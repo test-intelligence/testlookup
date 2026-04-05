@@ -1,0 +1,102 @@
+# ============================================================
+# TestLookup — Backend Dependencies
+# ============================================================
+
+# ── Web Framework ────────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.22
+httpx==0.28.1
+
+# ── Database ─────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+motor==3.7.0            # Async MongoDB driver (requires pymongo>=4.9,<4.11)
+pymongo==4.9.2          # Must stay <4.11 to match motor 3.7.0 constraint
+
+# ── Object Storage ───────────────────────────────────────────
+# aioboto3 bundles a compatible boto3 + botocore internally.
+# Do NOT pin boto3 separately — it conflicts with aiobotocore's botocore constraint.
+aioboto3==13.2.0
+
+# ── Validation & Settings ────────────────────────────────────
+pydantic==2.10.3
+pydantic-settings==2.6.1
+email-validator==2.2.0
+
+# ── Authentication & Security ────────────────────────────────
+python-jose[cryptography]==3.4.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.1
+slowapi==0.1.9
+
+# ── Notifications ─────────────────────────────────────────────
+aiosmtplib==3.0.2
+
+# ── LangChain & AI ───────────────────────────────────────────
+langchain==0.3.27
+langchain-ollama==0.2.1
+langchain-openai==0.2.12
+langchain-google-genai==2.0.7
+langgraph==0.6.11
+
+# ── Vector Store ─────────────────────────────────────────────
+chromadb==0.5.20
+
+# ── Background Tasks ─────────────────────────────────────────
+celery[redis]==5.4.0
+redis==5.2.1
+kombu==5.4.2
+flower==2.0.1
+
+# ── XML / JSON Parsing ───────────────────────────────────────
+lxml==5.3.0
+defusedxml==0.7.1
+
+# ── HTTP Client ──────────────────────────────────────────────
+httpx==0.28.1
+aiohttp==3.13.4
+
+# ── Observability: OpenTelemetry ─────────────────────────────
+# Core SDK + OTLP HTTP exporter (ships spans to Jaeger / any OTel Collector)
+opentelemetry-api==1.27.0
+opentelemetry-sdk==1.27.0
+opentelemetry-exporter-otlp-proto-http==1.27.0
+# Auto-instrumentors — must match sdk 1.27.0 → instrumentor 0.48b0
+opentelemetry-instrumentation-fastapi==0.48b0
+opentelemetry-instrumentation-sqlalchemy==0.48b0
+opentelemetry-instrumentation-httpx==0.48b0
+opentelemetry-instrumentation-redis==0.48b0
+opentelemetry-instrumentation-celery==0.48b0
+
+# ── Observability: Prometheus metrics ────────────────────────
+prometheus-client==0.21.0
+# Zero-config HTTP metrics for FastAPI (exposes /metrics endpoint)
+prometheus-fastapi-instrumentator==7.0.0
+
+# ── Utilities ────────────────────────────────────────────────
+python-dateutil==2.9.0.post0
+pytz==2024.2
+structlog==24.4.0
+tenacity==9.0.0
+click==8.1.8
+
+# ── Export: Excel / Word / PDF ───────────────────────────────
+openpyxl==3.1.5           # Excel export (.xlsx)
+python-docx==1.1.2        # Word export (.docx)
+reportlab==4.2.5          # PDF generation
+
+# ── Development & Testing ────────────────────────────────────
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+pytest-mock==3.14.0
+anyio==4.7.0
+factory-boy==3.3.1
+freezegun==1.5.1
+
+# ── Code Quality ─────────────────────────────────────────────
+ruff==0.8.4
+mypy==1.13.0
+types-python-dateutil==2.9.0.20241206

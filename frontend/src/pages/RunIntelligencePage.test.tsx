@@ -1,0 +1,387 @@
+/**
+ * Tests for RunIntelligencePage.
+ *
+ * Verifies:
+ * - Loading state shows spinner
+ * - "AI analysis not yet available" state
+ * - GO / CONDITIONAL_GO / NO_GO banner rendering
+ * - Stats row (pass rate, total failures, clusters)
+ * - Failure cluster cards
+ * - Executive summary text from layer1
+ */
+import { render, screen } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { describe, expect, it, vi } from 'vitest'
+import type { RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
+
+// ── Mocks ────────────────────────────────────────────────────────────────────
+
+const { mockProjectState } = vi.hoisted(() => ({
+  mockProjectState: {
+    activeProjectId: 'proj-1',
+    activeProject: { id: 'proj-1', name: 'Project One' },
+  },
+}))
+
+const {
+  mockUseRunIntelligence,
+  mockUseRunModeSummary,
+  mockUseScoringModel,
+} = vi.hoisted(() => ({
+  mockUseRunIntelligence: vi.fn(),
+  mockUseRunModeSummary: vi.fn(),
+  mockUseScoringModel: vi.fn(),
+}))
+
+vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/useRunIntelligence')>()
+  return {
+    ...actual,
+    useRunIntelligence: mockUseRunIntelligence,
+    useRunModeSummary: mockUseRunModeSummary,
+    useScoringModel: mockUseScoringModel,
+  }
+})
+
+vi.mock('@/store/projectStore', () => ({
+  ALL_PROJECTS_ID: '__ALL__',
+  useProjectStore: vi.fn((selector: (state: typeof mockProjectState) => unknown) =>
+    selector(mockProjectState)),
+}))
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const MOCK_INTELLIGENCE = {
+  intelligence_available: true,
+  run: {
+    id: 'run-abc',
+    build_number: '42',
+    status: 'FAILED',
+    total_tests: 200,
+    passed_tests: 185,
+    failed_tests: 15,
+    skipped_tests: 0,
+    pass_rate: 92.5,
+    branch: 'main',
+    duration_ms: 120000,
+    start_time: '2026-03-30T12:00:00Z',
+    end_time: '2026-03-30T12:02:00Z',
+    ocp_namespace: 'qa',
+  },
+  structured_summary: {
+    executive_summary: '15 failures detected across 3 suites. Primary cause: DB connection pool exhaustion.',
+    layer1_executive: '15 failures detected across 3 suites. Primary cause: DB connection pool exhaustion.',
+    layer2_incident: {
+      what_failed: 'PaymentSuite tests',
+      likely_cause: 'DB connection pool',
+      scope: 'payment-service',
+      criticality: 'HIGH',
+    },
+    layer3_evidence: {},
+    layer4_action_plan: {
+      immediate_mitigation: 'Restart DB connection pool',
+      fix_recommendations: ['Scale DB pods'],
+      owner_hints: { sre: 'Check DB metrics', developer: 'Review pool config' },
+    },
+    generated_at: '2026-03-30T12:03:00Z',
+    schema_version: 2,
+  },
+  failure_clusters: [
+    {
+      id: 'cluster-row-1',
+      cluster_id: 'cl-1',
+      label: 'DB Timeouts',
+      size: 8,
+      representative_error: 'ConnectionTimeoutException: Unable to acquire JDBC Connection',
+      member_test_ids: ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8'],
+      cohesion_score: 0.85,
+      criticality_level: 'HIGH',
+      dimension_scores: [],
+    },
+  ],
+  category_breakdown: {
+    INFRASTRUCTURE: 8,
+    PRODUCT_BUG: 4,
+    UNKNOWN: 3,
+  },
+  affected_suites: [
+    { suite: 'PaymentSuite', failed_count: 8 },
+    { suite: 'AuthSuite', failed_count: 4 },
+  ],
+  release_decision: {
+    recommendation: 'NO_GO',
+    risk_score: 68,
+    reasoning: 'High user impact with product bugs detected.',
+    blocking_issues: ['Resolve DB connection pool exhaustion'],
+    conditions_for_go: [],
+  },
+  top_analyses: [],
+  avg_confidence: 88,
+  pipeline_stages: [
+    {
+      stage_name: 'summary',
+      status: 'completed',
+      started_at: '2026-03-30T12:01:00Z',
+      completed_at: '2026-03-30T12:01:10Z',
+      skipped_reason: null,
+      execution_path: 'executed',
+      fallback_used: false,
+    },
+  ],
+  role_actions: {},
+  all_green: false,
+  dimension_scores: [
+    {
+      name: 'user_impact',
+      label: 'User Impact',
+      score: 80,
+      weight: 0.2,
+      contribution: 16,
+    },
+    {
+      name: 'reproducibility',
+      label: 'Reproducibility',
+      score: 60,
+      weight: 0.2,
+      contribution: 12,
+    },
+  ],
+  what_changed_since_last_good_run: null,
+  defect_candidates: [],
+  summary_modes: null,
+  provenance: null,
+}
+
+const MOCK_MODE_SUMMARY: RunModeSummary = {
+  test_run_id: 'run-abc',
+  mode: 'developer',
+  executive_summary: 'Developer summary',
+  markdown_report: '## Summary\nDeveloper summary',
+  layer1_executive: 'Developer summary',
+  layer2_incident: {
+    likely_cause: 'DB connection pool',
+    scope: 'payment-service',
+    criticality: 'HIGH',
+    failure_breakdown: { INFRASTRUCTURE: 8 },
+  },
+  layer3_evidence: null,
+  layer4_action_plan: {
+    immediate_mitigation: 'Restart DB connection pool',
+    fix_recommendations: ['Scale DB pods'],
+    validation_steps: ['Re-run failed suites'],
+  },
+  fallback_used: false,
+  generated_at: '2026-03-30T12:03:00Z',
+  citations: [],
+  similar_failures: [],
+  provenance: null,
+}
+
+const MOCK_SCORING_MODEL: ScoringModel = {
+  version: 1,
+  go_threshold: 20,
+  no_go_threshold: 50,
+  dimensions: [
+    { name: 'user_impact', weight: 0.2, description: 'Measures likely customer-facing risk.' },
+    { name: 'reproducibility', weight: 0.2, description: 'Measures how consistently the issue can be reproduced.' },
+  ],
+}
+
+import RunIntelligencePage from './RunIntelligencePage'
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+function mockHooks(overrides?: {
+  intelligence?: typeof MOCK_INTELLIGENCE | undefined
+  isLoading?: boolean
+  isError?: boolean
+}) {
+  mockUseRunIntelligence.mockReturnValue({
+    intelligence: overrides?.intelligence,
+    isLoading: overrides?.isLoading ?? false,
+    isError: overrides?.isError ?? false,
+  })
+  mockUseRunModeSummary.mockReturnValue({
+    summary: MOCK_MODE_SUMMARY,
+    isLoading: false,
+    isError: false,
+  })
+  mockUseScoringModel.mockReturnValue({
+    scoringModel: MOCK_SCORING_MODEL,
+    isLoading: false,
+    isError: false,
+    getDescription: (name: string) => MOCK_SCORING_MODEL.dimensions.find((d) => d.name === name)?.description ?? '',
+  })
+}
+
+describe('RunIntelligencePage', () => {
+  it('shows loading spinner while data is loading', async () => {
+    mockHooks({ intelligence: undefined, isLoading: true, isError: false })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // Should render loading state (spinner is present)
+    expect(document.querySelector('.animate-spin') ?? screen.queryByText(/loading/i)).toBeTruthy()
+  })
+
+  it('shows "AI analysis not yet available" when intelligence_available is false', async () => {
+    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, intelligence_available: false } })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/AI analysis not yet available/i)).toBeInTheDocument()
+  })
+
+  it('renders NO_GO banner with risk score', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/NO GO/i)).toBeInTheDocument()
+    expect(screen.getByText(/68\/100/i)).toBeInTheDocument()
+  })
+
+  it('renders executive summary from layer1', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(
+      screen.getByText(/15 failures detected across 3 suites/i),
+    ).toBeInTheDocument()
+  })
+
+  it('renders failure cluster label and size', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/DB Timeouts/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/8 failures/i).length).toBeGreaterThan(0)
+  })
+
+  it('renders workflow progress strip above the summary cards', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/workflow progress/i)).toBeInTheDocument()
+    expect(screen.getByText(/how the AI pipeline moved through ingestion/i)).toBeInTheDocument()
+  })
+
+  it('renders CONDITIONAL_GO banner correctly', async () => {
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        release_decision: {
+          ...MOCK_INTELLIGENCE.release_decision,
+          recommendation: 'CONDITIONAL_GO',
+          risk_score: 35,
+        },
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText(/CONDITIONAL GO/i)).toBeInTheDocument()
+  })
+
+  it('renders GO banner when risk is low', async () => {
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        release_decision: {
+          ...MOCK_INTELLIGENCE.release_decision,
+          recommendation: 'GO',
+          risk_score: 12,
+          blocking_issues: [],
+        },
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // "GO" is shown (not NO_GO or CONDITIONAL_GO)
+    const goText = screen.getAllByText(/GO/i).filter(
+      (node) => node.textContent?.trim() === 'GO',
+    )
+    expect(goText.length).toBeGreaterThan(0)
+  })
+
+  it('returns to the intelligence hub when the project changes', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+          <Route path="/intelligence" element={<div>Intelligence Hub</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(/NO GO/i)).toBeInTheDocument()
+
+    mockProjectState.activeProjectId = 'proj-2'
+    mockProjectState.activeProject = { id: 'proj-2', name: 'Project Two' }
+
+    rerender(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+          <Route path="/intelligence" element={<div>Intelligence Hub</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(/Intelligence Hub/i)).toBeInTheDocument()
+  })
+})

@@ -1,0 +1,156 @@
+/**
+ * TestLookup — Frontend error and Web Vitals reporting.
+ *
+ * Collects:
+ *   - Uncaught JavaScript errors (window.onerror)
+ *   - Unhandled promise rejections (window.onunhandledrejection)
+ *   - React Error Boundary errors (via reportBoundaryError)
+ *   - Core Web Vitals (via web-vitals library)
+ *
+ * All events are batched and sent to POST /api/v1/observability/frontend
+ * using navigator.sendBeacon on page unload and a periodic flush timer.
+ */
+
+import type { Metric } from 'web-vitals'
+
+const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/api/v1/observability/frontend`
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface FrontendError {
+  type: 'error' | 'unhandledrejection' | 'boundary'
+  message: string
+  stack?: string
+  component_stack?: string
+  url: string
+  user_agent: string
+  timestamp: string
+  context?: Record<string, unknown>
+}
+
+interface WebVitalReport {
+  name: string
+  value: number
+  rating: string
+  url: string
+  delta?: number
+}
+
+interface TelemetryBatch {
+  errors: FrontendError[]
+  vitals: WebVitalReport[]
+}
+
+// ── Batch buffer ──────────────────────────────────────────────────────────────
+
+const _batch: TelemetryBatch = { errors: [], vitals: [] }
+let _flushTimer: ReturnType<typeof setTimeout> | null = null
+
+function _scheduleFlush(): void {
+  if (_flushTimer) return
+  _flushTimer = setTimeout(() => {
+    _flushTimer = null
+    flush()
+  }, 5000) // batch window: 5 s
+}
+
+/** Send the current batch to the backend. Clears the buffer on success. */
+export function flush(): void {
+  if (_batch.errors.length === 0 && _batch.vitals.length === 0) return
+
+  const payload = JSON.stringify({ errors: [..._batch.errors], vitals: [..._batch.vitals] })
+  _batch.errors.length = 0
+  _batch.vitals.length = 0
+
+  try {
+    // sendBeacon works even during page unload
+    if (navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: 'application/json' })
+      navigator.sendBeacon(API_ENDPOINT, blob)
+    } else {
+      // Fallback: fire-and-forget fetch
+      fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {
+        /* best-effort — ignore network failures */
+      })
+    }
+  } catch {
+    /* never throw from error reporting */
+  }
+}
+
+// ── Error capture ─────────────────────────────────────────────────────────────
+
+function _capture(error: FrontendError): void {
+  _batch.errors.push(error)
+  _scheduleFlush()
+}
+
+/** Report an error caught by a React Error Boundary. */
+export function reportBoundaryError(error: Error, componentStack: string): void {
+  _capture({
+    type: 'boundary',
+    message: error.message,
+    stack: error.stack,
+    component_stack: componentStack,
+    url: window.location.href,
+    user_agent: navigator.userAgent,
+    timestamp: new Date().toISOString(),
+  })
+}
+
+// ── Global error listeners ────────────────────────────────────────────────────
+
+/** Install window-level error and unhandledrejection handlers. Call once from main.tsx. */
+export function installGlobalErrorHandlers(): void {
+  window.addEventListener('error', (event) => {
+    _capture({
+      type: 'error',
+      message: event.message || String(event.error),
+      stack: event.error?.stack,
+      url: event.filename || window.location.href,
+      user_agent: navigator.userAgent,
+      timestamp: new Date().toISOString(),
+      context: {
+        lineno: event.lineno,
+        colno: event.colno,
+      },
+    })
+  })
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason
+    _capture({
+      type: 'unhandledrejection',
+      message: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+      url: window.location.href,
+      user_agent: navigator.userAgent,
+      timestamp: new Date().toISOString(),
+    })
+  })
+
+  // Flush on page unload
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush()
+  })
+  window.addEventListener('pagehide', flush)
+}
+
+// ── Web Vitals reporting ──────────────────────────────────────────────────────
+
+/** Called by useWebVitals hook with each Core Web Vital measurement. */
+export function reportWebVital(metric: Metric): void {
+  _batch.vitals.push({
+    name: metric.name,
+    value: metric.value,
+    rating: metric.rating,
+    url: window.location.href,
+    delta: metric.delta,
+  })
+  _scheduleFlush()
+}

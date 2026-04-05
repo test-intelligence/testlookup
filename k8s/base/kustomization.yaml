@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: testlookup
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - rbac.yaml
+  - backend-deployment.yaml
+  - frontend-deployment.yaml
+  - worker-deployments.yaml   # 4 queue-scoped workers + beat (independently scalable)
+  - mcp-deployment.yaml
+  - ollama-deployment.yaml
+  - hpa.yaml                  # all HPAs consolidated here (not embedded in deployments)
+  - pdb.yaml                  # PodDisruptionBudgets for graceful node drains
+  - services.yaml
+  - ingress.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: testlookup
+      app.kubernetes.io/version: "0.0.1"
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+    includeTemplates: true

@@ -1,0 +1,101 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: testlookup-dev
+
+patches:
+  # ── Replica overrides — keep dev footprint small ─────────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-backend
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-frontend
+
+  # In dev, a single worker-critical handles all queue traffic to reduce resource use.
+  # Other queues are set to 0; tasks will queue in Redis until staging/prod.
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-critical
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ingestion
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ai
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-default
+
+  # Beat is disabled in dev — tasks are triggered manually
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Disable HPAs in dev — fixed replica counts are sufficient ────────────
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 1
+    target:
+      kind: HorizontalPodAutoscaler
+
+  # ── Environment configuration ─────────────────────────────────────────────
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        APP_ENV: "development"
+        LOG_LEVEL: "DEBUG"
+        CORS_ORIGINS: "http://localhost:3000,https://testlookup-dev.yourdomain.com"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
+images:
+  - name: testlookup/backend
+    newTag: dev-latest
+  - name: testlookup/frontend
+    newTag: dev-latest
+  - name: testlookup/mcp
+    newTag: dev-latest

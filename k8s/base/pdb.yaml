@@ -1,0 +1,68 @@
+# ── PodDisruptionBudgets ──────────────────────────────────────────────────────
+#
+# Prevent Kubernetes from evicting all pods of a service simultaneously
+# during voluntary disruptions (node drain, rolling cluster upgrades).
+#
+# Rules of thumb used here:
+#  - Traffic-facing services (backend, frontend):
+#      minAvailable: 1 — at least one pod must always be running.
+#  - Stateless workers: minAvailable: 1 except default-queue where best-effort is fine.
+#  - Beat scheduler: no PDB — Recreate strategy already handles single-replica safety.
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testlookup-backend-pdb
+  namespace: testlookup
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: testlookup-backend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testlookup-frontend-pdb
+  namespace: testlookup
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: testlookup-frontend
+---
+# Critical worker handles real-time user-facing analysis — keep at least one alive
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testlookup-worker-critical-pdb
+  namespace: testlookup
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-critical
+---
+# Ingestion and AI workers can tolerate brief unavailability (Celery will requeue)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testlookup-worker-ingestion-pdb
+  namespace: testlookup
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-ingestion
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testlookup-worker-ai-pdb
+  namespace: testlookup
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-ai

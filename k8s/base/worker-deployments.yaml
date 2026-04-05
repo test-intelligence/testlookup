@@ -1,0 +1,315 @@
+# ── Celery Worker Deployments ──────────────────────────────────────────────
+#
+# Each queue runs as a SEPARATE Deployment so Kubernetes can scale them
+# independently based on their individual CPU / memory / queue-depth signals.
+#
+#  worker-critical   — real-time "critical" queue  (live test analysis, LLM)
+#  worker-ingestion  — "ingestion" queue            (MinIO → DB parsing)
+#  worker-ai         — "ai_analysis" queue          (full LangGraph pipeline)
+#  worker-default    — "default" queue              (notifications, housekeeping)
+#  beat              — Celery beat scheduler        (always exactly 1 replica)
+#
+# HPAs live in hpa.yaml; replicas here are the floor for non-prod environments.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── worker-critical: real-time analysis (critical queue) ─────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-worker-critical
+  namespace: testlookup
+  labels:
+    app: testlookup-worker-critical
+    app.kubernetes.io/component: worker
+    queue: critical
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-critical
+  template:
+    metadata:
+      labels:
+        app: testlookup-worker-critical
+        app.kubernetes.io/component: worker
+        queue: critical
+    spec:
+      serviceAccountName: testlookup-sa
+      terminationGracePeriodSeconds: 60   # allow in-flight tasks to finish
+      containers:
+        - name: worker
+          image: testlookup/backend:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.worker.celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency=2           # lower concurrency — LLM tasks are memory-heavy
+            - -Q
+            - critical
+            - --max-tasks-per-child=100
+          envFrom:
+            - configMapRef:
+                name: testlookup-config
+            - secretRef:
+                name: testlookup-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: testlookup-worker-critical
+                topologyKey: kubernetes.io/hostname
+---
+# ── worker-ingestion: test report parsing (ingestion queue) ──────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-worker-ingestion
+  namespace: testlookup
+  labels:
+    app: testlookup-worker-ingestion
+    app.kubernetes.io/component: worker
+    queue: ingestion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-ingestion
+  template:
+    metadata:
+      labels:
+        app: testlookup-worker-ingestion
+        app.kubernetes.io/component: worker
+        queue: ingestion
+    spec:
+      serviceAccountName: testlookup-sa
+      terminationGracePeriodSeconds: 120   # parsing can take time
+      containers:
+        - name: worker
+          image: testlookup/backend:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.worker.celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency=4
+            - -Q
+            - ingestion
+            - --max-tasks-per-child=200
+          envFrom:
+            - configMapRef:
+                name: testlookup-config
+            - secretRef:
+                name: testlookup-secrets
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: testlookup-worker-ingestion
+                topologyKey: kubernetes.io/hostname
+---
+# ── worker-ai: multi-agent LangGraph pipeline (ai_analysis queue) ────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-worker-ai
+  namespace: testlookup
+  labels:
+    app: testlookup-worker-ai
+    app.kubernetes.io/component: worker
+    queue: ai_analysis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-ai
+  template:
+    metadata:
+      labels:
+        app: testlookup-worker-ai
+        app.kubernetes.io/component: worker
+        queue: ai_analysis
+    spec:
+      serviceAccountName: testlookup-sa
+      terminationGracePeriodSeconds: 1860  # match Celery hard time limit (31 min)
+      containers:
+        - name: worker
+          image: testlookup/backend:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.worker.celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency=2           # LangGraph pipelines are CPU+memory heavy
+            - -Q
+            - ai_analysis
+            - --max-tasks-per-child=50  # lower limit: prevent LLM memory leaks
+          envFrom:
+            - configMapRef:
+                name: testlookup-config
+            - secretRef:
+                name: testlookup-secrets
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: testlookup-worker-ai
+                topologyKey: kubernetes.io/hostname
+---
+# ── worker-default: notifications, housekeeping (default queue) ──────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-worker-default
+  namespace: testlookup
+  labels:
+    app: testlookup-worker-default
+    app.kubernetes.io/component: worker
+    queue: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testlookup-worker-default
+  template:
+    metadata:
+      labels:
+        app: testlookup-worker-default
+        app.kubernetes.io/component: worker
+        queue: default
+    spec:
+      serviceAccountName: testlookup-sa
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: testlookup/backend:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.worker.celery_app
+            - worker
+            - --loglevel=info
+            - --concurrency=4
+            - -Q
+            - default
+            - --max-tasks-per-child=200
+          envFrom:
+            - configMapRef:
+                name: testlookup-config
+            - secretRef:
+                name: testlookup-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+---
+# ── beat: Celery beat scheduler (always exactly 1 replica — never scaled) ─────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-beat
+  namespace: testlookup
+  labels:
+    app: testlookup-beat
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testlookup-beat
+  strategy:
+    type: Recreate              # beat MUST NOT run as two instances simultaneously
+  template:
+    metadata:
+      labels:
+        app: testlookup-beat
+        app.kubernetes.io/component: scheduler
+    spec:
+      serviceAccountName: testlookup-sa
+      containers:
+        - name: beat
+          image: testlookup/backend:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.worker.celery_app
+            - beat
+            - --loglevel=info
+          envFrom:
+            - configMapRef:
+                name: testlookup-config
+            - secretRef:
+                name: testlookup-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false

@@ -1,0 +1,371 @@
+"""SCIM 2.0 provisioning router — user lifecycle management for IdP integration."""
+import logging
+import uuid
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.deps import require_role
+from app.db.postgres import get_db
+from app.models.postgres import SCIMToken, User, UserRole
+from app.models.schemas import (
+    SCIMListResponse,
+    SCIMPatchRequest,
+    SCIMTokenCreate,
+    SCIMTokenCreatedResponse,
+    SCIMTokenResponse,
+    SCIMUserResource,
+)
+from app.services.scim_service import (
+    create_scim_token,
+    scim_create_user,
+    scim_get_user,
+    scim_list_users,
+    scim_update_user,
+    user_to_scim_resource,
+    validate_scim_token,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/scim/v2", tags=["SCIM 2.0"])
+
+# SCIM token management router (protected — admin only)
+token_router = APIRouter(prefix="/api/v1/scim-tokens", tags=["SCIM Tokens"])
+
+
+# ── SCIM Bearer Token Authentication ────────────────────────────────────────
+
+
+async def verify_scim_bearer(
+    request: Request,
+    authorization: str = Header(..., alias="Authorization"),
+    db: AsyncSession = Depends(get_db),
+) -> SCIMToken:
+    """Validate the SCIM bearer token from the Authorization header."""
+    if not settings.SCIM_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="SCIM provisioning is not enabled",
+        )
+
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization scheme — expected Bearer token",
+        )
+
+    bearer_token = authorization[7:]
+    token = await validate_scim_token(db, bearer_token)
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired SCIM token",
+        )
+
+    return token
+
+
+# ── SCIM User Endpoints ─────────────────────────────────────────────────────
+
+
+@router.get("/Users")
+async def scim_list(
+    request: Request,
+    startIndex: int = 1,
+    count: int = 100,
+    filter: str | None = None,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: List users."""
+    users, total = await scim_list_users(db, start_index=startIndex, count=count, filter_str=filter)
+    base_url = str(request.base_url).rstrip("/")
+
+    return SCIMListResponse(
+        totalResults=total,
+        startIndex=startIndex,
+        itemsPerPage=count,
+        Resources=[
+            SCIMUserResource(**user_to_scim_resource(u, base_url))
+            for u in users
+        ],
+    )
+
+
+@router.get("/Users/{user_id}")
+async def scim_get(
+    user_id: uuid.UUID,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: Get a single user."""
+    user = await scim_get_user(db, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    base_url = str(request.base_url).rstrip("/")
+    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+
+
+@router.post("/Users", status_code=201)
+async def scim_create(
+    payload: SCIMUserResource,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: Create a user."""
+    email = None
+    for em in payload.emails:
+        if em.primary:
+            email = em.value
+            break
+    if not email and payload.emails:
+        email = payload.emails[0].value
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one email is required",
+        )
+
+    display_name = payload.displayName
+    if not display_name and payload.name:
+        parts = [payload.name.givenName, payload.name.familyName]
+        display_name = " ".join(p for p in parts if p) or None
+
+    groups = [g.display or g.value for g in payload.groups] if payload.groups else []
+    client_ip = request.client.host if request.client else None
+
+    try:
+        user = await scim_create_user(
+            db=db,
+            username=payload.userName,
+            email=email,
+            display_name=display_name,
+            external_id=payload.externalId,
+            groups=groups,
+            active=payload.active,
+            sso_config_id=scim_token.sso_config_id,
+            ip_address=client_ip,
+        )
+        await db.commit()
+        await db.refresh(user)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+
+    base_url = str(request.base_url).rstrip("/")
+    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+
+
+@router.put("/Users/{user_id}")
+async def scim_replace(
+    user_id: uuid.UUID,
+    payload: SCIMUserResource,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: Replace (full update) a user."""
+    email = None
+    for em in payload.emails:
+        if em.primary:
+            email = em.value
+            break
+    if not email and payload.emails:
+        email = payload.emails[0].value
+
+    display_name = payload.displayName
+    if not display_name and payload.name:
+        parts = [payload.name.givenName, payload.name.familyName]
+        display_name = " ".join(p for p in parts if p) or None
+
+    groups = [g.display or g.value for g in payload.groups] if payload.groups else []
+    client_ip = request.client.host if request.client else None
+
+    try:
+        user = await scim_update_user(
+            db=db,
+            user_id=user_id,
+            username=payload.userName,
+            email=email,
+            display_name=display_name,
+            active=payload.active,
+            groups=groups,
+            sso_config_id=scim_token.sso_config_id,
+            ip_address=client_ip,
+        )
+        await db.commit()
+        await db.refresh(user)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    base_url = str(request.base_url).rstrip("/")
+    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+
+
+@router.patch("/Users/{user_id}")
+async def scim_patch(
+    user_id: uuid.UUID,
+    payload: SCIMPatchRequest,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: Patch (partial update) a user."""
+    client_ip = request.client.host if request.client else None
+
+    username = None
+    email = None
+    display_name = None
+    active = None
+    groups = None
+
+    for op in payload.Operations:
+        op_type = op.op.lower()
+        if op_type == "replace":
+            if op.path == "userName" and isinstance(op.value, str):
+                username = op.value
+            elif op.path == "active":
+                active = bool(op.value)
+            elif op.path == "displayName" and isinstance(op.value, str):
+                display_name = op.value
+            elif op.path == "emails" and isinstance(op.value, list):
+                for em in op.value:
+                    if isinstance(em, dict) and em.get("primary"):
+                        email = em.get("value")
+                        break
+            elif op.path is None and isinstance(op.value, dict):
+                # Bulk replace
+                if "userName" in op.value:
+                    username = op.value["userName"]
+                if "active" in op.value:
+                    active = bool(op.value["active"])
+                if "displayName" in op.value:
+                    display_name = op.value["displayName"]
+
+    try:
+        user = await scim_update_user(
+            db=db,
+            user_id=user_id,
+            username=username,
+            email=email,
+            display_name=display_name,
+            active=active,
+            groups=groups,
+            sso_config_id=scim_token.sso_config_id,
+            ip_address=client_ip,
+        )
+        await db.commit()
+        await db.refresh(user)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    base_url = str(request.base_url).rstrip("/")
+    return SCIMUserResource(**user_to_scim_resource(user, base_url))
+
+
+@router.delete("/Users/{user_id}", status_code=204)
+async def scim_delete(
+    user_id: uuid.UUID,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: Deactivate (soft-delete) a user."""
+    client_ip = request.client.host if request.client else None
+
+    try:
+        await scim_update_user(
+            db=db,
+            user_id=user_id,
+            active=False,
+            sso_config_id=scim_token.sso_config_id,
+            ip_address=client_ip,
+        )
+        await db.commit()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+
+    return None
+
+
+# ── SCIM Token Management (Admin-only) ──────────────────────────────────────
+
+
+@token_router.get("", response_model=list[SCIMTokenResponse])
+async def list_scim_tokens(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all SCIM tokens (ADMIN only)."""
+    result = await db.execute(
+        select(SCIMToken).order_by(SCIMToken.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@token_router.post("", response_model=SCIMTokenCreatedResponse, status_code=201)
+async def create_token(
+    payload: SCIMTokenCreate,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new SCIM bearer token (ADMIN only). The raw token is shown once."""
+    token, raw_token = await create_scim_token(
+        db=db,
+        name=payload.name,
+        created_by_id=current_user.id,
+        sso_config_id=payload.sso_config_id,
+        expires_days=payload.expires_days,
+    )
+    await db.commit()
+    await db.refresh(token)
+
+    return SCIMTokenCreatedResponse(
+        id=token.id,
+        name=token.name,
+        token_hint=token.token_hint,
+        sso_config_id=token.sso_config_id,
+        is_active=token.is_active,
+        last_used_at=token.last_used_at,
+        expires_at=token.expires_at,
+        created_at=token.created_at,
+        raw_token=raw_token,
+    )
+
+
+@token_router.delete("/{token_id}", status_code=204)
+async def revoke_scim_token(
+    token_id: uuid.UUID,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke a SCIM token (ADMIN only)."""
+    result = await db.execute(
+        select(SCIMToken).where(SCIMToken.id == token_id)
+    )
+    token = result.scalar_one_or_none()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SCIM token not found")
+
+    token.is_active = False
+    await db.commit()
+    return None

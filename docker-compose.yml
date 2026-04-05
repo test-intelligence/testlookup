@@ -1,0 +1,413 @@
+version: "3.9"
+name: testlookup
+
+# ============================================================
+# TestLookup — Local Development Stack
+# ============================================================
+# Usage:
+#   docker compose up -d --build          # Start all services
+#   docker compose exec backend alembic upgrade head  # Run migrations
+#   docker compose exec ollama ollama pull qwen2.5:7b # Pull LLM
+#   docker compose logs -f backend        # Tail backend logs
+# ============================================================
+
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # DATABASE LAYER
+  # ──────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: testlookup_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-testlookup}
+      POSTGRES_USER: ${POSTGRES_USER:-testlookup_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set — copy .env.example to .env}
+    ports:
+      - "5433:5432"   # 5433 on host to avoid conflict with any local PostgreSQL on 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testlookup_user} -d ${POSTGRES_DB:-testlookup}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          memory: 512M
+    networks:
+      - testlookup_net
+
+  mongo:
+    image: mongo:7
+    container_name: testlookup_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-testlookup_logs}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          memory: 512M
+    networks:
+      - testlookup_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: testlookup_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+        reservations:
+          memory: 128M
+    networks:
+      - testlookup_net
+
+  # ──────────────────────────────────────────────────────────
+  # OBJECT STORAGE
+  # ──────────────────────────────────────────────────────────
+
+  minio:
+    image: minio/minio:latest
+    container_name: testlookup_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — copy .env.example to .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — copy .env.example to .env}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - testlookup_net
+
+  # MinIO setup: create bucket and configure webhook notification
+  minio-setup:
+    image: minio/mc:latest
+    container_name: testlookup_minio_setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY};
+      mc mb --ignore-existing local/${MINIO_BUCKET_NAME:-test-telemetry};
+      mc mb --ignore-existing local/testlookup-attachments;
+      mc anonymous set download local/testlookup-attachments;
+      echo 'MinIO setup complete';
+      "
+    networks:
+      - testlookup_net
+
+  # ──────────────────────────────────────────────────────────
+  # AI LAYER — LOCAL LLM (OFFLINE CAPABLE)
+  # ──────────────────────────────────────────────────────────
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: testlookup_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    # Uncomment for NVIDIA GPU acceleration:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - testlookup_net
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: testlookup_chroma
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - testlookup_net
+
+  # ──────────────────────────────────────────────────────────
+  # APPLICATION LAYER
+  # ──────────────────────────────────────────────────────────
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_backend
+    restart: unless-stopped
+    # Retry migration until PostgreSQL is fully ready (handles timing on fresh machines)
+    command: >
+      sh -c "
+        echo 'Waiting for database…';
+        until alembic upgrade head; do
+          echo 'Migration failed — retrying in 5s…';
+          sleep 5;
+        done;
+        echo 'Migrations complete. Starting server…';
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app                   # Hot-reload in development
+      - ./backend/app:/app/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGO_HOST=mongo
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=minio:9000
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          memory: 256M
+    networks:
+      - testlookup_net
+
+  # Celery worker for background tasks (ingestion, AI analysis)
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_worker
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=4 -Q default,ingestion,ai_analysis --max-tasks-per-child=200
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGO_HOST=mongo
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=minio:9000
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - backend
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 3G
+        reservations:
+          memory: 512M
+    networks:
+      - testlookup_net
+
+  # Celery Beat scheduler for periodic tasks
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_beat
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    networks:
+      - testlookup_net
+
+  # Flower — Celery monitoring UI
+  flower:
+    image: mher/flower:latest
+    container_name: testlookup_flower
+    restart: unless-stopped
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    networks:
+      - testlookup_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src         # Hot-reload in development
+      - ./frontend/public:/app/public
+      - /app/node_modules               # Preserve node_modules from container
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_APP_NAME=TestLookup
+      - VITE_APP_VERSION=0.0.1
+    depends_on:
+      - backend
+    networks:
+      - testlookup_net
+
+  # ──────────────────────────────────────────────────────────
+  # SEED INIT — one-shot: auto-seeds dev database after backend
+  # is healthy. Idempotent — safe to run on every `make dev`.
+  # ──────────────────────────────────────────────────────────
+  seed-init:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_seed_init
+    restart: "no"
+    command: sh -c "python /app/scripts/seed_dev_data.py"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - testlookup_net
+
+  # ──────────────────────────────────────────────────────────
+  # MCP SERVER — AI assistant integration (SSE transport)
+  # ──────────────────────────────────────────────────────────
+  # Primary use: stdio (Desktop Clients) — run `make mcp-start` locally.
+  # This container enables SSE transport for CI pipelines and web clients.
+
+  mcp:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile
+    container_name: testlookup_mcp
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - TESTLOOKUP_API_URL=http://backend:8000
+      - TESTLOOKUP_USERNAME=${MCP_USERNAME:-}
+      - TESTLOOKUP_PASSWORD=${MCP_PASSWORD:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - testlookup_net
+
+# ──────────────────────────────────────────────────────────
+# NETWORKS & VOLUMES
+# ──────────────────────────────────────────────────────────
+
+networks:
+  testlookup_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
+  minio_data:
+  ollama_models:     # Persists downloaded LLM models (4–14GB each)
+  chroma_data:       # Persists embedding vectors

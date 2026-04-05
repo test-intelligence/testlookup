@@ -1,0 +1,379 @@
+"""Authentication endpoints — register, login, refresh, me, change-password."""
+import logging
+import uuid as _uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordRequestForm
+from jose import JWTError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.deps import get_current_active_user
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    get_password_hash,
+    verify_password,
+)
+from app.db.postgres import get_db
+from app.models.postgres import IdentityEventType, User, UserRole
+from app.models.schemas import (
+    ChangePasswordRequest,
+    FirstTimeResetRequest,
+    RefreshRequest,
+    TokenResponse,
+    UserCreate,
+    UserResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
+
+
+@router.post("/register", response_model=UserResponse, status_code=201)
+async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
+    """
+    Self-service registration.
+
+    New accounts are created with the VIEWER role (read-only) and
+    must_change_password=True so the user is prompted to set a permanent
+    password on their first login.
+    """
+    existing = await db.execute(
+        select(User).where(
+            (User.email == payload.email) | (User.username == payload.username)
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username already registered",
+        )
+
+    user = User(
+        email=payload.email,
+        username=payload.username,
+        full_name=payload.full_name,
+        hashed_password=get_password_hash(payload.password),
+        role=UserRole.VIEWER,
+        must_change_password=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info("New user self-registered: %s (role=VIEWER, must_change_password=True)", user.username)
+    return user
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    """Authenticate and return JWT access + refresh tokens."""
+    result = await db.execute(
+        select(User).where(
+            (User.username == form_data.username) | (User.email == form_data.username)
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        logger.warning("Failed login attempt for: %s", form_data.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account disabled",
+        )
+
+    # ── SSO enforcement check ────────────────────────────────────
+    # When SSO is enforced (SSO_REQUIRED mode), only ADMIN users with the
+    # fallback flag enabled can use password login. All other users must
+    # authenticate through the SSO/SAML flow.
+    if settings.SSO_ENABLED:
+        from app.services.sso_service import is_sso_enforced, log_identity_event
+
+        sso_enforced = await is_sso_enforced(db)
+        if sso_enforced:
+            is_admin = user.role == UserRole.ADMIN or str(user.role) == UserRole.ADMIN.value
+            if is_admin and settings.SSO_ADMIN_FALLBACK_ENABLED:
+                # Admin fallback allowed — log the event
+                client_ip = request.client.host if request.client else None
+                await log_identity_event(
+                    db,
+                    IdentityEventType.ADMIN_FALLBACK_LOGIN,
+                    user_id=user.id,
+                    detail={"method": "password", "reason": "admin_fallback"},
+                    ip_address=client_ip,
+                )
+                logger.info("Admin fallback login for: %s", user.username)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="SSO is required for this account. Please use the SSO login option.",
+                )
+
+    access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
+    logger.info("User logged in: %s (must_change_password=%s)", user.username, user.must_change_password)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        must_change_password=user.must_change_password,
+    )
+
+
+# Mapping from URL-friendly role slug to UserRole enum
+_DEV_ROLE_MAP: dict[str, UserRole] = {
+    "admin":       UserRole.ADMIN,
+    "qa_lead":     UserRole.QA_LEAD,
+    "qa_engineer": UserRole.QA_ENGINEER,
+    "tester":      UserRole.TESTER,
+    "viewer":      UserRole.VIEWER,
+}
+
+# Defaults used when creating a temporary user if the seed has not run yet
+_DEV_ROLE_DEFAULTS: dict[UserRole, dict] = {
+    UserRole.ADMIN:       {"email": "admin@testlookup.dev",    "username": "admin",       "full_name": "Dev Admin"},
+    UserRole.QA_LEAD:     {"email": "lead@testlookup.dev",     "username": "qa_lead",     "full_name": "Dev QA Lead"},
+    UserRole.QA_ENGINEER: {"email": "engineer@testlookup.dev", "username": "qa_engineer", "full_name": "Dev QA Engineer"},
+    UserRole.TESTER:      {"email": "tester@testlookup.dev",   "username": "tester",      "full_name": "Dev Tester"},
+    UserRole.VIEWER:      {"email": "viewer@testlookup.dev",   "username": "viewer",      "full_name": "Dev Viewer"},
+}
+
+
+async def _get_or_create_dev_user(
+    db: AsyncSession,
+    target_role: UserRole,
+    role_slug: str,
+    username: str | None = None,
+) -> User:
+    if username:
+        requested_username = username.strip()
+        result = await db.execute(
+            select(User)
+            .where(User.username == requested_username)
+            .where(User.is_active == True)  # noqa: E712
+            .limit(1)
+        )
+        requested_user = result.scalar_one_or_none()
+        if requested_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Active user '{requested_username}' was not found",
+            )
+        return requested_user
+
+    result = await db.execute(
+        select(User)
+        .where(User.role == target_role)
+        .where(User.is_active == True)  # noqa: E712
+        .limit(1)
+    )
+    user = result.scalar_one_or_none()
+
+    if user is not None:
+        return user
+
+    # Seed hasn't run yet — create a temporary account so the UI is accessible
+    import secrets as _secrets
+    defaults = _DEV_ROLE_DEFAULTS[target_role]
+    user = User(
+        id=_uuid.uuid4(),
+        email=defaults["email"],
+        username=defaults["username"],
+        full_name=defaults["full_name"],
+        hashed_password=get_password_hash(_secrets.token_urlsafe(32)),
+        role=target_role,
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.info("dev-login: created temporary %s user (seed not yet run)", role_slug)
+    return user
+
+
+@router.post("/dev-login", response_model=TokenResponse)
+async def dev_login(
+    role: str = "admin",
+    username: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Development-only: issue a JWT for a seeded user without credentials.
+
+    Enabled only when APP_ENV=development AND DEV_AUTO_LOGIN_ENABLED=true.
+    Returns 404 in all other environments so it is invisible in staging/prod.
+
+    Query param:
+      role — one of: admin, qa_lead, qa_engineer, tester, viewer (default: admin)
+      username — optional active username to authenticate as directly
+
+    If the requested user does not exist yet (seed not run), a temporary account
+    is created on the fly so developers can always access the UI after `make dev`.
+    """
+    if not settings.is_development or not settings.DEV_AUTO_LOGIN_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    target_role = _DEV_ROLE_MAP.get(role.lower())
+    if target_role is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown role '{role}'. Valid values: {', '.join(_DEV_ROLE_MAP)}",
+        )
+
+    user = await _get_or_create_dev_user(
+        db=db,
+        target_role=target_role,
+        role_slug=role,
+        username=username,
+    )
+
+    access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
+    logger.info("dev-login: issued token for %s (%s)", user.username, role)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@router.post("/first-time-reset", status_code=204)
+async def first_time_reset(
+    payload: FirstTimeResetRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Forced password reset for self-registered users on first login.
+
+    - Requires a valid JWT (user must be authenticated).
+    - Only permitted when must_change_password=True on the account.
+    - Does NOT require the current/registration password.
+    - Clears the must_change_password flag after a successful change.
+    """
+    if not current_user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password reset not required for this account. Use change-password instead.",
+        )
+    if payload.new_password != payload.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passwords do not match",
+        )
+    current_user.hashed_password = get_password_hash(payload.new_password)
+    current_user.must_change_password = False
+    await db.commit()
+    logger.info("First-time password reset completed for user: %s", current_user.username)
+    return None
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_tokens(
+    payload: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Exchange a valid refresh token for a new access + refresh token pair (rotation).
+    The old refresh token is not reusable after this call.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        data = decode_token(payload.refresh_token)
+        if data.get("type") != "refresh":
+            raise credentials_exception
+        user_id: str = data.get("sub", "")
+        if not user_id:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    try:
+        uid = _uuid.UUID(user_id)
+    except ValueError:
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.id == uid))
+    user = result.scalar_one_or_none()
+
+    if user is None or not user.is_active:
+        raise credentials_exception
+
+    new_access = create_access_token(str(user.id))
+    new_refresh = create_refresh_token(str(user.id))
+
+    return TokenResponse(
+        access_token=new_access,
+        refresh_token=new_refresh,
+        token_type="bearer",
+        expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_active_user)):
+    """Return the authenticated user's profile."""
+    return current_user
+
+
+@router.post("/logout", status_code=204)
+async def logout(current_user: User = Depends(get_current_active_user)):
+    """
+    Client-side logout — instructs the client to discard its tokens.
+    For full server-side revocation, add a Redis token denylist keyed on jti.
+    """
+    logger.info("User logged out: %s", current_user.username)
+    return None
+
+
+@router.get("/users", response_model=list[UserResponse])
+async def list_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return all active users (for assignee dropdowns)."""
+    result = await db.execute(
+        select(User).where(User.is_active == True).order_by(User.full_name)  # noqa: E712
+    )
+    return result.scalars().all()
+
+
+@router.post("/change-password", status_code=204)
+async def change_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change the current user's password."""
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+    current_user.hashed_password = get_password_hash(payload.new_password)
+    await db.commit()
+    logger.info("Password changed for user: %s", current_user.username)
+    return None

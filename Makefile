@@ -1,0 +1,240 @@
+# ============================================================
+# TestLookup — Developer Makefile
+# ============================================================
+.PHONY: help dev dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset setup-minio mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+
+DOCKER_COMPOSE = docker compose
+BACKEND_CONTAINER = testlookup_backend
+OLLAMA_CONTAINER = ollama
+K8S_NAMESPACE ?= testlookup
+
+# PostgreSQL defaults (overridable via environment — used by shell-db target)
+POSTGRES_USER ?= testlookup_user
+POSTGRES_DB   ?= testlookup
+
+# Cross-platform copy command (.env bootstrap)
+ifeq ($(OS),Windows_NT)
+  CP_CMD = copy .env.example .env
+else
+  CP_CMD = cp .env.example .env
+endif
+
+help: ## Show this help message
+	@echo "TestLookup — Development Commands"
+	@echo "======================================"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# ── Development ─────────────────────────────────────────────
+
+# File target: copy .env.example → .env only when .env does not exist.
+# Make skips this rule if the file already exists — works on all platforms
+# (Windows cmd.exe, PowerShell, Git Bash, macOS, Linux) without shell tests.
+.env:
+	$(CP_CMD)
+	@echo "Created .env from .env.example — review values before production use."
+
+dev: .env ## Start all services in development mode (auto-seeds on first run)
+	$(DOCKER_COMPOSE) up -d --build
+	@echo ""
+	@echo "Stack started."
+	@echo "  Dashboard  -> http://localhost:3000"
+	@echo "  API Docs   -> http://localhost:8000/docs"
+	@echo "  MinIO      -> http://localhost:9001  (credentials from .env)"
+	@echo "  Flower     -> http://localhost:5555"
+	@echo ""
+	@echo "  Seed data runs automatically via the seed-init container."
+	@echo "  Use the Quick Login buttons at http://localhost:3000 (no password required in dev)."
+	@echo "  Run 'make dev-logs-seed' to watch seed progress."
+
+dev-setup: .env ## First-time full setup: start stack + pull LLM models
+	$(MAKE) dev
+	@echo "Pulling Ollama LLM models (this may take a while on first run)..."
+	$(MAKE) pull-llm
+	@echo ""
+	@echo "Setup complete. Open http://localhost:3000 and use the Quick Login buttons (no password required in dev)."
+
+dev-lite: .env ## Start minimal stack (no Ollama/ChromaDB) — for low-resource machines
+	docker compose -f docker-compose.dev-lite.yml up -d --build
+	@echo "Lite stack started. Dashboard: http://localhost:3000 | API: http://localhost:8000/docs"
+
+dev-lite-stop: ## Stop lite stack
+	docker compose -f docker-compose.dev-lite.yml down
+
+dev-logs: ## Tail logs for all services
+	$(DOCKER_COMPOSE) logs -f
+
+dev-logs-seed: ## Tail seed-init container output (useful on first run)
+	$(DOCKER_COMPOSE) logs -f seed-init
+
+stop: ## Stop all services
+	$(DOCKER_COMPOSE) down
+
+restart: ## Restart all services
+	$(DOCKER_COMPOSE) restart
+
+clean: ## Stop services and remove volumes (WARNING: deletes all data)
+	$(DOCKER_COMPOSE) down -v --remove-orphans
+	@echo "WARNING: All volumes removed."
+
+# ── Database ─────────────────────────────────────────────────
+
+migrate: ## Run pending Alembic migrations
+	$(DOCKER_COMPOSE) exec backend alembic upgrade head
+
+migrate-create: ## Create a new migration (usage: make migrate-create MSG="add_test_runs")
+	$(DOCKER_COMPOSE) exec backend alembic revision --autogenerate -m "$(MSG)"
+
+migrate-down: ## Rollback last migration
+	$(DOCKER_COMPOSE) exec backend alembic downgrade -1
+
+migrate-status: ## Show migration status
+	$(DOCKER_COMPOSE) exec backend alembic current
+
+# ── AI / LLM ─────────────────────────────────────────────────
+
+pull-llm: ## Pull recommended local LLM models via Ollama
+	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:7b
+	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull nomic-embed-text
+	@echo "Models downloaded."
+
+pull-llm-large: ## Pull larger/more capable models (requires 16GB+ VRAM)
+	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:14b
+	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull llama3.2:8b
+	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull deepseek-coder:6.7b
+
+list-llm: ## List downloaded LLM models
+	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama list
+
+# ── Testing ───────────────────────────────────────────────────
+
+test-backend: ## Run backend test suite (pytest)
+	$(DOCKER_COMPOSE) exec backend pytest tests/ -v --tb=short
+
+test-backend-cov: ## Run backend tests with coverage report
+	$(DOCKER_COMPOSE) exec backend pytest tests/ -v --cov=app --cov-report=html --cov-report=term
+
+test-frontend: ## Run frontend test suite (Vitest)
+	$(DOCKER_COMPOSE) exec frontend npm run test
+
+test-e2e: ## Run end-to-end tests (Playwright)
+	$(DOCKER_COMPOSE) exec frontend npm run test:e2e
+
+test-agent: ## Run AI agent unit tests with mocked tools
+	$(DOCKER_COMPOSE) exec backend pytest tests/test_agent.py -v
+
+# ── Code Quality ─────────────────────────────────────────────
+
+lint: ## Lint all code (ruff + eslint)
+	$(DOCKER_COMPOSE) exec backend ruff check app/ tests/
+	$(DOCKER_COMPOSE) exec frontend npm run lint
+
+format: ## Auto-format all code (ruff + prettier)
+	$(DOCKER_COMPOSE) exec backend ruff format app/ tests/
+	$(DOCKER_COMPOSE) exec frontend npm run format
+
+type-check: ## Run type checking (mypy + tsc)
+	$(DOCKER_COMPOSE) exec backend mypy app/
+	$(DOCKER_COMPOSE) exec frontend npm run type-check
+
+# ── Build ─────────────────────────────────────────────────────
+
+build: ## Build production Docker images
+	docker build -t testlookup/backend:latest --target production ./backend
+	docker build -t testlookup/frontend:latest --target production ./frontend
+	@echo "Production images built."
+
+build-push: ## Build and push images to registry (set REGISTRY env var)
+	docker build -t $(REGISTRY)/testlookup/backend:$(VERSION) --target production ./backend
+	docker build -t $(REGISTRY)/testlookup/frontend:$(VERSION) --target production ./frontend
+	docker push $(REGISTRY)/testlookup/backend:$(VERSION)
+	docker push $(REGISTRY)/testlookup/frontend:$(VERSION)
+
+# ── Kubernetes ────────────────────────────────────────────────
+
+k8s-deploy-dev: ## Deploy to development Kubernetes cluster
+	kubectl apply -k k8s/overlays/dev
+
+k8s-deploy-staging: ## Deploy to staging Kubernetes cluster
+	kubectl apply -k k8s/overlays/staging
+
+k8s-deploy-prod: ## Deploy to production Kubernetes cluster
+	kubectl apply -k k8s/overlays/prod
+
+k8s-deploy-openshift: ## Deploy using OpenShift-compatible overlay
+	kubectl apply -k k8s/overlays/openshift
+
+k8s-status: ## Show Kubernetes deployment status
+	kubectl get pods,svc,ing -n testlookup
+
+k8s-rollout-async: ## Wait for all queue-specific worker deployments to finish rolling out
+	kubectl rollout status deployment/testlookup-worker-critical  -n $(K8S_NAMESPACE) --timeout=180s
+	kubectl rollout status deployment/testlookup-worker-ingestion -n $(K8S_NAMESPACE) --timeout=180s
+	kubectl rollout status deployment/testlookup-worker-ai        -n $(K8S_NAMESPACE) --timeout=180s
+	kubectl rollout status deployment/testlookup-worker-default   -n $(K8S_NAMESPACE) --timeout=120s
+	kubectl rollout status deployment/testlookup-beat             -n $(K8S_NAMESPACE) --timeout=120s
+
+k8s-rollout-async-dev: ## Wait for async rollout in dev namespace
+	$(MAKE) k8s-rollout-async K8S_NAMESPACE=testlookup-dev
+
+k8s-rollout-async-staging: ## Wait for async rollout in staging namespace
+	$(MAKE) k8s-rollout-async K8S_NAMESPACE=testlookup-staging
+
+k8s-rollout-async-prod: ## Wait for async rollout in prod namespace
+	$(MAKE) k8s-rollout-async K8S_NAMESPACE=testlookup
+
+k8s-status-async: ## Show all queue-specific worker deployments and HPAs in a namespace
+	kubectl get deployment \
+	  testlookup-worker-critical testlookup-worker-ingestion \
+	  testlookup-worker-ai testlookup-worker-default testlookup-beat \
+	  -n $(K8S_NAMESPACE)
+	kubectl get hpa -n $(K8S_NAMESPACE)
+
+k8s-scale-worker: ## Manually scale a specific worker queue (QUEUE=ai REPLICAS=3)
+	kubectl scale deployment/testlookup-worker-$(QUEUE) --replicas=$(REPLICAS) -n $(K8S_NAMESPACE)
+
+k8s-status-openshift: ## Show OpenShift routes (if Route API is enabled)
+	kubectl get route -n $(K8S_NAMESPACE)
+
+# ── Utilities ─────────────────────────────────────────────────
+
+logs: ## Tail backend logs
+	$(DOCKER_COMPOSE) logs -f backend worker
+
+shell-backend: ## Open a shell in the backend container
+	$(DOCKER_COMPOSE) exec backend bash
+
+shell-db: ## Open psql in the postgres container
+	$(DOCKER_COMPOSE) exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+
+simulate-upload: ## Simulate a single Jenkins test run upload to MinIO
+	$(DOCKER_COMPOSE) exec backend python /app/scripts/simulate_upload.py
+
+seed-data: ## Seed demo users, projects, test cases, plans, strategies and releases
+	$(DOCKER_COMPOSE) exec backend python /app/scripts/seed_dev_data.py
+
+seed-data-reset: ## Wipe seed data and regenerate from scratch
+	$(DOCKER_COMPOSE) exec backend python /app/scripts/seed_dev_data.py --reset
+
+setup-minio: ## Manually configure MinIO bucket and webhook (runs inside Docker — no host deps)
+	docker run --rm \
+		--network testlookup_net \
+		-v "$(CURDIR)/scripts/setup-minio.sh:/setup-minio.sh:ro" \
+		-e MINIO_ENDPOINT=http://minio:9000 \
+		-e BACKEND_URL=http://backend:8000 \
+		--entrypoint sh \
+		minio/mc /setup-minio.sh
+
+# ── MCP Server ────────────────────────────────────────────────
+
+mcp-install: ## Install MCP server Python dependencies
+	$(MAKE) -C mcp install
+
+mcp-start: ## Start MCP server (stdio mode — for MCP Clients)
+	$(MAKE) -C mcp start
+
+mcp-sse: ## Start MCP server (SSE mode — for web/CI clients on port 8002)
+	$(MAKE) -C mcp sse
+
+mcp-sse-docker: ## Start MCP SSE server via Docker Compose
+	$(DOCKER_COMPOSE) up -d mcp
+	@echo "MCP SSE server running at http://localhost:8002/sse"

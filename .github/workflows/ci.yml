@@ -1,0 +1,403 @@
+name: TestLookup — CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # JOB 1: Backend tests and linting
+  # ─────────────────────────────────────────────────────────────
+  backend-test:
+    name: Backend — Test & Lint
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: testlookup_test
+          POSTGRES_USER: testlookup_user
+          POSTGRES_PASSWORD: test_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint with ruff
+        run: ruff check app/ tests/
+
+      - name: Type check with mypy
+        run: mypy app/ --ignore-missing-imports
+        continue-on-error: true     # Non-blocking in early phases
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          MONGO_URI: mongodb://localhost:27017
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          LLM_PROVIDER: ollama
+          LLM_MODEL: qwen2.5:7b
+          AI_OFFLINE_MODE: "true"
+          APP_SECRET_KEY: test-secret-key-for-ci
+          JWT_SECRET_KEY: test-jwt-key-for-ci
+        run: |
+          pytest tests/ -v \
+            --tb=short \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --junit-xml=test-results.xml
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./backend/coverage.xml
+          flags: backend
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: backend/test-results.xml
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 2: Frontend tests and type check
+  # ─────────────────────────────────────────────────────────────
+  frontend-test:
+    name: Frontend — Test & Lint
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Save lockfile to workspace (for caching future runs)
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "✓ package-lock.json present"
+          else
+            echo "⚠ package-lock.json not found — run 'npm install' locally and commit it"
+          fi
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run type-check
+        continue-on-error: true   # Non-blocking during iterative development phases
+
+      - name: Run tests
+        run: npm run test
+        env:
+          VITE_API_BASE_URL: http://localhost:8000
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: http://localhost:8000
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 3: MCP server lint and syntax validation
+  # ─────────────────────────────────────────────────────────────
+  mcp-test:
+    name: MCP Server — Lint & Validate
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./mcp
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: mcp/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check all Python files
+        run: |
+          python -c "
+          import ast, sys, os
+          errors = []
+          for root, dirs, files in os.walk('.'):
+              for f in files:
+                  if f.endswith('.py'):
+                      path = os.path.join(root, f)
+                      try:
+                          with open(path, encoding='utf-8') as fh:
+                              ast.parse(fh.read())
+                      except SyntaxError as e:
+                          errors.append(f'{path}: {e}')
+          if errors:
+              print('Syntax errors found:')
+              for e in errors: print(e)
+              sys.exit(1)
+          print(f'All Python files OK')
+          "
+
+      - name: Validate module imports (dry-run without MCP connection)
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from config import settings
+          print('config OK')
+          import client
+          print('client OK')
+          from tools import auth, projects, runs, metrics, analytics, analysis, release
+          print('tools OK')
+          from resources import registry
+          print('resources OK')
+          from prompts import templates
+          print('prompts OK')
+          print('All imports validated successfully')
+          "
+        env:
+          TESTLOOKUP_API_URL: http://localhost:8000
+          TESTLOOKUP_USERNAME: ""
+          TESTLOOKUP_PASSWORD: ""
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 4: Build & push Docker images (only on main branch)
+  # ─────────────────────────────────────────────────────────────
+  build-images:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-test, mcp-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Generate package-lock.json before Docker build so npm ci works inside the image.
+      # This avoids needing to commit a lockfile while still getting reproducible installs.
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Generate frontend package-lock.json
+        working-directory: ./frontend
+        run: npm install --package-lock-only
+
+      - name: Log in to Docker Hub (avoids pull rate limits on base images and buildkit)
+        uses: docker/login-action@v3
+        if: env.DOCKERHUB_USERNAME != ''
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: production
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          target: production
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build & push MCP server
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp
+          file: ./mcp/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 4: Deploy to dev (only on main branch, after images built)
+  # Requires KUBE_CONFIG_DEV secret set in GitHub → Settings →
+  # Environments → development → Secrets.
+  # Value: base64-encoded kubeconfig file
+  #   Linux/Mac: base64 -w0 ~/.kube/config
+  #   Windows:   [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.kube\config"))
+  # ─────────────────────────────────────────────────────────────
+  deploy-dev:
+    name: Deploy → Dev
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    if: github.ref == 'refs/heads/main'
+    environment: development
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Set up kustomize
+        uses: imranismail/setup-kustomize@v2
+        with:
+          kustomize-version: "5.4.2"
+
+      - name: Validate kubeconfig secret is set
+        id: check-secret
+        run: |
+          if [ -z "${{ secrets.KUBE_CONFIG_DEV }}" ]; then
+            echo "⚠️  KUBE_CONFIG_DEV secret is not set in GitHub Environment 'development'."
+            echo "   Skipping deploy. Add the secret to enable automatic deployments."
+            echo "   See: https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure kubeconfig
+        if: steps.check-secret.outputs.skip != 'true'
+        run: |
+          mkdir -p /tmp
+          echo "${{ secrets.KUBE_CONFIG_DEV }}" | base64 -d > /tmp/kubeconfig
+          # Verify the decoded file is valid YAML with a server entry
+          if ! grep -q "server:" /tmp/kubeconfig; then
+            echo "ERROR: Decoded kubeconfig does not contain a 'server:' entry."
+            echo "       Ensure KUBE_CONFIG_DEV is a valid base64-encoded kubeconfig."
+            exit 1
+          fi
+          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          echo "✓ kubeconfig configured"
+
+      - name: Verify cluster connectivity
+        if: steps.check-secret.outputs.skip != 'true'
+        run: |
+          kubectl cluster-info
+          kubectl get nodes --request-timeout=10s
+
+      - name: Update image tags in kustomization
+        if: steps.check-secret.outputs.skip != 'true'
+        run: |
+          cd k8s/overlays/dev
+          kustomize edit set image \
+            testlookup/backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:${{ github.sha }} \
+            testlookup/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }} \
+            testlookup/mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:${{ github.sha }}
+
+      - name: Apply manifests
+        if: steps.check-secret.outputs.skip != 'true'
+        run: |
+          # --validate=false skips server-side schema validation (safe for apply operations)
+          # Remove this flag once the cluster API server is reachable for openapi schema download
+          kubectl apply -k k8s/overlays/dev --validate=false
+
+      - name: Wait for rollout
+        if: steps.check-secret.outputs.skip != 'true'
+        run: |
+          kubectl rollout status deployment/testlookup-backend -n testlookup-dev --timeout=120s
+          kubectl rollout status deployment/testlookup-frontend -n testlookup-dev --timeout=60s
+
+      - name: Run DB migrations
+        if: steps.check-secret.outputs.skip != 'true'
+        run: |
+          kubectl exec -n testlookup-dev \
+            deployment/testlookup-backend \
+            -- alembic upgrade head
+
+      - name: Deploy skipped — add KUBE_CONFIG_DEV to enable
+        if: steps.check-secret.outputs.skip == 'true'
+        run: |
+          echo "ℹ️  Deploy skipped. Images were built and pushed successfully."
+          echo "   To enable auto-deploy, add KUBE_CONFIG_DEV to the 'development' GitHub Environment."

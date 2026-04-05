@@ -1,0 +1,59 @@
+app\services\testng_parser.py:5: error: Library stubs not installed for "defusedxml.ElementTree"  [import-untyped]
+app\services\testng_parser.py:5: note: Hint: "python3 -m pip install types-defusedxml"
+app\services\testng_parser.py:5: error: Library stubs not installed for "defusedxml"  [import-untyped]
+app\services\testng_parser.py:12: error: Need type annotation for "results" (hint: "results: list[<type>] = ...")  [var-annotated]
+app\core\config.py:9: error: Cannot find implementation or library stub for module named "pydantic_settings"  [import-not-found]
+app\core\config.py:9: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+app\worker\celery_app.py:2: error: Cannot find implementation or library stub for module named "celery"  [import-not-found]
+app\worker\celery_app.py:3: error: Cannot find implementation or library stub for module named "celery.schedules"  [import-not-found]
+app\db\mongo.py:4: error: Cannot find implementation or library stub for module named "motor.motor_asyncio"  [import-not-found]
+app\db\minio.py:2: error: Cannot find implementation or library stub for module named "aioboto3"  [import-not-found]
+app\db\minio.py:3: error: Cannot find implementation or library stub for module named "botocore.client"  [import-not-found]
+app\db\minio.py:26: error: Incompatible default for argument "bucket" (default has type "None", argument has type "str")  [assignment]
+app\db\minio.py:26: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\db\minio.py:26: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\db\minio.py:38: error: Incompatible default for argument "bucket" (default has type "None", argument has type "str")  [assignment]
+app\db\minio.py:38: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\db\minio.py:38: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\db\minio.py:47: error: Incompatible default for argument "bucket" (default has type "None", argument has type "str")  [assignment]
+app\db\minio.py:47: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\db\minio.py:47: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\db\minio.py:57: error: Incompatible default for argument "bucket" (default has type "None", argument has type "str")  [assignment]
+app\db\minio.py:57: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\db\minio.py:57: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\db\minio.py:69: error: Incompatible default for argument "bucket" (default has type "None", argument has type "str")  [assignment]
+app\db\minio.py:69: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\db\minio.py:69: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\core\security.py:5: error: Library stubs not installed for "jose"  [import-untyped]
+app\core\security.py:5: note: Hint: "python3 -m pip install types-python-jose"
+app\core\security.py:6: error: Library stubs not installed for "passlib.context"  [import-untyped]
+app\core\security.py:6: note: Hint: "python3 -m pip install types-passlib"
+app\core\security.py:6: note: (or run "mypy --install-types" to install all missing stub packages)
+app\routers\search.py:14: error: Incompatible default for argument "project_id" (default has type "None", argument has type "str")  [assignment]
+app\routers\search.py:14: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\routers\search.py:14: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\routers\search.py:15: error: Incompatible default for argument "status" (default has type "None", argument has type "str")  [assignment]
+app\routers\search.py:15: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\routers\search.py:15: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\routers\runs.py:20: error: Incompatible default for argument "status" (default has type "None", argument has type "str")  [assignment]
+app\routers\runs.py:20: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\routers\runs.py:20: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\routers\runs.py:41: error: Unsupported operand type for unary - ("int | None")  [operator]
+app\routers\runs.py:60: error: Incompatible default for argument "status" (default has type "None", argument has type "str")  [assignment]
+app\routers\runs.py:60: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\routers\runs.py:60: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\routers\runs.py:61: error: Incompatible default for argument "suite" (default has type "None", argument has type "str")  [assignment]
+app\routers\runs.py:61: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+app\routers\runs.py:61: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+app\routers\runs.py:84: error: Unsupported operand type for unary - ("int | None")  [operator]
+app\services\llm_factory.py:49: error: Unexpected keyword argument "max_tokens" for "ChatOpenAI"  [call-arg]
+app\services\llm_factory.py:52: error: Argument "api_key" to "ChatOpenAI" has incompatible type "str"; expected "SecretStr | None"  [arg-type]
+app\services\llm_factory.py:59: error: Unexpected keyword argument "max_tokens" for "ChatOpenAI"  [call-arg]
+app\services\llm_factory.py:62: error: Argument "api_key" to "ChatOpenAI" has incompatible type "str"; expected "SecretStr | None"  [arg-type]
+app\services\llm_factory.py:69: error: Unexpected keyword argument "max_tokens" for "ChatOpenAI"  [call-arg]
+app\services\llm_factory.py:72: error: Argument "api_key" to "ChatOpenAI" has incompatible type "str"; expected "SecretStr | None"  [arg-type]
+app\services\llm_factory.py:81: error: Unexpected keyword argument "max_tokens" for "ChatOpenAI"  [call-arg]
+app\services\llm_factory.py:83: error: Argument "api_key" to "ChatOpenAI" has incompatible type "str | None"; expected "SecretStr | None"  [arg-type]
+app\services\llm_factory.py:91: error: Cannot find implementation or library stub for module named "langchain_google_genai"  [import-not-found]
+app\main.py:7: error: Cannot find implementation or library stub for module named "structlog"  [import-not-found]
+Found 33 errors in 10 files (checked 38 source files)

@@ -1,0 +1,307 @@
+version: "3.9"
+name: testlookup
+
+# ============================================================
+# TestLookup — Lightweight Local Dev Stack
+# ============================================================
+# Minimal footprint for machines with limited CPU/RAM.
+# Omits: Ollama, ChromaDB, Flower, MCP server.
+# AI features run in offline/mock mode (AI_OFFLINE_MODE=true,
+# LLM_PROVIDER=ollama but Ollama is not started — agent calls
+# will gracefully degrade when Ollama is unreachable).
+#
+# Usage:
+#   docker compose -f docker-compose.dev-lite.yml up -d --build
+#   docker compose -f docker-compose.dev-lite.yml exec backend \
+#       alembic upgrade head
+# ============================================================
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: testlookup_lite_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-testlookup}
+      POSTGRES_USER: ${POSTGRES_USER:-testlookup_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set — copy .env.example to .env}
+    ports:
+      - "5433:5432"   # 5433 on host to avoid conflict with any local PostgreSQL on 5432
+    volumes:
+      - lite_postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testlookup_user} -d ${POSTGRES_DB:-testlookup}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          memory: 256M
+    networks:
+      - testlookup_lite_net
+
+  mongo:
+    image: mongo:7
+    container_name: testlookup_lite_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-testlookup_logs}
+    ports:
+      - "27017:27017"
+    volumes:
+      - lite_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          memory: 256M
+    networks:
+      - testlookup_lite_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: testlookup_lite_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - lite_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+        reservations:
+          memory: 64M
+    networks:
+      - testlookup_lite_net
+
+  minio:
+    image: minio/minio:latest
+    container_name: testlookup_lite_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — copy .env.example to .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — copy .env.example to .env}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - lite_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          memory: 128M
+    networks:
+      - testlookup_lite_net
+
+  minio-setup:
+    image: minio/mc:latest
+    container_name: testlookup_lite_minio_setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY};
+      mc mb --ignore-existing local/${MINIO_BUCKET_NAME:-test-telemetry};
+      mc mb --ignore-existing local/testlookup-attachments;
+      echo 'MinIO setup complete';
+      "
+    networks:
+      - testlookup_lite_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_lite_backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./backend/app:/app/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGO_HOST=mongo
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=minio:9000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      # Lite-mode overrides: smaller pools, disable unused services
+      - APP_ENV=development
+      - AI_OFFLINE_MODE=true
+      - PG_POOL_SIZE=3
+      - PG_MAX_OVERFLOW=5
+      - MONGO_MAX_POOL_SIZE=10
+      - MONGO_MIN_POOL_SIZE=2
+      - INGESTION_S3_CONCURRENCY=4
+      - LLM_MAX_CONCURRENT_ANALYSES=1
+      - WS_MAX_CONNECTIONS_PER_PROJECT=50
+      - WS_MAX_TOTAL_CONNECTIONS=200
+      # No Ollama / ChromaDB in lite mode
+      - OLLAMA_BASE_URL=http://localhost:11434
+      - CHROMA_HOST=localhost
+      - CHROMA_PORT=8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
+        reservations:
+          memory: 256M
+    networks:
+      - testlookup_lite_net
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_lite_worker
+    restart: unless-stopped
+    # Single worker process, 2 threads — minimal footprint
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2 -Q default,ingestion,ai_analysis --max-tasks-per-child=100
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - MONGO_HOST=mongo
+      - REDIS_HOST=redis
+      - MINIO_ENDPOINT=minio:9000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - APP_ENV=development
+      - AI_OFFLINE_MODE=true
+      - OLLAMA_BASE_URL=http://localhost:11434
+      - CHROMA_HOST=localhost
+      - CHROMA_PORT=8001
+    depends_on:
+      - backend
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          memory: 256M
+    networks:
+      - testlookup_lite_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_lite_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_APP_NAME=TestLookup (Lite)
+      - VITE_APP_VERSION=0.0.1
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    networks:
+      - testlookup_lite_net
+
+  # SEED INIT — one-shot: auto-seeds dev database after backend is healthy.
+  seed-init:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: testlookup_lite_seed_init
+    restart: "no"
+    command: sh -c "python /app/scripts/seed_dev_data.py"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - testlookup_lite_net
+
+networks:
+  testlookup_lite_net:
+    driver: bridge
+
+volumes:
+  lite_postgres_data:
+  lite_mongo_data:
+  lite_redis_data:
+  lite_minio_data:

@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-backend
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-frontend
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-ollama
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-ollama
+  ports:
+    - name: ollama
+      port: 11434
+      targetPort: 11434
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-postgres
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-mongo
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-mongo
+  ports:
+    - port: 27017
+      targetPort: 27017
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-redis
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-minio
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-chromadb
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-chromadb
+  ports:
+    - port: 8001
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testlookup-mcp
+  namespace: testlookup
+spec:
+  selector:
+    app: testlookup-mcp
+  ports:
+    - name: sse
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP

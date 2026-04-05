@@ -1,0 +1,57 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+
+# Playwright auth state (contains JWT — never commit)
+frontend/tests/e2e/.auth/
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Kubernetes secrets (never commit real secrets)
+k8s/**/secrets-real.yaml
+k8s/**/secret-values.yaml
+
+# Test artifacts
+test-results.xml
+allure-results/
+allure-report/
+
+# Claude Code — keep local, never push to remote
+CLAUDE.md
+.claude/
+Product_Plan
+frontend/playwright-report/
+frontend/test-results
+LintFailures
+docs/

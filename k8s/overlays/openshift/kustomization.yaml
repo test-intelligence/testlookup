@@ -1,0 +1,97 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - route.yaml
+
+namespace: testlookup
+
+patches:
+  # ── Remove standard Ingress — OpenShift uses Routes instead ──────────────
+  - path: remove-ingress.yaml
+
+  # ── OpenShift SCC: remove hardcoded runAsUser from every Deployment ───────
+  # The "restricted" SCC assigns a random UID from the project's namespace range.
+  # Keeping runAsUser: 1000 causes "SCC violation" admission failures on clusters
+  # that do not grant the "anyuid" SCC to the service account.
+  - patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+    target:
+      kind: Deployment
+      name: testlookup-backend
+
+  - patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+    target:
+      kind: Deployment
+      name: testlookup-worker-critical
+
+  - patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+    target:
+      kind: Deployment
+      name: testlookup-worker-ingestion
+
+  - patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+    target:
+      kind: Deployment
+      name: testlookup-worker-ai
+
+  - patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+    target:
+      kind: Deployment
+      name: testlookup-worker-default
+
+  - patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Add OpenShift-required annotation to force restricted SCC ─────────────
+  # This prevents the pod from accidentally getting a more permissive SCC via
+  # namespace defaults.  Remove this annotation if your SA has anyuid granted.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: not-used
+      spec:
+        template:
+          metadata:
+            annotations:
+              openshift.io/scc: restricted-v2
+    target:
+      kind: Deployment
+
+  # ── Environment ───────────────────────────────────────────────────────────
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        APP_ENV: "production"
+        LOG_LEVEL: "INFO"
+        AI_OFFLINE_MODE: "true"
+        CORS_ORIGINS: "https://testlookup.apps.example.com"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
+images:
+  - name: testlookup/backend
+    newTag: "0.0.1"
+  - name: testlookup/frontend
+    newTag: "0.0.1"
+  - name: testlookup/mcp
+    newTag: "0.0.1"

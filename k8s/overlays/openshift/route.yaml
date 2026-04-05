@@ -1,0 +1,46 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup
+  namespace: testlookup
+spec:
+  host: testlookup.apps.example.com
+  to:
+    kind: Service
+    name: testlookup-frontend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api
+  namespace: testlookup
+spec:
+  host: testlookup-api.apps.example.com
+  to:
+    kind: Service
+    name: testlookup-backend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-mcp
+  namespace: testlookup
+spec:
+  host: testlookup-mcp.apps.example.com
+  path: /sse
+  to:
+    kind: Service
+    name: testlookup-mcp
+  port:
+    targetPort: sse
+  tls:
+    termination: edge
+

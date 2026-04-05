@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testlookup-config
+  namespace: testlookup
+data:
+  APP_ENV: "production"
+  APP_VERSION: "0.0.1"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  POSTGRES_HOST: "testlookup-postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "testlookup"
+  POSTGRES_USER: "testlookup_user"
+  MONGO_HOST: "testlookup-mongo"
+  MONGO_PORT: "27017"
+  MONGO_DB: "testlookup_logs"
+  REDIS_HOST: "testlookup-redis"
+  REDIS_PORT: "6379"
+  REDIS_URL: "redis://testlookup-redis:6379/0"
+  CELERY_BROKER_URL: "redis://testlookup-redis:6379/0"
+  CELERY_RESULT_BACKEND: "redis://testlookup-redis:6379/1"
+  MINIO_ENDPOINT: "testlookup-minio:9000"
+  MINIO_BUCKET_NAME: "test-telemetry"
+  MINIO_USE_SSL: "false"
+  OLLAMA_BASE_URL: "http://testlookup-ollama:11434"
+  CHROMA_HOST: "testlookup-chromadb"
+  CHROMA_PORT: "8001"
+  LLM_PROVIDER: "ollama"
+  LLM_MODEL: "qwen2.5:7b"
+  AI_OFFLINE_MODE: "true"
+  AI_CONFIDENCE_THRESHOLD: "80"
+  CELERY_WORKER_CONCURRENCY: "4"
+  CORS_ORIGINS: "https://testlookup.yourdomain.com"
+  # MCP server internal service URL (used by the backend's health endpoint reference only)
+  MCP_SERVICE_URL: "http://testlookup-mcp:8002"
+  # ── Observability ────────────────────────────────────────────────────────────
+  OTEL_ENABLED: "true"
+  OTEL_SERVICE_NAME: "testlookup"
+  # Set to your OTEL Collector / Jaeger OTLP HTTP endpoint in overlays
+  # OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger-collector:4318"
+  METRICS_ENABLED: "true"

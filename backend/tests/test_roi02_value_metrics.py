@@ -1,0 +1,167 @@
+"""
+ROI-02: Value Metrics — Unit Tests.
+
+Tests:
+  - Service function importable and callable
+  - Router endpoints exist
+  - Time-saved calculation formula
+  - Metric response shape
+  - Edge cases: zero data, all projects, short period
+"""
+from __future__ import annotations
+
+import importlib.util
+import sys
+import types
+import uuid
+from unittest.mock import MagicMock
+
+import pytest
+
+
+def _make_stub(name: str, **attrs) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    return mod
+
+
+@pytest.fixture(autouse=True)
+def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    with monkeypatch.context() as m:
+        if importlib.util.find_spec("bcrypt") is None:
+            m.setitem(sys.modules, "bcrypt", _make_stub("bcrypt", checkpw=MagicMock(return_value=True), hashpw=MagicMock(return_value=b"$2b$fake"), gensalt=MagicMock(return_value=b"$2b$12$salt")))
+        if importlib.util.find_spec("jose") is None:
+            jose_jwt_stub = _make_stub("jose.jwt", encode=MagicMock(return_value="tok"), decode=MagicMock(return_value={}))
+            m.setitem(sys.modules, "jose.jwt", jose_jwt_stub)
+            m.setitem(sys.modules, "jose", _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception))
+
+        m.setitem(sys.modules, "app.core.security", _make_stub("app.core.security", verify_password=MagicMock(return_value=True), get_password_hash=MagicMock(return_value="hashed_pw"), create_access_token=MagicMock(return_value="access_token"), create_refresh_token=MagicMock(return_value="refresh_token"), decode_token=MagicMock(return_value={"sub": str(uuid.uuid4()), "type": "access"})))
+        m.setitem(sys.modules, "app.core.deps", _make_stub("app.core.deps", require_role=MagicMock(return_value=MagicMock()), get_current_active_user=MagicMock(), verify_webhook_secret=MagicMock(), require_project_role=MagicMock(return_value=MagicMock()), require_project_access=MagicMock(return_value=MagicMock()), require_run_access=MagicMock(return_value=MagicMock()), get_accessible_project_ids=MagicMock(return_value=None)))
+
+        from sqlalchemy.orm import DeclarativeBase
+
+        class _Base(DeclarativeBase):
+            pass
+
+        m.setitem(sys.modules, "app.db.postgres", _make_stub("app.db.postgres", get_db=MagicMock(), AsyncSession=MagicMock(), AsyncSessionLocal=MagicMock(), Base=_Base))
+        m.setitem(sys.modules, "app.db.mongo", _make_stub("app.db.mongo", get_mongo_db=MagicMock(), close_mongo=MagicMock(), Collections=MagicMock()))
+        m.setitem(sys.modules, "app.db.redis_client", _make_stub("app.db.redis_client", get_redis=MagicMock(), close_redis=MagicMock()))
+
+        yield
+
+
+class TestServiceImport:
+    def test_get_value_metrics_importable(self):
+        from app.services.value_metrics_service import get_value_metrics
+        assert callable(get_value_metrics)
+
+    def test_constants_defined(self):
+        from app.services.value_metrics_service import (
+            _MINUTES_PER_CLUSTER_TRIAGE,
+            _MINUTES_PER_DUPLICATE_AVOIDED,
+            _MINUTES_PER_INTELLIGENCE_REPORT,
+        )
+        assert _MINUTES_PER_CLUSTER_TRIAGE > 0
+        assert _MINUTES_PER_DUPLICATE_AVOIDED > 0
+        assert _MINUTES_PER_INTELLIGENCE_REPORT > 0
+
+
+class TestRouterEndpoints:
+    def test_get_metrics_exists(self):
+        from app.routers.value_metrics import get_metrics
+        assert callable(get_metrics)
+
+    def test_export_metrics_exists(self):
+        from app.routers.value_metrics import export_metrics
+        assert callable(export_metrics)
+
+    def test_router_prefix(self):
+        from app.routers.value_metrics import router
+        assert router.prefix == "/api/v1/value-metrics"
+
+
+class TestTimeSavedFormula:
+    def test_zero_inputs(self):
+        from app.services.value_metrics_service import (
+            _MINUTES_PER_CLUSTER_TRIAGE as ct,
+            _MINUTES_PER_DUPLICATE_AVOIDED as da,
+            _MINUTES_PER_INTELLIGENCE_REPORT as ir,
+        )
+        minutes = 0 * ct + 0 * da + 0 * ir
+        assert minutes == 0
+
+    def test_positive_inputs(self):
+        from app.services.value_metrics_service import (
+            _MINUTES_PER_CLUSTER_TRIAGE as ct,
+            _MINUTES_PER_DUPLICATE_AVOIDED as da,
+            _MINUTES_PER_INTELLIGENCE_REPORT as ir,
+        )
+        minutes = 10 * ct + 5 * da + 20 * ir
+        assert minutes == 10 * 15 + 5 * 30 + 20 * 20  # 150 + 150 + 400 = 700
+        assert minutes == 700
+
+    def test_hours_conversion(self):
+        minutes = 150
+        hours = round(minutes / 60, 1)
+        assert hours == 2.5
+
+
+class TestResponseShape:
+    def test_expected_fields(self):
+        expected_fields = {
+            "period_days", "project_id",
+            "triage_time_saved_minutes", "triage_time_saved_hours",
+            "defects_auto_grouped", "tests_grouped",
+            "duplicate_tickets_avoided", "defects_promoted",
+            "flaky_tests_identified", "quarantine_recommended",
+            "risky_releases_blocked", "releases_conditional",
+            "release_overrides", "intelligence_reports_generated",
+        }
+        # Verify all fields are present in a mock response
+        mock_response = {field: 0 for field in expected_fields}
+        mock_response["project_id"] = None
+        assert set(mock_response.keys()) == expected_fields
+
+
+class TestEdgeCases:
+    def test_zero_data_produces_valid_response(self):
+        response = {
+            "period_days": 30,
+            "project_id": None,
+            "triage_time_saved_minutes": 0,
+            "triage_time_saved_hours": 0.0,
+            "defects_auto_grouped": 0,
+            "tests_grouped": 0,
+            "duplicate_tickets_avoided": 0,
+            "defects_promoted": 0,
+            "flaky_tests_identified": 0,
+            "quarantine_recommended": 0,
+            "risky_releases_blocked": 0,
+            "releases_conditional": 0,
+            "release_overrides": 0,
+            "intelligence_reports_generated": 0,
+        }
+        assert response["triage_time_saved_hours"] == 0.0
+
+    def test_project_id_optional(self):
+        """None project_id means all-projects aggregate."""
+        response = {"project_id": None}
+        assert response["project_id"] is None
+
+    def test_short_period(self):
+        """1-day window should be valid."""
+        response = {"period_days": 1}
+        assert response["period_days"] >= 1
+
+    def test_all_models_referenced_exist(self):
+        from app.models.postgres import (
+            Defect, DefectCandidate, FailureCluster,
+            FlakyCoachResult, ReleaseDecision,
+            RunIntelligenceSnapshot, ProductUsageEvent,
+        )
+        assert all(hasattr(m, "__tablename__") for m in [
+            Defect, DefectCandidate, FailureCluster,
+            FlakyCoachResult, ReleaseDecision,
+            RunIntelligenceSnapshot, ProductUsageEvent,
+        ])

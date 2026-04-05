@@ -1,0 +1,145 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: testlookup-staging
+
+patches:
+  # ── Replica overrides ────────────────────────────────────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: testlookup-backend
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: testlookup-frontend
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-critical
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ingestion
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ai
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-default
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── HPA caps — tighter in staging to control costs ───────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-backend-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-frontend-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-worker-critical-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-worker-ingestion-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-worker-ai-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-worker-default-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-mcp-hpa
+
+  # ── Environment configuration ─────────────────────────────────────────────
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        APP_ENV: "staging"
+        LOG_LEVEL: "INFO"
+        AI_OFFLINE_MODE: "false"
+        CORS_ORIGINS: "https://testlookup-staging.yourdomain.com"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
+images:
+  - name: testlookup/backend
+    newTag: staging-latest
+  - name: testlookup/frontend
+    newTag: staging-latest
+  - name: testlookup/mcp
+    newTag: staging-latest

@@ -1,0 +1,94 @@
+"""Celery application configuration."""
+from celery import Celery
+from celery.schedules import crontab
+from kombu import Exchange, Queue
+
+from app.core.config import settings
+
+celery_app = Celery(
+    "testlookup",
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
+    include=["app.worker.tasks", "app.worker.training_tasks"],
+)
+
+# ── Priority queues ────────────────────────────────────────────────────────────
+# critical  (9)  — live test analysis, immediate user-facing results
+# ingestion (7)  — test report parsing from MinIO
+# ai_analysis(5) — offline pipeline (anomaly, root-cause, summary)
+# default   (1)  — notifications, snapshots, housekeeping
+
+_default_exchange = Exchange("default", type="direct")
+
+celery_app.conf.task_queues = (
+    Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
+    Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
+    Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
+    Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
+)
+
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    task_default_queue="default",
+    task_default_exchange="default",
+    task_default_routing_key="default",
+    task_routes={
+        "app.worker.tasks.run_live_test_analysis":          {"queue": "critical"},
+        "app.worker.tasks.ingest_test_run":                 {"queue": "ingestion"},
+        "app.worker.tasks.run_ai_analysis":                 {"queue": "ai_analysis"},
+        "app.worker.tasks.run_agent_pipeline":              {"queue": "ai_analysis"},
+        "app.worker.tasks.generate_ai_test_cases_task":     {"queue": "ai_analysis"},
+        "app.worker.tasks.create_ai_test_plan_task":         {"queue": "ai_analysis"},
+        "app.worker.tasks.generate_ai_strategy_task":        {"queue": "ai_analysis"},
+        "app.worker.training_tasks.export_training_data":   {"queue": "default"},
+        "app.worker.training_tasks.check_finetune_trigger": {"queue": "default"},
+        "app.worker.training_tasks.run_finetune_pipeline":  {"queue": "default"},
+        "app.worker.tasks.reindex_search":                    {"queue": "default"},
+        "app.worker.tasks.*":                               {"queue": "default"},
+    },
+    beat_schedule={
+        "daily-coverage-snapshot": {
+            "task": "app.worker.tasks.take_coverage_snapshot",
+            "schedule": crontab(hour=0, minute=5),
+        },
+        # Continuous learning pipeline
+        "weekly-training-export": {
+            "task": "app.worker.training_tasks.export_training_data",
+            "schedule": crontab(hour=2, minute=0, day_of_week="sunday"),
+        },
+        "daily-finetune-trigger-check": {
+            "task": "app.worker.training_tasks.check_finetune_trigger",
+            "schedule": crontab(hour=3, minute=0),
+        },
+        "hourly-search-reindex": {
+            "task": "app.worker.tasks.reindex_search",
+            "schedule": crontab(minute=30),
+        },
+        # ENT-05: Scheduled digest delivery
+        "daily-digest-dispatch": {
+            "task": "app.worker.tasks.dispatch_scheduled_digests",
+            "schedule": crontab(hour=7, minute=0),  # Daily at 07:00 UTC
+        },
+        # OPS-01: Integration health probes (every 15 minutes)
+        "integration-health-probes": {
+            "task": "app.worker.tasks.run_integration_health_probes",
+            "schedule": crontab(minute="*/15"),
+        },
+    },
+    # Prevent memory bloat from stale results
+    result_expires=3600,
+    # Worker reliability
+    worker_prefetch_multiplier=1,   # fair dispatch — one task at a time per slot
+    task_acks_late=True,            # ack only after task completes (safe retries on crash)
+    worker_max_tasks_per_child=200, # recycle worker process after 200 tasks (prevent leaks)
+    # Time limits: soft sends SIGTERM to task coroutine, hard sends SIGKILL
+    task_soft_time_limit=1740,      # 29 min soft (pipeline tasks can run up to 30 min)
+    task_time_limit=1860,           # 31 min hard
+    # Connection resilience
+    broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=10,
+)

@@ -1,0 +1,39 @@
+
+> testlookup-frontend@0.0.1 lint
+> eslint src
+
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\components\ai\LogViewer.tsx
+  7:69  warning  'language' is assigned a value but never used. Allowed unused args must match /^_/u  @typescript-eslint/no-unused-vars
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\hooks\useMetrics.ts
+   9:37  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+  18:36  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\hooks\useRuns.ts
+   9:28  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+  15:70  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+  21:33  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+  28:31  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+  28:39  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\main.tsx
+  8:21  warning  Forbidden non-null assertion  @typescript-eslint/no-non-null-assertion
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\pages\RunDetailPage.tsx
+  94:47  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\pages\RunsPage.tsx
+  70:39  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\pages\SearchPage.tsx
+  17:42  warning  Unexpected any. Specify a different type                                                                                   @typescript-eslint/no-explicit-any
+  33:51  warning  React Hook useEffect has missing dependencies: 'doSearch' and 'query'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  74:40  warning  Unexpected any. Specify a different type                                                                                   @typescript-eslint/no-explicit-any
+
+C:\Users\anand\Downloads\Projects\AI_TestDashboard\testlookup\frontend\src\pages\TestCasePage.tsx
+   2:10  warning  'ArrowLeft' is defined but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+  93:22  warning  Forbidden non-null assertion                                                 @typescript-eslint/no-non-null-assertion
+
+Γ£û 16 problems (0 errors, 16 warnings)
+

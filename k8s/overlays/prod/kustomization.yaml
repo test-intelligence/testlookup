@@ -1,0 +1,118 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  # worker-hpa.yaml is removed — all HPAs now live in k8s/base/hpa.yaml
+
+namespace: testlookup
+
+patches:
+  # ── Environment configuration ─────────────────────────────────────────────
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        APP_ENV: "production"
+        LOG_LEVEL: "INFO"
+        AI_OFFLINE_MODE: "true"
+        CORS_ORIGINS: "https://testlookup.yourdomain.com"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
+  # ── Worker replica floors (HPAs handle the ceiling) ──────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: testlookup-worker-critical
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: testlookup-worker-ingestion
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: testlookup-worker-ai
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-default
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Raise HPA ceilings for production workload ────────────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 8
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-backend-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 8
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-worker-ingestion-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 6
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-worker-ai-hpa
+
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 6
+    target:
+      kind: HorizontalPodAutoscaler
+      name: testlookup-worker-critical-hpa
+
+images:
+  - name: testlookup/backend
+    newTag: "0.0.1"
+  - name: testlookup/frontend
+    newTag: "0.0.1"
+  - name: testlookup/mcp
+    newTag: "0.0.1"

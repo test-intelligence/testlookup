@@ -1,0 +1,128 @@
+"""Saved Views router — CRUD for persisted filter/scope configurations (ENT-05)."""
+import logging
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.deps import get_current_active_user
+from app.db.postgres import get_db
+from app.models.postgres import SavedView, User
+from app.models.schemas import SavedViewCreate, SavedViewResponse, SavedViewUpdate
+
+logger = logging.getLogger("routers.saved_views")
+
+router = APIRouter(prefix="/api/v1/saved-views", tags=["Saved Views"])
+
+
+@router.get("", response_model=list[SavedViewResponse])
+async def list_saved_views(
+    project_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List saved views: user's personal + shared views for the project."""
+    query = select(SavedView).where(
+        (SavedView.user_id == current_user.id) | (SavedView.is_shared == True)  # noqa: E712
+    )
+    if project_id:
+        query = query.where(
+            (SavedView.project_id == project_id) | (SavedView.project_id.is_(None))
+        )
+    query = query.order_by(SavedView.is_default.desc(), SavedView.name)
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.post("", response_model=SavedViewResponse, status_code=201)
+async def create_saved_view(
+    payload: SavedViewCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Create a new saved view."""
+    view = SavedView(
+        user_id=current_user.id,
+        project_id=payload.project_id,
+        name=payload.name,
+        description=payload.description,
+        filters=payload.filters,
+        is_shared=payload.is_shared,
+        is_default=payload.is_default,
+    )
+    db.add(view)
+
+    # If setting as default, unset other defaults for same scope
+    if payload.is_default:
+        existing = await db.execute(
+            select(SavedView).where(
+                SavedView.user_id == current_user.id,
+                SavedView.project_id == payload.project_id,
+                SavedView.is_default == True,  # noqa: E712
+            )
+        )
+        for old_view in existing.scalars().all():
+            old_view.is_default = False
+
+    await db.commit()
+    await db.refresh(view)
+    return view
+
+
+@router.get("/{view_id}", response_model=SavedViewResponse)
+async def get_saved_view(
+    view_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get a single saved view."""
+    result = await db.execute(select(SavedView).where(SavedView.id == view_id))
+    view = result.scalar_one_or_none()
+    if not view:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="View not found")
+    # Access check: owner or shared
+    if view.user_id != current_user.id and not view.is_shared:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return view
+
+
+@router.patch("/{view_id}", response_model=SavedViewResponse)
+async def update_saved_view(
+    view_id: uuid.UUID,
+    payload: SavedViewUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Update a saved view (owner only)."""
+    result = await db.execute(select(SavedView).where(SavedView.id == view_id))
+    view = result.scalar_one_or_none()
+    if not view:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="View not found")
+    if view.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can edit")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(view, field, value)
+
+    await db.commit()
+    await db.refresh(view)
+    return view
+
+
+@router.delete("/{view_id}", status_code=204)
+async def delete_saved_view(
+    view_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Delete a saved view (owner only)."""
+    result = await db.execute(select(SavedView).where(SavedView.id == view_id))
+    view = result.scalar_one_or_none()
+    if not view:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="View not found")
+    if view.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can delete")
+    await db.delete(view)
+    await db.commit()
+    return None

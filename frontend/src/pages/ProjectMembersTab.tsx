@@ -1,0 +1,259 @@
+// Project Members Tab component — imported into UserManagementPage
+import { useEffect, useState } from 'react'
+import { AlertTriangle, UserMinus, UserPlus } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { useUsers } from '@/hooks/useUserManagement'
+import { userManagementService, type ProjectMember, type UserItem, type UserRole } from '@/services/userManagementService'
+import { projectsService } from '@/services/projectsService'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import type { Project } from '@/types/projects'
+
+const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
+const ROLE_COLORS: Record<UserRole, string> = {
+  VIEWER: 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]',
+  TESTER: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]',
+  QA_ENGINEER: 'bg-emerald-900/50 text-emerald-300',
+  QA_LEAD: 'bg-amber-900/50 text-amber-300',
+  ADMIN: 'bg-red-900/50 text-red-300',
+}
+
+export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolean; canManageUsers: boolean }) {
+  const [projects, setProjects] = useState<Project[]>([])
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('')
+  const [members, setMembers] = useState<ProjectMember[]>([])
+  const [loading, setLoading] = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
+
+  // Use SWR hook for users — reliable, auto-retries, and shares cache with Users tab
+  const { data: allUsers, isLoading: usersLoading, error: usersError } = useUsers()
+
+  useEffect(() => {
+    projectsService.list().then(setProjects).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!selectedProjectId) { setMembers([]); return }
+    setLoading(true)
+    userManagementService.listProjectMembers(selectedProjectId)
+      .then(setMembers)
+      .catch(() => toast.error('Failed to load project members'))
+      .finally(() => setLoading(false))
+  }, [selectedProjectId])
+
+  async function handleRemove(userId: string) {
+    if (!selectedProjectId) return
+    if (!confirm('Remove this user from the project?')) return
+    try {
+      await userManagementService.removeProjectMember(selectedProjectId, userId)
+      toast.success('Member removed')
+      setMembers(prev => prev.filter(m => m.user_id !== userId))
+    } catch { toast.error('Failed to remove member') }
+  }
+
+  async function handleRoleChange(userId: string, role: UserRole) {
+    if (!selectedProjectId) return
+    try {
+      const updated = await userManagementService.updateProjectMemberRole(selectedProjectId, userId, role)
+      setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role: updated.role } : m))
+      toast.success('Role updated')
+    } catch { toast.error('Failed to update role') }
+  }
+
+  const selectedProject = projects.find(p => p.id === selectedProjectId)
+  const memberUserIds = new Set(members.map(m => m.user_id))
+  const nonMembers = (allUsers ?? []).filter(u => !memberUserIds.has(u.id) && u.is_active)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <label className="text-sm text-[var(--color-text-muted)] whitespace-nowrap">Select Project:</label>
+        <select
+          value={selectedProjectId}
+          onChange={e => setSelectedProjectId(e.target.value)}
+          className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500 flex-1 max-w-xs"
+        >
+          <option value="">— Pick a project —</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {selectedProjectId && canManageUsers && (
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] px-3 py-2 rounded-lg font-medium"
+          >
+            <UserPlus className="h-4 w-4" /> Add Member
+          </button>
+        )}
+      </div>
+
+      {/* User loading error warning */}
+      {usersError && (
+        <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-3 py-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          Could not load users list. The &quot;Add Member&quot; dropdown may be empty. Check your permissions (QA_LEAD+ required).
+        </div>
+      )}
+
+      {!selectedProjectId ? (
+        <div className="text-center py-16 text-[var(--color-text-muted)] text-sm">
+          Select a project to view and manage its members.
+        </div>
+      ) : loading ? (
+        <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
+      ) : members.length === 0 ? (
+        <div className="text-center py-16 text-[var(--color-text-muted)] text-sm">
+          No members assigned to <span className="text-[var(--color-text-secondary)]">{selectedProject?.name}</span> yet.
+          {canManageUsers && (
+            <button onClick={() => setShowAddModal(true)} className="ml-2 text-[var(--color-text)] hover:text-[var(--color-text-secondary)] underline">
+              Add the first member
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-[var(--color-bg-secondary)]/80">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">User</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Email</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Project Role</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Added</th>
+                {isAdmin && <th className="px-4 py-3 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Actions</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {members.map(m => (
+                <tr key={m.id} className="hover:bg-[var(--color-bg-secondary)]/60 transition-colors">
+                  <td className="px-4 py-3 text-[var(--color-text)] font-medium">{m.full_name || m.username}</td>
+                  <td className="px-4 py-3 text-[var(--color-text-muted)]">{m.email}</td>
+                  <td className="px-4 py-3">
+                    {canManageUsers ? (
+                      <select
+                        value={m.role}
+                        onChange={e => handleRoleChange(m.user_id, e.target.value as UserRole)}
+                        className="text-xs rounded px-2 py-1 border border-transparent bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] focus:outline-none"
+                      >
+                        {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    ) : (
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${ROLE_COLORS[m.role] || 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'}`}>{m.role}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">
+                    {new Date(m.created_at).toLocaleDateString()}
+                  </td>
+                  {isAdmin && (
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => handleRemove(m.user_id)}
+                        className="text-red-500/70 hover:text-red-400 p-1 rounded transition-colors"
+                        title="Remove from project"
+                      >
+                        <UserMinus className="h-4 w-4" />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showAddModal && selectedProjectId && (
+        <AddProjectMemberModal
+          projectId={selectedProjectId}
+          projectName={selectedProject?.name ?? ''}
+          nonMembers={nonMembers}
+          usersLoading={usersLoading}
+          onClose={() => setShowAddModal(false)}
+          onAdded={member => { setMembers(prev => [...prev, member]); setShowAddModal(false) }}
+        />
+      )}
+    </div>
+  )
+}
+
+interface AddProjectMemberModalProps {
+  projectId: string
+  projectName: string
+  nonMembers: UserItem[]
+  usersLoading: boolean
+  onClose: () => void
+  onAdded: (member: ProjectMember) => void
+}
+
+function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoading, onClose, onAdded }: AddProjectMemberModalProps) {
+  const [userId, setUserId] = useState('')
+  const [role, setRole] = useState<UserRole>('TESTER')
+  const [saving, setSaving] = useState(false)
+
+  async function handleAdd() {
+    if (!userId) { toast.error('Select a user'); return }
+    setSaving(true)
+    try {
+      const member = await userManagementService.addProjectMember(projectId, userId, role)
+      toast.success('Member added successfully')
+      onAdded(member)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to add member')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
+      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        <h2 className="text-base font-semibold text-[var(--color-text)] mb-1">Add Member to {projectName}</h2>
+        <p className="text-xs text-[var(--color-text-muted)] mb-4">Assign a user to this project with a specific role.</p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">User</label>
+            {usersLoading ? (
+              <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-2">
+                <LoadingSpinner size="sm" /> Loading users…
+              </div>
+            ) : nonMembers.length === 0 ? (
+              <p className="text-xs text-[var(--color-text-muted)] py-2">
+                All users are already members of this project, or the users list could not be loaded.
+              </p>
+            ) : (
+              <select
+                value={userId}
+                onChange={e => setUserId(e.target.value)}
+                className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-neutral-500"
+              >
+                <option value="">— Select user —</option>
+                {nonMembers.map(u => (
+                  <option key={u.id} value={u.id}>{u.full_name || u.username} ({u.email})</option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Project Role</label>
+            <select
+              value={role}
+              onChange={e => setRole(e.target.value as UserRole)}
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-neutral-500"
+            >
+              {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-3 justify-end mt-5">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          <button
+            onClick={handleAdd}
+            disabled={saving || !userId}
+            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+          >
+            {saving ? <LoadingSpinner size="sm" /> : <UserPlus className="h-4 w-4" />}
+            {saving ? 'Adding…' : 'Add Member'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

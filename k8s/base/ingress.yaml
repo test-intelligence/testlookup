@@ -1,0 +1,50 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testlookup-ingress
+  namespace: testlookup
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    # cert-manager TLS (uncomment when cert-manager is installed)
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # OpenShift Route alternative: use Route resource instead of Ingress
+spec:
+  ingressClassName: nginx
+  # tls:
+  #   - hosts:
+  #       - testlookup.yourdomain.com
+  #     secretName: testlookup-tls-cert
+  rules:
+    - host: testlookup.yourdomain.com    # Change to your actual hostname
+      http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /webhooks/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-frontend
+                port:
+                  number: 80

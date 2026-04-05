@@ -1,0 +1,49 @@
+# TestLookup — Prometheus scrape configuration
+# Used by the Prometheus service in docker-compose.monitoring.yml
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'testlookup'
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────────
+  - job_name: 'testlookup-backend'
+    static_configs:
+      - targets: ['backend:8000']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # ── Celery worker (via prometheus-client multiprocess) ───────────────────────
+  # Workers expose metrics on port 9191 when PROMETHEUS_MULTIPROC_DIR is set
+  - job_name: 'testlookup-worker'
+    static_configs:
+      - targets: ['worker:9191']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # ── Prometheus itself ────────────────────────────────────────────────────────
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ── Node Exporter (host metrics — optional) ──────────────────────────────────
+  # Uncomment when node-exporter is running in docker-compose.monitoring.yml
+  # - job_name: 'node-exporter'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+
+  # ── PostgreSQL exporter (optional) ──────────────────────────────────────────
+  # - job_name: 'postgres-exporter'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+
+  # ── Redis exporter (optional) ────────────────────────────────────────────────
+  # - job_name: 'redis-exporter'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']

@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: testlookup-sa
+  namespace: testlookup
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: testlookup-pod-reader
+  namespace: qa-testing     # The namespace where test pods run
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: testlookup-pod-reader-binding
+  namespace: qa-testing
+subjects:
+  - kind: ServiceAccount
+    name: testlookup-sa
+    namespace: testlookup
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: testlookup-pod-reader

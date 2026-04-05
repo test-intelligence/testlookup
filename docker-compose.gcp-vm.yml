@@ -1,0 +1,67 @@
+version: "3.9"
+name: testlookup
+
+# GCP VM override for testlookup.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.gcp-vm.yml up -d --build
+#
+# This override switches app services to production targets,
+# avoids bind mounts, and keeps resource-heavy services optional.
+
+services:
+  backend:
+    build:
+      target: production
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    volumes: []
+    environment:
+      - APP_ENV=${APP_ENV:-production}
+      - APP_DEBUG=${APP_DEBUG:-false}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - MINIO_ENDPOINT=minio:9000
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+
+  frontend:
+    build:
+      target: production
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "80:80"
+    volumes: []
+    environment: []
+
+  worker:
+    build:
+      target: production
+    profiles: ["async"]
+    volumes: []
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-1} -Q default,ingestion,ai_analysis
+
+  beat:
+    build:
+      target: production
+    profiles: ["async"]
+    volumes: []
+
+  flower:
+    profiles: ["async"]
+
+  ollama:
+    profiles: ["ai"]
+
+  chromadb:
+    profiles: ["ai"]
+
+  # Keep MinIO console internal by default.
+  # Uncomment if you need direct console access from internet:
+  # minio:
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"

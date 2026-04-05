@@ -1,0 +1,161 @@
+import { type ComponentType, lazy, Suspense } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import AppLayout from '@/components/layout/AppLayout'
+import ProtectedRoute from '@/components/auth/ProtectedRoute'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { useWebVitals } from '@/hooks/useWebVitals'
+import { usePermissions } from '@/hooks/usePermissions'
+import LoginPage from '@/pages/LoginPage'
+import ResetPasswordPage from '@/pages/ResetPasswordPage'
+
+const OverviewPage = lazy(() => import('@/pages/OverviewPage'))
+const RunsPage = lazy(() => import('@/pages/RunsPage'))
+const RunDetailPage = lazy(() => import('@/pages/RunDetailPage'))
+const TestCasePage = lazy(() => import('@/pages/TestCasePage'))
+const CoveragePage = lazy(() => import('@/pages/CoveragePage'))
+const SuiteDetailPage = lazy(() => import('@/pages/SuiteDetailPage'))
+const FailureAnalysisPage = lazy(() => import('@/pages/FailureAnalysisPage'))
+const TrendsPage = lazy(() => import('@/pages/TrendsPage'))
+const DefectsPage = lazy(() => import('@/pages/DefectsPage'))
+const SearchPage = lazy(() => import('@/pages/SearchPage'))
+const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'))
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'))
+const NotificationsPage = lazy(() => import('@/pages/settings/NotificationsPage'))
+const AIConfigPage = lazy(() => import('@/pages/settings/AIConfigPage'))
+const IntegrationsSettingsPage = lazy(() => import('@/pages/settings/IntegrationsPage'))
+const StoragePage = lazy(() => import('@/pages/settings/StoragePage'))
+const DigestsPage = lazy(() => import('@/pages/settings/DigestsPage'))
+const IntegrationHealthPage = lazy(() => import('@/pages/settings/IntegrationHealthPage'))
+const AuditDashboardPage = lazy(() => import('@/pages/settings/AuditDashboardPage'))
+const AIEvalDashboardPage = lazy(() => import('@/pages/settings/AIEvalDashboardPage'))
+const PerformancePage = lazy(() => import('@/pages/settings/PerformancePage'))
+const SSOSettingsPage = lazy(() => import('@/pages/settings/SSOSettingsPage'))
+const ChatPage = lazy(() => import('@/pages/ChatPage'))
+const AgentStatusPage = lazy(() => import('@/pages/AgentStatusPage'))
+const DeepInvestigationPage = lazy(() => import('@/pages/DeepInvestigationPage'))
+const ReleaseGatePage = lazy(() => import('@/pages/ReleaseGatePage'))
+const RunIntelligencePage = lazy(() => import('@/pages/RunIntelligencePage'))
+const TestManagementPage = lazy(() => import('@/pages/TestManagementPage'))
+const LiveExecutionPage = lazy(() => import('@/pages/LiveExecutionPage'))
+const ReleasesPage = lazy(() => import('@/pages/ReleasesPage'))
+const UserManagementPage = lazy(() => import('@/pages/UserManagementPage'))
+const FlakyCoachPage = lazy(() => import('@/pages/FlakyCoachPage'))
+const IntelligenceHubPage = lazy(() => import('@/pages/IntelligenceHubPage'))
+const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
+const ValueMetricsPage = lazy(() => import('@/pages/ValueMetricsPage'))
+const PolicyEditorPage = lazy(() => import('@/pages/PolicyEditorPage'))
+const OwnershipEditorPage = lazy(() => import('@/pages/OwnershipEditorPage'))
+
+type AppRoute = {
+  path: string
+  component: ComponentType
+}
+
+const appRoutes: AppRoute[] = [
+  { path: 'overview', component: OverviewPage },
+  { path: 'getting-started', component: OnboardingPage },
+  { path: 'value-metrics', component: ValueMetricsPage },
+  { path: 'intelligence', component: IntelligenceHubPage },
+  { path: 'runs', component: RunsPage },
+  { path: 'runs/:runId', component: RunDetailPage },
+  { path: 'runs/:runId/intelligence', component: RunIntelligencePage },
+  { path: 'runs/:runId/tests/:testId', component: TestCasePage },
+  { path: 'coverage', component: CoveragePage },
+  { path: 'coverage/suite', component: SuiteDetailPage },
+  { path: 'failures', component: FailureAnalysisPage },
+  { path: 'trends', component: TrendsPage },
+  { path: 'defects', component: DefectsPage },
+  { path: 'search', component: SearchPage },
+  { path: 'chat', component: ChatPage },
+  { path: 'agents', component: AgentStatusPage },
+  { path: 'agents/run/:runId', component: AgentStatusPage },
+  { path: 'deep-investigate', component: DeepInvestigationPage },
+  { path: 'deep-investigate/:runId', component: DeepInvestigationPage },
+  { path: 'release-gate', component: ReleaseGatePage },
+  { path: 'release-gate/:runId', component: ReleaseGatePage },
+  { path: 'flaky-coach', component: FlakyCoachPage },
+  { path: 'test-management', component: TestManagementPage },
+  { path: 'live', component: LiveExecutionPage },
+]
+
+/** Routes restricted to QA_LEAD and ADMIN roles. */
+const managementRoutes: AppRoute[] = [
+  { path: 'projects', component: ProjectsPage },
+  { path: 'releases', component: ReleasesPage },
+  { path: 'users', component: UserManagementPage },
+  { path: 'settings', component: SettingsPage },
+  { path: 'settings/notifications', component: NotificationsPage },
+  { path: 'settings/ai', component: AIConfigPage },
+  { path: 'settings/integrations', component: IntegrationsSettingsPage },
+  { path: 'settings/storage', component: StoragePage },
+  { path: 'settings/sso', component: SSOSettingsPage },
+  { path: 'settings/digests', component: DigestsPage },
+  { path: 'settings/integration-health', component: IntegrationHealthPage },
+  { path: 'settings/audit', component: AuditDashboardPage },
+  { path: 'settings/ai-eval', component: AIEvalDashboardPage },
+  { path: 'settings/performance', component: PerformancePage },
+  { path: 'policies', component: PolicyEditorPage },
+  { path: 'policies/new', component: PolicyEditorPage },
+  { path: 'policies/:policyId', component: PolicyEditorPage },
+  { path: 'ownership', component: OwnershipEditorPage },
+]
+
+function RouteFallback() {
+  return (
+    <div className="flex h-64 items-center justify-center">
+      <LoadingSpinner size="lg" />
+    </div>
+  )
+}
+
+function renderLazyRoute(Component: ComponentType) {
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <Component />
+    </Suspense>
+  )
+}
+
+/**
+ * Route guard for management pages (Projects, Releases, Users).
+ * Redirects users without QA_LEAD or ADMIN role to the overview page.
+ */
+function ManagementGuard({ children }: { children: React.ReactNode }) {
+  const { canAccessManagement } = usePermissions()
+
+  if (!canAccessManagement) {
+    return <Navigate to="/overview" replace />
+  }
+
+  return <>{children}</>
+}
+
+export default function App() {
+  useWebVitals()
+
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<ProtectedRoute />}>
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/" element={<AppLayout />}>
+          <Route index element={<Navigate to="/overview" replace />} />
+          {appRoutes.map(({ path, component }) => (
+            <Route key={path} path={path} element={renderLazyRoute(component)} />
+          ))}
+          {managementRoutes.map(({ path, component: Component }) => (
+            <Route
+              key={path}
+              path={path}
+              element={
+                <ManagementGuard>
+                  {renderLazyRoute(Component)}
+                </ManagementGuard>
+              }
+            />
+          ))}
+        </Route>
+      </Route>
+    </Routes>
+  )
+}

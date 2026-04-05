@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-ollama
+  namespace: testlookup
+  labels:
+    app: testlookup-ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testlookup-ollama
+  template:
+    metadata:
+      labels:
+        app: testlookup-ollama
+    spec:
+      # Schedule on GPU node if available — comment out if CPU-only
+      # nodeSelector:
+      #   nvidia.com/gpu: "true"
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 11434
+              name: ollama
+          resources:
+            requests:
+              cpu: 500m
+              memory: 4Gi
+            limits:
+              cpu: 4000m
+              memory: 32Gi
+              # nvidia.com/gpu: "1"   # Uncomment for GPU
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /root/.ollama
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 30
+            periodSeconds: 15
+      volumes:
+        - name: ollama-models
+          persistentVolumeClaim:
+            claimName: ollama-models-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models-pvc
+  namespace: testlookup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi   # Enough for 2-3 large models (qwen2.5:14b ~9GB each)
+  storageClassName: standard
