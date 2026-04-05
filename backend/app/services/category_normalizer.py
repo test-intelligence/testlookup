@@ -28,6 +28,7 @@ CATEGORY_ALIASES: dict[str, str] = {
     "SOFTWARE_BUG":     FailureCategory.PRODUCT_BUG.value,
     "CODE_DEFECT":      FailureCategory.PRODUCT_BUG.value,
     "APP_BUG":          FailureCategory.PRODUCT_BUG.value,
+    "PRODUT_BUG":       FailureCategory.PRODUCT_BUG.value,  # common LLM typo
     # INFRASTRUCTURE aliases
     "INFRA":            FailureCategory.INFRASTRUCTURE.value,
     "ENV":              FailureCategory.INFRASTRUCTURE.value,
