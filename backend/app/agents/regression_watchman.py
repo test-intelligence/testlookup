@@ -32,6 +32,7 @@ from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import FailureCategory, TestCase, TestRun, TestStatus
 from app.services.category_normalizer import normalize_category
+from app.models.llm_schemas import ClusterClassification, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.prompt_redaction import redact_text
@@ -52,6 +53,29 @@ You are a QA regression analyst. For each failure cluster, classify it as one of
   - "new_regression": first-time failure, not seen in recent baseline runs
   - "known_flaky_recurrence": test has flaked before, not caused by code changes
   - "environmental_anomaly": failure caused by infra/environment, not the application
+
+GROUNDING RULES:
+- If cluster history is empty or insufficient, state "Insufficient baseline data" in evidence — never guess.
+- Confidence must reflect actual evidence strength: <40 if no history, 40-70 if partial, >70 only with clear signals.
+- Do NOT override the deterministic pre-classification unless you have strong contradictory evidence.
+
+EXAMPLE (good output):
+{{
+  "cl_001": {{
+    "classification": "new_regression",
+    "confidence": 82,
+    "evidence": "3 tests failed for the first time; none appeared in the last 10 baseline runs."
+  }}
+}}
+
+EXAMPLE (missing data):
+{{
+  "cl_002": {{
+    "classification": "new_regression",
+    "confidence": 30,
+    "evidence": "Insufficient baseline data — only 1 historical run available."
+  }}
+}}
 
 Cluster data:
 {clusters_json}
@@ -262,7 +286,15 @@ class RegressionWatchman(BaseAgent):
             if error:
                 logger.warning("LLM classification parse failed", reason=error)
                 return {}
-            return parsed
+            # Validate each cluster classification through Pydantic schema
+            validated: dict[str, dict] = {}
+            for cid, raw_cls in parsed.items():
+                if isinstance(raw_cls, dict):
+                    validated[cid] = validate_llm_output(
+                        ClusterClassification, raw_cls,
+                        context=f"regression_watchman_{cid}",
+                    )
+            return validated
         except asyncio.TimeoutError:
             logger.warning(
                 "LLM classification timed out — returning deterministic results",

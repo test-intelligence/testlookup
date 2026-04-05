@@ -527,7 +527,7 @@ class TestRetryLogic:
         result = await agent._analyse_with_retry(
             asyncio.Semaphore(1),
             "tc-retry",
-            {"test_name": "test_retry"},
+            {"test_name": "test_retry", "error_message": "NPE at Foo.java:42"},
             {"test_run_data": {}},
         )
 
@@ -624,7 +624,7 @@ class TestRetryLogic:
         result = await agent._analyse_with_retry(
             asyncio.Semaphore(1),
             "tc-worse-retry",
-            {"test_name": "test_worse_retry"},
+            {"test_name": "test_worse_retry", "error_message": "AssertionError"},
             {"test_run_data": {}},
         )
 

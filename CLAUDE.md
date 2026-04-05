@@ -12,6 +12,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Multi-framework ingestion (Allure, TestNG, JUnit, etc.)
 - OpenShift/Kubernetes native (Kustomize)
 
+**Subdirectory guides** (auto-loaded by Claude Code when working in those dirs):
+- `backend/CLAUDE.md` — Backend code patterns, adding endpoints/agents/tools, test patterns
+- `frontend/CLAUDE.md` — Frontend code patterns, adding pages/hooks/services, styling conventions
+
 ---
 
 ## Architecture
@@ -402,31 +406,22 @@ Settings                (footer)
 
 ## Adding New Features
 
-### New API endpoint
-1. Define Pydantic schemas in `backend/app/models/schemas.py`
-2. Create router in `backend/app/routers/<feature>.py`
-3. Register in `backend/app/bootstrap.py` under `PROTECTED_ROUTERS` (or `PUBLIC_ROUTERS`)
-4. Add service logic in `backend/app/services/<feature>.py`
-5. Write tests in `backend/tests/test_<feature>.py`
-6. Add frontend API service in `frontend/src/services/<feature>Service.ts`
-7. Create SWR hook in `frontend/src/hooks/use<Feature>.ts`
-8. Build page in `frontend/src/pages/<Feature>Page.tsx`
-9. Add route in `frontend/src/App.tsx`
-10. Add nav entry to appropriate sidebar section in `frontend/src/components/layout/Sidebar.tsx`
+### Full-stack feature checklist
+1. Pydantic schemas → `backend/app/models/schemas.py`
+2. ORM model → `backend/app/models/postgres.py`
+3. Migration → `make migrate-create MSG="add_feature_table"`
+4. Service → `backend/app/services/<feature>.py`
+5. Router → `backend/app/routers/<feature>.py`
+6. Register router → `backend/app/bootstrap.py` (`PROTECTED_ROUTERS` or `PUBLIC_ROUTERS`)
+7. Tests → `backend/tests/test_<feature>.py`
+8. Frontend types → `frontend/src/types/<feature>.ts`
+9. API service → `frontend/src/services/<feature>Service.ts`
+10. SWR hook → `frontend/src/hooks/use<Feature>.ts`
+11. Page → `frontend/src/pages/<Feature>Page.tsx`
+12. Route → `frontend/src/App.tsx` (lazy import)
+13. Sidebar entry → `frontend/src/components/layout/Sidebar.tsx`
 
-### New DB table
-1. Add ORM model to `backend/app/models/postgres.py`
-2. Create migration `backend/migrations/versions/<next_num>_<name>.py`
-3. Migrations run automatically on next container start
-
-### New LangChain agent tool
-- Add tool file under `backend/app/tools/`
-- Register in `backend/app/services/agent.py`
-
-### New deep pipeline agent
-- Subclass `BaseAgent` in `backend/app/agents/`
-- Add stage to `WorkflowState` in `agents/state.py`
-- Wire as a node in `_build_deep_graph()` in `agents/workflow.py`
+See `backend/CLAUDE.md` and `frontend/CLAUDE.md` for exact code templates and patterns.
 
 ---
 

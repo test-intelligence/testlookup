@@ -20,6 +20,12 @@ from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.mongo import Collections, get_mongo_db
 from app.services.llm_factory import get_llm
+from app.models.llm_schemas import (
+    ActionPlan,
+    EvidencePack,
+    IncidentView,
+    validate_llm_output,
+)
 from app.services.llm_json_parser import parse_llm_json
 from app.services.prompt_redaction import redact_text
 from app.services.resilience import truncate_to_token_budget
@@ -36,6 +42,12 @@ _SYSTEM_PROMPT = """\
 You are a QA Engineering Lead writing a structured post-run analysis report.
 Be factual, direct, and actionable. Focus on failures and risks.
 Do not pad the report. Base every statement strictly on the data provided.
+
+GROUNDING RULES:
+- If data is missing or unavailable, state "Insufficient data" — never fabricate details.
+- If pass rate is not provided, do not guess a number.
+- Only reference test names, error messages, and stack traces that appear in the data.
+- Use exact numbers from the data (pass rates, failure counts) — never approximate.
 """
 
 # ── Layer prompts ─────────────────────────────────────────────────────────────
@@ -140,6 +152,12 @@ class SummaryAgent(BaseAgent):
             anomalies = state.get("anomalies") or []
             analyses = state.get("analyses") or {}
             anomaly_summary = state.get("anomaly_summary") or ""
+            stage_errors = state.get("stage_errors") or {}
+            stage_quality = state.get("stage_quality") or "normal"
+
+            # Stash stage quality info for context builder
+            self._current_stage_quality = stage_quality
+            self._current_stage_errors = stage_errors
 
             # Fetch similar historical failures BEFORE LLM call to enrich context
             similar_failures = await self._fetch_similar_failures(
@@ -264,10 +282,22 @@ class SummaryAgent(BaseAgent):
                     + "\n".join(f"  - {n}" for n in names)
                 )
 
+        # Surface analysis quality indicator from upstream stages
+        quality_note = ""
+        stage_quality = self._current_stage_quality or "normal"
+        stage_errors = self._current_stage_errors or {}
+        if stage_quality == "degraded":
+            error_stages = ", ".join(stage_errors.keys()) if stage_errors else "unknown"
+            quality_note = (
+                f"\n\nANALYSIS QUALITY: DEGRADED — some upstream stages ({error_stages}) "
+                "had errors or timeouts. Data below may be incomplete.\n"
+            )
+
         raw_context = (
             f"Build: {build} | Branch: {branch}\n"
-            f"Results: {total} tests, {failed} failures, {pass_rate:.1f}% pass rate\n\n"
-            f"Anomalies ({len(anomalies)} detected):\n{anomaly_summary or 'None detected.'}\n\n"
+            f"Results: {total} tests, {failed} failures, {pass_rate:.1f}% pass rate\n"
+            + quality_note
+            + f"\nAnomalies ({len(anomalies)} detected):\n{anomaly_summary or 'None detected.'}\n\n"
             f"Top failure root causes ({len(analysis_bullets)} above threshold):\n"
             + ("\n".join(analysis_bullets) or "No analyses available.")
             + (("\n\nEvidence excerpts:\n" + "\n".join(evidence_excerpts)) if evidence_excerpts else "")
@@ -351,6 +381,13 @@ class SummaryAgent(BaseAgent):
             "layer4_action_plan": layer4,
         }
 
+    # Map layer names to Pydantic schemas for structured validation
+    _LAYER_SCHEMAS: dict[str, type] = {
+        "incident_view": IncidentView,
+        "evidence_pack": EvidencePack,
+        "action_plan": ActionPlan,
+    }
+
     async def _call_json_layer(
         self,
         llm,
@@ -377,6 +414,10 @@ class SummaryAgent(BaseAgent):
             )
             if error:
                 logger.warning("JSON layer parse issue", layer=layer_name, reason=error)
+            # Validate through Pydantic schema if available
+            schema = self._LAYER_SCHEMAS.get(layer_name)
+            if schema:
+                parsed = validate_llm_output(schema, parsed, context=f"summary_{layer_name}")
             return parsed
         except asyncio.TimeoutError:
             logger.warning("JSON layer call timed out", layer=layer_name, timeout=_LAYER_TIMEOUT_SECONDS)

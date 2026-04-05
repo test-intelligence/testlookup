@@ -44,6 +44,7 @@ from app.services.criticality_service import (
     compute_dimension_scores,
     score_to_recommendation,
 )
+from app.models.llm_schemas import ReleaseReasoning, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.prompt_redaction import redact_text
@@ -67,10 +68,26 @@ Test Run Context:
 Failure Details:
 {failures}
 
-Your task:
-1. Write a 2-3 sentence REASONING that explains WHY this score was produced.
-2. List BLOCKING_ISSUES — specific failures/defects that must be resolved before release.
-3. List CONDITIONS_FOR_GO — conditions under which CONDITIONAL_GO becomes GO (leave empty for GO/NO_GO).
+GROUNDING RULES:
+- The recommendation field ({recommendation}) is DETERMINISTIC — do not override or contradict it.
+- Your job is to EXPLAIN the score, not re-evaluate it.
+- If failure details are empty, state "No failures detected" — never fabricate failure descriptions.
+- Only list blocking_issues that are directly supported by the failure data above.
+- List conditions_for_go ONLY when recommendation is CONDITIONAL_GO; leave empty for GO or NO_GO.
+
+EXAMPLE (CONDITIONAL_GO with blocking issues):
+{{
+  "reasoning": "Composite risk score of 38/100 driven primarily by 3 product bugs in the checkout flow and an elevated regression signal. Pass rate of 91% is above threshold but the checkout failures affect a critical user journey.",
+  "blocking_issues": ["Checkout payment validation fails on amounts > $999", "Cart total mismatch after coupon removal"],
+  "conditions_for_go": ["Fix both checkout bugs and rerun the e2e-checkout suite"]
+}}
+
+EXAMPLE (GO with no issues):
+{{
+  "reasoning": "Composite risk score of 12/100 with all dimensions in the green zone. 98.5% pass rate with only minor flaky test recurrences. No new regressions detected.",
+  "blocking_issues": [],
+  "conditions_for_go": []
+}}
 
 Respond ONLY with a valid JSON object:
 {{
@@ -78,6 +95,10 @@ Respond ONLY with a valid JSON object:
   "blocking_issues": ["issue1", "issue2"],
   "conditions_for_go": ["condition1"]
 }}"""
+
+# Composite risk thresholds below which LLM is skipped (cost optimization)
+_EXTREME_GO_THRESHOLD = 10         # Clearly safe — skip LLM
+_EXTREME_NO_GO_THRESHOLD = 75      # Clearly blocked — skip LLM
 
 
 class ReleaseRiskAgent(BaseAgent):
@@ -182,9 +203,30 @@ class ReleaseRiskAgent(BaseAgent):
             recommendation = score_to_recommendation(composite, pass_rate, threshold)
 
         # ── Step 2: LLM reasoning (non-blocking — failures gracefully degrade) ─
-        llm_extras = await self._get_llm_reasoning(
-            dim_scores, composite, recommendation, executive_summary, analyses
-        )
+        # Cost optimization: skip LLM for extreme scores (saves ~10K tokens/day)
+        if composite < _EXTREME_GO_THRESHOLD:
+            llm_extras = {
+                "reasoning": (
+                    f"Composite risk score {composite:.0f}/100 — all dimensions in the green zone. "
+                    f"Pass rate {pass_rate:.1f}% is well above threshold. No LLM reasoning required."
+                ),
+                "blocking_issues": [],
+                "conditions_for_go": [],
+            }
+        elif composite >= _EXTREME_NO_GO_THRESHOLD:
+            blocking = self._deterministic_blocking_issues(dim_scores)
+            llm_extras = {
+                "reasoning": (
+                    f"Composite risk score {composite:.0f}/100 — critical risk across multiple dimensions. "
+                    f"Pass rate {pass_rate:.1f}%. Release is strongly blocked."
+                ),
+                "blocking_issues": blocking,
+                "conditions_for_go": [],
+            }
+        else:
+            llm_extras = await self._get_llm_reasoning(
+                dim_scores, composite, recommendation, executive_summary, analyses
+            )
 
         result = {
             "recommendation": recommendation,
@@ -250,25 +292,18 @@ class ReleaseRiskAgent(BaseAgent):
                 context="release_risk_reasoning",
             )
             if not error:
-                parsed.setdefault("reasoning", "")
-                parsed.setdefault("blocking_issues", [])
-                parsed.setdefault("conditions_for_go", [])
-                return parsed
+                validated = validate_llm_output(
+                    ReleaseReasoning, parsed, context="release_risk_reasoning",
+                )
+                return validated
             logger.warning("LLM reasoning parse issue", reason=error)
         except asyncio.TimeoutError:
             logger.warning("LLM reasoning timed out", timeout=_LLM_REASONING_TIMEOUT)
         except Exception as exc:
             logger.warning("LLM reasoning step failed (non-blocking)", error=str(exc))
 
-        # Deterministic fallback: generate blocking issues from scores
-        blocking: list[str] = []
-        if dim_scores.get("user_impact", 0) > 50:
-            blocking.append(f"High user impact score ({dim_scores['user_impact']:.0f}/100) — product bugs detected")
-        if dim_scores.get("regression_likely", 0) > 40:
-            blocking.append(f"Regression risk elevated ({dim_scores['regression_likely']:.0f}/100)")
-        if dim_scores.get("blast_radius", 0) > 50:
-            blocking.append(f"Wide blast radius ({dim_scores['blast_radius']:.0f}/100) — failures span multiple clusters")
-
+        # Deterministic fallback
+        blocking = self._deterministic_blocking_issues(dim_scores)
         return {
             "reasoning": (
                 f"Composite risk score {composite:.0f}/100 (weights: user_impact=25%, "
@@ -278,6 +313,18 @@ class ReleaseRiskAgent(BaseAgent):
             "blocking_issues": blocking,
             "conditions_for_go": ["Resolve product bugs and rerun failing suites"] if blocking else [],
         }
+
+    @staticmethod
+    def _deterministic_blocking_issues(dim_scores: dict) -> list[str]:
+        """Generate blocking issues from dimension scores without LLM."""
+        blocking: list[str] = []
+        if dim_scores.get("user_impact", 0) > 50:
+            blocking.append(f"High user impact score ({dim_scores['user_impact']:.0f}/100) — product bugs detected")
+        if dim_scores.get("regression_likely", 0) > 40:
+            blocking.append(f"Regression risk elevated ({dim_scores['regression_likely']:.0f}/100)")
+        if dim_scores.get("blast_radius", 0) > 50:
+            blocking.append(f"Wide blast radius ({dim_scores['blast_radius']:.0f}/100) — failures span multiple clusters")
+        return blocking
 
     # ── Input snapshot ──────────────────────────────────────────────────────
 
