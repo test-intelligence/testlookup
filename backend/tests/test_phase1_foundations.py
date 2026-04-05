@@ -16,7 +16,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
