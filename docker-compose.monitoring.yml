@@ -26,7 +26,7 @@ services:
       - "4317:4317"     # OTLP gRPC receiver
       - "4318:4318"     # OTLP HTTP receiver  ← backend ships spans here
     networks:
-      - testlookup-network
+      - testlookup_net
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:14269/"]
       interval: 20s
@@ -50,7 +50,7 @@ services:
     ports:
       - "9090:9090"
     networks:
-      - testlookup-network
+      - testlookup_net
     depends_on:
       - backend
     healthcheck:
@@ -77,7 +77,7 @@ services:
     ports:
       - "3001:3000"
     networks:
-      - testlookup-network
+      - testlookup_net
     depends_on:
       - prometheus
       - jaeger
@@ -102,5 +102,5 @@ volumes:
   grafana-data:
 
 networks:
-  testlookup-network:
+  testlookup_net:
     external: true

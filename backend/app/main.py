@@ -57,6 +57,18 @@ async def lifespan(app: FastAPI):
         version=settings.APP_VERSION,
         env=settings.APP_ENV,
     )
+
+    # Validate production secrets — fail fast on misconfig
+    secret_warnings = settings.validate_production_secrets()
+    for warning in secret_warnings:
+        logger.warning("security_check_failed", message=warning)
+    critical_warnings = [w for w in secret_warnings if w.startswith("CRITICAL")]
+    if critical_warnings and settings.APP_ENV == "production":
+        raise RuntimeError(
+            f"Refusing to start in production with {len(critical_warnings)} critical "
+            f"security issue(s): {'; '.join(critical_warnings)}"
+        )
+
     # Ensure MongoDB indexes exist
     db = get_mongo_db()
     try:
