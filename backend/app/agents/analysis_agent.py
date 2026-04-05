@@ -104,18 +104,29 @@ class AnalysisAgent(BaseAgent):
         timed_out = 0
         retried = 0
         low_confidence = 0
+        error_count = 0
         for tc_id, result in zip(prioritized_ids, results_list):
             if isinstance(result, BaseException):
+                error_count += 1
                 errors.append(f"Analysis failed for {tc_id}: {result}")
                 analyses[tc_id] = {"error": str(result), "confidence_score": 0}
             else:
                 analyses[tc_id] = result
                 if result.get("timed_out"):
                     timed_out += 1
+                    error_count += 1
                 if result.get("retry_count", 0) > 0:
                     retried += 1
                 if result.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD:
                     low_confidence += 1
+
+        # P2-4: Explicit error propagation — determine stage quality
+        total_analysed = len(prioritized_ids)
+        error_ratio = error_count / max(total_analysed, 1)
+        stage_quality = "degraded" if error_ratio > 0.3 else "normal"
+        stage_errors: dict[str, list[str]] = {}
+        if errors:
+            stage_errors["root_cause_analysis"] = errors
 
         # Batch persist all analyses in chunked upserts (single session)
         await self._batch_upsert_analyses(analyses)
@@ -128,15 +139,22 @@ class AnalysisAgent(BaseAgent):
                 "timed_out": timed_out,
                 "retried": retried,
                 "low_confidence": low_confidence,
+                "stage_quality": stage_quality,
+                "error_ratio": round(error_ratio, 3),
             },
         )
+
+        quality_msg = ""
+        if stage_quality == "degraded":
+            quality_msg = f" (quality: DEGRADED — {error_count} of {total_analysed} tests had insufficient data)"
         await self.broadcast_progress(
             project_id,
             {
                 "status": "completed",
                 "message": f"Root-cause analysis complete: {len(analyses)} test(s) analysed"
                 + (f", {timed_out} timed out" if timed_out else "")
-                + (f", {retried} retried" if retried else ""),
+                + (f", {retried} retried" if retried else "")
+                + quality_msg,
             },
         )
 
@@ -144,6 +162,9 @@ class AnalysisAgent(BaseAgent):
             "analyses": analyses,
             "completed_stages": ["root_cause_analysis"],
             "errors": errors,
+            "stage_errors": stage_errors,
+            "stage_quality": stage_quality,
+            "low_confidence_count": low_confidence,
             "current_stage": "summary",
         }
 
@@ -172,11 +193,15 @@ class AnalysisAgent(BaseAgent):
         """Run analysis with retry for low-confidence results."""
         result = await self._analyse_one(semaphore, tc_id, meta, state)
 
-        # Retry once if confidence is very low and it wasn't a timeout/error
+        # P2-5: Smart retry — only retry on LLM failures (low confidence from
+        # actual analysis), not when data is missing (no error_message, no stack_trace).
+        # Missing data retries waste tokens since the LLM gets the same empty inputs.
+        has_input_data = bool(meta.get("error_message") or meta.get("stack_trace"))
         if (
             result.get("confidence_score", 0) < _RETRY_CONFIDENCE_THRESHOLD
             and not result.get("timed_out")
             and not result.get("error")
+            and has_input_data
             and _MAX_ANALYSIS_RETRIES > 0
         ):
             logger.info(
@@ -227,6 +252,10 @@ class AnalysisAgent(BaseAgent):
             except Exception as exc:
                 logger.error("ReAct agent failed for %s: %s", tc_id, exc)
                 analysis = self._build_error_analysis(exc)
+
+            # Attach flakiness data from historical enrichment for P2-6 validation
+            if "flakiness_data" in meta:
+                analysis["flakiness_data"] = meta["flakiness_data"]
 
             # Post-process: validate confidence and sanitize category
             analysis = self._validate_confidence(analysis)
@@ -300,24 +329,33 @@ class AnalysisAgent(BaseAgent):
     async def _enrich_historical_counts(
         self, db, meta: dict[str, dict], fingerprints: dict[str, str]
     ) -> None:
-        """Add historical failure counts to metadata for priority ordering."""
+        """Add historical failure counts and pass/fail breakdown for flakiness detection."""
         try:
             fp_values = list(set(fingerprints.values()))
+            # Fetch both failure and total counts per fingerprint for flakiness detection (P2-6)
             result = await db.execute(
                 select(
                     TestCase.test_fingerprint,
-                    func.count(TestCase.id).label("failure_count"),
+                    TestCase.status,
+                    func.count(TestCase.id).label("count"),
                 )
-                .where(
-                    TestCase.test_fingerprint.in_(fp_values),
-                    TestCase.status.in_([TestStatus.FAILED.value, TestStatus.BROKEN.value]),
-                )
-                .group_by(TestCase.test_fingerprint)
+                .where(TestCase.test_fingerprint.in_(fp_values))
+                .group_by(TestCase.test_fingerprint, TestCase.status)
             )
-            counts = {row.test_fingerprint: row.failure_count for row in result.all()}
+            # Build pass/fail breakdown per fingerprint
+            fp_stats: dict[str, dict[str, int]] = {}
+            for row in result.all():
+                fp_stats.setdefault(row.test_fingerprint, {"pass_count": 0, "fail_count": 0})
+                if row.status in (TestStatus.FAILED.value, TestStatus.BROKEN.value):
+                    fp_stats[row.test_fingerprint]["fail_count"] += row.count
+                elif row.status == TestStatus.PASSED.value:
+                    fp_stats[row.test_fingerprint]["pass_count"] += row.count
+
             for tc_id, fp in fingerprints.items():
                 if tc_id in meta:
-                    meta[tc_id]["historical_failure_count"] = counts.get(fp, 0)
+                    stats = fp_stats.get(fp, {"pass_count": 0, "fail_count": 0})
+                    meta[tc_id]["historical_failure_count"] = stats["fail_count"]
+                    meta[tc_id]["flakiness_data"] = stats
         except Exception as exc:
             logger.debug("Historical count enrichment failed (non-critical): %s", exc)
 
@@ -377,6 +415,26 @@ class AnalysisAgent(BaseAgent):
                 confidence, len(summary),
             )
             confidence = min(confidence, 30)
+
+        # P2-6: Validate flakiness using actual historical data instead of LLM guess.
+        # A test is flaky only if it has both passes AND failures historically,
+        # with a pass rate between 10-90% (indicating non-deterministic behavior).
+        flakiness_data = analysis.get("flakiness_data") or {}
+        if flakiness_data:
+            hist_passes = flakiness_data.get("pass_count", 0)
+            hist_failures = flakiness_data.get("fail_count", 0)
+            total_hist = hist_passes + hist_failures
+            if total_hist > 0:
+                hist_pass_rate = (hist_passes / total_hist) * 100
+                is_actually_flaky = (
+                    hist_passes > 0
+                    and hist_failures > 0
+                    and 10 <= hist_pass_rate <= 90
+                )
+                analysis["is_flaky"] = is_actually_flaky
+                if not is_actually_flaky and hist_failures > 0 and hist_passes == 0:
+                    # Never passed — this is broken, not flaky
+                    analysis["is_flaky"] = False
 
         # Penalty: no tools used and not a cache hit (suspicious high confidence)
         if not has_tools and not analysis.get("cache_hit") and not analysis.get("classified_by") and confidence > 60:

@@ -16,6 +16,27 @@ def _concat_lists(a: list, b: list) -> list:
     return a + b
 
 
+def _dedup_concat_lists(a: list, b: list) -> list:
+    """Reducer: concatenate lists, then deduplicate preserving order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in a + b:
+        key = str(item)
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+
+def _merge_error_dicts(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Reducer: merge stage_errors dicts (stage_name -> list of error strings)."""
+    merged = dict(a)
+    for key, errors in b.items():
+        merged.setdefault(key, [])
+        merged[key].extend(errors)
+    return merged
+
+
 class WorkflowState(TypedDict):
     # ── Required Inputs ───────────────────────────────────────────
     pipeline_run_id: str        # AgentPipelineRun.id (UUID string)
@@ -67,8 +88,13 @@ class WorkflowState(TypedDict):
 
     # ── Error / Progress Tracking ─────────────────────────────────
     errors: Annotated[list[str], _concat_lists]
-    completed_stages: Annotated[list[str], _concat_lists]
+    completed_stages: Annotated[list[str], _dedup_concat_lists]
     current_stage: str
+    # Per-stage structured errors for downstream agents to inspect
+    stage_errors: Annotated[dict[str, list[str]], _merge_error_dicts]
+    # Quality indicator set by analysis agent when >30% of analyses fail
+    stage_quality: Optional[str]          # "normal" | "degraded"
+    low_confidence_count: int             # count of analyses below confidence threshold
 
     # ── Provenance / Execution Tracking ──────────────────────────
     # Annotated with _concat_lists so parallel nodes (analysis + cluster) can both append

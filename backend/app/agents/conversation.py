@@ -12,8 +12,10 @@ Context engineering improvements over v1:
   8. Source priority matches intent — relevant sources float to top of the list
 """
 import asyncio
+import hashlib
 import structlog
 import re
+import time
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
@@ -42,6 +44,12 @@ logger = structlog.get_logger("agents.conversation")
 _MAX_MESSAGE_LENGTH = 50_000
 # Debounce: skip compression if it ran within this many seconds
 _COMPRESS_DEBOUNCE_SECONDS = 300
+# P2-8: In-memory TTL cache for _fetch_run_context() — avoids re-fetching
+# the same run history multiple times within a chat session.
+_RUN_CONTEXT_CACHE: dict[str, tuple[float, str, list[dict]]] = {}
+_RUN_CONTEXT_TTL_SECONDS = 60
+# P2-8: Hash of last compressed message list per session — skip if unchanged
+_LAST_COMPRESSION_HASH: dict[str, str] = {}
 
 # ── Intent classification ─────────────────────────────────────────────────────
 
@@ -331,7 +339,20 @@ class ConversationAgent:
     async def _fetch_run_context(
         self, project_id: Optional[str], limit: int = 5
     ) -> tuple[str, list[dict]]:
-        """Fetch test run history in a table-friendly format."""
+        """Fetch test run history in a table-friendly format.
+
+        P2-8: Results are cached in-memory with a 60-second TTL to avoid
+        redundant DB queries within the same chat session.
+        """
+        # Check in-memory TTL cache
+        cache_key = f"{project_id or 'all'}:{limit}"
+        cached = _RUN_CONTEXT_CACHE.get(cache_key)
+        if cached:
+            ts, cached_text, cached_sources = cached
+            if time.monotonic() - ts < _RUN_CONTEXT_TTL_SECONDS:
+                return cached_text, cached_sources
+            del _RUN_CONTEXT_CACHE[cache_key]
+
         try:
             async with AsyncSessionLocal() as db:
                 q = (
@@ -362,7 +383,9 @@ class ConversationAgent:
                     )
                     src.append({"type": "test_run", "id": str(r.id), "build": r.build_number})
 
-                return header + "\n" + "\n".join(lines), src
+                result_text = header + "\n" + "\n".join(lines)
+                _RUN_CONTEXT_CACHE[cache_key] = (time.monotonic(), result_text, src)
+                return result_text, src
         except Exception as exc:
             logger.debug("Run context fetch error: %s", exc)
             return "", []
@@ -685,6 +708,12 @@ class ConversationAgent:
             transcript = "\n".join(
                 f"{m.role.upper()}: {m.content[:600]}" for m in older
             )
+
+            # P2-8: Skip compression if message list is identical to last compression
+            content_hash = hashlib.sha256(transcript.encode()).hexdigest()[:16]
+            if _LAST_COMPRESSION_HASH.get(session_id) == content_hash:
+                return
+            _LAST_COMPRESSION_HASH[session_id] = content_hash
 
             compression_prompt = (
                 "Summarise the following QA analysis chat conversation in 4-6 bullet points. "
