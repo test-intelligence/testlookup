@@ -3,7 +3,9 @@
 Strips the 'UserRole.' prefix from any stored role values so the
 _normalize_user_role() workaround in deps.py can be simplified.
 
-Affected tables: users, project_members, api_keys, user_invitations.
+Affected tables: users, project_members, user_invitations.
+(api_keys does NOT have a role column; chat_messages.role stores
+'user'/'assistant', not UserRole values.)
 
 Revision ID: 0045
 Revises: 0044
@@ -15,8 +17,8 @@ down_revision = "0044"
 branch_labels = None
 depends_on = None
 
-# Tables with a `role` column stored as String(20)
-_TABLES_WITH_ROLE = ["users", "project_members", "api_keys", "user_invitations"]
+# Only tables with a UserRole-typed `role` column
+_TABLES_WITH_ROLE = ["users", "project_members", "user_invitations"]
 
 
 def upgrade() -> None:
