@@ -31,6 +31,7 @@ from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import FailureCategory, TestCase, TestRun, TestStatus
+from app.services.category_normalizer import normalize_category
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.prompt_redaction import redact_text
@@ -174,8 +175,7 @@ class RegressionWatchman(BaseAgent):
             for mid in member_ids:
                 analysis = analyses.get(mid, {})
                 raw_cat = analysis.get("failure_category", "")
-                # Handle both enum objects and plain strings
-                cat_str = str(getattr(raw_cat, "value", raw_cat) or "").upper()
+                cat_str = normalize_category(raw_cat)
                 if cat_str == FailureCategory.INFRASTRUCTURE.value:
                     infra_count += 1
                 if analysis.get("is_flaky", False):
@@ -247,7 +247,7 @@ class RegressionWatchman(BaseAgent):
         ))
 
         try:
-            llm = get_llm(temperature=0.0)
+            llm = await get_llm(temperature=0.0)
             response = await asyncio.wait_for(
                 llm.ainvoke(prompt),
                 timeout=_LLM_CLASSIFY_TIMEOUT,

@@ -6,10 +6,8 @@ import pytest
 
 pytest.importorskip("asyncpg")  # skip entire module if asyncpg is not installed
 
-from app.agents.analysis_agent import (  # noqa: E402
-    AnalysisAgent,
-    VALID_CATEGORIES,
-)
+from app.agents.analysis_agent import AnalysisAgent  # noqa: E402
+from app.services.category_normalizer import VALID_CATEGORIES  # noqa: E402
 
 
 # ── Fallback analysis tests ──────────────────────────────────────────────────

@@ -33,11 +33,6 @@ from app.services.resilience import (
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("services.agent")
 
-# Reserve tokens for system prompt + agent reasoning overhead
-_PROMPT_OVERHEAD_TOKENS = 1500
-# Cache TTL for AI analysis results (1 hour)
-_ANALYSIS_CACHE_TTL_S = 3600
-
 SYSTEM_PROMPT = """You are an expert Software Quality Assurance Architect and Site Reliability Engineer.
 Your objective is to analyse failed automated test cases, identify the root cause, and produce
 a clear, structured, actionable defect analysis.
@@ -179,7 +174,7 @@ async def run_triage_agent(
 
     # ── Token budget enforcement ─────────────────────────────────────────────
     # Truncate inputs that would blow the context window before the agent starts.
-    max_input_tokens = settings.LLM_MAX_TOKENS - _PROMPT_OVERHEAD_TOKENS
+    max_input_tokens = settings.LLM_MAX_TOKENS - settings.PROMPT_OVERHEAD_TOKENS
     if error_message:
         error_message = truncate_to_token_budget(error_message, max_input_tokens // 4)
     if stack_trace:
@@ -192,7 +187,7 @@ async def run_triage_agent(
     create_react_agent = cast(Any, getattr(langchain_agents, "create_react_agent"))
     AgentExecutor = cast(Any, getattr(langchain_agents, "AgentExecutor"))
 
-    llm = get_llm()
+    llm = await get_llm()
     tools = _get_tools()
 
     prompt = PromptTemplate.from_template(SYSTEM_PROMPT)
@@ -418,6 +413,6 @@ async def _store_analysis_cache(
         cache_key = compute_analysis_cache_key(test_name, error_message, stack_trace)
         # Store a clean copy without transient fields
         cacheable = {k: v for k, v in analysis.items() if k not in ("cache_hit",)}
-        await redis.set(cache_key, json.dumps(cacheable, default=str), ex=_ANALYSIS_CACHE_TTL_S)
+        await redis.set(cache_key, json.dumps(cacheable, default=str), ex=settings.AI_ANALYSIS_CACHE_TTL)
     except Exception as exc:
         logger.debug("Analysis cache store failed (non-critical): %s", exc)

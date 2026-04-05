@@ -10,7 +10,12 @@ For every HTTP request:
   4. Returns X-Request-ID in the response headers so clients can correlate requests.
 
 Paths listed in _SKIP_PATHS are exempt from access logging to reduce noise.
+
+The ``REQUEST_ID_CTX`` context variable is available for non-structlog code
+(e.g., MongoDB query comments, external HTTP headers) to read the current
+request's correlation ID.
 """
+import contextvars
 import time
 import uuid
 
@@ -21,6 +26,12 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 logger = structlog.get_logger("http.access")
+
+# ── Correlation ID context var ───────────────────────────────────────────────
+# Readable from any async code within the same request scope.
+REQUEST_ID_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_id", default=""
+)
 
 # Paths that generate too much noise if logged on every request
 _SKIP_PATHS = frozenset(
@@ -41,6 +52,9 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         start = time.perf_counter()
 
+        # Set correlation ID for non-structlog consumers
+        _token = REQUEST_ID_CTX.set(request_id)
+
         # Bind context — all log calls in the same async context will carry these fields
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(
@@ -53,6 +67,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         except Exception:
             structlog.contextvars.clear_contextvars()
+            REQUEST_ID_CTX.reset(_token)
             raise
 
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -68,4 +83,5 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
 
         response.headers["X-Request-ID"] = request_id
         structlog.contextvars.clear_contextvars()
+        REQUEST_ID_CTX.reset(_token)
         return response

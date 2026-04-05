@@ -70,7 +70,7 @@ async def render_developer_summary(
         try:
             from app.services.llm_factory import get_llm
 
-            llm = get_llm()
+            llm = await get_llm()
             resp = await llm.ainvoke(
                 _DEVELOPER_PROMPT.format(system=_SYSTEM_PROMPT, context=context)
             )
@@ -103,7 +103,7 @@ async def render_manager_summary(
         try:
             from app.services.llm_factory import get_llm
 
-            llm = get_llm()
+            llm = await get_llm()
             resp = await llm.ainvoke(
                 _MANAGER_PROMPT.format(system=_SYSTEM_PROMPT, context=context)
             )

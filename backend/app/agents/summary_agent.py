@@ -289,7 +289,7 @@ class SummaryAgent(BaseAgent):
             run_data, anomaly_summary, anomalies, analyses,
             similar_failures=similar_failures or [],
         )
-        llm = get_llm()
+        llm = await get_llm()
 
         # Layer 1: executive summary (plain text) with timeout
         safe_context = truncate_to_token_budget(context, _MAX_CONTEXT_TOKENS)

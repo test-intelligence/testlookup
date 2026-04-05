@@ -37,7 +37,10 @@ projects_router = APIRouter(prefix="/api/v1/projects", tags=["User Management"])
 
 
 def _normalize_user_role(value: UserRole | str) -> UserRole:
-    """Accept enum values and legacy 'UserRole.X' strings from older rows."""
+    """Convert a stored role string to a UserRole enum.
+
+    After migration 0045, the ``UserRole.`` prefix guard is a safety net only.
+    """
     if isinstance(value, UserRole):
         return value
     raw_value = str(value).strip()

@@ -69,17 +69,19 @@ def test_mock_generators_return_expected_shapes():
     assert b"<testsuite" in testng[0][1]
 
 
+@pytest.mark.asyncio
 @patch("langchain_ollama.ChatOllama")
-def test_llm_factory_ollama_uses_registry_model(mock_ollama):
-    with patch("app.services.llm_factory._get_active_model_sync", return_value="ft-model"):
-        get_llm(provider="ollama", track="reasoning")
+async def test_llm_factory_ollama_uses_registry_model(mock_ollama):
+    with patch("app.services.llm_factory._async_get_active_model", return_value="ft-model"):
+        await get_llm(provider="ollama", track="reasoning")
     kwargs = mock_ollama.call_args.kwargs
     assert kwargs["model"] == "ft-model"
 
 
-def test_llm_factory_openai_blocked_when_offline():
+@pytest.mark.asyncio
+async def test_llm_factory_openai_blocked_when_offline():
     with patch("app.services.llm_factory.settings") as s:
         s.AI_OFFLINE_MODE = True
         s.LLM_PROVIDER = "openai"
         with pytest.raises(ValueError):
-            get_llm(provider="openai")
+            await get_llm(provider="openai")

@@ -150,7 +150,7 @@ class ModelEvaluator:
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
             from app.services.training.classifier import _CLASSIFIER_SYSTEM
-            llm = get_llm(model=model, temperature=0.0)
+            llm = await get_llm(model=model, temperature=0.0)
             resp = await llm.ainvoke([
                 SystemMessage(content=_CLASSIFIER_SYSTEM),
                 HumanMessage(content=user_content),

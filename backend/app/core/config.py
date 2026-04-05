@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     AI_CONFIDENCE_THRESHOLD: int = 80
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
+    AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results
+    SEMANTIC_SIMILARITY_THRESHOLD: float = 0.85      # min cosine similarity for semantic cache hit
+    PROMPT_OVERHEAD_TOKENS: int = 1500               # reserved tokens for system prompt + reasoning
+    SEMANTIC_CACHE_MAX_DOCUMENTS: int = 10000        # cap ChromaDB collection size
 
     # ── Jira ─────────────────────────────────────────────────
     JIRA_ENABLED: bool = False

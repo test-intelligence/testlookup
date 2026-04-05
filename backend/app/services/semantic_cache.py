@@ -24,8 +24,6 @@ from app.core.config import settings
 logger = logging.getLogger("services.semantic_cache")
 
 _COLLECTION_NAME = "ai_analysis_cache"
-_SIMILARITY_THRESHOLD = 0.85  # min cosine similarity to consider a cache hit
-_MAX_CACHE_DOCUMENTS = 10000  # cap collection size to avoid unbounded growth
 
 
 def _get_chroma_client():
@@ -91,10 +89,10 @@ async def semantic_cache_lookup(
         distance = distances[0]
         similarity = 1.0 - (distance / 2.0)
 
-        if similarity < _SIMILARITY_THRESHOLD:
+        if similarity < settings.SEMANTIC_SIMILARITY_THRESHOLD:
             logger.debug(
                 "Semantic cache miss for '%s' (similarity=%.3f < threshold=%.3f)",
-                test_name[:40], similarity, _SIMILARITY_THRESHOLD,
+                test_name[:40], similarity, settings.SEMANTIC_SIMILARITY_THRESHOLD,
             )
             return None
 
@@ -174,7 +172,7 @@ async def get_semantic_cache_stats() -> dict:
             "status": "healthy",
             "collection": _COLLECTION_NAME,
             "document_count": count,
-            "similarity_threshold": _SIMILARITY_THRESHOLD,
+            "similarity_threshold": settings.SEMANTIC_SIMILARITY_THRESHOLD,
         }
     except Exception as exc:
         return {

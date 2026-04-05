@@ -451,7 +451,7 @@ async def _generate_jira_content(cluster: FailureCluster, analyses: list[AIAnaly
     )
 
     try:
-        llm = get_llm(temperature=0.1)
+        llm = await get_llm(temperature=0.1)
         response = await llm.ainvoke(prompt)
         raw = response.content if hasattr(response, "content") else str(response)
         content = str(raw).strip()

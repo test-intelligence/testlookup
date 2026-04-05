@@ -56,7 +56,7 @@ class FastClassifier:
         fine_tuned = await ModelRegistry.get_active_model("classifier")
         model_name = fine_tuned or settings.CLASSIFIER_MODEL or settings.LLM_MODEL
 
-        llm = get_llm(model=model_name, temperature=0.0)
+        llm = await get_llm(model=model_name, temperature=0.0)
 
         user_content = (
             f"Test: {test_name}\n"
