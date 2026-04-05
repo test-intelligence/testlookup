@@ -32,6 +32,12 @@ _ROLE_ORDER: list[UserRole] = [
 
 
 def _normalize_user_role(value: UserRole | str) -> UserRole:
+    """Convert a stored role string to a UserRole enum.
+
+    After migration 0045 cleaned legacy ``'UserRole.X'`` values, this is a
+    simple str → enum conversion.  The ``UserRole.`` prefix guard is retained
+    only as a safety net for any un-migrated rows.
+    """
     if isinstance(value, UserRole):
         return value
     raw_value = str(value).strip()

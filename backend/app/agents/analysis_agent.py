@@ -23,7 +23,6 @@ Improvements over baseline:
 import asyncio
 import time
 from datetime import datetime, timezone
-from difflib import get_close_matches
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -33,13 +32,11 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AIAnalysis, FailureCategory, TestCase, TestStatus
 from app.services.agent import run_triage_agent
 from app.services.artifact_store import store_artifact
+from app.services.category_normalizer import normalize_category_in_analysis
 
 import structlog
 
 logger = structlog.get_logger("agents.analysis")
-
-# Valid failure categories from the enum
-VALID_CATEGORIES = {cat.value for cat in FailureCategory}
 
 # Priority weights for analysis ordering (higher = analyzed first)
 _SEVERITY_PRIORITY = {
@@ -398,65 +395,12 @@ class AnalysisAgent(BaseAgent):
         return analysis
 
     def _sanitize_category(self, analysis: dict) -> dict:
+        """Validate failure_category against the FailureCategory enum.
+
+        Delegates to the unified category_normalizer service which uses
+        a deterministic alias map (no fuzzy matching).
         """
-        Validate failure_category against the FailureCategory enum.
-        Uses fuzzy matching for near-misses, falls back to UNKNOWN.
-        """
-        raw_category = (analysis.get("failure_category") or "").strip().upper()
-
-        if raw_category in VALID_CATEGORIES:
-            analysis["failure_category"] = raw_category
-            return analysis
-
-        # Try fuzzy matching for close misspellings
-        matches = get_close_matches(raw_category, VALID_CATEGORIES, n=1, cutoff=0.7)
-        if matches:
-            corrected = matches[0]
-            logger.info(
-                "Category sanitized: '%s' -> '%s' (fuzzy match)", raw_category, corrected,
-            )
-            analysis["failure_category"] = corrected
-            analysis["_category_corrected_from"] = raw_category
-            return analysis
-
-        # Common LLM aliases
-        _CATEGORY_ALIASES = {
-            "BUG": "PRODUCT_BUG",
-            "PRODUCT": "PRODUCT_BUG",
-            "CODE_BUG": "PRODUCT_BUG",
-            "APPLICATION_BUG": "PRODUCT_BUG",
-            "INFRA": "INFRASTRUCTURE",
-            "ENV": "INFRASTRUCTURE",
-            "ENVIRONMENT": "INFRASTRUCTURE",
-            "NETWORK": "INFRASTRUCTURE",
-            "DATA": "TEST_DATA",
-            "DATA_ISSUE": "TEST_DATA",
-            "SETUP": "TEST_DATA",
-            "TEST_CODE": "AUTOMATION_DEFECT",
-            "AUTOMATION": "AUTOMATION_DEFECT",
-            "TEST_BUG": "AUTOMATION_DEFECT",
-            "INTERMITTENT": "FLAKY",
-            "RACE_CONDITION": "FLAKY",
-            "NONDETERMINISTIC": "FLAKY",
-            "NON_DETERMINISTIC": "FLAKY",
-        }
-        if raw_category in _CATEGORY_ALIASES:
-            corrected = _CATEGORY_ALIASES[raw_category]
-            logger.info(
-                "Category sanitized: '%s' -> '%s' (alias match)", raw_category, corrected,
-            )
-            analysis["failure_category"] = corrected
-            analysis["_category_corrected_from"] = raw_category
-            return analysis
-
-        # Fallback to UNKNOWN
-        if raw_category and raw_category != self.UNKNOWN_CATEGORY:
-            logger.warning(
-                "Unrecognized failure category '%s' — falling back to UNKNOWN", raw_category,
-            )
-            analysis["_category_corrected_from"] = raw_category
-        analysis["failure_category"] = self.UNKNOWN_CATEGORY
-        return analysis
+        return normalize_category_in_analysis(analysis)
 
     async def _build_progressive_fallback(
         self, tc_id: str, meta: dict

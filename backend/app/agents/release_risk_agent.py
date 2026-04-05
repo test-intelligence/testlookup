@@ -236,7 +236,7 @@ class ReleaseRiskAgent(BaseAgent):
         ))
 
         try:
-            llm = get_llm(temperature=0.0)
+            llm = await get_llm(temperature=0.0)
             response = await asyncio.wait_for(
                 llm.ainvoke(prompt),
                 timeout=_LLM_REASONING_TIMEOUT,

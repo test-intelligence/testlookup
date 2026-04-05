@@ -203,7 +203,7 @@ class ConversationAgent:
 
         # 7. Invoke LLM with timeout
         try:
-            llm = get_llm()
+            llm = await get_llm()
             response = await asyncio.wait_for(
                 llm.ainvoke(messages),
                 timeout=settings.AI_TIMEOUT_SECONDS,
@@ -696,7 +696,7 @@ class ConversationAgent:
             # Generate summary with timeout (outside DB session to avoid holding connection)
             _COMPRESS_TIMEOUT = min(60, settings.AI_TIMEOUT_SECONDS)
             try:
-                llm = get_llm()
+                llm = await get_llm()
                 response = await asyncio.wait_for(
                     llm.ainvoke([HumanMessage(content=compression_prompt)]),
                     timeout=_COMPRESS_TIMEOUT,

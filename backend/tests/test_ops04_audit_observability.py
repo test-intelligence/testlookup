@@ -61,22 +61,22 @@ class TestRedaction:
     def test_redact_password_key(self):
         from app.services.audit_dashboard_service import redact_value
 
-        assert redact_value("password", "secret123") == "***REDACTED***"
+        assert redact_value("password", "secret123") == "[REDACTED]"
 
     def test_redact_api_token_key(self):
         from app.services.audit_dashboard_service import redact_value
 
-        assert redact_value("api_token", "tok_xyz") == "***REDACTED***"
+        assert redact_value("api_token", "tok_xyz") == "[REDACTED]"
 
     def test_redact_jwt_key(self):
         from app.services.audit_dashboard_service import redact_value
 
-        assert redact_value("jwt", "eyJhbG...") == "***REDACTED***"
+        assert redact_value("jwt", "eyJhbG...") == "[REDACTED]"
 
     def test_redact_secret_key(self):
         from app.services.audit_dashboard_service import redact_value
 
-        assert redact_value("webhook_secret", "abc") == "***REDACTED***"
+        assert redact_value("webhook_secret", "abc") == "[REDACTED]"
 
     def test_no_redact_normal_key(self):
         from app.services.audit_dashboard_service import redact_value
@@ -98,8 +98,8 @@ class TestRedaction:
         }
         result = redact_dict(data)
         assert result["username"] == "admin"
-        assert result["password"] == "***REDACTED***"
-        assert result["nested"]["api_key"] == "***REDACTED***"
+        assert result["password"] == "[REDACTED]"
+        assert result["nested"]["api_key"] == "[REDACTED]"
         assert result["nested"]["name"] == "test"
 
     def test_redact_dict_none(self):
@@ -115,8 +115,8 @@ class TestRedaction:
     def test_redact_case_insensitive(self):
         from app.services.audit_dashboard_service import redact_value
 
-        assert redact_value("API_TOKEN", "xyz") == "***REDACTED***"
-        assert redact_value("Password", "xyz") == "***REDACTED***"
+        assert redact_value("API_TOKEN", "xyz") == "[REDACTED]"
+        assert redact_value("Password", "xyz") == "[REDACTED]"
 
 
 # ── Audit categories ────────────────────────────────────────────────────────
@@ -192,8 +192,9 @@ class TestValuePatternRedaction:
     def test_value_containing_token_word(self):
         from app.services.audit_dashboard_service import redact_value
 
-        # The key is normal but value contains "authorization"
-        assert redact_value("header", "Bearer eyJ...") == "***REDACTED***"
+        # The key is normal but value contains a Bearer token pattern
+        result = redact_value("header", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdef")
+        assert "[REDACTED]" in result
 
     def test_value_normal_text(self):
         from app.services.audit_dashboard_service import redact_value

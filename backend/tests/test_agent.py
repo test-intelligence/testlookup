@@ -215,8 +215,9 @@ class TestConfidenceThreshold:
 class TestLLMFactory:
     """Verify the LLM factory returns correct providers."""
 
+    @pytest.mark.asyncio
     @patch("app.core.config.settings")
-    def test_ollama_provider_selected_by_default(self, mock_settings):
+    async def test_ollama_provider_selected_by_default(self, mock_settings):
         mock_settings.LLM_PROVIDER = "ollama"
         mock_settings.LLM_MODEL = "qwen2.5:7b"
         mock_settings.OLLAMA_BASE_URL = "http://localhost:11434"
@@ -226,10 +227,11 @@ class TestLLMFactory:
 
         with patch("langchain_ollama.ChatOllama") as mock_ollama:
             from app.services.llm_factory import get_llm
-            get_llm(provider="ollama", model="qwen2.5:7b")
+            await get_llm(provider="ollama", model="qwen2.5:7b")
             mock_ollama.assert_called_once()
 
-    def test_openai_blocked_in_offline_mode(self):
+    @pytest.mark.asyncio
+    async def test_openai_blocked_in_offline_mode(self):
         with patch("app.core.config.settings") as mock_settings:
             mock_settings.LLM_PROVIDER = "openai"
             mock_settings.AI_OFFLINE_MODE = True
@@ -239,12 +241,13 @@ class TestLLMFactory:
 
             from app.services.llm_factory import get_llm
             with pytest.raises(ValueError, match="AI_OFFLINE_MODE"):
-                get_llm(provider="openai")
+                await get_llm(provider="openai")
 
-    def test_unknown_provider_raises(self):
+    @pytest.mark.asyncio
+    async def test_unknown_provider_raises(self):
         from app.services.llm_factory import get_llm
         with pytest.raises(ValueError, match="Unknown LLM provider"):
-            get_llm(provider="nonexistent_provider")
+            await get_llm(provider="nonexistent_provider")
 
 
 class TestParsers:

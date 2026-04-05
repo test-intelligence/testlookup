@@ -617,7 +617,7 @@ class AnomalyDetectionAgent(BaseAgent):
         )
 
         try:
-            llm = get_llm(temperature=0.0)
+            llm = await get_llm(temperature=0.0)
             response = await llm.ainvoke(prompt)
             raw = response.content if hasattr(response, "content") else str(response)
             return (raw if isinstance(raw, str) else str(raw)).strip(), 1

@@ -11,21 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.postgres import Project, Release, ReleasePhase, ReleaseTestRunLink, TestRun
+from app.models.serializers import serialize_model  # noqa: F401
 
 logger = structlog.get_logger(__name__)
-
-
-def serialize_model(obj) -> dict:
-    data = {}
-    for col in obj.__table__.columns:
-        value = getattr(obj, col.name)
-        if isinstance(value, uuid.UUID):
-            data[col.name] = str(value)
-        elif isinstance(value, datetime):
-            data[col.name] = value.isoformat()
-        else:
-            data[col.name] = value
-    return data
 
 
 async def get_release_or_404(db: AsyncSession, release_id: str) -> Release:

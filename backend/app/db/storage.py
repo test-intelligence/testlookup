@@ -2,6 +2,7 @@
 import asyncio
 import os
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from pathlib import Path
 from typing import AsyncGenerator, cast
 
@@ -181,8 +182,13 @@ class LocalStorageProvider(StorageProvider):
         return cast(str, self._get_full_path(key, bucket).as_uri())
 
 
+@lru_cache(maxsize=1)
 def get_storage_provider() -> StorageProvider:
-    """Factory to return the configured storage provider."""
+    """Return the configured storage provider (singleton).
+
+    The provider is created once and reused for the lifetime of the process,
+    avoiding repeated S3 session creation on every call.
+    """
     backend_type = settings.STORAGE_BACKEND.lower()
     if backend_type in ("minio", "s3"):
         return S3StorageProvider()

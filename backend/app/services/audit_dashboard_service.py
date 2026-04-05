@@ -7,7 +7,6 @@ sensitive values before returning results.
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -26,45 +25,9 @@ from app.models.postgres import (
     TestRun,
 )
 
+from app.services.redaction_service import redact_dict, redact_value  # noqa: F401
+
 logger = logging.getLogger("services.audit_dashboard")
-
-# ── Redaction patterns ───────────────────────────────────────────────────────
-
-_SENSITIVE_KEYS = frozenset({
-    "password", "secret", "token", "api_key", "api_token", "credential",
-    "private_key", "hashed_password", "jwt", "bearer", "authorization",
-    "smtp_password", "minio_secret_key", "webhook_secret",
-})
-
-_SENSITIVE_PATTERN = re.compile(
-    r"(password|secret|token|api_key|credential|private_key|bearer|authorization)",
-    re.IGNORECASE,
-)
-
-
-def redact_value(key: str, value: Any) -> Any:
-    """Redact sensitive values based on key name patterns."""
-    if value is None:
-        return None
-    key_lower = key.lower()
-    if any(s in key_lower for s in _SENSITIVE_KEYS):
-        return "***REDACTED***"
-    if isinstance(value, str) and _SENSITIVE_PATTERN.search(value):
-        return "***REDACTED***"
-    return value
-
-
-def redact_dict(data: dict | None) -> dict | None:
-    """Recursively redact sensitive values in a dict."""
-    if not data:
-        return data
-    result = {}
-    for k, v in data.items():
-        if isinstance(v, dict):
-            result[k] = redact_dict(v)
-        else:
-            result[k] = redact_value(k, v)
-    return result
 
 
 # ── Unified audit query ─────────────────────────────────────────────────────

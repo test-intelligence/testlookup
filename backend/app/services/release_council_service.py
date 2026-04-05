@@ -37,27 +37,16 @@ from app.services.criticality_service import (
     score_cluster,
 )
 
+from app.models.constants import DIMENSION_METADATA
+
 logger = logging.getLogger("services.release_council")
-
-
-# ── Dimension metadata (same as run_intelligence_service) ────────────────────
-
-_DIMENSION_META: dict[str, tuple[str, float]] = {
-    "user_impact":       ("User Impact",        0.25),
-    "env_sensitivity":   ("Env Sensitivity",    0.10),
-    "reproducibility":   ("Reproducibility",    0.15),
-    "regression_likely": ("Regression Likely",  0.20),
-    "hist_recurrence":   ("Hist. Recurrence",   0.10),
-    "blast_radius":      ("Blast Radius",       0.15),
-    "diagnosis_conf":    ("Diagnosis Confidence", 0.05),
-}
 
 
 def _build_dimension_scores(scores_dict: Optional[dict]) -> list[DimensionScore]:
     if not scores_dict:
         return []
     result = []
-    for key, (label, weight) in _DIMENSION_META.items():
+    for key, (label, weight) in DIMENSION_METADATA.items():
         score = float(scores_dict.get(key, 0))
         result.append(DimensionScore(
             name=key,
