@@ -48,7 +48,6 @@ allure-results/
 allure-report/
 
 # Claude Code — keep local, never push to remote
-CLAUDE.md
 .claude/
 Product_Plan
 frontend/playwright-report/

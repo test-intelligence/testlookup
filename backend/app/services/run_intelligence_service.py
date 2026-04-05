@@ -243,7 +243,7 @@ async def get_run_intelligence(
                 weight=weight,
                 contribution=round(cluster_dim_scores.get(key, 0.0) * weight, 2),
             )
-            for key, (label, weight) in _DIMENSION_META.items()
+            for key, (label, weight) in DIMENSION_METADATA.items()
             if key in cluster_dim_scores
         ]
         failure_clusters.append(

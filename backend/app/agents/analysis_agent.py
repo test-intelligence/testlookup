@@ -29,7 +29,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import AIAnalysis, FailureCategory, TestCase, TestStatus
+from app.models.postgres import AIAnalysis, TestCase, TestStatus
 from app.services.agent import run_triage_agent
 from app.services.artifact_store import store_artifact
 from app.services.category_normalizer import normalize_category_in_analysis

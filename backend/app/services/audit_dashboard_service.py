@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from typing import cast
 
 from sqlalchemy import Float, cast as sa_cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
