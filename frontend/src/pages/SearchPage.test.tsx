@@ -27,7 +27,7 @@ describe('SearchPage', () => {
     )
 
     expect(await screen.findByText(/Search workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/Keyword/i)).toBeInTheDocument()
+    expect(screen.getByText(/Global/i)).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Search test names/i)).toBeInTheDocument()
   })
 })

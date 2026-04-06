@@ -149,6 +149,14 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             except Exception as sync_err:
                 logger.warning("Suite membership sync failed (non-blocking): %s", sync_err)
 
+            # ── Auto-tag test cases and run (TG-5/6) ─────
+            try:
+                from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
+                await auto_tag_test_cases(db, run.id)
+                await auto_tag_test_run(db, run.id)
+            except Exception as tag_err:
+                logger.warning("Auto-tagging failed (non-blocking): %s", tag_err)
+
             # ── Link to release (auto-create if new) ───────
             if sentinel.release_name and sentinel.release_name.strip():
                 try:

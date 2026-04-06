@@ -16,8 +16,6 @@ import pytest
 
 pytest.importorskip("asyncpg")
 
-from pydantic import ValidationError  # noqa: E402
-
 from app.models.schemas import GlobalSearchResult, GlobalSearchResponse  # noqa: E402
 
 
