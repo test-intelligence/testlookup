@@ -170,6 +170,7 @@ class TestRun(Base):
 
     # S3 references
     minio_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)          # TG-1: custom + system tags
 
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -874,6 +875,7 @@ class TestPlan(Base):
     passed_cases: Mapped[int] = mapped_column(Integer, default=0)
     failed_cases: Mapped[int] = mapped_column(Integer, default=0)
     blocked_cases: Mapped[int] = mapped_column(Integer, default=0)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)          # TG-1: custom tags
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -1044,6 +1046,7 @@ class SuiteMembership(Base):
     first_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
     deleted_at_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
     review_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)          # TG-4: custom suite tags
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 

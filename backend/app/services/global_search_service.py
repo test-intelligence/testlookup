@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import structlog
-from sqlalchemy import func, select, or_
+from sqlalchemy import cast, func, select, or_, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -95,6 +95,7 @@ async def _search_test_cases(
             TestCase.test_name.ilike(pattern),
             TestCase.suite_name.ilike(pattern),
             TestCase.error_message.ilike(pattern),
+            cast(TestCase.tags, String).ilike(pattern),
         ))
         .order_by(TestCase.created_at.desc())
         .limit(50)
@@ -131,6 +132,7 @@ async def _search_test_runs(
             TestRun.build_number.ilike(pattern),
             TestRun.branch.ilike(pattern),
             TestRun.jenkins_job.ilike(pattern),
+            cast(TestRun.tags, String).ilike(pattern),
         ))
         .order_by(TestRun.created_at.desc())
         .limit(20)

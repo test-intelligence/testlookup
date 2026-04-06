@@ -920,6 +920,7 @@ class TestPlanCreate(BaseModel):
     planned_start_date: Optional[datetime] = None
     planned_end_date: Optional[datetime] = None
     assigned_to_id: Optional[uuid.UUID] = None
+    tags: Optional[List[str]] = None
 
 
 class TestPlanUpdate(BaseModel):
@@ -932,6 +933,7 @@ class TestPlanUpdate(BaseModel):
     actual_start_date: Optional[datetime] = None
     actual_end_date: Optional[datetime] = None
     assigned_to_id: Optional[uuid.UUID] = None
+    tags: Optional[List[str]] = None
 
 
 class TestPlanResponse(BaseModel):
@@ -953,6 +955,7 @@ class TestPlanResponse(BaseModel):
     passed_cases: int
     failed_cases: int
     blocked_cases: int
+    tags: Optional[List[str]] = None
     created_at: datetime
     updated_at: datetime
 

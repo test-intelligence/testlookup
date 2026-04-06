@@ -653,6 +653,15 @@ def dispatch_ai_summary_email(
         except Exception as sub_exc:
             logger.warning("[AI Email] Per-run subscription dispatch failed (non-blocking): %s", sub_exc)
 
+        # TG-5/6: Apply AI-derived signal tags after analysis
+        try:
+            from app.services.auto_tagging_service import auto_tag_after_analysis
+            async with AsyncSessionLocal() as tag_db:
+                await auto_tag_after_analysis(tag_db, _uuid.UUID(test_run_id))
+                await tag_db.commit()
+        except Exception as tag_exc:
+            logger.warning("[AI Email] Post-analysis auto-tagging failed (non-blocking): %s", tag_exc)
+
         logger.info("[AI Email] Summary email dispatched for run %s (build %s)", test_run_id, build_number)
 
     try:
