@@ -355,6 +355,34 @@ class SearchResponse(BaseModel):
     search_type: str  # "keyword" | "semantic" | "hybrid"
 
 
+# ── Global Search Schemas (GS-2) ─────────────────────────────
+
+class GlobalSearchResult(BaseModel):
+    """A single result from system-wide global search."""
+    entity_type: str                          # test_case | test_run | suite | defect | flaky_test | release
+    entity_id: str                            # UUID as string
+    title: str                                # display title
+    subtitle: str = ""                        # secondary context
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
+    navigation_url: str                       # frontend route
+    relevance_score: float = 0.0
+    match_reasons: List[str] = []
+    metadata: dict = Field(default_factory=dict)
+
+
+class GlobalSearchResponse(BaseModel):
+    """Response from the global search endpoint."""
+    items: List[GlobalSearchResult]
+    total: int
+    query: str
+    search_type: str = "keyword"
+    entity_counts: dict = Field(default_factory=dict)   # {"test_case": 5, "test_run": 3}
+    page: int = 1
+    size: int = 20
+    pages: int = 1
+
+
 # ── Quality Gate Schemas ──────────────────────────────────────
 
 class QualityGateRule(BaseModel):

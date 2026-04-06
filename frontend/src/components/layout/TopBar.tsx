@@ -92,7 +92,7 @@ export default function TopBar() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
         <input
           type="text"
-          placeholder="Search tests, errors… (Enter)"
+          placeholder="Search tests, runs, defects… (Enter)"
           className="input pl-9 h-9 text-sm"
           value={searchVal}
           onChange={e => setSearchVal(e.target.value)}
