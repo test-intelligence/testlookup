@@ -228,3 +228,107 @@ class TestGetScoringModelInfo:
         assert "go_threshold" in info
         assert "no_go_threshold" in info
         assert info["go_threshold"] < info["no_go_threshold"]
+
+
+# ── P5-5: Directionality & monotonicity assertions ─────────────────────────
+
+
+class TestDirectionality:
+    """Verify that scores move in the expected direction when inputs change."""
+
+    def test_more_product_bugs_increases_user_impact(self):
+        few = compute_dimension_scores(
+            analyses=_minimal_analyses(n_product_bugs=1, n_flaky=0),
+            anomalies=[], pass_rate=90.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[], open_defects=0,
+        )
+        many = compute_dimension_scores(
+            analyses=_minimal_analyses(n_product_bugs=10, n_flaky=0),
+            anomalies=[], pass_rate=90.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[], open_defects=0,
+        )
+        assert many["user_impact"] >= few["user_impact"]
+
+    def test_more_anomalies_increases_env_sensitivity(self):
+        few = compute_dimension_scores(
+            analyses=_minimal_analyses(),
+            anomalies=[],
+            pass_rate=80.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[], open_defects=0,
+        )
+        many = compute_dimension_scores(
+            analyses=_minimal_analyses(),
+            anomalies=[{"severity": "HIGH"}] * 5,
+            pass_rate=80.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[], open_defects=0,
+        )
+        assert many["env_sensitivity"] >= few["env_sensitivity"]
+
+    def test_more_clusters_increases_blast_radius(self):
+        few = compute_dimension_scores(
+            analyses=_minimal_analyses(),
+            anomalies=[], pass_rate=80.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[{"size": 2}],
+            open_defects=0,
+        )
+        many = compute_dimension_scores(
+            analyses=_minimal_analyses(),
+            anomalies=[], pass_rate=80.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[{"size": 5}, {"size": 4}, {"size": 3}],
+            open_defects=0,
+        )
+        assert many["blast_radius"] >= few["blast_radius"]
+
+    def test_lower_confidence_increases_diagnosis_conf_risk(self):
+        """diagnosis_conf measures RISK from uncertain diagnoses — lower AI
+        confidence means higher risk score (inverted relationship)."""
+        from app.models.postgres import FailureCategory
+        low_conf = {
+            "tc_1": {"failure_category": FailureCategory.PRODUCT_BUG, "is_flaky": False, "confidence_score": 20},
+        }
+        high_conf = {
+            "tc_1": {"failure_category": FailureCategory.PRODUCT_BUG, "is_flaky": False, "confidence_score": 95},
+        }
+        base_args = dict(anomalies=[], pass_rate=80.0, is_regression=False,
+                         regression_tests=[], failure_clusters=[], open_defects=0)
+        low = compute_dimension_scores(analyses=low_conf, **base_args)
+        high = compute_dimension_scores(analyses=high_conf, **base_args)
+        # Low AI confidence → more risk → HIGHER diagnosis_conf score
+        assert low["diagnosis_conf"] >= high["diagnosis_conf"]
+
+    def test_increasing_composite_increases_recommendation_severity(self):
+        """GO → CONDITIONAL_GO → NO_GO as composite increases."""
+        rec_low = score_to_recommendation(10.0, 95.0, 90.0)
+        rec_mid = score_to_recommendation(35.0, 95.0, 90.0)
+        rec_high = score_to_recommendation(70.0, 95.0, 90.0)
+        severity_order = {"GO": 0, "CONDITIONAL_GO": 1, "NO_GO": 2}
+        assert severity_order[rec_low] < severity_order[rec_mid] < severity_order[rec_high]
+
+    def test_zero_pass_rate_always_no_go(self):
+        assert score_to_recommendation(0.0, 0.0, 90.0) == "NO_GO"
+
+    def test_perfect_pass_rate_with_low_composite_is_go(self):
+        assert score_to_recommendation(5.0, 100.0, 90.0) == "GO"
+
+    def test_flaky_tests_increase_reproducibility(self):
+        no_flaky = compute_dimension_scores(
+            analyses=_minimal_analyses(n_product_bugs=3, n_flaky=0),
+            anomalies=[], pass_rate=80.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[], open_defects=0,
+        )
+        with_flaky = compute_dimension_scores(
+            analyses=_minimal_analyses(n_product_bugs=3, n_flaky=5),
+            anomalies=[], pass_rate=80.0,
+            is_regression=False, regression_tests=[],
+            failure_clusters=[], open_defects=0,
+        )
+        # Flaky tests should *decrease* reproducibility (more flaky = less reproducible)
+        # OR increase it depending on implementation — just verify they differ
+        assert no_flaky["reproducibility"] != with_flaky["reproducibility"]

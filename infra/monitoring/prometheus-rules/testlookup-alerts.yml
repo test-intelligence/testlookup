@@ -81,3 +81,77 @@ groups:
         annotations:
           summary: "Abnormally high number of active pipeline runs"
           description: "More than 20 pipeline runs are simultaneously active — possible stuck pipelines."
+
+  # ── P5-7: Infrastructure alerts ────────────────────────────────────────────
+  - name: testlookup.infrastructure
+    interval: 30s
+    rules:
+
+      # PostgreSQL connection pool exhaustion
+      - alert: TestLookupDBPoolExhausted
+        expr: |
+          sqlalchemy_pool_checked_out{job="testlookup-backend"}
+          /
+          sqlalchemy_pool_size{job="testlookup-backend"} > 0.9
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool > 90% utilized"
+          description: "PostgreSQL pool is nearly exhausted. Increase pool_size or investigate long-running queries."
+
+      # Redis memory at capacity
+      - alert: TestLookupRedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage > 85%"
+          description: "Redis is approaching its memory limit. Volatile-LRU eviction may start dropping session tokens."
+
+      # Celery queue depth — tasks backing up
+      - alert: TestLookupCeleryQueueBacklog
+        expr: |
+          sum by (queue_name) (celery_queue_length) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery queue backlog > 100 tasks"
+          description: "Queue {{ $labels.queue_name }} has more than 100 pending tasks. Workers may need scaling."
+
+      # Task execution time P99 exceeds budget
+      - alert: TestLookupTaskLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(celery_task_runtime_seconds_bucket[10m]))
+            by (le, task_name)
+          ) > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery task P99 latency > 120s"
+          description: "Task {{ $labels.task_name }} p99 execution time exceeds 2 minutes."
+
+      # Disk space low (requires node-exporter)
+      - alert: TestLookupDiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.10
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space < 10% remaining"
+          description: "Root filesystem has less than 10% free space. Data loss risk."
+
+      # OOM kill events (requires node-exporter with textfile collector)
+      - alert: TestLookupOOMKillDetected
+        expr: increase(node_vmstat_oom_kill[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OOM kill detected on host"
+          description: "The kernel OOM killer terminated a process. Check container resource limits."

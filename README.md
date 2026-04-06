@@ -15,7 +15,8 @@ TestLookup bridges the gap between automated test execution and defect resolutio
 
 It also ships a first-class **MCP (Model Context Protocol) server** so AI assistants (AI Desktop Clients, IDE plugins, CI pipelines) can query test quality, investigate failures, and gate releases through natural-language conversations — no browser required.
 
-## Key Features
+
+## Key Features -
 
 | Domain | Capability |
 |--------|-----------|
