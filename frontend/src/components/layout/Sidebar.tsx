@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FlaskConical,
@@ -95,6 +95,12 @@ function SidebarGroup({ group }: { group: NavGroup }) {
   const isWithinGroup = group.activePrefixes.some(p => location.pathname.startsWith(p))
   const [open, setOpen] = useState(isWithinGroup)
 
+  // P4-2: Stable callback reference — prevents child re-renders on every parent render
+  const handleToggle = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setOpen(v => !v)
+  }, [])
+
   const GroupIcon = group.icon
 
   return (
@@ -115,10 +121,11 @@ function SidebarGroup({ group }: { group: NavGroup }) {
         </NavLink>
         {group.children.length > 0 && (
           <button
-            onClick={(e) => { e.preventDefault(); setOpen(v => !v) }}
+            onClick={handleToggle}
             className="p-1.5 rounded-md transition-colors"
             style={{ color: 'var(--color-text-faint)' }}
             aria-label={open ? 'Collapse' : 'Expand'}
+            aria-expanded={open}
           >
             <ChevronDown
               className={clsx('h-3.5 w-3.5 transition-transform duration-200', open && 'rotate-180')}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AlertTriangle, Bug, CheckCircle, Clock, TrendingUp, Zap } from 'lucide-react'
 import MetricCard from '@/components/ui/MetricCard'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import TrendChart from '@/components/charts/TrendChart'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -142,22 +143,26 @@ export default function OverviewPage() {
         />
       </div>
 
-      {/* Charts */}
+      {/* Charts — P4-7: each wrapped in SectionErrorBoundary */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="card">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Execution Trend — Pass / Fail / Skip</h3>
-          {trendsLoading
-            ? <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
-            : <TrendChart data={trendData} type="line" />
-          }
-        </div>
-        <div className="card">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Total Test Automation Growth</h3>
-          {trendsLoading
-            ? <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
-            : <TrendChart data={trendData} type="area" />
-          }
-        </div>
+        <SectionErrorBoundary message="Failed to load execution trend chart">
+          <div className="card">
+            <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Execution Trend — Pass / Fail / Skip</h3>
+            {trendsLoading
+              ? <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
+              : <TrendChart data={trendData} type="line" />
+            }
+          </div>
+        </SectionErrorBoundary>
+        <SectionErrorBoundary message="Failed to load automation growth chart">
+          <div className="card">
+            <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Total Test Automation Growth</h3>
+            {trendsLoading
+              ? <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
+              : <TrendChart data={trendData} type="area" />
+            }
+          </div>
+        </SectionErrorBoundary>
       </div>
     </div>
   )

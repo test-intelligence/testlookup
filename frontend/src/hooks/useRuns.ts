@@ -1,12 +1,13 @@
 import useSWR from 'swr'
 import { runsService } from '@/services/runsService'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useRuns(params?: Record<string, unknown>) {
   return useProjectScopedSWR(
     'runs',
     (projectId) => runsService.list(projectId, params),
-    { refreshInterval: 15_000 },
+    { refreshInterval: REFRESH_INTERVALS.ACTIVE },
     [params],
   )
 }
