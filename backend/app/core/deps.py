@@ -1,4 +1,5 @@
 """Dependencies for FastAPI (authentication, authorisation, webhook security)."""
+import json
 import logging
 import uuid
 from typing import Callable
@@ -15,6 +16,9 @@ from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 
 logger = logging.getLogger(__name__)
+
+# P3-2: Redis cache TTL for project membership lookups (seconds)
+_MEMBERSHIP_CACHE_TTL = 300  # 5 minutes
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/v1/auth/login",
@@ -191,16 +195,57 @@ async def get_accessible_project_ids(
     is ADMIN (meaning unrestricted access).
 
     Non-admin users can only access projects they are a member of.
+
+    P3-2: Results are cached in Redis for 5 minutes to avoid a DB query on
+    every request.  Invalidated by ``invalidate_membership_cache()``.
     """
     from app.models.postgres import ProjectMember
 
     if _normalize_user_role(user.role) == UserRole.ADMIN:
         return None  # ADMIN sees everything
 
+    # P3-2: Check Redis cache first
+    cache_key = f"membership:{user.id}"
+    try:
+        from app.db.redis_client import get_redis
+        redis = get_redis()
+        cached = await redis.get(cache_key)
+        if cached is not None:
+            return {uuid.UUID(pid) for pid in json.loads(cached)}
+    except Exception:
+        pass  # Redis unavailable — fall through to DB
+
     result = await db.execute(
         select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
     )
-    return {row[0] for row in result.all()}
+    project_ids = {row[0] for row in result.all()}
+
+    # Store in Redis cache
+    try:
+        from app.db.redis_client import get_redis
+        redis = get_redis()
+        await redis.set(
+            cache_key,
+            json.dumps([str(pid) for pid in project_ids]),
+            ex=_MEMBERSHIP_CACHE_TTL,
+        )
+    except Exception:
+        pass  # Cache write failure is non-blocking
+
+    return project_ids
+
+
+async def invalidate_membership_cache(user_id: uuid.UUID) -> None:
+    """Invalidate the cached project membership set for a user.
+
+    Call after adding/removing/updating project members.
+    """
+    try:
+        from app.db.redis_client import get_redis
+        redis = get_redis()
+        await redis.delete(f"membership:{user_id}")
+    except Exception:
+        pass  # Best-effort invalidation
 
 
 def require_project_access(project_id_param: str = "project_id"):

@@ -89,99 +89,16 @@ async def get_regression_diff(
 ):
     """
     Return a "What changed since last good run?" diff for the given test run.
-
-    Finds the most recent passing baseline run for the same project, then compares:
-    - New failing tests (not failing in baseline)
-    - Pass rate delta
-    - Build number range
-    - Commit range (from GitHub API if configured)
+    P3-9: Business logic extracted to regression_diff_service.
     """
-    # Fetch current run
+    from app.services.regression_diff_service import compute_regression_diff
+
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
     run = run_result.scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="Test run not found")
 
-    from app.core.config import settings
-
-    # Find last passing baseline run (pass_rate >= threshold) before this run
-    baseline_result = await db.execute(
-        select(TestRun)
-        .where(
-            TestRun.project_id == run.project_id,
-            TestRun.id != run_id,
-            TestRun.pass_rate >= settings.RELEASE_PASS_RATE_THRESHOLD * 0.85,
-            TestRun.created_at < run.created_at,
-        )
-        .order_by(TestRun.created_at.desc())
-        .limit(1)
-    )
-    baseline = baseline_result.scalar_one_or_none()
-
-    if not baseline:
-        return {
-            "run_id": str(run_id),
-            "baseline_run_id": None,
-            "baseline_available": False,
-            "message": "No recent passing baseline run found for this project",
-        }
-
-    # Get failing test fingerprints in current run
-    current_failed = await db.execute(
-        select(TestCase.test_fingerprint, TestCase.test_name, TestCase.suite_name)
-        .where(TestCase.test_run_id == run_id, TestCase.status.in_(["FAILED", "BROKEN"]))
-    )
-    current_failed_fps = {r.test_fingerprint: {"test_name": r.test_name, "suite_name": r.suite_name}
-                          for r in current_failed.all() if r.test_fingerprint}
-
-    # Get failing test fingerprints in baseline run
-    baseline_failed = await db.execute(
-        select(TestCase.test_fingerprint)
-        .where(TestCase.test_run_id == baseline.id, TestCase.status.in_(["FAILED", "BROKEN"]))
-    )
-    baseline_failed_fps = {r.test_fingerprint for r in baseline_failed.all() if r.test_fingerprint}
-
-    # New failures = in current but not in baseline
-    new_failing = [
-        {"test_name": info["test_name"], "suite_name": info["suite_name"]}
-        for fp, info in current_failed_fps.items()
-        if fp not in baseline_failed_fps
-    ][:50]
-
-    # Resolved failures = in baseline but not in current
-    resolved_count = len(baseline_failed_fps - set(current_failed_fps.keys()))
-
-    pass_rate_delta = round((run.pass_rate or 0) - (baseline.pass_rate or 0), 2)
-
-    # Fetch commit range from GitHub API if configured
-    commits: list[dict] = []
-    if settings.GITHUB_TOKEN and settings.GITHUB_REPO and run.start_time and baseline.end_time:
-        try:
-            from app.tools.fetch_build_changes import _fetch_github_commits
-            commits = await _fetch_github_commits(
-                repo=settings.GITHUB_REPO,
-                since=baseline.end_time.isoformat(),
-                until=run.start_time.isoformat(),
-                token=settings.GITHUB_TOKEN,
-            )
-        except Exception:
-            pass  # Commit range is nice-to-have, not critical
-
-    return {
-        "run_id": str(run_id),
-        "baseline_run_id": str(baseline.id),
-        "baseline_available": True,
-        "build_number": run.build_number,
-        "baseline_build_number": baseline.build_number,
-        "pass_rate": run.pass_rate,
-        "baseline_pass_rate": baseline.pass_rate,
-        "pass_rate_delta": pass_rate_delta,
-        "new_failing_tests": new_failing,
-        "new_failing_count": len(new_failing),
-        "resolved_count": resolved_count,
-        "commit_range": commits,
-        "commit_count": len(commits),
-    }
+    return await compute_regression_diff(run, db)
 
 
 @router.post("/{run_id}/release")

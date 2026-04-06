@@ -2,7 +2,7 @@
 import logging
 import uuid as _uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
 from sqlalchemy import select
@@ -351,12 +351,16 @@ async def logout(current_user: User = Depends(get_current_active_user)):
 
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
+    limit: int = Query(100, ge=1, le=500, description="Max users to return"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Return all active users (for assignee dropdowns)."""
+    """Return active users for assignee dropdowns (bounded)."""
     result = await db.execute(
-        select(User).where(User.is_active == True).order_by(User.full_name)  # noqa: E712
+        select(User)
+        .where(User.is_active == True)  # noqa: E712
+        .order_by(User.full_name)
+        .limit(limit)
     )
     return result.scalars().all()
 
