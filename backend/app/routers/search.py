@@ -1,9 +1,11 @@
-"""Search endpoint — keyword, semantic (ChromaDB), and hybrid modes."""
+"""Search endpoint — keyword, semantic (ChromaDB), hybrid, and global modes."""
 import time
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import get_current_active_user
 from app.core.metrics import semantic_search_duration_seconds, semantic_search_total
 from app.db.postgres import get_db
 from app.services.search_service import search_test_cases_query
@@ -140,3 +142,37 @@ async def search_test_cases(
         "size": size,
         "pages": pages,
     }
+
+
+@router.get("/global")
+async def global_search_endpoint(
+    q: str = Query(..., min_length=1),
+    project_id: Optional[str] = None,
+    entity_types: Optional[str] = Query(None, description="Comma-separated entity types to search"),
+    days: Optional[int] = Query(None, ge=1, le=365),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_active_user),
+):
+    """
+    System-wide global search across multiple entity types.
+
+    Searches test cases, test runs, suites, defects, flaky tests, and releases.
+    Returns mixed results with entity badges and navigation URLs.
+    """
+    from app.services.global_search_service import global_search, ALL_ENTITY_TYPES
+
+    types: set[str] | None = None
+    if entity_types:
+        types = {t.strip() for t in entity_types.split(",") if t.strip()} & ALL_ENTITY_TYPES
+
+    return await global_search(
+        db=db,
+        q=q,
+        project_id=project_id,
+        entity_types=types or None,
+        days=days,
+        page=page,
+        size=size,
+    )
