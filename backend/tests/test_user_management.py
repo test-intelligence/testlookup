@@ -91,6 +91,7 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
                 get_current_active_user=MagicMock(),
                 verify_webhook_secret=MagicMock(),
                 require_project_role=MagicMock(return_value=MagicMock()),
+                invalidate_membership_cache=AsyncMock(),
             ),
         )
 
