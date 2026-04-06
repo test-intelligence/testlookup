@@ -366,11 +366,25 @@ class RulesEngine:
         # ── Layer 4: Action plan ────────────────────────────────────────
         action_plan = _build_action_plan(top_category, all_actions, release_impact, flaky_ids)
 
+        # ── Executive panel (structured, scannable) ────────────────────
+        from app.services.executive_panel_builder import build_executive_panel
+
+        executive_panel = build_executive_panel(
+            run_data=run_data,
+            category_counts=category_counts,
+            flaky_count=len(flaky_ids),
+            anomaly_count=len(anomalies),
+            cluster_count=0,
+            release_impact=release_impact,
+            recommended_actions=all_actions[:3],
+        )
+
         return {
             "layer1_executive_summary": exec_summary,
             "layer2_incident_view": incident_view,
             "layer3_evidence_pack": evidence_pack,
             "layer4_action_plan": action_plan,
+            "executive_panel": executive_panel,
         }
 
 

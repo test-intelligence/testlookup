@@ -211,6 +211,7 @@ async def get_run_intelligence(
             "layer2_incident":     summary_doc.get("layer2_incident_view"),
             "layer3_evidence":     summary_doc.get("layer3_evidence_pack"),
             "layer4_action_plan":  summary_doc.get("layer4_action_plan"),
+            "executive_panel":     summary_doc.get("executive_panel"),
             "generated_at":        summary_doc.get("generated_at"),
             "schema_version":      summary_doc.get("schema_version", 1),
         }
@@ -396,6 +397,21 @@ async def get_run_intelligence(
         fallback_used=actual_fallback,
         generated_at=generated_at,
     )
+
+    # ── Enrich executive_panel with live data ──────────────────────────
+    if structured_summary and structured_summary.get("executive_panel"):
+        panel = structured_summary["executive_panel"]
+        panel.setdefault("metrics", {})["failure_clusters"] = len(failure_clusters)
+        if release_decision:
+            panel["risk_score"] = release_decision.get("risk_score")
+            panel["status_signal"] = release_decision.get("recommendation", panel.get("status_signal"))
+        if what_changed:
+            panel["baseline_comparison"] = {
+                "pass_rate_delta": round(float(what_changed.get("pass_rate_delta") or 0), 1),
+                "new_failures": len(what_changed.get("new_failures", [])),
+                "resolved": len(what_changed.get("resolved_failures", [])),
+                "classification": what_changed.get("regression_classification", "unclassified"),
+            }
 
     return {
         "run": run_summary,

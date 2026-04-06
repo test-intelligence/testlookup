@@ -67,6 +67,57 @@ class ActionPlan(BaseModel):
     owner_hints: dict[str, str] = Field(default_factory=dict)
 
 
+# ── Executive Panel Schemas ────────────────────────────────────────────────
+
+
+class ExecutivePanelMetrics(BaseModel):
+    """Core run metrics for the executive summary panel."""
+    build_number: str = ""
+    branch: str = ""
+    total_tests: int = 0
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    pass_rate: float = 0.0
+    duration_seconds: int | None = None
+    failure_clusters: int = 0
+    anomaly_count: int = 0
+
+
+class DominantFailure(BaseModel):
+    """Dominant failure category in the executive panel."""
+    category: str = "UNKNOWN"
+    count: int = 0
+    percentage: float = 0.0
+
+
+class BaselineComparison(BaseModel):
+    """Baseline comparison metrics for the executive panel."""
+    pass_rate_delta: float = 0.0
+    new_failures: int = 0
+    resolved: int = 0
+    classification: str = "unclassified"
+
+
+class ExecutivePanel(BaseModel):
+    """Structured executive summary panel — deterministically generated."""
+    headline: str = ""
+    status_signal: str = Field(default="CONDITIONAL_GO")
+    risk_score: int | None = None
+    metrics: ExecutivePanelMetrics = Field(default_factory=ExecutivePanelMetrics)
+    dominant_failure: DominantFailure | None = None
+    key_takeaways: list[str] = Field(default_factory=list)
+    baseline_comparison: BaselineComparison | None = None
+    next_actions: list[str] = Field(default_factory=list)
+
+    @field_validator("status_signal", mode="before")
+    @classmethod
+    def normalize_status_signal(cls, v: Any) -> str:
+        allowed = {"GO", "CONDITIONAL_GO", "NO_GO"}
+        val = str(v).strip().upper().replace(" ", "_")
+        return val if val in allowed else "CONDITIONAL_GO"
+
+
 # ── Regression Watchman Schemas ──────────────────────────────────────────────
 
 
