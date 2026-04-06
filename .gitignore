@@ -56,3 +56,4 @@ LintFailures
 docs/
 BuildFailures/
 CSS_Samples/
+backend/celerybeat-schedule

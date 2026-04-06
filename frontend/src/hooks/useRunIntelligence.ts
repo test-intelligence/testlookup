@@ -69,6 +69,31 @@ export function useBaselineDiff(runId: string | null) {
   }
 }
 
+/**
+ * P4-3: Batched hook that fetches intelligence + summary + baseline diff in one
+ * render cycle.  Each sub-request is still a separate SWR key (so they cache
+ * independently), but they're launched in the same component render — avoiding
+ * the waterfall of 3 sequential hooks mounting across parent/child boundaries.
+ */
+export function useRunFull(
+  runId: string | null,
+  mode: 'executive' | 'developer' | 'manager' = 'executive',
+) {
+  const intel = useRunIntelligence(runId)
+  const summary = useRunModeSummary(runId, mode)
+  const baseline = useBaselineDiff(runId)
+
+  return {
+    ...intel,
+    summary: summary.summary,
+    summaryLoading: summary.isLoading,
+    diff: baseline.diff,
+    diffLoading: baseline.isLoading,
+    isFullyLoaded: !intel.isLoading && !summary.isLoading && !baseline.isLoading,
+  }
+}
+
+
 export function useScoringModel() {
   const { data, error, isLoading } = useSWR<ScoringModel>(
     'scoring-model',

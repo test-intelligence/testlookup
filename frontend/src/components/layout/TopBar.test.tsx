@@ -166,7 +166,7 @@ describe('TopBar', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+    fireEvent.click(screen.getByRole('button', { name: /Notifications/ }))
     expect(screen.getByText('Notifications')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }))

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Package, PencilLine, TrendingDown, X, Check } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
@@ -205,9 +205,24 @@ function ReleaseTag({ releaseName, onSet }: {
 export default function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
-  const [page, setPage] = useState(1)
-  const [statusFilter, setStatusFilter] = useState('')
-  const [suiteFilter, setSuiteFilter] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // P4-5: Persist filters in URL params so they survive navigation
+  const [page, setPage] = useState(() => Number(searchParams.get('page')) || 1)
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || '')
+  const [suiteFilter, setSuiteFilter] = useState(() => searchParams.get('suite') || '')
+
+  // P4-5: Sync state changes back to URL (replace to avoid history spam).
+  // NOTE: setSearchParams is intentionally excluded from deps — including it
+  // causes an infinite loop because react-router returns a new reference each render.
+  useEffect(() => {
+    const params: Record<string, string> = {}
+    if (statusFilter) params.status = statusFilter
+    if (suiteFilter) params.suite = suiteFilter
+    if (page > 1) params.page = String(page)
+    setSearchParams(params, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, suiteFilter, page])
 
   useProjectChangeRedirect('/runs', Boolean(runId))
 
@@ -271,6 +286,7 @@ export default function RunDetailPage() {
             <button
               key={s || 'all'}
               onClick={() => { setStatusFilter(s); setPage(1) }}
+              aria-pressed={statusFilter === s}
               className={clsx(
                 'px-3 py-1 rounded-md text-sm font-medium transition-colors',
                 statusFilter === s ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
