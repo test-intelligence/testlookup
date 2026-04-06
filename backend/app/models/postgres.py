@@ -1016,6 +1016,59 @@ class TestCaseAuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+# ── Suite Membership Traceability (TS-1) ─────────────────────────────────────
+
+
+class SuiteMembership(Base):
+    """Tracks which test cases belong to which suite, linked to the run that confirmed membership."""
+    __tablename__ = "suite_memberships"
+    __table_args__ = (
+        UniqueConstraint("project_id", "suite_name", "test_fingerprint", name="uq_suite_membership"),
+        Index("ix_sm_project_suite", "project_id", "suite_name"),
+        Index("ix_sm_fingerprint", "test_fingerprint"),
+        Index("ix_sm_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[str] = mapped_column(String(1000), nullable=False)
+    class_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    managed_test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="SET NULL"), nullable=True,
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="execution")  # execution | managed | linked
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")      # active | deleted | needs_review
+    last_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    first_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    deleted_at_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    review_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class SuiteMembershipEvent(Base):
+    """Immutable audit log of suite membership changes detected during sync."""
+    __tablename__ = "suite_membership_events"
+    __table_args__ = (
+        Index("ix_sme_project_suite", "project_id", "suite_name", "created_at"),
+        Index("ix_sme_run", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # added | deleted | modified | restored
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    old_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    new_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # ── Release Management ────────────────────────────────────────────────────────
 
 class Release(Base):

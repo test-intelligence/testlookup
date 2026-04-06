@@ -190,6 +190,57 @@ export const testManagementService = {
 
   getSuiteCases: (suiteName: string, projectId: string | null): Promise<Array<{id: string; test_name: string; suite_name: string; status: string; duration_ms: number | null; class_name: string | null; package_name: string | null; created_at: string | null}>> =>
     getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/cases`, { params: projectId ? { project_id: projectId } : {} }),
+
+  // Suite Traceability (TS-5)
+  getSuiteMembership: (suiteName: string, projectId: string | null, status?: string): Promise<SuiteMembershipItem[]> =>
+    getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/membership`, { params: { ...(projectId ? { project_id: projectId } : {}), ...(status ? { status } : {}) } }),
+
+  getSuiteChanges: (suiteName: string, projectId: string | null, runId?: string): Promise<SuiteMembershipEventItem[]> =>
+    getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/changes`, { params: { ...(projectId ? { project_id: projectId } : {}), ...(runId ? { run_id: runId } : {}) } }),
+
+  getSuiteDeleted: (suiteName: string, projectId: string | null): Promise<SuiteDeletedItem[]> =>
+    getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/deleted`, { params: projectId ? { project_id: projectId } : {} }),
+}
+
+export interface SuiteMembershipItem {
+  id: string
+  suite_name: string
+  test_fingerprint: string
+  test_name: string
+  class_name: string | null
+  source: string
+  status: string
+  review_tag: string | null
+  last_seen_run_id: string | null
+  first_seen_run_id: string | null
+  managed_test_case_id: string | null
+  created_at: string | null
+}
+
+export interface SuiteMembershipEventItem {
+  id: string
+  suite_name: string
+  test_fingerprint: string
+  test_name: string
+  event_type: 'added' | 'deleted' | 'modified' | 'restored'
+  run_id: string | null
+  old_values: Record<string, unknown> | null
+  new_values: Record<string, unknown> | null
+  details: string | null
+  created_at: string | null
+}
+
+export interface SuiteDeletedItem {
+  id: string
+  original_suite: string
+  test_fingerprint: string
+  test_name: string
+  class_name: string | null
+  status: string
+  review_tag: string | null
+  deleted_at_run_id: string | null
+  last_seen_run_id: string | null
+  created_at: string | null
 }
 export interface UserSummary {
   id: string
