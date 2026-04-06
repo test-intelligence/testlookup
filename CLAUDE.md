@@ -36,7 +36,7 @@ MCP Server (mcp:8002) — AI assistant integration (stdio + SSE)
 
 **Backend:** FastAPI + SQLAlchemy (async) + Motor (MongoDB) + Celery
 **Frontend:** React 18 + Vite + TypeScript + Tailwind CSS + Zustand + SWR
-**AI Layer:** LangChain ReAct agent + LangGraph multi-agent pipelines (standard + deep)
+**AI Layer:** LangChain ReAct agent + LangGraph multi-agent pipelines (standard + deep) + ML classifier (scikit-learn) + rules engine
 **Databases:** PostgreSQL 16 (structured), MongoDB 7 (logs/artifacts), Redis 7 (broker + streams), MinIO (S3 object store), ChromaDB (vectors)
 **Observability:** OpenTelemetry → Jaeger, Prometheus, Grafana
 
@@ -53,6 +53,7 @@ MCP Server (mcp:8002) — AI assistant integration (stdio + SSE)
 | Object storage | aioboto3 (MinIO/S3) |
 | Background jobs | Celery 5.4 + Flower |
 | AI/LLM | LangChain 0.3.9 + LangGraph 0.2 |
+| ML classifier | scikit-learn HistGradientBoosting (LLM-free mode) |
 | Local LLM | Ollama (qwen2.5, llama3, mistral) |
 | Vector store | ChromaDB 0.5 |
 | DB migrations | Alembic 1.14 |
@@ -172,15 +173,19 @@ npm run dev   # → http://localhost:3000
   - `db/` — async clients: `postgres.py` (SQLAlchemy), `mongo.py` (Motor), `minio.py` (aioboto3), `redis_client.py`
   - `models/postgres.py` — all SQLAlchemy ORM models; `models/schemas.py` — Pydantic v2 schemas
   - `routers/` — thin HTTP routers (registered in `bootstrap.py` as `PROTECTED_ROUTERS` or `PUBLIC_ROUTERS`)
-  - `services/` — business logic; `services/training/` — fine-tuning pipeline
+  - `services/` — business logic; `services/training/` — fine-tuning pipeline; `services/ml/` — ML classifier + feature extraction + training
+  - `services/analysis_router.py` — central dispatcher (LLM/ML/Rules mode selection)
+  - `services/rules_engine.py` — enhanced pattern matching + template summaries
   - `agents/` — LangGraph multi-agent pipelines (`workflow.py` builds standard + deep graphs)
   - `tools/` — 11 LangChain agent tools
   - `streams/` — Redis Streams producer/consumer + circuit breaker
   - `worker/` — Celery app, tasks, training tasks
-- `backend/migrations/` — Alembic versions (0001-0038)
+- `backend/models/` — trained ML model artifacts (.joblib)
+- `backend/migrations/` — Alembic versions (0001-0046)
 - `backend/tests/` — pytest suite
 - `frontend/src/` — React 18 + TypeScript SPA
   - `pages/`, `components/`, `services/` (Axios API clients), `hooks/` (SWR wrappers), `store/` (Zustand)
+  - `config/refreshIntervals.ts` — standardized SWR polling intervals
 - `mcp/` — MCP Server (20 tools, 10 resources, 6 prompts)
 - `client/testlookup_reporter.py` — Python client SDK + pytest plugin
 - `k8s/` — Kustomize base + overlays (dev/staging/prod/openshift)
@@ -208,6 +213,10 @@ Copy `.env.example` to `.env` and configure:
 | `JIRA_*` | Jira integration (optional) |
 | `SPLUNK_*` | Splunk log query (optional) |
 | `JWT_SECRET_KEY` | Must be a strong random value in prod |
+| `ANALYSIS_MODE` | auto \| llm \| ml \| rules — which engine classifies test failures |
+| `ML_MODEL_DIR` | Path to trained ML model artifacts (default: models/) |
+| `ML_MIN_TRAINING_SAMPLES` | Minimum labeled samples before ML mode activates (default: 200) |
+| `ML_ACCURACY_THRESHOLD` | Minimum accuracy to deploy a new model (default: 0.80) |
 | `DEEP_INVESTIGATION_ENABLED` | true \| false — enables deep LangGraph pipeline |
 | `OTEL_ENABLED` | true \| false — enables OpenTelemetry tracing |
 | `METRICS_ENABLED` | true \| false — enables Prometheus metrics endpoint |
@@ -250,6 +259,8 @@ Current migrations:
 | 0036 | Integration probe results (integration_probe_results + health check columns) |
 | 0037 | Tenant metric snapshots (tenant_metric_snapshots for project-scoped observability) |
 | 0038 | AI evaluation datasets and runs (ai_eval_datasets, ai_eval_runs) |
+| ... | (0039–0045 various enhancements) |
+| 0046 | Performance composite indexes (ix_test_runs_project_status_created) |
 
 ---
 
@@ -266,6 +277,9 @@ Current migrations:
 - **Role-based access:** Use `require_role(UserRole.X)` as a dependency. Role hierarchy: VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN.
 - **API key storage:** Keys are stored as SHA-256 hashes. The raw key is only returned once at creation. `key_hint` = `raw_key[:8] + "..."` (max 11 chars; column is `String(12)`).
 - **Structured logging:** Use `structlog.get_logger(__name__)` — never `print()` or raw `logging.getLogger()`.
+- **Analysis mode dispatch:** All test classification must go through `services/analysis_router.py`, never call `run_triage_agent()` or `RulesEngine` directly from routers. The router reads `ANALYSIS_MODE` and dispatches to LLM/ML/Rules.
+- **ML feature extraction must be deterministic.** Same inputs → same feature vector. No randomness in preprocessing. Feature names in `ml/feature_extractor.py:FEATURE_NAMES` must match training order.
+- **ML inference budget:** <5ms per test. If the ML model takes longer, the analysis router falls back to rules.
 
 ### Frontend
 
@@ -333,6 +347,35 @@ These bugs have been encountered and fixed — avoid reintroducing them:
 26. **AI evaluation dashboards** — `ai_eval_service.py` computes macro-average precision/recall/F1/accuracy from labeled datasets. Datasets can be auto-generated from human feedback (AIFeedback records with `correct`/`incorrect` ratings). Drift detection compares current vs previous evaluation window accuracy. The `AIEvalRun` table persists every evaluation with metrics. The dashboard at `/settings/ai-eval` shows agreement rate, drift direction, recent eval runs, and model version history.
 
 27. **Digest subscriptions and saved views** — `DigestSubscription` stores user-level scheduled delivery config (DAILY or WEEKLY via email/slack/teams). The Celery beat task `dispatch_scheduled_digests` runs daily at 07:00 UTC, queries subscriptions where `next_delivery_at <= now`, generates content via `digest_content_service.generate_digest()`, and delivers via the notification email service. `SavedView` stores per-user filter configs with personal/shared visibility. Both tables are user-owned with project-scoped filtering.
+
+28. **ANALYSIS_MODE must go through analysis_router** — Never call `run_triage_agent()` directly from new code. Use `services/analysis_router.classify_test()` which reads the configured mode and dispatches to LLM, ML, or Rules engine. The mode is persisted in the `app_settings` table (key `ai_config.analysis_mode`) and cached in Redis (`config:analysis_mode`).
+
+29. **ML model cold start** — When `ANALYSIS_MODE=ml` but no trained model exists, `MLClassifier.is_available()` returns False and the analysis_router falls back to the rules engine. The UI shows a "Not Trained" badge. Minimum 200 labeled samples needed before training activates.
+
+30. **Zustand object selectors cause infinite loops** — Never use `useAuthStore(s => ({ key1: s.x, key2: s.y }))` — the inline object creates a new reference every render, causing Zustand (v5, `Object.is` equality) to re-render infinitely. Use individual primitive selectors: `useAuthStore(s => s.x)`.
+
+---
+
+## Analysis Engine Modes
+
+The system supports three test analysis engines, configurable via `ANALYSIS_MODE` env var or **Settings > AI Configuration** (ADMIN only):
+
+| Mode | Engine | Latency/test | Dependencies | Accuracy Target |
+|------|--------|-------------|--------------|-----------------|
+| `llm` | LangChain ReAct agent + 5 tools | ~300ms | Running LLM (Ollama/OpenAI/Gemini) | 85-95% |
+| `ml` | scikit-learn HistGradientBoosting | ~2ms | Trained model (.joblib) | >85% |
+| `rules` | Pattern matching + statistics | ~0.2ms | None | 60-75% |
+| `auto` | Smart fallback: ML → LLM → Rules | varies | Best available | Highest available |
+
+**Dispatch flow:** `analysis_agent._analyse_one()` → `analysis_router.get_analysis_mode()` → LLM/ML/Rules engine → same `AIAnalysis` output shape.
+
+**Key files:**
+- `services/analysis_router.py` — central dispatcher
+- `services/rules_engine.py` — enhanced pattern matching + template summaries
+- `services/ml/feature_extractor.py` — 28-feature numeric vector
+- `services/ml/classifier.py` — HistGradientBoosting wrapper
+- `services/ml/summary_generator.py` — template summaries enriched with ML metadata
+- `services/ml/trainer.py` — training pipeline (Celery beat, nightly)
 
 ---
 

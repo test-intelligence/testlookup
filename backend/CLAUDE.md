@@ -250,12 +250,41 @@ async def new_node(state: WorkflowState) -> dict:
 
 Add tool file under `app/tools/new_tool.py`, then register in `app/services/agent.py`.
 
+## Analysis Engine Architecture
+
+The system supports three analysis modes: LLM, ML, and Rules. All classification
+goes through `services/analysis_router.py` — never call engines directly.
+
+### Dispatch flow
+```
+analysis_agent._analyse_one()
+  → analysis_router.get_analysis_mode()   # reads ANALYSIS_MODE (env/DB/Redis cache)
+  → if "rules":  rules_engine.RulesEngine.classify_test()
+  → if "ml":     ml/classifier.MLClassifier.classify()  (falls back to rules if no model)
+  → if "llm":    services/agent.run_triage_agent()       (falls back to rules on timeout)
+```
+
+### Key files
+- `services/analysis_router.py` — central dispatcher, mode resolution, fallback chain
+- `services/rules_engine.py` — 14 keyword patterns + historical flakiness + regression + suite-level + template summaries
+- `services/ml/feature_extractor.py` — 32-feature numeric vector (FEATURE_NAMES list defines canonical order)
+- `services/ml/classifier.py` — scikit-learn HistGradientBoosting wrapper, ~2ms/test, model cached per-process
+- `services/ml/summary_generator.py` — enriches rules templates with ML metadata
+- `services/ml/trainer.py` — gathers labeled data, trains model, saves .joblib, evaluates on holdout
+
+### Adding a new analysis mode
+1. Add mode constant to `AnalysisMode` in `analysis_router.py`
+2. Create engine in `services/ml/` or `services/` with `classify(features) -> dict` method
+3. Add dispatch branch in `analysis_router.classify_test()`
+4. Add mode to config validation regex in `schemas.py:AIConfigUpdate.analysis_mode`
+5. Add radio option in `frontend/src/pages/settings/AIConfigPage.tsx:ANALYSIS_MODES`
+
 ## Test Patterns
 
 ### Fixtures (conftest.py)
 
 - `FakeExecuteResult` — Mock SQLAlchemy `.execute()` results with `.scalar_one_or_none()`, `.scalars().all()`, etc.
-- `FakeRedis` — In-memory async Redis mock with `get()`, `set()`, `delete()`
+- `FakeRedis` — In-memory async Redis mock with TTL support (`get`, `set`, `setex`, `expire`, `delete`, `exists`, `xlen`, `scan`, `pipeline`)
 - `ns` — `SimpleNamespace` factory for quick mock objects
 
 ### Mocking Pattern
@@ -291,3 +320,6 @@ def _stub_external_modules(monkeypatch):
 - **UserRole stored as `String(20)`**, not native PostgreSQL enum.
 - **`ALL_PROJECTS_ID = "all"`** — never pass string `"all"` to backend as UUID. Backend receives `None` for all-projects mode.
 - **Category normalization** — use `app.services.category_normalizer.normalize_category()`. Add new aliases to `CATEGORY_ALIASES` dict, never add fuzzy matching.
+- **Analysis mode dispatch** — always use `services/analysis_router.classify_test()`, never call `run_triage_agent()` or `RulesEngine` directly. The router handles mode selection and fallback.
+- **ML feature vectors must be deterministic** — same inputs produce same features. `FEATURE_NAMES` list in `ml/feature_extractor.py` defines the canonical order; never reorder.
+- **ML inference budget** — <5ms per test. If exceeded, analysis_router falls back to rules engine automatically.

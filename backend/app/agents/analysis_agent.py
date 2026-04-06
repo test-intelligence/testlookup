@@ -229,29 +229,57 @@ class AnalysisAgent(BaseAgent):
         start_time = time.perf_counter()
         async with semaphore:
             logger.info("Analysing test case %s: %s", tc_id, meta.get("test_name", ""))
-            try:
-                analysis = await asyncio.wait_for(
-                    run_triage_agent(
-                        test_case_id=tc_id,
-                        test_name=meta.get("test_name", tc_id),
-                        service_name=meta.get("suite_name"),
-                        timestamp=None,
-                        ocp_pod_name=state.get("test_run_data", {}).get("ocp_pod_name"),
-                        ocp_namespace=state.get("test_run_data", {}).get("ocp_namespace"),
-                        error_message=meta.get("error_message"),
-                        stack_trace=meta.get("stack_trace"),
-                    ),
-                    timeout=settings.AI_TIMEOUT_SECONDS,
+
+            # Check analysis mode — dispatch to ML/Rules if LLM is disabled
+            from app.services.analysis_router import AnalysisMode, get_analysis_mode
+            mode = get_analysis_mode()
+
+            if mode in (AnalysisMode.ML, AnalysisMode.RULES):
+                # Non-LLM path: use analysis_router (no timeout needed, <5ms)
+                from app.services.analysis_router import classify_test
+                run_data = state.get("test_run_data") or {}
+                analysis = await classify_test(
+                    test_case={
+                        "test_case_id": tc_id,
+                        "test_name": meta.get("test_name", tc_id),
+                        "suite_name": meta.get("suite_name"),
+                        "error_message": meta.get("error_message"),
+                        "stack_trace": meta.get("stack_trace"),
+                        "duration_ms": meta.get("duration_ms"),
+                        "severity": meta.get("severity"),
+                    },
+                    history=meta.get("flakiness_data"),
+                    run_context={
+                        "pass_rate": run_data.get("pass_rate", 0),
+                        "failed_tests": run_data.get("failed_tests", 0),
+                    },
+                    mode=mode,
                 )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "ReAct agent timed out after %ds for test %s — using progressive fallback",
-                    settings.AI_TIMEOUT_SECONDS, tc_id,
-                )
-                analysis = await self._build_progressive_fallback(tc_id, meta)
-            except Exception as exc:
-                logger.error("ReAct agent failed for %s: %s", tc_id, exc)
-                analysis = self._build_error_analysis(exc)
+            else:
+                # LLM path: existing ReAct agent with timeout + fallback
+                try:
+                    analysis = await asyncio.wait_for(
+                        run_triage_agent(
+                            test_case_id=tc_id,
+                            test_name=meta.get("test_name", tc_id),
+                            service_name=meta.get("suite_name"),
+                            timestamp=None,
+                            ocp_pod_name=state.get("test_run_data", {}).get("ocp_pod_name"),
+                            ocp_namespace=state.get("test_run_data", {}).get("ocp_namespace"),
+                            error_message=meta.get("error_message"),
+                            stack_trace=meta.get("stack_trace"),
+                        ),
+                        timeout=settings.AI_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "ReAct agent timed out after %ds for test %s — using progressive fallback",
+                        settings.AI_TIMEOUT_SECONDS, tc_id,
+                    )
+                    analysis = await self._build_progressive_fallback(tc_id, meta)
+                except Exception as exc:
+                    logger.error("ReAct agent failed for %s: %s", tc_id, exc)
+                    analysis = self._build_error_analysis(exc)
 
             # Attach flakiness data from historical enrichment for P2-6 validation
             if "flakiness_data" in meta:

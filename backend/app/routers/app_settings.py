@@ -231,6 +231,7 @@ async def _load_ai_config(db: AsyncSession) -> dict:
         "finetune_enabled": overrides.get("finetune_enabled", settings.FINETUNE_ENABLED),
         "openai_api_key": overrides.get("openai_api_key") or settings.OPENAI_API_KEY,
         "google_api_key": overrides.get("google_api_key") or settings.GOOGLE_API_KEY,
+        "analysis_mode": overrides.get("analysis_mode", settings.ANALYSIS_MODE),
     }
 
 
@@ -240,6 +241,25 @@ async def get_ai_config(
     db: AsyncSession = Depends(get_db),
 ) -> AIConfigRead:
     cfg = await _load_ai_config(db)
+
+    # ML model status (best-effort — non-blocking)
+    ml_available = False
+    ml_accuracy = None
+    ml_samples = 0
+    try:
+        from app.services.ml.classifier import MLClassifier
+        ml_available = MLClassifier.is_available()
+        info = MLClassifier.get_model_info()
+        ml_accuracy = info.get("accuracy")
+        ml_samples = info.get("sample_count", 0)
+    except Exception:
+        pass
+    try:
+        from app.services.ml.trainer import get_training_sample_count
+        ml_samples = max(ml_samples, await get_training_sample_count())
+    except Exception:
+        pass
+
     return AIConfigRead(
         llm_provider=cfg["llm_provider"],
         llm_model=cfg["llm_model"],
@@ -254,6 +274,10 @@ async def get_ai_config(
         finetune_enabled=cfg["finetune_enabled"],
         openai_key_set=bool(cfg.get("openai_api_key")),
         google_key_set=bool(cfg.get("google_api_key")),
+        analysis_mode=cfg.get("analysis_mode", "auto"),
+        ml_model_available=ml_available,
+        ml_model_accuracy=ml_accuracy,
+        ml_training_sample_count=ml_samples,
     )
 
 
@@ -287,7 +311,30 @@ async def update_ai_config(
     # Audit log
     await log_settings_change(db, _AI_CONFIG_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
-    logger.info("AI configuration updated by %s", current_user.username)
+    # Cache analysis_mode in Redis for fast sync reads by analysis_router
+    if "analysis_mode" in updates:
+        try:
+            from app.db.redis_client import get_redis
+            redis = get_redis()
+            await redis.set("config:analysis_mode", updates["analysis_mode"], ex=86400)
+        except Exception:
+            pass  # Redis cache is best-effort
+
+    logger.info("AI configuration updated by %s (fields: %s)", current_user.username, list(updates.keys()))
+
+    # ML model status for response
+    ml_available = False
+    ml_accuracy = None
+    ml_samples = 0
+    try:
+        from app.services.ml.classifier import MLClassifier
+        ml_available = MLClassifier.is_available()
+        info = MLClassifier.get_model_info()
+        ml_accuracy = info.get("accuracy")
+        ml_samples = info.get("sample_count", 0)
+    except Exception:
+        pass
+
     return AIConfigRead(
         llm_provider=merged["llm_provider"],
         llm_model=merged["llm_model"],
@@ -302,6 +349,10 @@ async def update_ai_config(
         finetune_enabled=merged["finetune_enabled"],
         openai_key_set=bool(merged.get("openai_api_key")),
         google_key_set=bool(merged.get("google_api_key")),
+        analysis_mode=merged.get("analysis_mode", "auto"),
+        ml_model_available=ml_available,
+        ml_model_accuracy=ml_accuracy,
+        ml_training_sample_count=ml_samples,
     )
 
 

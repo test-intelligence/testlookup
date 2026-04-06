@@ -242,10 +242,31 @@ Role hierarchy matches backend: `VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN
 
 | Data Type | Interval |
 |-----------|----------|
-| Runs | 15s |
-| Dashboard summary | 30s |
-| Trends | 60s |
-| Analytics (flaky, coverage) | 120s |
+| Data Type | Interval | Constant |
+|-----------|----------|----------|
+| Live execution | 5s | `REFRESH_INTERVALS.REALTIME` |
+| Runs | 15s | `REFRESH_INTERVALS.ACTIVE` |
+| Dashboard summary | 30s | `REFRESH_INTERVALS.POLLING` |
+| Trends, analytics | 60s | `REFRESH_INTERVALS.BACKGROUND` |
+
+Intervals defined in `config/refreshIntervals.ts`. Tab-visibility-aware polling pauses when the browser tab is hidden (see `hooks/usePageVisibility.ts`).
+
+## Settings > AI Configuration Page
+
+The `pages/settings/AIConfigPage.tsx` page allows ADMIN users to configure the analysis engine:
+
+**Analysis Engine section** (radio button group):
+- Auto / LLM (AI Agent) / Machine Learning / Rules-Based
+- ML mode shows live status badge: "Not Trained" (amber) or "Ready (87% accuracy)" (green)
+- Warning banner when ML selected but no model trained
+- All inputs `disabled={!isAdmin}`
+
+**Service types** (`services/appSettingsService.ts`):
+- `AnalysisMode = 'llm' | 'ml' | 'rules' | 'auto'`
+- `AIConfigRead` includes `analysis_mode`, `ml_model_available`, `ml_model_accuracy`, `ml_training_sample_count`
+- `AIConfigUpdate` includes `analysis_mode` (validated server-side)
+
+**Pattern**: Radio buttons use the `ANALYSIS_MODES` const array with `value`, `label`, `desc` per option. Form state managed via local `useState<AIConfigUpdate>`, saved via `appSettingsService.updateAIConfig(form)`.
 
 ## Build & Deploy
 
