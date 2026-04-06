@@ -4,9 +4,9 @@ import {
   Activity, AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronRight,
   Clock, FileText, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } from '@/hooks/useAgentRuns'
 import agentService from '@/services/agentService'
@@ -81,6 +81,69 @@ const STATUS_BG: Record<string, string> = {
 }
 
 // ── Sub-components ─────────────────────────────────────────────
+
+/** Parses the markdown report into structured sections and renders as clean cards. */
+function StructuredReportDetail({ markdown, hasPanel }: { markdown: string; hasPanel: boolean }) {
+  if (!markdown) return null
+
+  // Parse markdown into sections by ## headings
+  const sections: Array<{ title: string; lines: string[] }> = []
+  let current: { title: string; lines: string[] } | null = null
+
+  for (const line of markdown.split('\n')) {
+    const headingMatch = line.match(/^##\s+(.+)/)
+    if (headingMatch) {
+      if (current) sections.push(current)
+      current = { title: headingMatch[1].trim(), lines: [] }
+    } else if (current) {
+      const trimmed = line.trim()
+      if (trimmed) current.lines.push(trimmed)
+    }
+  }
+  if (current) sections.push(current)
+
+  // When executive panel is present, skip the "Executive Summary" section (already shown in panel)
+  const filtered = sections.filter(s => !(hasPanel && s.title.toLowerCase().includes('executive summary')))
+  if (filtered.length === 0) return null
+
+  return (
+    <div className="space-y-3">
+      {filtered.map((section, idx) => (
+        <details key={idx} open={idx === 0} className="group">
+          <summary className="flex items-center gap-2 cursor-pointer text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider hover:text-[var(--color-text-secondary)] transition-colors py-1">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            {section.title}
+          </summary>
+          <div className="bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] rounded-lg p-3 mt-1.5 space-y-1.5">
+            {section.lines.map((line, li) => {
+              // Bold labels: **Label:** value
+              const boldMatch = line.match(/^\*\*(.+?):\*\*\s*(.*)/)
+              if (boldMatch) {
+                return (
+                  <div key={li} className="text-sm">
+                    <span className="text-[var(--color-text-muted)] font-medium">{boldMatch[1]}: </span>
+                    <span className="text-[var(--color-text)]">{boldMatch[2]}</span>
+                  </div>
+                )
+              }
+              // List items: - text
+              if (line.startsWith('- ')) {
+                return (
+                  <div key={li} className="flex items-start gap-2 text-sm text-[var(--color-text-secondary)] pl-1">
+                    <span className="text-[var(--color-text-faint)] mt-1.5 h-1 w-1 rounded-full bg-current shrink-0" />
+                    {line.slice(2)}
+                  </div>
+                )
+              }
+              // Regular text
+              return <p key={li} className="text-sm text-[var(--color-text-secondary)]">{line}</p>
+            })}
+          </div>
+        </details>
+      ))}
+    </div>
+  )
+}
 
 function StatusIcon({ status }: { status: string }) {
   if (status === 'completed') return <CheckCircle className="w-4 h-4 text-emerald-400" />
@@ -445,13 +508,15 @@ export default function AgentStatusPage() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-3">
-                        <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase mb-1">Executive Summary</h4>
-                        <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
-                      </div>
-                      <div className="prose prose-invert prose-sm max-w-none">
-                        <ReactMarkdown>{summary.markdown_report}</ReactMarkdown>
-                      </div>
+                      {summary.executive_panel ? (
+                        <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as import('@/services/runIntelligenceService').ExecutivePanel} />
+                      ) : (
+                        <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-3">
+                          <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase mb-1">Executive Summary</h4>
+                          <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
+                        </div>
+                      )}
+                      <StructuredReportDetail markdown={summary.markdown_report} hasPanel={!!summary.executive_panel} />
                     </div>
                   )}
                 </div>

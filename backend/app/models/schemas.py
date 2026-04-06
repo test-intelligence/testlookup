@@ -472,6 +472,7 @@ class AgentRunSummaryResponse(BaseModel):
     build_number: Optional[str] = None
     executive_summary: str
     markdown_report: str
+    executive_panel: Optional[dict] = None
     anomaly_count: int = 0
     is_regression: bool = False
     analysis_count: int = 0
@@ -682,6 +683,7 @@ class RunModeSummaryResponse(BaseModel):
     layer2_incident: Optional[Any] = None
     layer3_evidence: Optional[Any] = None
     layer4_action_plan: Optional[Any] = None
+    executive_panel: Optional[dict] = None
     fallback_used: bool = False
     generated_at: Optional[Any] = None
     citations: List[Citation] = []

@@ -16,8 +16,46 @@ export interface RunSummary {
   ocp_namespace: string | null
 }
 
+export interface ExecutivePanelMetrics {
+  build_number: string
+  branch: string
+  total_tests: number
+  passed: number
+  failed: number
+  skipped: number
+  pass_rate: number
+  duration_seconds: number | null
+  failure_clusters: number
+  anomaly_count: number
+}
+
+export interface DominantFailure {
+  category: string
+  count: number
+  percentage: number
+}
+
+export interface BaselineComparisonPanel {
+  pass_rate_delta: number
+  new_failures: number
+  resolved: number
+  classification: string
+}
+
+export interface ExecutivePanel {
+  headline: string
+  status_signal: 'GO' | 'CONDITIONAL_GO' | 'NO_GO'
+  risk_score: number | null
+  metrics: ExecutivePanelMetrics
+  dominant_failure: DominantFailure | null
+  key_takeaways: string[]
+  baseline_comparison: BaselineComparisonPanel | null
+  next_actions: string[]
+}
+
 export interface StructuredSummary {
   executive_summary: string | null
+  executive_panel: ExecutivePanel | null
   layer1_executive: string | null
   layer2_incident: {
     what_failed?: string
@@ -210,6 +248,7 @@ export interface RunModeSummary {
   layer2_incident: StructuredSummary['layer2_incident']
   layer3_evidence: StructuredSummary['layer3_evidence']
   layer4_action_plan: StructuredSummary['layer4_action_plan']
+  executive_panel?: ExecutivePanel | null
   fallback_used: boolean
   generated_at: string | null
   citations: Citation[]

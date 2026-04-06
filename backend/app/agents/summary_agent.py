@@ -374,7 +374,38 @@ class SummaryAgent(BaseAgent):
             citations = extract_citations(json.dumps(layer3), evidence_snippets)
             layer3["citations"] = citations
 
+        # ── Executive panel (deterministic, never LLM-generated) ─────────
+        from app.services.executive_panel_builder import build_executive_panel  # noqa: PLC0415
+
+        category_counts: dict[str, int] = {}
+        flaky_count = 0
+        ep_actions: list[str] = []
+        for _tc_id, analysis in analyses.items():
+            cat = self._stringify_value(analysis.get("failure_category")) or "UNKNOWN"
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+            if analysis.get("is_flaky"):
+                flaky_count += 1
+            for a in (analysis.get("recommended_actions") or [])[:2]:
+                a_text = str(a).strip()
+                if a_text and a_text not in ep_actions:
+                    ep_actions.append(a_text)
+
+        ep_release_impact = "CONDITIONAL_GO"
+        if isinstance(layer2, dict):
+            ep_release_impact = layer2.get("release_impact", "CONDITIONAL_GO")
+
+        executive_panel = build_executive_panel(
+            run_data=run_data,
+            category_counts=category_counts,
+            flaky_count=flaky_count,
+            anomaly_count=len(anomalies),
+            cluster_count=0,
+            release_impact=ep_release_impact,
+            recommended_actions=ep_actions[:3],
+        )
+
         return {
+            "executive_panel": executive_panel,
             "layer1_executive_summary": layer1,
             "layer2_incident_view": layer2,
             "layer3_evidence_pack": layer3,
@@ -551,7 +582,21 @@ class SummaryAgent(BaseAgent):
             "Restore or retarget the configured Ollama model before re-running AI-assisted summary generation.",
         ]
 
+        # ── Executive panel (structured, scannable) ────────────────────
+        from app.services.executive_panel_builder import build_executive_panel
+
+        executive_panel = build_executive_panel(
+            run_data=run_data,
+            category_counts=category_counts,
+            flaky_count=len(flaky_test_ids),
+            anomaly_count=len(anomalies),
+            cluster_count=0,
+            release_impact=release_impact,
+            recommended_actions=fallback_fix_recommendations[:3],
+        )
+
         return {
+            "executive_panel": executive_panel,
             "layer1_executive_summary": summary_sentence,
             "layer2_incident_view": {
                 "what_failed": anomaly_summary or f"{failed} tests failed in build {build}",
@@ -684,17 +729,19 @@ class SummaryAgent(BaseAgent):
                     "layer2_incident_view": structured.get("layer2_incident_view"),
                     "layer3_evidence_pack": structured.get("layer3_evidence_pack"),
                     "layer4_action_plan": structured.get("layer4_action_plan"),
+                    # Structured executive panel (ES-2)
+                    "executive_panel": structured.get("executive_panel"),
                     # Pipeline metadata
                     "anomaly_count": len(state.get("anomalies") or []),
                     "is_regression": state.get("is_regression", False),
                     "analysis_count": len(state.get("analyses") or {}),
                     "generated_at": now,
-                    "schema_version": 3,  # v3 = 4-layer + citations + similar_failures
+                    "schema_version": 4,  # v4 = v3 + executive_panel
                     # Epic 6 additions
                     "fallback_used": fallback_used,
                     "citations": citations,
                     "provenance": {
-                        "schema_version": 3,
+                        "schema_version": 4,
                         "data_sources_used": data_sources,
                         "fallback_used": fallback_used,
                         "generated_at": now.isoformat(),

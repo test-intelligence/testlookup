@@ -6,6 +6,8 @@ import {
   Zap,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
+import type { ExecutivePanel } from '@/services/runIntelligenceService'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AppLogo from '@/components/ui/AppLogo'
@@ -157,9 +159,15 @@ function RunSummaryCard({
           </div>
 
           {/* Executive summary */}
-          <div className="text-sm text-[var(--color-text-secondary)] mt-1.5 leading-relaxed prose prose-invert prose-sm max-w-none">
-            <ReactMarkdown>{summary.executive_summary}</ReactMarkdown>
-          </div>
+          {summary.executive_panel ? (
+            <div className="mt-2">
+              <ExecutiveSummaryPanel panel={summary.executive_panel as unknown as ExecutivePanel} compact />
+            </div>
+          ) : (
+            <div className="text-sm text-[var(--color-text-secondary)] mt-1.5 leading-relaxed prose prose-invert prose-sm max-w-none">
+              <ReactMarkdown>{summary.executive_summary}</ReactMarkdown>
+            </div>
+          )}
 
           <div className="flex items-center gap-2 mt-2.5">
             {!summary.is_stub && (

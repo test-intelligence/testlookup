@@ -113,8 +113,26 @@ def render_report_pdf(report: Any) -> bytes:
             story.append(Paragraph(f"<i>{_safe(report.release_reasoning, 800)}</i>", body_style))
 
     # ── Executive Summary ───────────────────────────────────────────────
-    story.append(Paragraph("Executive Summary", h2_style))
-    story.append(Paragraph(_safe(report.executive_summary, 2000), body_style))
+    if report.executive_panel:
+        panel = report.executive_panel
+        headline = _safe(panel.get("headline", ""), 200)
+        signal = panel.get("status_signal", "N/A").replace("_", " ")
+        story.append(Paragraph(f"{headline} — <b>{signal}</b>", h2_style))
+
+        # Key takeaways
+        for t in panel.get("key_takeaways", []):
+            story.append(Paragraph(f"• {_safe(t, 200)}", body_style))
+
+        # Next actions
+        actions = panel.get("next_actions", [])
+        if actions:
+            story.append(Spacer(1, 2 * mm))
+            story.append(Paragraph("Next Actions", h2_style))
+            for i, a in enumerate(actions, 1):
+                story.append(Paragraph(f"{i}. {_safe(a, 200)}", body_style))
+    else:
+        story.append(Paragraph("Executive Summary", h2_style))
+        story.append(Paragraph(_safe(report.executive_summary, 2000), body_style))
 
     # ── Blocking Issues ─────────────────────────────────────────────────
     if report.blocking_issues:

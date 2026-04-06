@@ -62,8 +62,11 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
             </div>
         </div>""")
 
-    # Executive summary
-    sections.append(f"""
+    # Executive summary — structured panel or plain-text fallback
+    if report.executive_panel:
+        sections.append(_render_executive_panel_html(report.executive_panel))
+    else:
+        sections.append(f"""
     <h2 style="color:#1E40AF;border-bottom:2px solid #DBEAFE;padding-bottom:4px">Executive Summary</h2>
     <p style="font-size:14px;line-height:1.6;color:#374151">{_e(report.executive_summary, 2000)}</p>""")
 
@@ -175,3 +178,70 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
     {body}
 </body>
 </html>"""
+
+
+def _render_executive_panel_html(panel: dict) -> str:
+    """Render the structured executive panel as inline-styled HTML."""
+    metrics = panel.get("metrics", {})
+    signal = panel.get("status_signal", "CONDITIONAL_GO")
+    signal_color = _REC_COLORS.get(signal, "#D97706")
+    risk = panel.get("risk_score")
+
+    parts: list[str] = []
+
+    # Headline + status
+    risk_html = f' <span style="color:#6B7280;font-size:13px;margin-left:12px">Risk {risk}/100</span>' if risk is not None else ""
+    parts.append(f"""
+    <div style="background:{signal_color}10;border:2px solid {signal_color};border-radius:12px;padding:16px;margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <h2 style="margin:0;color:#1E40AF;font-size:16px">{_e(panel.get('headline', ''))}</h2>
+            <span style="background:{signal_color};color:white;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:bold">{signal.replace('_', ' ')}</span>
+            {risk_html}
+        </div>""")
+
+    # Metric strip as table
+    parts.append(f"""
+        <table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:13px;text-align:center">
+            <tr style="background:#F0F9FF">
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('pass_rate', 0):.1f}%</b><br><small>Pass Rate</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('total_tests', 0)}</b><br><small>Total</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('failed', 0)}</b><br><small>Failed</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('skipped', 0)}</b><br><small>Skipped</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('failure_clusters', 0)}</b><br><small>Clusters</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('anomaly_count', 0)}</b><br><small>Anomalies</small></td>
+            </tr>
+        </table>""")
+
+    # Dominant failure
+    dom = panel.get("dominant_failure")
+    if dom:
+        cat = str(dom.get("category", "")).replace("_", " ").title()
+        parts.append(f"""
+        <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:13px">
+            <b>{_e(cat)}</b> — {dom.get('count', 0)} failures ({dom.get('percentage', 0):.0f}%)
+        </div>""")
+
+    # Key takeaways
+    takeaways = panel.get("key_takeaways", [])
+    if takeaways:
+        items = "".join(f"<li>{_e(t, 200)}</li>" for t in takeaways)
+        parts.append(f'<div style="margin-top:10px;font-size:13px"><b>Key Takeaways</b><ul style="margin-top:4px">{items}</ul></div>')
+
+    # Baseline comparison
+    bl = panel.get("baseline_comparison")
+    if bl:
+        delta = bl.get("pass_rate_delta", 0)
+        delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
+        parts.append(f"""
+        <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:13px">
+            Pass rate: <b>{delta_str}</b> | New failures: <b>{bl.get('new_failures', 0)}</b> | Resolved: <b>{bl.get('resolved', 0)}</b>
+        </div>""")
+
+    # Next actions
+    actions = panel.get("next_actions", [])
+    if actions:
+        items = "".join(f"<li>{_e(a, 200)}</li>" for a in actions)
+        parts.append(f'<div style="margin-top:10px;font-size:13px"><b>Next Actions</b><ol style="margin-top:4px">{items}</ol></div>')
+
+    parts.append("</div>")
+    return "\n".join(parts)

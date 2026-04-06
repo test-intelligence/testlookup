@@ -75,6 +75,7 @@ def normalize_summary_doc(run_id: str, doc: dict[str, Any]) -> AgentRunSummaryRe
         build_number=str(doc["build_number"]) if doc.get("build_number") is not None else None,
         executive_summary=executive_summary,
         markdown_report=markdown_report,
+        executive_panel=doc.get("executive_panel"),
         anomaly_count=int(doc.get("anomaly_count") or 0),
         is_regression=bool(doc.get("is_regression", False)),
         analysis_count=int(doc.get("analysis_count") or 0),
@@ -144,12 +145,32 @@ async def build_fallback_summary(db: AsyncSession, run_id: str) -> AgentRunSumma
         ] if section
     )
 
+    # Build structured executive panel
+    from app.services.executive_panel_builder import build_executive_panel
+
+    executive_panel = build_executive_panel(
+        run_data={
+            "build_number": run.build_number,
+            "branch": run.branch,
+            "total_tests": run.total_tests or 0,
+            "passed_tests": run.passed_tests or 0,
+            "failed_tests": run.failed_tests or 0,
+            "skipped_tests": run.skipped_tests or 0,
+            "pass_rate": run.pass_rate or 0.0,
+        },
+        category_counts=category_counts,
+        release_impact=_stringify_model_value(recommendation, "CONDITIONAL_GO"),
+        risk_score=risk_score,
+        recommended_actions=top_findings[:3],
+    )
+
     return AgentRunSummaryResponse(
         test_run_id=str(run.id),
         project_id=str(run.project_id),
         build_number=run.build_number,
         executive_summary=executive_summary,
         markdown_report=markdown_report,
+        executive_panel=executive_panel,
         anomaly_count=0,
         is_regression=False,
         analysis_count=len(analyses),

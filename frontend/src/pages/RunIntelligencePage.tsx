@@ -13,6 +13,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import CriticalityMatrix from '@/components/ai/CriticalityMatrix'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
+import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import { useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
 import { useRunTestHealth } from '@/hooks/useTestHealth'
 import RoleActionCardShared from '@/components/ai/RoleActionCard'
@@ -144,7 +145,10 @@ function LayeredSummary({ summary, mode }: { summary: StructuredSummary | RunMod
         </div>
       )}
 
-      {summary.executive_summary && (
+      {/* Structured executive panel (preferred) or plain-text fallback */}
+      {(summary as StructuredSummary).executive_panel ? (
+        <ExecutiveSummaryPanel panel={(summary as StructuredSummary).executive_panel as NonNullable<StructuredSummary['executive_panel']>} />
+      ) : summary.executive_summary ? (
         <div className="theme-bg-secondary border theme-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">{modeLabel}</p>
@@ -158,7 +162,7 @@ function LayeredSummary({ summary, mode }: { summary: StructuredSummary | RunMod
           </div>
           <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
         </div>
-      )}
+      ) : null}
 
       {/* Render markdown_report as fallback when layer fields are all null */}
       {!hasLayers && markdownReport && (
@@ -846,8 +850,8 @@ export default function RunIntelligencePage() {
         </div>
       )}
 
-      {/* Run stats row */}
-      <div className="grid grid-cols-4 gap-4">
+      {/* Run stats row — hidden when executive panel provides these metrics */}
+      {!structured_summary?.executive_panel && <div className="grid grid-cols-4 gap-4">
         <div className="card text-center">
           <p className={clsx('text-3xl font-bold tabular-nums', passRateColour(run.pass_rate ?? 0))}>
             {(run.pass_rate ?? 0).toFixed(1)}%
@@ -866,7 +870,7 @@ export default function RunIntelligencePage() {
           <p className="text-3xl font-bold text-[var(--color-text)]">{failure_clusters.length}</p>
           <p className="text-xs text-[var(--color-text-muted)] mt-1">Failure Clusters</p>
         </div>
-      </div>
+      </div>}
 
       {/* All-green fast path notice */}
       {all_green && (

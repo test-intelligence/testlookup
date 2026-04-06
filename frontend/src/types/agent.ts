@@ -98,6 +98,7 @@ export interface RunSummary {
   build_number: string
   executive_summary: string
   markdown_report: string
+  executive_panel?: Record<string, unknown> | null
   anomaly_count: number
   is_regression: boolean
   analysis_count: number
