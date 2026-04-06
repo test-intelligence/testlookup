@@ -73,6 +73,7 @@ class TestAIConfigRead:
             finetune_enabled=False,
             openai_key_set=False,
             google_key_set=False,
+            analysis_mode="auto",
         )
         assert cfg.llm_provider == "ollama"
         assert cfg.ai_offline_mode is True
@@ -87,7 +88,7 @@ class TestAIConfigRead:
             llm_max_tokens=4096, ai_offline_mode=False, embedding_provider="openai",
             embedding_model="text-embedding-3-small", ai_confidence_threshold=80,
             ai_timeout_seconds=300, deep_investigation_enabled=True, finetune_enabled=False,
-            openai_key_set=True, google_key_set=True,
+            openai_key_set=True, google_key_set=True, analysis_mode="llm",
         )
         # The schema never exposes raw keys
         assert not hasattr(cfg, "openai_api_key")
