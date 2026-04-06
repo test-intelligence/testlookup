@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ShieldCheck, Layers, TestTube } from 'lucide-react'
+import { LayoutGrid, ShieldCheck, Layers, TestTube } from 'lucide-react'
+import WidgetPicker from '@/components/analytics/WidgetPicker'
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -52,11 +54,13 @@ interface SuiteRow {
 
 export default function CoveragePage() {
   const [days, setDays] = useState(30)
+  const [showPicker, setShowPicker] = useState(false)
   const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { data: coverageData, isLoading } = useCoverage(days)
+  const analyticsView = useAnalyticsView('coverage')
 
   if (!project && !isAllProjects) {
     return (
@@ -103,7 +107,18 @@ export default function CoveragePage() {
       <PageHeader
         title="Test Coverage"
         subtitle={`Suite breakdown and execution coverage for ${projectLabel}`}
-        actions={periodSelector}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowPicker(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] rounded-lg transition-colors"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Customize
+            </button>
+            {periodSelector}
+          </div>
+        }
       />
 
       <WorkflowTimeline
@@ -125,8 +140,8 @@ export default function CoveragePage() {
         />
       ) : (
         <>
-          {/* Summary KPIs */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {/* Summary KPIs — controlled by coverage_kpis widget */}
+          {analyticsView.widgetIds.includes('coverage_kpis') && <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {[
               { label: 'Unique Tests',      value: summary.unique_tests      ?? 0, color: 'text-[var(--color-text)]',    icon: <TestTube className="h-4 w-4" /> },
               { label: 'Test Suites',        value: summary.suite_count       ?? 0, color: 'text-violet-400',  icon: <Layers className="h-4 w-4" /> },
@@ -142,10 +157,10 @@ export default function CoveragePage() {
                 <p className={clsx('text-2xl font-bold tabular-nums', color)}>{value}</p>
               </div>
             ))}
-          </div>
+          </div>}
 
-          {/* Suite Stacked Bar Chart */}
-          <div className="card">
+          {/* Suite Stacked Bar Chart — controlled by top_suites_bar widget */}
+          {analyticsView.widgetIds.includes('top_suites_bar') && <div className="card">
             <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Top Suites — Test Execution Breakdown</h3>
             <ResponsiveContainer width="100%" height={320}>
               <BarChart data={topSuites} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }} barSize={14}>
@@ -158,9 +173,9 @@ export default function CoveragePage() {
                 <Bar dataKey="skipped" stackId="a" fill="#f59e0b" name="Skipped" radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </div>}
 
-          {/* Suite Table */}
+          {/* Suite Table — always visible */}
           <div className="card">
             <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Suite Coverage Details</h3>
             <div className="overflow-x-auto">
@@ -201,6 +216,15 @@ export default function CoveragePage() {
             </div>
           </div>
         </>
+      )}
+
+      {showPicker && (
+        <WidgetPicker
+          page="coverage"
+          enabledIds={analyticsView.widgetIds}
+          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onClose={() => setShowPicker(false)}
+        />
       )}
     </div>
   )

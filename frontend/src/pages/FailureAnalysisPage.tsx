@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Bug, TrendingDown, AlertTriangle, Flame } from 'lucide-react'
+import { Bug, TrendingDown, AlertTriangle, Flame, LayoutGrid } from 'lucide-react'
+import WidgetPicker from '@/components/analytics/WidgetPicker'
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import {
   Cell, Pie, PieChart, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -56,9 +58,11 @@ function FlakyScore({ rate }: { rate: number }) {
 
 export default function FailureAnalysisPage() {
   const [days, setDays] = useState(30)
+  const [showPicker, setShowPicker] = useState(false)
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+  const analyticsView = useAnalyticsView('failures')
 
   const { data: flakyData,    isLoading: flakyLoading    } = useFlakyTests(days)
   const { data: categoryData, isLoading: categoryLoading } = useFailureCategories(days)
@@ -82,6 +86,9 @@ export default function FailureAnalysisPage() {
   const categoryItems = categoryData?.items ?? []
   const topItems      = topData?.items      ?? []
   const workflow = buildFailureAnalysisWorkflow(flakyItems.length, categoryItems.length, topItems.length, days)
+
+  // Widget visibility — derived from analyticsView
+  const activeWidgets = new Set(analyticsView.widgetIds)
 
   const pieData = categoryItems.map((c: { category: string; count: number }) => ({
     name: c.category.replace(/_/g, ' '),
@@ -111,7 +118,18 @@ export default function FailureAnalysisPage() {
       <PageHeader
         title="Failure Analysis"
         subtitle={`Flaky leaderboard, error clustering & repeat-failure detection for ${projectLabel}`}
-        actions={periodSelector}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowPicker(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] rounded-lg transition-colors"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Customize
+            </button>
+            {periodSelector}
+          </div>
+        }
       />
 
       <WorkflowTimeline
@@ -128,8 +146,8 @@ export default function FailureAnalysisPage() {
         <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
       ) : (
         <>
-          {/* Summary KPIs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {/* Summary KPIs — controlled by failures_kpis widget */}
+          {activeWidgets.has('failures_kpis') && <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: 'Flaky Tests',        value: flakyItems.length,  color: 'text-amber-400',  icon: <AlertTriangle className="h-4 w-4" /> },
               { label: 'Top Failing',         value: topItems.length,    color: 'text-red-400',    icon: <TrendingDown className="h-4 w-4" /> },
@@ -144,11 +162,11 @@ export default function FailureAnalysisPage() {
                 <p className={clsx('text-2xl font-bold tabular-nums', color)}>{value}</p>
               </div>
             ))}
-          </div>
+          </div>}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Failure Category Pie */}
-            <div className="card">
+            {/* Failure Category Pie — controlled by failure_category_pie widget */}
+            {activeWidgets.has('failure_category_pie') && <div className="card">
               <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Failure Category Distribution</h3>
               {pieData.length === 0 ? (
                 <p className="text-sm text-[var(--color-text-muted)] text-center py-8">No failure data in this period</p>
@@ -164,10 +182,10 @@ export default function FailureAnalysisPage() {
                   </PieChart>
                 </ResponsiveContainer>
               )}
-            </div>
+            </div>}
 
-            {/* Top Failing Bar Chart */}
-            <div className="card">
+            {/* Top Failing Bar Chart — controlled by top_failing_bar widget */}
+            {activeWidgets.has('top_failing_bar') && <div className="card">
               <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Top Failing Tests (by count)</h3>
               {topItems.length === 0 ? (
                 <p className="text-sm text-[var(--color-text-muted)] text-center py-8">No failures in this period</p>
@@ -189,11 +207,11 @@ export default function FailureAnalysisPage() {
                   </BarChart>
                 </ResponsiveContainer>
               )}
-            </div>
+            </div>}
           </div>
 
-          {/* Flaky Test Leaderboard */}
-          <div className="card">
+          {/* Flaky Test Leaderboard — controlled by flaky_leaderboard_table widget */}
+          {activeWidgets.has('flaky_leaderboard_table') && <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-[var(--color-text)]">Flaky Test Leaderboard</h3>
               <span className="text-xs text-[var(--color-text-muted)]">{flakyItems.length} tests with intermittent failures</span>
@@ -244,8 +262,18 @@ export default function FailureAnalysisPage() {
                 </table>
               </div>
             )}
-          </div>
+          </div>}
         </>
+      )}
+
+      {/* Widget Picker Modal */}
+      {showPicker && (
+        <WidgetPicker
+          page="failures"
+          enabledIds={analyticsView.widgetIds}
+          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onClose={() => setShowPicker(false)}
+        />
       )}
     </div>
   )
