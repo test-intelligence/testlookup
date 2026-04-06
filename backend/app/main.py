@@ -124,12 +124,31 @@ configure_metrics(app)
 register_routers(app)
 
 
-# ── Login rate limit (applied here to avoid importing limiter into auth.py) ──
+# ── Auth rate limits (P5-8: covers login + register) ────────────────────────
+# Rate limit config: path → (production limit, error message)
+_AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
+    "/api/v1/auth/login": (
+        "10/minute",
+        "Too many login attempts. Try again in a minute.",
+    ),
+    "/api/v1/auth/register": (
+        "5/minute",
+        "Too many registration attempts. Try again in a minute.",
+    ),
+}
+
+
 @app.middleware("http")
-async def rate_limit_login(request: Request, call_next):
-    """Apply 10 requests/minute rate limit to the login endpoint."""
-    if request.url.path == "/api/v1/auth/login" and request.method == "POST":
-        limit = "200/minute" if settings.APP_ENV == "development" else "10/minute"
+async def rate_limit_auth(request: Request, call_next):
+    """Apply rate limits to authentication endpoints.
+
+    Production: login 10/min, register 5/min.
+    Development: 200/min for both (no friction during dev).
+    """
+    config = _AUTH_RATE_LIMITS.get(request.url.path)
+    if request.method == "POST" and config:
+        prod_limit, error_msg = config
+        limit = "200/minute" if settings.APP_ENV == "development" else prod_limit
 
         @limiter.limit(limit)
         async def _limited(request: Request):
@@ -140,7 +159,7 @@ async def rate_limit_login(request: Request, call_next):
         except RateLimitExceeded:
             return JSONResponse(
                 status_code=429,
-                content={"detail": "Too many login attempts. Try again in a minute."},
+                content={"detail": error_msg},
             )
     return await call_next(request)
 
