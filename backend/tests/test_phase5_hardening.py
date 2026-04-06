@@ -167,7 +167,7 @@ class TestWebhooksRouterStructure:
 
     def test_webhooks_router_importable(self):
         router = self._import_router()
-        assert router.prefix == "/api/v1/webhook"
+        assert router.prefix == "/webhooks"
 
     def test_webhooks_has_minio_endpoint(self):
         router = self._import_router()
