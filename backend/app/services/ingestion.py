@@ -142,6 +142,13 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             # ── Update run aggregates ──────────────────────
             await _update_run_aggregates(db, run.id)
 
+            # ── Sync suite membership traceability (TS-2) ──
+            try:
+                from app.services.suite_sync_service import sync_suite_membership
+                await sync_suite_membership(db, run.project_id, run.id)
+            except Exception as sync_err:
+                logger.warning("Suite membership sync failed (non-blocking): %s", sync_err)
+
             # ── Link to release (auto-create if new) ───────
             if sentinel.release_name and sentinel.release_name.strip():
                 try:

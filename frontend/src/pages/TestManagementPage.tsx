@@ -1736,6 +1736,8 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   const [expandedSuite, setExpandedSuite] = useState<string | null>(null)
   const [suiteCases, setSuiteCases] = useState<Record<string, SuiteCase[]>>({})
   const [loadingCases, setLoadingCases] = useState<string | null>(null)
+  const [suiteDeleted, setSuiteDeleted] = useState<Record<string, Array<{ id: string; test_name: string; class_name: string | null; review_tag: string | null; deleted_at_run_id: string | null }>>>({})
+  const [suiteChanges, setSuiteChanges] = useState<Record<string, Array<{ event_type: string; test_name: string; details: string | null }>>>({})
 
   useEffect(() => {
     setLoading(true)
@@ -1754,8 +1756,14 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     if (suiteCases[suiteName]) return
     setLoadingCases(suiteName)
     try {
-      const cases = await testManagementService.getSuiteCases(suiteName, projectId)
+      const [cases, deleted, changes] = await Promise.all([
+        testManagementService.getSuiteCases(suiteName, projectId),
+        testManagementService.getSuiteDeleted(suiteName, projectId).catch(() => []),
+        testManagementService.getSuiteChanges(suiteName, projectId).catch(() => []),
+      ])
       setSuiteCases(prev => ({ ...prev, [suiteName]: cases }))
+      setSuiteDeleted(prev => ({ ...prev, [suiteName]: deleted }))
+      setSuiteChanges(prev => ({ ...prev, [suiteName]: changes }))
     } catch {
       toast.error('Failed to load suite cases')
     } finally {
@@ -1860,6 +1868,46 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       )}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {/* Recent Changes */}
+              {(suiteChanges[suite.suite_name] ?? []).length > 0 && (
+                <div className="border-t border-[var(--color-border)] px-4 py-3">
+                  <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Recent Changes</p>
+                  <div className="space-y-1">
+                    {(suiteChanges[suite.suite_name] ?? []).slice(0, 5).map((evt, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className={clsx('px-1.5 py-0.5 rounded font-medium',
+                          evt.event_type === 'added' ? 'bg-green-900/30 text-green-400' :
+                          evt.event_type === 'deleted' ? 'bg-red-900/30 text-red-400' :
+                          evt.event_type === 'modified' ? 'bg-amber-900/30 text-amber-400' :
+                          'bg-blue-900/30 text-blue-400'
+                        )}>{evt.event_type}</span>
+                        <span className="text-[var(--color-text-secondary)] truncate">{evt.test_name}</span>
+                        {evt.details && <span className="text-[var(--color-text-faint)] truncate ml-auto">{evt.details}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Deleted Tests (needs_review) */}
+              {(suiteDeleted[suite.suite_name] ?? []).length > 0 && (
+                <div className="border-t border-red-700/30 bg-red-900/10 px-4 py-3">
+                  <p className="text-xs font-medium text-red-400 uppercase tracking-wider mb-2">
+                    Deleted from Suite ({(suiteDeleted[suite.suite_name] ?? []).length} tests need review)
+                  </p>
+                  <div className="space-y-1">
+                    {(suiteDeleted[suite.suite_name] ?? []).map(d => (
+                      <div key={d.id} className="flex items-center gap-2 text-xs">
+                        <span className="text-red-400">✕</span>
+                        <span className="text-[var(--color-text-secondary)]">{d.test_name}</span>
+                        {d.review_tag && (
+                          <span className="bg-amber-900/30 text-amber-400 px-1.5 py-0.5 rounded text-[10px] font-medium">{d.review_tag}</span>
+                        )}
+                        {d.class_name && <span className="text-[var(--color-text-faint)] ml-auto">{d.class_name}</span>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

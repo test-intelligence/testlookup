@@ -1045,6 +1045,53 @@ class AuditLogListResponse(BaseModel):
     pages: int
 
 
+# ── Suite Membership Traceability Schemas (TS-1) ────────────────────────────
+
+
+class SuiteMembershipResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    suite_name: str
+    test_fingerprint: str
+    test_name: str
+    class_name: Optional[str] = None
+    managed_test_case_id: Optional[uuid.UUID] = None
+    source: str
+    status: str
+    last_seen_run_id: Optional[uuid.UUID] = None
+    first_seen_run_id: Optional[uuid.UUID] = None
+    deleted_at_run_id: Optional[uuid.UUID] = None
+    review_tag: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuiteMembershipEventResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    suite_name: str
+    test_fingerprint: str
+    test_name: str
+    event_type: str
+    run_id: Optional[uuid.UUID] = None
+    old_values: Optional[dict] = None
+    new_values: Optional[dict] = None
+    details: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuiteSyncSummary(BaseModel):
+    suite_name: str
+    run_id: uuid.UUID
+    added_count: int = 0
+    deleted_count: int = 0
+    modified_count: int = 0
+    restored_count: int = 0
+    unchanged_count: int = 0
+
+
 class AIGenerateTestCasesRequest(BaseModel):
     project_id: uuid.UUID
     requirements: str = Field(..., min_length=3)

@@ -782,3 +782,119 @@ async def get_suite_test_cases(
     # Sort combined by created_at descending
     result.sort(key=lambda x: x["created_at"] or "", reverse=True)
     return result[:limit]
+
+
+# ── Suite Membership Traceability (TS-5) ──────────────────────────────────────
+
+
+@router.get("/suites/{suite_name}/membership")
+async def get_suite_membership(
+    suite_name: str,
+    project_id: Optional[uuid.UUID] = Query(None),
+    status: Optional[str] = Query(None, pattern="^(active|deleted|needs_review)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return current suite membership records from the traceability model."""
+    from app.models.postgres import SuiteMembership
+
+    stmt = select(SuiteMembership).where(SuiteMembership.suite_name == suite_name)
+    if project_id:
+        stmt = stmt.where(SuiteMembership.project_id == project_id)
+    if status:
+        stmt = stmt.where(SuiteMembership.status == status)
+    else:
+        stmt = stmt.where(SuiteMembership.status == "active")
+    stmt = stmt.order_by(SuiteMembership.test_name)
+
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": str(m.id),
+            "suite_name": m.suite_name,
+            "test_fingerprint": m.test_fingerprint,
+            "test_name": m.test_name,
+            "class_name": m.class_name,
+            "source": m.source,
+            "status": m.status,
+            "review_tag": m.review_tag,
+            "last_seen_run_id": str(m.last_seen_run_id) if m.last_seen_run_id else None,
+            "first_seen_run_id": str(m.first_seen_run_id) if m.first_seen_run_id else None,
+            "managed_test_case_id": str(m.managed_test_case_id) if m.managed_test_case_id else None,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in rows
+    ]
+
+
+@router.get("/suites/{suite_name}/changes")
+async def get_suite_changes(
+    suite_name: str,
+    run_id: Optional[uuid.UUID] = Query(None),
+    project_id: Optional[uuid.UUID] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return suite membership change events, optionally filtered by run."""
+    from app.models.postgres import SuiteMembershipEvent
+
+    stmt = select(SuiteMembershipEvent).where(SuiteMembershipEvent.suite_name == suite_name)
+    if project_id:
+        stmt = stmt.where(SuiteMembershipEvent.project_id == project_id)
+    if run_id:
+        stmt = stmt.where(SuiteMembershipEvent.run_id == run_id)
+    stmt = stmt.order_by(SuiteMembershipEvent.created_at.desc()).limit(limit)
+
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": str(e.id),
+            "suite_name": e.suite_name,
+            "test_fingerprint": e.test_fingerprint,
+            "test_name": e.test_name,
+            "event_type": e.event_type,
+            "run_id": str(e.run_id) if e.run_id else None,
+            "old_values": e.old_values,
+            "new_values": e.new_values,
+            "details": e.details,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in rows
+    ]
+
+
+@router.get("/suites/{suite_name}/deleted")
+async def get_suite_deleted(
+    suite_name: str,
+    project_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return deleted/needs_review members from the <suite>-deleted bucket."""
+    from app.models.postgres import SuiteMembership
+
+    deleted_bucket = f"{suite_name}-deleted"
+    stmt = select(SuiteMembership).where(
+        SuiteMembership.suite_name == deleted_bucket,
+    )
+    if project_id:
+        stmt = stmt.where(SuiteMembership.project_id == project_id)
+    stmt = stmt.order_by(SuiteMembership.updated_at.desc())
+
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": str(m.id),
+            "original_suite": suite_name,
+            "test_fingerprint": m.test_fingerprint,
+            "test_name": m.test_name,
+            "class_name": m.class_name,
+            "status": m.status,
+            "review_tag": m.review_tag,
+            "deleted_at_run_id": str(m.deleted_at_run_id) if m.deleted_at_run_id else None,
+            "last_seen_run_id": str(m.last_seen_run_id) if m.last_seen_run_id else None,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in rows
+    ]
