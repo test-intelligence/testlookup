@@ -68,15 +68,18 @@ def _build_project_member_response(member: ProjectMember, user: User) -> Project
 async def list_users(
     is_active: Optional[bool] = Query(None),
     role: Optional[UserRole] = Query(None),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
 ):
-    """List all users. Requires QA_LEAD or higher."""
+    """List all users (paginated). Requires QA_LEAD or higher."""
     stmt = select(User).order_by(User.full_name)
     if is_active is not None:
         stmt = stmt.where(User.is_active == is_active)
     if role is not None:
         stmt = stmt.where(User.role == role)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     return result.scalars().all()
 
@@ -393,6 +396,10 @@ async def add_project_member(
     await db.commit()
     await db.refresh(member)
 
+    # P3-2: Invalidate membership cache for the added user
+    from app.core.deps import invalidate_membership_cache
+    await invalidate_membership_cache(payload.user_id)
+
     return _build_project_member_response(member, user)
 
 
@@ -419,6 +426,10 @@ async def update_project_member_role(
     await db.commit()
     await db.refresh(member)
 
+    # P3-2: Invalidate membership cache for the updated user
+    from app.core.deps import invalidate_membership_cache
+    await invalidate_membership_cache(user_id)
+
     return _build_project_member_response(member, user)
 
 
@@ -441,4 +452,9 @@ async def remove_project_member(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project membership not found")
     await db.delete(member)
     await db.commit()
+
+    # P3-2: Invalidate membership cache for the removed user
+    from app.core.deps import invalidate_membership_cache
+    await invalidate_membership_cache(user_id)
+
     return None

@@ -46,6 +46,14 @@ async def publish_live_event(run_id: str, event: dict) -> str:
     return cast(str, msg_id)
 
 
+class StreamBackpressureError(Exception):
+    """Raised when the stream is at capacity and cannot accept new events."""
+
+
+# P3-8: Backpressure threshold — reject new events when stream is ≥80% full
+_BACKPRESSURE_RATIO = 0.8
+
+
 async def publish_event_batch(session_id: str, run_id: str, events: list) -> int:
     """
     Publish a batch of live events to the live events stream using a Redis pipeline.
@@ -53,9 +61,30 @@ async def publish_event_batch(session_id: str, run_id: str, events: list) -> int
     All XADDs are sent in a single round-trip — O(1) network overhead regardless
     of batch size. This is the critical path for 10k-concurrent-session throughput.
 
+    P3-8: Checks stream length before publishing and raises StreamBackpressureError
+    if the stream is at ≥80% capacity (consumer lagging).
+
     Returns the number of events successfully published.
     """
     redis = get_redis()
+
+    # P3-8: Backpressure check — reject batch if consumer is lagging
+    try:
+        stream_len = await redis.xlen(LIVE_EVENTS_STREAM)
+        if stream_len >= int(LIVE_STREAM_MAXLEN * _BACKPRESSURE_RATIO):
+            logger.warning(
+                "Stream backpressure: %d/%d entries — rejecting batch",
+                stream_len, LIVE_STREAM_MAXLEN,
+            )
+            raise StreamBackpressureError(
+                f"Stream at {stream_len}/{LIVE_STREAM_MAXLEN} capacity — retry later"
+            )
+    except StreamBackpressureError:
+        raise
+    except Exception as exc:
+        # If we can't check stream length (Redis issue), allow the publish
+        logger.debug("Backpressure check failed (non-blocking): %s", exc)
+
     pipe = redis.pipeline()
     for event in events:
         # Accept both Pydantic models and raw dicts

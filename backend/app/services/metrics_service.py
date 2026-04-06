@@ -12,7 +12,17 @@ logger = logging.getLogger(__name__)
 
 
 async def get_dashboard_summary(db: AsyncSession, project_id: str | None, days: int = 7) -> dict:
-    """Compute all Executive Dashboard KPIs for a project."""
+    """Compute all Executive Dashboard KPIs for a project.
+
+    P3-6: Results are cached in Redis for 60 seconds to avoid re-aggregating
+    thousands of test cases on every dashboard load.
+    """
+    from app.services.cache_service import CACHE_TTL_DASHBOARD, cache_get, cache_set
+
+    cached = await cache_get("dashboard_summary", project_id, days=days)
+    if cached is not None:
+        return cached
+
     now = datetime.now(timezone.utc)
     period_start = now - timedelta(days=days)
     prev_period_start = now - timedelta(days=days * 2)
@@ -68,7 +78,7 @@ async def get_dashboard_summary(db: AsyncSession, project_id: str | None, days: 
     # Release readiness
     readiness = _compute_readiness(pass_rate, active_defects, flaky_count)
 
-    return {
+    result_dict = {
         "total_executions_7d": {
             "value": total_exec,
             "trend": total_exec_trend,
@@ -101,6 +111,11 @@ async def get_dashboard_summary(db: AsyncSession, project_id: str | None, days: 
         },
         "release_readiness": readiness,
     }
+
+    # P3-6: Cache the result for subsequent requests
+    await cache_set("dashboard_summary", result_dict, project_id, ttl=CACHE_TTL_DASHBOARD, days=days)
+
+    return result_dict
 
 
 async def get_trend_data(db: AsyncSession, project_id: str | None, days: int = 7) -> list:

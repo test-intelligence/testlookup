@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -266,54 +266,14 @@ async def check_cluster_duplicate(
     """
     Check if a cluster likely duplicates an existing open defect.
     Returns duplicate info without creating anything.
+    P3-9: Business logic extracted to cluster_service.
     """
-    result = await db.execute(
-        select(FailureCluster).where(
-            FailureCluster.test_run_id == run_id,
-            FailureCluster.cluster_id == cluster_id,
-        )
-    )
-    cluster = result.scalar_one_or_none()
-    if not cluster:
-        raise HTTPException(status_code=404, detail="Cluster not found")
+    from app.services.cluster_service import check_duplicate
 
-    from app.models.postgres import Defect
-    defects_result = await db.execute(
-        select(Defect)
-        .where(Defect.resolution_status == "OPEN")
-        .order_by(Defect.created_at.desc())
-        .limit(100)
-    )
-    open_defects = defects_result.scalars().all()
-
-    cluster_label_lower = (cluster.label or "").lower()
-    cluster_words = set(cluster_label_lower.split())
-
-    duplicates: list[dict] = []
-    for d in open_defects:
-        defect_title_lower = (d.title or "").lower()
-        defect_words = set(defect_title_lower.split())
-        intersection = cluster_words & defect_words
-        union = cluster_words | defect_words
-        similarity = len(intersection) / max(len(union), 1)
-
-        if similarity > 0.3 or cluster_label_lower in defect_title_lower or defect_title_lower in cluster_label_lower:
-            duplicates.append({
-                "defect_id": str(d.id),
-                "title": d.title,
-                "severity": d.severity,
-                "component": d.component,
-                "similarity": round(similarity, 2),
-                "jira_ticket_id": d.jira_ticket_id,
-            })
-
-    duplicates.sort(key=lambda x: x["similarity"], reverse=True)
-    return {
-        "cluster_id": cluster_id,
-        "cluster_label": cluster.label,
-        "potential_duplicates": duplicates[:5],
-        "has_likely_duplicate": len(duplicates) > 0,
-    }
+    try:
+        return await check_duplicate(str(run_id), cluster_id, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 # ── Phase 4: Defect approval workflow ────────────────────────────────────────
@@ -400,15 +360,18 @@ async def review_defect(
 
 @router.get("/defects/pending-review")
 async def list_pending_defects(
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all defects awaiting approval (QA Lead+ only)."""
+    """List all defects awaiting approval (QA Lead+ only, paginated)."""
     result = await db.execute(
         select(Defect)
         .where(Defect.approval_status == ActionStatus.PENDING_REVIEW)
         .order_by(Defect.created_at.desc())
-        .limit(50)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     defects = result.scalars().all()
     return [

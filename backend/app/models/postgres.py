@@ -140,6 +140,8 @@ class TestRun(Base):
         UniqueConstraint("project_id", "build_number", "jenkins_job", name="uq_test_run_build"),
         Index("ix_test_runs_project_status", "project_id", "status"),
         Index("ix_test_runs_created_at", "created_at"),
+        # P3-3: Composite index for analytics queries that filter by project + status + time range
+        Index("ix_test_runs_project_status_created", "project_id", "status", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

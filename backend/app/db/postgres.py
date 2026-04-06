@@ -19,14 +19,16 @@ def _max_overflow() -> int:
     return {"development": 10, "staging": 30, "production": 50}.get(settings.APP_ENV, 10)
 
 
-# Create async engine with environment-aware pool sizing
+# Create async engine with environment-aware pool sizing.
+# P3-5: pool_pre_ping only in dev (saves 1 RTT per checkout in production),
+# pool_recycle capped at 900s to stay within typical PG idle timeouts.
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.is_development,
-    pool_pre_ping=True,
+    pool_pre_ping=settings.APP_ENV != "production",
     pool_size=_pool_size(),
     max_overflow=_max_overflow(),
-    pool_recycle=settings.PG_POOL_RECYCLE,
+    pool_recycle=min(settings.PG_POOL_RECYCLE, 900),
     pool_timeout=settings.PG_POOL_TIMEOUT,
 )
 
