@@ -107,7 +107,7 @@ describe('TopBar', () => {
       </MemoryRouter>,
     )
 
-    const input = screen.getByPlaceholderText('Search tests, errors… (Enter)')
+    const input = screen.getByPlaceholderText('Search tests, runs, defects… (Enter)')
     fireEvent.change(input, { target: { value: 'timeout issue' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
