@@ -1268,6 +1268,11 @@ class AIConfigRead(BaseModel):
     finetune_enabled: bool
     openai_key_set: bool
     google_key_set: bool
+    # Analysis mode — LLM-free operation
+    analysis_mode: str                               # "llm" | "ml" | "rules" | "auto"
+    ml_model_available: bool = False                  # True if a trained ML model exists
+    ml_model_accuracy: Optional[float] = None         # last known accuracy (0-1)
+    ml_training_sample_count: int = 0                 # total labeled samples available
 
 
 class AIConfigUpdate(BaseModel):
@@ -1285,6 +1290,7 @@ class AIConfigUpdate(BaseModel):
     finetune_enabled: Optional[bool] = None
     openai_api_key: Optional[str] = Field(None, max_length=500)
     google_api_key: Optional[str] = Field(None, max_length=500)
+    analysis_mode: Optional[str] = Field(None, pattern=r"^(llm|ml|rules|auto)$")
 
 
 # ── Integrations Schemas ─────────────────────────────────────

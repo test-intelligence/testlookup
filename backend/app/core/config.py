@@ -197,6 +197,18 @@ class Settings(BaseSettings):
     DEEP_CLUSTER_THRESHOLD: float = 0.75          # Jaccard similarity threshold for clustering
     DEEP_MAX_CLUSTERS_PER_RUN: int = 20           # cap clusters to avoid overload
 
+    # ── Analysis Mode (LLM-free operation) ──────────────────────────────────────
+    # Controls which engine processes test results.
+    #   "llm"   — full LangChain ReAct agent (requires running LLM)
+    #   "ml"    — scikit-learn ML classifiers (no LLM needed, needs trained model)
+    #   "rules" — pattern matching + statistical heuristics (zero dependencies)
+    #   "auto"  — ML if trained model available, else LLM if reachable, else rules
+    ANALYSIS_MODE: str = "auto"
+    ML_MODEL_DIR: str = "models"                     # directory for trained .joblib artifacts
+    ML_MIN_TRAINING_SAMPLES: int = 200               # minimum labeled samples before ML activates
+    ML_RETRAIN_ENABLED: bool = True                  # enable nightly Celery-beat retraining
+    ML_ACCURACY_THRESHOLD: float = 0.80              # minimum accuracy to deploy a new model
+
     # ── Anomaly Detection Tunables ────────────────────────────────────────────────
     # Pass-rate regression
     ANOMALY_REGRESSION_THRESHOLD: float = 10.0   # % drop vs median baseline to flag regression

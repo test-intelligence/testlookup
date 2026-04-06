@@ -28,9 +28,28 @@ MCP Server (mcp:8002) — AI assistant integration (stdio + SSE)
 
 **Backend:** FastAPI + SQLAlchemy (async) + Motor (MongoDB) + Celery
 **Frontend:** React 18 + Vite + TypeScript + Tailwind CSS + Zustand + SWR
-**AI Layer:** LangChain ReAct agent + LangGraph multi-agent pipelines (standard + deep)
+**AI Layer:** LangChain ReAct agent + LangGraph multi-agent pipelines + ML classifier (scikit-learn) + rules engine
 **Databases:** PostgreSQL 16 (structured), MongoDB 7 (logs/artifacts), Redis 7 (broker + streams), MinIO (S3 object store), ChromaDB (vectors)
 **Observability:** OpenTelemetry → Jaeger, Prometheus, Grafana
+
+---
+
+## Analysis Engine Modes
+
+The system supports three test analysis engines. Admin users toggle via **Settings > AI Configuration** or `ANALYSIS_MODE` env var:
+
+| Mode | Engine | Latency/test | Dependencies | Use When |
+|------|--------|-------------|--------------|----------|
+| `llm` | LangChain ReAct + 5 tools | ~300ms | Running LLM | Maximum accuracy needed |
+| `ml` | scikit-learn Gradient Boost | ~2ms | Trained model | LLM unavailable or cost concern |
+| `rules` | Pattern match + statistics | ~0.2ms | None | Air-gapped, no model trained |
+| `auto` | ML → LLM → Rules fallback | varies | Best available | Recommended default |
+
+All modes produce identical output shapes (same `AIAnalysis` schema, same 4-layer summary structure), so the frontend, reports, and dashboards work identically regardless of mode.
+
+**Dispatch:** `analysis_agent._analyse_one()` → `analysis_router.get_analysis_mode()` → engine
+
+**ML Feature Vector (28 features):** error keywords (9), execution context (7), historical signals (8), environment signals (4). See `docs/ML_ANALYSIS_ENGINE_DESIGN.md` for full specification.
 
 ---
 
@@ -45,6 +64,8 @@ MCP Server (mcp:8002) — AI assistant integration (stdio + SSE)
 | Object storage | aioboto3 (MinIO/S3) |
 | Background jobs | Celery 5.4 + Flower 2.0 |
 | AI/LLM | LangChain 0.3.27 + LangGraph 0.6.11 |
+| ML classifier | scikit-learn HistGradientBoosting (LLM-free mode) |
+| Rules engine | Pattern matching + statistical heuristics (zero-dependency mode) |
 | Local LLM | Ollama (qwen2.5, llama3, mistral) |
 | Vector store | ChromaDB 0.5.20 |
 | DB migrations | Alembic 1.14 |

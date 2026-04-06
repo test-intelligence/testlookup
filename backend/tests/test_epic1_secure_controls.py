@@ -213,7 +213,7 @@ class TestSecretNeverReturned:
             llm_max_tokens=4096, ai_offline_mode=False, embedding_provider="openai",
             embedding_model="text-embedding-3-small", ai_confidence_threshold=80,
             ai_timeout_seconds=300, deep_investigation_enabled=True, finetune_enabled=False,
-            openai_key_set=True, google_key_set=False,
+            openai_key_set=True, google_key_set=False, analysis_mode="auto",
         )
         fields = set(cfg.model_fields.keys())
         assert "openai_api_key" not in fields
