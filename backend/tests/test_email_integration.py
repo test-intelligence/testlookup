@@ -8,12 +8,12 @@ Covers:
   - Subscription schema validation
   - Per-run subscription matching logic
 """
+import uuid
+from datetime import datetime, timezone
+
 import pytest
 
 pytest.importorskip("asyncpg")
-
-import uuid
-from datetime import datetime, timezone
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
