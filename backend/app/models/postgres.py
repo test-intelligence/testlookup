@@ -1685,14 +1685,18 @@ class SavedView(Base):
 class DigestSchedule(str, PyEnum):
     DAILY = "DAILY"
     WEEKLY = "WEEKLY"
+    PER_RUN = "PER_RUN"
+    PER_RELEASE = "PER_RELEASE"
+    PER_SUITE = "PER_SUITE"
 
 
 class DigestSubscription(Base):
-    """User subscription to a scheduled digest delivery."""
+    """User subscription to a scheduled or event-driven report delivery."""
     __tablename__ = "digest_subscriptions"
     __table_args__ = (
         Index("ix_ds_user", "user_id"),
         Index("ix_ds_next", "next_delivery_at"),
+        Index("ix_ds_schedule_active", "schedule", "is_active", "is_paused"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1700,10 +1704,14 @@ class DigestSubscription(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     saved_view_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("saved_views.id", ondelete="SET NULL"), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    schedule: Mapped[DigestSchedule] = mapped_column(String(10), nullable=False, default=DigestSchedule.WEEKLY.value)
+    schedule: Mapped[DigestSchedule] = mapped_column(String(20), nullable=False, default=DigestSchedule.WEEKLY.value)
     channel: Mapped[NotificationChannel] = mapped_column(String(20), nullable=False, default=NotificationChannel.EMAIL.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    # EM-2: Scope and trigger fields for event-driven subscriptions
+    scope_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="project")   # project | release | suite | global
+    scope_value: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)                     # suite name, release id, etc.
+    trigger_filter: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="all")    # all | failed_only | degraded_only
     last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_delivery_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     delivery_count: Mapped[int] = mapped_column(Integer, default=0)

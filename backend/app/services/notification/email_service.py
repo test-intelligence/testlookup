@@ -129,8 +129,8 @@ def _build_html(
         <!-- Body -->
         <tr>
           <td style="padding:24px 28px;">
-            <p style="margin:0 0 20px;font-size:15px;color:#cbd5e1;line-height:1.6;">{body}</p>
-            {f'<table cellpadding="0" cellspacing="0" style="width:100%;background:#0f172a;border-radius:8px;margin-bottom:20px;">{stats_rows}</table>' if stats_rows else ''}
+            {_build_executive_panel_section(metadata) if event_type == "ai_analysis_complete" and metadata.get("executive_panel") else f'<p style="margin:0 0 20px;font-size:15px;color:#cbd5e1;line-height:1.6;">{body}</p>'}
+            {f'<table cellpadding="0" cellspacing="0" style="width:100%;background:#0f172a;border-radius:8px;margin-bottom:20px;">{stats_rows}</table>' if stats_rows and not metadata.get("executive_panel") else ''}
             {f'<a href="{dashboard_url}" style="display:inline-block;padding:10px 20px;background:{colour};color:#fff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">View in Dashboard →</a>' if dashboard_url != "#" else ''}
           </td>
         </tr>
@@ -148,6 +148,12 @@ def _build_html(
   </table>
 </body>
 </html>"""
+
+
+def _build_executive_panel_section(metadata: dict) -> str:
+    """Render the executive panel as an HTML section for AI summary emails."""
+    from app.services.notification.email_templates import render_executive_panel_email
+    return render_executive_panel_email(metadata.get("executive_panel", {}))
 
 
 def _build_plain(title: str, body: str, metadata: dict) -> str:
