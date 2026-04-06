@@ -1716,7 +1716,13 @@ class ServiceOwnershipRule(Base):
 
 
 class SavedView(Base):
-    """Persisted filter/scope configuration — personal or shared."""
+    """Persisted filter/scope configuration — personal or shared.
+
+    The `filters` JSON field supports both legacy filter-only payloads and
+    analytics widget configurations (AC-2):
+      Legacy: {"severity": "critical", "date_range": 7}
+      Analytics: {"page": "dashboard", "widgets": ["w1", "w2"], "filters": {...}, "version": 1}
+    """
     __tablename__ = "saved_views"
     __table_args__ = (
         Index("ix_sv_user", "user_id"),
@@ -1728,7 +1734,8 @@ class SavedView(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    filters: Mapped[dict] = mapped_column(JSON, nullable=False)  # {severity, category, owner, date_range, ...}
+    page: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # dashboard | trends | coverage | defects
+    filters: Mapped[dict] = mapped_column(JSON, nullable=False)  # {severity, category, owner, date_range, widgets, ...}
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False)  # visible to all project members
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)  # auto-load on page visit
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

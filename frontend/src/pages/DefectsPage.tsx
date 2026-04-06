@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { Gauge, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Gauge, ExternalLink, ChevronLeft, ChevronRight, LayoutGrid } from 'lucide-react'
 import { clsx } from 'clsx'
+import WidgetPicker from '@/components/analytics/WidgetPicker'
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -48,10 +50,12 @@ interface Defect {
 export default function DefectsPage() {
   const [page, setPage] = useState(1)
   const [resolutionFilter, setResolutionFilter] = useState<string | undefined>(undefined)
+  const [showPicker, setShowPicker] = useState(false)
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { data, isLoading } = useDefects(page, resolutionFilter)
+  const analyticsView = useAnalyticsView('defects')
 
   if (!project && !isAllProjects) {
     return (
@@ -81,19 +85,28 @@ export default function DefectsPage() {
         title="Defects"
         subtitle={`Defect tracking and Jira integration for ${projectLabel}`}
         actions={
-          <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
-            {RESOLUTION_FILTERS.map(({ label, value }) => (
-              <button
-                key={label}
-                onClick={() => handleFilterChange(value)}
-                className={clsx(
-                  'px-3 py-1 rounded-md text-sm font-medium transition-colors',
-                  resolutionFilter === value ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
-                )}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowPicker(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] rounded-lg transition-colors"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Customize
+            </button>
+            <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
+              {RESOLUTION_FILTERS.map(({ label, value }) => (
+                <button
+                  key={label}
+                  onClick={() => handleFilterChange(value)}
+                  className={clsx(
+                    'px-3 py-1 rounded-md text-sm font-medium transition-colors',
+                    resolutionFilter === value ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         }
       />
@@ -231,6 +244,15 @@ export default function DefectsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {showPicker && (
+        <WidgetPicker
+          page="defects"
+          enabledIds={analyticsView.widgetIds}
+          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onClose={() => setShowPicker(false)}
+        />
       )}
     </div>
   )

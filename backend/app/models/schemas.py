@@ -2024,6 +2024,7 @@ class SavedViewCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
     description: Optional[str] = None
+    page: Optional[str] = Field(None, max_length=50)  # dashboard | trends | coverage | defects
     filters: dict = Field(default_factory=dict)
     is_shared: bool = False
     is_default: bool = False
@@ -2032,6 +2033,7 @@ class SavedViewCreate(BaseModel):
 class SavedViewUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = None
+    page: Optional[str] = Field(None, max_length=50)
     filters: Optional[dict] = None
     is_shared: Optional[bool] = None
     is_default: Optional[bool] = None
@@ -2043,6 +2045,7 @@ class SavedViewResponse(BaseModel):
     project_id: Optional[uuid.UUID] = None
     name: str
     description: Optional[str] = None
+    page: Optional[str] = None
     filters: dict
     is_shared: bool
     is_default: bool

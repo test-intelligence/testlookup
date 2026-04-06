@@ -15,6 +15,8 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildTrendsWorkflow } from '@/components/workflow/workflowPresets'
 import { useTrendData } from '@/hooks/useMetrics'
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
+import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import type { TrendPoint } from '@/types/metrics'
 import { postData } from '@/services/http'
@@ -350,8 +352,10 @@ const PRINT_CHART_WIDTH = 680
 
 export default function TrendsPage() {
   const [days, setDays]           = useState(30)
+  const analyticsView = useAnalyticsView('trends')
   const [enabledCharts, setEnabled] = useState<string[]>(loadEnabledCharts)
   const [showPicker, setShowPicker] = useState(false)
+  const [showWidgetPicker, setShowWidgetPicker] = useState(false)
   const [showEmail, setShowEmail]   = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
   const project   = useProjectStore(s => s.activeProject)
@@ -359,6 +363,13 @@ export default function TrendsPage() {
   const isAllProjects = projectId === ALL_PROJECTS_ID
   const { data: trends, isLoading } = useTrendData(days)
   const contentRef = useRef<HTMLDivElement>(null)
+
+  // Sync from analytics view when loaded from server
+  useEffect(() => {
+    if (!analyticsView.loading && analyticsView.widgetIds.length > 0) {
+      setEnabled(analyticsView.widgetIds)
+    }
+  }, [analyticsView.loading, analyticsView.widgetIds])
 
   useEffect(() => { saveEnabledCharts(enabledCharts) }, [enabledCharts])
 
@@ -444,6 +455,14 @@ export default function TrendsPage() {
       {showPicker && (
         <ChartPickerModal enabled={enabledCharts} onToggle={toggleChart} onClose={() => setShowPicker(false)} />
       )}
+      {showWidgetPicker && (
+        <WidgetPicker
+          page="trends"
+          enabledIds={enabledCharts}
+          onSave={(ids) => { setEnabled(ids); analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onClose={() => setShowWidgetPicker(false)}
+        />
+      )}
       {showEmail && projectId && (
         <EmailModal onClose={() => setShowEmail(false)} projectId={projectId} days={days} enabledCharts={enabledCharts} />
       )}
@@ -471,7 +490,7 @@ export default function TrendsPage() {
               </div>
               {/* Customize */}
               <button
-                onClick={() => setShowPicker(true)}
+                onClick={() => setShowWidgetPicker(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] border border-[var(--color-border)] rounded-lg transition-colors"
               >
                 <Settings2 className="h-3.5 w-3.5" />
@@ -560,7 +579,7 @@ export default function TrendsPage() {
             {availableToAdd.length > 0 && (
               <div className="print:hidden">
                 <button
-                  onClick={() => setShowPicker(true)}
+                  onClick={() => setShowWidgetPicker(true)}
                   className="w-full flex items-center justify-center gap-2 py-4 border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-border-light)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors text-sm font-medium"
                 >
                   <Plus className="h-4 w-4" />
