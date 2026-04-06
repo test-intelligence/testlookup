@@ -73,7 +73,7 @@ describe('workflowPresets', () => {
 
   it('builds a digest workflow and uses preview data when available', () => {
     const workflow = buildDigestWorkflow(
-      [{ id: 'sub-1', user_id: 'u1', project_id: 'p1', saved_view_id: null, name: 'Weekly', schedule: 'WEEKLY', channel: 'email', is_active: true, is_paused: false, last_delivered_at: null, next_delivery_at: null, delivery_count: 2, created_at: '2026-04-03T15:00:00Z', updated_at: null }],
+      [{ id: 'sub-1', user_id: 'u1', project_id: 'p1', saved_view_id: null, name: 'Weekly', schedule: 'WEEKLY', channel: 'email', is_active: true, is_paused: false, scope_type: 'project', scope_value: null, trigger_filter: 'all', last_delivered_at: null, next_delivery_at: null, delivery_count: 2, created_at: '2026-04-03T15:00:00Z', updated_at: null }],
       [{ id: 'view-1', name: 'QA view', is_default: true, is_shared: true }],
       {
         project_name: 'Project A',

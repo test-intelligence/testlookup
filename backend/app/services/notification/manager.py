@@ -285,6 +285,60 @@ async def dispatch_ai_notifications(
     await _load_and_notify(project_id, run_id, events, _msg, meta)
 
 
+async def dispatch_ai_summary_notifications(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    build_number: str,
+    project_name: str,
+    executive_summary: str,
+    executive_panel: dict | None = None,
+    pass_rate: float = 0.0,
+    total_tests: int = 0,
+    failed_tests: int = 0,
+    dashboard_url: str = "#",
+) -> None:
+    """
+    Send AI executive-summary email after the AI pipeline completes.
+
+    Triggered from the run_agent_pipeline Celery task after the summary
+    stage finishes and the intelligence snapshot is persisted.
+    """
+    events = [NotificationEventType.AI_ANALYSIS_COMPLETE]
+
+    status_signal = "CONDITIONAL_GO"
+    risk_score = None
+    if executive_panel:
+        status_signal = executive_panel.get("status_signal", "CONDITIONAL_GO")
+        risk_score = executive_panel.get("risk_score")
+
+    title = f"🤖 AI Summary — Build {build_number}"
+    if failed_tests == 0:
+        body = f"All {total_tests} tests passed in {project_name} (build {build_number}). No issues detected."
+    else:
+        body = (
+            f"{failed_tests} failure{'s' if failed_tests != 1 else ''} detected in {project_name} "
+            f"(build {build_number}, {pass_rate:.1f}% pass rate). "
+            f"Release signal: {status_signal.replace('_', ' ')}"
+            + (f" (risk {risk_score}/100)" if risk_score is not None else "")
+            + f".\n\n{executive_summary}"
+        )
+
+    meta = {
+        "project_name": project_name,
+        "build_number": build_number,
+        "pass_rate": pass_rate,
+        "total_tests": total_tests,
+        "failed_tests": failed_tests,
+        "dashboard_url": dashboard_url,
+        "executive_panel": executive_panel,
+    }
+
+    def _msg(_event: NotificationEventType) -> tuple[str, str]:
+        return title, body
+
+    await _load_and_notify(project_id, run_id, events, _msg, meta)
+
+
 async def send_test_notification(
     user_id: uuid.UUID,
     channel: NotificationChannel,

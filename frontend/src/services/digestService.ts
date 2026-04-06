@@ -1,15 +1,22 @@
 import { api } from './api';
 
+export type DigestScheduleType = 'DAILY' | 'WEEKLY' | 'PER_RUN' | 'PER_RELEASE' | 'PER_SUITE';
+export type ScopeType = 'project' | 'release' | 'suite' | 'global';
+export type TriggerFilter = 'all' | 'failed_only' | 'degraded_only';
+
 export interface DigestSubscription {
   id: string;
   user_id: string;
   project_id: string | null;
   saved_view_id: string | null;
   name: string;
-  schedule: 'DAILY' | 'WEEKLY';
+  schedule: DigestScheduleType;
   channel: 'email' | 'slack' | 'teams';
   is_active: boolean;
   is_paused: boolean;
+  scope_type: ScopeType | null;
+  scope_value: string | null;
+  trigger_filter: TriggerFilter | null;
   last_delivered_at: string | null;
   next_delivery_at: string | null;
   delivery_count: number;
@@ -41,8 +48,11 @@ export async function createSubscription(payload: {
   project_id?: string | null;
   saved_view_id?: string | null;
   name: string;
-  schedule?: 'DAILY' | 'WEEKLY';
+  schedule?: DigestScheduleType;
   channel?: 'email' | 'slack' | 'teams';
+  scope_type?: ScopeType;
+  scope_value?: string | null;
+  trigger_filter?: TriggerFilter;
 }): Promise<DigestSubscription> {
   const { data } = await api.post<DigestSubscription>('/api/v1/digests/subscriptions', payload);
   return data;
@@ -50,8 +60,11 @@ export async function createSubscription(payload: {
 
 export async function updateSubscription(id: string, payload: {
   name?: string;
-  schedule?: 'DAILY' | 'WEEKLY';
+  schedule?: DigestScheduleType;
   channel?: 'email' | 'slack' | 'teams';
+  scope_type?: ScopeType;
+  scope_value?: string | null;
+  trigger_filter?: TriggerFilter;
   is_active?: boolean;
   is_paused?: boolean;
 }): Promise<DigestSubscription> {

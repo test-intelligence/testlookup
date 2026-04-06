@@ -2008,8 +2008,11 @@ class DigestSubscriptionCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     saved_view_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
-    schedule: str = Field(default="WEEKLY", pattern="^(DAILY|WEEKLY)$")
+    schedule: str = Field(default="WEEKLY", pattern="^(DAILY|WEEKLY|PER_RUN|PER_RELEASE|PER_SUITE)$")
     channel: str = Field(default="email", pattern="^(email|slack|teams)$")
+    scope_type: Optional[str] = Field(default="project", pattern="^(project|release|suite|global)$")
+    scope_value: Optional[str] = Field(None, max_length=255)
+    trigger_filter: Optional[str] = Field(default="all", pattern="^(all|failed_only|degraded_only)$")
 
 
 class DigestSubscriptionUpdate(BaseModel):
@@ -2031,6 +2034,9 @@ class DigestSubscriptionResponse(BaseModel):
     channel: str
     is_active: bool
     is_paused: bool
+    scope_type: Optional[str] = "project"
+    scope_value: Optional[str] = None
+    trigger_filter: Optional[str] = "all"
     last_delivered_at: Optional[datetime] = None
     next_delivery_at: Optional[datetime] = None
     delivery_count: int = 0

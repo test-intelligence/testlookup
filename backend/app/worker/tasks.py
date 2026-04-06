@@ -476,6 +476,18 @@ def run_agent_pipeline(
         except Exception as inv_exc:
             logger.warning("[Task %s] Snapshot invalidation failed (non-blocking): %s", self.request.id, inv_exc)
 
+        # EM-1: Dispatch AI summary email after pipeline completes
+        if "summary" in stages_done:
+            try:
+                dispatch_ai_summary_email.delay(
+                    test_run_id=test_run_id,
+                    project_id=project_id,
+                    build_number=build_number,
+                )
+                logger.debug("[Task %s] AI summary email queued for run %s", self.request.id, test_run_id)
+            except Exception as email_exc:
+                logger.warning("[Task %s] AI summary email dispatch failed (non-blocking): %s", self.request.id, email_exc)
+
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
         logger.error("[Task %s] Pipeline failed: %s", self.request.id, exc, exc_info=True)
@@ -487,6 +499,166 @@ def run_agent_pipeline(
                 kwargs={"test_run_id": test_run_id, "build_number": build_number},
                 error=str(exc),
             ))
+        countdown = _exponential_backoff(self.request.retries)
+        raise self.retry(exc=exc, countdown=countdown)
+
+
+@celery_app.task(
+    name="app.worker.tasks.dispatch_ai_summary_email",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    queue="default",
+)
+def dispatch_ai_summary_email(
+    self,
+    test_run_id: str,
+    project_id: str,
+    build_number: str,
+):
+    """
+    EM-1: Send AI executive-summary email after the pipeline completes.
+
+    Loads the run summary (MongoDB or fallback) and dispatches to users
+    subscribed to AI_ANALYSIS_COMPLETE notifications. Deduplicates per run.
+    """
+    import uuid as _uuid
+
+    from datetime import datetime, timezone
+
+    dedup_key = f"testlookup:dedup:ai_email:{test_run_id}"
+
+    async def _dispatch():
+        # Dedup check
+        if await _is_duplicate(dedup_key, ttl=3600):
+            logger.info("[AI Email] Skipping duplicate for run %s", test_run_id)
+            return
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.db.mongo import get_mongo_db, Collections
+        from app.models.postgres import Project as _Project, TestRun as _TestRun
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as db:
+            # Load run and project
+            run = (await db.execute(select(_TestRun).where(_TestRun.id == _uuid.UUID(test_run_id)))).scalar_one_or_none()
+            if not run:
+                logger.warning("[AI Email] Run %s not found", test_run_id)
+                return
+
+            project = (await db.execute(select(_Project).where(_Project.id == run.project_id))).scalar_one_or_none()
+            project_name = project.name if project else str(run.project_id)
+
+        # Load summary from MongoDB
+        mongo = get_mongo_db()
+        doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": test_run_id})
+        if not doc:
+            try:
+                doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": _uuid.UUID(test_run_id)})
+            except (ValueError, TypeError):
+                doc = None
+
+        executive_summary = ""
+        executive_panel = None
+        if doc:
+            executive_summary = doc.get("executive_summary") or doc.get("layer1_executive_summary") or ""
+            executive_panel = doc.get("executive_panel")
+
+        if not executive_summary:
+            # Fallback to deterministic summary
+            from app.services.run_summary_service import build_fallback_summary
+            async with AsyncSessionLocal() as db:
+                fallback = await build_fallback_summary(db, test_run_id)
+                if fallback:
+                    executive_summary = fallback.executive_summary
+                    executive_panel = fallback.executive_panel
+
+        from app.services.notification.manager import dispatch_ai_summary_notifications
+
+        _pass_rate = float(run.pass_rate or 0) if run else 0.0
+        _total_tests = int(run.total_tests or 0) if run else 0
+        _failed_tests = int(run.failed_tests or 0) if run else 0
+
+        # 1. Dispatch to notification-preference subscribers (AI_ANALYSIS_COMPLETE event)
+        await dispatch_ai_summary_notifications(
+            project_id=_uuid.UUID(project_id),
+            run_id=_uuid.UUID(test_run_id),
+            build_number=build_number,
+            project_name=project_name,
+            executive_summary=executive_summary,
+            executive_panel=executive_panel,
+            pass_rate=_pass_rate,
+            total_tests=_total_tests,
+            failed_tests=_failed_tests,
+            dashboard_url=f"/runs/{test_run_id}/intelligence",
+        )
+
+        # 2. EM-4: Dispatch to PER_RUN digest subscribers
+        try:
+            from app.models.postgres import DigestSubscription, User as _User
+            from app.services.notification import email_service
+
+            async with AsyncSessionLocal() as db:
+                per_run_result = await db.execute(
+                    select(DigestSubscription).where(
+                        DigestSubscription.schedule == "PER_RUN",
+                        DigestSubscription.is_active == True,  # noqa: E712
+                        DigestSubscription.is_paused == False,  # noqa: E712
+                    )
+                )
+                per_run_subs = per_run_result.scalars().all()
+
+                for sub in per_run_subs:
+                    # Scope check: global or matching project
+                    if sub.project_id and str(sub.project_id) != project_id:
+                        continue
+                    # Trigger filter: failed_only skips all-green runs
+                    if sub.trigger_filter == "failed_only" and _failed_tests == 0:
+                        continue
+                    if sub.trigger_filter == "degraded_only" and _pass_rate >= 90:
+                        continue
+
+                    # Get user email
+                    user = (await db.execute(select(_User).where(_User.id == sub.user_id))).scalar_one_or_none()
+                    if not user or not user.email:
+                        continue
+
+                    # Dedup per (subscription, run)
+                    sub_dedup = f"testlookup:dedup:per_run_email:{sub.id}:{test_run_id}"
+                    if await _is_duplicate(sub_dedup, ttl=3600):
+                        continue
+
+                    title = f"🤖 AI Summary — Build {build_number} ({project_name})"
+
+                    await email_service.send_notification(
+                        to=user.email,
+                        title=title,
+                        body=executive_summary,
+                        event_type="ai_analysis_complete",
+                        metadata={
+                            "project_name": project_name,
+                            "build_number": build_number,
+                            "pass_rate": _pass_rate,
+                            "total_tests": _total_tests,
+                            "failed_tests": _failed_tests,
+                            "dashboard_url": f"/runs/{test_run_id}/intelligence",
+                            "executive_panel": executive_panel,
+                        },
+                    )
+                    # Update delivery tracking
+                    sub.delivery_count = (sub.delivery_count or 0) + 1
+                    sub.last_delivered_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    logger.debug("[AI Email] Per-run email sent to %s for run %s (sub %s)", user.email, test_run_id, sub.id)
+        except Exception as sub_exc:
+            logger.warning("[AI Email] Per-run subscription dispatch failed (non-blocking): %s", sub_exc)
+
+        logger.info("[AI Email] Summary email dispatched for run %s (build %s)", test_run_id, build_number)
+
+    try:
+        _run_async(_dispatch())
+    except Exception as exc:
+        logger.error("[AI Email] Failed for run %s: %s", test_run_id, exc)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
 
@@ -853,11 +1025,15 @@ def dispatch_scheduled_digests(self):
 
         async with AsyncSessionLocal() as db:
             # Find subscriptions due for delivery
+            # Only process time-based subscriptions (DAILY, WEEKLY).
+            # Event-driven subscriptions (PER_RUN, PER_RELEASE, PER_SUITE)
+            # are dispatched by their respective event triggers.
             result = await db.execute(
                 select(DigestSubscription).where(
                     DigestSubscription.is_active == True,  # noqa: E712
                     DigestSubscription.is_paused == False,  # noqa: E712
                     DigestSubscription.next_delivery_at <= now,
+                    DigestSubscription.schedule.in_(["DAILY", "WEEKLY"]),
                 )
             )
             subs = result.scalars().all()
