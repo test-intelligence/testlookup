@@ -61,10 +61,8 @@ async def get_training_sample_count() -> int:
         return 0
 
 
-def _compute_class_weights(y: "np.ndarray", n_classes: int) -> dict[int, float]:
+def _compute_class_weights(y: Any, n_classes: int) -> dict[int, float]:
     """Compute balanced class weights inversely proportional to class frequency."""
-    import numpy as np
-
     counts = Counter(y.tolist())
     n_samples = len(y)
     weights = {}
@@ -77,9 +75,9 @@ def _compute_class_weights(y: "np.ndarray", n_classes: int) -> dict[int, float]:
     return weights
 
 
-def _compute_sample_weights(y: "np.ndarray", class_weights: dict[int, float]) -> "np.ndarray":
+def _compute_sample_weights(y: Any, class_weights: dict[int, float]) -> Any:
     """Convert class weights to per-sample weight array."""
-    import numpy as np
+    import numpy as np  # noqa: F811
     return np.array([class_weights[label] for label in y])
 
 
