@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     WS_BROADCAST_TIMEOUT: float = 5.0           # seconds before dropping a dead connection
 
     # ── LLM Provider ─────────────────────────────────────────
-    LLM_PROVIDER: Literal["ollama", "lmstudio", "localai", "vllm", "openai", "gemini"] = "ollama"
+    LLM_PROVIDER: Literal["ollama", "lmstudio", "localai", "vllm", "openai", "gemini", "anthropic"] = "ollama"
     LLM_MODEL: str = "qwen2.5:7b"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 4096
@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     VLLM_BASE_URL: str = "http://localhost:8000/v1"
     OPENAI_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
 
     # ── Embedding ─────────────────────────────────────────────
     EMBEDDING_PROVIDER: str = "ollama"
