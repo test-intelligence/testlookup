@@ -83,9 +83,39 @@ export function flush(): void {
   }
 }
 
+// ── Privacy sanitization (PR-5) ──────────────────────────────────────────────
+
+/** Strip full file paths from stack traces, keeping only filename + line number. */
+function _sanitizeStack(stack: string | undefined): string | undefined {
+  if (!stack) return stack
+  // Replace full paths like /home/user/project/src/file.ts:42:10 → file.ts:42:10
+  return stack.replace(/(?:\/[\w./-]+\/|[A-Z]:\\[\w.\\-]+\\)([\w.-]+:\d+)/g, '$1')
+}
+
+/** Redact potential PII patterns from error messages. */
+function _sanitizeMessage(msg: string): string {
+  return msg
+    // Email addresses
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]')
+    // Phone numbers
+    .replace(/\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '[REDACTED_PHONE]')
+    // Bearer tokens
+    .replace(/Bearer\s+[A-Za-z0-9\-_.]{20,}/gi, 'Bearer [REDACTED]')
+    // API keys
+    .replace(/api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9\-_]{16,}['"]?/gi, 'api_key=[REDACTED]')
+    // Connection strings with passwords
+    .replace(/(\/\/[^:]+:)[^@]{4,}(@)/g, '$1[REDACTED]$2')
+}
+
 // ── Error capture ─────────────────────────────────────────────────────────────
 
 function _capture(error: FrontendError): void {
+  // Sanitize before buffering (PR-5: never send raw PII to backend)
+  error.message = _sanitizeMessage(error.message)
+  error.stack = _sanitizeStack(error.stack)
+  if (error.component_stack) {
+    error.component_stack = _sanitizeStack(error.component_stack)
+  }
   _batch.errors.push(error)
   _scheduleFlush()
 }

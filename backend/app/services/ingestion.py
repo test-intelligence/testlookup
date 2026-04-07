@@ -304,10 +304,14 @@ async def _upsert_test_case(db, case_data: dict, run: TestRun) -> TestCase:
     }
     status = status_map.get(case_data.get("status", "unknown").lower(), TestStatus.UNKNOWN)
 
+    # PR-3: Sanitize error_message before persistence
+    from app.services.privacy_service import sanitize_for_persistence as _sanitize  # noqa: PLC0415
+    _safe_error = _sanitize(case_data.get("error_message") or "")
+
     if existing:
         existing.status = status
         existing.duration_ms = case_data.get("duration_ms")
-        existing.error_message = case_data.get("error_message")
+        existing.error_message = _safe_error
         tc = existing
     else:
         tc = TestCase(
@@ -326,7 +330,7 @@ async def _upsert_test_case(db, case_data: dict, run: TestRun) -> TestCase:
             epic=case_data.get("epic"),
             owner=case_data.get("owner"),
             tags=case_data.get("tags", []),
-            error_message=case_data.get("error_message"),
+            error_message=_safe_error,
             minio_s3_prefix=case_data.get("minio_s3_prefix"),
             has_attachments=bool(case_data.get("attachments")),
         )

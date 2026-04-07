@@ -19,8 +19,9 @@ _REC_COLORS = {
 
 
 def _e(text: Any, max_len: int = 500) -> str:
-    """HTML-escape and truncate."""
-    s = html.escape(str(text or ""))
+    """HTML-escape, redact PII, and truncate."""
+    from app.services.privacy_service import sanitize_for_report
+    s = html.escape(sanitize_for_report(str(text or "")))
     return s[:max_len] + "..." if len(s) > max_len else s
 
 
