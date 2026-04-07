@@ -30,7 +30,7 @@ def get_mongo_db() -> AsyncIOMotorDatabase:
 async def close_mongo() -> None:
     global _client
     if _client is not None:
-        _client.close()
+        _client.close()  # Motor's close() is synchronous (returns None, not a coroutine)
         _client = None
 
 

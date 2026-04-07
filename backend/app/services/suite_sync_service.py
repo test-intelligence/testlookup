@@ -106,6 +106,22 @@ async def _sync_one_suite(
         if tc.test_fingerprint:
             run_map[tc.test_fingerprint] = tc
 
+    # Batch-fetch managed test cases for auto-linking (avoids N+1 per-fingerprint queries)
+    managed_map: dict[str, uuid.UUID] = {}
+    if run_map:
+        from sqlalchemy import and_
+        managed_result = await db.execute(
+            select(ManagedTestCase.id, ManagedTestCase.test_fingerprint).where(
+                and_(
+                    ManagedTestCase.project_id == project_id,
+                    ManagedTestCase.test_fingerprint.in_(list(run_map.keys())),
+                    ManagedTestCase.status != "deprecated",
+                )
+            )
+        )
+        for row in managed_result.all():
+            managed_map[row.test_fingerprint] = row.id
+
     # Fetch current memberships for this suite (active + deleted)
     existing_result = await db.execute(
         select(SuiteMembership).where(
@@ -183,8 +199,8 @@ async def _sync_one_suite(
                        details=f"Test restored from {deleted_bucket}")
 
         else:
-            # New test case — add to suite
-            managed_id = await _find_managed_test_case(db, project_id, fingerprint)
+            # New test case — add to suite (use batch-fetched managed_map)
+            managed_id = managed_map.get(fingerprint)
             new_member = SuiteMembership(
                 project_id=project_id,
                 suite_name=suite_name,

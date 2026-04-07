@@ -22,9 +22,10 @@ def register(mcp) -> None:  # noqa: ANN001
 
         from config import settings as _s  # type: ignore[import]
         # Temporarily override credentials for this call
+        # Backend expects OAuth2 form-encoded data, not JSON
         resp = await _api._get_client().post(
             "/api/v1/auth/login",
-            json={"username": username, "password": password},
+            data={"username": username, "password": password},
         )
         if resp.status_code != 200:
             return f"Login failed (HTTP {resp.status_code}): {resp.text}"
@@ -44,7 +45,13 @@ def register(mcp) -> None:  # noqa: ANN001
         version, environment, and configured LLM provider.
         """
         try:
-            data = await api.get("/health")
+            data = await api.get("/health/ready")
+        except Exception:
+            pass
+
+        # Try detailed health for richer info
+        try:
+            data = await api.get("/health/details")
         except Exception as exc:
             return f"Backend unreachable at {settings.api_url}: {exc}"
 
@@ -56,4 +63,10 @@ def register(mcp) -> None:  # noqa: ANN001
             f"**Offline Mode:** {data.get('offline_mode', False)}",
             f"**API URL:** {settings.api_url}",
         ]
+        # Include dependency status if available
+        deps = data.get("dependencies", {})
+        if deps:
+            lines.append("**Dependencies:**")
+            for dep_name, dep_status in deps.items():
+                lines.append(f"  - {dep_name}: {dep_status}")
         return "\n".join(lines)

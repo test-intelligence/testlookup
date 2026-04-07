@@ -79,22 +79,22 @@ class FirstTimeResetRequest(BaseModel):
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
     slug: str = Field(..., min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
-    description: Optional[str] = None
-    jira_project_key: Optional[str] = None
-    splunk_index: Optional[str] = None
-    ocp_namespace: Optional[str] = None
-    jenkins_job_pattern: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    jira_project_key: Optional[str] = Field(None, max_length=50)
+    splunk_index: Optional[str] = Field(None, max_length=255)
+    ocp_namespace: Optional[str] = Field(None, max_length=255)
+    jenkins_job_pattern: Optional[str] = Field(None, max_length=500)
     component_owner_map: Optional[dict] = None
 
 
 class ProjectUpdate(BaseModel):
     """Partial update for project attributes. None = keep existing."""
     name: Optional[str] = Field(None, min_length=2, max_length=255)
-    description: Optional[str] = None
-    jira_project_key: Optional[str] = None
-    splunk_index: Optional[str] = None
-    ocp_namespace: Optional[str] = None
-    jenkins_job_pattern: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    jira_project_key: Optional[str] = Field(None, max_length=50)
+    splunk_index: Optional[str] = Field(None, max_length=255)
+    ocp_namespace: Optional[str] = Field(None, max_length=255)
+    jenkins_job_pattern: Optional[str] = Field(None, max_length=500)
     component_owner_map: Optional[dict] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None

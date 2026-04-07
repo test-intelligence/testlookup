@@ -99,7 +99,11 @@ async def auto_tag_after_analysis(db: AsyncSession, run_id: uuid.UUID) -> dict[s
     """
     counts = {"flaky": 0, "regression": 0, "duplicate": 0, "run_tags": 0}
 
-    # Load AI analyses for this run
+    # Load run + AI analyses in minimal queries (avoid N+1)
+    run = (await db.execute(select(TestRun).where(TestRun.id == run_id))).scalar_one_or_none()
+    if not run:
+        return counts
+
     result = await db.execute(
         select(AIAnalysis, TestCase)
         .join(TestCase, AIAnalysis.test_case_id == TestCase.id)
@@ -132,8 +136,7 @@ async def auto_tag_after_analysis(db: AsyncSession, run_id: uuid.UUID) -> dict[s
         if tags_to_add:
             tc.tags = merge_tags(tc.tags, tags_to_add)
 
-    # Run-level signal tags
-    run = (await db.execute(select(TestRun).where(TestRun.id == run_id))).scalar_one_or_none()
+    # Run-level signal tags (run already fetched above)
     if run:
         run_tags: list[str] = []
         if has_flaky:

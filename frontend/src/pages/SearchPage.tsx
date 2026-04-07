@@ -102,7 +102,9 @@ export default function SearchPage() {
 
   const workflow = useMemo(
     () => buildSearchWorkflow(query, searchType, results),
-    [query, searchType, results],
+    // Use scalar deps to avoid rebuilding when object ref changes but content is same
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [query, searchType, results?.total, results?.search_type],
   )
 
   // Re-run search whenever the URL ?q= param changes (e.g. navigating from TopBar)

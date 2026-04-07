@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
@@ -871,11 +871,14 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   const [showAiGen, setShowAiGen] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
 
-  const params: Record<string, unknown> = { page, size: 20 }
-  if (status) params.status = status
-  if (testType) params.test_type = testType
-  if (priority) params.priority = priority
-  if (search) params.search = search
+  const params = useMemo(() => {
+    const p: Record<string, unknown> = { page, size: 20 }
+    if (status) p.status = status
+    if (testType) p.test_type = testType
+    if (priority) p.priority = priority
+    if (search) p.search = search
+    return p
+  }, [page, status, testType, priority, search])
 
   const { data, isLoading, mutate: mutateCases } = useTestCases(params)
 

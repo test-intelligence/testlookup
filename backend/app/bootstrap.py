@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_user_or_api_key
 from app.routers import (
     agent_memory,
     agents,
@@ -113,7 +113,7 @@ def configure_middlewares(app: FastAPI) -> None:
         allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Webhook-Secret", "X-Request-ID"],
+        allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Webhook-Secret", "X-Request-ID"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.
@@ -139,7 +139,8 @@ def register_routers(app: FastAPI) -> None:
     for router in PUBLIC_ROUTERS:
         app.include_router(router)
 
-    protected_deps = [Depends(get_current_active_user)]
+    # CLI-5: Accept both JWT and API key auth on protected routes
+    protected_deps = [Depends(get_current_user_or_api_key)]
     for router in PROTECTED_ROUTERS:
         app.include_router(router, dependencies=protected_deps)
 
