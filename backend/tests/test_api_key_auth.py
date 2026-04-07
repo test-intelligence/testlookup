@@ -8,14 +8,12 @@ Covers:
   - CORS headers include X-API-Key
 """
 import hashlib
-import uuid
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
 pytest.importorskip("asyncpg")
 
-from app.models.postgres import ApiKey, User  # noqa: E402
+from app.models.postgres import ApiKey  # noqa: E402
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
