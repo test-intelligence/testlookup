@@ -43,7 +43,8 @@ class TriggerDeepRequest(BaseModel):
 
 
 class TriggerDeepResponse(BaseModel):
-    pipeline_run_id: Optional[str] = None
+    task_id: Optional[str] = None           # WF-2: Celery task ID (for queue tracking)
+    pipeline_run_id: Optional[str] = None   # WF-2: Deprecated — use task_id + pipeline-status endpoint
     message: str
     run_id: str
 
@@ -99,8 +100,9 @@ async def trigger_deep_investigation(
             queue="ai_analysis",
         )
         return TriggerDeepResponse(
-            pipeline_run_id=task.id,
-            message=f"Deep investigation pipeline queued (mode={workflow_type})",
+            task_id=task.id,
+            pipeline_run_id=task.id,  # Deprecated: kept for backward compat
+            message=f"Deep investigation pipeline queued (mode={workflow_type}). Poll /pipeline-status for real execution state.",
             run_id=str(run_id),
         )
     except Exception as exc:

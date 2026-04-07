@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { Bug, TrendingDown, AlertTriangle, Flame, LayoutGrid } from 'lucide-react'
+import SortableHeader from '@/components/ui/SortableHeader'
+import { useTableSort } from '@/hooks/useTableSort'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import {
@@ -67,6 +69,8 @@ export default function FailureAnalysisPage() {
   const { data: flakyData,    isLoading: flakyLoading    } = useFlakyTests(days)
   const { data: categoryData, isLoading: categoryLoading } = useFailureCategories(days)
   const { data: topData,      isLoading: topLoading      } = useTopFailing(days)
+  const flakyItemsRaw = flakyData?.items ?? []
+  const { sorted: flakyItems, sortKey: flakySortKey, sortDir: flakySortDir, toggleSort: flakyToggleSort } = useTableSort(flakyItemsRaw, 'failure_rate_pct', 'desc')
 
   if (!project && !isAllProjects) {
     return (
@@ -81,8 +85,6 @@ export default function FailureAnalysisPage() {
   const projectLabel = project?.name ?? 'All Projects'
 
   const isLoading = flakyLoading || categoryLoading || topLoading
-
-  const flakyItems    = flakyData?.items    ?? []
   const categoryItems = categoryData?.items ?? []
   const topItems      = topData?.items      ?? []
   const workflow = buildFailureAnalysisWorkflow(flakyItems.length, categoryItems.length, topItems.length, days)
@@ -228,12 +230,12 @@ export default function FailureAnalysisPage() {
                   <thead>
                     <tr>
                       <th className="th text-left">#</th>
-                      <th className="th text-left">Test Name</th>
-                      <th className="th text-left">Suite</th>
-                      {isAllProjects && <th className="th text-left">Project</th>}
-                      <th className="th text-right">Runs</th>
-                      <th className="th text-right">Fails</th>
-                      <th className="th min-w-[160px]">Flakiness Rate</th>
+                      <SortableHeader label="Test Name" sortKey="test_name" currentKey={flakySortKey} dir={flakySortDir} onSort={flakyToggleSort} />
+                      <SortableHeader label="Suite" sortKey="suite_name" currentKey={flakySortKey} dir={flakySortDir} onSort={flakyToggleSort} />
+                      {isAllProjects && <SortableHeader label="Project" sortKey="project_name" currentKey={flakySortKey} dir={flakySortDir} onSort={flakyToggleSort} />}
+                      <SortableHeader label="Runs" sortKey="total_runs" currentKey={flakySortKey} dir={flakySortDir} onSort={flakyToggleSort} align="right" />
+                      <SortableHeader label="Fails" sortKey="fail_count" currentKey={flakySortKey} dir={flakySortDir} onSort={flakyToggleSort} align="right" />
+                      <SortableHeader label="Flakiness Rate" sortKey="failure_rate_pct" currentKey={flakySortKey} dir={flakySortDir} onSort={flakyToggleSort} className="min-w-[160px]" />
                     </tr>
                   </thead>
                   <tbody>

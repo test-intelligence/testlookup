@@ -175,6 +175,28 @@ async def get_run_intelligence(
         )
         return r.scalar_one_or_none()
 
+    async def _fetch_deep_pipeline_status():
+        """WF-1: Fetch latest deep pipeline separately for clear lifecycle display."""
+        r = await db.execute(
+            select(AgentPipelineRun)
+            .where(
+                AgentPipelineRun.test_run_id == run_id,
+                AgentPipelineRun.workflow_type == "deep",
+            )
+            .order_by(AgentPipelineRun.created_at.desc())
+            .limit(1)
+        )
+        deep_run = r.scalar_one_or_none()
+        if not deep_run:
+            return {"status": "never_run", "started_at": None, "completed_at": None}
+        return {
+            "pipeline_run_id": str(deep_run.id),
+            "status": deep_run.status or "pending",
+            "started_at": deep_run.created_at.isoformat() if deep_run.created_at else None,
+            "completed_at": deep_run.completed_at.isoformat() if deep_run.completed_at else None,
+            "workflow_type": "deep",
+        }
+
     async def _fetch_project():
         r = await db.execute(select(Project).where(Project.id == run.project_id))
         return r.scalar_one_or_none()
@@ -188,6 +210,7 @@ async def get_run_intelligence(
         release_rec,
         pipeline_run,
         project_obj,
+        deep_pipeline_status,
     ) = await asyncio.gather(
         _fetch_summary_doc(),
         _fetch_clusters(),
@@ -196,6 +219,7 @@ async def get_run_intelligence(
         _fetch_release_decision(),
         _fetch_pipeline_run(),
         _fetch_project(),
+        _fetch_deep_pipeline_status(),
     )
 
     # ── Process summary doc ──────────────────────────────────────────────────
@@ -432,6 +456,7 @@ async def get_run_intelligence(
         "summary_modes": summary_modes,
         "provenance": provenance,
         "partial_errors": _partial_errors if _partial_errors else None,
+        "deep_pipeline_status": deep_pipeline_status,
     }
 
 
