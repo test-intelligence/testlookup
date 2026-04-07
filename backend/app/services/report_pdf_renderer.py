@@ -23,8 +23,9 @@ _BORDER = "#CBD5E1"
 
 
 def _safe(text: Any, max_len: int = 500) -> str:
-    """HTML-escape and truncate text for ReportLab Paragraphs."""
-    s = html.escape(str(text or ""))
+    """HTML-escape, redact PII, and truncate text for ReportLab Paragraphs."""
+    from app.services.privacy_service import sanitize_for_report
+    s = html.escape(sanitize_for_report(str(text or "")))
     if len(s) > max_len:
         s = s[:max_len] + "..."
     return s

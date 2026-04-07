@@ -35,6 +35,18 @@ def _add_otel_trace_context(
     return event_dict
 
 
+def _privacy_redaction(
+    logger: WrappedLogger, method: str, event_dict: EventDict
+) -> EventDict:
+    """Redact PII and secrets from all string values in log records (PR-5)."""
+    from app.services.redaction_service import redact_text  # noqa: PLC0415
+
+    for key, val in event_dict.items():
+        if isinstance(val, str) and key not in ("event", "timestamp", "level", "logger", "service", "version", "env", "trace_id", "span_id"):
+            event_dict[key] = redact_text(val)
+    return event_dict
+
+
 def _add_service_info(
     logger: WrappedLogger, method: str, event_dict: EventDict
 ) -> EventDict:
@@ -68,6 +80,7 @@ def configure_logging() -> None:
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.UnicodeDecoder(),
+        _privacy_redaction,
     ]
 
     renderer: Any = (

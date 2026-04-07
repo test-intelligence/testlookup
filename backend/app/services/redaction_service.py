@@ -1,5 +1,5 @@
 """
-Unified redaction service — single source of truth for secret scrubbing.
+Unified redaction service — single source of truth for secret + PII scrubbing.
 
 Two modes of redaction:
   1. **Key-based** (`redact_value`, `redact_dict`): redacts dict values whose
@@ -7,8 +7,8 @@ Two modes of redaction:
   2. **Pattern-based** (`redact_text`): regex-scrubs free-form strings (stack
      traces, error messages, log excerpts) before LLM ingestion or persistence.
 
-Both are combined in `redact_dict` — keys trigger full replacement while
-remaining string values are pattern-scrubbed.
+PR-2: Extended to detect PII patterns (email, phone, SSN, credit card, IP)
+in addition to secrets (tokens, passwords, API keys).
 """
 from __future__ import annotations
 
@@ -22,11 +22,18 @@ logger = logging.getLogger("services.redaction")
 # Matched after lowercasing and normalising hyphens → underscores.
 
 SENSITIVE_KEYS: frozenset[str] = frozenset({
+    # Secrets
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "api_token", "authorization", "auth_token", "access_token",
     "refresh_token", "private_key", "secret_key", "credential",
     "credentials", "cookie", "hashed_password", "jwt", "bearer",
     "smtp_password", "minio_secret_key", "webhook_secret",
+    # PII (PR-2)
+    "email", "email_address", "phone", "phone_number", "mobile",
+    "ssn", "social_security", "social_security_number",
+    "credit_card", "card_number", "cc_number",
+    "dob", "date_of_birth", "address", "street_address",
+    "national_id", "passport_number", "drivers_license",
 })
 
 # ── Regex patterns for free-form text scrubbing ─────────────────────────────
@@ -50,6 +57,17 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"), "[REDACTED_JWT]"),
     # Connection strings with passwords
     (re.compile(r"(://[^:]+:)[^@]{4,}(@)"), r"\1[REDACTED]\2"),
+    # ── PII patterns (PR-2) ────────────────────────────────────────────────
+    # Email addresses
+    (re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"), "[REDACTED_EMAIL]"),
+    # Phone numbers (US/international formats)
+    (re.compile(r"\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"), "[REDACTED_PHONE]"),
+    # SSN (xxx-xx-xxxx or xxx xx xxxx)
+    (re.compile(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b"), "[REDACTED_SSN]"),
+    # Credit card numbers (4 groups of 4 digits)
+    (re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"), "[REDACTED_CC]"),
+    # IPv4 addresses
+    (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "[REDACTED_IP]"),
 ]
 
 # Compiled pattern for quick key-name content check (used for string values
