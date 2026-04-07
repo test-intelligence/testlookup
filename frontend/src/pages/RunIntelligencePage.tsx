@@ -883,6 +883,31 @@ export default function RunIntelligencePage() {
       {/* Release gate banner */}
       {release_decision && <ReleaseGateBanner decision={release_decision} />}
 
+      {/* WF-4: Deep analysis status panel */}
+      {intelligence.deep_pipeline_status && intelligence.deep_pipeline_status.status !== 'never_run' && (
+        <div className={clsx(
+          'flex items-center gap-3 px-4 py-2.5 rounded-lg border text-sm',
+          intelligence.deep_pipeline_status.status === 'completed' ? 'bg-emerald-900/20 border-emerald-700/40 text-emerald-300' :
+          intelligence.deep_pipeline_status.status === 'partial' ? 'bg-amber-900/20 border-amber-700/40 text-amber-300' :
+          intelligence.deep_pipeline_status.status === 'running' ? 'bg-blue-900/20 border-blue-700/40 text-blue-300' :
+          intelligence.deep_pipeline_status.status === 'failed' ? 'bg-red-900/20 border-red-700/40 text-red-300' :
+          'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)]'
+        )}>
+          <span className="font-medium">Deep Analysis:</span>
+          <span className="capitalize">{intelligence.deep_pipeline_status.status}</span>
+          {intelligence.deep_pipeline_status.completed_at && (
+            <span className="text-xs opacity-75">
+              · Completed {new Date(intelligence.deep_pipeline_status.completed_at).toLocaleString()}
+            </span>
+          )}
+          {intelligence.deep_pipeline_status.status === 'running' && intelligence.deep_pipeline_status.started_at && (
+            <span className="text-xs opacity-75">
+              · Started {new Date(intelligence.deep_pipeline_status.started_at).toLocaleString()}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* What Changed panel */}
       {what_changed_since_last_good_run && !all_green && (
         <div ref={baselineDiffRef}>

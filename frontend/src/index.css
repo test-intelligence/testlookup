@@ -8,57 +8,57 @@
    ═══════════════════════════════════════════════════ */
 
 @layer base {
-  /* ── Midnight (default) — dark gray, white text, minimal accent ── */
+  /* ── Midnight (default) — GitHub-inspired dark theme with blue tints ── */
   :root,
   [data-theme="midnight"] {
-    --color-bg:           #111111;
-    --color-bg-secondary: #191919;
-    --color-bg-card:      #161616;
-    --color-bg-input:     #1a1a1a;
-    --color-bg-hover:     #222222;
-    --color-border:       #2a2a2a;
-    --color-border-light: #333333;
-    --color-text:         #ffffff;
-    --color-text-secondary: #a3a3a3;
-    --color-text-muted:   #737373;
-    --color-text-faint:   #525252;
-    --color-accent:       #e5e5e5;
-    --color-accent-muted: rgba(255,255,255,0.08);
-    --color-accent-hover: rgba(255,255,255,0.12);
-    --color-btn-primary-bg: #ffffff;
-    --color-btn-primary-text: #111111;
-    --color-btn-primary-hover: #e5e5e5;
-    --color-sidebar-active-bg: rgba(255,255,255,0.08);
-    --color-sidebar-active-text: #ffffff;
-    --color-ring: #525252;
-    --color-scrollbar-track: #111111;
-    --color-scrollbar-thumb: #404040;
+    --color-bg:           #0d1117;
+    --color-bg-secondary: #161b22;
+    --color-bg-card:      #151b23;
+    --color-bg-input:     #0d1117;
+    --color-bg-hover:     #1c2128;
+    --color-border:       #3d444d;
+    --color-border-light: #4a525c;
+    --color-text:         #f0f6fc;
+    --color-text-secondary: #c9d1d9;
+    --color-text-muted:   #9198a1;
+    --color-text-faint:   #656d76;
+    --color-accent:       #4493f8;
+    --color-accent-muted: rgba(68,147,248,0.12);
+    --color-accent-hover: rgba(68,147,248,0.20);
+    --color-btn-primary-bg: #238636;
+    --color-btn-primary-text: #ffffff;
+    --color-btn-primary-hover: #2ea043;
+    --color-sidebar-active-bg: rgba(68,147,248,0.12);
+    --color-sidebar-active-text: #4493f8;
+    --color-ring: #4493f8;
+    --color-scrollbar-track: #0d1117;
+    --color-scrollbar-thumb: #3d444d;
   }
 
-  /* ── Classic — slate + blue accent ── */
+  /* ── Classic — deep navy + vivid blue accent, high contrast ── */
   [data-theme="classic"] {
-    --color-bg:           #0f172a;
-    --color-bg-secondary: #1e293b;
-    --color-bg-card:      #1e293b;
-    --color-bg-input:     #1e293b;
-    --color-bg-hover:     #334155;
-    --color-border:       #334155;
-    --color-border-light: #475569;
-    --color-text:         #f1f5f9;
-    --color-text-secondary: #94a3b8;
-    --color-text-muted:   #64748b;
-    --color-text-faint:   #475569;
-    --color-accent:       #3b82f6;
-    --color-accent-muted: rgba(59,130,246,0.15);
-    --color-accent-hover: rgba(59,130,246,0.25);
+    --color-bg:           #0b1222;
+    --color-bg-secondary: #141d2e;
+    --color-bg-card:      #131c2b;
+    --color-bg-input:     #0b1222;
+    --color-bg-hover:     #1a2538;
+    --color-border:       #2d3a4d;
+    --color-border-light: #3b4a60;
+    --color-text:         #edf2f7;
+    --color-text-secondary: #c3cddb;
+    --color-text-muted:   #8b99ad;
+    --color-text-faint:   #5f6f85;
+    --color-accent:       #58a6ff;
+    --color-accent-muted: rgba(88,166,255,0.14);
+    --color-accent-hover: rgba(88,166,255,0.22);
     --color-btn-primary-bg: #2563eb;
     --color-btn-primary-text: #ffffff;
     --color-btn-primary-hover: #3b82f6;
-    --color-sidebar-active-bg: rgba(59,130,246,0.15);
-    --color-sidebar-active-text: #60a5fa;
-    --color-ring: #3b82f6;
-    --color-scrollbar-track: #0f172a;
-    --color-scrollbar-thumb: #475569;
+    --color-sidebar-active-bg: rgba(88,166,255,0.14);
+    --color-sidebar-active-text: #58a6ff;
+    --color-ring: #58a6ff;
+    --color-scrollbar-track: #0b1222;
+    --color-scrollbar-thumb: #3b4a60;
   }
 
   * { box-sizing: border-box; }
@@ -128,11 +128,11 @@
   .badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
-  .badge-passed  { @apply badge bg-emerald-950/60 text-emerald-400 border border-emerald-800/50; }
-  .badge-failed  { @apply badge bg-red-950/60 text-red-400 border border-red-800/50; }
-  .badge-skipped { @apply badge bg-amber-950/60 text-amber-400 border border-amber-800/50; }
-  .badge-broken  { @apply badge bg-orange-950/60 text-orange-400 border border-orange-800/50; }
-  .badge-flaky   { @apply badge bg-purple-950/60 text-purple-400 border border-purple-800/50; }
+  .badge-passed  { @apply badge bg-emerald-900/50 text-emerald-300 border border-emerald-700/60; }
+  .badge-failed  { @apply badge bg-red-900/50 text-red-300 border border-red-700/60; }
+  .badge-skipped { @apply badge bg-amber-900/50 text-amber-300 border border-amber-700/60; }
+  .badge-broken  { @apply badge bg-orange-900/50 text-orange-300 border border-orange-700/60; }
+  .badge-flaky   { @apply badge bg-purple-900/50 text-purple-300 border border-purple-700/60; }
 
   .sidebar-link {
     color: var(--color-text-muted);

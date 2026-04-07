@@ -35,6 +35,10 @@ from app.services.pipeline_event_log import emit_event
 
 import structlog
 
+# WF-3: Stage classification for partial-completion logic
+DEEP_REQUIRED_STAGES = frozenset({"ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis", "summary"})
+DEEP_OPTIONAL_STAGES = frozenset({"triage", "flaky_sentinel", "test_health", "release_risk"})
+
 logger = structlog.get_logger("agents.workflow")
 
 # Singleton agent instances (stateless — safe to share across concurrent pipeline runs)
@@ -771,7 +775,19 @@ async def _mark_pipeline_done(
         )
         run = result.scalar_one_or_none()
         if run:
-            run.status = "completed" if success else "failed"
+            if success:
+                # WF-3: Check for partial completion — some stages may have failed
+                # while the pipeline overall didn't raise an exception
+                stage_results = await db.execute(
+                    sa_select(AgentStageResult).where(
+                        AgentStageResult.pipeline_run_id == pipeline_run_id,
+                    )
+                )
+                stages = stage_results.scalars().all()
+                has_failed_stages = any(s.status == "failed" for s in stages)
+                run.status = "partial" if has_failed_stages else "completed"
+            else:
+                run.status = "failed"
             run.completed_at = datetime.now(timezone.utc)
             if error:
                 run.error = error[:2000]

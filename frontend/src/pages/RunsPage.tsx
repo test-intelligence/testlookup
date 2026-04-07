@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { GitBranch, Package, Sparkles } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
+import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildRunsWorkflow } from '@/components/workflow/workflowPresets'
 import { useRuns } from '@/hooks/useRuns'
+import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, fromNow, formatDuration, formatPassRate } from '@/utils/formatters'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
@@ -41,6 +43,7 @@ export default function RunsPage() {
 
   const { data, isLoading } = useRuns({ page, size: 20, ...(statusFilter && { status: statusFilter }) })
   const runs = (data?.items ?? []) as TestRun[]
+  const { sorted: sortedRuns, sortKey, sortDir, toggleSort } = useTableSort(runs, 'created_at', 'desc')
   const workflow = useMemo(() => buildRunsWorkflow(runs, statusFilter, isAllProjects), [runs, statusFilter, isAllProjects])
 
   if (!project && !isAllProjects) {
@@ -98,16 +101,21 @@ export default function RunsPage() {
             <table className="w-full">
               <thead className="border-b border-[var(--color-border)]">
                 <tr>
-                  {[
-                    ...(isAllProjects ? ['Project'] : []),
-                    'Build', 'Job', 'Branch', 'Release', 'Status', 'Tests', 'Pass Rate', 'Duration', 'Started', '',
-                  ].map(h => (
-                    <th key={h} className="th">{h}</th>
-                  ))}
+                  {isAllProjects && <SortableHeader label="Project" sortKey="project_name" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />}
+                  <SortableHeader label="Build" sortKey="build_number" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Job" sortKey="jenkins_job" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Branch" sortKey="branch" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Release" sortKey="release_name" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Status" sortKey="status" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Tests" sortKey="total_tests" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Pass Rate" sortKey="pass_rate" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Duration" sortKey="duration_ms" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Started" sortKey="created_at" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <th className="th" />
                 </tr>
               </thead>
               <tbody>
-                {(data.items as TestRun[]).map((run) => (
+                {sortedRuns.map((run) => (
                   <tr
                     key={run.id}
                     className="table-row"

@@ -230,6 +230,13 @@ export interface RunIntelligence {
   summary_modes: SummaryModes | null
   provenance: Provenance | null
   partial_errors: string[] | null
+  deep_pipeline_status?: {
+    pipeline_run_id?: string | null
+    status: string
+    started_at: string | null
+    completed_at: string | null
+    workflow_type?: string
+  } | null
   _snapshot?: { cached: boolean; stale: boolean; just_refreshed?: boolean }
 }
 

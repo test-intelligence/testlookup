@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import SortableHeader from '@/components/ui/SortableHeader'
+import { useTableSort } from '@/hooks/useTableSort'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Search, TestTube, GitBranch, Layers, Bug, AlertTriangle,
@@ -55,6 +57,8 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
+  const searchResultItems = useMemo(() => results?.items ?? [], [results])
+  const { sorted: sortedSearchResults, sortKey: srSortKey, sortDir: srSortDir, toggleSort: srToggleSort } = useTableSort(searchResultItems, 'relevance_score', 'desc')
 
   const isGlobal = searchType === 'global'
 
@@ -270,13 +274,16 @@ export default function SearchPage() {
             <table className="w-full">
               <thead className="border-b border-[var(--color-border)]">
                 <tr>
-                  {['Test Name', 'Suite', 'Status', 'Failures', 'Relevance', 'Last Run'].map(h => (
-                    <th key={h} className="th">{h}</th>
-                  ))}
+                  <SortableHeader label="Test Name" sortKey="test_name" currentKey={srSortKey} dir={srSortDir} onSort={srToggleSort} />
+                  <SortableHeader label="Suite" sortKey="suite_name" currentKey={srSortKey} dir={srSortDir} onSort={srToggleSort} />
+                  <SortableHeader label="Status" sortKey="status" currentKey={srSortKey} dir={srSortDir} onSort={srToggleSort} />
+                  <SortableHeader label="Failures" sortKey="failure_count" currentKey={srSortKey} dir={srSortDir} onSort={srToggleSort} />
+                  <SortableHeader label="Relevance" sortKey="relevance_score" currentKey={srSortKey} dir={srSortDir} onSort={srToggleSort} />
+                  <SortableHeader label="Last Run" sortKey="last_run_date" currentKey={srSortKey} dir={srSortDir} onSort={srToggleSort} />
                 </tr>
               </thead>
               <tbody>
-                {results.items.map((r) => (
+                {sortedSearchResults.map((r) => (
                   <tr
                     key={r.test_case_id}
                     className="table-row"

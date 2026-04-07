@@ -10,9 +10,11 @@ import {
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import SortableHeader from '@/components/ui/SortableHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
+import { useTableSort } from '@/hooks/useTableSort'
 import { api } from '@/services/api'
 import { useProjectStore } from '@/store/projectStore'
 import {
@@ -893,7 +895,8 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
     }
   }
 
-  const cases = data?.items ?? []
+  const casesRaw = data?.items ?? []
+  const { sorted: cases, sortKey: tcSortKey, sortDir: tcSortDir, toggleSort: tcToggleSort } = useTableSort(casesRaw, 'updated_at', 'desc')
 
   async function handleExportExcel() {
     try {
@@ -979,12 +982,12 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr>
-                      <th className="th text-left">Title</th>
-                      <th className="th text-left">Type</th>
-                      <th className="th text-left">Priority</th>
-                      <th className="th text-left">Status</th>
-                      <th className="th text-center">AI Score</th>
-                      <th className="th text-left">Updated</th>
+                      <SortableHeader label="Title" sortKey="title" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                      <SortableHeader label="Type" sortKey="test_type" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                      <SortableHeader label="Priority" sortKey="priority" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                      <SortableHeader label="Status" sortKey="status" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                      <SortableHeader label="AI Score" sortKey="ai_quality_score" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} align="center" />
+                      <SortableHeader label="Updated" sortKey="updated_at" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
                       <th className="th text-right">Actions</th>
                     </tr>
                   </thead>

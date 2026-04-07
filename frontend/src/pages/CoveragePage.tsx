@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LayoutGrid, ShieldCheck, Layers, TestTube } from 'lucide-react'
+import SortableHeader from '@/components/ui/SortableHeader'
+import { useTableSort } from '@/hooks/useTableSort'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import {
@@ -61,6 +63,8 @@ export default function CoveragePage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { data: coverageData, isLoading } = useCoverage(days)
   const analyticsView = useAnalyticsView('coverage')
+  const suites: SuiteRow[] = coverageData?.suites ?? []
+  const { sorted: sortedSuites, sortKey: covSortKey, sortDir: covSortDir, toggleSort: covToggleSort } = useTableSort(suites, 'pass_rate', 'desc')
 
   if (!project && !isAllProjects) {
     return (
@@ -75,7 +79,6 @@ export default function CoveragePage() {
   const projectLabel = project?.name ?? 'All Projects'
 
   const summary: Partial<CoverageSummary> = coverageData?.summary ?? {}
-  const suites: SuiteRow[] = coverageData?.suites ?? []
   const workflow = buildCoverageWorkflow(summary, suites, days, projectLabel)
 
   const topSuites = suites.slice(0, 15).map((s) => ({
@@ -182,17 +185,17 @@ export default function CoveragePage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr>
-                    {isAllProjects && <th className="th text-left">Project</th>}
-                    <th className="th text-left">Suite</th>
-                    <th className="th text-right">Unique Tests</th>
-                    <th className="th text-right text-emerald-400">Passed</th>
-                    <th className="th text-right text-red-400">Failed</th>
-                    <th className="th text-right text-amber-400">Skipped</th>
-                    <th className="th min-w-[180px]">Pass Rate</th>
+                    {isAllProjects && <SortableHeader label="Project" sortKey="project_name" currentKey={covSortKey} dir={covSortDir} onSort={covToggleSort} />}
+                    <SortableHeader label="Suite" sortKey="suite_name" currentKey={covSortKey} dir={covSortDir} onSort={covToggleSort} />
+                    <SortableHeader label="Unique Tests" sortKey="unique_tests" currentKey={covSortKey} dir={covSortDir} onSort={covToggleSort} align="right" />
+                    <SortableHeader label="Passed" sortKey="passed" currentKey={covSortKey} dir={covSortDir} onSort={covToggleSort} align="right" className="text-emerald-400" />
+                    <SortableHeader label="Failed" sortKey="failed" currentKey={covSortKey} dir={covSortDir} onSort={covToggleSort} align="right" className="text-red-400" />
+                    <SortableHeader label="Skipped" sortKey="skipped" currentKey={covSortKey} dir={covSortDir} onSort={covToggleSort} align="right" className="text-amber-400" />
+                    <SortableHeader label="Pass Rate" sortKey="pass_rate" currentKey={covSortKey} dir={covSortDir} onSort={covToggleSort} className="min-w-[180px]" />
                   </tr>
                 </thead>
                 <tbody>
-                  {suites.map((s) => (
+                  {sortedSuites.map((s) => (
                     <tr
                       key={s.suite_name}
                       className="table-row cursor-pointer hover:bg-[var(--color-bg-hover)]/50"

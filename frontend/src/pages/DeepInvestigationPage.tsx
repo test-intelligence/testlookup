@@ -243,21 +243,31 @@ export default function DeepInvestigationPage() {
   const [promoteClusterLabel, setPromoteClusterLabel] = useState<string>('')
 
   const activeProjectId = useProjectStore(s => s.activeProjectId)
-  const { data: recentRuns } = useRuns({ page: 1, size: 1 })
+  const { data: recentRuns, isLoading: runsLoading } = useRuns({ page: 1, size: 1 })
   const previousProjectId = useRef(activeProjectId)
-  useEffect(() => {
-    if (!runId && recentRuns?.items?.[0]?.id) {
-      navigate(`/deep-investigate/${recentRuns.items[0].id}`, { replace: true })
-    }
-  }, [runId, recentRuns, navigate])
+  const [projectSwitching, setProjectSwitching] = useState(false)
 
+  // When project changes: clear current runId, reset state, wait for new data
   useEffect(() => {
-    // When project changes, clear the current run selection to avoid showing stale data.
-    if (previousProjectId.current !== activeProjectId && runId) {
-      navigate('/deep-investigate', { replace: true })
+    if (previousProjectId.current !== activeProjectId) {
+      previousProjectId.current = activeProjectId
+      setSelectedCluster(null)
+      setProjectSwitching(true)
+      if (runId) {
+        navigate('/deep-investigate', { replace: true })
+      }
     }
-    previousProjectId.current = activeProjectId
   }, [activeProjectId, runId, navigate])
+
+  // Auto-navigate to latest run ONLY after project switch completes and new runs load
+  useEffect(() => {
+    if (!runId && recentRuns?.items?.[0]?.id && !runsLoading) {
+      navigate(`/deep-investigate/${recentRuns.items[0].id}`, { replace: true })
+      setProjectSwitching(false)
+    } else if (!runId && !runsLoading && (!recentRuns?.items || recentRuns.items.length === 0)) {
+      setProjectSwitching(false)
+    }
+  }, [runId, recentRuns, runsLoading, navigate])
 
   const { data: clusters = [], isLoading: clustersLoading, mutate: mutateClusters } = useFailureClusters(runId ?? null)
   const { data: findings = [], isLoading: findingsLoading, mutate: mutateFindings } = useDeepFindings(runId ?? null)
@@ -291,7 +301,7 @@ export default function DeepInvestigationPage() {
     }
   }
 
-  const isLoading = clustersLoading || findingsLoading
+  const isLoading = clustersLoading || findingsLoading || projectSwitching
 
   return (
     <div className="space-y-6">

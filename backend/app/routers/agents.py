@@ -263,6 +263,79 @@ async def get_live_run_state(
     return state
 
 
+@router.get("/runs/{run_id}/pipeline-status")
+async def get_pipeline_status(
+    run_id: str,
+    workflow_type: str = Query(default="deep", pattern="^(offline|deep|live)$"),
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_active_user),
+):
+    """
+    WF-1: Return the latest pipeline execution status for a run and workflow type.
+
+    Enables the frontend to know when deep/offline analysis ran, whether it
+    completed fully, partially, or failed, without scanning the full timeline.
+    """
+    import uuid as _uuid
+    from app.models.postgres import AgentPipelineRun, AgentStageResult
+
+    try:
+        run_uuid = _uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(400, detail="Invalid run_id")
+
+    # Find latest pipeline for this run + workflow_type
+    result = await db.execute(
+        select(AgentPipelineRun)
+        .where(
+            AgentPipelineRun.test_run_id == run_uuid,
+            AgentPipelineRun.workflow_type == workflow_type,
+        )
+        .order_by(AgentPipelineRun.created_at.desc())
+        .limit(1)
+    )
+    pipeline = result.scalar_one_or_none()
+
+    if not pipeline:
+        return {
+            "pipeline_run_id": None,
+            "workflow_type": workflow_type,
+            "status": "never_run",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+            "stage_summary": {"completed": 0, "failed": 0, "skipped": 0, "pending": 0},
+        }
+
+    # Get stage summary counts
+    stages_result = await db.execute(
+        select(AgentStageResult).where(AgentStageResult.pipeline_run_id == pipeline.id)
+    )
+    stages = stages_result.scalars().all()
+
+    stage_summary = {"completed": 0, "failed": 0, "skipped": 0, "pending": 0}
+    for s in stages:
+        status = (s.status or "pending").lower()
+        if status == "completed":
+            stage_summary["completed"] += 1
+        elif status == "failed":
+            stage_summary["failed"] += 1
+        elif status == "skipped":
+            stage_summary["skipped"] += 1
+        else:
+            stage_summary["pending"] += 1
+
+    return {
+        "pipeline_run_id": str(pipeline.id),
+        "workflow_type": pipeline.workflow_type,
+        "status": pipeline.status or "pending",
+        "started_at": pipeline.created_at.isoformat() if pipeline.created_at else None,
+        "completed_at": pipeline.completed_at.isoformat() if pipeline.completed_at else None,
+        "error": pipeline.error,
+        "stage_summary": stage_summary,
+    }
+
+
 @router.get("/runs/{run_id}/summary", response_model=AgentRunSummaryResponse)
 async def get_run_summary(
     run_id: str,

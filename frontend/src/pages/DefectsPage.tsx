@@ -4,11 +4,13 @@ import { clsx } from 'clsx'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import PageHeader from '@/components/ui/PageHeader'
+import SortableHeader from '@/components/ui/SortableHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildDefectsWorkflow } from '@/components/workflow/workflowPresets'
 import { useDefects } from '@/hooks/useMetrics'
+import { useTableSort } from '@/hooks/useTableSort'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
 const RESOLUTION_FILTERS = [
@@ -56,6 +58,8 @@ export default function DefectsPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { data, isLoading } = useDefects(page, resolutionFilter)
   const analyticsView = useAnalyticsView('defects')
+  const defectItems: Defect[] = data?.items ?? []
+  const { sorted: sortedItems, sortKey, sortDir, toggleSort } = useTableSort(defectItems, 'created_at', 'desc')
 
   if (!project && !isAllProjects) {
     return (
@@ -69,7 +73,7 @@ export default function DefectsPage() {
 
   const projectLabel = project?.name ?? 'All Projects'
 
-  const items: Defect[] = data?.items ?? []
+  const items = defectItems
   const total: number   = data?.total ?? 0
   const pages: number   = data?.pages ?? 1
   const workflow = buildDefectsWorkflow(items, resolutionFilter, projectLabel, page, pages)
@@ -159,17 +163,17 @@ export default function DefectsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  <th className="th text-left">Test / Suite</th>
-                  <th className="th text-left">Category</th>
-                  <th className="th text-left">Jira Ticket</th>
-                  <th className="th text-left">Status</th>
-                  <th className="th text-right">AI Confidence</th>
-                  <th className="th text-left">Created</th>
-                  <th className="th text-left">Resolved</th>
+                  <SortableHeader label="Test / Suite" sortKey="test_name" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Category" sortKey="failure_category" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Jira Ticket" sortKey="jira_ticket_id" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Status" sortKey="resolution_status" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="AI Confidence" sortKey="ai_confidence_score" currentKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+                  <SortableHeader label="Created" sortKey="created_at" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Resolved" sortKey="resolved_at" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                 </tr>
               </thead>
               <tbody>
-                {items.map((d) => (
+                {sortedItems.map((d) => (
                   <tr key={d.id} className="table-row">
                     <td className="td">
                       <div className="font-medium text-[var(--color-text)] max-w-[220px] truncate">{d.test_name}</div>

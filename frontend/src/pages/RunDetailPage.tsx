@@ -3,9 +3,11 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Package, PencilLine, TrendingDown, X, Check } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
+import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useRun, useTestCases } from '@/hooks/useRuns'
+import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import { runsService } from '@/services/runsService'
@@ -232,6 +234,8 @@ export default function RunDetailPage() {
     ...(statusFilter && { status: statusFilter }),
     ...(suiteFilter && { suite: suiteFilter }),
   })
+  const tcItems = (data?.items ?? []) as TestCase[]
+  const { sorted: sortedCases, sortKey: tcSortKey, sortDir: tcSortDir, toggleSort: tcToggleSort } = useTableSort(tcItems, 'test_name', 'asc')
 
   async function handleSetRelease(name: string) {
     if (!runId) return
@@ -334,13 +338,16 @@ export default function RunDetailPage() {
             <table className="w-full">
               <thead className="border-b border-[var(--color-border)]">
                 <tr>
-                  {['Test Name', 'Suite', 'Status', 'Duration', 'Category', ''].map(h => (
-                    <th key={h} className="th">{h}</th>
-                  ))}
+                  <SortableHeader label="Test Name" sortKey="test_name" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Suite" sortKey="suite_name" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Status" sortKey="status" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Duration" sortKey="duration_ms" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Category" sortKey="failure_category" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <th className="th" />
                 </tr>
               </thead>
               <tbody>
-                {((data?.items ?? []) as TestCase[]).map((tc) => (
+                {sortedCases.map((tc) => (
                   <tr
                     key={tc.id}
                     className="table-row"
