@@ -2,15 +2,26 @@
 TestLookup — MCP Server
 ==========================
 
-Exposes 20 tools, 10 resources, and 6 prompt templates to MCP clients
+Exposes tools, resources, and prompt templates to MCP clients
 (AI Desktop Clients, IDEs, CI pipelines).
+
+Tool Domains:
+  - Auth & Health (login, health_check)
+  - Projects (list, get, create, metrics)
+  - Runs & Test Cases (list, get, filter)
+  - Run Intelligence (show, refresh, summary)
+  - Deep Investigation (trigger, status, clusters, findings)
+  - Global Search (keyword + entity-type filtering)
+  - Reports (release readiness, share links)
+  - Metrics & Analytics (dashboard, trends, flaky, categories)
+  - AI Analysis (trigger root-cause analysis)
 
 Transport: stdio (default) or SSE
 Auth:      JWT via TESTLOOKUP_USERNAME / TESTLOOKUP_PASSWORD env vars
 
 Usage:
     python server.py                    # stdio (Desktop Client)
-    python server.py --transport sse    # SSE on port 8001
+    python server.py --transport sse    # SSE on port 8002
 
 MCP Client config:
     {
@@ -26,10 +37,6 @@ MCP Client config:
         }
       }
     }
-
-SSE transport (CI / web clients):
-    python server.py --transport sse --port 8002
-    Client connects to: http://localhost:8002/sse
 """
 
 from __future__ import annotations
@@ -43,6 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mcp.server.fastmcp import FastMCP  # type: ignore[import]
 
 from tools import auth, projects, runs, metrics, analytics, analysis, release
+from tools import intelligence, deep, search, reports
 from resources import registry
 from prompts import templates
 
@@ -51,9 +59,12 @@ mcp = FastMCP(
     instructions=(
         "You are connected to TestLookup, a 360° software testing intelligence platform. "
         "You can query test quality metrics, investigate failures, check release readiness, "
-        "and trigger AI root-cause analysis for failing tests. "
-        "Start with `list_projects` to discover available projects, then use the project_id "
-        "in subsequent tool calls. Use `health_check` to verify connectivity."
+        "view run intelligence with AI summaries, trigger deep analysis pipelines, "
+        "search across all entities, and export reports. "
+        "Start with `health_check` to verify connectivity, then `list_projects` to discover "
+        "available projects. Use `get_run_intelligence` for AI-powered run analysis, "
+        "`trigger_deep_analysis` for multi-agent investigation, and `global_search` "
+        "to find anything in the system."
     ),
 )
 
@@ -65,6 +76,11 @@ metrics.register(mcp)
 analytics.register(mcp)
 analysis.register(mcp)
 release.register(mcp)
+# New domains
+intelligence.register(mcp)
+deep.register(mcp)
+search.register(mcp)
+reports.register(mcp)
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)

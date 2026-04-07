@@ -4,9 +4,13 @@ import logging
 import random
 from typing import Any, cast
 
+import structlog
+from structlog.contextvars import bind_contextvars, clear_contextvars
+
 from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger("worker.tasks")
 
 
 def _run_async(coro):
@@ -17,6 +21,17 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+def _bind_task_context(task, **extra):
+    """Bind structured logging context for a Celery task (observability improvement)."""
+    clear_contextvars()
+    bind_contextvars(
+        celery_task_id=task.request.id,
+        celery_task_name=task.name,
+        celery_retry=task.request.retries,
+        **extra,
+    )
 
 
 def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
@@ -424,6 +439,7 @@ def run_agent_pipeline(
     Deduplicates by test_run_id so multiple triggers for the same run don't stack up.
     Moves to DLQ after max retries.
     """
+    _bind_task_context(self, run_id=test_run_id, project_id=project_id, workflow_type=workflow_type)
     from app.agents.workflow import run_offline_pipeline, run_deep_pipeline
 
     # Include workflow_type in dedup key so a deep run isn't blocked by a prior offline run
@@ -522,6 +538,7 @@ def dispatch_ai_summary_email(
     Loads the run summary (MongoDB or fallback) and dispatches to users
     subscribed to AI_ANALYSIS_COMPLETE notifications. Deduplicates per run.
     """
+    _bind_task_context(self, run_id=test_run_id, project_id=project_id)
     import uuid as _uuid
 
     from datetime import datetime, timezone

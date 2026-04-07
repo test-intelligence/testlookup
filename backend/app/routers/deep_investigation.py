@@ -121,6 +121,7 @@ async def get_failure_clusters(
             select(FailureCluster)
             .where(FailureCluster.test_run_id == run_id)
             .order_by(FailureCluster.size.desc())
+            .limit(200)  # Scalability: prevent unbounded results on large runs
         )
         clusters = result.scalars().all()
 
@@ -147,6 +148,7 @@ async def get_deep_findings(
         result = await db.execute(
             select(DeepFinding)
             .where(DeepFinding.test_run_id == run_id)
+            .limit(200)  # Scalability: prevent unbounded results on large runs
         )
         findings = result.scalars().all()
 

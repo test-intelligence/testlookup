@@ -1,8 +1,10 @@
 """Dependencies for FastAPI (authentication, authorisation, webhook security)."""
+import hashlib
 import json
 import logging
 import uuid
-from typing import Callable
+from datetime import datetime, timezone
+from typing import Callable, Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -13,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.security import decode_token
 from app.db.postgres import get_db
-from app.models.postgres import User, UserRole
+from app.models.postgres import ApiKey, User, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,13 @@ _MEMBERSHIP_CACHE_TTL = 300  # 5 minutes
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/v1/auth/login",
     scheme_name="JWT",
+)
+
+# CLI-5: Optional OAuth2 scheme for dual auth (JWT OR API key)
+oauth2_scheme_optional = OAuth2PasswordBearer(
+    tokenUrl="/api/v1/auth/login",
+    scheme_name="JWT",
+    auto_error=False,
 )
 
 # Role hierarchy — higher index = more privileged
@@ -99,6 +108,61 @@ async def get_current_active_user(
             detail="Inactive user account",
         )
     return current_user
+
+
+# ── CLI-5: Dual auth (JWT OR API Key) ────────────────────────────────────────
+
+
+async def _validate_api_key(db: AsyncSession, raw_key: str) -> User:
+    """Validate an API key from the X-API-Key header and return the owning user."""
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.key_hash == key_hash)
+    )
+    api_key = result.scalar_one_or_none()
+
+    if not api_key:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    if not api_key.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key is inactive")
+    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key has expired")
+
+    # Load the owning user
+    user_result = await db.execute(select(User).where(User.id == api_key.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key owner account is inactive")
+
+    return user
+
+
+async def get_current_user_or_api_key(
+    db: AsyncSession = Depends(get_db),
+    bearer_token: Optional[str] = Depends(oauth2_scheme_optional),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+) -> User:
+    """Authenticate via JWT Bearer token OR X-API-Key header.
+
+    Tries JWT first (if Authorization header present), falls back to API key.
+    Raises 401 if neither is provided or valid.
+    """
+    # Try JWT first
+    if bearer_token:
+        try:
+            return await get_current_user(db=db, token=bearer_token)
+        except HTTPException:
+            pass  # Fall through to API key
+
+    # Try API key
+    if x_api_key:
+        return await _validate_api_key(db, x_api_key)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required — provide Authorization Bearer token or X-API-Key header",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def require_role(min_role: UserRole) -> Callable:

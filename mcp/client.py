@@ -36,9 +36,10 @@ async def authenticate() -> Optional[str]:
         return None
 
     client = _get_client()
+    # Backend expects OAuth2 form-encoded data, not JSON
     resp = await client.post(
         "/api/v1/auth/login",
-        json={"username": settings.username, "password": settings.password},
+        data={"username": settings.username, "password": settings.password},
     )
     resp.raise_for_status()
     _access_token = resp.json()["access_token"]

@@ -107,7 +107,7 @@ async def get_test_case_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(TestCaseVersion).where(TestCaseVersion.test_case_id == case_id).order_by(TestCaseVersion.version.desc()))
+    result = await db.execute(select(TestCaseVersion).where(TestCaseVersion.test_case_id == case_id).order_by(TestCaseVersion.version.desc()).limit(100))
     return [row(version, TestCaseVersionResponse) for version in result.scalars().all()]
 
 
@@ -136,7 +136,7 @@ async def get_reviews(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(TestCaseReview).where(TestCaseReview.test_case_id == case_id).order_by(TestCaseReview.created_at.desc()))
+    result = await db.execute(select(TestCaseReview).where(TestCaseReview.test_case_id == case_id).order_by(TestCaseReview.created_at.desc()).limit(50))
     return [row(review, TestCaseReviewResponse) for review in result.scalars().all()]
 
 
@@ -146,7 +146,7 @@ async def list_comments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(TestCaseComment).where(TestCaseComment.test_case_id == case_id).order_by(TestCaseComment.created_at.asc()))
+    result = await db.execute(select(TestCaseComment).where(TestCaseComment.test_case_id == case_id).order_by(TestCaseComment.created_at.asc()).limit(200))
     return [row(comment, TestCaseCommentResponse) for comment in result.scalars().all()]
 
 

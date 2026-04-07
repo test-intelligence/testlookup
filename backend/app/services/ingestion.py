@@ -6,7 +6,7 @@ to PostgreSQL (structured metrics) and MongoDB (raw payloads).
 import asyncio
 import hashlib
 import json
-import logging
+import structlog
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, cast
@@ -29,7 +29,7 @@ from app.services.allure_parser import parse_allure_result
 from app.services.testng_parser import parse_testng_xml
 from app.services.ocp_client import get_pod_metadata
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger("services.ingestion")
 
 # Import WebSocket manager lazily to avoid circular imports at module load time
 def _get_ws_manager():

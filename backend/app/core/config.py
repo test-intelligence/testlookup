@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
-    CELERY_WORKER_CONCURRENCY: int = 4
+    CELERY_WORKER_CONCURRENCY: int = 4          # Set to 16-32 in production for 100+ concurrent users
 
     # ── Performance / Scalability tunables ────────────────────
     # PostgreSQL pool (None = auto-size by environment)
