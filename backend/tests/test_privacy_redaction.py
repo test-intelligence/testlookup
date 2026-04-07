@@ -8,8 +8,6 @@ Covers:
   - Sensitive key expansion
   - Dict redaction with PII in nested values
 """
-import pytest
-
 from app.services.redaction_service import (
     redact_text,
     redact_dict,
