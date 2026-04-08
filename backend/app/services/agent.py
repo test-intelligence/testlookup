@@ -254,9 +254,52 @@ async def run_triage_agent(
         except Exception as e:
             logger.error("Agent execution failed: %s", e, exc_info=True)
             triage_span.set_attribute("agent.error", str(e)[:500])
-            # Detect token limit errors and provide actionable feedback
             error_str = str(e).lower()
-            if any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
+
+            # ── Model not installed → fall back to rules engine silently ──────
+            _model_not_found = (
+                "model" in error_str and "not found" in error_str
+            ) or (
+                "404" in error_str and ("model" in error_str or "pull" in error_str)
+            )
+            if _model_not_found:
+                logger.warning(
+                    "LLM model '%s' not available (%s) — falling back to rules engine",
+                    settings.LLM_MODEL, str(e)[:120],
+                )
+                # Open the circuit breaker so subsequent tasks skip the LLM
+                try:
+                    from app.streams.circuit_breaker import LLMCircuitBreaker
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()  # 5 failures → OPEN
+                except Exception:
+                    pass
+                try:
+                    from app.services.rules_engine import RulesEngine
+                    analysis = RulesEngine.classify_test(
+                        error_message=error_message,
+                        test_name=test_name,
+                        stack_trace=stack_trace,
+                    )
+                    analysis["llm_provider"] = settings.LLM_PROVIDER
+                    analysis["llm_model"] = settings.LLM_MODEL
+                    analysis["analysis_engine"] = "rules"
+                    analysis["llm_unavailable_reason"] = (
+                        f"Model '{settings.LLM_MODEL}' is not installed. "
+                        f"Run: docker compose exec ollama ollama pull {settings.LLM_MODEL}"
+                    )
+                except Exception as rules_exc:
+                    logger.error("Rules engine fallback also failed: %s", rules_exc)
+                    analysis = _fallback_analysis(
+                        f"Model '{settings.LLM_MODEL}' not installed. "
+                        f"Pull it with: docker compose exec ollama ollama pull {settings.LLM_MODEL}"
+                    )
+
+            # ── Token limit ───────────────────────────────────────────────────
+            elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
                 logger.warning("Token limit exceeded — returning fallback with truncation hint")
                 analysis = _fallback_analysis(
                     f"Input exceeded LLM context window. Error: {str(e)[:200]}. "

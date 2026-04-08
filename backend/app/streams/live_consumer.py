@@ -158,9 +158,9 @@ class LiveEventStreamConsumer:
         if state is None:
             return  # Unknown run — ignore
 
-        # Buffer this test event in Redis List for later DB persistence.
-        # The persist_live_session Celery task drains this list when the session completes.
-        await self._buffer_test_event(run_id, payload)
+        # NOTE: test event buffering (LIVE_TESTCASES_KEY) is done synchronously in
+        # stream_service.ingest_event_batch() to avoid a race condition where
+        # persist_live_session runs before the consumer processes the stream.
 
         # Broadcast incremental update
         await _broadcast(state["project_id"], {

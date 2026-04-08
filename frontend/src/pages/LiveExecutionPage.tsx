@@ -399,9 +399,28 @@ function CodeBlock({ code }: { code: string }) {
   )
 }
 
+// Direct backend URL — bypasses the Vite proxy which can't stream binary responses
+const SDK_API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+
+const SDK_DOWNLOADS: { sdkLang: SDKLang; label: string; backendLang: string }[] = [
+  { sdkLang: 'python',     label: 'Python (.py)',         backendLang: 'python' },
+  { sdkLang: 'java',       label: 'Java (.zip)',           backendLang: 'java'   },
+  { sdkLang: 'javascript', label: 'JavaScript/TS (.zip)', backendLang: 'js'     },
+  { sdkLang: 'go',         label: 'Go (.zip)',             backendLang: 'go'     },
+]
+
 function ClientSDKGuide({ projectId }: { projectId?: string }) {
   const [lang, setLang] = useState<SDKLang>('python')
+  const [showSdkDropdown, setShowSdkDropdown] = useState(false)
   const pid = projectId ?? '<project-id>'
+
+  const handleSdkDownload = useCallback((backendLang: string) => {
+    // Navigate directly to the backend — Content-Disposition: attachment triggers
+    // download without leaving the page, and bypasses the Vite proxy which fails
+    // on binary/streaming responses.
+    window.location.href = `${SDK_API_BASE}/api/v1/sdk/${backendLang}`
+    setShowSdkDropdown(false)
+  }, [])
 
   return (
     <div className="theme-bg-secondary border theme-border rounded-lg p-5">
@@ -412,15 +431,30 @@ function ClientSDKGuide({ projectId }: { projectId?: string }) {
             Connect a Test Runner
           </h3>
         </div>
-        <a
-          href="https://github.com/testlookup/clients"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-        >
-          <Download className="h-3.5 w-3.5" />
-          All client SDKs
-        </a>
+        <div className="relative">
+          <button
+            onClick={() => setShowSdkDropdown(v => !v)}
+            className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+          >
+            <Download className="h-3.5 w-3.5" />
+            All client SDKs
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {showSdkDropdown && (
+            <div className="absolute right-0 top-full mt-1 z-10 bg-[var(--color-bg-card)] border theme-border rounded-lg shadow-lg py-1 min-w-[190px]">
+              {SDK_DOWNLOADS.map(({ sdkLang, label, backendLang }) => (
+                <button
+                  key={sdkLang}
+                  onClick={() => handleSdkDownload(backendLang)}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] transition-colors"
+                >
+                  <Download className="h-3 w-3 text-[var(--color-text-muted)]" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Language tabs */}

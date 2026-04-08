@@ -41,6 +41,7 @@ from app.routers import (
     saved_views,
     scim,
     scoring,
+    sdk,
     search,
     shared_reports,
     sso,
@@ -64,6 +65,7 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     sso.router,            # SSO/SAML — public endpoints (metadata, ACS, login-url, status)
     scim.router,           # SCIM 2.0 — bearer-token auth (not JWT)
     shared_reports.router,  # Public shared report views (token-based, ENT-03)
+    sdk.router,             # Client SDK downloads (no auth required)
 )
 
 PROTECTED_ROUTERS: Sequence[APIRouter] = (

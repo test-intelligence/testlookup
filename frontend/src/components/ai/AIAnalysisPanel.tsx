@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronUp,
   ExternalLink, Loader2, Shield, Zap,
@@ -168,12 +168,26 @@ function InvestigationTrail({
 export default function AIAnalysisPanel({
   testCaseId, testName, runId, serviceName, timestamp, ocpPodName, ocpNamespace, projectKey,
 }: Props) {
-  const [loading, setLoading]   = useState(false)
-  const [result, setResult]     = useState<AnalysisResult | null>(null)
-  const [jiraUrl, setJiraUrl]   = useState<string | null>(null)
+  const [loading, setLoading]         = useState(false)
+  const [initialLoading, setInitialLoading] = useState(true)
+  const [result, setResult]           = useState<AnalysisResult | null>(null)
+  const [jiraUrl, setJiraUrl]         = useState<string | null>(null)
   const [creatingJira, setCreatingJira] = useState(false)
-  const [expanded, setExpanded] = useState(true)
-  const [hasError, setHasError] = useState(false)
+  const [expanded, setExpanded]       = useState(true)
+  const [hasError, setHasError]       = useState(false)
+
+  // Auto-load any previously stored analysis so the user sees results immediately
+  // without having to click "Analyse Root Cause" again.
+  useEffect(() => {
+    let cancelled = false
+    aiService.getAnalysis(testCaseId)
+      .then((existing) => {
+        if (!cancelled && existing) setResult(existing)
+      })
+      .catch(() => { /* ignore — panel shows the analyse button as fallback */ })
+      .finally(() => { if (!cancelled) setInitialLoading(false) })
+    return () => { cancelled = true }
+  }, [testCaseId])
 
   const handleAnalyze = async () => {
     setLoading(true)
@@ -218,7 +232,17 @@ export default function AIAnalysisPanel({
     }
   }
 
-  // ── Idle state ─────────────────────────────────────────────
+  // ── Initial fetch in progress ───────────────────────────────
+  if (initialLoading) {
+    return (
+      <div className="card flex flex-col items-center gap-4 py-10">
+        <Loader2 className="h-7 w-7 animate-spin text-[var(--color-text-muted)]" />
+        <p className="text-sm text-[var(--color-text-muted)]">Loading analysis…</p>
+      </div>
+    )
+  }
+
+  // ── Idle state (no prior analysis exists) ───────────────────
   if (!loading && !result && !hasError) {
     return (
       <div className="card flex flex-col items-center gap-4 py-10">

@@ -187,4 +187,12 @@ class RedisLiveRunState:
         result["pass_rate"] = (
             round((result.get("passed", 0) / completed * 100), 2) if completed else 0.0
         )
+        # Ensure total >= completed count.
+        # When no pre-announced total was given (total=0 at start), total stays 0
+        # in Redis but the UI needs it to reflect tests seen so far.
+        # When a pre-announced total IS given (e.g. 100), max() keeps it unchanged
+        # until completed count surpasses it (shouldn't happen, but safe).
+        all_completed = (result.get("passed", 0) + result.get("failed", 0)
+                         + result.get("skipped", 0) + result.get("broken", 0))
+        result["total"] = max(result.get("total", 0), all_completed)
         return result

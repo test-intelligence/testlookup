@@ -212,6 +212,7 @@ services:
     volumes:
       - ./backend:/app                   # Hot-reload in development
       - ./backend/app:/app/app
+      - ./client:/app/client_sdks:ro     # Client SDK files served at /api/v1/sdk/
     env_file:
       - .env
     environment:
