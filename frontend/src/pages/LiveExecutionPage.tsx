@@ -17,7 +17,7 @@
  * - SWR polling GET /api/v1/stream/active (5 s interval, 30 s when WS open)
  * - WebSocket   /ws/live/{projectId} (push updates, merges into local state)
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity,
@@ -33,6 +33,11 @@ import {
   FlaskConical,
   Cpu,
   Package,
+  Copy,
+  Check,
+  Download,
+  Terminal,
+  Code2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -202,6 +207,268 @@ function EventRow({ event }: { event: LiveEvent }) {
         )}
       </div>
       <span className="text-[var(--color-text-faint)] flex-shrink-0">{relativeTime(event.timestamp)}</span>
+    </div>
+  )
+}
+
+// ── SDK language tabs & snippets ───────────────────────────────────────────
+
+type SDKLang = 'python' | 'java' | 'javascript' | 'go'
+
+const SDK_TABS: { id: SDKLang; label: string; icon: string }[] = [
+  { id: 'python',     label: 'Python',     icon: 'py' },
+  { id: 'java',       label: 'Java',       icon: 'java' },
+  { id: 'javascript', label: 'JavaScript', icon: 'js' },
+  { id: 'go',         label: 'Go',         icon: 'go' },
+]
+
+function getInstallSnippet(lang: SDKLang): string {
+  switch (lang) {
+    case 'python':
+      return 'pip install testlookup-reporter'
+    case 'java':
+      return `<!-- Maven -->
+<dependency>
+  <groupId>io.testlookup</groupId>
+  <artifactId>testlookup-reporter</artifactId>
+  <version>1.0.0</version>
+</dependency>
+
+<!-- Gradle -->
+implementation 'io.testlookup:testlookup-reporter:1.0.0'`
+    case 'javascript':
+      return 'npm install testlookup-reporter'
+    case 'go':
+      return 'go get github.com/testlookup/testlookup-go'
+  }
+}
+
+function getRunnerSnippet(lang: SDKLang, projectId: string): string {
+  switch (lang) {
+    case 'python':
+      return `pytest --testlookup-url http://server:8000 \\
+       --testlookup-token <jwt> \\
+       --testlookup-project ${projectId}`
+    case 'java':
+      return `// JUnit 5 — add the extension to your test class
+@ExtendWith(TestLookupExtension.class)
+public class MyTests {
+    // tests run automatically reported
+}
+
+// Run with system properties:
+mvn test \\
+  -Dtestlookup.url=http://server:8000 \\
+  -Dtestlookup.token=<jwt> \\
+  -Dtestlookup.projectId=${projectId}
+
+// TestNG — add the listener
+// <listener class-name="io.testlookup.TestLookupListener" />`
+    case 'javascript':
+      return `// Jest — add to jest.config.js
+module.exports = {
+  reporters: [
+    "default",
+    ["testlookup-reporter/jest-reporter", {
+      url: "http://server:8000",
+      token: "<jwt>",
+      projectId: "${projectId}",
+    }],
+  ],
+};
+
+// Mocha — run with reporter flag
+mocha --reporter testlookup-reporter/mocha-reporter \\
+  --reporter-options url=http://server:8000,token=<jwt>,projectId=${projectId}`
+    case 'go':
+      return `// Set environment variables
+export TESTLOOKUP_URL=http://server:8000
+export TESTLOOKUP_TOKEN=<jwt>
+export TESTLOOKUP_PROJECT=${projectId}
+
+// Use the testing helper in TestMain
+func TestMain(m *testing.M) {
+    testlookup.RunWithReporter(m)
+}`
+  }
+}
+
+function getAPISnippet(lang: SDKLang, projectId: string): string {
+  switch (lang) {
+    case 'python':
+      return `from testlookup_reporter import TestLookupReporter
+
+reporter = TestLookupReporter(
+    base_url="http://server:8000",
+    token="<jwt>",
+    project_id="${projectId}",
+)
+async with reporter.session(
+    "my-build",
+    release_name="v2.5.0",   # optional
+) as s:
+    await s.record("test_login", "PASSED", 120)
+    await s.record("test_cart",  "FAILED", 340,
+                   error="AssertionError: expected 200")`
+    case 'java':
+      return `import io.testlookup.TestLookupReporter;
+import io.testlookup.LiveSession;
+
+TestLookupReporter reporter = TestLookupReporter.builder()
+    .baseUrl("http://server:8000")
+    .token("<jwt>")
+    .projectId("${projectId}")
+    .build();
+
+try (LiveSession session = reporter.createSession(
+        "my-build", "v2.5.0")) {
+    session.record("test_login", "PASSED", 120);
+    session.record("test_cart", "FAILED", 340,
+        Map.of("error", "AssertionError: expected 200"));
+}`
+    case 'javascript':
+      return `import { TestLookupReporter } from 'testlookup-reporter';
+
+const reporter = new TestLookupReporter({
+  url: 'http://server:8000',
+  token: '<jwt>',
+  projectId: '${projectId}',
+});
+
+const session = await reporter.createSession(
+  'my-build',
+  { releaseName: 'v2.5.0' },
+);
+
+await session.record('test_login', 'PASSED', 120);
+await session.record('test_cart', 'FAILED', 340, {
+  error: 'AssertionError: expected 200',
+});
+
+await session.close();`
+    case 'go':
+      return `package main
+
+import "github.com/testlookup/testlookup-go/testlookup"
+
+reporter, _ := testlookup.NewReporter(testlookup.Config{
+    BaseURL:   "http://server:8000",
+    Token:     "<jwt>",
+    ProjectID: "${projectId}",
+})
+
+ctx := context.Background()
+session, _ := reporter.CreateSession(ctx,
+    "my-build",
+    testlookup.WithRelease("v2.5.0"),
+)
+defer session.Close(ctx)
+
+session.Record(ctx, "test_login", testlookup.Passed, 120)
+session.Record(ctx, "test_cart", testlookup.Failed, 340,
+    testlookup.WithError("AssertionError: expected 200"))`
+  }
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [text])
+  return (
+    <button
+      onClick={handleCopy}
+      className="absolute top-2 right-2 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] transition-colors"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
+function CodeBlock({ code }: { code: string }) {
+  return (
+    <div className="relative group">
+      <pre className="bg-[var(--color-bg-card)] rounded p-3 pr-8 text-[var(--color-text-secondary)] overflow-x-auto font-mono leading-relaxed">
+        {code}
+      </pre>
+      <CopyButton text={code} />
+    </div>
+  )
+}
+
+function ClientSDKGuide({ projectId }: { projectId?: string }) {
+  const [lang, setLang] = useState<SDKLang>('python')
+  const pid = projectId ?? '<project-id>'
+
+  return (
+    <div className="theme-bg-secondary border theme-border rounded-lg p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Terminal className="h-4 w-4 text-[var(--color-text-muted)]" />
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">
+            Connect a Test Runner
+          </h3>
+        </div>
+        <a
+          href="https://github.com/testlookup/clients"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+        >
+          <Download className="h-3.5 w-3.5" />
+          All client SDKs
+        </a>
+      </div>
+
+      {/* Language tabs */}
+      <div className="flex items-center gap-1 mb-4 bg-[var(--color-bg-card)] rounded-lg p-1 w-fit">
+        {SDK_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setLang(tab.id)}
+            className={clsx(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+              lang === tab.id
+                ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+            )}
+          >
+            <Code2 className="h-3 w-3" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <div>
+          <p className="text-[var(--color-text-muted)] mb-2 font-medium">1. Install the client SDK</p>
+          <CodeBlock code={getInstallSnippet(lang)} />
+        </div>
+        <div>
+          <p className="text-[var(--color-text-muted)] mb-2 font-medium">
+            2. {lang === 'python' ? 'Run pytest with the plugin' : lang === 'java' ? 'Use the JUnit 5 / TestNG integration' : lang === 'javascript' ? 'Use the Jest or Mocha reporter' : 'Use the testing helper'}
+          </p>
+          <CodeBlock code={getRunnerSnippet(lang, pid)} />
+        </div>
+        <div>
+          <p className="text-[var(--color-text-muted)] mb-2 font-medium">
+            3. Or use the {lang === 'python' ? 'Python' : lang === 'java' ? 'Java' : lang === 'javascript' ? 'JavaScript' : 'Go'} API directly
+          </p>
+          <CodeBlock code={getAPISnippet(lang, pid)} />
+        </div>
+        <div>
+          <p className="text-[var(--color-text-muted)] mb-2 font-medium">4. Stream stats appear here in real-time</p>
+          <ul className="space-y-1.5 text-[var(--color-text-muted)] list-disc list-inside">
+            <li>Events batched every 100 ms client-side</li>
+            <li>Results visible on dashboard within ~1 s</li>
+            <li>Final test cases persisted to DB after run completes</li>
+            <li>Supports 10 000+ concurrent executions</li>
+          </ul>
+        </div>
+      </div>
     </div>
   )
 }
@@ -633,55 +900,7 @@ export default function LiveExecutionPage() {
       </div>
 
       {/* ── Integration guide ── */}
-      <div className="theme-bg-secondary border theme-border rounded-lg p-5">
-        <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">
-          Connect a Test Runner
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div>
-            <p className="text-[var(--color-text-muted)] mb-2 font-medium">1. Install the client SDK</p>
-            <pre className="bg-[var(--color-bg-card)] rounded p-3 text-[var(--color-text-secondary)] overflow-x-auto font-mono">
-              {`pip install testlookup-reporter`}
-            </pre>
-          </div>
-          <div>
-            <p className="text-[var(--color-text-muted)] mb-2 font-medium">2. Run pytest with the plugin</p>
-            <pre className="bg-[var(--color-bg-card)] rounded p-3 text-[var(--color-text-secondary)] overflow-x-auto font-mono">
-              {`pytest --testlookup-url http://server:8000 \\
-       --testlookup-token <jwt> \\
-       --testlookup-project ${selectedProject?.id || '<project-id>'}`}
-            </pre>
-          </div>
-          <div>
-            <p className="text-[var(--color-text-muted)] mb-2 font-medium">3. Or use the Python API directly</p>
-            <pre className="bg-[var(--color-bg-card)] rounded p-3 text-[var(--color-text-secondary)] overflow-x-auto font-mono leading-relaxed">
-              {`from testlookup_reporter import TestLookupReporter
-
-reporter = TestLookupReporter(
-    base_url="http://server:8000",
-    token="<jwt>",
-    project_id="${selectedProject?.id || '<id>'}",
-)
-async with reporter.session(
-    "my-build",
-    release_name="v2.5.0",   # optional
-) as s:
-    await s.record("test_login", "PASSED", 120)
-    await s.record("test_cart",  "FAILED", 340,
-                   error="AssertionError: expected 200")`}
-            </pre>
-          </div>
-          <div>
-            <p className="text-[var(--color-text-muted)] mb-2 font-medium">4. Stream stats appear here in real-time</p>
-            <ul className="space-y-1 text-[var(--color-text-muted)] list-disc list-inside">
-              <li>Events batched every 100 ms client-side</li>
-              <li>Results visible on dashboard within ~1 s</li>
-              <li>Final test cases persisted to DB after run completes</li>
-              <li>Supports 10 000+ concurrent executions</li>
-            </ul>
-          </div>
-        </div>
-      </div>
+      <ClientSDKGuide projectId={selectedProject?.id} />
     </div>
   )
 }
