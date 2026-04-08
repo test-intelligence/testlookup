@@ -141,7 +141,10 @@ async def coverage_stats(db: AsyncSession, project_id: str | None, days: int) ->
             COUNT(DISTINCT tc.test_fingerprint)  AS unique_tests,
             COUNT(DISTINCT tc.suite_name)        AS suite_count,
             COUNT(*)                            AS total_executions,
-            ROUND(AVG(tr.pass_rate)::numeric, 1) AS avg_pass_rate,
+            ROUND(
+                COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
+                / NULLIF(COUNT(*), 0), 1
+            ) AS avg_pass_rate,
             COUNT(DISTINCT DATE_TRUNC('day', tr.created_at)) AS days_with_runs
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id
@@ -155,8 +158,8 @@ async def coverage_stats(db: AsyncSession, project_id: str | None, days: int) ->
     suites = (await db.execute(suite_query, params)).fetchall()
     total = (await db.execute(total_query, params)).one()
     return {
-        "summary": dict(total._mapping),
-        "suites": [dict(row._mapping) for row in suites],
+        "summary": _row_dict(total),
+        "suites": [_row_dict(row) for row in suites],
         "period_days": days,
     }
 
