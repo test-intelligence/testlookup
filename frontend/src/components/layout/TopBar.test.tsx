@@ -22,8 +22,9 @@ const mocked = vi.hoisted(() => {
     user: {
       full_name: 'Test User',
       username: 'tester',
-      role: 'admin',
+      role: 'ADMIN',
       email: 'test@example.com',
+      avatar_color: null,
     },
   }
 

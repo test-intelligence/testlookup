@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import sys
 
 import pytest
@@ -691,7 +691,11 @@ async def test_stream_service_create_session_stores_token_and_initializes_live_s
 
 @pytest.mark.asyncio
 async def test_stream_service_ingest_event_batch_validates_and_refreshes_token():
-    redis = SimpleNamespace(get=AsyncMock(return_value="sess-1"), expire=AsyncMock())
+    pipe_mock = AsyncMock()
+    pipe_mock.rpush = MagicMock()
+    pipe_mock.expire = MagicMock()
+    pipe_mock.execute = AsyncMock()
+    redis = SimpleNamespace(get=AsyncMock(return_value="sess-1"), expire=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
     batch = SimpleNamespace(session_id="sess-1", run_id="run-1", events=[{"event_type": "test_result"}])
 
     with (
