@@ -79,11 +79,14 @@ MCP Server (mcp:8002) — AI assistant integration (stdio + SSE)
 All commands are via `make` (see `Makefile` for full list):
 
 ```bash
-make dev                  # Start full stack (docker compose up -d --build)
+make dev                  # Start core stack WITHOUT local LLM (Ollama/ChromaDB excluded)
                           # Auto-creates .env from .env.example if missing
                           # Migrations run automatically at container start (with retry)
                           # Seed data runs automatically via seed-init service
-make dev-setup            # First-time setup: make dev + pull-llm
+                          # AI falls back to rules/ML engine when LLM is absent
+make dev-llm              # Start full stack WITH local LLM (Ollama + ChromaDB)
+                          # Use this when you need LLM-powered analysis
+make dev-setup            # First-time setup with LLM: make dev-llm + pull-llm
 make seed-data            # Re-run seed (idempotent — safe at any time)
 make seed-data-reset      # Wipe and regenerate seed data
 make dev-logs-seed        # Watch seed-init output
@@ -181,7 +184,7 @@ npm run dev   # → http://localhost:3000
   - `streams/` — Redis Streams producer/consumer + circuit breaker
   - `worker/` — Celery app, tasks, training tasks
 - `backend/models/` — trained ML model artifacts (.joblib)
-- `backend/migrations/` — Alembic versions (0001-0046)
+- `backend/migrations/` — Alembic versions (0001-0052)
 - `backend/tests/` — pytest suite
 - `frontend/src/` — React 18 + TypeScript SPA
   - `pages/`, `components/`, `services/` (Axios API clients), `hooks/` (SWR wrappers), `store/` (Zustand)
@@ -420,6 +423,9 @@ Settings                (footer)
 | POST | /api/v1/auth/login | Standard login |
 | POST | /api/v1/auth/first-time-reset | Forced reset on first login (JWT required, no old password needed) |
 | POST | /api/v1/auth/dev-login | Dev-only bypass login (APP_ENV=development only) |
+| GET  | /api/v1/auth/me | Return own profile (JWT required) |
+| PATCH | /api/v1/auth/me | Self-service profile update: full_name, avatar_color (JWT required, all roles) |
+| POST | /api/v1/auth/change-password | Change own password (JWT required, requires current password) |
 
 ### Self-registration flow
 1. User fills in the Register form on the login page (email, username, full name, password)

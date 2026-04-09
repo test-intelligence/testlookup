@@ -23,6 +23,7 @@ from app.models.schemas import (
     ChangePasswordRequest,
     FirstTimeResetRequest,
     RefreshRequest,
+    SelfUpdateProfileRequest,
     TokenResponse,
     UserCreate,
     UserResponse,
@@ -336,6 +337,24 @@ async def refresh_tokens(
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_active_user)):
     """Return the authenticated user's profile."""
+    return current_user
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    payload: SelfUpdateProfileRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Self-service profile update — any authenticated user can update their own
+    full_name and avatar_color.  Email and username are read-only here."""
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name.strip() or None
+    if payload.avatar_color is not None:
+        current_user.avatar_color = payload.avatar_color
+    await db.commit()
+    await db.refresh(current_user)
+    logger.info("Profile updated for user: %s", str(current_user.id))
     return current_user
 
 

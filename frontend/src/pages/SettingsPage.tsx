@@ -1,9 +1,16 @@
 import { Link } from 'react-router-dom'
-import { Activity, Bot, BrainCircuit, Database, Gauge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ShieldAlert } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, Database, Gauge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ShieldAlert, UserCircle2 } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 
 const sections = [
+  {
+    icon: UserCircle2,
+    title: 'My Profile',
+    desc: 'Update your display name, avatar colour, and password',
+    href: '/settings/profile',
+    allRoles: true,
+  },
   {
     icon: Bot,
     title: 'AI Configuration',
@@ -69,24 +76,22 @@ const sections = [
 export default function SettingsPage() {
   const { canViewSettings } = usePermissions()
 
-  if (!canViewSettings) {
-    return (
-      <div className="space-y-4">
-        <PageHeader title="Settings" subtitle="Application configuration and integrations" />
-        <div className="flex flex-col items-center py-20 text-[var(--color-text-muted)]">
-          <ShieldAlert className="h-10 w-10 mb-3 text-[var(--color-text-faint)]" />
-          <p className="font-medium">Access Restricted</p>
-          <p className="text-sm mt-1">You need QA Lead or Admin role to view settings.</p>
-        </div>
-      </div>
-    )
-  }
+  // Profile card is always visible; other cards require QA_LEAD+
+  const visibleSections = sections.filter(s => s.allRoles || canViewSettings)
 
   return (
     <div className="space-y-4">
       <PageHeader title="Settings" subtitle="Application configuration and integrations" />
+
+      {!canViewSettings && (
+        <div className="card flex items-center gap-3 border-amber-700/30 bg-amber-900/10 py-3 px-4">
+          <ShieldAlert className="h-4 w-4 text-amber-400 flex-shrink-0" />
+          <p className="text-sm text-amber-300">Some settings require QA Lead or Admin role.</p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {sections.map(({ icon: Icon, title, desc, href }) => (
+        {visibleSections.map(({ icon: Icon, title, desc, href }) => (
           <Link key={title} to={href} className="block">
             <div className="card hover:border-[var(--color-border-light)] transition-colors cursor-pointer">
               <div className="flex items-center gap-3 mb-2">

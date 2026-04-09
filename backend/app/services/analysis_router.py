@@ -71,16 +71,35 @@ def get_analysis_mode() -> str:
 
     # Check if LLM is likely reachable (heuristic: provider is configured)
     if settings.LLM_PROVIDER and settings.LLM_PROVIDER != "none":
-        try:
-            import asyncio
-            # Non-blocking check — if circuit breaker says unavailable, skip LLM
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # In async context, default to LLM (circuit breaker will catch failures)
-                logger.debug("Auto mode: LLM provider configured — using LLM")
-                return AnalysisMode.LLM
-        except Exception:
-            pass
+        # For Ollama: verify the configured model is actually installed.
+        # A 404 "model not found" from Ollama is not a transient error — it means
+        # the model was never pulled.  Detect it here so auto mode degrades to rules
+        # immediately instead of burning a LLM attempt on every task.
+        if settings.LLM_PROVIDER == "ollama":
+            try:
+                import httpx
+                resp = httpx.get(
+                    f"{settings.OLLAMA_BASE_URL}/api/tags",
+                    timeout=3.0,
+                )
+                if resp.status_code == 200:
+                    installed = [m.get("name", "") for m in resp.json().get("models", [])]
+                    # Match "qwen2.5:7b" against full tag names like "qwen2.5:7b" or "qwen2.5:latest"
+                    model_base = settings.LLM_MODEL.split(":")[0]
+                    model_available = any(
+                        settings.LLM_MODEL in name or name.startswith(model_base)
+                        for name in installed
+                    )
+                    if not model_available:
+                        logger.warning(
+                            "Auto mode: Ollama model '%s' not installed (available: %s) — using rules",
+                            settings.LLM_MODEL,
+                            installed or "none",
+                        )
+                        return AnalysisMode.RULES
+            except Exception as probe_exc:
+                logger.debug("Auto mode: Ollama probe failed (%s) — attempting LLM anyway", probe_exc)
+
         logger.debug("Auto mode: LLM provider configured — using LLM")
         return AnalysisMode.LLM
 

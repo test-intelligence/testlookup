@@ -50,6 +50,59 @@ def _build_role_actions(analysis: dict) -> RoleActions:
     )
 
 
+@router.get(
+    "/analyze/{test_case_id}",
+    response_model=AnalysisResponse,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+    summary="Fetch existing AI analysis for a test case (no re-run)",
+)
+async def get_existing_analysis(
+    test_case_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return the previously stored AI analysis for a test case without triggering
+    a new LLM run.  Returns 404 if no analysis has been run yet.
+    """
+    import uuid as _uuid
+    try:
+        tc_uuid = _uuid.UUID(test_case_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid test_case_id format")
+
+    row = (await db.execute(
+        select(AIAnalysis).where(AIAnalysis.test_case_id == tc_uuid)
+    )).scalar_one_or_none()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="No analysis found for this test case")
+
+    analysis = {
+        "root_cause_summary":  row.root_cause_summary or "",
+        "failure_category":    row.failure_category.value if row.failure_category else "UNKNOWN",
+        "backend_error_found": row.backend_error_found or False,
+        "pod_issue_found":     row.pod_issue_found or False,
+        "is_flaky":            row.is_flaky or False,
+        "confidence_score":    row.confidence_score or 0,
+        "recommended_actions": row.recommended_actions or [],
+        "evidence_references": row.evidence_references or [],
+        "tools_used":          row.tools_used or [],
+        "role_actions":        row.role_actions or {},
+        "llm_provider":        row.llm_provider or "unknown",
+        "llm_model":           row.llm_model or "unknown",
+        "requires_human_review": row.requires_human_review if row.requires_human_review is not None else True,
+    }
+    return AnalysisResponse(
+        test_case_id=tc_uuid,
+        **{k: v for k, v in analysis.items() if k not in {"role_actions", "llm_provider", "llm_model", "requires_human_review"}},
+        role_actions=_build_role_actions(analysis),
+        confidence_why=_build_confidence_why(analysis),
+        llm_provider=analysis["llm_provider"],
+        llm_model=analysis["llm_model"],
+        requires_human_review=analysis["requires_human_review"],
+    )
+
+
 @router.post(
     "/analyze",
     response_model=AnalysisResponse,

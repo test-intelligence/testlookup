@@ -68,6 +68,11 @@ async def export_test_cases_excel(
     current_user: User = Depends(get_current_active_user),
 ):
     """Export test cases to an Excel (.xlsx) file."""
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return Response(content=b"", media_type="application/octet-stream")
     _check_excel_deps()
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -633,6 +638,11 @@ async def list_test_suites(
     Return test suites grouped by suite_name, combining automation test_cases
     (from ingested runs) and manually authored managed_test_cases.
     """
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     from sqlalchemy import text as sa_text
 
     # Automation test cases
@@ -726,6 +736,11 @@ async def get_suite_test_cases(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return test cases for a given suite_name from both automation runs and managed test cases."""
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     from app.models.postgres import TestCase, TestRun
 
     # Automation test cases
@@ -796,6 +811,11 @@ async def get_suite_membership(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return current suite membership records from the traceability model."""
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     from app.models.postgres import SuiteMembership
 
     stmt = select(SuiteMembership).where(SuiteMembership.suite_name == suite_name)
@@ -837,6 +857,11 @@ async def get_suite_changes(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return suite membership change events, optionally filtered by run."""
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     from app.models.postgres import SuiteMembershipEvent
 
     stmt = select(SuiteMembershipEvent).where(SuiteMembershipEvent.suite_name == suite_name)

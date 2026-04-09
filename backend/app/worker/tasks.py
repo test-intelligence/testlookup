@@ -14,12 +14,32 @@ _slog = structlog.get_logger("worker.tasks")
 
 
 def _run_async(coro):
-    """Run an async coroutine in a Celery task (sync context)."""
+    """Run an async coroutine in a Celery task (sync context).
+
+    Each Celery task runs in a separate thread / process.  The global async
+    clients (Redis, SQLAlchemy engine) hold references to the event loop that
+    was current when they were first created.  If that loop was already closed
+    (e.g. from a previous task invocation) we get "Event loop is closed" /
+    "Future attached to a different loop" errors.
+
+    Fix: reset the module-level singletons before creating the new loop so
+    that the first `get_redis()` call inside the coroutine creates a fresh
+    client bound to the *current* loop.
+    """
+    import app.db.redis_client as _redis_mod
+    _redis_mod._pool = None
+    _redis_mod._client = None
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coro)
     finally:
+        try:
+            # Close all async generators and pending tasks cleanly
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
         loop.close()
 
 
@@ -135,6 +155,9 @@ def persist_live_session(
             skipped = final_state.get("skipped", 0)
             broken  = final_state.get("broken",  0)
             total   = final_state.get("total",   0)
+
+        # If total wasn't tracked explicitly, derive it from component counts
+        total = total or (passed + failed + skipped + broken)
 
         pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
         run_status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED

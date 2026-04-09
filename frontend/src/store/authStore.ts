@@ -10,6 +10,7 @@ export interface User {
   role: string;
   is_active: boolean;
   must_change_password: boolean;
+  avatar_color: string | null;
 }
 
 interface AuthState {
@@ -101,9 +102,15 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
+      // Persist user + isAuthenticated alongside tokens so that a hard page
+      // refresh never clears auth state while valid tokens are still present.
+      // fetchUser() still runs in the background on every mount to silently
+      // re-validate the token; logout only happens on explicit 401/403.
       partialize: (state) => ({
         token: state.token,
         refreshToken: state.refreshToken,
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

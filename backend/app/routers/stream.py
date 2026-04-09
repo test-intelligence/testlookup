@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.schemas import ActiveSessionsResponse, LiveEventBatch, LiveSessionCreate
 from app.services import stream_service
@@ -65,8 +65,12 @@ async def ingest_event_batch(
 async def list_active_sessions(
     project_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_active_user),
+    current_user=Depends(get_current_active_user),
 ):
+    if not project_id:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return ActiveSessionsResponse(sessions=[], total=0)
     return await stream_service.list_active_sessions(db, project_id)
 
 

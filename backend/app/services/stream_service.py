@@ -203,6 +203,9 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
 
 
 async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
+    import json as _json
+    from app.streams import LIVE_TESTCASES_KEY
+
     redis = get_redis()
     stored_session_id = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
     if not stored_session_id or stored_session_id != batch.session_id:
@@ -212,6 +215,31 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
         )
 
     accepted = await publish_event_batch(session_id=batch.session_id, run_id=batch.run_id, events=batch.events)
+
+    # Buffer test_result events directly into the Redis List that persist_live_session
+    # reads.  This must happen here — synchronously in the HTTP handler — not in the
+    # async stream consumer, because close_session() / persist_live_session can be
+    # dispatched before the consumer processes the stream (race condition).
+    list_key = LIVE_TESTCASES_KEY.format(run_id=batch.run_id)
+    pipe = redis.pipeline()
+    for event in batch.events:
+        event_dict: dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+        if event_dict.get("event_type") == "test_result":
+            entry = _json.dumps({
+                "test_name":     event_dict.get("test_name", ""),
+                "status":        event_dict.get("status", "UNKNOWN"),
+                "duration_ms":   event_dict.get("duration_ms", 0),
+                "suite_name":    event_dict.get("suite_name"),
+                "class_name":    event_dict.get("class_name"),
+                "error_message": event_dict.get("error_message"),
+                "stack_trace":   event_dict.get("stack_trace"),
+                "tags":          event_dict.get("tags"),
+                "timestamp_ms":  event_dict.get("timestamp_ms"),
+            })
+            pipe.rpush(list_key, entry)
+    pipe.expire(list_key, 90_000)  # 25 h TTL — same as consumer's buffer
+    await pipe.execute()
+
     await redis.expire(SESSION_TOKEN_KEY.format(token=x_session_token), SESSION_TTL)
     return LiveEventBatchResponse(accepted=accepted, run_id=batch.run_id, session_id=batch.session_id)
 
@@ -345,6 +373,8 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     skipped = int(state.get("skipped", 0))
     broken = int(state.get("broken", 0))
     total = int(state.get("total", session.total_tests or 0))
+    # Fallback: if total wasn't tracked, derive it from component counts
+    total = total or (passed + failed + skipped + broken)
     pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
     run_status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
     now = datetime.now(timezone.utc)

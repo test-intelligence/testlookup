@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import SavedView, User
 from app.models.schemas import SavedViewCreate, SavedViewResponse, SavedViewUpdate
@@ -23,6 +23,10 @@ async def list_saved_views(
     current_user: User = Depends(get_current_active_user),
 ):
     """List saved views: user's personal + shared views for the project."""
+    if not project_id:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     query = select(SavedView).where(
         (SavedView.user_id == current_user.id) | (SavedView.is_shared == True)  # noqa: E712
     )

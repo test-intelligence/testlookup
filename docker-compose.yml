@@ -4,11 +4,20 @@ name: testlookup
 # ============================================================
 # TestLookup — Local Development Stack
 # ============================================================
-# Usage:
-#   docker compose up -d --build          # Start all services
-#   docker compose exec backend alembic upgrade head  # Run migrations
-#   docker compose exec ollama ollama pull qwen2.5:7b # Pull LLM
-#   docker compose logs -f backend        # Tail backend logs
+# Default start (no local LLM — uses rules/ML engine):
+#   docker compose up -d --build
+#
+# With local LLM (Ollama + ChromaDB — adds ~4GB download):
+#   docker compose --profile local-llm up -d --build
+#   docker compose exec ollama ollama pull qwen2.5:7b
+#
+# Or via Make (recommended):
+#   make dev          # no local LLM
+#   make dev-llm      # with Ollama + ChromaDB
+#   make dev-setup    # first-time: dev-llm + pull LLM models
+#
+# The backend degrades gracefully when local-llm services are
+# absent: ANALYSIS_MODE=auto falls back to ML then rules.
 # ============================================================
 
 services:
@@ -138,12 +147,19 @@ services:
       - testlookup_net
 
   # ──────────────────────────────────────────────────────────
-  # AI LAYER — LOCAL LLM (OFFLINE CAPABLE)
+  # AI LAYER — LOCAL LLM (OPTIONAL — profile: local-llm)
+  # ──────────────────────────────────────────────────────────
+  # These services are NOT started by default to keep the dev
+  # stack lightweight.  Enable them with:
+  #   docker compose --profile local-llm up -d --build
+  #   make dev-llm
+  # The backend falls back to rules/ML engine when absent.
   # ──────────────────────────────────────────────────────────
 
   ollama:
     image: ollama/ollama:latest
     container_name: testlookup_ollama
+    profiles: ["local-llm"]
     restart: unless-stopped
     ports:
       - "11434:11434"
@@ -168,6 +184,7 @@ services:
   chromadb:
     image: chromadb/chroma:latest
     container_name: testlookup_chroma
+    profiles: ["local-llm"]
     restart: unless-stopped
     ports:
       - "8001:8000"
@@ -212,6 +229,7 @@ services:
     volumes:
       - ./backend:/app                   # Hot-reload in development
       - ./backend/app:/app/app
+      - ./client:/app/client_sdks:ro     # Client SDK files served at /api/v1/sdk/
     env_file:
       - .env
     environment:

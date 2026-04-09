@@ -4,7 +4,7 @@ import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FlaskConical,
   Gauge, GitBranch, HeartPulse, Layers, LayoutDashboard, MessageSquare,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
-  ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound,
+  ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -182,10 +182,19 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-3" style={{ borderTop: '1px solid var(--color-border)' }}>
+      <div className="px-3 py-3 space-y-1" style={{ borderTop: '1px solid var(--color-border)' }}>
+        {/* Profile is accessible to all authenticated roles */}
+        <NavLink
+          to="/settings/profile"
+          className={({ isActive }) => clsx('sidebar-link', isActive && 'active')}
+        >
+          <UserCircle2 className="h-4 w-4 flex-shrink-0" />
+          My Profile
+        </NavLink>
         {canAccessManagement && (
           <NavLink
             to="/settings"
+            end
             className={({ isActive }) => clsx('sidebar-link', isActive && 'active')}
           >
             <Settings className="h-4 w-4 flex-shrink-0" />

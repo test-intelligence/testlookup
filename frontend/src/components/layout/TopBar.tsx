@@ -4,11 +4,29 @@ import { useNavigate, Link } from 'react-router-dom'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { projectsService } from '@/services/projectsService'
 import { useAuthStore } from '@/store/authStore'
-import { UserCircle, LogOut } from 'lucide-react'
+import { usePermissions } from '@/hooks/usePermissions'
+import { LogOut } from 'lucide-react'
 import { useUnreadCount, useNotificationHistory, invalidateNotifications } from '@/hooks/useNotifications'
 import { notificationService } from '@/services/notificationService'
 import type { Project } from '@/types/projects'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+
+const AVATAR_BG: Record<string, string> = {
+  slate: 'bg-slate-500', red: 'bg-red-500', orange: 'bg-orange-500',
+  amber: 'bg-amber-500', lime: 'bg-lime-500', emerald: 'bg-emerald-500',
+  teal: 'bg-teal-500', cyan: 'bg-cyan-500', blue: 'bg-blue-500',
+  violet: 'bg-violet-500', fuchsia: 'bg-fuchsia-500', pink: 'bg-pink-500',
+}
+
+function getInitials(fullName: string | null | undefined, username: string): string {
+  if (fullName?.trim()) {
+    const parts = fullName.trim().split(/\s+/)
+    return parts.length >= 2
+      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+      : parts[0].slice(0, 2).toUpperCase()
+  }
+  return username.slice(0, 2).toUpperCase()
+}
 
 /* P4-1: Three selectors that each return a primitive string — Zustand's
    default Object.is equality works correctly with primitives, so each
@@ -17,10 +35,18 @@ function UserProfileDropdown() {
   const userName = useAuthStore(s => s.user?.full_name || s.user?.username || 'User')
   const userRole = useAuthStore(s => s.user?.role || '')
   const userEmail = useAuthStore(s => s.user?.email || '')
+  const avatarColor = useAuthStore(s => s.user?.avatar_color || 'blue')
+  const username = useAuthStore(s => s.user?.username || 'U')
+  const fullName = useAuthStore(s => s.user?.full_name ?? null)
+
+  const initials = getInitials(fullName, username)
+  const bgClass = AVATAR_BG[avatarColor] ?? AVATAR_BG['blue']
 
   return (
     <div className="flex items-center gap-3 border-l pl-4 relative group cursor-pointer h-full" style={{ borderColor: 'var(--color-border)' }}>
-      <UserCircle className="w-8 h-8 text-[var(--color-text-muted)]" />
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${bgClass}`}>
+        {initials}
+      </div>
       <div className="flex flex-col justify-center">
         <span className="text-sm font-medium text-[var(--color-text)] leading-none">
           {userName}
@@ -52,14 +78,27 @@ export default function TopBar() {
   const [searchVal, setSearchVal] = useState('')
   const [bellOpen, setBellOpen] = useState(false)
   const bellRef = useRef<HTMLDivElement>(null)
+  const { isAdmin } = usePermissions()
 
   const { data: unreadData } = useUnreadCount()
   const { data: recentLogs, mutate: refreshLogs } = useNotificationHistory(false)
   const unreadCount = unreadData?.unread ?? 0
 
   useEffect(() => {
-    projectsService.list().then(setProjects).catch(() => {})
-  }, [])
+    projectsService.list().then((list) => {
+      setProjects(list)
+      // Non-admin users cannot use "All Projects" — auto-select first project
+      if (!isAdmin) {
+        const currentIsAll = useProjectStore.getState().activeProjectId === ALL_PROJECTS_ID
+        const currentIsNull = useProjectStore.getState().activeProjectId === null
+        if (currentIsAll || currentIsNull) {
+          if (list.length > 0) {
+            setActiveProject(list[0])
+          }
+        }
+      }
+    }).catch(() => {})
+  }, [isAdmin, setActiveProject])
 
   // Close bell dropdown when clicking outside
   useEffect(() => {
@@ -115,7 +154,7 @@ export default function TopBar() {
         }}
       >
         <option value="">— Select project —</option>
-        <option value={ALL_PROJECTS_ID}>All Projects</option>
+        {isAdmin && <option value={ALL_PROJECTS_ID}>All Projects</option>}
         {projects.map(p => (
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}

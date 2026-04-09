@@ -105,6 +105,8 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # True for self-registered users until they complete their first-time password reset
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Avatar colour slug chosen by the user (e.g. "blue", "emerald"); null = default slate
+    avatar_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 

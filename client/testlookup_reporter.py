@@ -309,9 +309,13 @@ class LiveSession:
                 await asyncio.sleep(self._batch_interval)
                 await self._flush_once()
             except asyncio.CancelledError:
-                # Final drain on shutdown
-                await self._flush_all()
-                return
+                # Re-raise immediately — do NOT attempt to flush here.
+                # When a task is cancelled, asyncio sets _must_cancel=True, which
+                # causes any subsequent await inside this handler to be cancelled
+                # too (the underlying future is cancelled before the coroutine even
+                # sends the HTTP request).  _shutdown() handles the final drain in
+                # the non-cancelled caller coroutine where awaits work normally.
+                raise
             except Exception as exc:
                 logger.debug("Flusher loop error (non-fatal): %s", exc)
 
@@ -391,13 +395,25 @@ class LiveSession:
                 return
 
     async def _shutdown(self) -> None:
-        """Cancel the flusher task (which triggers a final drain) and wait."""
+        """Cancel the flusher task and drain any remaining events.
+
+        The final flush MUST happen here (in the non-cancelled caller coroutine),
+        not inside the flusher task's CancelledError handler.  When a task is
+        cancelled, asyncio's internal _must_cancel flag causes every subsequent
+        await inside that task to be cancelled as well — so any HTTP call made
+        from the CancelledError handler is dropped silently.  By flushing here
+        we avoid that pitfall entirely.
+        """
         if self._flusher_task and not self._flusher_task.done():
             self._flusher_task.cancel()
             try:
                 await self._flusher_task
             except asyncio.CancelledError:
                 pass
+
+        # Drain anything the flusher didn't send (runs in a non-cancelled context)
+        await self._flush_all()
+
         logger.info(
             "Session %s shutdown: sent=%d failed=%d",
             self.session_id[:8], self._stats["sent"], self._stats["failed"],

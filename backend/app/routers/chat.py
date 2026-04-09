@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.models.schemas import (
@@ -32,8 +32,12 @@ async def get_run_summaries(
     project_id: Optional[str] = None,
     days: int = Query(5, ge=1, le=30),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
+    if not project_id:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     return await chat_service.get_run_summaries(db, project_id, days)
 
 

@@ -10,18 +10,25 @@ export default function ProtectedRoute() {
   const fetchUser = useAuthStore((s) => s.fetchUser);
   const location = useLocation();
 
-  // Pre-initialise to true when a token exists but isAuthenticated hasn't been
-  // restored yet (page-refresh scenario).  This prevents the first render from
-  // immediately redirecting to /login before fetchUser() has a chance to run.
+  // Show a spinner only when we have a token but no cached auth state yet
+  // (first-ever load before localStorage is seeded).  Once user + isAuthenticated
+  // are persisted, this is false on every subsequent page refresh.
   const [validating, setValidating] = useState(
     () => !!useAuthStore.getState().token && !useAuthStore.getState().isAuthenticated,
   );
 
   useEffect(() => {
-    if (hasHydrated && token && !isAuthenticated) {
-      setValidating(true);
-      fetchUser().finally(() => setValidating(false));
-    }
+    if (!hasHydrated || !token) return;
+
+    // Always re-verify the token silently on every mount so expired tokens are
+    // caught promptly.  If we already have cached auth state (isAuthenticated=true
+    // from localStorage) we don't block rendering — the verification runs in the
+    // background and only logs out on an explicit 401/403 from the server.
+    const hasCachedAuth = useAuthStore.getState().isAuthenticated;
+    if (!hasCachedAuth) setValidating(true);
+    fetchUser().finally(() => {
+      if (!hasCachedAuth) setValidating(false);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydrated]);
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_accessible_project_ids, get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import ReleaseDecision, ReleaseGatePolicy, TestRun, User, UserRole
 from app.models.schemas import (
@@ -33,6 +33,10 @@ async def list_policies(
     db: AsyncSession = Depends(get_db),
 ):
     """List all release gate policies with optional filters."""
+    if project_id is None:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     query = select(ReleaseGatePolicy).order_by(ReleaseGatePolicy.created_at.desc())
     if project_id is not None:
         query = query.where(ReleaseGatePolicy.project_id == project_id)

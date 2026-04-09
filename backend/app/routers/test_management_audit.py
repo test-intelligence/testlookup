@@ -26,6 +26,11 @@ async def get_audit_log(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
     items, total, pages = await list_audit_logs(
         db,
         project_id=project_id,

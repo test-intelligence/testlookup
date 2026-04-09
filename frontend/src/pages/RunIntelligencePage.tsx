@@ -859,7 +859,9 @@ export default function RunIntelligencePage() {
           <p className="text-xs text-[var(--color-text-muted)] mt-1">Pass Rate</p>
         </div>
         <div className="card text-center">
-          <p className="text-3xl font-bold text-[var(--color-text)]">{run.total_tests}</p>
+          <p className="text-3xl font-bold text-[var(--color-text)]">
+            {run.total_tests || ((run.passed_tests ?? 0) + (run.failed_tests ?? 0) + (run.skipped_tests ?? 0) + (run.broken_tests ?? 0))}
+          </p>
           <p className="text-xs text-[var(--color-text-muted)] mt-1">Total Tests</p>
         </div>
         <div className="card text-center">
