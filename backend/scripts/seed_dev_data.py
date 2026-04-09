@@ -1031,11 +1031,18 @@ async def _seed_live_sessions(
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def main(reset: bool = False) -> None:
+async def main(reset: bool = False, wipe_only: bool = False) -> None:
     engine = create_async_engine(str(settings.DATABASE_URL), echo=False)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as db:
+        if wipe_only:
+            await _wipe_seed_data(db)
+            await db.commit()
+            print("Seed data wiped successfully.")
+            await engine.dispose()
+            return
+
         if reset:
             await _wipe_seed_data(db)
         elif await _already_seeded(db):
@@ -1124,5 +1131,6 @@ async def main(reset: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Seed TestLookup dev database")
     parser.add_argument("--reset", action="store_true", help="Wipe existing seed data and re-seed")
+    parser.add_argument("--wipe-only", action="store_true", help="Wipe seed data without re-seeding")
     args = parser.parse_args()
-    asyncio.run(main(reset=args.reset))
+    asyncio.run(main(reset=args.reset, wipe_only=args.wipe_only))

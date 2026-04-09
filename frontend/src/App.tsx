@@ -46,6 +46,7 @@ const ValueMetricsPage = lazy(() => import('@/pages/ValueMetricsPage'))
 const PolicyEditorPage = lazy(() => import('@/pages/PolicyEditorPage'))
 const OwnershipEditorPage = lazy(() => import('@/pages/OwnershipEditorPage'))
 const ProfilePage = lazy(() => import('@/pages/settings/ProfilePage'))
+const SeedDataPage = lazy(() => import('@/pages/settings/SeedDataPage'))
 
 type AppRoute = {
   path: string
@@ -97,6 +98,7 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/audit', component: AuditDashboardPage },
   { path: 'settings/ai-eval', component: AIEvalDashboardPage },
   { path: 'settings/performance', component: PerformancePage },
+  { path: 'settings/seed-data', component: SeedDataPage },
   { path: 'policies', component: PolicyEditorPage },
   { path: 'policies/new', component: PolicyEditorPage },
   { path: 'policies/:policyId', component: PolicyEditorPage },

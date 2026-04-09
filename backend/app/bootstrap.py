@@ -43,6 +43,7 @@ from app.routers import (
     scoring,
     sdk,
     search,
+    seed,
     shared_reports,
     sso,
     stream,
@@ -106,6 +107,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     ai_evaluation.router,            # AI evaluation dashboards (OPS-02)
     performance.router,              # Performance budgets & config (OPS-03)
     agent_memory.router,             # Unified agent memory & recall (P3)
+    seed.router,                      # Dev-only seed data management
 )
 
 

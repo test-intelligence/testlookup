@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom'
-import { Activity, Bot, BrainCircuit, Database, Gauge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ShieldAlert, UserCircle2 } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, Database, Gauge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, UserCircle2 } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
+
+const isDev = import.meta.env.DEV
 
 const sections = [
   {
@@ -71,6 +73,16 @@ const sections = [
     desc: 'Latency budgets, search indexing config, and scale scenarios',
     href: '/settings/performance',
   },
+  ...(isDev
+    ? [
+        {
+          icon: Sprout,
+          title: 'Seed Data',
+          desc: 'Load, reset, or delete demo data for the dev environment',
+          href: '/settings/seed-data',
+        },
+      ]
+    : []),
 ]
 
 export default function SettingsPage() {
