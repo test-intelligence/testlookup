@@ -5,7 +5,7 @@ import uuid
 from typing import Optional
 
 import structlog
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

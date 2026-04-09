@@ -10,13 +10,13 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
 
-from sqlalchemy import func, select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings

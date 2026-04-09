@@ -25,7 +25,7 @@ export default function KnowledgeGenerationTab() {
   const [result, setResult] = useState<RagGenerateResponse | null>(null)
 
   if (!projectId) {
-    return <EmptyState title="Select a project" description="Choose a project from the selector to use knowledge generation." />
+    return <EmptyState icon={<Search className="h-8 w-8" />} title="Select a project" description="Choose a project from the selector to use knowledge generation." />
   }
 
   if (ragStatus && !ragStatus.enabled) {

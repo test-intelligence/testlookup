@@ -1029,6 +1029,7 @@ def resync_stale_knowledge_sources(self) -> dict:
         async with AsyncSessionLocal() as db:
             stale = await list_stale_sources(db)
 
+        from app.core.config import settings
         cap = getattr(settings, "KNOWLEDGE_RESYNC_BATCH_CAP", 50)
         enqueued = 0
         for source in stale[:cap]:

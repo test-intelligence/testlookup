@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import time
 from typing import Optional
 
 import httpx

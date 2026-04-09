@@ -6,24 +6,19 @@ redaction, and eval services.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.models.postgres import (
     GenerationBatch,
     GenerationCaseSource,
-    KnowledgeChunk,
     KnowledgeClassification,
-    KnowledgeSource,
     KnowledgeSourceType,
     KnowledgeSyncStatus,
     ManagedTestCase,
-    RequirementCoverage,
 )
 from app.services.connectors.base import ConnectorFetchError, FetchedContent
 
@@ -1004,13 +999,13 @@ class TestConnectorRegistryEdgeCases:
         from app.services.connectors.registry import get_connector
         jira_issue = get_connector("jira_issue")
         jira_epic = get_connector("jira_epic")
-        assert type(jira_issue) == type(jira_epic)
+        assert type(jira_issue) is type(jira_epic)
 
     def test_internal_and_external_url_share_connector_class(self):
         from app.services.connectors.registry import get_connector
         internal = get_connector("internal_url")
         external = get_connector("external_url")
-        assert type(internal) == type(external)
+        assert type(internal) is type(external)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

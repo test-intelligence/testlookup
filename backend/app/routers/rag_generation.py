@@ -11,7 +11,6 @@ from app.models.schemas import (
     AcceptCaseRequest,
     BatchAcceptRequest,
     GenerationBatchResponse,
-    ManagedTestCaseResponse,
     RagGenerateRequest,
     RagGenerateResponse,
     RagRetrieveRequest,

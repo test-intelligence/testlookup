@@ -6,18 +6,13 @@ Tests retrieval, generation, coverage, review, staleness, redaction, and eval.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from app.models.postgres import (
     GenerationBatch,
     GenerationCaseSource,
-    KnowledgeChunk,
-    KnowledgeClassification,
-    KnowledgeSource,
-    KnowledgeSourceType,
-    KnowledgeSyncStatus,
     ManagedTestCase,
     RequirementCoverage,
 )
