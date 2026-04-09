@@ -987,6 +987,63 @@ def reindex_search(self, project_id: str | None = None, full: bool = False) -> d
         raise self.retry(exc=exc, countdown=60)
 
 
+# ── Knowledge source sync (RAG-4) ────────────────────────────────────────────
+
+
+@celery_app.task(queue="ai_analysis", bind=True, max_retries=3)
+def sync_knowledge_source(self, source_id: str, trigger: str = "manual") -> dict:
+    """Fetch content for a KnowledgeSource, chunk, index in ChromaDB, and update sync state."""
+    async def _run():
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import KnowledgeSource
+        from app.services.knowledge_sync_service import run_sync
+        import uuid as _uuid
+
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            result = await db.execute(
+                select(KnowledgeSource).where(KnowledgeSource.id == _uuid.UUID(source_id))
+            )
+            source = result.scalar_one_or_none()
+            if not source:
+                return {"status": "not_found", "source_id": source_id}
+            return await run_sync(db, source, trigger=trigger)
+
+    try:
+        return cast(dict[str, Any], _run_async(_run()))
+    except Exception as exc:
+        logger.error("sync_knowledge_source failed: %s (source=%s)", exc, source_id)
+        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
+
+
+# ── Knowledge source scheduled re-sync (RAG-6) ──────────────────────────────
+
+
+@celery_app.task(queue="default", bind=True, max_retries=0)
+def resync_stale_knowledge_sources(self) -> dict:
+    """Periodic task: find stale/failed sources and enqueue individual sync tasks."""
+    async def _find_and_enqueue():
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.knowledge_sync_service import list_stale_sources
+
+        async with AsyncSessionLocal() as db:
+            stale = await list_stale_sources(db)
+
+        cap = getattr(settings, "KNOWLEDGE_RESYNC_BATCH_CAP", 50)
+        enqueued = 0
+        for source in stale[:cap]:
+            sync_knowledge_source.apply_async(
+                kwargs={"source_id": str(source.id), "trigger": "scheduled"},
+                countdown=enqueued * 2,  # stagger to avoid burst
+            )
+            enqueued += 1
+
+        logger.info("Knowledge resync scheduled: enqueued=%d, total_stale=%d", enqueued, len(stale))
+        return {"enqueued": enqueued, "total_stale": len(stale)}
+
+    return cast(dict[str, Any], _run_async(_find_and_enqueue()))
+
+
 # ── DLQ helper ────────────────────────────────────────────────────────────────
 
 async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -> None:

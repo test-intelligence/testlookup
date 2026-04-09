@@ -41,6 +41,7 @@ export default function AIConfigPage() {
           deep_investigation_enabled: cfg.deep_investigation_enabled,
           finetune_enabled: cfg.finetune_enabled,
           analysis_mode: cfg.analysis_mode,
+          knowledge_rag_enabled: cfg.knowledge_rag_enabled,
         })
       })
       .catch(() => setError('Failed to load AI configuration'))
@@ -222,6 +223,39 @@ export default function AIConfigPage() {
               Fine-Tuning Pipeline
             </label>
           </div>
+        </div>
+
+        {/* Knowledge RAG */}
+        <div className="card space-y-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Knowledge-Grounded Generation</h3>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Enable RAG-based test case generation from Jira stories, Confluence pages, uploaded documents, and approved URLs.
+          </p>
+          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+            form.knowledge_rag_enabled
+              ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
+              : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
+          } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <input
+              type="checkbox"
+              checked={form.knowledge_rag_enabled ?? false}
+              onChange={e => upd('knowledge_rag_enabled', e.target.checked)}
+              disabled={!isAdmin}
+              className="mt-0.5 rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]"
+            />
+            <div>
+              <span className="text-sm font-medium text-[var(--color-text)]">Enable Knowledge RAG</span>
+              {config.knowledge_rag_enabled ? (
+                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">Active</span>
+              ) : (
+                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-400">Disabled</span>
+              )}
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                When enabled, the &quot;Knowledge Generation&quot; tab appears in Test Management,
+                allowing QA engineers to generate test cases grounded in synced requirement sources.
+              </p>
+            </div>
+          </label>
         </div>
 
         {/* API Keys */}

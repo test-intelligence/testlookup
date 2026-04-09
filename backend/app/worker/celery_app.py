@@ -78,6 +78,11 @@ celery_app.conf.update(
             "task": "app.worker.tasks.run_integration_health_probes",
             "schedule": crontab(minute="*/15"),
         },
+        # RAG-6: Knowledge source freshness re-sync (every 4 hours)
+        "knowledge-source-resync": {
+            "task": "app.worker.tasks.resync_stale_knowledge_sources",
+            "schedule": crontab(minute=0, hour="*/4"),
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,

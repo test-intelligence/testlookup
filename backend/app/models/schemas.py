@@ -1362,6 +1362,8 @@ class AIConfigRead(BaseModel):
     ml_model_available: bool = False                  # True if a trained ML model exists
     ml_model_accuracy: Optional[float] = None         # last known accuracy (0-1)
     ml_training_sample_count: int = 0                 # total labeled samples available
+    # Knowledge RAG feature toggle
+    knowledge_rag_enabled: bool = False               # True if grounded test generation is active
 
 
 class AIConfigUpdate(BaseModel):
@@ -1382,6 +1384,7 @@ class AIConfigUpdate(BaseModel):
     anthropic_api_key: Optional[str] = Field(None, max_length=500)  # LP-3
     base_url: Optional[str] = Field(None, max_length=500)           # LP-3: endpoint override
     analysis_mode: Optional[str] = Field(None, pattern=r"^(llm|ml|rules|auto)$")
+    knowledge_rag_enabled: Optional[bool] = None
 
 
 # ── Integrations Schemas ─────────────────────────────────────
@@ -2259,3 +2262,252 @@ class MemoryTimelineResponse(BaseModel):
     project_id: uuid.UUID
     entries_by_type: dict  # {entity_type: [AgentMemoryEntryResponse]}
     total_entries: int
+
+
+# ── Knowledge Source Schemas (RAG-1 / RAG-2 / RAG-3) ─────────────────────────
+
+
+class KnowledgeSourceCreate(BaseModel):
+    source_type: str = Field(..., max_length=30)
+    title: str = Field(..., min_length=1, max_length=500)
+    canonical_url: str = Field(..., min_length=1, max_length=2000)
+    external_id: Optional[str] = Field(None, max_length=500)
+    classification: str = "internal"
+
+
+class KnowledgeSourceUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=500)
+    classification: Optional[str] = None
+    is_archived: Optional[bool] = None
+
+
+class KnowledgeSourceResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    source_type: str
+    title: str
+    canonical_url: str
+    external_id: Optional[str] = None
+    owner_id: Optional[uuid.UUID] = None
+    sync_status: str
+    last_synced_at: Optional[datetime] = None
+    sync_error: Optional[str] = None
+    content_hash: Optional[str] = None
+    classification: str
+    is_archived: bool
+    storage_path: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgeSourceListResponse(BaseModel):
+    items: List[KnowledgeSourceResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class KnowledgeSourceSyncResponse(BaseModel):
+    source_id: uuid.UUID
+    task_id: str
+    sync_status: str
+
+
+class ConnectorTestResult(BaseModel):
+    success: bool
+    latency_ms: Optional[int] = None
+    error: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class ConnectorConfigTestRequest(BaseModel):
+    source_type: str
+    params: dict = Field(default_factory=dict)
+
+
+class KnowledgeDomainAllowlistUpdate(BaseModel):
+    domains: List[str] = Field(
+        ...,
+        description="FQDN list, e.g. ['confluence.corp.com', 'jira.corp.com']",
+    )
+
+
+# ── Knowledge Sync Events (RAG-4) ─────────────────────────────────────────────
+
+
+class KnowledgeSyncEventResponse(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    project_id: uuid.UUID
+    trigger: str
+    status: str
+    content_hash: Optional[str] = None
+    previous_hash: Optional[str] = None
+    content_changed: bool
+    chunk_count: Optional[int] = None
+    duration_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Knowledge Chunks (RAG-5) ──────────────────────────────────────────────────
+
+
+class KnowledgeChunkResponse(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    project_id: uuid.UUID
+    vector_id: str
+    section_heading: Optional[str] = None
+    requirement_id: Optional[str] = None
+    chunk_index: int
+    chunk_text_preview: Optional[str] = None
+    token_count: Optional[int] = None
+    sync_version: int
+    is_active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Source Freshness (RAG-6) ──────────────────────────────────────────────────
+
+
+class KnowledgeSourceFreshnessResponse(BaseModel):
+    source_id: uuid.UUID
+    is_stale: bool
+    stale_since: Optional[datetime] = None
+    hours_since_sync: Optional[float] = None
+    staleness_threshold_hours: int
+    content_changed_on_last_sync: bool
+    active_chunk_count: int
+    last_sync_status: Optional[str] = None
+    sync_event_count: int
+
+
+# ── RAG Retrieval (RAG-7) ─────────────────────────────────────────────────────
+
+
+class RagRetrieveRequest(BaseModel):
+    project_id: uuid.UUID
+    query_text: str = Field(..., min_length=1, max_length=5000)
+    source_ids: Optional[List[uuid.UUID]] = None
+    top_k: int = Field(10, ge=1, le=50)
+    min_score: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class RetrievedChunkSchema(BaseModel):
+    vector_id: str
+    source_id: uuid.UUID
+    source_title: str
+    section_heading: Optional[str] = None
+    chunk_text: str
+    relevance_score: float
+    requirement_id: Optional[str] = None
+
+
+class RagRetrieveResponse(BaseModel):
+    chunks: List[RetrievedChunkSchema]
+    total: int
+
+
+# ── RAG Generation (RAG-8) ────────────────────────────────────────────────────
+
+
+class RagGenerateRequest(BaseModel):
+    project_id: uuid.UUID
+    prompt_text: str = Field("", max_length=10000)
+    source_ids: List[uuid.UUID] = Field(default_factory=list)
+    persist: bool = False
+    generation_config: Optional[dict] = None
+
+
+class CitationSchema(BaseModel):
+    case_index: int
+    vector_id: str
+    source_id: uuid.UUID
+    source_title: str
+    section_heading: Optional[str] = None
+    chunk_text_preview: Optional[str] = None
+    relevance_score: Optional[float] = None
+
+
+class RagGenerateResponse(BaseModel):
+    batch_id: uuid.UUID
+    generation_mode: str
+    test_cases: List[dict]
+    citations: List[CitationSchema]
+    coverage_summary: Optional[str] = None
+    gaps_noted: List[str] = Field(default_factory=list)
+    created_ids: List[str] = Field(default_factory=list)
+
+
+# ── RAG Coverage (RAG-9) ──────────────────────────────────────────────────────
+
+
+class RequirementCoverageSchema(BaseModel):
+    id: uuid.UUID
+    batch_id: uuid.UUID
+    project_id: uuid.UUID
+    requirement_id: str
+    requirement_text: Optional[str] = None
+    coverage_status: str
+    covered_by_case_ids: Optional[List[str]] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── RAG Batch Review (RAG-10) ─────────────────────────────────────────────────
+
+
+class GenerationBatchResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_by_id: Optional[uuid.UUID] = None
+    generation_mode: str
+    cases_generated: int
+    cases_accepted: int
+    cases_rejected: int
+    coverage_score: Optional[int] = None
+    status: str
+    llm_model_used: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchAcceptRequest(BaseModel):
+    case_ids: List[uuid.UUID]
+    edits: Optional[dict] = None  # {str(case_id): {field: value}}
+
+
+class RejectCaseRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class AcceptCaseRequest(BaseModel):
+    edits: Optional[dict] = None
+
+
+# ── RAG Staleness (RAG-12) ────────────────────────────────────────────────────
+
+
+class StaleCaseDismissRequest(BaseModel):
+    pass  # empty body — just the POST acknowledges
+
+
+# ── RAG Status (RAG-14) ───────────────────────────────────────────────────────
+
+
+class RagStatusResponse(BaseModel):
+    enabled: bool
+    feature_flag: str = "KNOWLEDGE_RAG_ENABLED"
+    total_sources: int = 0
+    total_batches: int = 0
+    total_chunks: int = 0

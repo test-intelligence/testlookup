@@ -51,6 +51,8 @@ export interface AIConfigRead {
   ml_model_available: boolean
   ml_model_accuracy: number | null
   ml_training_sample_count: number
+  // Knowledge RAG
+  knowledge_rag_enabled: boolean
 }
 
 export interface AIConfigUpdate {
@@ -68,6 +70,7 @@ export interface AIConfigUpdate {
   openai_api_key?: string
   google_api_key?: string
   analysis_mode?: AnalysisMode
+  knowledge_rag_enabled?: boolean
 }
 
 // ── Integrations Configuration ──────────────────────────────

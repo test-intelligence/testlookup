@@ -25,6 +25,7 @@ from app.routers import (
     identity_events,
     integration_health,
     integrations,
+    knowledge_sources,
     live,
     metrics,
     notifications,
@@ -32,6 +33,7 @@ from app.routers import (
     ownership,
     performance,
     projects,
+    rag_generation,
     release_gate_policies,
     release_readiness,
     releases,
@@ -108,6 +110,8 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     performance.router,              # Performance budgets & config (OPS-03)
     agent_memory.router,             # Unified agent memory & recall (P3)
     seed.router,                      # Dev-only seed data management
+    knowledge_sources.router,          # Knowledge source registry (RAG-1/2/3)
+    rag_generation.router,             # RAG grounded generation (RAG-7 through RAG-14)
 )
 
 

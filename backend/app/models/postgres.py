@@ -759,6 +759,13 @@ class ManagedTestCase(Base):
     last_executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_execution_status: Mapped[Optional[str]] = mapped_column(String(20))  # PASSED|FAILED|BLOCKED
 
+    # RAG lineage (RAG-11 / RAG-12)
+    generation_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("generation_batches.id", ondelete="SET NULL", use_alter=True), nullable=True,
+    )
+    is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stale_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
@@ -951,6 +958,202 @@ class TestStrategy(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+# ── Knowledge Source Registry (RAG-1) ─────────────────────────────────────────
+
+
+class KnowledgeSourceType(str, PyEnum):
+    JIRA_ISSUE = "jira_issue"
+    JIRA_EPIC = "jira_epic"
+    CONFLUENCE_PAGE = "confluence_page"
+    UPLOADED_DOC = "uploaded_document"
+    INTERNAL_URL = "internal_url"
+    EXTERNAL_URL = "external_url"
+
+
+class KnowledgeSyncStatus(str, PyEnum):
+    PENDING = "pending"
+    SYNCING = "syncing"
+    SYNCED = "synced"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class KnowledgeClassification(str, PyEnum):
+    PUBLIC = "public"
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
+    RESTRICTED = "restricted"
+
+
+class KnowledgeSource(Base):
+    """Registry of external knowledge sources attached to a project for RAG-grounded test generation."""
+    __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        UniqueConstraint("project_id", "canonical_url", name="uq_ks_project_url"),
+        Index("ix_ks_project_type", "project_id", "source_type"),
+        Index("ix_ks_project_status", "project_id", "sync_status"),
+        Index("ix_ks_owner", "owner_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    canonical_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    external_id: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    sync_status: Mapped[str] = mapped_column(String(20), nullable=False, default=KnowledgeSyncStatus.PENDING.value)
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    classification: Mapped[str] = mapped_column(String(20), nullable=False, default=KnowledgeClassification.INTERNAL.value)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    storage_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class KnowledgeSyncEvent(Base):
+    """Audit log for every sync attempt on a KnowledgeSource."""
+    __tablename__ = "knowledge_sync_events"
+    __table_args__ = (
+        Index("ix_kse_source_created", "source_id", "created_at"),
+        Index("ix_kse_project_created", "project_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    trigger: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    previous_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    content_changed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    chunk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeChunk(Base):
+    """PostgreSQL metadata for each chunk stored in ChromaDB knowledge_chunks collection."""
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        Index("ix_kc_source_active", "source_id", "is_active"),
+        Index("ix_kc_project_active", "project_id", "is_active"),
+        Index("ix_kc_sync_version", "source_id", "sync_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    vector_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    section_heading: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    requirement_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_text_preview: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sync_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── RAG Generation Lineage (RAG-8 / RAG-9 / RAG-11 / RAG-12) ────────────────
+
+
+class GenerationBatch(Base):
+    """One row per AI test-case generation request (grounded or raw)."""
+    __tablename__ = "generation_batches"
+    __table_args__ = (
+        Index("ix_gb_project_created", "project_id", "created_at"),
+        Index("ix_gb_author", "created_by_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    prompt_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    generation_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="raw")
+    generation_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    cases_generated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cases_accepted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cases_rejected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    coverage_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_redacted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    llm_model_used: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GenerationCaseSource(Base):
+    """Maps a generated ManagedTestCase to the KnowledgeChunks cited for it."""
+    __tablename__ = "generation_case_sources"
+    __table_args__ = (
+        UniqueConstraint("case_id", "chunk_vector_id", name="uq_gcs_case_chunk"),
+        Index("ix_gcs_case_id", "case_id"),
+        Index("ix_gcs_batch_id", "batch_id"),
+        Index("ix_gcs_source_id", "source_id"),
+        Index("ix_gcs_stale", "is_stale"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generation_batches.id", ondelete="CASCADE"), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("managed_test_cases.id", ondelete="CASCADE"), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False)
+    chunk_vector_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    relevance_score: Mapped[Optional[float]] = mapped_column(nullable=True)
+    section_heading: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    chunk_text_preview: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    source_content_hash_at_generation: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stale_detected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RequirementCoverage(Base):
+    """Tracks which requirements are covered/uncovered by a generation batch."""
+    __tablename__ = "requirement_coverage"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "requirement_id", name="uq_rc_batch_req"),
+        Index("ix_rc_batch_id", "batch_id"),
+        Index("ix_rc_project_req", "project_id", "requirement_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generation_batches.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    requirement_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    requirement_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    coverage_status: Mapped[str] = mapped_column(String(20), nullable=False, default="uncovered")
+    covered_by_case_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class LiveSession(Base):

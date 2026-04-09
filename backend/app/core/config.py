@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     JIRA_API_TOKEN: Optional[str] = None
     JIRA_DEFAULT_PROJECT_KEY: str = "QA"
 
+    # ── Confluence (Knowledge RAG) ──────────────────────────────
+    CONFLUENCE_ENABLED: bool = False
+    CONFLUENCE_DOMAIN: Optional[str] = None
+    CONFLUENCE_EMAIL: Optional[str] = None
+    CONFLUENCE_API_TOKEN: Optional[str] = None
+
     # ── Splunk ────────────────────────────────────────────────
     SPLUNK_ENABLED: bool = False
     SPLUNK_BASE_URL: Optional[str] = None
@@ -197,6 +203,18 @@ class Settings(BaseSettings):
     RELEASE_PASS_RATE_THRESHOLD: float = 90.0     # minimum pass rate to consider GO
     DEEP_CLUSTER_THRESHOLD: float = 0.75          # Jaccard similarity threshold for clustering
     DEEP_MAX_CLUSTERS_PER_RUN: int = 20           # cap clusters to avoid overload
+
+    # ── Knowledge-Grounded Test Generation (RAG) ───────────────────────────────
+    KNOWLEDGE_RAG_ENABLED: bool = False
+    KNOWLEDGE_SYNC_TIMEOUT_SECONDS: int = 60
+    KNOWLEDGE_MAX_SOURCES_PER_PROJECT: int = 100
+    KNOWLEDGE_DOCS_BUCKET: str = "knowledge-docs"
+    KNOWLEDGE_STALE_THRESHOLD_JIRA_HOURS: int = 24
+    KNOWLEDGE_STALE_THRESHOLD_URL_HOURS: int = 168
+    KNOWLEDGE_CHUNK_TARGET_TOKENS: int = 400
+    KNOWLEDGE_CHUNK_MAX_TOKENS: int = 800
+    KNOWLEDGE_CHUNK_OVERLAP_TOKENS: int = 50
+    KNOWLEDGE_RESYNC_BATCH_CAP: int = 50
 
     # ── Analysis Mode (LLM-free operation) ──────────────────────────────────────
     # Controls which engine processes test results.
