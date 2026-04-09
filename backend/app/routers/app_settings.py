@@ -232,6 +232,7 @@ async def _load_ai_config(db: AsyncSession) -> dict:
         "openai_api_key": overrides.get("openai_api_key") or settings.OPENAI_API_KEY,
         "google_api_key": overrides.get("google_api_key") or settings.GOOGLE_API_KEY,
         "analysis_mode": overrides.get("analysis_mode", settings.ANALYSIS_MODE),
+        "knowledge_rag_enabled": overrides.get("knowledge_rag_enabled", settings.KNOWLEDGE_RAG_ENABLED),
     }
 
 
@@ -278,6 +279,7 @@ async def get_ai_config(
         ml_model_available=ml_available,
         ml_model_accuracy=ml_accuracy,
         ml_training_sample_count=ml_samples,
+        knowledge_rag_enabled=cfg.get("knowledge_rag_enabled", False),
     )
 
 
@@ -311,14 +313,16 @@ async def update_ai_config(
     # Audit log
     await log_settings_change(db, _AI_CONFIG_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
-    # Cache analysis_mode in Redis for fast sync reads by analysis_router
-    if "analysis_mode" in updates:
-        try:
-            from app.db.redis_client import get_redis
-            redis = get_redis()
+    # Cache in Redis for fast sync reads by analysis_router / knowledge services
+    try:
+        from app.db.redis_client import get_redis
+        redis = get_redis()
+        if "analysis_mode" in updates:
             await redis.set("config:analysis_mode", updates["analysis_mode"], ex=86400)
-        except Exception:
-            pass  # Redis cache is best-effort
+        if "knowledge_rag_enabled" in updates:
+            await redis.set("config:knowledge_rag_enabled", "1" if updates["knowledge_rag_enabled"] else "0", ex=86400)
+    except Exception:
+        pass  # Redis cache is best-effort
 
     logger.info("AI configuration updated by %s (fields: %s)", current_user.username, list(updates.keys()))
 
@@ -353,6 +357,7 @@ async def update_ai_config(
         ml_model_available=ml_available,
         ml_model_accuracy=ml_accuracy,
         ml_training_sample_count=ml_samples,
+        knowledge_rag_enabled=merged.get("knowledge_rag_enabled", False),
     )
 
 

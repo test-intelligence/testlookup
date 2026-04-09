@@ -26,6 +26,7 @@ import {
   testManagementService,
 } from '@/services/testManagementService'
 import type { UserSummary } from '@/services/testManagementService'
+import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import type {
   AIReviewResult,
   ManagedTestCase,
@@ -40,7 +41,7 @@ import type {
 
 // ─── Constants / helpers ─────────────────────────────────────────────────────
 
-const TABS = ['Test Cases', 'Test Suites', 'Test Plans', 'Strategy', 'Reviews', 'Audit Log'] as const
+const TABS = ['Test Cases', 'Test Suites', 'Test Plans', 'Strategy', 'Knowledge Generation', 'Reviews', 'Audit Log'] as const
 type Tab = typeof TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -2185,6 +2186,7 @@ export default function TestManagementPage() {
         {activeTab === 'Test Plans'   && <TestPlansTab projectId={tabProjectId} />}
         {activeTab === 'Strategy'     && <StrategyTab projectId={tabProjectId} />}
         {activeTab === 'Reviews'      && <ReviewsTab projectId={tabProjectId} />}
+        {activeTab === 'Knowledge Generation' && <KnowledgeGenerationTab />}
         {activeTab === 'Audit Log'    && <AuditTab projectId={tabProjectId} />}
       </div>
     </div>
