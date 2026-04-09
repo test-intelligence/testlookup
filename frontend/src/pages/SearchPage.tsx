@@ -47,33 +47,50 @@ const ENTITY_BADGE_COLORS: Record<string, string> = {
 
 export default function SearchPage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const projectId = useProjectStore(s => s.activeProjectId)
+
+  // Initialise all filter state from URL so that browser back/forward
+  // navigation restores exactly what the user was looking at.
   const [query, setQuery] = useState(searchParams.get('q') ?? '')
-  const [searchType, setSearchType] = useState<SearchType | 'global'>('global')
-  const [entityFilter, setEntityFilter] = useState<SearchEntityType | 'all'>('all')
+  const [searchType, setSearchType] = useState<SearchType | 'global'>(
+    (SEARCH_MODES.some(m => m.value === searchParams.get('search_type'))
+      ? searchParams.get('search_type')
+      : null) as SearchType | 'global' ?? 'global'
+  )
+  const [entityFilter, setEntityFilter] = useState<SearchEntityType | 'all'>(
+    (ENTITY_FILTERS.some(f => f.value === searchParams.get('entity_filter'))
+      ? searchParams.get('entity_filter')
+      : null) as SearchEntityType | 'all' ?? 'all'
+  )
   const [results, setResults] = useState<SearchResponse | null>(null)
   const [globalResults, setGlobalResults] = useState<GlobalSearchResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(Number(searchParams.get('page')) || 1)
   const searchResultItems = useMemo(() => results?.items ?? [], [results])
   const { sorted: sortedSearchResults, sortKey: srSortKey, sortDir: srSortDir, toggleSort: srToggleSort } = useTableSort(searchResultItems, 'relevance_score', 'desc')
 
-  const isGlobal = searchType === 'global'
-
-  const doSearch = async (q: string, p = 1) => {
+  // Accept explicit st/ef to avoid reading stale closure state when called
+  // from the URL-sync effect (state setters are async in React).
+  const doSearch = async (
+    q: string,
+    p = 1,
+    st: SearchType | 'global' = searchType,
+    ef: SearchEntityType | 'all' = entityFilter,
+  ) => {
     if (!q.trim()) return
     setLoading(true)
     setError(null)
     try {
       const pid = (projectId && projectId !== ALL_PROJECTS_ID) ? projectId : undefined
+      const isGlobalSearch = st === 'global'
 
-      if (isGlobal) {
+      if (isGlobalSearch) {
         const data = await searchService.globalSearch({
           q,
           project_id: pid,
-          entity_types: entityFilter !== 'all' ? [entityFilter] : undefined,
+          entity_types: ef !== 'all' ? [ef] : undefined,
           page: p,
           size: 25,
         })
@@ -83,7 +100,7 @@ export default function SearchPage() {
         const data = await searchService.search({
           q,
           project_id: pid,
-          search_type: searchType as SearchType,
+          search_type: st as SearchType,
           page: p,
           size: 25,
         })
@@ -100,6 +117,38 @@ export default function SearchPage() {
     }
   }
 
+  // Push search state into the URL so the browser's back button can restore it.
+  const pushSearchParams = (
+    q: string,
+    st: SearchType | 'global',
+    ef: SearchEntityType | 'all',
+    p: number,
+  ) => {
+    const params: Record<string, string> = { q, search_type: st }
+    if (ef !== 'all') params.entity_filter = ef
+    if (p > 1) params.page = String(p)
+    setSearchParams(params, { replace: false })
+  }
+
+  const handleSearch = () => {
+    if (!query.trim()) return
+    pushSearchParams(query, searchType, entityFilter, 1)
+    doSearch(query, 1, searchType, entityFilter)
+  }
+
+  const handlePageChange = (p: number) => {
+    pushSearchParams(query, searchType, entityFilter, p)
+    doSearch(query, p, searchType, entityFilter)
+  }
+
+  const handleEntityFilterChange = (ef: SearchEntityType | 'all') => {
+    setEntityFilter(ef)
+    if (query.trim()) {
+      pushSearchParams(query, searchType, ef, 1)
+      doSearch(query, 1, searchType, ef)
+    }
+  }
+
   const workflow = useMemo(
     () => buildSearchWorkflow(query, searchType, results),
     // Use scalar deps to avoid rebuilding when object ref changes but content is same
@@ -107,19 +156,29 @@ export default function SearchPage() {
     [query, searchType, results?.total, results?.search_type],
   )
 
-  // Re-run search whenever the URL ?q= param changes (e.g. navigating from TopBar)
+  // Re-run search whenever URL params change — covers TopBar navigation and
+  // browser back/forward restoring a previously entered search.
   useEffect(() => {
-    const q = searchParams.get('q') ?? ''
-    const st = searchParams.get('search_type') as SearchType | null
-    if (st && SEARCH_MODES.some(m => m.value === st)) {
-      setSearchType(st)
-    }
+    const q  = searchParams.get('q') ?? ''
+    const st = (SEARCH_MODES.some(m => m.value === searchParams.get('search_type'))
+      ? searchParams.get('search_type') : 'global') as SearchType | 'global'
+    const ef = (ENTITY_FILTERS.some(f => f.value === searchParams.get('entity_filter'))
+      ? searchParams.get('entity_filter') : 'all') as SearchEntityType | 'all'
+    const pg = Number(searchParams.get('page')) || 1
+
+    // Sync all local state so UI controls reflect the restored URL
+    setSearchType(st)
+    setEntityFilter(ef)
+    setPage(pg)
+
     if (q) {
       setQuery(q)
-      doSearch(q)
+      doSearch(q, pg, st, ef)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams.get('q'), searchParams.get('search_type')])
+  }, [searchParams.toString()])
+
+  const isGlobal = searchType === 'global'
 
   return (
     <div className="space-y-4">
@@ -159,7 +218,7 @@ export default function SearchPage() {
           {ENTITY_FILTERS.map(f => (
             <button
               key={f.value}
-              onClick={() => { setEntityFilter(f.value); if (query.trim()) doSearch(query) }}
+              onClick={() => handleEntityFilterChange(f.value)}
               className={clsx(
                 'flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors',
                 entityFilter === f.value
@@ -187,11 +246,11 @@ export default function SearchPage() {
             placeholder="Search test names, error messages, suites…"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && doSearch(query)}
+            onKeyDown={e => e.key === 'Enter' && handleSearch()}
             autoFocus
           />
         </div>
-        <button className="btn-primary px-6" onClick={() => doSearch(query)} disabled={loading}>
+        <button className="btn-primary px-6" onClick={handleSearch} disabled={loading}>
           {loading ? <LoadingSpinner size="sm" /> : 'Search'}
         </button>
       </div>
@@ -251,7 +310,7 @@ export default function SearchPage() {
             ))}
           </div>
           <Pagination page={page} pages={globalResults.pages} total={globalResults.total}
-            onChange={p => doSearch(query, p)} />
+            onChange={handlePageChange} />
         </div>
       )}
 
@@ -330,7 +389,7 @@ export default function SearchPage() {
               </tbody>
             </table>
             <Pagination page={page} pages={results.pages} total={results.total}
-              onChange={p => doSearch(query, p)} />
+              onChange={handlePageChange} />
           </div>
         </div>
       )}

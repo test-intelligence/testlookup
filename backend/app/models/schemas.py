@@ -42,8 +42,15 @@ class UserResponse(TimestampMixin):
     role: UserRole
     is_active: bool
     must_change_password: bool = False
+    avatar_color: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SelfUpdateProfileRequest(BaseModel):
+    """Fields a user can update about themselves (no role/status changes)."""
+    full_name: Optional[str] = Field(None, max_length=255)
+    avatar_color: Optional[str] = Field(None, max_length=20)
 
 
 class TokenResponse(BaseModel):

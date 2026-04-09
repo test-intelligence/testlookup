@@ -5,9 +5,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.core.metrics import semantic_search_duration_seconds, semantic_search_total
 from app.db.postgres import get_db
+from app.models.postgres import User
 from app.services.search_service import search_test_cases_query
 
 router = APIRouter(prefix="/api/v1/search", tags=["Search"])
@@ -75,6 +76,7 @@ async def search_test_cases(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Search test cases by name, suite, or error message.
@@ -87,6 +89,12 @@ async def search_test_cases(
     The response always includes search_type to reflect the mode actually used
     (may fall back to keyword if ChromaDB is unavailable).
     """
+    # Tenant isolation: non-admin users must specify a project
+    if not project_id:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return {"items": [], "total": 0, "query": q, "search_type": search_type, "page": page, "size": size, "pages": 0}
+
     actual_type = search_type
     start = time.monotonic()
 
@@ -153,7 +161,7 @@ async def global_search_endpoint(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     System-wide global search across multiple entity types.
@@ -161,6 +169,12 @@ async def global_search_endpoint(
     Searches test cases, test runs, suites, defects, flaky tests, and releases.
     Returns mixed results with entity badges and navigation URLs.
     """
+    # Tenant isolation: non-admin users must specify a project
+    if not project_id:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return {"items": [], "total": 0, "query": q, "page": page, "size": size, "pages": 0}
+
     from app.services.global_search_service import global_search, ALL_ENTITY_TYPES
 
     types: set[str] | None = None

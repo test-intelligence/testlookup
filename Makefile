@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset setup-minio mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset setup-minio mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 DOCKER_COMPOSE = docker compose
 BACKEND_CONTAINER = testlookup_backend
@@ -33,21 +33,34 @@ help: ## Show this help message
 	$(CP_CMD)
 	@echo "Created .env from .env.example — review values before production use."
 
-dev: .env ## Start all services in development mode (auto-seeds on first run)
+dev: .env ## Start core stack without local LLM (Ollama/ChromaDB excluded)
 	$(DOCKER_COMPOSE) up -d --build
 	@echo ""
-	@echo "Stack started."
+	@echo "Stack started (no local LLM — AI falls back to rules/ML engine)."
 	@echo "  Dashboard  -> http://localhost:3000"
 	@echo "  API Docs   -> http://localhost:8000/docs"
 	@echo "  MinIO      -> http://localhost:9001  (credentials from .env)"
 	@echo "  Flower     -> http://localhost:5555"
 	@echo ""
+	@echo "  To enable Ollama + ChromaDB: run 'make dev-llm' instead."
 	@echo "  Seed data runs automatically via the seed-init container."
 	@echo "  Use the Quick Login buttons at http://localhost:3000 (no password required in dev)."
 	@echo "  Run 'make dev-logs-seed' to watch seed progress."
 
-dev-setup: .env ## First-time full setup: start stack + pull LLM models
-	$(MAKE) dev
+dev-llm: .env ## Start full stack including local LLM (Ollama + ChromaDB)
+	$(DOCKER_COMPOSE) --profile local-llm up -d --build
+	@echo ""
+	@echo "Stack started with local LLM enabled."
+	@echo "  Dashboard  -> http://localhost:3000"
+	@echo "  API Docs   -> http://localhost:8000/docs"
+	@echo "  Ollama     -> http://localhost:11434"
+	@echo "  ChromaDB   -> http://localhost:8001"
+	@echo ""
+	@echo "  Run 'make pull-llm' to download models (required on first run)."
+	@echo "  Seed data runs automatically via the seed-init container."
+
+dev-setup: .env ## First-time full setup with local LLM: start stack + pull LLM models
+	$(MAKE) dev-llm
 	@echo "Pulling Ollama LLM models (this may take a while on first run)..."
 	$(MAKE) pull-llm
 	@echo ""
@@ -66,14 +79,14 @@ dev-logs: ## Tail logs for all services
 dev-logs-seed: ## Tail seed-init container output (useful on first run)
 	$(DOCKER_COMPOSE) logs -f seed-init
 
-stop: ## Stop all services
-	$(DOCKER_COMPOSE) down
+stop: ## Stop all services (including local-llm profile if running)
+	$(DOCKER_COMPOSE) --profile local-llm down
 
 restart: ## Restart all services
-	$(DOCKER_COMPOSE) restart
+	$(DOCKER_COMPOSE) --profile local-llm restart
 
 clean: ## Stop services and remove volumes (WARNING: deletes all data)
-	$(DOCKER_COMPOSE) down -v --remove-orphans
+	$(DOCKER_COMPOSE) --profile local-llm down -v --remove-orphans
 	@echo "WARNING: All volumes removed."
 
 # ── Database ─────────────────────────────────────────────────
@@ -91,19 +104,25 @@ migrate-status: ## Show migration status
 	$(DOCKER_COMPOSE) exec backend alembic current
 
 # ── AI / LLM ─────────────────────────────────────────────────
+# These targets require Ollama to be running.
+# Start it first with: make dev-llm
 
-pull-llm: ## Pull recommended local LLM models via Ollama
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:7b
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull nomic-embed-text
+pull-llm: ## Pull recommended local LLM models (requires: make dev-llm)
+	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \
+	  (echo "ERROR: Ollama is not running. Start it first with: make dev-llm" && exit 1)
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:7b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull nomic-embed-text
 	@echo "Models downloaded."
 
-pull-llm-large: ## Pull larger/more capable models (requires 16GB+ VRAM)
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:14b
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull llama3.2:8b
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull deepseek-coder:6.7b
+pull-llm-large: ## Pull larger/more capable models — 16GB+ VRAM (requires: make dev-llm)
+	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \
+	  (echo "ERROR: Ollama is not running. Start it first with: make dev-llm" && exit 1)
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:14b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull llama3.2:8b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull deepseek-coder:6.7b
 
-list-llm: ## List downloaded LLM models
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama list
+list-llm: ## List downloaded LLM models (requires: make dev-llm)
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama list
 
 # ── Testing ───────────────────────────────────────────────────
 

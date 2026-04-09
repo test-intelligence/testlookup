@@ -19,6 +19,7 @@ vi.mock('@/services/aiService', () => ({
   aiService: {
     analyze: vi.fn(),
     createJiraTicket: vi.fn(),
+    getAnalysis: vi.fn().mockResolvedValue(null),
   },
 }))
 
@@ -79,19 +80,19 @@ describe('AIAnalysisPanel', () => {
       ...analysis,
     })
     render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-    fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
     await waitFor(() => expect(screen.getByText(/%/)).toBeInTheDocument())
   }
 
   describe('idle state', () => {
-    it('shows Analyse Root Cause button', () => {
+    it('shows Analyse Root Cause button', async () => {
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      expect(screen.getByRole('button', { name: /Analyse Root Cause/i })).toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: /Analyse Root Cause/i })).toBeInTheDocument()
     })
 
-    it('shows AI Root Cause Analysis heading', () => {
+    it('shows AI Root Cause Analysis heading', async () => {
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      expect(screen.getByText('AI Root Cause Analysis')).toBeInTheDocument()
+      expect(await screen.findByText('AI Root Cause Analysis')).toBeInTheDocument()
     })
   })
 
@@ -102,7 +103,7 @@ describe('AIAnalysisPanel', () => {
         () => new Promise(() => {}), // never resolves
       )
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
 
       await waitFor(() => {
         expect(screen.getByText(/Investigating/i)).toBeInTheDocument()
@@ -120,7 +121,7 @@ describe('AIAnalysisPanel', () => {
         new Error('LLM unavailable'),
       )
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
 
       await waitFor(() => {
         expect(screen.getByText(/Analysis Failed/i)).toBeInTheDocument()
@@ -132,7 +133,7 @@ describe('AIAnalysisPanel', () => {
       const { aiService } = await import('@/services/aiService')
       ;(aiService.analyze as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('fail'))
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
 
       await waitFor(() => screen.getByRole('button', { name: /Try Again/i }))
       fireEvent.click(screen.getByRole('button', { name: /Try Again/i }))
@@ -201,7 +202,7 @@ describe('AIAnalysisPanel', () => {
       const { aiService } = await import('@/services/aiService')
       ;(aiService.analyze as ReturnType<typeof vi.fn>).mockResolvedValue(MOCK_ANALYSIS)
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)  // no projectKey prop
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
 
       await waitFor(() => screen.getByText('92%'))
       const jiraButton = screen.getByRole('button', { name: /Create Jira Defect/i })
@@ -283,7 +284,7 @@ describe('AIAnalysisPanel', () => {
         confidence_score: 65,
       })
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
       await waitFor(() => expect(screen.getByText('65%')).toBeInTheDocument())
       expect(screen.getByText(/Medium confidence.*some evidence gathered/i)).toBeInTheDocument()
     })
@@ -295,7 +296,7 @@ describe('AIAnalysisPanel', () => {
         confidence_score: 40,
       })
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
       await waitFor(() => expect(screen.getByText('40%')).toBeInTheDocument())
       expect(screen.getByText(/Low confidence.*insufficient telemetry/i)).toBeInTheDocument()
     })
@@ -305,7 +306,7 @@ describe('AIAnalysisPanel', () => {
       const { aiService } = await import('@/services/aiService')
       ;(aiService.analyze as ReturnType<typeof vi.fn>).mockResolvedValue(withoutConfidenceWhy)
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
       await waitFor(() => expect(screen.getByText('92%')).toBeInTheDocument())
       // Should still render — no crash, confidence score visible
       expect(screen.getByText('Confidence + Why')).toBeInTheDocument()
@@ -370,7 +371,7 @@ describe('AIAnalysisPanel', () => {
       const { aiService } = await import('@/services/aiService')
       ;(aiService.analyze as ReturnType<typeof vi.fn>).mockResolvedValue(withoutRoleActions)
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      fireEvent.click(screen.getByRole('button', { name: /Analyse Root Cause/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
       await waitFor(() => expect(screen.getByText('92%')).toBeInTheDocument())
       expect(screen.queryByText('Role-Aware Actions')).not.toBeInTheDocument()
     })

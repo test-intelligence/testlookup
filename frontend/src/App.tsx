@@ -45,6 +45,7 @@ const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
 const ValueMetricsPage = lazy(() => import('@/pages/ValueMetricsPage'))
 const PolicyEditorPage = lazy(() => import('@/pages/PolicyEditorPage'))
 const OwnershipEditorPage = lazy(() => import('@/pages/OwnershipEditorPage'))
+const ProfilePage = lazy(() => import('@/pages/settings/ProfilePage'))
 
 type AppRoute = {
   path: string
@@ -76,6 +77,8 @@ const appRoutes: AppRoute[] = [
   { path: 'flaky-coach', component: FlakyCoachPage },
   { path: 'test-management', component: TestManagementPage },
   { path: 'live', component: LiveExecutionPage },
+  // Profile is accessible to ALL authenticated roles
+  { path: 'settings/profile', component: ProfilePage },
 ]
 
 /** Routes restricted to QA_LEAD and ADMIN roles. */

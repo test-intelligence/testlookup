@@ -71,17 +71,6 @@ def get_analysis_mode() -> str:
 
     # Check if LLM is likely reachable (heuristic: provider is configured)
     if settings.LLM_PROVIDER and settings.LLM_PROVIDER != "none":
-        # Check circuit breaker first — if OPEN, skip LLM entirely
-        try:
-            from app.streams.circuit_breaker import LLMCircuitBreaker
-            import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Can't await here; fall through to LLM which the breaker will guard
-                pass
-        except Exception:
-            pass
-
         # For Ollama: verify the configured model is actually installed.
         # A 404 "model not found" from Ollama is not a transient error — it means
         # the model was never pulled.  Detect it here so auto mode degrades to rules

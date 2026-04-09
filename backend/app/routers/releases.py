@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_accessible_project_ids, get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.services import release_service
@@ -80,8 +80,12 @@ async def list_releases(
     project_id: Optional[str] = None,
     status: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
+    if not project_id:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            return []
     return await release_service.list_releases(db, project_id, status)
 
 

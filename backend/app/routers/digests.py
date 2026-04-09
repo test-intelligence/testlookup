@@ -189,6 +189,12 @@ async def preview_digest(
     current_user: User = Depends(get_current_active_user),
 ):
     """Preview digest content without sending."""
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            from datetime import datetime, timezone
+            return DigestContentResponse(period=period, generated_at=datetime.now(timezone.utc).isoformat())
     from app.services.digest_content_service import generate_digest
 
     digest = await generate_digest(db, project_id, period)
