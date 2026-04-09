@@ -117,13 +117,16 @@ def _extract_pdf(file_bytes: bytes) -> str:
             "pypdf is not installed — required for PDF extraction (pip install pypdf)"
         )
 
-    reader = PdfReader(io.BytesIO(file_bytes))
-    parts: list[str] = []
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text()
-        if text and text.strip():
-            parts.append(f"--- Page {i + 1} ---\n{text.strip()}")
-    return "\n\n".join(parts)
+    try:
+        reader = PdfReader(io.BytesIO(file_bytes))
+        parts: list[str] = []
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if text and text.strip():
+                parts.append(f"--- Page {i + 1} ---\n{text.strip()}")
+        return "\n\n".join(parts)
+    except Exception as exc:
+        raise ConnectorFetchError(f"pypdf failed to parse PDF: {exc}") from exc
 
 
 def _extract_docx(file_bytes: bytes) -> str:

@@ -212,10 +212,11 @@ async def _call_llm_generate(prompt: str, config: Optional[dict]) -> list[dict]:
             timeout=llm_timeout,
         )
         if isinstance(result, list):
-            return result
+            return result if result else _stub_generated_cases(effective_prompt)
         if isinstance(result, dict) and "test_cases" in result:
-            return result["test_cases"]
-        return []
+            cases = result["test_cases"]
+            return cases if cases else _stub_generated_cases(effective_prompt)
+        return _stub_generated_cases(effective_prompt)
     except ImportError:
         logger.warning("test_case_ai_agent not available, returning stub cases")
         return _stub_generated_cases(effective_prompt)
