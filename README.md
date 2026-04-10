@@ -16,34 +16,41 @@ TestLookup bridges the gap between automated test execution and defect resolutio
 It also ships a first-class **MCP (Model Context Protocol) server** so AI assistants (AI Desktop Clients, IDE plugins, CI pipelines) can query test quality, investigate failures, and gate releases through natural-language conversations — no browser required.
 
 
-## Key Features -
+## Key Features
 
 | Domain | Capability |
 |--------|-----------|
 | **Ingestion** | TestNG, JUnit, Allure, Cucumber, pytest, Robot Framework, JUnit XML (universal) |
 | **AI Triage** | LangChain ReAct agent · 5 investigation tools · Ollama/OpenAI/Gemini |
-| **ML Analysis Engine** | LLM-free test analysis using trained ML classifiers (scikit-learn) or rule-based heuristics · 28-feature Gradient Boosted Trees · ~2ms/test · 100K tests/day on a single core · admin-configurable via Settings UI |
+| **ML Analysis Engine** | LLM-free test analysis using trained ML classifiers (scikit-learn) or rule-based heuristics · 32-feature Gradient Boosted Trees · ~2ms/test · 100K tests/day on a single core · admin-configurable via Settings UI |
 | **Analysis Modes** | **LLM** (full ReAct agent) · **ML** (trained classifier, no LLM) · **Rules** (pattern matching, zero deps) · **Auto** (smart fallback chain) — toggle via `ANALYSIS_MODE` env var or Settings > AI Configuration |
+| **RAG Test Generation** | Knowledge-grounded test case generation from Jira, Confluence, URLs, documents · citation tracking · requirement coverage · staleness detection |
 | **Deep Investigation** | Multi-agent network (LangGraph) — semantic clustering, distributed trace reconstruction, log anomaly detection, API contract validation, flaky lifecycle, test health scoring |
 | **Release Gate** | LLM-backed or rules-based GO / NO_GO / CONDITIONAL_GO recommendation · risk score · QA Lead override with audit trail |
 | **Offline AI** | Fully air-gapped with Ollama (qwen2.5, llama3, mistral) or completely LLM-free (ML/Rules mode) |
 | **Continuous Learning** | Self-improving models — fine-tuned on your own verified failure data, no external labelling required |
 | **Live Reporting** | Real-time WebSocket dashboard during test execution · Redis Streams event pipeline |
 | **Fault Tolerance** | Consumer group ACK model · XAUTOCLAIM stale reclaim · Dead-letter queue · LLM circuit breaker |
-| **Dashboards** | Pass/fail trends, coverage heatmaps, flaky leaderboard, defect burn-down |
+| **Dashboards** | Customizable analytics widgets (30+ templates) · pass/fail trends, coverage heatmaps, flaky leaderboard, defect burn-down · drag-and-drop layout |
 | **Quality Gates** | Automated GO/NO-GO feedback to Jenkins/GitHub Actions |
 | **Async Processing** | Celery priority queues (`critical` → `ingestion` → `ai_analysis` → `default`) + beat scheduler |
-| **User Management** | Role-based team management (VIEWER → TESTER → QA_ENGINEER → QA_LEAD → ADMIN) · admin direct-create with temp password · email invitation flow |
-| **API Key Management** | Scoped personal access tokens (PATs) · SHA-256 hashing · per-user key lifecycle (create / list / revoke) |
+| **User Management** | Role-based team management (VIEWER → TESTER → QA_ENGINEER → QA_LEAD → ADMIN) · admin direct-create with temp password · email invitation flow · user profile with avatar |
+| **API Key Management** | Scoped personal access tokens (PATs) · SHA-256 hashing · per-user key lifecycle (create / list / revoke) · dual JWT/API key auth |
+| **CLI Tool** | Full command-line interface (Typer + Rich) · 10 command groups · multi-profile auth · table/JSON/YAML output |
+| **Email Notifications** | Async SMTP delivery · HTML templates for 6 event types · digest subscriptions (daily/weekly/per-run/per-release) |
+| **PII Redaction** | Automatic sensitive data scrubbing at all system boundaries (persistence, logging, LLM prompts, reports) · 37 key patterns + 13 regex patterns |
+| **Test Case Tagging** | Automatic + custom tags on tests, runs, suites · 13 system tags · AI-derived signal tags after analysis |
+| **Suite Traceability** | Suite membership tracking with change detection · addition/deletion/modification/restoration events |
+| **Global Search** | Multi-entity search (6 types) · keyword + semantic (ChromaDB) + hybrid modes |
 | **Observability** | OpenTelemetry tracing → Jaeger · Prometheus metrics endpoint · Grafana dashboards · deep health checks with dependency status |
-| **Security** | JWT-based authentication with role-based access control (RBAC) · scoped API keys |
-| **MCP Server** | 20 tools · 10 resources · 6 prompt workflows for AI assistant integration |
-| **Search** | Full-text + semantic (ChromaDB) + hybrid search across all test history |
+| **Security** | JWT-based authentication with role-based access control (RBAC) · scoped API keys · PII redaction |
+| **MCP Server** | 24 tools · 10 resources · 6 prompt workflows for AI assistant integration |
 | **Run Intelligence** | Single-pane view: 4-layer summary, release gate, cluster cards, role actions, regression diff |
 | **Regression Watchman** | Classifies failure clusters: new_regression / known_flaky_recurrence / environmental_anomaly |
 | **Defect Commander** | Auto-promotes clusters to Jira using 7-dimension severity scoring + duplicate dedup |
 | **Honest AI Progress** | Shows actual ReAct tools invoked (not simulated) after analysis completes |
-| **Integrations** | Jira, Splunk, Prometheus, GitHub, OpenShift API, Slack, Teams |
+| **SDK Downloads** | Client SDKs for Python, Java, JavaScript, Go with interactive setup guides |
+| **Integrations** | Jira, Confluence, Splunk, Prometheus, GitHub, OpenShift API, Slack, Teams, SMTP |
 
 ## Architecture
 
@@ -440,7 +447,7 @@ testlookup/
 │   │   └── worker/             # Celery background tasks
 │   │       ├── tasks.py                 # Ingestion + analysis + pipeline tasks
 │   │       └── training_tasks.py        # Export · trigger-check · fine-tune pipeline
-│   ├── migrations/             # Alembic migrations (0001–0012)
+│   ├── migrations/             # Alembic migrations (0001–0055)
 │   ├── tests/                  # pytest test suite
 │   │   └── test_user_management.py  # 16 unit tests for user/API key management
 │   ├── requirements.txt
@@ -464,15 +471,28 @@ testlookup/
 │   │   └── utils/              # Helpers and formatters
 │   ├── package.json
 │   └── Dockerfile
+├── cli/                        # TestLookup CLI tool (Typer + Rich)
+│   ├── testlookup_cli/         # CLI source code
+│   │   ├── app.py              # Root app with 10 command groups
+│   │   ├── client.py           # Async HTTP client (JWT + API key auth)
+│   │   ├── config.py           # Multi-profile config (~/.config/testlookup/)
+│   │   └── output.py           # Rich table, JSON, YAML output
+│   ├── tests/                  # CLI test suite
+│   └── pyproject.toml          # CLI package config
 ├── mcp/                        # MCP Server — AI assistant integration
 │   ├── server.py               # Entry point (stdio + SSE transport)
 │   ├── config.py               # Settings (TESTLOOKUP_API_URL, credentials)
 │   ├── client.py               # httpx async client with JWT auto-auth
-│   ├── tools/                  # 20 callable tools
+│   ├── tools/                  # 24 callable tools (auth, projects, runs, intelligence, deep, search, reports)
 │   ├── resources/              # 10 readable resources (testlookup:// URIs)
 │   ├── prompts/                # 6 investigation workflow templates
 │   ├── Dockerfile
 │   └── requirements.txt
+├── postman/                    # Postman API collection + environment
+│   ├── TestLookup_API_Collection.postman_collection.json
+│   └── TestLookup_Local.postman_environment.json
+├── UserGuides/                 # End-user documentation
+│   └── TESTLOOKUP_USER_GUIDE.md
 ├── k8s/                        # Kubernetes/OpenShift manifests
 │   ├── base/                   # Kustomize base resources
 │   └── overlays/               # Environment-specific patches (dev/staging/prod)
@@ -532,7 +552,7 @@ make k8s-rollout-async-prod
 
 TestLookup ships a full MCP server under `mcp/` that gives AI assistants direct access to your test quality data.
 
-### Available Tools (20)
+### Available Tools (24)
 
 | Group | Tools |
 |-------|-------|
@@ -542,6 +562,10 @@ TestLookup ships a full MCP server under `mcp/` that gives AI assistants direct 
 | Metrics | `get_dashboard_metrics`, `get_test_trends` |
 | Analytics | `get_flaky_tests`, `get_failure_categories`, `get_top_failing_tests`, `get_coverage_report`, `get_defects`, `get_ai_analysis_summary` |
 | Analysis | `trigger_ai_analysis`, `search_tests` |
+| Intelligence | `get_run_intelligence`, `refresh_intelligence`, `get_run_summary` |
+| Deep Investigation | `trigger_deep_analysis`, `get_pipeline_status`, `get_failure_clusters`, `get_deep_findings` |
+| Search | `global_search` |
+| Reports | `create_share_link` |
 | Release | `check_release_readiness` |
 
 ### Available Prompts (6)
@@ -630,6 +654,140 @@ PROMETHEUS_URL=http://prometheus:9090 # Optional — enables fetch_app_metrics t
 GITHUB_TOKEN=ghp_...                  # Optional — enables fetch_build_changes tool
 GITHUB_REPO=yourorg/yourrepo         # Required when GITHUB_TOKEN is set
 ```
+
+---
+
+## CLI Tool
+
+TestLookup ships a full command-line interface under `cli/` built with Typer + Rich, enabling QA engineers to interact with the platform from the terminal.
+
+### Installation
+
+```bash
+cd cli && pip install -e .
+testlookup auth login  # Configure profile
+```
+
+### Command Groups
+
+| Command | Purpose |
+|---------|---------|
+| `auth` | Login, logout, show current user |
+| `keys` | Create, list, revoke API keys |
+| `health` | Check API server connectivity |
+| `projects` | List and inspect projects |
+| `runs` | Query test runs by project/status |
+| `tests` | Search and inspect test cases |
+| `search` | Global cross-entity search |
+| `intelligence` | View run intelligence snapshots |
+| `deep` | Trigger and monitor deep investigation |
+| `reports` | Download PDF reports, create share links |
+
+### Features
+
+- **Multi-profile auth**: JWT tokens and API keys stored per-profile at `~/.config/testlookup/profiles.json`
+- **Output formats**: `--output table|json|yaml` — Rich-formatted tables by default
+- **Environment fallback**: `TESTLOOKUP_URL` and `TESTLOOKUP_API_KEY` env vars when no profile configured
+- **Binary downloads**: PDF reports stream directly to local files
+
+---
+
+## RAG Knowledge Generation
+
+TestLookup includes a Retrieval-Augmented Generation pipeline that generates grounded test cases from external knowledge sources.
+
+### How It Works
+
+1. **Register** knowledge sources (Jira issues/epics, Confluence pages, URLs, uploaded documents)
+2. **Sync** content via pluggable connectors → stored in MinIO, chunked and embedded into ChromaDB
+3. **Retrieve** semantically relevant chunks for a given prompt
+4. **Generate** test cases grounded in the retrieved evidence, with citation tracking
+5. **Review** generated cases — accept, reject, or edit before committing to the test suite
+
+### Connectors
+
+| Type | Source |
+|------|--------|
+| `jira_issue` / `jira_epic` | Jira REST API |
+| `confluence_page` | Confluence REST API |
+| `internal_url` / `external_url` | HTTP fetch |
+| `uploaded_document` | File upload → MinIO |
+
+### Key Features
+
+- **Citation lineage**: Every generated test case links to source chunks with relevance scores
+- **Requirement coverage**: Tracks which requirements are covered/uncovered per batch
+- **Staleness detection**: Flags generated cases when underlying sources change
+- **PII redaction**: Prompts are sanitized before LLM calls via `rag_redaction_service`
+- **Feature gating**: `KNOWLEDGE_RAG_ENABLED` with Redis → DB → env var fallback
+- **Data classification**: Sources tagged as public/internal/confidential/restricted
+
+### Configuration
+
+```bash
+KNOWLEDGE_RAG_ENABLED=true
+KNOWLEDGE_SYNC_TIMEOUT_SECONDS=60
+KNOWLEDGE_MAX_SOURCES_PER_PROJECT=100
+KNOWLEDGE_CHUNK_TARGET_TOKENS=400
+CONFLUENCE_ENABLED=true
+CONFLUENCE_DOMAIN=yourcompany.atlassian.net
+```
+
+---
+
+## Email Notifications
+
+Async email delivery system with HTML templates and configurable digest subscriptions.
+
+### Supported Events
+
+| Event | Trigger |
+|-------|---------|
+| `run_failed` | Test run completes with failures |
+| `run_passed` | Test run completes successfully |
+| `high_failure_rate` | Failure rate exceeds threshold |
+| `ai_analysis_complete` | AI analysis pipeline finishes |
+| `quality_gate_failed` | Release gate returns NO_GO |
+| `flaky_test_detected` | New flaky test identified |
+
+### Digest Subscriptions
+
+Users can subscribe to scheduled digests via email, Slack, or Teams:
+- **DAILY / WEEKLY**: Scheduled delivery (Celery beat, 07:00 UTC)
+- **PER_RUN / PER_RELEASE / PER_SUITE**: Event-driven delivery
+
+### Configuration
+
+```bash
+SMTP_ENABLED=true
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=notifications@example.com
+SMTP_PASSWORD=...
+SMTP_FROM=TestLookup <notifications@example.com>
+SMTP_TLS=true
+```
+
+---
+
+## PII Redaction
+
+TestLookup automatically redacts sensitive data at all system boundaries to prevent PII/secrets from leaking into logs, LLM prompts, reports, or database records.
+
+### Redaction Boundaries
+
+| Boundary | Method |
+|----------|--------|
+| Database writes | `privacy_service.sanitize_for_persistence()` |
+| Log emission | Integrated into structlog pipeline |
+| LLM prompts | `privacy_service.sanitize_for_llm()` |
+| Report rendering | `privacy_service.sanitize_for_report()` |
+| Frontend errors | Client-side sanitization in `errorReporting.ts` |
+
+### Detected Patterns
+
+**Key-based**: 37 sensitive key names (password, token, api_key, email, phone, ssn, credit_card, etc.)
+**Pattern-based**: 13 regex patterns (Bearer tokens, API keys, JWTs, emails, phone numbers, SSNs, credit cards, IPv4 addresses, connection strings)
 
 ---
 
@@ -727,6 +885,22 @@ PROMETHEUS_URL=http://prometheus:9090    # Prometheus URL for fetch_app_metrics 
 | **Phase 13** | Deep Investigation Agent Network (semantic clustering, release gate, flaky lifecycle, API contract, test health) | 21–22 |
 | **Phase 14** | Observability stack — OpenTelemetry → Jaeger, Prometheus metrics, Grafana dashboards, deep health checks, frontend ErrorBoundary + Web Vitals | 23 |
 | **Phase 15** | User Management — RBAC roles, admin direct-create, email invitations, scoped API keys, user lifecycle | 24 |
+| **Phase 16** | Optimization (5 phases) — performance indexes, security fixes, stability improvements | 25–26 |
+| **Phase 17** | Analysis Modes — ML classifier pipeline, rules engine, analysis router, AI config UI | 27 |
+| **Phase 18** | Test Reports & Filters — executive panel builder, structured summaries, PDF/HTML rendering | 28 |
+| **Phase 19** | Email Notifications — async SMTP, HTML templates, digest subscriptions, event-driven dispatch | 28 |
+| **Phase 20** | Test Case Traceability — suite membership tracking, change detection, event history | 29 |
+| **Phase 21** | Chart Customizations — analytics widget system, 30+ templates, drag-and-drop layout, saved views | 29 |
+| **Phase 22** | Global Search — multi-entity search, keyword/semantic/hybrid modes, reindexing | 30 |
+| **Phase 23** | Test Case Tagging — automatic + custom tags, system tag protection, AI-derived signals | 30 |
+| **Phase 24** | PII Redaction — privacy service, pattern-based scrubbing, frontend sanitization | 30 |
+| **Phase 25** | LLM Integration Enhancements — AI config resolver, multi-provider factory, secret management | 31 |
+| **Phase 26** | CSS & Theming — dark theme system, sortable tables, workflow visibility | 31 |
+| **Phase 27** | CLI Tool — Typer + Rich, 10 command groups, multi-profile auth, API key support | 32 |
+| **Phase 28** | Desktop App & SDK — client SDK guides, download endpoints, interactive setup | 32 |
+| **Phase 29** | Critical Bug Fixes — profile page, avatar colors, SDK router, analytics endpoints | 33 |
+| **Phase 30** | Seed Data Management — dev-only UI for seed load/reset/delete, user guide | 33 |
+| **Phase 31** | RAG Knowledge Generation — knowledge sources, connectors, chunking, citation-grounded test generation | 34 |
 
 ## Continuous Fine-Tuning
 
@@ -1097,6 +1271,109 @@ SYSTEM_PROMPT. Empty role actions are hidden; the entire panel is omitted when a
 
 ---
 
+## What's New — Platform Enhancements (v0.0.1 build 04092026)
+
+### 12. RAG Knowledge-Grounded Test Generation
+
+Register external knowledge sources (Jira, Confluence, URLs, documents), sync and embed content into ChromaDB, then generate test cases grounded in actual requirements with full citation tracking.
+
+**New tables:** `knowledge_sources`, `knowledge_chunks`, `knowledge_sync_events`, `generation_batches`, `generation_case_sources`, `requirement_coverage`
+**New migrations:** 0053, 0054, 0055
+**New services:** `knowledge_source_service`, `knowledge_sync_service`, `knowledge_chunking_service`, `rag_generation_service`, `rag_retrieval_service`, `rag_review_service`, `rag_staleness_service`, `rag_redaction_service`
+**New connectors:** `connectors/jira_connector`, `connectors/confluence_connector`, `connectors/url_connector`, `connectors/document_connector`
+**Frontend:** `KnowledgeGenerationTab`, `KnowledgeSourcePicker`, `GenerationReviewPanel`, `CitationDrawer`
+
+### 13. CLI Tool
+
+Full command-line interface with 10 command groups, multi-profile authentication (JWT + API keys), and Rich terminal formatting.
+
+**New directory:** `cli/testlookup_cli/`
+**Dependencies:** Typer, Rich, httpx, platformdirs, pyyaml
+
+### 14. Email Notifications
+
+Async SMTP delivery with HTML templates for 6 event types. Digest subscriptions support daily/weekly/per-run/per-release/per-suite schedules.
+
+**New services:** `email_service`, `email_templates`, notification dispatcher in `worker/tasks.py`
+**New migration:** 0047 — extends digest_subscriptions with scope and trigger columns
+
+### 15. PII Redaction
+
+Automatic sensitive data scrubbing at all system boundaries — persistence, logging, LLM prompts, and report rendering.
+
+**New services:** `privacy_service`, enhanced `redaction_service`
+**Integration:** structlog pipeline processor, frontend `errorReporting.ts`
+
+### 16. Test Case Tagging
+
+Automatic and custom tagging with 13 reserved system tags and AI-derived signal tags after analysis.
+
+**New services:** `auto_tagging_service`, `tag_utils`
+**New migration:** 0050 — JSON tags column on test_plans, test_runs, suite_memberships
+
+### 17. Global Search (Multi-Entity)
+
+Cross-entity search across test cases, runs, suites, defects, flaky tests, and releases with keyword/semantic/hybrid modes.
+
+**New service:** `global_search_service`
+**New frontend:** Complete search UI with entity filters, mode selector, URL state sync
+
+### 18. Customizable Analytics Widgets
+
+30+ visualization templates across 5 page categories with drag-and-drop layout, per-instance configuration, and server-persisted saved views.
+
+**New components:** `AnalyticsWidget`, `AnalyticsGrid`, `VisualizationConfigModal`, `WidgetPicker`, `widgetRegistry`
+**New hook:** `useAnalyticsView`
+**New migration:** 0049 — saved_view page field
+
+### 19. Suite Membership Traceability
+
+Tracks test membership in suites across runs with change detection for additions, deletions, modifications, and restorations.
+
+**New service:** `suite_sync_service`
+**New migration:** 0048 — suite_memberships and suite_membership_events tables
+
+### 20. User Profile & Avatar
+
+Profile management page with avatar color picker, full name editing, and password change with strength meter.
+
+**New migration:** 0052 — avatar_color column on users
+**New frontend:** `ProfilePage.tsx` with 12-color palette
+
+### 21. MCP Server Expansion
+
+4 new tool domains added: run intelligence, deep investigation, global search, and report sharing.
+
+**New tools:** `intelligence.py`, `deep.py`, `search.py`, `reports.py` (11 new tool functions)
+
+### 22. SDK Downloads & Setup Guides
+
+Client SDK download endpoints for Python, Java, JavaScript, and Go with interactive setup guides on the Live Execution page.
+
+**New router:** `sdk.py` — public endpoints for SDK listing and download
+**New frontend:** Client SDK Guide with language tabs, code snippets, copy buttons
+
+### 23. Seed Data Management (Dev)
+
+UI-driven seed data management for development environments with Load/Reset/Delete operations.
+
+**New router:** `seed.py` — dev-only endpoints (return 404 in non-dev)
+**New frontend:** `SeedDataPage.tsx` in Settings
+
+### 24. Comprehensive User Guide
+
+1,479-line end-user guide covering all platform features from account creation to MCP integration.
+
+**New file:** `UserGuides/TESTLOOKUP_USER_GUIDE.md`
+
+### 25. Postman API Collection
+
+Complete API collection with environment configuration for all endpoints including RAG workflow.
+
+**New directory:** `postman/`
+
+---
+
 ## Environment Variables
 
 See [`.env.example`](.env.example) for complete reference.
@@ -1129,6 +1406,27 @@ Key variables:
 - `PROMETHEUS_URL` — Prometheus base URL (optional); enables `fetch_app_metrics` tool
 - `GITHUB_TOKEN` — GitHub personal access token (optional); enables `fetch_build_changes` tool
 - `GITHUB_REPO` — `owner/repo` slug (required when `GITHUB_TOKEN` is set)
+
+**Analysis Modes**
+- `ANALYSIS_MODE` — `auto` (default) | `llm` | `ml` | `rules` — which engine classifies test failures
+- `ML_MODEL_DIR` — path to trained ML model artifacts (default: `models/`)
+- `ML_MIN_TRAINING_SAMPLES` — minimum labeled samples before ML mode activates (default: 200)
+- `ML_ACCURACY_THRESHOLD` — minimum accuracy to deploy a new model (default: 0.80)
+
+**RAG / Knowledge Sources**
+- `KNOWLEDGE_RAG_ENABLED` — `false` by default; enables RAG test case generation
+- `KNOWLEDGE_SYNC_TIMEOUT_SECONDS` — max sync duration per source (default: 60)
+- `KNOWLEDGE_MAX_SOURCES_PER_PROJECT` — source quota per project (default: 100)
+- `KNOWLEDGE_CHUNK_TARGET_TOKENS` — ideal chunk size for embeddings (default: 400)
+- `KNOWLEDGE_CHUNK_MAX_TOKENS` — hard limit on chunk size (default: 800)
+- `CONFLUENCE_ENABLED` — `false` by default; enables Confluence connector
+- `CONFLUENCE_DOMAIN` / `CONFLUENCE_EMAIL` / `CONFLUENCE_API_TOKEN` — Confluence connection settings
+
+**Email Notifications**
+- `SMTP_ENABLED` — `false` by default; enables email notification delivery
+- `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` — SMTP server settings
+- `SMTP_FROM` — from address for notification emails
+- `SMTP_TLS` — `true` to enable TLS
 
 **Authentication & User Management**
 - `JWT_SECRET_KEY` — randomly generated secret for encoding authentication tokens
