@@ -208,6 +208,7 @@ Role hierarchy matches backend: `VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN
 ### Styling
 
 - **Tailwind CSS** with CSS custom properties for theming: `text-[var(--color-text)]`, `bg-[var(--color-bg-secondary)]`
+- **Two dark themes**: "midnight" (GitHub-inspired, blue tints) and "classic" (deep navy, high contrast). Use CSS vars: `var(--color-bg)`, `var(--color-accent)`, `var(--color-border)`, etc. Never hardcode colors.
 - **clsx** for conditional classes: `clsx('base-class', isActive && 'active', size === 'lg' && 'h-12')`
 - **Icons:** `lucide-react` — import individual icons: `import { Settings, ChevronDown } from 'lucide-react'`
 - **Responsive:** Use `md:` and `xl:` breakpoints. Grid: `grid-cols-2 xl:grid-cols-4`
@@ -221,11 +222,46 @@ Role hierarchy matches backend: `VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN
 - **Pagination:** `<Pagination current={page} total={total} size={size} onChange={setPage} />`
 - **StatusBadge:** For test status display
 
+### Analytics Widgets
+
+Customizable dashboard visualizations using the analytics widget system:
+
+```typescript
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
+import AnalyticsGrid from '@/components/analytics/AnalyticsGrid'
+import AnalyticsWidget from '@/components/analytics/AnalyticsWidget'
+
+// In a page component:
+const { instances, addInstance, removeInstance, save, isDirty } = useAnalyticsView('dashboard')
+```
+
+Key files:
+- `components/analytics/widgetRegistry.ts` — 30+ widget templates with `id`, `label`, `chartType`, `pages`, `defaultEnabled`
+- `components/analytics/AnalyticsGrid.tsx` — responsive grid layout with drag-and-drop
+- `components/analytics/WidgetPicker.tsx` — catalog browser (max 12 per page)
+- `components/analytics/VisualizationConfigModal.tsx` — per-instance config (title, chart type, metric)
+- `hooks/useAnalyticsView.ts` — manages widget state, saved views, dirty tracking, migration from legacy format
+
+### Sortable Tables
+
+```typescript
+import { useTableSort } from '@/hooks/useTableSort'
+import SortableHeader from '@/components/analytics/SortableHeader'
+
+const { sortKey, sortDir, handleSort, sortedData } = useTableSort(data, 'name')
+```
+
+### RAG Components
+
+- `components/rag/KnowledgeSourcePicker.tsx` — multi-select sources with sync status
+- `components/rag/GenerationReviewPanel.tsx` — review generated test cases + citations
+- `components/rag/CitationDrawer.tsx` — evidence drawer with chunk text, source, relevance
+
 ### Error Handling
 
 - `ErrorBoundary.tsx` catches React render errors → POSTs to `/api/v1/observability/frontend`
 - `useWebVitals.ts` reports CLS, FID, LCP, FCP, TTFB, INP to backend
-- `errorReporting.ts` installs `window.onerror` + `unhandledrejection` handlers
+- `errorReporting.ts` installs `window.onerror` + `unhandledrejection` handlers — with PII sanitization (strips file paths, redacts emails, Bearer tokens, API keys)
 - Toast notifications via `react-hot-toast`: `toast.success(...)`, `toast.error(...)`
 
 ## Critical Rules
@@ -237,6 +273,10 @@ Role hierarchy matches backend: `VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN
 - **Zustand for global state only.** Project selection + auth. Everything else is local state.
 - **`build_number` lives on `TestRun`, not `TestCase`.** Use `runId?.slice(0,8)` for breadcrumbs.
 - **`ALL_PROJECTS_ID = "all"` must never be sent to the backend as a UUID.** Convert to `null` before API calls.
+- **Analytics widget max 12 per page.** `useAnalyticsView` enforces this limit. Legacy widget-ID format auto-migrates to `VisualizationInstance` on load.
+- **Dev-only pages check `APP_ENV`.** Pages like `SeedDataPage.tsx` must render nothing in staging/production.
+- **Client-side PII sanitization.** `errorReporting.ts` redacts sensitive data before sending to backend. Never skip this for error reports.
+- **Avatar color palette.** 12 colors defined in `AVATAR_BG` map (slate, red, orange, amber, lime, emerald, teal, cyan, blue, violet, fuchsia, pink). Display via `TopBar.tsx` using the user's `avatar_color` from auth store.
 
 ## SWR Refresh Intervals
 
@@ -266,7 +306,19 @@ The `pages/settings/AIConfigPage.tsx` page allows ADMIN users to configure the a
 - `AIConfigRead` includes `analysis_mode`, `ml_model_available`, `ml_model_accuracy`, `ml_training_sample_count`
 - `AIConfigUpdate` includes `analysis_mode` (validated server-side)
 
+**Knowledge RAG section** (when `KNOWLEDGE_RAG_ENABLED`):
+- Toggle to enable/disable RAG feature
+- Status showing total sources, batches, chunks
+
 **Pattern**: Radio buttons use the `ANALYSIS_MODES` const array with `value`, `label`, `desc` per option. Form state managed via local `useState<AIConfigUpdate>`, saved via `appSettingsService.updateAIConfig(form)`.
+
+## Settings Pages
+
+| Page | Path | Purpose |
+|------|------|---------|
+| AI Configuration | `/settings/ai` | Analysis mode, ML status, RAG toggle (ADMIN) |
+| Profile | `/settings/profile` | Full name, avatar color, password change |
+| Seed Data | `/settings/seed` | Dev-only: load/reset/delete seed data (ADMIN) |
 
 ## Build & Deploy
 

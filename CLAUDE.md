@@ -6,11 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**TestLookup** is a 360° AI-powered software testing intelligence platform. It ingests test results from 50+ frameworks, uses a LangChain ReAct agent (via Ollama locally or cloud LLMs) to correlate failures, and pushes structured root-cause analysis to Jira. It includes a deep multi-agent investigation network, continuous fine-tuning pipeline, real-time live streaming, full observability stack, user/API-key management, and an MCP server for AI assistant integration.
+**TestLookup** is a 360° AI-powered software testing intelligence platform. It ingests test results from 50+ frameworks, uses a LangChain ReAct agent (via Ollama locally or cloud LLMs) to correlate failures, and pushes structured root-cause analysis to Jira. It includes a deep multi-agent investigation network, RAG-powered test case generation, continuous fine-tuning pipeline, real-time live streaming, full observability stack, PII redaction, user/API-key management, CLI tool, and an MCP server for AI assistant integration.
 
 - Local-LLM capable (air-gapped via Ollama)
 - Multi-framework ingestion (Allure, TestNG, JUnit, etc.)
 - OpenShift/Kubernetes native (Kustomize)
+- CLI tool (Typer + Rich) with multi-profile auth
+- RAG knowledge-grounded test case generation
 
 **Subdirectory guides** (auto-loaded by Claude Code when working in those dirs):
 - `backend/CLAUDE.md` — Backend code patterns, adding endpoints/agents/tools, test patterns
@@ -71,6 +73,8 @@ MCP Server (mcp:8002) — AI assistant integration (stdio + SSE)
 | Tracing | OpenTelemetry → Jaeger |
 | Metrics | Prometheus + prometheus-fastapi-instrumentator |
 | Dashboards | Grafana |
+| CLI | Typer + Rich + httpx |
+| Email | aiosmtplib (async SMTP) |
 
 ---
 
@@ -179,18 +183,47 @@ npm run dev   # → http://localhost:3000
   - `services/` — business logic; `services/training/` — fine-tuning pipeline; `services/ml/` — ML classifier + feature extraction + training
   - `services/analysis_router.py` — central dispatcher (LLM/ML/Rules mode selection)
   - `services/rules_engine.py` — enhanced pattern matching + template summaries
+  - `services/connectors/` — pluggable knowledge source connectors (Jira, Confluence, URL, document)
+  - `services/knowledge_source_service.py` — knowledge source CRUD + governance
+  - `services/knowledge_sync_service.py` — sync pipeline + MinIO storage + freshness
+  - `services/knowledge_chunking_service.py` — text segmentation + embedding + ChromaDB indexing
+  - `services/rag_generation_service.py` — LLM-grounded test case generation with citations
+  - `services/rag_retrieval_service.py` — vector search via ChromaDB
+  - `services/rag_review_service.py` — batch review + case acceptance/rejection
+  - `services/privacy_service.py` — PII/secrets redaction for persistence, logging, LLM, reports
+  - `services/redaction_service.py` — pattern-based + key-based sensitive data scrubbing
+  - `services/auto_tagging_service.py` — automatic test case/run/suite tagging
+  - `services/global_search_service.py` — multi-entity search across 6 entity types
+  - `services/suite_sync_service.py` — suite membership traceability + change detection
+  - `services/email_service.py` — async SMTP delivery + HTML templates
+  - `services/ai_config_resolver.py` — single source of truth for AI config (DB → secrets → env)
   - `agents/` — LangGraph multi-agent pipelines (`workflow.py` builds standard + deep graphs)
   - `tools/` — 11 LangChain agent tools
   - `streams/` — Redis Streams producer/consumer + circuit breaker
   - `worker/` — Celery app, tasks, training tasks
 - `backend/models/` — trained ML model artifacts (.joblib)
-- `backend/migrations/` — Alembic versions (0001-0052)
+- `backend/migrations/` — Alembic versions (0001-0055)
 - `backend/tests/` — pytest suite
 - `frontend/src/` — React 18 + TypeScript SPA
   - `pages/`, `components/`, `services/` (Axios API clients), `hooks/` (SWR wrappers), `store/` (Zustand)
+  - `components/analytics/` — customizable analytics widget system (AnalyticsGrid, WidgetPicker, widgetRegistry)
+  - `components/rag/` — RAG generation components (KnowledgeSourcePicker, GenerationReviewPanel, CitationDrawer)
+  - `pages/settings/ProfilePage.tsx` — user profile + avatar color + password change
+  - `pages/settings/SeedDataPage.tsx` — dev-only seed data management UI
+  - `pages/test-management/KnowledgeGenerationTab.tsx` — RAG test generation interface
+  - `hooks/useAnalyticsView.ts` — analytics widget state + saved views
+  - `hooks/useGenerationBatch.ts` — SWR hooks for RAG data
+  - `hooks/useTableSort.ts` — sortable table header state
   - `config/refreshIntervals.ts` — standardized SWR polling intervals
-- `mcp/` — MCP Server (20 tools, 10 resources, 6 prompts)
+- `cli/` — TestLookup CLI tool (Typer + Rich + httpx)
+  - `testlookup_cli/app.py` — root app with 10 command groups
+  - `testlookup_cli/client.py` — async HTTP client (JWT + API key auth)
+  - `testlookup_cli/config.py` — multi-profile config (~/.config/testlookup/profiles.json)
+  - `testlookup_cli/output.py` — Rich table, JSON, YAML output modes
+- `mcp/` — MCP Server (24 tools, 10 resources, 6 prompts)
+- `postman/` — Postman API collection + environment for RAG workflow testing
 - `client/testlookup_reporter.py` — Python client SDK + pytest plugin
+- `UserGuides/TESTLOOKUP_USER_GUIDE.md` — comprehensive end-user guide
 - `k8s/` — Kustomize base + overlays (dev/staging/prod/openshift)
 - `infra/monitoring/` — Prometheus, Grafana, alerting rules
 - `scripts/` — setup and utility scripts
@@ -230,6 +263,26 @@ Copy `.env.example` to `.env` and configure:
 | `SAML_SP_ENTITY_ID` | SP entity ID for SAML metadata |
 | `SAML_BASE_URL` | Base URL for ACS/SLO URL construction |
 | `SSO_ADMIN_FALLBACK_ENABLED` | true \| false — allow admin password login when SSO enforced |
+| `KNOWLEDGE_RAG_ENABLED` | true \| false — enables RAG knowledge-grounded test generation |
+| `KNOWLEDGE_SYNC_TIMEOUT_SECONDS` | Max sync duration per source (default: 60) |
+| `KNOWLEDGE_MAX_SOURCES_PER_PROJECT` | Quota per project (default: 100) |
+| `KNOWLEDGE_DOCS_BUCKET` | MinIO bucket for knowledge documents (default: knowledge-docs) |
+| `KNOWLEDGE_STALE_THRESHOLD_JIRA_HOURS` | Staleness threshold for Jira sources (default: 24) |
+| `KNOWLEDGE_STALE_THRESHOLD_URL_HOURS` | Staleness threshold for URL sources (default: 168) |
+| `KNOWLEDGE_CHUNK_TARGET_TOKENS` | Ideal chunk size for embeddings (default: 400) |
+| `KNOWLEDGE_CHUNK_MAX_TOKENS` | Hard limit on chunk size (default: 800) |
+| `KNOWLEDGE_CHUNK_OVERLAP_TOKENS` | Sliding window overlap (default: 50) |
+| `CONFLUENCE_ENABLED` | true \| false — enables Confluence connector for RAG |
+| `CONFLUENCE_DOMAIN` | Confluence domain (e.g., yourcompany.atlassian.net) |
+| `CONFLUENCE_EMAIL` | Confluence auth email |
+| `CONFLUENCE_API_TOKEN` | Confluence API token |
+| `SMTP_ENABLED` | true \| false — enables email notifications |
+| `SMTP_HOST` | SMTP server hostname |
+| `SMTP_PORT` | SMTP server port |
+| `SMTP_USER` | SMTP username |
+| `SMTP_PASSWORD` | SMTP password |
+| `SMTP_FROM` | From address for notification emails |
+| `SMTP_TLS` | true \| false — enable TLS for SMTP |
 
 ---
 
@@ -264,6 +317,15 @@ Current migrations:
 | 0038 | AI evaluation datasets and runs (ai_eval_datasets, ai_eval_runs) |
 | ... | (0039–0045 various enhancements) |
 | 0046 | Performance composite indexes (ix_test_runs_project_status_created) |
+| 0047 | Extend digest subscriptions (scope_type, scope_value, trigger_filter; PER_RUN/PER_RELEASE/PER_SUITE schedules) |
+| 0048 | Suite membership traceability (suite_memberships, suite_membership_events) |
+| 0049 | Saved view page field (adds `page` column for analytics widget configs) |
+| 0050 | Tags on plans/runs/suites (JSON `tags` column on test_plans, test_runs, suite_memberships) |
+| 0051 | Performance status indexes (ix_test_cases_status_only, ix_test_runs_status_only, ix_sm_project_suite_status) |
+| 0052 | User avatar color (avatar_color column on users) |
+| 0053 | Knowledge source registry (knowledge_sources table) |
+| 0054 | Knowledge chunks and sync events (knowledge_chunks, knowledge_sync_events) |
+| 0055 | RAG generation lineage (generation_batches, generation_case_sources, requirement_coverage; RAG columns on managed_test_cases) |
 
 ---
 
@@ -283,6 +345,13 @@ Current migrations:
 - **Analysis mode dispatch:** All test classification must go through `services/analysis_router.py`, never call `run_triage_agent()` or `RulesEngine` directly from routers. The router reads `ANALYSIS_MODE` and dispatches to LLM/ML/Rules.
 - **ML feature extraction must be deterministic.** Same inputs → same feature vector. No randomness in preprocessing. Feature names in `ml/feature_extractor.py:FEATURE_NAMES` must match training order.
 - **ML inference budget:** <5ms per test. If the ML model takes longer, the analysis router falls back to rules.
+- **PII redaction:** All data must pass through `services/privacy_service.py` before persistence (`sanitize_for_persistence()`), logging (`sanitize_for_logging()`), LLM calls (`sanitize_for_llm()`), or report rendering (`sanitize_for_report()`). Redaction placeholder is always `[REDACTED]`.
+- **Tag normalization:** Use `services/tag_utils.py:normalize_tag()` for all tag operations. System tags (13 reserved names) cannot be used as custom tags — validate with `validate_custom_tags()`.
+- **Knowledge source connectors** are pluggable via `services/connectors/registry.py`. New connectors must implement the `BaseConnector` interface in `services/connectors/base.py`.
+- **RAG feature gating:** Check `KNOWLEDGE_RAG_ENABLED` via the feature gate (Redis → DB → env var fallback chain). Never bypass the gate.
+- **Dual authentication:** `get_current_user_or_api_key()` in `core/deps.py` tries JWT first, then API key (SHA-256 hash lookup). Use this dependency for endpoints that accept both auth methods.
+- **Email notifications:** Use `services/email_service.py` for async SMTP delivery. Templates in `services/email_templates.py`. Never send emails synchronously in request handlers — dispatch via Celery tasks.
+- **AI config resolution:** Use `services/ai_config_resolver.py` for LLM configuration. Resolution precedence: DB overrides → secret-backed API keys → environment defaults. Results are cached in Redis (60s TTL).
 
 ### Frontend
 
@@ -292,6 +361,11 @@ Current migrations:
 - **TestCase breadcrumbs** use `runId?.slice(0,8)` — the `build_number` field lives on `TestRun`, not `TestCase`.
 - **TypeScript strict mode is on** — avoid `any`; use `unknown` + type guards when necessary.
 - **Sidebar navigation** has three sections in order: main nav (top), AI Agents (middle), Management (bottom — Projects, Releases, Users). Settings is in the footer.
+- **Analytics widget system:** Use `useAnalyticsView` hook + `AnalyticsGrid` + `AnalyticsWidget` components for customizable dashboard pages. Widget templates defined in `components/analytics/widgetRegistry.ts` (30+ templates). Max 12 widgets per page.
+- **CSS theming:** Two dark themes ("midnight" GitHub-inspired, "classic" deep navy). Use CSS custom properties: `var(--color-bg)`, `var(--color-accent)`, `var(--color-border)`, etc. Never hardcode colors.
+- **Sortable tables:** Use `useTableSort` hook + `SortableHeader` component for sortable table columns.
+- **Client-side PII sanitization:** `utils/errorReporting.ts` redacts emails, phone numbers, Bearer tokens, API keys, and file paths before sending error reports to the backend.
+- **Dev-only pages:** Pages like `SeedDataPage.tsx` check `APP_ENV=development` and render nothing in staging/production.
 
 ---
 
@@ -357,6 +431,26 @@ These bugs have been encountered and fixed — avoid reintroducing them:
 
 30. **Zustand object selectors cause infinite loops** — Never use `useAuthStore(s => ({ key1: s.x, key2: s.y }))` — the inline object creates a new reference every render, causing Zustand (v5, `Object.is` equality) to re-render infinitely. Use individual primitive selectors: `useAuthStore(s => s.x)`.
 
+31. **PII redaction depth limit** — `redact_dict()` has a max recursion depth of 10 levels. Deeply nested structures beyond 10 levels will not be redacted. The redaction placeholder is always `[REDACTED]` — never customize it.
+
+32. **System tags are reserved** — The 13 system tags (passed, failed, skipped, broken, flaky, regression, duplicate, all_passed, has_failures, has_skips, flaky_content, regression_detected, needs_review) cannot be used as custom tags. `validate_custom_tags()` in `tag_utils.py` enforces this.
+
+33. **Suite membership sync ordering** — `suite_sync_service.py` must run after ingestion aggregates are computed. The sync detects additions, deletions, modifications, and restorations; deleted tests go to `<suite>-deleted` bucket with `needs_review` tag.
+
+34. **Knowledge source deduplication** — `knowledge_sources` has a UNIQUE constraint on `(project_id, canonical_url)`. Attempting to register the same URL twice for a project will fail. Content change detection uses SHA-256 hashing (`content_hash` column).
+
+35. **RAG chunk vector_id uniqueness** — `knowledge_chunks.vector_id` is UNIQUE. It references the corresponding ChromaDB document. When re-syncing, old chunks must be deactivated (`is_active=false`) before creating new ones.
+
+36. **Generation case source staleness** — `generation_case_sources.source_content_hash_at_generation` captures the source hash at generation time. If the source is re-synced and the hash changes, `is_stale` is set to true and the linked test case's `is_stale` flag is also set.
+
+37. **Dev-only seed endpoints** — The seed router (`/api/v1/dev/seed`) uses `_require_dev()` to return 404 in non-development environments. Never remove this guard.
+
+38. **CLI profile storage** — CLI profiles are stored at `~/.config/testlookup/profiles.json`. Environment variables `TESTLOOKUP_URL` and `TESTLOOKUP_API_KEY` serve as fallbacks when no profile is configured.
+
+39. **Email template event types** — `email_templates.py` supports 6 event types: `run_failed`, `run_passed`, `high_failure_rate`, `ai_analysis_complete`, `quality_gate_failed`, `flaky_test_detected`. Adding new event types requires both a template and a Celery task dispatcher.
+
+40. **Analytics widget migration** — `useAnalyticsView` hook supports both legacy widget-ID arrays (v1) and new `VisualizationInstance` arrays (v2). Legacy format is auto-migrated on load via `migrateWidgetIds()`. Max 12 widgets per page.
+
 ---
 
 ## Analysis Engine Modes
@@ -375,7 +469,7 @@ The system supports three test analysis engines, configurable via `ANALYSIS_MODE
 **Key files:**
 - `services/analysis_router.py` — central dispatcher
 - `services/rules_engine.py` — enhanced pattern matching + template summaries
-- `services/ml/feature_extractor.py` — 28-feature numeric vector
+- `services/ml/feature_extractor.py` — 32-feature numeric vector
 - `services/ml/classifier.py` — HistGradientBoosting wrapper
 - `services/ml/summary_generator.py` — template summaries enriched with ML metadata
 - `services/ml/trainer.py` — training pipeline (Celery beat, nightly)
@@ -588,7 +682,7 @@ make mcp-sse-docker    # docker compose up -d mcp  (port 8002)
 
 SSE endpoint: `http://localhost:8002/sse`
 
-### Available Tools (20)
+### Available Tools (24)
 
 | Group | Tools |
 |-------|-------|
@@ -598,6 +692,10 @@ SSE endpoint: `http://localhost:8002/sse`
 | Metrics | `get_dashboard_metrics`, `get_test_trends` |
 | Analytics | `get_flaky_tests`, `get_failure_categories`, `get_top_failing_tests`, `get_coverage_report`, `get_defects`, `get_ai_analysis_summary` |
 | Analysis | `trigger_ai_analysis`, `search_tests` |
+| Intelligence | `get_run_intelligence`, `refresh_intelligence`, `get_run_summary` |
+| Deep Investigation | `trigger_deep_analysis`, `get_pipeline_status`, `get_failure_clusters`, `get_deep_findings` |
+| Search | `global_search` |
+| Reports | `create_share_link` |
 | Release | `check_release_readiness` |
 
 ### Available Prompts (6)
@@ -613,13 +711,224 @@ SSE endpoint: `http://localhost:8002/sse`
 
 ---
 
+## CLI Tool
+
+The `cli/` directory contains a full command-line interface built with Typer + Rich, enabling terminal-based interaction with TestLookup.
+
+### Installation
+
+```bash
+cd cli && pip install -e .
+```
+
+### Command Groups (10)
+
+| Command | Purpose |
+|---------|---------|
+| `auth` | Login/logout/whoami |
+| `keys` | API key management (create/list/revoke) |
+| `health` | System connectivity check |
+| `projects` | Project listing and metadata |
+| `runs` | Test run inspection |
+| `tests` | Individual test case queries |
+| `search` | Global entity search |
+| `intelligence` | Run intelligence and AI analysis |
+| `deep` | Deep investigation pipeline (start/status/clusters/findings) |
+| `reports` | PDF export and share link generation |
+
+### Authentication
+
+- **JWT**: `testlookup auth login` saves tokens to profile
+- **API Key**: `testlookup --api-key <key>` or `TESTLOOKUP_API_KEY` env var
+- **Multi-profile**: Profiles stored at `~/.config/testlookup/profiles.json`
+
+### Output Formats
+
+All commands support `--output table|json|yaml` (default: table with Rich formatting).
+
+---
+
+## RAG Knowledge Generation
+
+The RAG (Retrieval-Augmented Generation) system enables knowledge-grounded test case generation from external sources.
+
+### Architecture
+
+```
+Knowledge Sources (Jira, Confluence, URLs, Documents)
+  → Connectors (fetch content)
+  → MinIO (store raw content)
+  → Chunking Service (segment + embed)
+  → ChromaDB (vector store)
+  → Retrieval (semantic search)
+  → Generation (LLM + citations)
+  → Review (accept/reject)
+```
+
+### API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/v1/knowledge-sources` | List sources |
+| POST | `/api/v1/knowledge-sources` | Create source (Jira, Confluence, URL, document) |
+| GET | `/api/v1/knowledge-sources/{id}` | Get source details |
+| PATCH | `/api/v1/knowledge-sources/{id}` | Update source |
+| DELETE | `/api/v1/knowledge-sources/{id}` | Delete/archive source |
+| POST | `/api/v1/knowledge-sources/{id}/sync` | Trigger manual sync |
+| GET | `/api/v1/knowledge-sources/{id}/sync-history` | Sync audit trail |
+| GET | `/api/v1/knowledge-sources/{id}/freshness` | Staleness status |
+| POST | `/api/v1/knowledge-sources/test-connector` | Test connector connectivity |
+| POST | `/api/v1/test-management/cases/rag-retrieve` | Vector search chunks |
+| POST | `/api/v1/test-management/cases/rag-generate` | Generate test cases with citations |
+| GET | `/api/v1/test-management/batches/{id}/coverage` | Requirement coverage |
+| GET | `/api/v1/test-management/batches/{id}` | Batch summary |
+| POST | `/api/v1/test-management/batches/{id}/accept` | Accept multiple cases |
+| POST | `/api/v1/test-management/batches/{id}/cases/{cid}/accept` | Accept single case |
+| POST | `/api/v1/test-management/batches/{id}/cases/{cid}/reject` | Reject case |
+| GET | `/api/v1/test-management/rag-status` | RAG feature status + counts |
+
+### Feature Gating
+
+RAG is controlled by `KNOWLEDGE_RAG_ENABLED` with fallback chain: Redis cache → DB (`app_settings`) → env var.
+
+---
+
+## Global Search
+
+Multi-entity search across 6 entity types with keyword, semantic, and hybrid modes.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/v1/search` | Global search (q, project_id, status, days, search_type, page, size) |
+| GET | `/api/v1/search/index-status` | ChromaDB collection health |
+| POST | `/api/v1/search/reindex` | Manual reindex trigger via Celery |
+| GET | `/api/v1/search/similar/{test_case_id}` | Find historically similar failures |
+
+### Entity Types
+
+test_case, test_run, suite, defect, flaky_test, release
+
+---
+
+## Email Notifications
+
+Async email delivery via aiosmtplib with HTML templates for 6 event types.
+
+### Event Types
+
+`run_failed`, `run_passed`, `high_failure_rate`, `ai_analysis_complete`, `quality_gate_failed`, `flaky_test_detected`
+
+### Digest Subscriptions
+
+`DigestSubscription` supports DAILY, WEEKLY, PER_RUN, PER_RELEASE, PER_SUITE schedules. Celery beat dispatches at 07:00 UTC daily. Subscriptions have scope_type/scope_value for filtering.
+
+---
+
+## PII Redaction
+
+All sensitive data passes through `services/privacy_service.py` at system boundaries:
+
+| Boundary | Method |
+|----------|--------|
+| Database/cache writes | `sanitize_for_persistence()` |
+| Log emission | `sanitize_for_logging()` (integrated into structlog pipeline) |
+| LLM prompts | `sanitize_for_llm()` |
+| Report rendering | `sanitize_for_report()` |
+
+**Detected patterns:** emails, phone numbers, SSNs, credit cards, IPv4 addresses, Bearer tokens, API keys, JWTs, connection strings, and 37 sensitive key names.
+
+**Frontend:** `errorReporting.ts` sanitizes stack traces and error messages before transmission.
+
+---
+
+## Test Case Tagging
+
+Automatic and custom tagging for test cases, runs, and suites.
+
+### System Tags (13 reserved)
+
+Outcome: `passed`, `failed`, `skipped`, `broken`
+Signal: `flaky`, `regression`, `duplicate`
+Run-level: `all_passed`, `has_failures`, `has_skips`, `flaky_content`, `regression_detected`
+Traceability: `needs_review`
+
+### Auto-tagging
+
+- After ingestion: outcome tags on test cases, summary tags on runs
+- After AI analysis: signal tags (flaky, regression, duplicate) on cases and runs
+
+### Custom Tags
+
+User-defined tags validated via `validate_custom_tags()` — system tags rejected. Stored as JSON arrays on `test_cases`, `test_plans`, `test_runs`, `suite_memberships`.
+
+---
+
+## Suite Membership Traceability
+
+`suite_sync_service.py` tracks test membership in suites across runs:
+
+- Detects additions, deletions, modifications, restorations
+- Deleted tests moved to `<suite>-deleted` bucket with `needs_review` tag
+- Full change history in `suite_membership_events` table
+- Runs after ingestion aggregates are computed
+
+---
+
+## Analytics Widget System
+
+Customizable dashboard visualizations via `components/analytics/`:
+
+- **widgetRegistry.ts** — 30+ widget templates across 5 page categories (Dashboard, Trends, Coverage, Defects, Failures)
+- **useAnalyticsView** hook — manages widget instances, saved views, dirty state
+- **WidgetPicker** — catalog browser with enable/disable toggles (max 12 per page)
+- **VisualizationConfigModal** — per-instance config (title, chart type, metric variant)
+- Saved views persist to server per-page, per-project with localStorage fallback
+
+---
+
+## Seed Data Management (Dev Only)
+
+### API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/v1/dev/seed/status` | Check if seed data is loaded |
+| POST | `/api/v1/dev/seed` | Load seed data (idempotent) |
+| POST | `/api/v1/dev/seed/reset` | Wipe and regenerate seed data |
+| DELETE | `/api/v1/dev/seed` | Delete seed data without re-seeding |
+
+All endpoints return 404 in non-development environments. Requires ADMIN role.
+
+### Frontend
+
+Settings > Seed Data page (`SeedDataPage.tsx`) — interactive UI with Load/Reset/Delete buttons and collapsible log output.
+
+---
+
+## SDK Downloads
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/v1/sdk` | List available SDKs (Python, Java, JavaScript, Go) |
+| GET | `/api/v1/sdk/{lang}` | Download SDK (python\|java\|js\|go) |
+
+Public router (no JWT required). Python served as single file, others as ZIP.
+
+---
+
 ## Documentation
 
 | File | Purpose |
 |------|---------|
 | `README.md` | Overview, features, architecture, quick start |
+| `UserGuides/TESTLOOKUP_USER_GUIDE.md` | Comprehensive end-user guide |
 | `installation.md` | GCP VM deployment guide |
 | `docs/DEVELOPMENT.md` | Developer workflow, iterative phases |
 | `docs/cloud-run-cloud-sql.md` | Cloud Run + Cloud SQL deployment |
+| `postman/README.md` | API collection guide with RAG workflow |
 | `.env.example` | Environment variable reference |
 | `Makefile` | All developer commands |

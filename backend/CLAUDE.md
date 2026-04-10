@@ -250,6 +250,29 @@ async def new_node(state: WorkflowState) -> dict:
 
 Add tool file under `app/tools/new_tool.py`, then register in `app/services/agent.py`.
 
+## Adding a New Knowledge Source Connector
+
+1. Create connector in `app/services/connectors/new_connector.py`:
+```python
+from app.services.connectors.base import BaseConnector
+
+class NewConnector(BaseConnector):
+    async def fetch_content(self, source) -> str:
+        # Fetch and return raw text content
+        ...
+
+    async def test_connectivity(self, config: dict) -> dict:
+        # Return {success: bool, latency_ms: int, error: str|None}
+        ...
+```
+
+2. Register in `app/services/connectors/registry.py`:
+```python
+CONNECTOR_REGISTRY["new_type"] = NewConnector
+```
+
+3. Add source type to `KnowledgeSourceType` enum in `models/schemas.py`.
+
 ## Analysis Engine Architecture
 
 The system supports three analysis modes: LLM, ML, and Rules. All classification
@@ -323,3 +346,10 @@ def _stub_external_modules(monkeypatch):
 - **Analysis mode dispatch** — always use `services/analysis_router.classify_test()`, never call `run_triage_agent()` or `RulesEngine` directly. The router handles mode selection and fallback.
 - **ML feature vectors must be deterministic** — same inputs produce same features. `FEATURE_NAMES` list in `ml/feature_extractor.py` defines the canonical order; never reorder.
 - **ML inference budget** — <5ms per test. If exceeded, analysis_router falls back to rules engine automatically.
+- **PII redaction at boundaries** — use `privacy_service.sanitize_for_persistence()` before DB writes, `sanitize_for_logging()` before log emission, `sanitize_for_llm()` before LLM calls, `sanitize_for_report()` before rendering. Placeholder is always `[REDACTED]`.
+- **Tag normalization** — use `tag_utils.normalize_tag()` for all tag ops. System tags (13 reserved) cannot be custom tags — validate with `validate_custom_tags()`.
+- **Knowledge connectors are pluggable** — new connectors implement `BaseConnector` in `services/connectors/base.py` and register in `services/connectors/registry.py`.
+- **RAG feature gating** — check `KNOWLEDGE_RAG_ENABLED` via Redis → DB → env var chain. Never bypass.
+- **Dual authentication** — `get_current_user_or_api_key()` in `core/deps.py` tries JWT first, then API key (SHA-256 hash). Use for endpoints accepting both methods.
+- **Email notifications are async** — dispatch via Celery tasks in `worker/tasks.py`, never send synchronously in request handlers.
+- **AI config resolution** — use `ai_config_resolver.py` for LLM config. Precedence: DB → secrets → env. Cached in Redis (60s TTL).
