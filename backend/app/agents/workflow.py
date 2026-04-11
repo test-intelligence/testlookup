@@ -738,12 +738,20 @@ _DEEP_PIPELINE_STAGES = [
     "ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis",
     "summary", "triage", "flaky_sentinel", "test_health", "release_risk",
 ]
+_LIVE_PIPELINE_STAGES = [
+    "ingestion", "summary",
+]
 
 
 async def _create_pipeline_run(
     pipeline_run_id: str, test_run_id: str, workflow_type: str
 ) -> None:
-    stages = _DEEP_PIPELINE_STAGES if workflow_type == "deep" else _PIPELINE_STAGES
+    if workflow_type == "deep":
+        stages = _DEEP_PIPELINE_STAGES
+    elif workflow_type == "live":
+        stages = _LIVE_PIPELINE_STAGES
+    else:
+        stages = _PIPELINE_STAGES
     async with AsyncSessionLocal() as db:
         db.add(AgentPipelineRun(
             id=pipeline_run_id,

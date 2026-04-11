@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
@@ -113,8 +114,15 @@ async def get_current_active_user(
 # ── CLI-5: Dual auth (JWT OR API Key) ────────────────────────────────────────
 
 
-async def _validate_api_key(db: AsyncSession, raw_key: str) -> User:
-    """Validate an API key from the X-API-Key header and return the owning user."""
+@dataclass
+class ApiKeyContext:
+    """Internal result of API key validation — carries project scope."""
+    user: User
+    project_id: uuid.UUID | None  # None for user-scoped keys
+
+
+async def _validate_api_key(db: AsyncSession, raw_key: str) -> ApiKeyContext:
+    """Validate an API key from the X-API-Key header and return context."""
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     result = await db.execute(
         select(ApiKey).where(ApiKey.key_hash == key_hash)
@@ -134,7 +142,11 @@ async def _validate_api_key(db: AsyncSession, raw_key: str) -> User:
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key owner account is inactive")
 
-    return user
+    # Update last_used_at
+    api_key.last_used_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return ApiKeyContext(user=user, project_id=api_key.project_id)
 
 
 async def get_current_user_or_api_key(
@@ -146,6 +158,8 @@ async def get_current_user_or_api_key(
 
     Tries JWT first (if Authorization header present), falls back to API key.
     Raises 401 if neither is provided or valid.
+    Returns User only (backward-compatible). Use ``get_api_key_context`` when
+    you need the bound project_id.
     """
     # Try JWT first
     if bearer_token:
@@ -156,7 +170,39 @@ async def get_current_user_or_api_key(
 
     # Try API key
     if x_api_key:
-        return await _validate_api_key(db, x_api_key)
+        ctx = await _validate_api_key(db, x_api_key)
+        return ctx.user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required — provide Authorization Bearer token or X-API-Key header",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def get_api_key_context(
+    db: AsyncSession = Depends(get_db),
+    bearer_token: Optional[str] = Depends(oauth2_scheme_optional),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+) -> tuple[User, uuid.UUID | None]:
+    """Authenticate via JWT or API key and return (user, bound_project_id).
+
+    Returns:
+        (user, None) for JWT auth or user-scoped API key.
+        (user, project_uuid) for project-scoped API key.
+
+    Callers must enforce the project_id constraint when non-None.
+    """
+    if bearer_token:
+        try:
+            user = await get_current_user(db=db, token=bearer_token)
+            return user, None
+        except HTTPException:
+            pass
+
+    if x_api_key:
+        ctx = await _validate_api_key(db, x_api_key)
+        return ctx.user, ctx.project_id
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

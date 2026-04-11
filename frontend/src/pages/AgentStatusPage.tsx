@@ -9,6 +9,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } from '@/hooks/useAgentRuns'
+import { useAIConfig } from '@/hooks/useAIConfig'
 import agentService from '@/services/agentService'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
@@ -153,7 +154,7 @@ function StatusIcon({ status }: { status: string }) {
   return <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />
 }
 
-function StageCard({ stage }: { stage: AgentStageResult }) {
+function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; showLLMMetrics?: boolean }) {
   const [open, setOpen] = useState(stage.status === 'failed')
   const meta = STAGE_META[stage.stage_name]
   if (!meta) return null
@@ -181,15 +182,15 @@ function StageCard({ stage }: { stage: AgentStageResult }) {
           <p className="text-xs text-[var(--color-text-muted)]">{meta.description}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {/* Phase 6: Token and cost badges */}
-          {stage.total_tokens != null && stage.total_tokens > 0 && (
+          {/* Phase 6: Token and cost badges (hidden in rules/ML mode) */}
+          {showLLMMetrics && stage.total_tokens != null && stage.total_tokens > 0 && (
             <span className="text-[10px] bg-indigo-900/30 text-indigo-400 px-1.5 py-0.5 rounded"
               title={`Input: ${stage.input_tokens ?? 0} / Output: ${stage.output_tokens ?? 0}`}
             >
               {stage.total_tokens.toLocaleString()} tok
             </span>
           )}
-          {stage.cost_usd != null && stage.cost_usd > 0 && (
+          {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
             <span className="text-[10px] bg-amber-900/30 text-amber-400 px-1.5 py-0.5 rounded">
               ${stage.cost_usd.toFixed(4)}
             </span>
@@ -223,19 +224,19 @@ function StageCard({ stage }: { stage: AgentStageResult }) {
           {/* Phase 6: Observability details */}
           {(stage.total_tokens || stage.llm_calls_count || stage.evidence_count) && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {stage.llm_calls_count != null && stage.llm_calls_count > 0 && (
+              {showLLMMetrics && stage.llm_calls_count != null && stage.llm_calls_count > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
                   <div className="text-sm font-bold text-[var(--color-text)]">{stage.llm_calls_count}</div>
                   <div className="text-[9px] text-[var(--color-text-muted)]">LLM Calls</div>
                 </div>
               )}
-              {stage.total_tokens != null && stage.total_tokens > 0 && (
+              {showLLMMetrics && stage.total_tokens != null && stage.total_tokens > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
                   <div className="text-sm font-bold text-indigo-400">{stage.total_tokens.toLocaleString()}</div>
                   <div className="text-[9px] text-[var(--color-text-muted)]">Tokens ({stage.input_tokens ?? 0}in/{stage.output_tokens ?? 0}out)</div>
                 </div>
               )}
-              {stage.cost_usd != null && stage.cost_usd > 0 && (
+              {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
                   <div className="text-sm font-bold text-amber-400">${stage.cost_usd.toFixed(4)}</div>
                   <div className="text-[9px] text-[var(--color-text-muted)]">Est. Cost</div>
@@ -359,11 +360,21 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
 
 // ── Main page ──────────────────────────────────────────────────
 
+const MODE_BADGE: Record<string, { label: string; colour: string }> = {
+  llm:   { label: 'LLM Mode',   colour: 'bg-indigo-900/30 text-indigo-400' },
+  ml:    { label: 'ML Mode',    colour: 'bg-cyan-900/30 text-cyan-400' },
+  rules: { label: 'Rules Mode', colour: 'bg-amber-900/30 text-amber-400' },
+  auto:  { label: 'Auto Mode',  colour: 'bg-emerald-900/30 text-emerald-400' },
+}
+
 export default function AgentStatusPage() {
   const { runId } = useParams<{ runId?: string }>()
   const [selectedPipeline, setSelectedPipeline] = useState<string | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [showSummary, setShowSummary] = useState(false)
+  const { data: aiConfig } = useAIConfig()
+  const analysisMode = aiConfig?.analysis_mode ?? 'auto'
+  const showLLMMetrics = analysisMode !== 'rules' && analysisMode !== 'ml'
 
   useProjectChangeRedirect('/agents', Boolean(runId))
   useProjectChangeReset(() => {
@@ -401,6 +412,11 @@ export default function AgentStatusPage() {
       <PageHeader
         title="Agent Pipeline"
         subtitle="Multi-agent test analysis: ingestion → anomaly detection → root-cause → summary → triage"
+        actions={
+          <span className={`text-xs px-2 py-1 rounded font-medium ${MODE_BADGE[analysisMode]?.colour ?? MODE_BADGE.auto.colour}`}>
+            {MODE_BADGE[analysisMode]?.label ?? 'Auto Mode'}
+          </span>
+        }
       />
 
       {/* Live runs */}
@@ -481,7 +497,7 @@ export default function AgentStatusPage() {
                 </summary>
                 <div className="mt-4 space-y-2">
                   {stages.map((stage: AgentStageResult) => (
-                    <StageCard key={stage.stage_name} stage={stage} />
+                    <StageCard key={stage.stage_name} stage={stage} showLLMMetrics={showLLMMetrics} />
                   ))}
                 </div>
               </details>

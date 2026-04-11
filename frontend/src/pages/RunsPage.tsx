@@ -33,6 +33,14 @@ interface TestRun {
   release_id?: string
 }
 
+const DAYS_OPTIONS = [
+  { label: 'Last 6 days', value: 6 },
+  { label: 'Last 14 days', value: 14 },
+  { label: 'Last 30 days', value: 30 },
+  { label: 'Last 90 days', value: 90 },
+  { label: 'All time', value: 0 },
+]
+
 export default function RunsPage() {
   const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
@@ -40,8 +48,9 @@ export default function RunsPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState('')
+  const [days, setDays] = useState(6)
 
-  const { data, isLoading } = useRuns({ page, size: 20, ...(statusFilter && { status: statusFilter }) })
+  const { data, isLoading } = useRuns({ page, size: 20, days, ...(statusFilter && { status: statusFilter }) })
   const runs = (data?.items ?? []) as TestRun[]
   const { sorted: sortedRuns, sortKey, sortDir, toggleSort } = useTableSort(runs, 'created_at', 'desc')
   const workflow = useMemo(() => buildRunsWorkflow(runs, statusFilter, isAllProjects), [runs, statusFilter, isAllProjects])
@@ -64,16 +73,27 @@ export default function RunsPage() {
         title="Test Runs"
         subtitle={`Jenkins builds for ${projectLabel}`}
         actions={
-          <select
-            className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
-            value={statusFilter}
-            onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
-          >
-            <option value="">All statuses</option>
-            <option value="FAILED">Failed</option>
-            <option value="PASSED">Passed</option>
-            <option value="IN_PROGRESS">In Progress</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+              value={days}
+              onChange={e => { setDays(Number(e.target.value)); setPage(1) }}
+            >
+              {DAYS_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <select
+              className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
+              value={statusFilter}
+              onChange={e => { setStatusFilter(e.target.value); setPage(1) }}
+            >
+              <option value="">All statuses</option>
+              <option value="FAILED">Failed</option>
+              <option value="PASSED">Passed</option>
+              <option value="IN_PROGRESS">In Progress</option>
+            </select>
+          </div>
         }
       />
 
@@ -102,6 +122,7 @@ export default function RunsPage() {
               <thead className="border-b border-[var(--color-border)]">
                 <tr>
                   {isAllProjects && <SortableHeader label="Project" sortKey="project_name" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />}
+                  <SortableHeader label="Run ID" sortKey="id" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableHeader label="Build" sortKey="build_number" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableHeader label="Job" sortKey="jenkins_job" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableHeader label="Branch" sortKey="branch" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -134,6 +155,7 @@ export default function RunsPage() {
                         {run.project_name ?? run.project_id?.slice(0, 8) ?? '—'}
                       </td>
                     )}
+                    <td className="td font-mono text-[var(--color-text-secondary)] text-xs" title={run.id}>{run.id.slice(0, 8)}</td>
                     <td className="td font-mono text-[var(--color-text)] font-medium">#{run.build_number}</td>
                     <td className="td text-[var(--color-text-muted)] truncate max-w-[160px]">{run.jenkins_job ?? '—'}</td>
                     <td className="td text-[var(--color-text-muted)]">{run.branch ?? '—'}</td>

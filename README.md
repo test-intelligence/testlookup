@@ -391,6 +391,241 @@ Add to your MCP client configuration (e.g., Claude Desktop, Cursor, etc.):
 
 Then ask the AI Assistant: *"List all QA projects"* or *"Check release readiness for project-alpha"*.
 
+### 6. Ingest Test Results
+
+There are three ways to send test results to TestLookup: **live streaming** (real-time during execution), **file upload** (post-execution), and **API batch** (programmatic). All methods require a project UUID — find it in the Projects page or via the API.
+
+#### Option A — Live streaming with the Python SDK (pytest)
+
+The fastest path: install the reporter, add a `testlookup.yaml` to your project, and run pytest normally.
+
+**1. Install the SDK**
+
+```bash
+pip install httpx pyyaml
+# Copy the reporter into your project (or install from the SDK download page)
+cp client/testlookup_reporter.py your_project/
+```
+
+**2. Create `testlookup.yaml` in your project root**
+
+```yaml
+server:
+  url: "http://localhost:8000"
+
+auth:
+  api_key: "tl_your_api_key"     # Generate via Dashboard > API Keys
+
+project:
+  id: "your-project-uuid"
+
+ci:
+  build_number: ""               # Set in CI, or leave blank for auto-generated
+  branch: ""                     # Optional: git branch name
+  commit_hash: ""                # Optional: git SHA
+```
+
+> **Tip:** Use environment variables for secrets instead of committing them:
+> `TESTLOOKUP_URL`, `TESTLOOKUP_API_KEY`, `TESTLOOKUP_PROJECT_ID`, `TESTLOOKUP_BUILD`
+
+**3. Run pytest**
+
+```bash
+# With testlookup.yaml in place — zero flags needed:
+pytest
+
+# Or pass config via CLI flags (overrides testlookup.yaml):
+pytest --testlookup-url http://localhost:8000 \
+       --testlookup-token <jwt-or-api-key> \
+       --testlookup-project <project-uuid> \
+       --testlookup-build build-42
+```
+
+Results stream to the server in real-time and appear on the Live Execution dashboard.
+
+#### Option A′ — Live streaming with the Python SDK (programmatic)
+
+For non-pytest frameworks or custom scripts:
+
+```python
+import asyncio
+from testlookup_reporter import TestLookupReporter
+
+async def main():
+    # Config resolved from testlookup.yaml / env vars automatically
+    reporter = TestLookupReporter()
+
+    # Or pass explicitly:
+    # reporter = TestLookupReporter(
+    #     base_url="http://localhost:8000",
+    #     token="<jwt-or-api-key>",
+    #     project_id="<project-uuid>",
+    # )
+
+    async with reporter.session(build_number="build-42", branch="main") as session:
+        await session.record("test_login",  "PASSED",  120)
+        await session.record("test_checkout", "FAILED", 340,
+                             error="AssertionError: expected 200",
+                             stack_trace="...",
+                             suite_name="auth_tests",
+                             tags=["smoke", "critical"])
+        await session.log("Environment: staging", level="INFO")
+        await session.metric("memory_mb", 512.3, unit="MB")
+
+    # Session auto-closes → flushes remaining events → triggers AI analysis
+    await reporter.aclose()
+
+asyncio.run(main())
+```
+
+#### Option B — Live streaming with the Java SDK (JUnit 5 / TestNG)
+
+**1. Add the fat JAR to your project**
+
+```bash
+# Build it (once):
+make build-java-sdk            # requires Maven + JDK 11+
+# Or without local Maven:
+make build-java-sdk-docker
+
+# Output: client/java/target/testlookup-reporter-1.0.0-all.jar
+```
+
+Add as a dependency (Maven):
+```xml
+<dependency>
+    <groupId>io.testlookup</groupId>
+    <artifactId>testlookup-reporter</artifactId>
+    <version>1.0.0</version>
+    <classifier>all</classifier>
+    <scope>test</scope>
+</dependency>
+```
+
+**2. Configure via `testlookup.yaml` or environment variables**
+
+Place `testlookup.yaml` at your project root (same format as Python above), or set environment variables / JVM system properties:
+
+```bash
+# Environment variables (CI-friendly):
+export TESTLOOKUP_URL=http://localhost:8000
+export TESTLOOKUP_API_KEY=tl_your_api_key
+export TESTLOOKUP_PROJECT_ID=your-project-uuid
+export TESTLOOKUP_BUILD=$BUILD_NUMBER
+
+# Or JVM system properties:
+mvn test -Dtestlookup.url=http://localhost:8000 \
+         -Dtestlookup.apiKey=tl_your_api_key \
+         -Dtestlookup.projectId=your-project-uuid \
+         -Dtestlookup.build=$BUILD_NUMBER
+```
+
+**3. Run tests — auto-discovery handles the rest**
+
+The fat JAR includes `META-INF/services/` descriptors that auto-register:
+- **JUnit 5:** `TestLookupExtension` — activates via ServiceLoader, no `@ExtendWith` needed
+- **TestNG:** `TestLookupListener` — activates via ServiceLoader, no `testng.xml` changes needed
+
+```bash
+mvn test     # JUnit 5 or TestNG — reporter activates automatically
+```
+
+**4. Programmatic usage (optional)**
+
+```java
+TestLookupReporter reporter = new TestLookupReporter.Builder()
+    .baseUrl("http://localhost:8000")
+    .token("<jwt-or-api-key>")
+    .projectId("<project-uuid>")
+    .build();
+
+try (TestLookupReporter.LiveSession session = reporter.startSession(
+        TestLookupReporter.SessionOptions.builder()
+            .buildNumber("build-42")
+            .branch("main")
+            .build())) {
+
+    session.record("loginTest",    TestLookupReporter.TestStatus.PASSED, 120);
+    session.record("checkoutTest", TestLookupReporter.TestStatus.FAILED, 340,
+        TestLookupReporter.RecordOptions.builder()
+            .error("AssertionError: expected 200")
+            .suiteName("AuthTests")
+            .tags(List.of("smoke", "critical"))
+            .build());
+    session.log("Environment: staging", "INFO");
+    session.metric("memory_mb", 512.3, "MB");
+}
+// session.close() called automatically → triggers AI analysis
+```
+
+#### Option C — File upload (post-execution)
+
+Upload JUnit XML, TestNG XML, or Allure JSON files after tests complete:
+
+```bash
+# Single file
+testlookup upload file results.xml \
+    --project <project-uuid> \
+    --build build-42 \
+    --branch main
+
+# Entire directory (uploads all .xml and .json files)
+testlookup upload dir ./target/surefire-reports \
+    --project <project-uuid> \
+    --build build-42
+
+# Or via the API directly:
+curl -X POST http://localhost:8000/api/v1/ingest/file \
+    -H "Authorization: Bearer <token>" \
+    -F "file=@results.xml" \
+    -F "project_id=<project-uuid>" \
+    -F "build_number=build-42" \
+    -F "format=auto"
+```
+
+Supported formats: `junit` (JUnit/Surefire XML), `testng` (TestNG XML), `allure` (Allure JSON). Use `format=auto` (default) for automatic detection.
+
+#### Option D — JSON batch (programmatic)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ingest \
+    -H "Authorization: Bearer <token>" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "project_id": "<project-uuid>",
+        "build_number": "build-42",
+        "results": [
+            {"test_name": "test_login", "status": "PASSED", "duration_ms": 120},
+            {"test_name": "test_checkout", "status": "FAILED", "duration_ms": 340,
+             "error_message": "AssertionError: expected 200"}
+        ]
+    }'
+```
+
+Returns `202 Accepted` with `run_id` and `task_id` for tracking.
+
+#### Configuration reference
+
+All SDKs share the same configuration model. See [`client/testlookup.yaml.example`](client/testlookup.yaml.example) for the full annotated template.
+
+| Source | Precedence | Best for |
+|--------|-----------|----------|
+| Constructor args / Builder | Highest | Tests, one-off scripts |
+| Environment variables | High | CI/CD pipelines |
+| `testlookup.yaml` | Medium | Project defaults (commit non-secrets to repo) |
+| Built-in defaults | Lowest | Batch size, intervals |
+
+| Environment Variable | Purpose |
+|---------------------|---------|
+| `TESTLOOKUP_URL` | Server URL |
+| `TESTLOOKUP_TOKEN` | JWT access token |
+| `TESTLOOKUP_API_KEY` | API key (preferred for CI/CD) |
+| `TESTLOOKUP_PROJECT_ID` | Project UUID |
+| `TESTLOOKUP_BUILD` | Build / pipeline number |
+| `TESTLOOKUP_BRANCH` | Git branch |
+| `TESTLOOKUP_COMMIT` | Git commit SHA |
+| `TESTLOOKUP_UPLOAD_MODE` | `live` (real-time) or `offline` (batch at end) |
+
 ## Project Structure
 
 ```
@@ -1285,7 +1520,7 @@ Register external knowledge sources (Jira, Confluence, URLs, documents), sync an
 
 ### 13. CLI Tool
 
-Full command-line interface with 10 command groups, multi-profile authentication (JWT + API keys), and Rich terminal formatting.
+Full command-line interface with 11 command groups, multi-profile authentication (JWT + API keys), and Rich terminal formatting. Includes `upload` command for file and directory ingestion.
 
 **New directory:** `cli/testlookup_cli/`
 **Dependencies:** Typer, Rich, httpx, platformdirs, pyyaml
@@ -1352,6 +1587,18 @@ Client SDK download endpoints for Python, Java, JavaScript, and Go with interact
 
 **New router:** `sdk.py` — public endpoints for SDK listing and download
 **New frontend:** Client SDK Guide with language tabs, code snippets, copy buttons
+
+### 26. Unified Ingestion API & Client SDK Configuration
+
+Consolidated test data ingestion via `POST /api/v1/ingest` (JSON batch) and `POST /api/v1/ingest/file` (file upload: JUnit XML, TestNG XML, Allure JSON). Both return 202 Accepted with async Celery processing. Post-ingestion pipeline handles run creation, test case upsert, suite sync, auto-tagging, and AI analysis triggering.
+
+All client SDKs (Python, Java) share a unified `testlookup.yaml` configuration model with consistent environment variable support (`TESTLOOKUP_URL`, `TESTLOOKUP_API_KEY`, etc.). Java SDK uses `ConfigLoader` with builder pattern, auto-discovers JUnit 5 / TestNG listeners via `META-INF/services/` ServiceLoader. Fat JAR built via Maven shade plugin with relocated Jackson.
+
+**New router:** `ingest.py` — unified ingestion endpoint (JSON batch + file upload)
+**New service:** `ingestion_pipeline.py` — shared pipeline: create run → upsert cases → finalize
+**New CLI commands:** `testlookup upload file` and `testlookup upload dir`
+**New Java classes:** `ConfigLoader.java`, enhanced `TestLookupReporter.java` (builder + config), `TestLookupExtension.java` (JUnit 5), `TestLookupListener.java` (TestNG)
+**New config:** `client/testlookup.yaml.example` — annotated SDK configuration template
 
 ### 23. Seed Data Management (Dev)
 

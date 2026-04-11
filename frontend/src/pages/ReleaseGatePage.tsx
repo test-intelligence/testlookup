@@ -12,6 +12,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import CriticalityMatrix from '@/components/ai/CriticalityMatrix'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
+import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
 import { releaseCouncilService } from '@/services/releaseCouncilService'
 import type { OverrideAuditEntry } from '@/services/releaseCouncilService'
 import { useRuns } from '@/hooks/useRuns'
@@ -97,6 +98,8 @@ export default function ReleaseGatePage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { council: decision, isLoading, isError, refresh } = useReleaseCouncil(runId ?? null)
+  const { data: aiConfig } = useAIConfig()
+  const llmMode = isLLMAvailable(aiConfig)
   const [overrideMode, setOverrideMode] = useState(false)
   const [overrideRec, setOverrideRec] = useState<Recommendation>('GO')
   const [overrideReason, setOverrideReason] = useState('')
@@ -434,7 +437,7 @@ export default function ReleaseGatePage() {
       {/* Reasoning */}
       {decision.reasoning && (
         <div className="card">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-2">AI Reasoning</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-2">{llmMode ? 'AI Reasoning' : 'Decision Rationale'}</h3>
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">{decision.reasoning}</p>
         </div>
       )}

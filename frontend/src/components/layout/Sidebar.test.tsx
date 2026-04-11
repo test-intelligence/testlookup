@@ -40,7 +40,7 @@ describe('Sidebar', () => {
     // Group headers are always visible
     expect(screen.getByRole('link', { name: /Dashboard/ })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Testing/ })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /AI Intelligence/ })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /AI Reports/ })).toBeInTheDocument()
   })
 
   it('shows Management group for admin/QA Lead users', () => {

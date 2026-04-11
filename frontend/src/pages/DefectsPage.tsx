@@ -47,6 +47,7 @@ interface Defect {
   resolved_at?: string
   test_name: string
   suite_name?: string
+  release_name?: string
 }
 
 export default function DefectsPage() {
@@ -167,6 +168,7 @@ export default function DefectsPage() {
                   <SortableHeader label="Category" sortKey="failure_category" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableHeader label="Jira Ticket" sortKey="jira_ticket_id" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableHeader label="Status" sortKey="resolution_status" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableHeader label="Release" sortKey="release_name" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableHeader label="AI Confidence" sortKey="ai_confidence_score" currentKey={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
                   <SortableHeader label="Created" sortKey="created_at" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableHeader label="Resolved" sortKey="resolved_at" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -210,6 +212,15 @@ export default function DefectsPage() {
                       )}>
                         {d.resolution_status.replace(/_/g, ' ')}
                       </span>
+                    </td>
+                    <td className="td">
+                      {d.release_name ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-violet-900/40 text-violet-300 font-medium">
+                          {d.release_name}
+                        </span>
+                      ) : (
+                        <span className="text-[var(--color-text-muted)]">—</span>
+                      )}
                     </td>
                     <td className="td text-right tabular-nums">
                       {d.ai_confidence_score != null ? (

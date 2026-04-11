@@ -31,11 +31,11 @@ import java.util.logging.Logger;
  *   <li>Thread-safe — safe to call from parallel test runners</li>
  * </ul>
  *
- * <h3>Quick start</h3>
+ * <h3>Quick start (API key — recommended for CI/CD)</h3>
  * <pre>{@code
  * TestLookupReporter reporter = new TestLookupReporter.Builder()
  *     .baseUrl("http://localhost:8000")
- *     .token("<jwt>")
+ *     .apiKey("qai_...")
  *     .projectId("<uuid>")
  *     .build();
  *
@@ -47,6 +47,28 @@ import java.util.logging.Logger;
  *         RecordOptions.builder().error("AssertionError: expected 200").build());
  * }
  * // session.close() is called automatically; triggers AI analysis pipeline
+ * }</pre>
+ *
+ * <h3>Quick start (JWT token)</h3>
+ * <pre>{@code
+ * TestLookupReporter reporter = new TestLookupReporter.Builder()
+ *     .baseUrl("http://localhost:8000")
+ *     .token("<jwt>")
+ *     .projectId("<uuid>")
+ *     .build();
+ * }</pre>
+ *
+ * <h3>Zero-code TestNG integration</h3>
+ * <p>Add the listener to your {@code testng.xml} with suite parameters — no Java code needed:
+ * <pre>{@code
+ * <suite name="My Suite">
+ *   <parameter name="testlookup.url" value="http://localhost:8000"/>
+ *   <parameter name="testlookup.apiKey" value="qai_..."/>
+ *   <parameter name="testlookup.projectId" value="your-project-uuid"/>
+ *   <listeners>
+ *     <listener class-name="io.testlookup.testng.TestLookupListener"/>
+ *   </listeners>
+ * </suite>
  * }</pre>
  *
  * <h3>Login helper</h3>
@@ -69,7 +91,8 @@ public class TestLookupReporter {
     // ── Builder ──────────────────────────────────────────────────────────────
 
     private final String     baseUrl;
-    private final String     token;
+    private final String     token;      // JWT Bearer token (mutually exclusive with apiKey)
+    private final String     apiKey;     // X-API-Key header value
     private final String     projectId;
     private final String     clientName;
     private final String     framework;
@@ -82,6 +105,7 @@ public class TestLookupReporter {
     private TestLookupReporter(Builder b) {
         this.baseUrl        = b.baseUrl.replaceAll("/$", "");
         this.token          = b.token;
+        this.apiKey         = b.apiKey;
         this.projectId      = b.projectId;
         this.clientName     = b.clientName != null ? b.clientName : getHostname();
         this.framework      = b.framework  != null ? b.framework  : "java";
@@ -96,6 +120,7 @@ public class TestLookupReporter {
     public static class Builder {
         private String baseUrl;
         private String token;
+        private String apiKey;
         private String projectId;
         private String clientName;
         private String framework;
@@ -103,13 +128,42 @@ public class TestLookupReporter {
         private int    batchIntervalMs;
 
         public Builder baseUrl(String v)         { this.baseUrl        = v; return this; }
+        /** Set JWT Bearer token for authentication. Mutually exclusive with {@link #apiKey}. */
         public Builder token(String v)           { this.token          = v; return this; }
+        /** Set API key for authentication (sent as X-API-Key header). Mutually exclusive with {@link #token}. */
+        public Builder apiKey(String v)          { this.apiKey         = v; return this; }
         public Builder projectId(String v)       { this.projectId      = v; return this; }
         public Builder clientName(String v)      { this.clientName     = v; return this; }
         public Builder framework(String v)       { this.framework      = v; return this; }
         public Builder batchSize(int v)          { this.batchSize      = v; return this; }
         public Builder batchIntervalMs(int v)    { this.batchIntervalMs = v; return this; }
-        public TestLookupReporter build()         { return new TestLookupReporter(this); }
+
+        /**
+         * Build the reporter, resolving unset fields from testlookup.yaml and
+         * environment variables. Explicit Builder values always take precedence.
+         */
+        public TestLookupReporter build() {
+            Map<String, Object> cfg = ConfigLoader.load();
+            if (this.baseUrl == null)    this.baseUrl    = ConfigLoader.getString(cfg, "server.url", null);
+            if (this.token == null)      this.token      = ConfigLoader.getString(cfg, "auth.token", null);
+            if (this.apiKey == null)     this.apiKey     = ConfigLoader.getString(cfg, "auth.api_key", null);
+            if (this.projectId == null)  this.projectId  = ConfigLoader.getString(cfg, "project.id", null);
+            if (this.clientName == null) this.clientName  = ConfigLoader.getString(cfg, "reporting.client_name", null);
+            if (this.framework == null)  this.framework   = ConfigLoader.getString(cfg, "reporting.framework", null);
+            if (this.batchSize <= 0)     this.batchSize   = ConfigLoader.getInt(cfg, "reporting.batch_size", 0);
+            if (this.batchIntervalMs<=0) this.batchIntervalMs = ConfigLoader.getInt(cfg, "reporting.batch_interval_ms", 0);
+
+            boolean hasAuth = this.token != null || this.apiKey != null;
+            if (this.baseUrl == null || !hasAuth || this.projectId == null) {
+                throw new IllegalStateException(
+                    "baseUrl, token or apiKey, and projectId are required. "
+                    + "Provide them via Builder, testlookup.yaml, env vars "
+                    + "(TESTLOOKUP_URL, TESTLOOKUP_TOKEN or TESTLOOKUP_API_KEY, TESTLOOKUP_PROJECT_ID), "
+                    + "or JVM properties (-Dtestlookup.url, -Dtestlookup.token or -Dtestlookup.apiKey, -Dtestlookup.projectId)."
+                );
+            }
+            return new TestLookupReporter(this);
+        }
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -127,7 +181,6 @@ public class TestLookupReporter {
         payload.put("machine_id",  opts.machineId != null ? opts.machineId : getHostname());
 
         if (opts.buildNumber != null) payload.put("build_number", opts.buildNumber);
-        if (opts.runId       != null) payload.put("run_id",       opts.runId);
         if (opts.branch      != null) payload.put("branch",       opts.branch);
         if (opts.commitHash  != null) payload.put("commit_hash",  opts.commitHash);
         if (opts.totalTests  >= 0)    payload.put("total_tests",  opts.totalTests);
@@ -136,7 +189,7 @@ public class TestLookupReporter {
         try { body = MAPPER.writeValueAsString(payload); }
         catch (Exception e) { throw new TestLookupException("Serialization error", e); }
 
-        String resp = postJson(baseUrl + "/api/v1/stream/sessions", body, token);
+        String resp = postJson(baseUrl + "/api/v1/stream/sessions", body);
 
         try {
             var node = MAPPER.readTree(resp);
@@ -161,14 +214,13 @@ public class TestLookupReporter {
      * Called automatically by {@link LiveSession#close()}.
      */
     public void closeSession(String sessionId) {
-        HttpRequest req = HttpRequest.newBuilder()
+        HttpRequest.Builder rb = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + "/api/v1/stream/sessions/" + sessionId))
-            .header("Authorization", "Bearer " + token)
             .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SEC))
-            .DELETE()
-            .build();
+            .DELETE();
+        applyAuth(rb);
         try {
-            http.send(req, HttpResponse.BodyHandlers.discarding());
+            http.send(rb.build(), HttpResponse.BodyHandlers.discarding());
             LOG.info("TestLookup: session closed: " + sessionId);
         } catch (Exception e) {
             LOG.warning("TestLookup: failed to close session " + sessionId + ": " + e.getMessage());
@@ -221,16 +273,15 @@ public class TestLookupReporter {
         return resp.body();
     }
 
-    private String postJson(String url, String body, String bearerToken) throws TestLookupException {
-        HttpRequest req = HttpRequest.newBuilder()
+    private String postJson(String url, String body) throws TestLookupException {
+        HttpRequest.Builder rb = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .header("Content-Type", "application/json")
-            .header("Authorization", "Bearer " + bearerToken)
             .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SEC))
-            .POST(HttpRequest.BodyPublishers.ofString(body))
-            .build();
+            .POST(HttpRequest.BodyPublishers.ofString(body));
+        applyAuth(rb);
         try {
-            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = http.send(rb.build(), HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() < 200 || resp.statusCode() >= 300)
                 throw new TestLookupException("HTTP " + resp.statusCode() + ": " + resp.body());
             return resp.body();
@@ -238,6 +289,15 @@ public class TestLookupReporter {
             throw e;
         } catch (Exception e) {
             throw new TestLookupException("Request failed: " + url, e);
+        }
+    }
+
+    /** Apply the correct auth header: X-API-Key if apiKey is set, else Authorization Bearer. */
+    private void applyAuth(HttpRequest.Builder rb) {
+        if (apiKey != null) {
+            rb.header("X-API-Key", apiKey);
+        } else if (token != null) {
+            rb.header("Authorization", "Bearer " + token);
         }
     }
 
@@ -262,7 +322,6 @@ public class TestLookupReporter {
 
     public static class SessionOptions {
         public final String buildNumber;
-        public final String runId;
         public final String branch;
         public final String commitHash;
         public final String machineId;
@@ -270,7 +329,6 @@ public class TestLookupReporter {
 
         private SessionOptions(Builder b) {
             this.buildNumber = b.buildNumber;
-            this.runId       = b.runId;
             this.branch      = b.branch;
             this.commitHash  = b.commitHash;
             this.machineId   = b.machineId;
@@ -281,14 +339,12 @@ public class TestLookupReporter {
 
         public static class Builder {
             private String buildNumber;
-            private String runId;
             private String branch;
             private String commitHash;
             private String machineId;
             private int    totalTests = -1;
 
             public Builder buildNumber(String v)  { this.buildNumber = v; return this; }
-            public Builder runId(String v)        { this.runId       = v; return this; }
             public Builder branch(String v)       { this.branch      = v; return this; }
             public Builder commitHash(String v)   { this.commitHash  = v; return this; }
             public Builder machineId(String v)    { this.machineId   = v; return this; }

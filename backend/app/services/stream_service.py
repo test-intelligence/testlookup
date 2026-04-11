@@ -42,7 +42,7 @@ async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
         raise HTTPException(status_code=404, detail="Project not found")
 
     session_id = str(uuid.uuid4())
-    run_id = payload.run_id or session_id
+    run_id = session_id
     session_token = secrets.token_urlsafe(32)
 
     session = LiveSession(
@@ -191,7 +191,7 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
                 "test_run_id": session.run_id,
                 "project_id": str(session.project_id),
                 "build_number": session.build_number or session_id,
-                "workflow_type": "live",
+                "workflow_type": "offline",
             },
             queue="ai_analysis",
             priority=6,
@@ -204,7 +204,7 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
 
 async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
     import json as _json
-    from app.streams import LIVE_TESTCASES_KEY
+    from app.streams import LIVE_TESTCASES_KEY, LIVE_STATE_KEY
 
     redis = get_redis()
     stored_session_id = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
@@ -220,7 +220,15 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
     # reads.  This must happen here — synchronously in the HTTP handler — not in the
     # async stream consumer, because close_session() / persist_live_session can be
     # dispatched before the consumer processes the stream (race condition).
+    #
+    # Counter increments (HINCRBY) also happen here so the live state is
+    # immediately accurate.  The async consumer only broadcasts + queues analysis.
     list_key = LIVE_TESTCASES_KEY.format(run_id=batch.run_id)
+    state_key = LIVE_STATE_KEY.format(run_id=batch.run_id)
+    counter_map = {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "BROKEN": "broken"}
+    now = datetime.now(timezone.utc).isoformat()
+    last_test_name = ""
+
     pipe = redis.pipeline()
     for event in batch.events:
         event_dict: dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
@@ -237,7 +245,21 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
                 "timestamp_ms":  event_dict.get("timestamp_ms"),
             })
             pipe.rpush(list_key, entry)
+
+            # Increment the appropriate counter in the live run state hash
+            status_upper = (event_dict.get("status") or "UNKNOWN").upper()
+            counter_field = counter_map.get(status_upper)
+            if counter_field:
+                pipe.hincrby(state_key, counter_field, 1)
+            last_test_name = event_dict.get("test_name") or last_test_name
+
     pipe.expire(list_key, 90_000)  # 25 h TTL — same as consumer's buffer
+    # Update metadata on the live state hash
+    if last_test_name:
+        pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name})
+    else:
+        pipe.hset(state_key, "last_event_at", now)
+    pipe.expire(state_key, 86_400)
     await pipe.execute()
 
     await redis.expire(SESSION_TOKEN_KEY.format(token=x_session_token), SESSION_TTL)

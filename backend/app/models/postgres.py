@@ -1440,11 +1440,20 @@ class ProjectMember(Base):
 
 
 class ApiKey(Base):
-    """Scoped personal access token (PAT) for CI/CD and API access."""
+    """Scoped personal access token (PAT) for CI/CD and API access.
+
+    When ``project_id`` is NULL the key is **user-scoped** and inherits the
+    owning user's project permissions.  When set, the key is
+    **project-scoped** — requests using this key are restricted to the
+    specified project.
+    """
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True,
+    )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     key_hint: Mapped[str] = mapped_column(String(12), nullable=False)  # first 8 chars shown in UI

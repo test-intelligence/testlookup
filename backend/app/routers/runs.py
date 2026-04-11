@@ -22,18 +22,21 @@ async def list_runs(
     size: int = Query(20, ge=1, le=100),
     status: str | None = None,
     release_id: str | None = None,
+    days: int | None = Query(6, ge=0, le=365, description="Show runs from last N days (0 = all time)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # days=0 means no date filter (all time)
+    effective_days = days if days and days > 0 else None
     # Filter by accessible projects when no explicit project_id
     if not project_id:
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None and not accessible:
             return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
         # Pass accessible set to service for filtering (None = admin, no filter)
-        items, total, pages = await list_project_runs(db, project_id, page, size, status, release_id, accessible_project_ids=accessible)
+        items, total, pages = await list_project_runs(db, project_id, page, size, status, release_id, accessible_project_ids=accessible, days=effective_days)
     else:
-        items, total, pages = await list_project_runs(db, project_id, page, size, status, release_id)
+        items, total, pages = await list_project_runs(db, project_id, page, size, status, release_id, days=effective_days)
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
 
 

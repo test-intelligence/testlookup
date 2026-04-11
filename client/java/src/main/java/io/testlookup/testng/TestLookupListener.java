@@ -1,5 +1,6 @@
 package io.testlookup.testng;
 
+import io.testlookup.ConfigLoader;
 import io.testlookup.TestLookupReporter;
 import io.testlookup.TestLookupReporter.*;
 
@@ -10,11 +11,14 @@ import java.util.logging.Logger;
 /**
  * TestNG Listener — streams test results to TestLookup in real-time.
  *
- * <h3>Usage (testng.xml)</h3>
+ * <h3>Simplest usage (testng.xml with suite parameters)</h3>
  * <pre>{@code
  * <suite name="My Suite">
+ *   <parameter name="testlookup.url" value="http://localhost:8000"/>
+ *   <parameter name="testlookup.apiKey" value="qai_..."/>
+ *   <parameter name="testlookup.projectId" value="your-project-uuid"/>
  *   <listeners>
- *     <listener class-name="ai.testlookup.testng.TestLookupListener"/>
+ *     <listener class-name="io.testlookup.testng.TestLookupListener"/>
  *   </listeners>
  *   <test name="API Tests">
  *     <classes>
@@ -24,27 +28,35 @@ import java.util.logging.Logger;
  * </suite>
  * }</pre>
  *
- * <h3>Programmatic registration</h3>
- * <pre>{@code
- * TestNG testng = new TestNG();
- * testng.addListener(new TestLookupListener());
- * testng.setTestClasses(new Class[]{ MyTest.class });
- * testng.run();
- * }</pre>
- *
- * <h3>Configuration via environment variables</h3>
+ * <h3>Optional suite parameters</h3>
  * <pre>
- *   TESTLOOKUP_URL          Server base URL     (required)
- *   TESTLOOKUP_TOKEN        JWT access token    (required)
- *   TESTLOOKUP_PROJECT_ID   Target project UUID (required)
- *   TESTLOOKUP_BUILD        CI build number     (optional)
- *   TESTLOOKUP_BRANCH       Git branch name     (optional)
- *   TESTLOOKUP_COMMIT       Git commit SHA      (optional)
+ *   testlookup.url          Server base URL       (required)
+ *   testlookup.apiKey       API key               (required — or use testlookup.token)
+ *   testlookup.token        JWT access token       (alternative to apiKey)
+ *   testlookup.projectId    Target project UUID   (required)
+ *   testlookup.build        CI build number       (optional)
+ *   testlookup.branch       Git branch name       (optional)
+ *   testlookup.commit       Git commit SHA        (optional)
  * </pre>
  *
- * <h3>Configuration via JVM system properties (takes precedence)</h3>
+ * <h3>Configuration precedence</h3>
+ * Suite parameters &gt; JVM system properties &gt; Environment variables &gt; testlookup.yaml
+ *
+ * <h3>Environment variable fallbacks</h3>
+ * <pre>
+ *   TESTLOOKUP_URL          Server base URL
+ *   TESTLOOKUP_API_KEY      API key
+ *   TESTLOOKUP_TOKEN        JWT access token
+ *   TESTLOOKUP_PROJECT_ID   Target project UUID
+ *   TESTLOOKUP_BUILD        CI build number
+ *   TESTLOOKUP_BRANCH       Git branch name
+ *   TESTLOOKUP_COMMIT       Git commit SHA
+ * </pre>
+ *
+ * <h3>JVM system properties (takes precedence over env vars)</h3>
  * <pre>
  *   -Dtestlookup.url=...
+ *   -Dtestlookup.apiKey=...
  *   -Dtestlookup.token=...
  *   -Dtestlookup.projectId=...
  *   -Dtestlookup.build=...
@@ -61,34 +73,45 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
     @Override
     public void onStart(ISuite suite) {
-        String url       = prop("testlookup.url",       "TESTLOOKUP_URL");
-        String token     = prop("testlookup.token",     "TESTLOOKUP_TOKEN");
-        String projectId = prop("testlookup.projectId", "TESTLOOKUP_PROJECT_ID");
+        // Resolve config: suite params > system props > env vars > testlookup.yaml
+        String url       = resolve(suite, "testlookup.url",       "TESTLOOKUP_URL",        null);
+        String apiKey    = resolve(suite, "testlookup.apiKey",    "TESTLOOKUP_API_KEY",    null);
+        String token     = resolve(suite, "testlookup.token",     "TESTLOOKUP_TOKEN",      null);
+        String projectId = resolve(suite, "testlookup.projectId", "TESTLOOKUP_PROJECT_ID", null);
 
-        if (url.isEmpty() || token.isEmpty() || projectId.isEmpty()) {
-            LOG.warning("TestLookupListener: disabled — missing URL, token, or projectId");
-            return;
+        // Skip silently if essential config is missing
+        boolean hasAuth = apiKey != null || token != null;
+        if (url == null || !hasAuth || projectId == null) {
+            if (!ConfigLoader.isConfigured()) {
+                LOG.fine("TestLookupListener: no configuration found — skipping");
+                return;
+            }
         }
 
-        reporter = new TestLookupReporter.Builder()
-            .baseUrl(url)
-            .token(token)
-            .projectId(projectId)
-            .framework("testng")
-            .build();
-
         try {
+            TestLookupReporter.Builder builder = new TestLookupReporter.Builder()
+                .framework("testng");
+
+            // Apply suite-level overrides (Builder values take precedence over ConfigLoader)
+            if (url != null)       builder.baseUrl(url);
+            if (apiKey != null)    builder.apiKey(apiKey);
+            if (token != null)     builder.token(token);
+            if (projectId != null) builder.projectId(projectId);
+
+            reporter = builder.build();
+
             session = reporter.startSession(
                 SessionOptions.builder()
-                    .buildNumber(prop("testlookup.build",  "TESTLOOKUP_BUILD",
+                    .buildNumber(resolve(suite, "testlookup.build",  "TESTLOOKUP_BUILD",
                                     "testng-" + System.currentTimeMillis()))
-                    .branch(     nullable("testlookup.branch", "TESTLOOKUP_BRANCH"))
-                    .commitHash( nullable("testlookup.commit", "TESTLOOKUP_COMMIT"))
+                    .branch(     resolve(suite, "testlookup.branch", "TESTLOOKUP_BRANCH", null))
+                    .commitHash( resolve(suite, "testlookup.commit", "TESTLOOKUP_COMMIT", null))
                     .build()
             );
             LOG.info("TestLookupListener: session started: " + session.getSessionId());
         } catch (Exception e) {
-            LOG.warning("TestLookupListener: failed to start session: " + e.getMessage());
+            LOG.warning("TestLookupListener: disabled — " + e.getMessage());
+            reporter = null;
             session = null;
         }
     }
@@ -161,20 +184,25 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
         session.record(testName, status, durationMs, opts);
     }
 
-    private static String prop(String sysProp, String envVar) {
-        String v = System.getProperty(sysProp);
+    /**
+     * Resolve a config value with precedence:
+     * suite parameter > JVM system property > environment variable > default.
+     */
+    private static String resolve(ISuite suite, String paramName, String envVar, String defaultVal) {
+        // 1. Suite parameter (highest precedence for testng.xml config)
+        String v = suite.getParameter(paramName);
         if (v != null && !v.isEmpty()) return v;
-        v = System.getenv(envVar);
-        return v != null ? v : "";
-    }
 
-    private static String prop(String sysProp, String envVar, String defaultVal) {
-        String v = prop(sysProp, envVar);
-        return v.isEmpty() ? defaultVal : v;
-    }
+        // 2. JVM system property
+        v = System.getProperty(paramName);
+        if (v != null && !v.isEmpty()) return v;
 
-    private static String nullable(String sysProp, String envVar) {
-        String v = prop(sysProp, envVar);
-        return v.isEmpty() ? null : v;
+        // 3. Environment variable
+        if (envVar != null) {
+            v = System.getenv(envVar);
+            if (v != null && !v.isEmpty()) return v;
+        }
+
+        return defaultVal;
     }
 }

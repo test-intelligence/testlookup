@@ -300,6 +300,166 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
         raise self.retry(exc=exc, countdown=countdown)
 
 
+# ── Unified Ingest Tasks (POST /api/v1/ingest) ──────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.ingest_uploaded_results",
+    bind=True,
+    max_retries=3,
+    queue="ingestion",
+)
+def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
+    """
+    Process a JSON batch of test results from POST /api/v1/ingest.
+    Creates a TestRun, upserts test cases, runs post-ingestion pipeline.
+    """
+    from app.services.ingestion_pipeline import (
+        create_run_from_payload,
+        finalize_run,
+        ingest_test_results,
+    )
+
+    async def _run():
+        from app.db.postgres import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            try:
+                run = await create_run_from_payload(
+                    db,
+                    project_id=payload["project_id"],
+                    build_number=payload["build_number"],
+                    run_id=run_id,
+                    branch=payload.get("branch"),
+                    commit_hash=payload.get("commit_hash"),
+                    framework=payload.get("framework"),
+                    trigger_source=payload.get("trigger_source", "api"),
+                    release_name=payload.get("release_name"),
+                )
+                count = await ingest_test_results(db, run, payload["results"])
+                await db.commit()
+                logger.info(
+                    "[Task %s] Uploaded results ingested: %d cases",
+                    self.request.id, count,
+                )
+            except Exception:
+                await db.rollback()
+                raise
+
+        await finalize_run(
+            run_id=run_id,
+            project_id=payload["project_id"],
+            build_number=payload["build_number"],
+            release_name=payload.get("release_name"),
+        )
+
+    logger.info("[Task %s] Processing uploaded batch: run=%s", self.request.id, run_id)
+    try:
+        _run_async(_run())
+    except Exception as exc:
+        logger.error("[Task %s] Batch ingest failed: %s", self.request.id, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.ingest_uploaded_file",
+    bind=True,
+    max_retries=3,
+    queue="ingestion",
+)
+def ingest_uploaded_file(
+    self,
+    run_id: str,
+    file_content: str,
+    file_name: str,
+    file_format: str,
+    project_id: str,
+    build_number: str,
+    branch: str = None,
+    commit_hash: str = None,
+    release_name: str = None,
+    user_id: str = None,
+):
+    """
+    Parse an uploaded test result file and ingest.
+    Supports JUnit XML, TestNG XML, and Allure JSON.
+    """
+    from app.services.ingestion_pipeline import (
+        create_run_from_payload,
+        finalize_run,
+        ingest_test_results,
+    )
+
+    async def _run():
+        from app.db.postgres import AsyncSessionLocal
+
+        # Parse file into normalized result dicts
+        results = _parse_file_to_results(file_content, file_format, file_name, run_id)
+
+        async with AsyncSessionLocal() as db:
+            try:
+                run = await create_run_from_payload(
+                    db,
+                    project_id=project_id,
+                    build_number=build_number,
+                    run_id=run_id,
+                    branch=branch,
+                    commit_hash=commit_hash,
+                    release_name=release_name,
+                )
+                count = await ingest_test_results(db, run, results)
+                await db.commit()
+                logger.info(
+                    "[Task %s] File ingested: %d cases from %s (%s)",
+                    self.request.id, count, file_name, file_format,
+                )
+            except Exception:
+                await db.rollback()
+                raise
+
+        await finalize_run(
+            run_id=run_id,
+            project_id=project_id,
+            build_number=build_number,
+            release_name=release_name,
+        )
+
+    logger.info("[Task %s] Processing uploaded file: %s (%s)", self.request.id, file_name, file_format)
+    try:
+        _run_async(_run())
+    except Exception as exc:
+        logger.error("[Task %s] File ingest failed: %s", self.request.id, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -> list[dict]:
+    """Parse a test result file into normalized result dicts."""
+    import json as _json
+
+    if fmt == "allure":
+        from app.services.allure_parser import parse_allure_result
+        try:
+            raw = _json.loads(content)
+        except _json.JSONDecodeError:
+            logger.warning("Invalid JSON in allure file: %s", filename)
+            return []
+        items = raw if isinstance(raw, list) else [raw]
+        results = []
+        for item in items:
+            parsed = parse_allure_result(item, run_id, filename)
+            if parsed:
+                results.append(parsed)
+        return results
+
+    if fmt == "testng":
+        from app.services.testng_parser import parse_testng_xml
+        return parse_testng_xml(content, run_id)
+
+    # junit (default) — reuse testng_parser which handles standard JUnit XML too
+    from app.services.testng_parser import parse_testng_xml
+    return parse_testng_xml(content, run_id)
+
+
 @celery_app.task(
     name="app.worker.tasks.run_live_test_analysis",
     bind=True,

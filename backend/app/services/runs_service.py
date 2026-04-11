@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,8 +76,12 @@ async def list_project_runs(
     status: str | None = None,
     release_id: str | None = None,
     accessible_project_ids: set | None = None,
+    days: int | None = 6,
 ):
     query = select(TestRun)
+    if days and days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        query = query.where(TestRun.created_at >= cutoff)
     if project_id:
         query = query.where(TestRun.project_id == project_id)
     elif accessible_project_ids is not None:

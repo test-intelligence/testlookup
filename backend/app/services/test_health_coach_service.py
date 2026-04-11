@@ -229,6 +229,7 @@ async def get_flaky_coach(
     """
     Project-level flaky test leaderboard ranked by impact.
     Reads from pre-computed flaky_coach_results table.
+    Auto-computes on first access if no cached results exist.
     """
     result = await db.execute(
         select(FlakyCoachResult)
@@ -237,6 +238,17 @@ async def get_flaky_coach(
         .limit(limit)
     )
     rows = result.scalars().all()
+
+    if not rows:
+        # No cached results — compute on-the-fly so the first page load shows data
+        await refresh_flaky_coach(project_id, db, days=days)
+        result = await db.execute(
+            select(FlakyCoachResult)
+            .where(FlakyCoachResult.project_id == project_id)
+            .order_by(FlakyCoachResult.impact_score.desc())
+            .limit(limit)
+        )
+        rows = result.scalars().all()
 
     entries = []
     for row in rows:

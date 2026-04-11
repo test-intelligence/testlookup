@@ -12,6 +12,7 @@ import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AppLogo from '@/components/ui/AppLogo'
 import { useChat, useChatSessions, useRunSummaries } from '@/hooks/useChat'
+import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
 import chatService from '@/services/chatService'
 import { useProjectStore } from '@/store/projectStore'
 import type { ChatSession, RunSummary } from '@/types/chat'
@@ -221,6 +222,8 @@ const STARTER_PROMPTS = [
 
 export default function ChatPage() {
   const { activeProject } = useProjectStore()
+  const { data: aiConfig } = useAIConfig()
+  const llmAvailable = isLLMAvailable(aiConfig)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -426,30 +429,39 @@ export default function ChatPage() {
 
         {/* ── Input bar ── */}
         <div className="border-t border-[var(--color-border)] p-3 shrink-0">
-          <div className="flex gap-2 items-end">
-            <textarea
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSend()
-                }
-              }}
-              placeholder="Ask about test results, failures, trends…"
-              rows={1}
-              className="input flex-1 resize-none text-sm py-2 leading-relaxed"
-              style={{ maxHeight: '120px', overflow: 'auto' }}
-            />
-            <button
-              onClick={() => handleSend()}
-              disabled={!input.trim() || isSending}
-              className="btn-primary p-2.5 shrink-0 disabled:opacity-40"
-            >
-              {isSending ? <LoadingSpinner size="sm" /> : <Send className="w-4 h-4" />}
-            </button>
-          </div>
-          <p className="text-xs text-[var(--color-text-faint)] mt-1">Press Enter to send · Shift+Enter for new line</p>
+          {!llmAvailable ? (
+            <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 px-4 py-3 text-sm text-[var(--color-text-muted)]">
+              <Bot className="w-4 h-4 shrink-0" />
+              Chat is unavailable in Rules mode. Switch to LLM or Auto mode in Settings &gt; AI Configuration.
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-2 items-end">
+                <textarea
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
+                  placeholder="Ask about test results, failures, trends…"
+                  rows={1}
+                  className="input flex-1 resize-none text-sm py-2 leading-relaxed"
+                  style={{ maxHeight: '120px', overflow: 'auto' }}
+                />
+                <button
+                  onClick={() => handleSend()}
+                  disabled={!input.trim() || isSending}
+                  className="btn-primary p-2.5 shrink-0 disabled:opacity-40"
+                >
+                  {isSending ? <LoadingSpinner size="sm" /> : <Send className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-[var(--color-text-faint)] mt-1">Press Enter to send · Shift+Enter for new line</p>
+            </>
+          )}
         </div>
       </div>
     </div>

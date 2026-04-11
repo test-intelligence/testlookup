@@ -28,6 +28,11 @@ frontend/.vite/
 # Playwright auth state (contains JWT — never commit)
 frontend/tests/e2e/.auth/
 
+# Java SDK build artifacts
+client/java/target/
+*.jar
+*.class
+
 # Docker
 docker-compose.override.yml
 
