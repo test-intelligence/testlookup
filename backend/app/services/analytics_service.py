@@ -283,9 +283,11 @@ async def list_defects(
             d.created_at,
             d.resolved_at,
             tc.test_name,
-            tc.suite_name
+            tc.suite_name,
+            tr.release_name
         FROM defects d
         JOIN test_cases tc ON tc.id = d.test_case_id
+        LEFT JOIN test_runs tr ON tr.id = tc.test_run_id
         WHERE 1=1
         {project_filter}
         {status_filter}

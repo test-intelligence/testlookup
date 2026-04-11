@@ -9,6 +9,7 @@ import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import { useAIConfig, isDeepEnabled } from '@/hooks/useAIConfig'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildDeepInvestigationWorkflow } from '@/components/workflow/workflowPresets'
@@ -243,6 +244,8 @@ export default function DeepInvestigationPage() {
   const [promoteClusterLabel, setPromoteClusterLabel] = useState<string>('')
 
   const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const { data: aiConfig } = useAIConfig()
+  const deepAvailable = isDeepEnabled(aiConfig)
   const { data: recentRuns, isLoading: runsLoading } = useRuns({ page: 1, size: 1 })
   const previousProjectId = useRef(activeProjectId)
   const [projectSwitching, setProjectSwitching] = useState(false)
@@ -311,7 +314,8 @@ export default function DeepInvestigationPage() {
         actions={
           <button
             onClick={handleTrigger}
-            disabled={triggering}
+            disabled={triggering || !deepAvailable}
+            title={!deepAvailable ? 'Deep investigation requires LLM mode' : undefined}
             className="flex items-center gap-2 px-4 py-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
           >
             {triggering ? <LoadingSpinner size="sm" /> : <Bot className="w-4 h-4" />}
@@ -319,6 +323,18 @@ export default function DeepInvestigationPage() {
           </button>
         }
       />
+
+      {!deepAvailable && (
+        <div className="flex items-center gap-3 rounded-lg border border-amber-700/30 bg-amber-900/10 px-4 py-3 text-sm">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <span className="text-amber-300">
+            Deep investigation requires LLM mode.{' '}
+            {!aiConfig?.deep_investigation_enabled
+              ? 'It is currently disabled in Settings > AI Configuration.'
+              : 'Switch from Rules mode to enable it.'}
+          </span>
+        </div>
+      )}
 
       <WorkflowTimeline
         title="Investigation Workflow"

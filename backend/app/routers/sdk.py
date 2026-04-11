@@ -52,9 +52,13 @@ _SDK_CONFIGS: dict[str, dict] = {
     },
     "java": {
         "label": "Java",
-        "type": "dir",
+        "type": "jar",
         "path": "java",
-        "filename": "testlookup-java-sdk.zip",
+        "jar_path": "java/target/testlookup-reporter-1.0.0-all.jar",
+        "filename": "testlookup-reporter-1.0.0-all.jar",
+        "media_type": "application/java-archive",
+        # Fallback: serve as ZIP of source if JAR not built
+        "fallback_filename": "testlookup-java-sdk.zip",
     },
     "js": {
         "label": "JavaScript / TypeScript",
@@ -72,11 +76,20 @@ async def list_sdks() -> JSONResponse:
     for lang, cfg in _SDK_CONFIGS.items():
         full_path = os.path.join(SDK_BASE_PATH, cfg["path"])
         exists = os.path.exists(full_path)
+
+        # For JAR-type SDKs, report whether the built JAR is available
+        filename = cfg["filename"]
+        if cfg["type"] == "jar":
+            jar_full = os.path.join(SDK_BASE_PATH, cfg["jar_path"])
+            jar_built = os.path.exists(jar_full)
+            if not jar_built:
+                filename = cfg["fallback_filename"]
+
         available.append(
             {
                 "lang": lang,
                 "label": cfg["label"],
-                "filename": cfg["filename"],
+                "filename": filename,
                 "download_url": f"/api/v1/sdk/{lang}",
                 "available": exists,
             }
@@ -90,7 +103,9 @@ async def download_sdk(lang: str):
     Download the SDK for the specified language.
 
     - **python** — returns `testlookup_reporter.py` directly
-    - **go / java / js** — returns a ZIP archive of the SDK directory
+    - **java** — returns `testlookup-reporter-1.0.0-all.jar` (fat JAR) if built,
+      otherwise falls back to a ZIP archive of the source directory
+    - **go / js** — returns a ZIP archive of the SDK directory
     """
     cfg = _SDK_CONFIGS.get(lang)
     if cfg is None:
@@ -121,6 +136,34 @@ async def download_sdk(lang: str):
             filename=cfg["filename"],
             media_type=cfg["media_type"],
             headers=_no_cache_headers,
+        )
+
+    if cfg["type"] == "jar":
+        # Serve the pre-built fat JAR if available, otherwise fall back to
+        # zipping the source directory so developers can build locally.
+        jar_full = os.path.join(SDK_BASE_PATH, cfg["jar_path"])
+        if os.path.exists(jar_full):
+            return FileResponse(
+                path=jar_full,
+                filename=cfg["filename"],
+                media_type=cfg["media_type"],
+                headers=_no_cache_headers,
+            )
+        logger.info(
+            "jar_not_built_serving_source_zip",
+            lang=lang,
+            hint="Run 'make build-java-sdk' to build the JAR",
+        )
+        buf = _zip_directory(full_path, zip_root=lang)
+        data = buf.read()
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{cfg["fallback_filename"]}"',
+                "Content-Length": str(len(data)),
+                **_no_cache_headers,
+            },
         )
 
     # Directory → buffer as ZIP then return with Content-Length set

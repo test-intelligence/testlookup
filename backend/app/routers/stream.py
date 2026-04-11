@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user
+from app.core.deps import get_accessible_project_ids, get_api_key_context, get_current_active_user
 from app.db.postgres import get_db
+from app.models.postgres import User
 from app.models.schemas import ActiveSessionsResponse, LiveEventBatch, LiveSessionCreate
 from app.services import stream_service
 
@@ -30,8 +31,20 @@ _sse_subscribers: dict[str, set[asyncio.Queue]] = {}
 async def create_session(
     payload: LiveSessionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    auth: tuple[User, None] = Depends(get_api_key_context),
 ):
+    current_user, bound_project_id = auth
+
+    if not current_user.is_active:
+        raise HTTPException(status_code=403, detail="Inactive user account")
+
+    # Project-scoped API key: enforce that the session targets the bound project
+    if bound_project_id is not None and payload.project_id != bound_project_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This API key is restricted to a different project",
+        )
+
     return await stream_service.create_session(db, payload)
 
 
@@ -39,7 +52,7 @@ async def create_session(
 async def get_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_active_user),
+    auth: tuple[User, None] = Depends(get_api_key_context),
 ):
     return await stream_service.get_session(db, session_id)
 
@@ -48,7 +61,7 @@ async def get_session(
 async def close_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_active_user),
+    auth: tuple[User, None] = Depends(get_api_key_context),
 ):
     await stream_service.close_session(db, session_id)
 

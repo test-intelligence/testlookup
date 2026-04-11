@@ -12,6 +12,7 @@ from testlookup_cli.commands.intelligence import intelligence_app
 from testlookup_cli.commands.deep import deep_app
 from testlookup_cli.commands.reports import reports_app
 from testlookup_cli.commands.keys import keys_app
+from testlookup_cli.commands.upload import upload_app
 
 app = typer.Typer(
     name="testlookup",
@@ -44,6 +45,7 @@ app.add_typer(intelligence_app, name="intelligence")
 app.add_typer(deep_app, name="deep")
 app.add_typer(reports_app, name="reports")
 app.add_typer(keys_app, name="keys")
+app.add_typer(upload_app, name="upload")
 
 
 if __name__ == "__main__":

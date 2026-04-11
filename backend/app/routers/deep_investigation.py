@@ -28,7 +28,9 @@ from app.models.schemas import (
     DefectPromotionRequest,
     DefectPromotionResponse,
 )
+from app.core.config import settings
 from app.services.action_policy import ActionStatus, approve_action, reject_action
+from app.services.analysis_router import get_analysis_mode
 from app.services.cluster_ranking_service import rank_clusters
 from app.services.defect_promotion_service import get_defect_candidate, promote_cluster
 from app.worker.tasks import run_agent_pipeline
@@ -81,6 +83,18 @@ async def trigger_deep_investigation(
     Uses workflow_type="deep" which adds failure clustering, flaky sentinel,
     test health analysis, and release risk on top of the standard 5-stage pipeline.
     """
+    if not settings.DEEP_INVESTIGATION_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Deep investigation is disabled. Enable it in Settings > AI Configuration.",
+        )
+    current_mode = get_analysis_mode()
+    if current_mode == "rules":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Deep investigation requires LLM or Auto mode. Current mode: rules.",
+        )
+
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(TestRun).where(TestRun.id == run_id))
         run = result.scalar_one_or_none()

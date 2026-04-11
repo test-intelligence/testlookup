@@ -1212,7 +1212,6 @@ class AITaskStatusResponse(BaseModel):
 class LiveSessionCreate(BaseModel):
     """Request body to register a new live execution session."""
     project_id: uuid.UUID
-    run_id: Optional[str] = None           # auto-generated if omitted
     client_name: str = Field(..., min_length=1, max_length=255)
     machine_id: Optional[str] = Field(None, max_length=255)
     build_number: Optional[str] = Field(None, max_length=100)
@@ -1269,6 +1268,41 @@ class LiveEventBatchResponse(BaseModel):
     accepted: int
     run_id: str
     session_id: str
+
+
+# ── Ingest Schemas (unified batch + file upload) ──────────────────────────────
+
+class IngestTestResult(BaseModel):
+    """A single test result in a JSON batch ingest."""
+    test_name: str = Field(..., min_length=1, max_length=1000)
+    status: str = Field(..., pattern=r"^(PASSED|FAILED|SKIPPED|BROKEN)$")
+    duration_ms: Optional[int] = Field(None, ge=0)
+    suite_name: Optional[str] = Field(None, max_length=500)
+    class_name: Optional[str] = Field(None, max_length=500)
+    error_message: Optional[str] = None
+    stack_trace: Optional[str] = None
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class IngestPayload(BaseModel):
+    """JSON batch ingest request body for POST /api/v1/ingest."""
+    project_id: str = Field(..., description="Project UUID")
+    build_number: str = Field(..., min_length=1, max_length=255)
+    results: List[IngestTestResult] = Field(..., min_length=1, max_length=50_000)
+    branch: Optional[str] = Field(None, max_length=255)
+    commit_hash: Optional[str] = Field(None, max_length=64)
+    framework: Optional[str] = Field(None, max_length=50)
+    trigger_source: Optional[str] = "api"
+    release_name: Optional[str] = Field(None, max_length=255)
+
+
+class IngestResponse(BaseModel):
+    """Response for accepted ingest request."""
+    status: str = "accepted"
+    run_id: str
+    task_id: str
+    total_results: int
 
 
 class LiveSessionState(BaseModel):
@@ -1557,6 +1591,8 @@ class ApiKeyCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     scopes: List[str] = Field(default_factory=list)
     expires_days: Optional[int] = Field(None, ge=1, le=365)
+    project_id: Optional[uuid.UUID] = Field(None, description="Bind key to a single project (ADMIN only)")
+    target_user_id: Optional[uuid.UUID] = Field(None, description="Create key for another user (ADMIN only)")
 
 
 class ApiKeyResponse(BaseModel):
@@ -1564,6 +1600,7 @@ class ApiKeyResponse(BaseModel):
     name: str
     key_hint: str
     scopes: List[str]
+    project_id: Optional[uuid.UUID] = None
     is_active: bool
     expires_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None

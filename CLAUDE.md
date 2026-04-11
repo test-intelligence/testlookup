@@ -101,6 +101,8 @@ make migrate-create MSG="name"  # Auto-generate new migration
 make migrate-down         # Rollback last migration
 make pull-llm             # Download Ollama models (qwen2.5:7b + nomic-embed-text)
 make simulate-upload      # Send a sample test run to the API
+make build-java-sdk       # Build Java SDK fat JAR locally (requires Maven + JDK 11+)
+make build-java-sdk-docker # Build Java SDK fat JAR via Docker (no local Maven needed)
 make test-backend         # pytest tests/ -v
 make test-backend-cov     # pytest with HTML coverage report
 make test-frontend        # vitest
@@ -181,6 +183,7 @@ npm run dev   # → http://localhost:3000
   - `models/postgres.py` — all SQLAlchemy ORM models; `models/schemas.py` — Pydantic v2 schemas
   - `routers/` — thin HTTP routers (registered in `bootstrap.py` as `PROTECTED_ROUTERS` or `PUBLIC_ROUTERS`)
   - `services/` — business logic; `services/training/` — fine-tuning pipeline; `services/ml/` — ML classifier + feature extraction + training
+  - `services/ingestion_pipeline.py` — shared ingestion pipeline (run creation, test case upsert, post-ingestion orchestration)
   - `services/analysis_router.py` — central dispatcher (LLM/ML/Rules mode selection)
   - `services/rules_engine.py` — enhanced pattern matching + template summaries
   - `services/connectors/` — pluggable knowledge source connectors (Jira, Confluence, URL, document)
@@ -216,13 +219,21 @@ npm run dev   # → http://localhost:3000
   - `hooks/useTableSort.ts` — sortable table header state
   - `config/refreshIntervals.ts` — standardized SWR polling intervals
 - `cli/` — TestLookup CLI tool (Typer + Rich + httpx)
-  - `testlookup_cli/app.py` — root app with 10 command groups
+  - `testlookup_cli/app.py` — root app with 11 command groups
   - `testlookup_cli/client.py` — async HTTP client (JWT + API key auth)
   - `testlookup_cli/config.py` — multi-profile config (~/.config/testlookup/profiles.json)
+  - `testlookup_cli/commands/upload.py` — file and directory upload commands
   - `testlookup_cli/output.py` — Rich table, JSON, YAML output modes
 - `mcp/` — MCP Server (24 tools, 10 resources, 6 prompts)
 - `postman/` — Postman API collection + environment for RAG workflow testing
-- `client/testlookup_reporter.py` — Python client SDK + pytest plugin
+- `client/testlookup_reporter.py` — Python client SDK + pytest plugin + ConfigLoader
+- `client/testlookup.yaml.example` — SDK configuration file template
+- `client/java/` — Java client SDK (Maven, fat JAR via shade plugin)
+  - `src/main/java/io/testlookup/TestLookupReporter.java` — core reporter (builder pattern, batch flush, session management)
+  - `src/main/java/io/testlookup/ConfigLoader.java` — unified config (YAML file + env vars + system props)
+  - `src/main/java/io/testlookup/junit5/TestLookupExtension.java` — JUnit 5 auto-discovery extension
+  - `src/main/java/io/testlookup/testng/TestLookupListener.java` — TestNG auto-discovery listener
+  - `src/main/resources/META-INF/services/` — ServiceLoader descriptors for auto-registration
 - `UserGuides/TESTLOOKUP_USER_GUIDE.md` — comprehensive end-user guide
 - `k8s/` — Kustomize base + overlays (dev/staging/prod/openshift)
 - `infra/monitoring/` — Prometheus, Grafana, alerting rules
@@ -326,6 +337,7 @@ Current migrations:
 | 0053 | Knowledge source registry (knowledge_sources table) |
 | 0054 | Knowledge chunks and sync events (knowledge_chunks, knowledge_sync_events) |
 | 0055 | RAG generation lineage (generation_batches, generation_case_sources, requirement_coverage; RAG columns on managed_test_cases) |
+| 0056 | API key project scope (adds nullable `project_id` FK + index to `api_keys`) |
 
 ---
 
@@ -340,7 +352,7 @@ Current migrations:
 - **Celery tasks** in `worker/tasks.py` are fire-and-forget — they accept simple serializable args (IDs, dicts), not ORM objects.
 - **AgentExecutor** must include `max_execution_time=settings.AI_TIMEOUT_SECONDS` to prevent runaway LLM calls.
 - **Role-based access:** Use `require_role(UserRole.X)` as a dependency. Role hierarchy: VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN.
-- **API key storage:** Keys are stored as SHA-256 hashes. The raw key is only returned once at creation. `key_hint` = `raw_key[:8] + "..."` (max 11 chars; column is `String(12)`).
+- **API key storage:** Keys are stored as SHA-256 hashes. The raw key is only returned once at creation. `key_hint` = `raw_key[:8] + "..."` (max 11 chars; column is `String(12)`). Keys can be project-scoped (nullable `project_id` FK) — ADMIN-only creation. Use `get_api_key_context` dependency when project scope enforcement is needed.
 - **Structured logging:** Use `structlog.get_logger(__name__)` — never `print()` or raw `logging.getLogger()`.
 - **Analysis mode dispatch:** All test classification must go through `services/analysis_router.py`, never call `run_triage_agent()` or `RulesEngine` directly from routers. The router reads `ANALYSIS_MODE` and dispatches to LLM/ML/Rules.
 - **ML feature extraction must be deterministic.** Same inputs → same feature vector. No randomness in preprocessing. Feature names in `ml/feature_extractor.py:FEATURE_NAMES` must match training order.
@@ -352,6 +364,8 @@ Current migrations:
 - **Dual authentication:** `get_current_user_or_api_key()` in `core/deps.py` tries JWT first, then API key (SHA-256 hash lookup). Use this dependency for endpoints that accept both auth methods.
 - **Email notifications:** Use `services/email_service.py` for async SMTP delivery. Templates in `services/email_templates.py`. Never send emails synchronously in request handlers — dispatch via Celery tasks.
 - **AI config resolution:** Use `services/ai_config_resolver.py` for LLM configuration. Resolution precedence: DB overrides → secret-backed API keys → environment defaults. Results are cached in Redis (60s TTL).
+- **Ingestion goes through `ingestion_pipeline.py`.** New ingestion paths (routers, Celery tasks, SDK handlers) must use `create_run_from_payload()` → `ingest_test_results()` → `finalize_run()` from `services/ingestion_pipeline.py`. Never duplicate the post-ingestion orchestration (tagging, suite sync, notifications, AI analysis).
+- **Client SDK config resolution:** Both Python and Java SDKs use a `ConfigLoader` with the same precedence: constructor args > env vars > `testlookup.yaml` > defaults. New SDKs must follow this pattern and support the same env var names (`TESTLOOKUP_URL`, `TESTLOOKUP_API_KEY`, etc.).
 
 ### Frontend
 
@@ -450,6 +464,18 @@ These bugs have been encountered and fixed — avoid reintroducing them:
 39. **Email template event types** — `email_templates.py` supports 6 event types: `run_failed`, `run_passed`, `high_failure_rate`, `ai_analysis_complete`, `quality_gate_failed`, `flaky_test_detected`. Adding new event types requires both a template and a Celery task dispatcher.
 
 40. **Analytics widget migration** — `useAnalyticsView` hook supports both legacy widget-ID arrays (v1) and new `VisualizationInstance` arrays (v2). Legacy format is auto-migrated on load via `migrateWidgetIds()`. Max 12 widgets per page.
+
+41. **Ingestion file size limit** — `POST /api/v1/ingest/file` rejects uploads > 50 MB with 413. The limit is hardcoded in `routers/ingest.py:MAX_FILE_SIZE`. Large test suites should use JSON batch ingestion or split files.
+
+42. **Ingestion format auto-detection** — The `_detect_format()` function in `routers/ingest.py` inspects the first 2 KB of content. If a file has ambiguous markers (e.g., both `<testsuite>` and TestNG attributes), it may misdetect. Use `format=testng` explicitly for TestNG XML.
+
+43. **Java SDK fat JAR classifier** — The Maven shade plugin produces `testlookup-reporter-1.0.0-all.jar` (classifier "all"). The SDK download endpoint looks for `*-all.jar` in `client/java/target/`. If missing, it falls back to a ZIP of source. Run `make build-java-sdk` to produce the JAR.
+
+44. **Client config file precedence** — `testlookup.yaml` discovery stops at first file found. If a project-root config exists but is incomplete, it will NOT merge with `~/.testlookup/config.yaml`. Each level within a single file merges (constructor > env > file > defaults), but only one file is loaded.
+
+45. **Java ConfigLoader YAML optional** — If `jackson-dataformat-yaml` is not on the classpath, `ConfigLoader` silently skips YAML parsing and relies solely on env vars and system properties. The fat JAR includes it, but a slim dependency may not.
+
+46. **Project-scoped API keys** — `ApiKey.project_id` is nullable. NULL = user-scoped (inherits user's project permissions). Non-null = project-scoped (restricted to that project). Only ADMIN can create project-scoped keys or keys for other users (`target_user_id`). The `get_api_key_context` dependency in `core/deps.py` returns `(User, project_id | None)` — callers must enforce project scope when `project_id` is non-None. Ingestion and stream session creation endpoints enforce this. The existing `get_current_user_or_api_key` still returns only `User` for backward compatibility.
 
 ---
 
@@ -721,7 +747,7 @@ The `cli/` directory contains a full command-line interface built with Typer + R
 cd cli && pip install -e .
 ```
 
-### Command Groups (10)
+### Command Groups (11)
 
 | Command | Purpose |
 |---------|---------|
@@ -735,6 +761,7 @@ cd cli && pip install -e .
 | `intelligence` | Run intelligence and AI analysis |
 | `deep` | Deep investigation pipeline (start/status/clusters/findings) |
 | `reports` | PDF export and share link generation |
+| `upload` | Upload test result files/directories (JUnit/TestNG XML, Allure JSON) |
 
 ### Authentication
 
@@ -907,16 +934,145 @@ Settings > Seed Data page (`SeedDataPage.tsx`) — interactive UI with Load/Rese
 
 ---
 
+## Ingestion API
+
+Unified test data ingestion endpoints consolidating JSON batch and file upload paths. Both return 202 Accepted with async processing via Celery.
+
+### Endpoints
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/api/v1/ingest` | JWT or API key | JSON batch of test results from SDKs or scripts |
+| POST | `/api/v1/ingest/file` | JWT or API key | File upload (JUnit XML, TestNG XML, Allure JSON) |
+
+### JSON batch (`POST /api/v1/ingest`)
+
+Accepts `IngestPayload` with `project_id`, `build_number`, and `results[]`. Returns `run_id` and `task_id`.
+
+### File upload (`POST /api/v1/ingest/file`)
+
+Multipart form with: `file`, `project_id`, `build_number`, `branch` (opt), `commit_hash` (opt), `release_name` (opt), `format` (auto|junit|testng|allure).
+
+- Max file size: 50 MB
+- Format auto-detection: `.json` → allure, `<testng-results` → testng, `<testsuite` → junit, fallback → junit
+
+### Post-ingestion pipeline (`services/ingestion_pipeline.py`)
+
+After parsing, the pipeline: creates/upserts TestRun → upserts TestCase rows → updates run aggregates → syncs suite membership → auto-tags → links release → enqueues notifications → triggers AI analysis.
+
+### CLI upload
+
+```bash
+testlookup upload file results.xml -p <project-id> -b build-42
+testlookup upload dir ./target/surefire-reports -p <project-id> -b build-42
+```
+
+---
+
+## Client SDK Configuration
+
+All client SDKs (Python, Java) share a unified configuration model via `testlookup.yaml`.
+
+### Config file discovery (first found wins)
+
+1. `./testlookup.yaml` — project root (commit to repo, no secrets)
+2. `./.testlookup/config.yaml` — hidden dir (add to `.gitignore`)
+3. `~/.testlookup/config.yaml` — user home (personal defaults)
+
+### Precedence (highest wins)
+
+Constructor args > Environment variables > Config file > Built-in defaults
+
+### Environment variables
+
+| Variable | Maps to |
+|----------|---------|
+| `TESTLOOKUP_URL` | `server.url` |
+| `TESTLOOKUP_TOKEN` | `auth.token` (JWT) |
+| `TESTLOOKUP_API_KEY` | `auth.api_key` |
+| `TESTLOOKUP_PROJECT_ID` | `project.id` |
+| `TESTLOOKUP_BUILD` | `ci.build_number` |
+| `TESTLOOKUP_BRANCH` | `ci.branch` |
+| `TESTLOOKUP_COMMIT` | `ci.commit_hash` |
+| `TESTLOOKUP_UPLOAD_MODE` | `upload.mode` (live\|offline) |
+
+### Java system properties
+
+`-Dtestlookup.url`, `-Dtestlookup.token`, `-Dtestlookup.apiKey`, `-Dtestlookup.projectId`, `-Dtestlookup.build`, `-Dtestlookup.branch`, `-Dtestlookup.commit`
+
+### Python SDK usage
+
+```python
+from testlookup_reporter import TestLookupReporter
+
+# Config auto-resolved from testlookup.yaml / env vars
+reporter = TestLookupReporter()
+
+# Or explicit overrides
+reporter = TestLookupReporter(url="http://localhost:8000", api_key="tl_...")
+```
+
+### Java SDK usage
+
+```java
+// Config auto-resolved from testlookup.yaml / env vars / system props
+TestLookupReporter reporter = new TestLookupReporter.Builder().build();
+
+// Or explicit overrides
+TestLookupReporter reporter = new TestLookupReporter.Builder()
+    .url("http://localhost:8000")
+    .apiKey("tl_...")
+    .projectId("uuid")
+    .build();
+```
+
+### Java auto-discovery (zero-config)
+
+JUnit 5 and TestNG listeners are auto-registered via `META-INF/services/` ServiceLoader descriptors. Add the fat JAR to the classpath and configure via env vars — no code changes needed.
+
+- **JUnit 5:** `org.junit.jupiter.api.extension.Extension` → `TestLookupExtension`
+- **TestNG:** `org.testng.ITestNGListener` → `TestLookupListener`
+
+**TestNG suite parameter configuration (simplest approach):**
+```xml
+<suite name="My Suite">
+  <parameter name="testlookup.url" value="http://localhost:8000"/>
+  <parameter name="testlookup.apiKey" value="qai_..."/>
+  <parameter name="testlookup.projectId" value="your-project-uuid"/>
+  <listeners>
+    <listener class-name="io.testlookup.testng.TestLookupListener"/>
+  </listeners>
+</suite>
+```
+
+Suite parameters take highest precedence over system properties, env vars, and `testlookup.yaml`.
+
+### Building the Java fat JAR
+
+```bash
+make build-java-sdk             # Local Maven + JDK 11+
+make build-java-sdk-docker      # Docker-based (no local Maven needed)
+# Output: client/java/target/testlookup-reporter-1.0.0-all.jar
+```
+
+Jackson is relocated to `ai.testlookup.shaded.jackson` to avoid classpath conflicts.
+
+### Config file template
+
+See `client/testlookup.yaml.example` for the full annotated configuration template.
+
+---
+
 ## SDK Downloads
 
 ### Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/v1/sdk` | List available SDKs (Python, Java, JavaScript, Go) |
+| GET | `/api/v1/sdk` | List available SDKs with metadata (language, filename, download URL) |
 | GET | `/api/v1/sdk/{lang}` | Download SDK (python\|java\|js\|go) |
 
-Public router (no JWT required). Python served as single file, others as ZIP.
+Public router (no JWT required). Python served as single file, Java as fat JAR (with ZIP fallback if not pre-built), others as ZIP. No-cache headers applied for freshness.
 
 ---
 

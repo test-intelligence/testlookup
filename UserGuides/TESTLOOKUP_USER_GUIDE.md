@@ -691,6 +691,85 @@ A real-time scrolling feed showing the last 200 events:
 
 Data refreshes every 5 seconds as a baseline, with more frequent updates when the WebSocket is connected.
 
+### 15.5 Quick Start: Connect a Test Runner
+
+The simplest way to stream live test execution is with a **project-scoped API key** and the TestNG or JUnit listener.
+
+#### Prerequisites
+
+1. An ADMIN creates a project-scoped API key (see Section 25.4).
+2. Download the Java SDK fat JAR from the Live page's "All client SDKs" dropdown (or build with `make build-java-sdk`).
+3. Add the JAR to your test classpath.
+
+#### TestNG — Zero-Code Setup (Recommended)
+
+Add suite parameters directly in your `testng.xml` — no Java code changes required:
+
+```xml
+<suite name="My Suite">
+  <parameter name="testlookup.url" value="http://localhost:8000"/>
+  <parameter name="testlookup.apiKey" value="qai_..."/>
+  <parameter name="testlookup.projectId" value="your-project-uuid"/>
+  <listeners>
+    <listener class-name="io.testlookup.testng.TestLookupListener"/>
+  </listeners>
+  <test name="Regression Tests">
+    <classes>
+      <class name="com.example.MyTest"/>
+    </classes>
+  </test>
+</suite>
+```
+
+Run your tests normally — the listener automatically:
+- Creates a live session when the suite starts
+- Records every test result (pass/fail/skip/broken) with duration, class name, error message, and stack trace
+- Closes the session when the suite finishes, triggering the AI analysis pipeline
+
+Optional suite parameters: `testlookup.build`, `testlookup.branch`, `testlookup.commit`.
+
+#### Environment Variables (Works with TestNG and JUnit 5)
+
+```bash
+export TESTLOOKUP_URL=http://localhost:8000
+export TESTLOOKUP_API_KEY=qai_...
+export TESTLOOKUP_PROJECT_ID=your-project-uuid
+export TESTLOOKUP_BUILD=build-42       # optional
+export TESTLOOKUP_BRANCH=main          # optional
+mvn test
+```
+
+The fat JAR auto-registers listeners for both JUnit 5 and TestNG via `META-INF/services` — no code changes needed.
+
+#### Python — pytest Plugin
+
+```bash
+export TESTLOOKUP_URL=http://localhost:8000
+export TESTLOOKUP_API_KEY=qai_...
+export TESTLOOKUP_PROJECT_ID=your-project-uuid
+pytest
+```
+
+Or add a `testlookup.yaml` to your project root:
+```yaml
+server:
+  url: "http://localhost:8000"
+auth:
+  api_key: "qai_..."
+project:
+  id: "your-project-uuid"
+```
+
+#### Configuration Precedence
+
+For all SDKs, configuration is resolved in this order (highest wins):
+1. **TestNG suite parameters** (Java only)
+2. **Constructor / Builder arguments** (programmatic)
+3. **JVM system properties** (`-Dtestlookup.apiKey=...`)
+4. **Environment variables** (`TESTLOOKUP_API_KEY=...`)
+5. **testlookup.yaml config file**
+6. **Built-in defaults**
+
 ---
 
 ## 16. AI Chat
@@ -1024,6 +1103,28 @@ API keys provide programmatic access to the TestLookup API:
 - **Revoke:** Delete an API key to immediately disable it.
 - **Minimum Role:** QA_ENGINEER or higher can create API keys.
 
+#### Project-Scoped API Keys (ADMIN)
+
+ADMINs can create **project-scoped** API keys that restrict access to a single project. This is the recommended approach for CI/CD pipelines and live test execution:
+
+- **Project-scoped key:** Can only submit test results and create live sessions for the bound project. Any request targeting a different project is rejected with 403.
+- **User-scoped key (default):** Inherits the owning user's project permissions — can access any project the user is a member of.
+
+**Creating a project-scoped key via API:**
+```bash
+curl -X POST http://localhost:8000/api/v1/keys \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "CI Pipeline - My Project",
+    "project_id": "<project-uuid>",
+    "scopes": ["test:write"],
+    "expires_days": 90
+  }'
+```
+
+The response includes the raw key (shown once) — configure it as `TESTLOOKUP_API_KEY` in your CI environment or `testng.xml`.
+
 ---
 
 ## 26. Settings
@@ -1278,23 +1379,117 @@ pytest \
   --testlookup-build=build-42
 ```
 
-### 27.3 Go Client
+### 27.3 Java Reporter SDK
+
+TestLookup provides a Java client SDK with auto-discovery listeners for JUnit 5 and TestNG.
+
+**Installation:**
+```bash
+# Download the fat JAR from the Live page or build locally:
+make build-java-sdk
+# Output: client/java/target/testlookup-reporter-1.0.0-all.jar
+
+# Add to Maven (after local install):
+mvn install:install-file -Dfile=testlookup-reporter-1.0.0-all.jar \
+  -DgroupId=io.testlookup -DartifactId=testlookup-reporter \
+  -Dversion=1.0.0 -Dclassifier=all -Dpackaging=jar
+```
+
+**TestNG — Zero-Code (Recommended):**
+
+Add the listener and configuration directly in `testng.xml`:
+
+```xml
+<suite name="My Suite">
+  <parameter name="testlookup.url" value="http://localhost:8000"/>
+  <parameter name="testlookup.apiKey" value="qai_..."/>
+  <parameter name="testlookup.projectId" value="your-project-uuid"/>
+  <listeners>
+    <listener class-name="io.testlookup.testng.TestLookupListener"/>
+  </listeners>
+  <test name="API Tests">
+    <classes>
+      <class name="com.example.ApiTest"/>
+    </classes>
+  </test>
+</suite>
+```
+
+No Java code changes required. The listener automatically creates a live session, records all test results in real-time, and closes the session when the suite finishes.
+
+**JUnit 5 — Auto-Discovery:**
+
+The fat JAR includes a `META-INF/services` descriptor that auto-registers the `TestLookupExtension`. Just add the JAR to the test classpath and configure via environment variables:
+
+```bash
+export TESTLOOKUP_URL=http://localhost:8000
+export TESTLOOKUP_API_KEY=qai_...
+export TESTLOOKUP_PROJECT_ID=your-project-uuid
+mvn test
+```
+
+**Programmatic Usage (API Key):**
+```java
+import io.testlookup.TestLookupReporter;
+import io.testlookup.TestLookupReporter.*;
+
+TestLookupReporter reporter = new TestLookupReporter.Builder()
+    .baseUrl("http://localhost:8000")
+    .apiKey("qai_...")                     // project-scoped API key
+    .projectId("your-project-uuid")
+    .build();
+
+try (LiveSession session = reporter.startSession(
+        SessionOptions.builder()
+            .buildNumber("build-42")
+            .branch("main")
+            .build())) {
+
+    session.record("test_login", TestStatus.PASSED, 120);
+    session.record("test_cart",  TestStatus.FAILED, 340,
+        RecordOptions.builder()
+            .error("AssertionError: expected 200")
+            .suiteName("CheckoutTests")
+            .build());
+}
+// session.close() called automatically — triggers AI analysis
+```
+
+**Programmatic Usage (JWT Token):**
+```java
+TestLookupReporter reporter = new TestLookupReporter.Builder()
+    .baseUrl("http://localhost:8000")
+    .token("<jwt-access-token>")
+    .projectId("your-project-uuid")
+    .build();
+```
+
+**Features:**
+- Auto-discovery for JUnit 5 and TestNG (zero-code via ServiceLoader).
+- TestNG suite parameter configuration (no env vars needed).
+- API key authentication (project-scoped keys for CI/CD).
+- Async batching: flushes every 50 events or 100ms.
+- Retry with exponential backoff (up to 5 retries).
+- Thread-safe with `LinkedBlockingQueue`.
+- Fat JAR with relocated Jackson (no classpath conflicts).
+
+### 27.4 Go Client
 
 A Go client is available at `client/go/testlookup/client.go` for Go-based test frameworks.
 
-### 27.4 Webhook Ingestion
+### 27.5 Webhook Ingestion
 
 For frameworks that produce result files (JUnit XML, Allure JSON), upload directly:
 
 ```bash
-curl -X POST https://testlookup.company.com/api/v1/runs/upload \
-  -H "Authorization: Bearer <your-api-key>" \
+curl -X POST https://testlookup.company.com/api/v1/ingest/file \
+  -H "X-API-Key: qai_..." \
   -F "file=@results/junit.xml" \
   -F "project_id=<project-uuid>" \
   -F "build_number=build-42"
 ```
 
-### 27.5 REST API
+### 27.6 REST API
 
 The full REST API is documented at `https://your-instance:8000/docs` (Swagger UI). Key endpoints:
 

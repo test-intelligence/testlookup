@@ -71,6 +71,123 @@ CONNECT_TIMEOUT    = 10.0
 READ_TIMEOUT       = 30.0
 
 
+# ── Configuration Loader ──────────────────────────────────────────────────────
+
+class ConfigLoader:
+    """
+    Discovers and merges testlookup.yaml config with environment variables.
+
+    Discovery order (first file found wins):
+      1. ./testlookup.yaml
+      2. ./.testlookup/config.yaml
+      3. ~/.testlookup/config.yaml
+
+    Precedence (highest wins):
+      Constructor kwargs > Environment variables > Config file > Built-in defaults
+    """
+
+    from pathlib import Path as _Path
+
+    SEARCH_PATHS = [
+        _Path("testlookup.yaml"),
+        _Path(".testlookup") / "config.yaml",
+    ]
+
+    ENV_MAP: dict[str, tuple[str, str]] = {
+        "TESTLOOKUP_URL":         ("server", "url"),
+        "TESTLOOKUP_TOKEN":       ("auth", "token"),
+        "TESTLOOKUP_API_KEY":     ("auth", "api_key"),
+        "TESTLOOKUP_PROJECT_ID":  ("project", "id"),
+        "TESTLOOKUP_BUILD":       ("ci", "build_number"),
+        "TESTLOOKUP_BRANCH":      ("ci", "branch"),
+        "TESTLOOKUP_COMMIT":      ("ci", "commit_hash"),
+        "TESTLOOKUP_UPLOAD_MODE": ("upload", "mode"),
+    }
+
+    @classmethod
+    def load(cls, overrides: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Return merged config dict from file + env vars + overrides."""
+        config: dict[str, Any] = {}
+
+        # 1. Load from config file
+        config_file = cls._find_config_file()
+        if config_file:
+            config = cls._parse_yaml(config_file)
+
+        # 2. Overlay environment variables
+        cls._apply_env_overlay(config)
+
+        # 3. Overlay programmatic overrides (highest precedence)
+        if overrides:
+            cls._deep_merge(config, overrides)
+
+        return config
+
+    @classmethod
+    def _find_config_file(cls):
+        """Walk SEARCH_PATHS, return first existing file path or None."""
+        from pathlib import Path
+
+        # Project-level paths
+        for p in cls.SEARCH_PATHS:
+            if p.exists():
+                return p
+
+        # User home path
+        home_cfg = Path.home() / ".testlookup" / "config.yaml"
+        if home_cfg.exists():
+            return home_cfg
+
+        return None
+
+    @classmethod
+    def _parse_yaml(cls, path) -> dict[str, Any]:
+        """Parse a YAML config file. Returns empty dict if pyyaml is not installed."""
+        try:
+            import yaml  # type: ignore[import-untyped]
+        except ImportError:
+            logger.debug("pyyaml not installed — skipping config file %s", path)
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("Failed to parse config file %s: %s", path, exc)
+            return {}
+
+    @classmethod
+    def _apply_env_overlay(cls, config: dict[str, Any]) -> None:
+        """Overlay environment variables onto config dict (mutates in place)."""
+        for env_var, (section, key) in cls.ENV_MAP.items():
+            val = os.environ.get(env_var)
+            if val:
+                config.setdefault(section, {})[key] = val
+
+    @classmethod
+    def _deep_merge(cls, base: dict, overlay: dict) -> None:
+        """Recursively merge overlay into base (mutates base)."""
+        for k, v in overlay.items():
+            if isinstance(v, dict) and isinstance(base.get(k), dict):
+                cls._deep_merge(base[k], v)
+            elif v is not None:
+                base[k] = v
+
+    @classmethod
+    def get(cls, config: dict[str, Any], dotpath: str, default: Any = None) -> Any:
+        """Get a nested value using dot notation: 'server.url' → config['server']['url']."""
+        parts = dotpath.split(".")
+        cur = config
+        for p in parts:
+            if isinstance(cur, dict):
+                cur = cur.get(p)
+            else:
+                return default
+            if cur is None:
+                return default
+        return cur if cur != "" else default
+
+
 # ── Reporter ──────────────────────────────────────────────────────────────────
 
 class TestLookupReporter:
@@ -90,9 +207,9 @@ class TestLookupReporter:
 
     def __init__(
         self,
-        base_url: str,
-        token: str,
-        project_id: str,
+        base_url: Optional[str] = None,
+        token: Optional[str] = None,
+        project_id: Optional[str] = None,
         *,
         client_name: Optional[str] = None,
         framework: str = "python",
@@ -100,18 +217,42 @@ class TestLookupReporter:
         batch_interval_ms: int = BATCH_INTERVAL_MS,
         verify_ssl: bool = True,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._token = token
-        self._project_id = project_id
-        self._client_name = client_name or socket.gethostname()
+        # Resolve config from file + env vars, then overlay constructor args
+        cfg = ConfigLoader.load()
+        resolved_url = base_url or ConfigLoader.get(cfg, "server.url")
+        resolved_token = token or ConfigLoader.get(cfg, "auth.token") or ConfigLoader.get(cfg, "auth.api_key")
+        resolved_project = project_id or ConfigLoader.get(cfg, "project.id")
+
+        if not resolved_url or not resolved_token or not resolved_project:
+            raise ValueError(
+                "base_url, token/api_key, and project_id are required. "
+                "Provide them as constructor args, in testlookup.yaml, "
+                "or via TESTLOOKUP_URL / TESTLOOKUP_TOKEN / TESTLOOKUP_PROJECT_ID env vars."
+            )
+
+        self._base_url = resolved_url.rstrip("/")
+        self._token = resolved_token
+        self._project_id = resolved_project
+        self._client_name = client_name or ConfigLoader.get(cfg, "reporting.client_name") or socket.gethostname()
         self._framework = framework
-        self._batch_size = min(batch_size, MAX_BATCH_SIZE)
-        self._batch_interval = batch_interval_ms / 1_000.0
+        self._batch_size = min(
+            batch_size if batch_size != BATCH_SIZE else int(ConfigLoader.get(cfg, "reporting.batch_size", BATCH_SIZE)),
+            MAX_BATCH_SIZE,
+        )
+        batch_ms = batch_interval_ms if batch_interval_ms != BATCH_INTERVAL_MS else int(ConfigLoader.get(cfg, "reporting.batch_interval_ms", BATCH_INTERVAL_MS))
+        self._batch_interval = batch_ms / 1_000.0
         self._verify_ssl = verify_ssl
+
+        # Determine auth header: API key vs JWT
+        api_key = ConfigLoader.get(cfg, "auth.api_key")
+        if api_key and (not token) and api_key == self._token:
+            auth_headers = {"X-API-Key": self._token}
+        else:
+            auth_headers = {"Authorization": f"Bearer {self._token}"}
 
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
-            headers={"Authorization": f"Bearer {self._token}"},
+            headers=auth_headers,
             timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=10.0, pool=5.0),
             verify=self._verify_ssl,
         )
@@ -120,7 +261,6 @@ class TestLookupReporter:
     async def session(
         self,
         build_number: Optional[str] = None,
-        run_id: Optional[str] = None,
         branch: Optional[str] = None,
         commit_hash: Optional[str] = None,
         total_tests: Optional[int] = None,
@@ -134,7 +274,6 @@ class TestLookupReporter:
         """
         live = await self._create_session(
             build_number=build_number,
-            run_id=run_id,
             branch=branch,
             commit_hash=commit_hash,
             total_tests=total_tests,
@@ -440,18 +579,33 @@ def pytest_addoption(parser):  # noqa: D401
 
 
 def pytest_configure(config):  # noqa: D401
-    """Attach the reporter plugin if configuration is present."""
+    """Attach the reporter plugin if configuration is present.
+
+    Resolution order: CLI flags → env vars → testlookup.yaml config file.
+    If a testlookup.yaml exists, the plugin activates without any CLI flags.
+    """
     url     = config.getoption("--testlookup-url",     default="")
     token   = config.getoption("--testlookup-token",   default="")
     project = config.getoption("--testlookup-project", default="")
+    build   = config.getoption("--testlookup-build",   default="")
+    branch  = config.getoption("--testlookup-branch",  default="")
+
+    # If CLI flags are incomplete, try ConfigLoader (file + env vars)
+    if not (url and token and project):
+        cfg = ConfigLoader.load()
+        url     = url     or ConfigLoader.get(cfg, "server.url", "")
+        token   = token   or ConfigLoader.get(cfg, "auth.token", "") or ConfigLoader.get(cfg, "auth.api_key", "")
+        project = project or ConfigLoader.get(cfg, "project.id", "")
+        build   = build   or ConfigLoader.get(cfg, "ci.build_number", "")
+        branch  = branch  or ConfigLoader.get(cfg, "ci.branch", "")
 
     if url and token and project:
         plugin = _TestLookupPytestPlugin(
             base_url=url,
             token=token,
             project_id=project,
-            build_number=config.getoption("--testlookup-build",  default=""),
-            branch=config.getoption("--testlookup-branch", default=""),
+            build_number=build,
+            branch=branch,
         )
         config.pluginmanager.register(plugin, "testlookup_live")
 

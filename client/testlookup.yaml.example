@@ -1,0 +1,55 @@
+# testlookup.yaml — SDK Configuration File
+# ============================================
+#
+# Place this file at your project root, in .testlookup/, or in ~/.testlookup/
+# to configure TestLookup SDKs without code changes.
+#
+# Discovery order (first file found wins):
+#   1. ./testlookup.yaml           (project root — commit to repo, no secrets)
+#   2. ./.testlookup/config.yaml   (hidden dir — add to .gitignore)
+#   3. ~/.testlookup/config.yaml   (user home — personal defaults)
+#
+# Precedence (highest wins):
+#   Constructor args > Environment variables > Config file > Built-in defaults
+#
+# Environment variables override any value in this file.
+# Use this file for non-secret config (URL, project ID), and env vars for secrets.
+
+server:
+  url: "http://localhost:8000"         # TESTLOOKUP_URL
+  verify_ssl: true
+
+auth:
+  # Set exactly one. Prefer api_key for CI/CD, token for interactive use.
+  token: ""                            # TESTLOOKUP_TOKEN  (JWT access token)
+  api_key: ""                          # TESTLOOKUP_API_KEY
+
+project:
+  id: ""                               # TESTLOOKUP_PROJECT_ID (UUID)
+
+reporting:
+  framework: "auto"                    # auto-detected from test runner
+  client_name: ""                      # default: hostname
+  batch_size: 50                       # events per HTTP batch
+  batch_interval_ms: 100               # flush interval in milliseconds
+
+upload:
+  mode: "live"                         # TESTLOOKUP_UPLOAD_MODE
+                                       #   "live"    — stream events in real-time
+                                       #   "offline" — accumulate, POST once at end
+
+ci:
+  build_number: ""                     # TESTLOOKUP_BUILD  (e.g., CI pipeline ID)
+  branch: ""                           # TESTLOOKUP_BRANCH (e.g., main, feature/x)
+  commit_hash: ""                      # TESTLOOKUP_COMMIT (e.g., git SHA)
+  tags: []                             # extra tags attached to every run
+
+# Framework-specific overrides (optional)
+# frameworks:
+#   pytest:
+#     capture_output: true
+#     capture_logs: true
+#   junit5:
+#     enabled: true
+#   testng:
+#     enabled: true

@@ -225,17 +225,29 @@ const SDK_TABS: { id: SDKLang; label: string; icon: string }[] = [
 function getInstallSnippet(lang: SDKLang): string {
   switch (lang) {
     case 'python':
-      return 'pip install testlookup-reporter'
+      return `pip install httpx pyyaml
+# Copy the reporter from the SDK Downloads button above
+# Then add testlookup.yaml to your project root (see Step 2)`
     case 'java':
-      return `<!-- Maven -->
+      return `# Option 1: Download the fat JAR from the SDK Downloads button above
+# Add to classpath — auto-discovery registers JUnit 5 / TestNG listeners
+
+# Option 2: Install to local Maven repo, then add dependency:
+mvn install:install-file -Dfile=testlookup-reporter-1.0.0-all.jar \\
+  -DgroupId=io.testlookup -DartifactId=testlookup-reporter \\
+  -Dversion=1.0.0 -Dclassifier=all -Dpackaging=jar
+
+# Maven dependency (after local install)
 <dependency>
   <groupId>io.testlookup</groupId>
   <artifactId>testlookup-reporter</artifactId>
   <version>1.0.0</version>
+  <classifier>all</classifier>
+  <scope>test</scope>
 </dependency>
 
-<!-- Gradle -->
-implementation 'io.testlookup:testlookup-reporter:1.0.0'`
+# Gradle (after local install)
+testImplementation 'io.testlookup:testlookup-reporter:1.0.0:all'`
     case 'javascript':
       return 'npm install testlookup-reporter'
     case 'go':
@@ -246,24 +258,57 @@ implementation 'io.testlookup:testlookup-reporter:1.0.0'`
 function getRunnerSnippet(lang: SDKLang, projectId: string): string {
   switch (lang) {
     case 'python':
-      return `pytest --testlookup-url http://server:8000 \\
-       --testlookup-token <jwt> \\
-       --testlookup-project ${projectId}`
-    case 'java':
-      return `// JUnit 5 — add the extension to your test class
-@ExtendWith(TestLookupExtension.class)
-public class MyTests {
-    // tests run automatically reported
-}
+      return `# Option 1: Zero-config — add testlookup.yaml to project root:
+# server:
+#   url: "http://server:8000"
+# auth:
+#   api_key: "<api-key>"       # or token: "<jwt>"
+# project:
+#   id: "${projectId}"
+pytest
 
-// Run with system properties:
+# Option 2: CLI flags
+pytest --testlookup-url http://server:8000 \\
+       --testlookup-token <jwt-or-api-key> \\
+       --testlookup-project ${projectId} \\
+       --testlookup-build build-42
+
+# Option 3: Environment variables
+export TESTLOOKUP_URL=http://server:8000
+export TESTLOOKUP_API_KEY=<api-key>
+export TESTLOOKUP_PROJECT_ID=${projectId}
+pytest`
+    case 'java':
+      return `# Option 1: TestNG XML — zero-code setup (recommended)
+# Just add suite parameters to your testng.xml:
+
+# <suite name="My Suite">
+#   <parameter name="testlookup.url" value="http://server:8000"/>
+#   <parameter name="testlookup.apiKey" value="qai_..."/>
+#   <parameter name="testlookup.projectId" value="${projectId}"/>
+#   <listeners>
+#     <listener class-name="io.testlookup.testng.TestLookupListener"/>
+#   </listeners>
+#   <test name="Regression">
+#     <classes><class name="com.example.MyTest"/></classes>
+#   </test>
+# </suite>
+mvn test -DsuiteXmlFiles=testng.xml
+
+# Option 2: Environment variables (works with JUnit 5 too)
+export TESTLOOKUP_URL=http://server:8000
+export TESTLOOKUP_API_KEY=<api-key>
+export TESTLOOKUP_PROJECT_ID=${projectId}
+mvn test
+
+# Option 3: JVM system properties
 mvn test \\
   -Dtestlookup.url=http://server:8000 \\
-  -Dtestlookup.token=<jwt> \\
-  -Dtestlookup.projectId=${projectId}
+  -Dtestlookup.apiKey=<api-key> \\
+  -Dtestlookup.projectId=${projectId} \\
+  -Dtestlookup.build=build-42
 
-// TestNG — add the listener
-// <listener class-name="io.testlookup.TestLookupListener" />`
+# Option 4: testlookup.yaml in project root (same format as Python)`
     case 'javascript':
       return `// Jest — add to jest.config.js
 module.exports = {
@@ -298,34 +343,57 @@ function getAPISnippet(lang: SDKLang, projectId: string): string {
     case 'python':
       return `from testlookup_reporter import TestLookupReporter
 
-reporter = TestLookupReporter(
-    base_url="http://server:8000",
-    token="<jwt>",
-    project_id="${projectId}",
-)
-async with reporter.session(
-    "my-build",
-    release_name="v2.5.0",   # optional
-) as s:
+# Config auto-resolved from testlookup.yaml / env vars:
+reporter = TestLookupReporter()
+
+# Or pass explicitly with API key (recommended for CI/CD):
+# reporter = TestLookupReporter(
+#     base_url="http://server:8000",
+#     api_key="qai_...",               # project-scoped API key
+#     project_id="${projectId}",
+# )
+
+async with reporter.session(build_number="build-42", branch="main") as s:
     await s.record("test_login", "PASSED", 120)
     await s.record("test_cart",  "FAILED", 340,
-                   error="AssertionError: expected 200")`
+                   error="AssertionError: expected 200",
+                   suite_name="checkout_tests",
+                   tags=["smoke"])
+    await s.log("Environment: staging")
+    await s.metric("memory_mb", 512.3, unit="MB")
+await reporter.aclose()`
     case 'java':
       return `import io.testlookup.TestLookupReporter;
-import io.testlookup.LiveSession;
+import io.testlookup.TestLookupReporter.*;
+import java.util.List;
 
-TestLookupReporter reporter = TestLookupReporter.builder()
-    .baseUrl("http://server:8000")
-    .token("<jwt>")
-    .projectId("${projectId}")
-    .build();
+// Config auto-resolved from testlookup.yaml / env vars / system props:
+TestLookupReporter reporter = new TestLookupReporter.Builder().build();
 
-try (LiveSession session = reporter.createSession(
-        "my-build", "v2.5.0")) {
-    session.record("test_login", "PASSED", 120);
-    session.record("test_cart", "FAILED", 340,
-        Map.of("error", "AssertionError: expected 200"));
-}`
+// Or pass explicitly with API key (recommended for CI/CD):
+// TestLookupReporter reporter = new TestLookupReporter.Builder()
+//     .baseUrl("http://server:8000")
+//     .apiKey("qai_...")               // project-scoped API key
+//     .projectId("${projectId}")
+//     .build();
+
+try (LiveSession session = reporter.startSession(
+        SessionOptions.builder()
+            .buildNumber("build-42")
+            .branch("main")
+            .build())) {
+
+    session.record("test_login", TestStatus.PASSED, 120);
+    session.record("test_cart",  TestStatus.FAILED, 340,
+        RecordOptions.builder()
+            .error("AssertionError: expected 200")
+            .suiteName("CheckoutTests")
+            .tags(List.of("smoke"))
+            .build());
+    session.log("Environment: staging", "INFO");
+    session.metric("memory_mb", 512.3, "MB");
+}
+// session.close() called automatically — triggers AI analysis`
     case 'javascript':
       return `import { TestLookupReporter } from 'testlookup-reporter';
 
@@ -404,7 +472,7 @@ const SDK_API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?
 
 const SDK_DOWNLOADS: { sdkLang: SDKLang; label: string; backendLang: string }[] = [
   { sdkLang: 'python',     label: 'Python (.py)',         backendLang: 'python' },
-  { sdkLang: 'java',       label: 'Java (.zip)',           backendLang: 'java'   },
+  { sdkLang: 'java',       label: 'Java (.jar)',           backendLang: 'java'   },
   { sdkLang: 'javascript', label: 'JavaScript/TS (.zip)', backendLang: 'js'     },
   { sdkLang: 'go',         label: 'Go (.zip)',             backendLang: 'go'     },
 ]
@@ -483,7 +551,7 @@ function ClientSDKGuide({ projectId }: { projectId?: string }) {
         </div>
         <div>
           <p className="text-[var(--color-text-muted)] mb-2 font-medium">
-            2. {lang === 'python' ? 'Run pytest with the plugin' : lang === 'java' ? 'Use the JUnit 5 / TestNG integration' : lang === 'javascript' ? 'Use the Jest or Mocha reporter' : 'Use the testing helper'}
+            2. {lang === 'python' ? 'Run pytest with the plugin' : lang === 'java' ? 'Configure TestNG XML or env vars (zero-code)' : lang === 'javascript' ? 'Use the Jest or Mocha reporter' : 'Use the testing helper'}
           </p>
           <CodeBlock code={getRunnerSnippet(lang, pid)} />
         </div>

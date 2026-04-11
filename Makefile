@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset setup-minio mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 DOCKER_COMPOSE = docker compose
 BACKEND_CONTAINER = testlookup_backend
@@ -242,6 +242,16 @@ setup-minio: ## Manually configure MinIO bucket and webhook (runs inside Docker 
 		-e BACKEND_URL=http://backend:8000 \
 		--entrypoint sh \
 		minio/mc /setup-minio.sh
+
+# ── Client SDKs ──────────────────────────────────────────────
+
+build-java-sdk: ## Build the Java SDK fat JAR (requires Maven + JDK 11+)
+	cd client/java && mvn clean package -DskipTests -q
+	@echo "Built: client/java/target/testlookup-reporter-1.0.0-all.jar"
+
+build-java-sdk-docker: ## Build the Java SDK fat JAR using Docker (no local Maven needed)
+	docker run --rm -v "$(CURDIR)/client/java:/app" -w /app maven:3.9-eclipse-temurin-11 mvn clean package -DskipTests -q
+	@echo "Built: client/java/target/testlookup-reporter-1.0.0-all.jar"
 
 # ── MCP Server ────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useAIConfig } from '@/hooks/useAIConfig'
 import AppLogo from '@/components/ui/AppLogo'
 
 /* ─── Navigation structure: grouped with primary + sub-items ─── */
@@ -28,6 +29,8 @@ interface NavGroup {
   children: NavItem[]
   /** Route prefixes that count as "within this group" */
   activePrefixes: string[]
+  /** Optional badge text shown next to the group label */
+  badge?: string
 }
 
 const GROUPS: NavGroup[] = [
@@ -60,7 +63,7 @@ const GROUPS: NavGroup[] = [
   },
   {
     key: 'intelligence',
-    label: 'AI Intelligence',
+    label: 'AI Reports',
     icon: Brain,
     to: '/intelligence',
     activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/chat'],
@@ -118,6 +121,11 @@ function SidebarGroup({ group }: { group: NavGroup }) {
         >
           <GroupIcon className="h-4 w-4 flex-shrink-0" />
           {group.label}
+          {group.badge && (
+            <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-[var(--color-bg-hover)] text-[var(--color-text-faint)] font-mono uppercase tracking-wide">
+              {group.badge}
+            </span>
+          )}
         </NavLink>
         {group.children.length > 0 && (
           <button
@@ -159,6 +167,18 @@ function SidebarGroup({ group }: { group: NavGroup }) {
 
 export default function Sidebar() {
   const { canAccessManagement } = usePermissions()
+  const { data: aiConfig } = useAIConfig()
+
+  // Show a mode badge on the AI Reports group when in rules or ML mode
+  const aiModeBadge =
+    !aiConfig ? undefined :
+    aiConfig.analysis_mode === 'rules' ? 'rules' :
+    aiConfig.analysis_mode === 'ml' ? 'ml' :
+    undefined
+
+  const groups = GROUPS.map(g =>
+    g.key === 'intelligence' && aiModeBadge ? { ...g, badge: aiModeBadge } : g
+  )
 
   return (
     <aside className="w-56 flex-shrink-0 border-r flex flex-col" style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}>
@@ -169,7 +189,7 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-1">
-        {GROUPS.map(group => (
+        {groups.map(group => (
           <SidebarGroup key={group.key} group={group} />
         ))}
 

@@ -37,6 +37,26 @@ def _merge_error_dicts(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict
     return merged
 
 
+def _last_str(a: str, b: str) -> str:
+    """Reducer: last writer wins (for scalar fields updated by parallel nodes)."""
+    return b
+
+
+def _last_bool(a: bool, b: bool) -> bool:
+    """Reducer: last writer wins for booleans (True wins over False via OR)."""
+    return a or b
+
+
+def _last_int(a: int, b: int) -> int:
+    """Reducer: sum integers from parallel nodes."""
+    return a + b
+
+
+def _last_optional_str(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """Reducer: last non-None writer wins."""
+    return b if b is not None else a
+
+
 class WorkflowState(TypedDict):
     # ── Required Inputs ───────────────────────────────────────────
     pipeline_run_id: str        # AgentPipelineRun.id (UUID string)
@@ -89,18 +109,18 @@ class WorkflowState(TypedDict):
     # ── Error / Progress Tracking ─────────────────────────────────
     errors: Annotated[list[str], _concat_lists]
     completed_stages: Annotated[list[str], _dedup_concat_lists]
-    current_stage: str
+    current_stage: Annotated[str, _last_str]
     # Per-stage structured errors for downstream agents to inspect
     stage_errors: Annotated[dict[str, list[str]], _merge_error_dicts]
     # Quality indicator set by analysis agent when >30% of analyses fail
-    stage_quality: Optional[str]          # "normal" | "degraded"
-    low_confidence_count: int             # count of analyses below confidence threshold
+    stage_quality: Annotated[Optional[str], _last_optional_str]  # "normal" | "degraded"
+    low_confidence_count: Annotated[int, _last_int]              # count of analyses below confidence threshold
 
     # ── Provenance / Execution Tracking ──────────────────────────
     # Annotated with _concat_lists so parallel nodes (analysis + cluster) can both append
     skipped_stages: Annotated[list[str], _concat_lists]  # stages bypassed and why
-    execution_path: str            # ExecutionPath enum value for the overall run
-    fallback_used: bool            # any stage used deterministic fallback instead of LLM
+    execution_path: Annotated[str, _last_str]    # ExecutionPath enum value for the overall run
+    fallback_used: Annotated[bool, _last_bool]   # any stage used deterministic fallback instead of LLM
     tools_used: Annotated[list[str], _concat_lists]      # LangChain tools invoked (parallel-safe)
     schema_version: int            # pipeline state schema version (increment on breaking changes)
 
