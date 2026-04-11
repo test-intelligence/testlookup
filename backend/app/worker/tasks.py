@@ -384,8 +384,6 @@ def ingest_uploaded_file(
     Parse an uploaded test result file and ingest.
     Supports JUnit XML, TestNG XML, and Allure JSON.
     """
-    import json as _json
-
     from app.services.ingestion_pipeline import (
         create_run_from_payload,
         finalize_run,
