@@ -87,10 +87,21 @@ def test_email_templates_contain_metadata():
     assert "Failed tests: 2" in plain
 
 
+# The fake enum values MUST match the real ``NotificationChannel`` enum
+# values (lowercase), because test isolation is not guaranteed — if another
+# test imports ``app.services.notification.manager`` first, the patched
+# ``sys.modules`` entry is a no-op and ``manager.NotificationChannel`` stays
+# bound to the real str-Enum. Using lowercase ``"email"``/``"slack"``/``"teams"``
+# works against **both** the fake and the real enum: the real enum inherits
+# from ``str`` so comparing ``"slack" == NotificationChannel.SLACK`` returns
+# True regardless of which one is bound.
+_FAKE_CHANNELS = SimpleNamespace(EMAIL="email", SLACK="slack", TEAMS="teams")
+
+
 @pytest.mark.asyncio
 async def test_notification_dispatch_missing_email_fails():
     fake_models = SimpleNamespace(
-        NotificationChannel=SimpleNamespace(EMAIL="EMAIL", SLACK="SLACK", TEAMS="TEAMS"),
+        NotificationChannel=_FAKE_CHANNELS,
         NotificationEventType=SimpleNamespace(RUN_FAILED=SimpleNamespace(value="run_failed"), RUN_PASSED=SimpleNamespace(value="run_passed")),
         NotificationLog=object,
         NotificationPreference=object,
@@ -107,7 +118,7 @@ async def test_notification_dispatch_missing_email_fails():
     ):
         from app.services.notification import manager
     pref = SimpleNamespace(
-        channel="EMAIL",
+        channel="email",
         email_override=None,
         slack_webhook_url=None,
         teams_webhook_url=None,
@@ -120,7 +131,7 @@ async def test_notification_dispatch_missing_email_fails():
 @pytest.mark.asyncio
 async def test_notification_dispatch_slack_success():
     fake_models = SimpleNamespace(
-        NotificationChannel=SimpleNamespace(EMAIL="EMAIL", SLACK="SLACK", TEAMS="TEAMS"),
+        NotificationChannel=_FAKE_CHANNELS,
         NotificationEventType=SimpleNamespace(RUN_FAILED=SimpleNamespace(value="run_failed")),
         NotificationLog=object,
         NotificationPreference=object,
@@ -136,9 +147,8 @@ async def test_notification_dispatch_slack_success():
         clear=False,
     ):
         from app.services.notification import manager
-    channel = "SLACK"
     pref = SimpleNamespace(
-        channel=channel,
+        channel="slack",
         email_override=None,
         slack_webhook_url="https://hooks.slack",
         teams_webhook_url=None,
