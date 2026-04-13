@@ -95,10 +95,13 @@ async def override_release_decision(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No release decision found for this run.",
             )
-        # BL-03: Mark intelligence snapshot stale after release override
+        # BL-03: Mark intelligence snapshot stale after release override.
+        # ``apply_override`` and ``mark_stale`` both stage-only now, so a
+        # single commit below makes the override + staleness flip atomic.
         try:
             from app.services.intelligence_snapshot_service import mark_stale
             await mark_stale(db, run_id)
         except Exception:
             pass  # Non-blocking
+        await db.commit()
         return council

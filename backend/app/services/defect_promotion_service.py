@@ -295,10 +295,14 @@ async def promote_cluster(
         policy_evaluation=policy_result,
     )
     db.add(defect)
-    await db.commit()
-    await db.refresh(defect)
+    await db.flush()  # materialize defect.id so jira ticket writes can reference it
 
-    # Only create Jira ticket if approved (not pending review)
+    # Only create Jira ticket if approved (not pending review).
+    # Jira is an *external* side effect, so we commit the defect record
+    # first (outside this service) before calling out. The handler is
+    # responsible for the atomic write; Jira creation then happens on a
+    # best-effort basis and gets its own follow-up flush if it updates
+    # the defect row.
     jira_ticket: Optional[dict] = None
     jira_url: Optional[str] = None
     if (
@@ -317,8 +321,6 @@ async def promote_cluster(
             defect.jira_ticket_id = jira_ticket.get("key")
             defect.jira_ticket_url = jira_url
             defect.approval_status = ActionStatus.EXECUTED
-            db.add(defect)
-            await db.commit()
 
     # Track promotion metrics
     if duplicate_detected:

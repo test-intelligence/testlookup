@@ -109,7 +109,13 @@ async def mark_stale(
     db: AsyncSession,
     run_id: uuid.UUID,
 ) -> bool:
-    """Mark a snapshot as stale (triggers refresh on next read). Returns True if found."""
+    """Mark a snapshot as stale (triggers refresh on next read). Returns True if found.
+
+    Stage-only: mutation is left pending on the current transaction. The
+    caller (router handler) owns the commit so a stale flip can land in the
+    same transaction as whatever triggered it (defect promotion, release
+    override, etc.), keeping the freshness guarantee atomic.
+    """
     result = await db.execute(
         select(RunIntelligenceSnapshot).where(
             RunIntelligenceSnapshot.run_id == run_id,
@@ -118,7 +124,6 @@ async def mark_stale(
     snapshot = result.scalar_one_or_none()
     if snapshot:
         snapshot.stale = True
-        await db.commit()
         return True
     return False
 

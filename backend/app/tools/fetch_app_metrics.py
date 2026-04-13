@@ -5,10 +5,10 @@ Correlates infrastructure metrics (CPU, memory, latency, error rate) with test f
 import logging
 from datetime import datetime, timedelta, timezone
 
-import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.http_client import get_http_client
 
 logger = logging.getLogger("tools.fetch_app_metrics")
 
@@ -19,37 +19,38 @@ async def _query_prometheus(metric: str, start: float, end: float, step: str = "
     if not _PROMETHEUS_URL:
         return []
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{_PROMETHEUS_URL}/api/v1/query_range",
-                params={
-                    "query": metric,
-                    "start": start,
-                    "end": end,
-                    "step": step,
-                },
-            )
-            if resp.status_code != 200:
-                return []
-            data = resp.json()
-            if data.get("status") != "success":
-                return []
-            results = []
-            for series in data.get("data", {}).get("result", []):
-                metric_name = metric
-                labels = series.get("metric", {})
-                values = series.get("values", [])
-                if values:
-                    avg_val = sum(float(v[1]) for v in values) / len(values)
-                    max_val = max(float(v[1]) for v in values)
-                    results.append({
-                        "metric": metric_name,
-                        "labels": labels,
-                        "avg": round(avg_val, 4),
-                        "max": round(max_val, 4),
-                        "sample_count": len(values),
-                    })
-            return results
+        client = get_http_client()
+        resp = await client.get(
+            f"{_PROMETHEUS_URL}/api/v1/query_range",
+            params={
+                "query": metric,
+                "start": start,
+                "end": end,
+                "step": step,
+            },
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        if data.get("status") != "success":
+            return []
+        results = []
+        for series in data.get("data", {}).get("result", []):
+            metric_name = metric
+            labels = series.get("metric", {})
+            values = series.get("values", [])
+            if values:
+                avg_val = sum(float(v[1]) for v in values) / len(values)
+                max_val = max(float(v[1]) for v in values)
+                results.append({
+                    "metric": metric_name,
+                    "labels": labels,
+                    "avg": round(avg_val, 4),
+                    "max": round(max_val, 4),
+                    "sample_count": len(values),
+                })
+        return results
     except Exception as exc:
         logger.debug("Prometheus query failed: %s", exc)
         return []

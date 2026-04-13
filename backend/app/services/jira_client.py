@@ -3,9 +3,9 @@ import base64
 import logging
 from typing import Any, cast
 
-import httpx
 
 from app.core.config import settings
+from app.core.http_client import get_http_client
 from app.services.resilience import async_retry
 
 logger = logging.getLogger(__name__)
@@ -83,16 +83,16 @@ async def create_jira_issue(
     }
 
     async def _do_create() -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = cast(dict[str, Any], resp.json())
-            ticket_key = data["key"]
-            return {
-                "ticket_id": data["id"],
-                "ticket_key": ticket_key,
-                "ticket_url": f"https://{settings.JIRA_DOMAIN}/browse/{ticket_key}",
-            }
+        client = get_http_client()
+        resp = await client.post(url, headers=headers, json=payload, timeout=15.0)
+        resp.raise_for_status()
+        data = cast(dict[str, Any], resp.json())
+        ticket_key = data["key"]
+        return {
+            "ticket_id": data["id"],
+            "ticket_key": ticket_key,
+            "ticket_url": f"https://{settings.JIRA_DOMAIN}/browse/{ticket_key}",
+        }
 
     return cast(dict[Any, Any], await async_retry(
         _do_create,

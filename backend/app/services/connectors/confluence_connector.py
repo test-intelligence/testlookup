@@ -10,6 +10,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.core.http_client import get_http_client
 from app.services.connectors.base import (
     ConnectorFetchError,
     FetchedContent,
@@ -87,22 +88,22 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
 
             # Use v2 API to check connectivity
             url = f"{self._base_url()}/wiki/api/v2/spaces?limit=1"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, headers=self._headers())
-                latency = int((time.monotonic() - t_start) * 1000)
-                if resp.status_code == 200:
-                    return {
-                        "success": True,
-                        "latency_ms": latency,
-                        "error": None,
-                        "detail": "Confluence API accessible",
-                    }
+            client = get_http_client()
+            resp = await client.get(url, headers=self._headers(), timeout=10.0)
+            latency = int((time.monotonic() - t_start) * 1000)
+            if resp.status_code == 200:
                 return {
-                    "success": False,
+                    "success": True,
                     "latency_ms": latency,
-                    "error": f"HTTP {resp.status_code}",
-                    "detail": resp.text[:200],
+                    "error": None,
+                    "detail": "Confluence API accessible",
                 }
+            return {
+                "success": False,
+                "latency_ms": latency,
+                "error": f"HTTP {resp.status_code}",
+                "detail": resp.text[:200],
+            }
         except Exception as exc:
             latency = int((time.monotonic() - t_start) * 1000)
             return {
@@ -124,16 +125,16 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
         params = {"expand": "body.storage,version,space,ancestors"}
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, headers=self._headers(), params=params)
-                if resp.status_code == 401:
-                    raise ConnectorFetchError("Confluence authentication failed — check credentials")
-                if resp.status_code == 403:
-                    raise ConnectorFetchError(f"Access denied to Confluence page {page_id}")
-                if resp.status_code == 404:
-                    raise ConnectorFetchError(f"Confluence page {page_id} not found")
-                resp.raise_for_status()
-                data = resp.json()
+            client = get_http_client()
+            resp = await client.get(url, headers=self._headers(), params=params, timeout=15.0)
+            if resp.status_code == 401:
+                raise ConnectorFetchError("Confluence authentication failed — check credentials")
+            if resp.status_code == 403:
+                raise ConnectorFetchError(f"Access denied to Confluence page {page_id}")
+            if resp.status_code == 404:
+                raise ConnectorFetchError(f"Confluence page {page_id} not found")
+            resp.raise_for_status()
+            data = resp.json()
         except ConnectorFetchError:
             raise
         except httpx.TimeoutException:

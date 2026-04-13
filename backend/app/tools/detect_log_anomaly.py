@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from langchain_core.tools import tool
 
 from app.core.config import settings
-from app.core.http_client import http_verify
+from app.core.http_client import get_http_client
 from app.services.input_sanitizer import sanitize_query_param, sanitize_service_name
 
 logger = logging.getLogger("tools.detect_log_anomaly")
@@ -20,21 +20,21 @@ async def _count_splunk_events(service: str, level: str, start: str, end: str) -
     service = sanitize_service_name(service)
     level = sanitize_query_param(level)
     try:
-        import httpx
         spl = f'index={settings.SPLUNK_INDEX} service="{service}" level="{level}" earliest="{start}" latest="{end}" | stats count'
-        async with httpx.AsyncClient(timeout=15.0, verify=http_verify()) as client:
-            resp = await client.post(
-                f"{settings.SPLUNK_BASE_URL}/services/search/jobs/export",
-                headers={"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"},
-                data={"search": f"search {spl}", "output_mode": "json", "count": 1},
-            )
-            if resp.status_code != 200:
-                return 0
-            import json
-            for line in resp.text.strip().split("\n"):
-                if line:
-                    result = json.loads(line).get("result", {})
-                    return int(result.get("count", 0))
+        client = get_http_client()
+        resp = await client.post(
+            f"{settings.SPLUNK_BASE_URL}/services/search/jobs/export",
+            headers={"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"},
+            data={"search": f"search {spl}", "output_mode": "json", "count": 1},
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return 0
+        import json
+        for line in resp.text.strip().split("\n"):
+            if line:
+                result = json.loads(line).get("result", {})
+                return int(result.get("count", 0))
     except Exception as exc:
         logger.debug("Splunk count query failed: %s", exc)
     return 0

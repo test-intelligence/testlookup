@@ -10,6 +10,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
+from app.core.http_client import get_http_client
 from app.services.connectors.base import (
     ConnectorFetchError,
     FetchedContent,
@@ -74,23 +75,23 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
                     "detail": "Set JIRA_DOMAIN, JIRA_EMAIL, and JIRA_API_TOKEN",
                 }
             url = f"{self._base_url()}/rest/api/3/myself"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, headers=self._headers())
-                latency = int((time.monotonic() - t_start) * 1000)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return {
-                        "success": True,
-                        "latency_ms": latency,
-                        "error": None,
-                        "detail": f"Authenticated as {data.get('displayName', data.get('emailAddress', 'unknown'))}",
-                    }
+            client = get_http_client()
+            resp = await client.get(url, headers=self._headers(), timeout=10.0)
+            latency = int((time.monotonic() - t_start) * 1000)
+            if resp.status_code == 200:
+                data = resp.json()
                 return {
-                    "success": False,
+                    "success": True,
                     "latency_ms": latency,
-                    "error": f"HTTP {resp.status_code}",
-                    "detail": resp.text[:200],
+                    "error": None,
+                    "detail": f"Authenticated as {data.get('displayName', data.get('emailAddress', 'unknown'))}",
                 }
+            return {
+                "success": False,
+                "latency_ms": latency,
+                "error": f"HTTP {resp.status_code}",
+                "detail": resp.text[:200],
+            }
         except Exception as exc:
             latency = int((time.monotonic() - t_start) * 1000)
             return {
@@ -111,16 +112,16 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         params = {"fields": "summary,description,issuetype,status,priority,labels,subtasks,comment"}
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, headers=self._headers(), params=params)
-                if resp.status_code == 401:
-                    raise ConnectorFetchError("Jira authentication failed — check credentials")
-                if resp.status_code == 403:
-                    raise ConnectorFetchError(f"Access denied to issue {issue_key}")
-                if resp.status_code == 404:
-                    raise ConnectorFetchError(f"Jira issue {issue_key} not found")
-                resp.raise_for_status()
-                data = resp.json()
+            client = get_http_client()
+            resp = await client.get(url, headers=self._headers(), params=params, timeout=15.0)
+            if resp.status_code == 401:
+                raise ConnectorFetchError("Jira authentication failed — check credentials")
+            if resp.status_code == 403:
+                raise ConnectorFetchError(f"Access denied to issue {issue_key}")
+            if resp.status_code == 404:
+                raise ConnectorFetchError(f"Jira issue {issue_key} not found")
+            resp.raise_for_status()
+            data = resp.json()
         except ConnectorFetchError:
             raise
         except httpx.TimeoutException:
@@ -242,12 +243,12 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
                 "fields": "summary,description,issuetype,status,priority",
                 "maxResults": 50,
             }
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, headers=self._headers(), params=params)
-                if resp.status_code != 200:
-                    logger.warning("Failed to fetch epic children for %s: HTTP %d", epic_key, resp.status_code)
-                    return ""
-                data = resp.json()
+            client = get_http_client()
+            resp = await client.get(url, headers=self._headers(), params=params, timeout=15.0)
+            if resp.status_code != 200:
+                logger.warning("Failed to fetch epic children for %s: HTTP %d", epic_key, resp.status_code)
+                return ""
+            data = resp.json()
 
             children_parts: list[str] = []
             for issue in data.get("issues", []):

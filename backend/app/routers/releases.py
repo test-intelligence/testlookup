@@ -22,6 +22,7 @@ from app.core.deps import (
 )
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
+from app.models.serializers import serialize_model
 from app.services import release_service
 
 router = APIRouter(prefix="/api/v1/releases", tags=["Releases"])
@@ -112,7 +113,9 @@ async def create_release(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.QA_LEAD)),
 ):
-    return await release_service.create_release(db, body)
+    release = await release_service.create_release(db, body)
+    await db.commit()
+    return await release_service.serialize_created_release(db, release)
 
 
 @router.put("/{release_id}")
@@ -123,7 +126,10 @@ async def update_release(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
-    return await release_service.update_release(db, release_id, body)
+    release = await release_service.update_release(db, release_id, body)
+    await db.commit()
+    await db.refresh(release)
+    return serialize_model(release)
 
 
 @router.delete("/{release_id}", status_code=204)
@@ -134,6 +140,7 @@ async def delete_release(
     __: User = Depends(require_release_access()),
 ):
     await release_service.delete_release(db, release_id)
+    await db.commit()
 
 
 @router.post("/{release_id}/phases", status_code=201)
@@ -144,7 +151,10 @@ async def add_phase(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
-    return await release_service.add_phase(db, release_id, body)
+    phase = await release_service.add_phase(db, release_id, body)
+    await db.commit()
+    await db.refresh(phase)
+    return serialize_model(phase)
 
 
 @router.put("/{release_id}/phases/{phase_id}")
@@ -156,7 +166,12 @@ async def update_phase(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
-    return await release_service.update_phase(db, release_id, phase_id, body)
+    phase, all_done = await release_service.update_phase(db, release_id, phase_id, body)
+    await db.commit()
+    await db.refresh(phase)
+    result = serialize_model(phase)
+    result["all_phases_completed"] = all_done
+    return result
 
 
 @router.delete("/{release_id}/phases/{phase_id}", status_code=204)
@@ -168,6 +183,7 @@ async def delete_phase(
     __: User = Depends(require_release_access()),
 ):
     await release_service.delete_phase(db, release_id, phase_id)
+    await db.commit()
 
 
 @router.post("/{release_id}/test-runs")
@@ -178,7 +194,13 @@ async def link_test_run(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
     __: User = Depends(require_release_access()),
 ):
-    return await release_service.link_test_run(db, release_id, body)
+    link, is_new = await release_service.link_test_run(db, release_id, body)
+    if is_new:
+        await db.commit()
+        await db.refresh(link)
+        return serialize_model(link)
+    # Idempotent: link already existed, service returned the existing row.
+    return {"message": "Already linked", "id": str(link.id)}
 
 
 @router.delete("/{release_id}/test-runs/{run_id}", status_code=204)
@@ -190,3 +212,4 @@ async def unlink_test_run(
     __: User = Depends(require_run_access()),
 ):
     await release_service.unlink_test_run(db, release_id, run_id)
+    await db.commit()
