@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from app.core.deps import get_current_active_user, require_role, require_run_access
+from app.core.deps import require_role, require_run_access
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
