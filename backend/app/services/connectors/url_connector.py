@@ -7,6 +7,7 @@ from typing import Optional
 import httpx
 import structlog
 
+from app.core.http_client import http_verify as _http_verify
 from app.services.connectors.base import (
     ConnectorFetchError,
     FetchedContent,
@@ -52,10 +53,15 @@ class URLConnector(KnowledgeConnectorBase):
             raise ConnectorFetchError(str(exc))
 
         try:
+            # NB: the shared pooled client defaults to ``follow_redirects=False``
+            # and the default httpx redirect cap is 20. This connector fetches
+            # untrusted user-supplied URLs, so we deliberately cap redirects at
+            # 5 and have to construct a bespoke client to set that limit.
             async with httpx.AsyncClient(
                 timeout=20.0,
                 follow_redirects=True,
                 max_redirects=5,
+                verify=_http_verify(),
             ) as client:
                 resp = await client.get(
                     url,

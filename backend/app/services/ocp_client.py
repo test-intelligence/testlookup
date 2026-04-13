@@ -2,10 +2,8 @@
 import logging
 from typing import Any, Optional, cast
 
-import httpx
-
 from app.core.config import settings
-from app.core.http_client import http_verify
+from app.core.http_client import get_http_client
 from app.services.resilience import async_retry
 
 logger = logging.getLogger(__name__)
@@ -20,44 +18,44 @@ async def get_pod_metadata(pod_name: str, namespace: str) -> Optional[dict]:
     base = settings.OCP_API_URL.rstrip("/")
 
     async def _do_fetch() -> dict:
-        async with httpx.AsyncClient(verify=http_verify(), timeout=10.0) as client:
-            # Fetch pod details
-            pod_url = f"{base}/api/v1/namespaces/{namespace}/pods/{pod_name}"
-            pod_resp = await client.get(pod_url, headers=headers)
-            pod_resp.raise_for_status()
-            pod_data = pod_resp.json()
+        client = get_http_client()
+        # Fetch pod details
+        pod_url = f"{base}/api/v1/namespaces/{namespace}/pods/{pod_name}"
+        pod_resp = await client.get(pod_url, headers=headers, timeout=10.0)
+        pod_resp.raise_for_status()
+        pod_data = pod_resp.json()
 
-            # Fetch pod events
-            events_url = (
-                f"{base}/api/v1/namespaces/{namespace}/events"
-                f"?fieldSelector=involvedObject.name={pod_name}"
-            )
-            events_resp = await client.get(events_url, headers=headers)
-            events_resp.raise_for_status()
-            events_data = events_resp.json()
+        # Fetch pod events
+        events_url = (
+            f"{base}/api/v1/namespaces/{namespace}/events"
+            f"?fieldSelector=involvedObject.name={pod_name}"
+        )
+        events_resp = await client.get(events_url, headers=headers, timeout=10.0)
+        events_resp.raise_for_status()
+        events_data = events_resp.json()
 
-            container = pod_data.get("spec", {}).get("containers", [{}])[0]
-            status = pod_data.get("status", {})
+        container = pod_data.get("spec", {}).get("containers", [{}])[0]
+        status = pod_data.get("status", {})
 
-            return {
-                "pod_name": pod_name,
-                "namespace": namespace,
-                "node": status.get("hostIP") or pod_data.get("spec", {}).get("nodeName"),
-                "phase": status.get("phase"),
-                "container_image": container.get("image"),
-                "resources": container.get("resources", {}),
-                "events": [
-                    {
-                        "reason": e.get("reason"),
-                        "message": e.get("message"),
-                        "type": e.get("type"),
-                        "first_time": e.get("firstTimestamp"),
-                        "last_time": e.get("lastTimestamp"),
-                        "count": e.get("count"),
-                    }
-                    for e in events_data.get("items", [])
-                ],
-            }
+        return {
+            "pod_name": pod_name,
+            "namespace": namespace,
+            "node": status.get("hostIP") or pod_data.get("spec", {}).get("nodeName"),
+            "phase": status.get("phase"),
+            "container_image": container.get("image"),
+            "resources": container.get("resources", {}),
+            "events": [
+                {
+                    "reason": e.get("reason"),
+                    "message": e.get("message"),
+                    "type": e.get("type"),
+                    "first_time": e.get("firstTimestamp"),
+                    "last_time": e.get("lastTimestamp"),
+                    "count": e.get("count"),
+                }
+                for e in events_data.get("items", [])
+            ],
+        }
 
     try:
         return cast(Optional[dict[Any, Any]], await async_retry(

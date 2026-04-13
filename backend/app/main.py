@@ -13,6 +13,7 @@ from slowapi.util import get_remote_address
 
 from app.bootstrap import configure_metrics, configure_middlewares, register_routers
 from app.core.config import settings
+from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
 from app.db.mongo import close_mongo, get_mongo_db
 from app.db.postgres import close_db
@@ -99,10 +100,11 @@ async def lifespan(app: FastAPI):
         pass
     logger.info("Live event stream consumer stopped")
 
-    # Shutdown DB connections
+    # Shutdown DB connections and pooled outbound HTTP client
     await close_db()
     await close_mongo()
     await close_redis()
+    await close_http_client()
     logger.info("TestLookup shutdown complete")
 
 

@@ -230,12 +230,15 @@ async def promote_cluster_to_defect(
             request=body.model_dump(),
             db=db,
         )
-        # BL-03: Mark intelligence snapshot stale after defect promotion
+        # BL-03: Mark intelligence snapshot stale after defect promotion.
+        # mark_stale also only flushes, so a single commit below covers the
+        # defect row, any Jira ticket link updates, and the staleness flag.
         try:
             from app.services.intelligence_snapshot_service import mark_stale
             await mark_stale(db, run_id)
         except Exception:
             pass  # Non-blocking
+        await db.commit()
         return DefectPromotionResponse(**result_dict)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

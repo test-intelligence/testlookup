@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from app.core.http_client import http_verify
+from app.core.http_client import get_http_client
 
 logger = logging.getLogger("services.integration_probe")
 
@@ -41,8 +41,12 @@ async def probe_jira() -> ProbeResult:
     start = time.monotonic()
     try:
         url = f"https://{settings.JIRA_DOMAIN}/rest/api/3/serverInfo"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, auth=(settings.JIRA_EMAIL or "", settings.JIRA_API_TOKEN or ""))
+        client = get_http_client()
+        resp = await client.get(
+            url,
+            auth=(settings.JIRA_EMAIL or "", settings.JIRA_API_TOKEN or ""),
+            timeout=10.0,
+        )
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             data = resp.json()
@@ -69,8 +73,8 @@ async def probe_splunk() -> ProbeResult:
     try:
         url = f"{settings.SPLUNK_BASE_URL}/services/server/info"
         headers = {"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"}
-        async with httpx.AsyncClient(timeout=10.0, verify=http_verify()) as client:
-            resp = await client.get(url, headers=headers)
+        client = get_http_client()
+        resp = await client.get(url, headers=headers, timeout=10.0)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             return ProbeResult("splunk", "healthy", ms, "Splunk API reachable", True, True)
@@ -90,13 +94,12 @@ async def probe_github() -> ProbeResult:
     if not settings.GITHUB_TOKEN:
         return ProbeResult("github", "skipped", message="No GITHUB_TOKEN configured")
 
-    import httpx
 
     start = time.monotonic()
     try:
         headers = {"Authorization": f"token {settings.GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("https://api.github.com/rate_limit", headers=headers)
+        client = get_http_client()
+        resp = await client.get("https://api.github.com/rate_limit", headers=headers, timeout=10.0)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             remaining = resp.json().get("rate", {}).get("remaining", 0)
@@ -115,13 +118,16 @@ async def probe_ocp() -> ProbeResult:
     if not settings.OCP_ENABLED or not settings.OCP_API_URL:
         return ProbeResult("ocp", "skipped", message="OCP_ENABLED=false or no URL configured")
 
-    import httpx
 
     start = time.monotonic()
     try:
         headers = {"Authorization": f"Bearer {settings.OCP_SA_TOKEN}"}
-        async with httpx.AsyncClient(timeout=10.0, verify=http_verify()) as client:
-            resp = await client.get(f"{settings.OCP_API_URL}/api/v1/namespaces/{settings.OCP_DEFAULT_NAMESPACE}", headers=headers)
+        client = get_http_client()
+        resp = await client.get(
+            f"{settings.OCP_API_URL}/api/v1/namespaces/{settings.OCP_DEFAULT_NAMESPACE}",
+            headers=headers,
+            timeout=10.0,
+        )
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             return ProbeResult("ocp", "healthy", ms, "Namespace accessible", True, True)
@@ -139,16 +145,16 @@ async def probe_slack() -> ProbeResult:
     if not settings.SLACK_ENABLED:
         return ProbeResult("slack", "skipped", message="SLACK_ENABLED=false")
 
-    import httpx
 
     start = time.monotonic()
     try:
         if settings.SLACK_BOT_TOKEN:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    "https://slack.com/api/auth.test",
-                    headers={"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"},
-                )
+            client = get_http_client()
+            resp = await client.post(
+                "https://slack.com/api/auth.test",
+                headers={"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"},
+                timeout=10.0,
+            )
             ms = int((time.monotonic() - start) * 1000)
             data = resp.json()
             if data.get("ok"):
@@ -207,12 +213,11 @@ async def probe_ollama() -> ProbeResult:
     if not settings.AI_OFFLINE_MODE:
         return ProbeResult("ollama", "skipped", message="AI_OFFLINE_MODE=false — using cloud LLM")
 
-    import httpx
 
     start = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
+        client = get_http_client()
+        resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=5.0)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             models = [m["name"] for m in resp.json().get("models", [])]
@@ -226,12 +231,11 @@ async def probe_chromadb() -> ProbeResult:
     """Probe ChromaDB vector store."""
     from app.core.config import settings
 
-    import httpx
 
     start = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(f"{settings.chroma_host_url}/api/v2/heartbeat")
+        client = get_http_client()
+        resp = await client.get(f"{settings.chroma_host_url}/api/v2/heartbeat", timeout=4.0)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
             return ProbeResult("chromadb", "healthy", ms, "ChromaDB heartbeat OK", True, True)

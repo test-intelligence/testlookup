@@ -1,7 +1,6 @@
 """Slack notifications via incoming webhooks (Block Kit)."""
 import logging
 
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +103,9 @@ async def send_notification(
         ],
     }
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.post(webhook_url, json=payload)
-        response.raise_for_status()
+    from app.core.http_client import get_http_client
+    client = get_http_client()
+    response = await client.post(webhook_url, json=payload, timeout=10.0)
+    response.raise_for_status()
 
     logger.info("Slack notification sent — event=%s", event_type)

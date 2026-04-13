@@ -516,10 +516,13 @@ async def test_release_service_link_test_run_returns_existing_link_message():
     )
 
     with patch.object(release_service, "get_release_or_404", AsyncMock(return_value=release)):
-        result = await release_service.link_test_run(db, str(release.id), body)
+        # After the item-#2 refactor link_test_run returns (link, is_new) so
+        # the router can decide whether to commit. For an existing link,
+        # is_new is False and the returned ``link`` is the existing row.
+        link, is_new = await release_service.link_test_run(db, str(release.id), body)
 
-    assert result["message"] == "Already linked"
-    assert result["id"] == str(existing.id)
+    assert is_new is False
+    assert link is existing
 
 
 def test_report_service_build_html_report_summarizes_totals():

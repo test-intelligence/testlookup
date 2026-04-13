@@ -1,3 +1,14 @@
+"""
+Release lifecycle service — CRUD for releases, phases, and test-run links.
+
+Transaction model (item #2: one commit per request):
+  * Commands stage changes via ``db.add`` / ``db.delete`` / mutation and
+    call ``db.flush()`` only when they need a generated ID before
+    continuing. They never call ``db.commit()``.
+  * The ``releases`` router owns ``db.commit()`` — one commit per request.
+  * Read commands (``list_releases``, ``get_release_details``) are pure
+    queries and never touch the transaction.
+"""
 from __future__ import annotations
 
 import uuid
@@ -86,7 +97,8 @@ async def list_releases(db: AsyncSession, project_id: Optional[str], status: Opt
     return {"items": items, "total": len(items)}
 
 
-async def create_release(db: AsyncSession, body) -> dict:
+async def create_release(db: AsyncSession, body) -> Release:
+    """Stage a new release (and its initial phases). Handler commits + serializes."""
     logger.info("creating_release", project_id=body.project_id, name=body.name)
     release = Release(
         project_id=uuid.UUID(body.project_id),
@@ -97,7 +109,7 @@ async def create_release(db: AsyncSession, body) -> dict:
         planned_date=body.planned_date,
     )
     db.add(release)
-    await db.flush()
+    await db.flush()  # need release.id for child phases
 
     for idx, phase_in in enumerate(body.phases):
         db.add(
@@ -114,8 +126,11 @@ async def create_release(db: AsyncSession, body) -> dict:
                 notes=phase_in.notes,
             )
         )
+    return release
 
-    await db.commit()
+
+async def serialize_created_release(db: AsyncSession, release: Release) -> dict:
+    """Serialize a freshly-committed release into the response shape."""
     stmt = select(Release).where(Release.id == release.id).options(selectinload(Release.phases))
     release = (await db.execute(stmt)).scalar_one()
     data = serialize_model(release)
@@ -179,7 +194,8 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
     return data
 
 
-async def update_release(db: AsyncSession, release_id: str, body) -> dict:
+async def update_release(db: AsyncSession, release_id: str, body) -> Release:
+    """Stage updates to a release. Handler commits; returns the mutated row."""
     release = await get_release_or_404(db, release_id)
     updates = body.model_dump(exclude_none=True)
     new_status = updates.get("status")
@@ -209,18 +225,17 @@ async def update_release(db: AsyncSession, release_id: str, body) -> dict:
 
     for field, value in updates.items():
         setattr(release, field, value)
-    await db.commit()
-    await db.refresh(release)
-    return serialize_model(release)
+    return release
 
 
 async def delete_release(db: AsyncSession, release_id: str) -> None:
+    """Stage deletion of a release. Handler commits."""
     release = await get_release_or_404(db, release_id)
     await db.delete(release)
-    await db.commit()
 
 
-async def add_phase(db: AsyncSession, release_id: str, body) -> dict:
+async def add_phase(db: AsyncSession, release_id: str, body) -> ReleasePhase:
+    """Stage a new phase under an existing release. Handler commits."""
     release = await get_release_or_404(db, release_id)
 
     # Check for duplicate phase name within the same release
@@ -258,12 +273,16 @@ async def add_phase(db: AsyncSession, release_id: str, body) -> dict:
         notes=body.notes,
     )
     db.add(phase)
-    await db.commit()
-    await db.refresh(phase)
-    return serialize_model(phase)
+    await db.flush()  # materialize phase.id for any follow-up queries
+    return phase
 
 
-async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -> dict:
+async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -> tuple[ReleasePhase, bool]:
+    """Stage updates to a phase. Returns (phase, all_phases_completed).
+
+    The "all phases completed" flag is computed before commit so the handler
+    can surface it alongside the response without a second round-trip.
+    """
     phase = await get_phase_or_404(db, release_id, phase_id)
     updates = body.model_dump(exclude_none=True)
 
@@ -295,10 +314,6 @@ async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -
 
     for field, value in updates.items():
         setattr(phase, field, value)
-    await db.commit()
-    await db.refresh(phase)
-
-    result = serialize_model(phase)
 
     # Check if all phases of this release are now completed/skipped
     all_phases = (
@@ -307,18 +322,21 @@ async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -
         )
     ).scalars().all()
     all_done = all(p.status in ("completed", "skipped") for p in all_phases)
-    result["all_phases_completed"] = all_done
-
-    return result
+    return phase, all_done
 
 
 async def delete_phase(db: AsyncSession, release_id: str, phase_id: str) -> None:
+    """Stage deletion of a phase. Handler commits."""
     phase = await get_phase_or_404(db, release_id, phase_id)
     await db.delete(phase)
-    await db.commit()
 
 
-async def link_test_run(db: AsyncSession, release_id: str, body) -> dict:
+async def link_test_run(db: AsyncSession, release_id: str, body) -> tuple[ReleaseTestRunLink, bool]:
+    """Stage a release↔run link. Returns (link, is_new).
+
+    If a matching link already exists we return it with ``is_new=False`` and
+    the handler just re-serializes without committing.
+    """
     await get_release_or_404(db, release_id)
     run_uuid = uuid.UUID(body.test_run_id)
     run = (await db.execute(select(TestRun).where(TestRun.id == run_uuid))).scalar_one_or_none()
@@ -334,7 +352,7 @@ async def link_test_run(db: AsyncSession, release_id: str, body) -> dict:
         )
     ).scalar_one_or_none()
     if existing:
-        return {"message": "Already linked", "id": str(existing.id)}
+        return existing, False
 
     link = ReleaseTestRunLink(
         release_id=uuid.UUID(release_id),
@@ -342,12 +360,12 @@ async def link_test_run(db: AsyncSession, release_id: str, body) -> dict:
         phase_id=uuid.UUID(body.phase_id) if body.phase_id else None,
     )
     db.add(link)
-    await db.commit()
-    await db.refresh(link)
-    return serialize_model(link)
+    await db.flush()
+    return link, True
 
 
 async def unlink_test_run(db: AsyncSession, release_id: str, run_id: str) -> None:
+    """Stage deletion of a release↔run link. Handler commits."""
     link = (
         await db.execute(
             select(ReleaseTestRunLink).where(
@@ -359,4 +377,3 @@ async def unlink_test_run(db: AsyncSession, release_id: str, run_id: str) -> Non
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
     await db.delete(link)
-    await db.commit()

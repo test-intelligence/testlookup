@@ -321,13 +321,16 @@ async def apply_override(
     existing_audit.append(audit_entry)
     decision.override_audit = existing_audit
 
-    # Apply override
+    # Apply override. Transaction is owned by the handler — ``apply_override``
+    # only stages the mutation so the override row, any follow-up
+    # ``mark_stale`` on the intelligence snapshot, and the metrics
+    # counter can all land atomically under one commit.
     before_rec = decision.recommendation
     decision.recommendation = override_recommendation
     decision.human_override = reason
     decision.overridden_by = actor.id if actor else None
 
-    await db.commit()
+    await db.flush()
     await db.refresh(decision)
 
     # Track metric

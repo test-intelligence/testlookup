@@ -23,18 +23,14 @@ async def test_jira_create_issue_success():
         raise_for_status=lambda: None,
         json=lambda: {"id": "1", "key": "QA-1"},
     )
-    client = SimpleNamespace(post=AsyncMock(return_value=resp))
+    shared_client = SimpleNamespace(post=AsyncMock(return_value=resp))
 
-    class _CM:
-        async def __aenter__(self):
-            return client
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
+    # jira_client now uses the pooled ``get_http_client`` singleton instead
+    # of constructing per-request ``httpx.AsyncClient`` instances. Patch the
+    # accessor so the test supplies a fake client with a stubbed ``post``.
     with (
         patch("app.services.jira_client.settings") as s,
-        patch("app.services.jira_client.httpx.AsyncClient", return_value=_CM()),
+        patch("app.services.jira_client.get_http_client", return_value=shared_client),
     ):
         s.JIRA_ENABLED = True
         s.JIRA_DOMAIN = "jira.example.com"

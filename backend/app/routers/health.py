@@ -72,13 +72,13 @@ async def _check_redis() -> dict[str, Any]:
 
 async def _check_minio() -> dict[str, Any]:
     try:
-        import httpx  # noqa: PLC0415
+        from app.core.http_client import get_http_client  # noqa: PLC0415
 
         # MinIO health endpoint — available without auth
         endpoint = settings.MINIO_ENDPOINT
         scheme = "https" if settings.MINIO_USE_SSL else "http"
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(f"{scheme}://{endpoint}/minio/health/live")
+        client = get_http_client()
+        resp = await client.get(f"{scheme}://{endpoint}/minio/health/live", timeout=4.0)
         if resp.status_code in (200, 204):
             return {"status": "ok"}
         return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
@@ -90,10 +90,10 @@ async def _check_ollama() -> dict[str, Any]:
     if not settings.AI_OFFLINE_MODE:
         return {"status": "skipped", "detail": "AI_OFFLINE_MODE=false — using cloud LLM"}
     try:
-        import httpx  # noqa: PLC0415
+        from app.core.http_client import get_http_client  # noqa: PLC0415
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
+        client = get_http_client()
+        resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=5.0)
         if resp.status_code == 200:
             models = [m["name"] for m in resp.json().get("models", [])]
             return {"status": "ok", "models": models}
@@ -104,10 +104,10 @@ async def _check_ollama() -> dict[str, Any]:
 
 async def _check_chromadb() -> dict[str, Any]:
     try:
-        import httpx  # noqa: PLC0415
+        from app.core.http_client import get_http_client  # noqa: PLC0415
 
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            resp = await client.get(f"{settings.chroma_host_url}/api/v2/heartbeat")
+        client = get_http_client()
+        resp = await client.get(f"{settings.chroma_host_url}/api/v2/heartbeat", timeout=4.0)
         if resp.status_code == 200:
             return {"status": "ok"}
         return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
