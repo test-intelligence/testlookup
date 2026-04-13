@@ -31,7 +31,13 @@ data:
   AI_OFFLINE_MODE: "true"
   AI_CONFIDENCE_THRESHOLD: "80"
   CELERY_WORKER_CONCURRENCY: "4"
-  CORS_ORIGINS: "https://testlookup.yourdomain.com"
+  # IMPORTANT: override per environment via a kustomize overlay patch.
+  # Must match the ingress hostname users open in their browser, otherwise
+  # the dashboard will be blocked by CORS. Multiple origins comma-separated.
+  CORS_ORIGINS: "https://testlookup.example.com"
+  # Externally-reachable base URL used to build links in Jira tickets,
+  # Slack/Teams notifications, and emails. Override per environment.
+  PUBLIC_BASE_URL: "https://testlookup.example.com"
   # MCP server internal service URL (used by the backend's health endpoint reference only)
   MCP_SERVICE_URL: "http://testlookup-mcp:8002"
   # ── Observability ────────────────────────────────────────────────────────────

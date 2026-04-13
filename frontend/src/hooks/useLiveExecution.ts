@@ -77,6 +77,32 @@ export function useLiveExecution(projectId?: string) {
           )
           return [...d.sessions, ...localOnly]
         })
+
+        // Seed the event feed from session data so the Workflow Event Feed
+        // widget is populated on initial load (before any WebSocket events).
+        setRecentEvents(prev => {
+          if (prev.length > 0) return prev // already have real-time events
+          const seeded: LiveEvent[] = d.sessions.map((s: LiveSessionState) => ({
+            type: s.status === 'running' ? 'live_run_started' : 'live_run_complete',
+            run_id: s.run_id,
+            build_number: s.build_number,
+            project_id: s.project_id,
+            passed: s.passed,
+            failed: s.failed,
+            skipped: s.skipped,
+            broken: s.broken,
+            total: s.total,
+            pass_rate: s.pass_rate,
+            last_test: s.current_test,
+            status: s.status,
+            timestamp: s.completed_at
+              ? new Date(s.completed_at).getTime()
+              : s.started_at
+                ? new Date(s.started_at).getTime()
+                : Date.now(),
+          }))
+          return seeded.slice(0, 200)
+        })
       },
     },
   )

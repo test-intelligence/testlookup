@@ -13,7 +13,10 @@
 
 import type { Metric } from 'web-vitals'
 
-const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/api/v1/observability/frontend`
+// When VITE_API_BASE_URL is unset, use a same-origin relative URL so the
+// reporter follows the page through any ingress (k8s, gcp, aws, homelab).
+// VITE_API_URL is also accepted as a legacy alias.
+const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? ''}/api/v1/observability/frontend`
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -2,13 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Search, Bell, CheckCircle, XCircle } from 'lucide-react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { projectsService } from '@/services/projectsService'
 import { useAuthStore } from '@/store/authStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { LogOut } from 'lucide-react'
 import { useUnreadCount, useNotificationHistory, invalidateNotifications } from '@/hooks/useNotifications'
 import { notificationService } from '@/services/notificationService'
-import type { Project } from '@/types/projects'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 
 const AVATAR_BG: Record<string, string> = {
@@ -73,8 +71,13 @@ function UserProfileDropdown() {
 
 export default function TopBar() {
   const navigate = useNavigate()
-  const { activeProject, activeProjectId, setActiveProject, setAllProjects } = useProjectStore()
-  const [projects, setProjects] = useState<Project[]>([])
+  // Individual primitive selectors avoid Zustand v5 infinite-loop pitfall (#30).
+  const activeProject = useProjectStore(s => s.activeProject)
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const setActiveProject = useProjectStore(s => s.setActiveProject)
+  const setAllProjects = useProjectStore(s => s.setAllProjects)
+  const projects = useProjectStore(s => s.projects)
+  const refreshProjects = useProjectStore(s => s.refreshProjects)
   const [searchVal, setSearchVal] = useState('')
   const [bellOpen, setBellOpen] = useState(false)
   const bellRef = useRef<HTMLDivElement>(null)
@@ -85,8 +88,7 @@ export default function TopBar() {
   const unreadCount = unreadData?.unread ?? 0
 
   useEffect(() => {
-    projectsService.list().then((list) => {
-      setProjects(list)
+    refreshProjects().then((list) => {
       // Non-admin users cannot use "All Projects" — auto-select first project
       if (!isAdmin) {
         const currentIsAll = useProjectStore.getState().activeProjectId === ALL_PROJECTS_ID
@@ -98,7 +100,7 @@ export default function TopBar() {
         }
       }
     }).catch(() => {})
-  }, [isAdmin, setActiveProject])
+  }, [isAdmin, setActiveProject, refreshProjects])
 
   // Close bell dropdown when clicking outside
   useEffect(() => {

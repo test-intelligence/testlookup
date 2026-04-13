@@ -71,6 +71,7 @@ async def get_test_case(
     run_id: uuid.UUID,
     test_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
 ):
     result = await db.execute(
         select(TestCase).where(
@@ -88,7 +89,7 @@ async def get_test_case(
 async def get_regression_diff(
     run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    _: Any = Depends(require_run_access()),
 ):
     """
     Return a "What changed since last good run?" diff for the given test run.
@@ -109,6 +110,7 @@ async def set_run_release(
     run_id: uuid.UUID,
     body: dict,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
 ):
     release_name = (body.get("release_name") or "").strip()
     if not release_name:

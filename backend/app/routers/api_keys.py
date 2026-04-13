@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_role
+from app.core.deps import require_api_key_owner, require_role
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, Project, User, UserRole
 from app.models.schemas import ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse
@@ -138,6 +138,7 @@ async def revoke_api_key(
     key_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_api_key_owner()),
 ):
     """Revoke (soft-delete) an API key. Only the owner can revoke their own keys."""
     result = await db.execute(

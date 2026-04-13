@@ -182,6 +182,18 @@ k8s-deploy-prod: ## Deploy to production Kubernetes cluster
 k8s-deploy-openshift: ## Deploy using OpenShift-compatible overlay
 	kubectl apply -k k8s/overlays/openshift
 
+ifeq ($(OS),Windows_NT)
+  BASH_CMD := "C:/Program Files/Git/bin/bash.exe"
+else
+  BASH_CMD := bash
+endif
+
+k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS, e.g. make k8s-deploy-homelab ARGS="--skip-registry")
+	$(BASH_CMD) homelabsetup/deploy-homelab.sh $(ARGS)
+
+k8s-deploy-homelab-update: ## Rebuild images and redeploy to homelab (skip registry + models)
+	$(BASH_CMD) homelabsetup/deploy-homelab.sh --skip-registry --skip-models $(ARGS)
+
 k8s-status: ## Show Kubernetes deployment status
 	kubectl get pods,svc,ing -n testlookup
 
@@ -224,6 +236,12 @@ shell-backend: ## Open a shell in the backend container
 
 shell-db: ## Open psql in the postgres container
 	$(DOCKER_COMPOSE) exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+
+create-admin: ## Create initial admin user (Docker Compose)
+	$(DOCKER_COMPOSE) exec backend python /app/scripts/create_admin.py
+
+create-admin-k8s: ## Create initial admin user (Kubernetes)
+	kubectl -n testlookup exec -it deployment/testlookup-backend -- python /app/scripts/create_admin.py
 
 simulate-upload: ## Simulate a single Jenkins test run upload to MinIO
 	$(DOCKER_COMPOSE) exec backend python /app/scripts/simulate_upload.py

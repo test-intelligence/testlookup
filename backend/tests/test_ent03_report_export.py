@@ -382,7 +382,7 @@ class TestShareLinkService:
         """Verify ReportShareLink has all expected fields."""
         from app.models.postgres import ReportShareLink
 
-        assert hasattr(ReportShareLink, "token")
+        assert hasattr(ReportShareLink, "token_hash")
         assert hasattr(ReportShareLink, "run_id")
         assert hasattr(ReportShareLink, "project_id")
         assert hasattr(ReportShareLink, "report_layout")

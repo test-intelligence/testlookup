@@ -45,9 +45,10 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "200m"
+          # /sse is a streaming endpoint that rejects plain HTTP GET probes
+          # with 421 — use a TCP probe to verify the server is listening.
           readinessProbe:
-            httpGet:
-              path: /sse
+            tcpSocket:
               port: 8002
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -58,8 +59,7 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
           livenessProbe:
-            httpGet:
-              path: /sse
+            tcpSocket:
               port: 8002
             initialDelaySeconds: 15
             periodSeconds: 30

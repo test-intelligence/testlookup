@@ -445,6 +445,284 @@ def require_run_access():
     return _check
 
 
+def _make_project_scoped_guard(
+    model_getter: Callable,
+    id_param: str,
+    guard_name: str,
+    not_found_detail: str,
+    deny_detail: str,
+):
+    """Factory for "load a project-scoped resource and check membership" guards.
+
+    The three resource-specific wrappers (``require_release_access`` etc.)
+    share the same three-step logic:
+
+      1. Extract a UUID path param named ``id_param``.
+      2. ``SELECT project_id FROM <table> WHERE id = :pid`` to find the
+         owning project.
+      3. Check ``ProjectMember`` for the current user against that project.
+         ADMIN bypasses.
+
+    ``model_getter`` is a callable that returns the SQLAlchemy model class,
+    so we can lazy-import the model inside and avoid circular imports at
+    module load time.
+
+    We override ``_check.__qualname__`` with the caller's ``guard_name`` so
+    the architectural ratchet (which identifies guards by qualname substring
+    match) can tell the three wrappers apart.
+    """
+    from app.models.postgres import ProjectMember
+
+    async def _check(
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_active_user),
+    ) -> User:
+        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+            return current_user
+
+        raw = request.path_params.get(id_param)
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"{guard_name} wired on route missing {{{id_param}}}",
+            )
+        try:
+            resource_uuid = uuid.UUID(raw)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {id_param}")
+
+        model = model_getter()
+        result = await db.execute(
+            select(model.project_id).where(model.id == resource_uuid)
+        )
+        project_id = result.scalar_one_or_none()
+        if project_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
+
+        membership = await db.execute(
+            select(ProjectMember.id).where(
+                ProjectMember.user_id == current_user.id,
+                ProjectMember.project_id == project_id,
+            )
+        )
+        if membership.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=deny_detail)
+        return current_user
+
+    # Make the guard identifiable by name in the architectural ratchet,
+    # which inspects ``call.__qualname__`` for substring matches.
+    _check.__qualname__ = f"{guard_name}.<locals>._check"
+    return _check
+
+
+def require_release_access():
+    """Verify the caller is a member of the project that owns ``{release_id}``."""
+    def _model():
+        from app.models.postgres import Release
+        return Release
+
+    return _make_project_scoped_guard(
+        _model,
+        id_param="release_id",
+        guard_name="require_release_access",
+        not_found_detail="Release not found",
+        deny_detail="You do not have access to this release",
+    )
+
+
+def require_knowledge_source_access():
+    """Verify the caller is a member of the project that owns ``{source_id}``."""
+    def _model():
+        from app.models.postgres import KnowledgeSource
+        return KnowledgeSource
+
+    return _make_project_scoped_guard(
+        _model,
+        id_param="source_id",
+        guard_name="require_knowledge_source_access",
+        not_found_detail="Knowledge source not found",
+        deny_detail="You do not have access to this knowledge source",
+    )
+
+
+def require_generation_batch_access():
+    """Verify the caller is a member of the project that owns ``{batch_id}``."""
+    def _model():
+        from app.models.postgres import GenerationBatch
+        return GenerationBatch
+
+    return _make_project_scoped_guard(
+        _model,
+        id_param="batch_id",
+        guard_name="require_generation_batch_access",
+        not_found_detail="Generation batch not found",
+        deny_detail="You do not have access to this generation batch",
+    )
+
+
+def require_live_session_access():
+    """Verify the caller is a member of the project that owns ``{session_id}``.
+
+    :class:`LiveSession` carries ``project_id`` directly, so the generic
+    project-scoped factory fits it cleanly.
+    """
+    def _model():
+        from app.models.postgres import LiveSession
+        return LiveSession
+
+    return _make_project_scoped_guard(
+        _model,
+        id_param="session_id",
+        guard_name="require_live_session_access",
+        not_found_detail="Live session not found",
+        deny_detail="You do not have access to this live session",
+    )
+
+
+def require_api_key_owner():
+    """Resolve an :class:`ApiKey` by ``{key_id}`` and verify caller ownership.
+
+    API keys are owned by a single user via ``user_id``; ADMIN bypasses.
+    Unlike the project-scoped guards this one does not need ``ProjectMember``
+    resolution — the owner check is a single-column comparison.
+    """
+    from app.models.postgres import ApiKey
+
+    async def _check(
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_active_user),
+    ) -> User:
+        raw = request.path_params.get("key_id")
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="require_api_key_owner wired on route missing {key_id}",
+            )
+        try:
+            key_uuid = uuid.UUID(raw)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid key_id")
+
+        owner_id = (await db.execute(
+            select(ApiKey.user_id).where(ApiKey.id == key_uuid)
+        )).scalar_one_or_none()
+        if owner_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+
+        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+            return current_user
+        if owner_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not own this API key",
+            )
+        return current_user
+
+    return _check
+
+
+def require_session_access():
+    """Resolve a chat session by ``{session_id}`` and verify ownership.
+
+    Returns the loaded :class:`ChatSession` so the handler does not need to
+    re-query. Creator-only semantics: the owning user (and ADMIN) may read,
+    delete, and post to a session; no one else, even fellow project members.
+
+    Unlike the older ``require_*_access`` helpers this dependency returns the
+    resource instead of the current user, so handlers can consume it directly:
+
+        async def delete_session(
+            session: ChatSession = Depends(require_session_access()),
+            db: AsyncSession = Depends(get_db),
+        ):
+            ...
+    """
+    from app.models.postgres import ChatSession
+
+    async def _check(
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_active_user),
+    ) -> "ChatSession":
+        raw = request.path_params.get("session_id")
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="require_session_access wired on non-session route",
+            )
+        try:
+            session_uuid = uuid.UUID(raw)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid session ID")
+
+        result = await db.execute(select(ChatSession).where(ChatSession.id == session_uuid))
+        session = result.scalar_one_or_none()
+        if session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        is_admin = _normalize_user_role(current_user.role) == UserRole.ADMIN
+        if not is_admin and session.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this chat session",
+            )
+        return session
+
+    return _check
+
+
+def require_link_access():
+    """Resolve a :class:`ReportShareLink` by ``{link_id}`` and verify access.
+
+    Access is granted to the link's creator, any member of the owning
+    project, and ADMIN. Returns the loaded link so the handler does not
+    need to re-query.
+    """
+    from app.models.postgres import ProjectMember, ReportShareLink
+
+    async def _check(
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_active_user),
+    ) -> "ReportShareLink":
+        raw = request.path_params.get("link_id")
+        if not raw:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="require_link_access wired on non-link route",
+            )
+        try:
+            link_uuid = uuid.UUID(raw)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid link ID")
+
+        result = await db.execute(select(ReportShareLink).where(ReportShareLink.id == link_uuid))
+        link = result.scalar_one_or_none()
+        if link is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
+
+        is_admin = _normalize_user_role(current_user.role) == UserRole.ADMIN
+        if is_admin or link.created_by_id == current_user.id:
+            return link
+
+        membership = await db.execute(
+            select(ProjectMember.id).where(
+                ProjectMember.user_id == current_user.id,
+                ProjectMember.project_id == link.project_id,
+            )
+        )
+        if not membership.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this share link",
+            )
+        return link
+
+    return _check
+
+
 async def verify_webhook_secret(
     x_webhook_secret: str = Header(..., alias="X-Webhook-Secret"),
 ) -> None:

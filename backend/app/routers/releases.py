@@ -13,7 +13,13 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user, require_role
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_current_active_user,
+    require_release_access,
+    require_role,
+    require_run_access,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.services import release_service
@@ -93,7 +99,7 @@ async def list_releases(
 async def get_release(
     release_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(require_release_access()),
 ):
     return await release_service.get_release_details(db, release_id)
 
@@ -115,6 +121,7 @@ async def update_release(
     body: ReleaseUpdate,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
 ):
     return await release_service.update_release(db, release_id, body)
 
@@ -124,6 +131,7 @@ async def delete_release(
     release_id: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.ADMIN)),
+    __: User = Depends(require_release_access()),
 ):
     await release_service.delete_release(db, release_id)
 
@@ -134,6 +142,7 @@ async def add_phase(
     body: PhaseIn,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
 ):
     return await release_service.add_phase(db, release_id, body)
 
@@ -145,6 +154,7 @@ async def update_phase(
     body: PhaseUpdate,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
 ):
     return await release_service.update_phase(db, release_id, phase_id, body)
 
@@ -155,6 +165,7 @@ async def delete_phase(
     phase_id: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.ADMIN)),
+    __: User = Depends(require_release_access()),
 ):
     await release_service.delete_phase(db, release_id, phase_id)
 
@@ -165,6 +176,7 @@ async def link_test_run(
     body: LinkRunRequest,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
 ):
     return await release_service.link_test_run(db, release_id, body)
 
@@ -175,5 +187,6 @@ async def unlink_test_run(
     run_id: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.ADMIN)),
+    __: User = Depends(require_run_access()),
 ):
     await release_service.unlink_test_run(db, release_id, run_id)

@@ -29,6 +29,13 @@ spec:
           ports:
             - containerPort: 80
               name: http
+          env:
+            # Override the docker-compose default ("backend:8000") with the
+            # in-cluster Service name. The base ingress routes /api to the
+            # backend before traffic reaches this pod, but this fallback lets
+            # `kubectl port-forward svc/testlookup-frontend` also work.
+            - name: BACKEND_UPSTREAM
+              value: "testlookup-backend:8000"
           resources:
             requests:
               cpu: 50m

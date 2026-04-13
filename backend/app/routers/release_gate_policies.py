@@ -7,7 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user, require_role
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_current_active_user,
+    require_project_access,
+    require_role,
+)
 from app.db.postgres import get_db
 from app.models.postgres import ReleaseDecision, ReleaseGatePolicy, TestRun, User, UserRole
 from app.models.schemas import (
@@ -51,6 +56,7 @@ async def get_effective_policy(
     project_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
 ):
     """Get the resolved effective policy for a project (project → system → None)."""
     from app.services.policy_evaluator_service import resolve_effective_policy
@@ -66,6 +72,7 @@ async def get_policy_history(
     project_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
 ):
     """Get all policy versions for a project scope, ordered by version desc."""
     result = await db.execute(

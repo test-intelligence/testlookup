@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_current_active_user, require_role, require_run_access
 from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import (
     Defect,
@@ -77,6 +77,7 @@ async def trigger_deep_investigation(
     run_id: uuid.UUID,
     body: TriggerDeepRequest,
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_run_access()),
 ):
     """
     Trigger the deep investigation pipeline for a completed test run.
@@ -127,7 +128,7 @@ async def trigger_deep_investigation(
 @router.get("/{run_id}/clusters", response_model=list[ClusterResponse])
 async def get_failure_clusters(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
 ):
     """Return semantic failure clusters for a test run."""
     async with AsyncSessionLocal() as db:
@@ -155,7 +156,7 @@ async def get_failure_clusters(
 @router.get("/{run_id}/findings", response_model=list[DeepFindingResponse])
 async def get_deep_findings(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
 ):
     """Return deep investigation findings per failure cluster for a test run."""
     async with AsyncSessionLocal() as db:
@@ -189,7 +190,7 @@ async def get_deep_findings(
 async def get_cluster_defect_candidate(
     run_id: uuid.UUID,
     cluster_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a pre-assembled defect candidate for a failure cluster."""
@@ -210,6 +211,7 @@ async def promote_cluster_to_defect(
     body: DefectPromotionRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
 ):
     """Promote a failure cluster to a defect record (optionally with Jira ticket)."""
     # Resolve project_id from run
@@ -242,7 +244,7 @@ async def promote_cluster_to_defect(
 @router.get("/{run_id}/clusters/ranked")
 async def get_ranked_clusters(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
     db: AsyncSession = Depends(get_db),
 ):
     """Return failure clusters ranked by impact score for triage prioritization."""
@@ -278,7 +280,7 @@ async def get_ranked_clusters(
 async def check_cluster_duplicate(
     run_id: uuid.UUID,
     cluster_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
     db: AsyncSession = Depends(get_db),
 ):
     """

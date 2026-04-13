@@ -1,0 +1,64 @@
+# Traefik IngressRoute for K3s (replaces nginx Ingress from base)
+# K3s ships with Traefik — no extra install needed.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testlookup-traefik-ingress
+  namespace: testlookup
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: testlookup.local
+      http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /webhooks/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /ws/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /health/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-frontend
+                port:
+                  number: 80

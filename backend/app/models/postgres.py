@@ -1877,10 +1877,15 @@ class ReleaseGatePolicy(Base):
 
 
 class ReportShareLink(Base):
-    """Time-limited share token for run intelligence reports."""
+    """Time-limited share token for run intelligence reports.
+
+    The raw token is shown once at creation and never persisted. Only the
+    SHA-256 hex digest (``token_hash``) is stored, so a DB compromise cannot
+    recover active share tokens.
+    """
     __tablename__ = "report_share_links"
     __table_args__ = (
-        Index("ix_rsl_token", "token", unique=True),
+        Index("ix_rsl_token_hash", "token_hash", unique=True),
         Index("ix_rsl_run", "run_id"),
         Index("ix_rsl_expires", "expires_at"),
     )
@@ -1888,7 +1893,7 @@ class ReportShareLink(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     report_layout: Mapped[str] = mapped_column(String(20), nullable=False, default="executive")
     created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_by_name: Mapped[Optional[str]] = mapped_column(String(200))
@@ -1899,6 +1904,31 @@ class ReportShareLink(Base):
     storage_key_pdf: Mapped[Optional[str]] = mapped_column(String(500))
     storage_key_html: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RefreshTokenRecord(Base):
+    """Server-side record of issued refresh tokens for rotation and replay detection.
+
+    Each refresh token carries a random ``jti`` claim; only the SHA-256 hex digest
+    is persisted. On refresh, the record is marked ``rotated_to_id`` and a new
+    record is created. Presenting an already-rotated or revoked token triggers
+    family-wide revocation for the owning user (``replay_detected = true``).
+    """
+    __tablename__ = "refresh_token_records"
+    __table_args__ = (
+        Index("ix_rtr_jti_hash", "jti_hash", unique=True),
+        Index("ix_rtr_user_id", "user_id"),
+        Index("ix_rtr_expires_at", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    jti_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotated_to_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    replay_detected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 # ── Service Ownership (ENT-04) ────────────────────────────────────────────────

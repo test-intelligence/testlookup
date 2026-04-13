@@ -12,13 +12,17 @@ from app.core.config import settings
 from app.core.deps import get_current_active_user
 from app.core.security import (
     create_access_token,
-    create_refresh_token,
     decode_token,
     get_password_hash,
     verify_password,
 )
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User, UserRole
+from app.services.refresh_token_service import (
+    RefreshTokenError,
+    issue_refresh_token,
+    rotate_refresh_token,
+)
 from app.models.schemas import (
     ChangePasswordRequest,
     FirstTimeResetRequest,
@@ -39,7 +43,7 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     """
     Self-service registration.
 
-    New accounts are created with the VIEWER role (read-only) and
+    New accounts are created with the QA_ENGINEER role and
     must_change_password=True so the user is prompted to set a permanent
     password on their first login.
     """
@@ -59,13 +63,13 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
         username=payload.username,
         full_name=payload.full_name,
         hashed_password=get_password_hash(payload.password),
-        role=UserRole.VIEWER,
+        role=UserRole.QA_ENGINEER,
         must_change_password=True,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    logger.info("New user self-registered: %s (role=VIEWER, must_change_password=True)", user.username)
+    logger.info("New user self-registered: %s (role=QA_ENGINEER, must_change_password=True)", user.username)
     return user
 
 
@@ -125,7 +129,8 @@ async def login(
                 )
 
     access_token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
+    refresh_token = await issue_refresh_token(db, user.id)
+    await db.commit()
     logger.info("User logged in: %s (must_change_password=%s)", user.username, user.must_change_password)
 
     return TokenResponse(
@@ -245,7 +250,8 @@ async def dev_login(
     )
 
     access_token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
+    refresh_token = await issue_refresh_token(db, user.id)
+    await db.commit()
     logger.info("dev-login: issued token for %s (%s)", user.username, role)
 
     return TokenResponse(
@@ -307,7 +313,8 @@ async def refresh_tokens(
         if data.get("type") != "refresh":
             raise credentials_exception
         user_id: str = data.get("sub", "")
-        if not user_id:
+        jti: str = data.get("jti", "")
+        if not user_id or not jti:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
@@ -323,8 +330,15 @@ async def refresh_tokens(
     if user is None or not user.is_active:
         raise credentials_exception
 
+    try:
+        new_refresh = await rotate_refresh_token(db, uid, jti)
+    except RefreshTokenError as exc:
+        await db.commit()  # persist any family revocation from replay detection
+        logger.warning("Refresh token rejected for %s: %s", user.username, exc)
+        raise credentials_exception
+
     new_access = create_access_token(str(user.id))
-    new_refresh = create_refresh_token(str(user.id))
+    await db.commit()
 
     return TokenResponse(
         access_token=new_access,

@@ -35,11 +35,13 @@ export default function ProjectsPage() {
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [form, setForm] = useState<NewProjectForm>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
-  const { setActiveProject } = useProjectStore()
+  const setActiveProject = useProjectStore(s => s.setActiveProject)
+  const refreshProjects = useProjectStore(s => s.refreshProjects)
   const { isAdmin, isQaLead } = usePermissions()
   const canEdit = isAdmin || isQaLead
 
-  const load = () => projectsService.list().then(setProjects).catch(() => {})
+  const load = () =>
+    refreshProjects().then(setProjects).catch(() => {})
   useEffect(() => { load() }, [])
 
   const handleNameChange = (name: string) => {
@@ -55,11 +57,14 @@ export default function ProjectsPage() {
       if (form.description) payload.description = form.description
       if (form.jira_project_key) payload.jira_project_key = form.jira_project_key
       if (form.ocp_namespace) payload.ocp_namespace = form.ocp_namespace
-      await projectsService.create(payload)
+      const created = await projectsService.create(payload)
       toast.success('Project created')
       setShowModal(false)
       setForm(EMPTY_FORM)
-      load()
+      // Refresh the shared store so the TopBar dropdown updates immediately,
+      // then make the new project the active selection.
+      await load()
+      if (created?.id) setActiveProject(created)
     } catch {
       toast.error('Failed to create project')
     } finally {

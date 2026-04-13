@@ -905,18 +905,26 @@ async def test_chat_service_get_run_summaries_merges_ai_summaries_and_stubs():
 
 @pytest.mark.asyncio
 async def test_chat_service_send_message_updates_default_title_and_dispatches_agent():
-    session_id = uuid.uuid4()
-    session = SimpleNamespace(id=session_id, user_id=uuid.uuid4(), project_id=uuid.uuid4(), title="New conversation")
+    """After the pilot refactor ``send_message`` receives a pre-authorized
+    :class:`ChatSession` from the ``require_session_access`` dependency and
+    stages the title mutation without committing. The router handler owns
+    the commit, so this unit test should not see ``db.commit`` called."""
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        title="New conversation",
+    )
     current_user = SimpleNamespace(id=session.user_id)
     payload = SimpleNamespace(message="Investigate latest failures", project_id=None)
-    db = FakeAsyncDB([FakeExecuteResult(scalar=session)])
+    db = FakeAsyncDB([])
     conversation_agent_cls = Mock()
     conversation_agent_cls.return_value.chat = AsyncMock(return_value={"reply": "Here is the summary", "sources": [{"type": "run"}]})
 
     with patch.dict(sys.modules, {"app.agents.conversation": SimpleNamespace(ConversationAgent=conversation_agent_cls)}):
-        result = await chat_service.send_message(db, session_id, payload, current_user)
+        result = await chat_service.send_message(db, session, payload, current_user)
 
     assert session.title == "Investigate latest failures"
-    db.commit.assert_awaited_once()
+    db.commit.assert_not_awaited()
     conversation_agent_cls.return_value.chat.assert_awaited_once()
     assert result["reply"] == "Here is the summary"

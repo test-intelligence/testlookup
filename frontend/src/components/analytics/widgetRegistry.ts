@@ -89,13 +89,35 @@ export function getWidgetDef(id: string): WidgetDef | undefined {
   return WIDGET_CATALOG.find(w => w.id === id)
 }
 
+/**
+ * crypto.randomUUID() only exists in secure contexts (HTTPS or localhost).
+ * Homelab/plain-HTTP deployments (e.g. http://testlookup.local) don't expose
+ * it, so fall back to a manual RFC-4122 v4 generator. crypto.getRandomValues
+ * is available in insecure contexts too, and Math.random is the last resort.
+ */
+function randomUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const bytes = new Uint8Array(16)
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40 // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80 // variant 10
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 /** Create a new visualization instance from a template. */
 export function createInstance(
   templateId: string,
   overrides?: Partial<Omit<VisualizationInstance, 'instanceId' | 'templateId'>>,
 ): VisualizationInstance {
   return {
-    instanceId: crypto.randomUUID(),
+    instanceId: randomUUID(),
     templateId,
     ...overrides,
   }

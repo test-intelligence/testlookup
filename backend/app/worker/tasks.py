@@ -579,11 +579,20 @@ def dispatch_run_notifications(
     total_tests: int,
     failed_tests: int,
     project_name: str,
-    dashboard_url: str = "#",
+    dashboard_url: str = "",
 ):
-    """Background task: fan-out run-completion notifications to all subscribed users."""
+    """Background task: fan-out run-completion notifications to all subscribed users.
+
+    When ``dashboard_url`` is empty, builds an absolute link from
+    ``settings.public_base_url`` so notifications rendered in Slack/Teams/email
+    contain a clickable link regardless of where the cluster is deployed.
+    """
     import uuid as _uuid
+    from app.core.config import settings
     from app.services.notification.manager import dispatch_run_notifications as _dispatch
+
+    if not dashboard_url or dashboard_url == "#":
+        dashboard_url = f"{settings.public_base_url}/runs/{run_id}"
 
     logger.info("[Task %s] Dispatching run notifications for build=%s", self.request.id, build_number)
     try:
@@ -773,6 +782,7 @@ def dispatch_ai_summary_email(
                     executive_summary = fallback.executive_summary
                     executive_panel = fallback.executive_panel
 
+        from app.core.config import settings
         from app.services.notification.manager import dispatch_ai_summary_notifications
 
         _pass_rate = float(run.pass_rate or 0) if run else 0.0
@@ -790,7 +800,7 @@ def dispatch_ai_summary_email(
             pass_rate=_pass_rate,
             total_tests=_total_tests,
             failed_tests=_failed_tests,
-            dashboard_url=f"/runs/{test_run_id}/intelligence",
+            dashboard_url=f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
         )
 
         # 2. EM-4: Dispatch to PER_RUN digest subscribers
@@ -841,7 +851,7 @@ def dispatch_ai_summary_email(
                             "pass_rate": _pass_rate,
                             "total_tests": _total_tests,
                             "failed_tests": _failed_tests,
-                            "dashboard_url": f"/runs/{test_run_id}/intelligence",
+                            "dashboard_url": f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
                             "executive_panel": executive_panel,
                         },
                     )

@@ -5,6 +5,7 @@ from typing import Any, Optional, cast
 import httpx
 
 from app.core.config import settings
+from app.core.http_client import http_verify
 from app.services.resilience import async_retry
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ async def get_pod_metadata(pod_name: str, namespace: str) -> Optional[dict]:
     base = settings.OCP_API_URL.rstrip("/")
 
     async def _do_fetch() -> dict:
-        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:  # noqa: S501
+        async with httpx.AsyncClient(verify=http_verify(), timeout=10.0) as client:
             # Fetch pod details
             pod_url = f"{base}/api/v1/namespaces/{namespace}/pods/{pod_name}"
             pod_resp = await client.get(pod_url, headers=headers)

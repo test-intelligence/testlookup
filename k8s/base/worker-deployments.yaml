@@ -417,8 +417,9 @@ spec:
               command:
                 - sh
                 - -c
-                - "pgrep -f 'celery.*beat' > /dev/null"
-            initialDelaySeconds: 15
+                # python:slim doesn't ship procps/pgrep, so grep /proc cmdlines instead.
+                - "grep -la 'celery' /proc/[0-9]*/cmdline 2>/dev/null | head -1 | grep -q ."
+            initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3

@@ -4,6 +4,7 @@ Notification manager — resolves preferences and dispatches to email/Slack/Team
 Called by the Celery task `dispatch_run_notifications` after each run completes
 and by `dispatch_ai_notifications` after AI triage finishes.
 """
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -159,40 +160,52 @@ async def _load_and_notify(
         )
         rows = prefs_result.all()
 
+        # Phase 1 — resolve each subscribed preference into (pref, user_email,
+        # event, title, body). This is pure Python work, no I/O.
+        priority = [
+            NotificationEventType.HIGH_FAILURE_RATE,
+            NotificationEventType.RUN_FAILED,
+            NotificationEventType.QUALITY_GATE_FAILED,
+            NotificationEventType.FLAKY_TEST_DETECTED,
+            NotificationEventType.AI_ANALYSIS_COMPLETE,
+            NotificationEventType.RUN_PASSED,
+        ]
+        plans: list[tuple] = []
         for pref, user_email in rows:
-            # Determine which events this preference actually covers
             subscribed = set(pref.events or [])
             matching = [e for e in events if e.value in subscribed]
             if not matching:
                 continue
 
-            # For high_failure_rate, respect the per-preference threshold
             if NotificationEventType.HIGH_FAILURE_RATE in matching:
                 threshold = pref.failure_rate_threshold or 80.0
                 pass_rate = metadata.get("pass_rate", 100.0)
                 if pass_rate >= threshold:
                     matching.remove(NotificationEventType.HIGH_FAILURE_RATE)
-
             if not matching:
                 continue
 
-            # Pick the most severe matching event
-            priority = [
-                NotificationEventType.HIGH_FAILURE_RATE,
-                NotificationEventType.RUN_FAILED,
-                NotificationEventType.QUALITY_GATE_FAILED,
-                NotificationEventType.FLAKY_TEST_DETECTED,
-                NotificationEventType.AI_ANALYSIS_COMPLETE,
-                NotificationEventType.RUN_PASSED,
-            ]
             event = next((e for e in priority if e in matching), matching[0])
-
             title, body = build_title_fn(event)
-            status, error_detail = await _dispatch_to_channel(
-                pref, user_email, title, body, event, metadata
-            )
+            plans.append((pref, user_email, event, title, body))
 
-            log = NotificationLog(
+        if not plans:
+            return
+
+        # Phase 2 — fan out all deliveries in parallel. A slow webhook no
+        # longer blocks the next recipient.
+        results = await asyncio.gather(
+            *(
+                _dispatch_to_channel(pref, user_email, title, body, event, metadata)
+                for (pref, user_email, event, title, body) in plans
+            ),
+            return_exceptions=False,
+        )
+
+        # Phase 3 — accumulate every NotificationLog row and commit once.
+        now_sent = datetime.now(timezone.utc)
+        for (pref, _user_email, event, title, body), (status, error_detail) in zip(plans, results):
+            db.add(NotificationLog(
                 user_id=pref.user_id,
                 project_id=project_id,
                 run_id=run_id,
@@ -202,9 +215,8 @@ async def _load_and_notify(
                 body=body,
                 status=status,
                 error_detail=error_detail,
-                sent_at=datetime.now(timezone.utc) if status == "sent" else None,
-            )
-            db.add(log)
+                sent_at=now_sent if status == "sent" else None,
+            ))
 
         await db.commit()
 

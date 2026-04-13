@@ -159,7 +159,7 @@ class DefectTriageAgent(BaseAgent):
                     ai_summary=analysis.get("root_cause_summary", ""),
                     recommended_action=", ".join(analysis.get("recommended_actions", [])[:2]),
                     stack_trace="",
-                    dashboard_link=f"/runs/{state['test_run_id']}",
+                    dashboard_link=f"{settings.public_base_url}/runs/{state['test_run_id']}",
                     labels=[idempotency_key],
                 )
                 ticket_id = ticket.get("ticket_id")

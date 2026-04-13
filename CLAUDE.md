@@ -411,7 +411,7 @@ These bugs have been encountered and fixed — avoid reintroducing them:
 
 13. **Dev auto-login endpoint** — `POST /api/v1/auth/dev-login` returns 404 unless `APP_ENV=development` AND `DEV_AUTO_LOGIN_ENABLED=true`. It lives in the public `auth` router so it is reachable before authentication. Never gate it behind JWT middleware.
 
-14. **Self-registration role + must_change_password** — `POST /api/v1/auth/register` always creates users with `role=VIEWER` and `must_change_password=True`. The `POST /api/v1/auth/first-time-reset` endpoint (requires JWT, no current password) clears this flag. `ProtectedRoute` redirects any authenticated user with `must_change_password=True` to `/reset-password`. Migration `0014` adds the `must_change_password` column to the `users` table.
+14. **Self-registration role + must_change_password** — `POST /api/v1/auth/register` always creates users with `role=QA_ENGINEER` and `must_change_password=True`. The `POST /api/v1/auth/first-time-reset` endpoint (requires JWT, no current password) clears this flag. `ProtectedRoute` redirects any authenticated user with `must_change_password=True` to `/reset-password`. Migration `0014` adds the `must_change_password` column to the `users` table.
 
 15. **SSO enforcement + admin fallback** — When `SSOEnforcementMode.SSO_REQUIRED` is active, only ADMIN users can use password login (if `SSO_ADMIN_FALLBACK_ENABLED=true`). Non-admin password login is blocked with 403. The SSO router (`/api/v1/sso/*`) and SCIM router (`/api/v1/scim/v2/*`) are registered as PUBLIC routers (no JWT required); SCIM uses its own bearer token auth, and SSO admin endpoints require `require_role(UserRole.ADMIN)` internally.
 
@@ -539,7 +539,7 @@ Settings                (footer)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | /api/v1/auth/register | Self-service registration → VIEWER role, must_change_password=True |
+| POST | /api/v1/auth/register | Self-service registration → QA_ENGINEER role, must_change_password=True |
 | POST | /api/v1/auth/login | Standard login |
 | POST | /api/v1/auth/first-time-reset | Forced reset on first login (JWT required, no old password needed) |
 | POST | /api/v1/auth/dev-login | Dev-only bypass login (APP_ENV=development only) |
@@ -549,11 +549,11 @@ Settings                (footer)
 
 ### Self-registration flow
 1. User fills in the Register form on the login page (email, username, full name, password)
-2. Account is created with `role=VIEWER` (read-only) and `must_change_password=True`
+2. Account is created with `role=QA_ENGINEER` and `must_change_password=True`
 3. User logs in; `ProtectedRoute` detects `must_change_password=True` and redirects to `/reset-password`
 4. User sets a permanent password via `POST /auth/first-time-reset` (no old password required)
 5. `must_change_password` is cleared; user proceeds to the dashboard
-6. An admin can promote the user's role via the User Management page
+6. An admin can adjust the user's role via the User Management page
 
 ### Endpoints (all require JWT)
 
@@ -853,45 +853,6 @@ Async email delivery via aiosmtplib with HTML templates for 6 event types.
 
 ---
 
-## PII Redaction
-
-All sensitive data passes through `services/privacy_service.py` at system boundaries:
-
-| Boundary | Method |
-|----------|--------|
-| Database/cache writes | `sanitize_for_persistence()` |
-| Log emission | `sanitize_for_logging()` (integrated into structlog pipeline) |
-| LLM prompts | `sanitize_for_llm()` |
-| Report rendering | `sanitize_for_report()` |
-
-**Detected patterns:** emails, phone numbers, SSNs, credit cards, IPv4 addresses, Bearer tokens, API keys, JWTs, connection strings, and 37 sensitive key names.
-
-**Frontend:** `errorReporting.ts` sanitizes stack traces and error messages before transmission.
-
----
-
-## Test Case Tagging
-
-Automatic and custom tagging for test cases, runs, and suites.
-
-### System Tags (13 reserved)
-
-Outcome: `passed`, `failed`, `skipped`, `broken`
-Signal: `flaky`, `regression`, `duplicate`
-Run-level: `all_passed`, `has_failures`, `has_skips`, `flaky_content`, `regression_detected`
-Traceability: `needs_review`
-
-### Auto-tagging
-
-- After ingestion: outcome tags on test cases, summary tags on runs
-- After AI analysis: signal tags (flaky, regression, duplicate) on cases and runs
-
-### Custom Tags
-
-User-defined tags validated via `validate_custom_tags()` — system tags rejected. Stored as JSON arrays on `test_cases`, `test_plans`, `test_runs`, `suite_memberships`.
-
----
-
 ## Suite Membership Traceability
 
 `suite_sync_service.py` tracks test membership in suites across runs:
@@ -1063,18 +1024,6 @@ See `client/testlookup.yaml.example` for the full annotated configuration templa
 
 ---
 
-## SDK Downloads
-
-### Endpoints
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/v1/sdk` | List available SDKs with metadata (language, filename, download URL) |
-| GET | `/api/v1/sdk/{lang}` | Download SDK (python\|java\|js\|go) |
-
-Public router (no JWT required). Python served as single file, Java as fat JAR (with ZIP fallback if not pre-built), others as ZIP. No-cache headers applied for freshness.
-
----
 
 ## Documentation
 

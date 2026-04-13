@@ -4,7 +4,11 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import (
+    get_current_active_user,
+    require_generation_batch_access,
+    require_role,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
@@ -102,7 +106,7 @@ async def rag_generate(
 async def get_batch_coverage(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(require_generation_batch_access()),
 ):
     from sqlalchemy import select
     from app.models.postgres import RequirementCoverage
@@ -120,6 +124,7 @@ async def get_batch(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_generation_batch_access()),
 ):
     from app.services.rag_review_service import get_batch_preview
     preview = await get_batch_preview(db, batch_id, current_user)
@@ -128,7 +133,10 @@ async def get_batch(
 
 @router.post(
     "/batches/{batch_id}/accept",
-    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_ENGINEER)),
+        Depends(require_generation_batch_access()),
+    ],
 )
 async def batch_accept(
     batch_id: uuid.UUID,
@@ -143,7 +151,10 @@ async def batch_accept(
 
 @router.post(
     "/batches/{batch_id}/cases/{case_id}/accept",
-    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_ENGINEER)),
+        Depends(require_generation_batch_access()),
+    ],
 )
 async def accept_case(
     batch_id: uuid.UUID,
@@ -160,7 +171,10 @@ async def accept_case(
 @router.post(
     "/batches/{batch_id}/cases/{case_id}/reject",
     status_code=204,
-    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_ENGINEER)),
+        Depends(require_generation_batch_access()),
+    ],
 )
 async def reject_case(
     batch_id: uuid.UUID,
@@ -253,7 +267,7 @@ async def rag_status(
 async def batch_eval(
     batch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(require_generation_batch_access()),
 ):
     from app.services.rag_eval_service import run_eval_for_batch
     return await run_eval_for_batch(db, batch_id)

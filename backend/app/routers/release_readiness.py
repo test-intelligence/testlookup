@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_current_active_user, require_role, require_run_access
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
@@ -42,7 +42,7 @@ class ReleaseDecisionResponse(BaseModel):
 @router.get("/{run_id}", response_model=ReleaseCouncilResponse)
 async def get_release_decision(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
 ):
     """
     Retrieve the release readiness decision with full council context:
@@ -64,6 +64,7 @@ async def override_release_decision(
     run_id: uuid.UUID,
     body: ReleaseCouncilOverrideRequest,
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_run_access()),
 ):
     """
     Override the AI release decision (QA Lead only).

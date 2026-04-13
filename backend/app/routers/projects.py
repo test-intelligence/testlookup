@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_project_access, require_role
 from app.db.postgres import get_db
-from app.models.postgres import Project, User, UserRole
+from app.models.postgres import Project, ProjectMember, User, UserRole
 from app.models.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Projects"])
@@ -33,12 +33,27 @@ async def list_projects(
     status_code=201,
     dependencies=[Depends(require_role(UserRole.QA_LEAD))],
 )
-async def create_project(payload: ProjectCreate, db: AsyncSession = Depends(get_db)):
+async def create_project(
+    payload: ProjectCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     existing = await db.execute(select(Project).where(Project.slug == payload.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Project with slug '{payload.slug}' already exists")
     project = Project(**payload.model_dump())
     db.add(project)
+    await db.flush()
+
+    # Auto-add the creator as a member so they can access the project
+    # without an admin having to add them manually. Creator inherits their
+    # global role (ADMIN stays ADMIN, QA_LEAD stays QA_LEAD, etc.).
+    db.add(ProjectMember(
+        user_id=current_user.id,
+        project_id=project.id,
+        role=current_user.role,
+    ))
+
     await db.commit()
     await db.refresh(project)
     return project
@@ -60,7 +75,10 @@ async def get_project(
 @router.put(
     "/{project_id}",
     response_model=ProjectResponse,
-    dependencies=[Depends(require_role(UserRole.QA_LEAD))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_LEAD)),
+        Depends(require_project_access()),
+    ],
 )
 async def update_project(
     project_id: uuid.UUID,
@@ -85,7 +103,10 @@ async def update_project(
 @router.delete(
     "/{project_id}",
     status_code=204,
-    dependencies=[Depends(require_role(UserRole.QA_LEAD))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_LEAD)),
+        Depends(require_project_access()),
+    ],
 )
 async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Project).where(Project.id == project_id))

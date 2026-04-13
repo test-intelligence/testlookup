@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_current_active_user, require_role, require_run_access
 from app.db.postgres import get_db
 from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun, UserRole
 from app.models.schemas import (
@@ -253,7 +253,7 @@ async def get_active_live_runs(_: Any = Depends(get_current_active_user)):
 @router.get("/active-runs/{run_id}")
 async def get_live_run_state(
     run_id: str,
-    _: Any = Depends(get_current_active_user),
+    _: Any = Depends(require_run_access()),
 ):
     """Get the current state for a single live test run."""
     from app.agents.live_monitor import LiveMonitorAgent
@@ -268,7 +268,7 @@ async def get_pipeline_status(
     run_id: str,
     workflow_type: str = Query(default="deep", pattern="^(offline|deep|live)$"),
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    _: Any = Depends(require_run_access()),
 ):
     """
     WF-1: Return the latest pipeline execution status for a run and workflow type.
@@ -340,7 +340,7 @@ async def get_pipeline_status(
 async def get_run_summary(
     run_id: str,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    _: Any = Depends(require_run_access()),
 ):
     """Retrieve the AI-generated markdown summary for a test run (all 4 layers if available)."""
     from app.db.mongo import Collections, get_mongo_db

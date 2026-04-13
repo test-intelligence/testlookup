@@ -43,6 +43,7 @@ async def create_ownership_rule(
     payload: OwnershipRuleCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Create a new ownership rule (QA_LEAD+)."""
     rule = ServiceOwnershipRule(
@@ -69,6 +70,7 @@ async def update_ownership_rule(
     payload: OwnershipRuleUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Update an ownership rule (QA_LEAD+)."""
     result = await db.execute(
@@ -95,6 +97,7 @@ async def delete_ownership_rule(
     rule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Delete an ownership rule (QA_LEAD+)."""
     result = await db.execute(
@@ -118,6 +121,7 @@ async def bulk_import_rules(
     payload: OwnershipBulkImportRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
 ):
     """Bulk import ownership rules (ADMIN only). Optionally replaces existing."""
     if payload.replace_existing:

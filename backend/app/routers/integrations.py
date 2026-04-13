@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import require_role
 from app.db.postgres import get_db
 from app.models.postgres import AIAnalysis, TestCase, UserRole
@@ -37,7 +38,7 @@ async def create_jira_defect(
     ai_result.scalar_one_or_none()
 
     stack_trace = tc.error_message or "Stack trace not available"
-    dashboard_link = f"http://localhost:3000/runs/{request.run_id}/tests/{tc.id}"
+    dashboard_link = f"{settings.public_base_url}/runs/{request.run_id}/tests/{tc.id}"
 
     try:
         result = await create_jira_issue(
