@@ -11,9 +11,14 @@ const mocked = vi.hoisted(() => {
   const markAllRead = vi.fn(async () => {})
   const refreshLogs = vi.fn()
 
+  const projects = [{ id: 'p1', name: 'Core UI' }]
+  const refreshProjects = vi.fn(async () => projects)
+
   const projectStoreState = {
     activeProject: null as null | { id: string; name: string },
     activeProjectId: null as null | string,
+    projects,
+    refreshProjects,
     setActiveProject,
     setAllProjects,
   }
@@ -31,6 +36,8 @@ const mocked = vi.hoisted(() => {
   const useProjectStore = vi.fn((selector?: (s: typeof projectStoreState) => unknown) =>
     selector ? selector(projectStoreState) : projectStoreState,
   )
+  ;(useProjectStore as unknown as { getState: () => typeof projectStoreState }).getState = () =>
+    projectStoreState
   const useAuthStore = vi.fn((selector?: (s: typeof authState) => unknown) =>
     selector ? selector(authState) : authState,
   )
