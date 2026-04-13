@@ -68,6 +68,7 @@ COPY --from=base /usr/local/bin /usr/local/bin
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/alembic.ini .
+COPY --from=builder /app/scripts ./scripts
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -81,4 +82,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health/live || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]

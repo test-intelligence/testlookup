@@ -35,7 +35,25 @@ async def search_test_cases_query(
     status: str | None = None,
     days: int | None = None,
 ):
-    history_case = aliased(TestCase)
+    # Correlated subquery for failure_count — scoped to the *same project* as
+    # the matched test case. The previous implementation used an unscoped join
+    # on ``test_fingerprint`` which leaked failure aggregates across tenants.
+    history_case = aliased(TestCase, name="history_case")
+    history_run = aliased(TestRun, name="history_run")
+
+    failure_count_subq = (
+        select(func.count())
+        .select_from(history_case)
+        .join(history_run, history_run.id == history_case.test_run_id)
+        .where(
+            history_case.test_fingerprint == TestCase.test_fingerprint,
+            history_case.status == "FAILED",
+            history_run.project_id == TestRun.project_id,
+        )
+        .correlate(TestCase, TestRun)
+        .scalar_subquery()
+    )
+
     filters = build_search_filters(q, project_id, status, days)
     query = (
         select(
@@ -45,19 +63,10 @@ async def search_test_cases_query(
             TestCase.suite_name,
             TestCase.status,
             TestCase.created_at.label("last_run_date"),
-            func.count().filter(history_case.status == "FAILED").label("failure_count"),
+            failure_count_subq.label("failure_count"),
         )
         .join(TestRun, TestRun.id == TestCase.test_run_id)
-        .outerjoin(history_case, history_case.test_fingerprint == TestCase.test_fingerprint)
         .where(*filters)
-        .group_by(
-            TestCase.id,
-            TestCase.test_run_id,
-            TestCase.test_name,
-            TestCase.suite_name,
-            TestCase.status,
-            TestCase.created_at,
-        )
         .order_by(TestCase.created_at.desc())
         .offset((page - 1) * size)
         .limit(size)

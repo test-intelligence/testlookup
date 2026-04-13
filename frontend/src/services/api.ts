@@ -2,7 +2,11 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+// When VITE_API_BASE_URL is unset, use same-origin relative URLs. This makes
+// the production bundle deploy-target agnostic — it works behind any ingress
+// (k8s/homelab/gcp/aws) over both http and https without mixed-content or CORS
+// issues. In Vite dev mode, vite.config.ts proxies /api to localhost:8000.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export const api = axios.create({
   baseURL: BASE_URL,

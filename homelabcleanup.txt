@@ -1,0 +1,67 @@
+ Here's the clean shutdown sequence. Run these from your dev machine, then from each node.                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                                                  
+  Step 1 — Stop the TestLookup workloads (optional, but cleaner)                                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                                                                                                    
+  This scales pods down so nothing is mid-write when nodes go down. Skip if you're in a hurry — Kubernetes will resume the same state on restart.                                                                                                                                                                   
+                                                                                                                                                                                                                                                                                                                    
+  # From your dev machine                                   
+  kubectl -n testlookup scale deployment --all --replicas=0
+
+  Step 2 — Stop K3s services on each node
+
+  SSH into each node in this order and stop K3s. Workers first, then control plane last.
+
+  On node3 (worker)
+
+  ssh labadmin@192.168.0.103
+
+  # Stop all K3s-managed containers and the agent service
+  sudo /usr/local/bin/k3s-killall.sh
+
+  # Power off the node
+  sudo shutdown -h now
+
+  On node2 (worker)
+
+  ssh labadmin@192.168.0.102
+  sudo /usr/local/bin/k3s-killall.sh
+  sudo shutdown -h now
+
+  On node1 (control plane, shut down LAST)
+
+  ssh labadmin@192.168.0.101
+  sudo /usr/local/bin/k3s-killall.sh
+  sudo shutdown -h now
+
+  ---
+  Why this order matters
+
+  - k3s-killall.sh is the official K3s cleanup script. It stops the K3s service (server or agent), kills all containerd-managed containers, unmounts volumes, and shuts down the network interfaces cleanly. Without this, shutdown -h now can leave PVCs in a half-mounted state.
+  - Workers first: so the control plane sees them as NotReady gracefully instead of fighting to schedule workloads onto vanishing nodes.
+  - Control plane last: so API-server writes (pod status updates) complete before etcd goes down.
+
+  When you power back on tomorrow
+
+  Just boot the nodes in the reverse order:
+
+  1. Power on node1 first — wait ~30 seconds for K3s server to initialize
+  2. Power on node2 and node3 — they'll auto-rejoin via k3s-agent on boot
+
+  K3s services auto-start via systemd, so no manual commands are needed. Once all nodes are up:
+
+  # From your dev machine — verify cluster is healthy
+  kubectl get nodes
+
+  # If you scaled down in Step 1, scale back up:
+  kubectl -n testlookup scale deployment testlookup-backend --replicas=1
+  kubectl -n testlookup scale deployment testlookup-frontend --replicas=1
+  kubectl -n testlookup scale deployment testlookup-worker-critical --replicas=1
+  kubectl -n testlookup scale deployment testlookup-worker-ingestion --replicas=1
+  kubectl -n testlookup scale deployment testlookup-worker-ai --replicas=1
+  kubectl -n testlookup scale deployment testlookup-worker-default --replicas=1
+  kubectl -n testlookup scale deployment testlookup-beat --replicas=1
+
+  # Or just re-apply the overlay to restore desired state
+  kubectl apply -k k8s/overlays/homelab
+
+  Your PVC data on each node's /opt/local-path-provisioner/ persists across reboots — PostgreSQL, MongoDB, MinIO, and Ollama models will all come back with their data intact.

@@ -9,15 +9,23 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    # OpenShift Route alternative: use Route resource instead of Ingress
+    # OpenShift Route alternative: use Route resource instead of Ingress.
+    # GKE GCE alternative: change ingressClassName to "gce" and remove
+    # nginx.ingress.kubernetes.io/* annotations.
+    # AWS ALB alternative: change ingressClassName to "alb" and add
+    # alb.ingress.kubernetes.io/* annotations.
 spec:
+  # Override `ingressClassName` per environment via overlay (nginx, traefik,
+  # gce, alb, etc.). Override the host below per environment as well.
   ingressClassName: nginx
   tls:
     - hosts:
-        - testlookup.yourdomain.com
+        - testlookup.example.com
       secretName: testlookup-tls-cert
   rules:
-    - host: testlookup.yourdomain.com    # Change to your actual hostname
+    # IMPORTANT: replace "testlookup.example.com" with your real hostname
+    # via a kustomize overlay patch (see k8s/overlays/homelab for an example).
+    - host: testlookup.example.com
       http:
         paths:
           - path: /api/
@@ -35,6 +43,27 @@ spec:
                 port:
                   number: 8000
           - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /ws/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /health/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /metrics
             pathType: Prefix
             backend:
               service:

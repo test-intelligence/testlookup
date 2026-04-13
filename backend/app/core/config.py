@@ -23,6 +23,13 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://localhost:5173",
         alias="CORS_ORIGINS",
     )
+    # Externally-reachable base URL for the dashboard. Used to build links
+    # rendered in Jira tickets, Slack/Teams notifications, and emails. Should
+    # match the ingress hostname users actually open in their browser
+    # (e.g. https://testlookup.example.com or http://testlookup.local).
+    # When unset, falls back to the first CORS_ORIGINS entry, or localhost in
+    # development.
+    PUBLIC_BASE_URL: str = ""
 
     # ── Database (PostgreSQL) ────────────────────────────────
     POSTGRES_HOST: str = "localhost"
@@ -172,7 +179,7 @@ class Settings(BaseSettings):
     # ── Authentication & JWT ──────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-jwt-secret"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # ── SSO / SAML / SCIM ───────────────────────────────────
@@ -260,6 +267,14 @@ class Settings(BaseSettings):
     GITHUB_TOKEN: Optional[str] = None            # GitHub PAT for build change lookup
     GITHUB_REPO: Optional[str] = None             # e.g. "org/repo"
 
+    # ── Outbound HTTP / TLS ───────────────────────────────────
+    # Default to strict certificate verification. Operators with self-signed
+    # internal CAs should set HTTP_CA_BUNDLE to the PEM path instead of
+    # disabling verification. HTTP_VERIFY_TLS=false is intended only for
+    # isolated lab environments and emits a warning at startup.
+    HTTP_VERIFY_TLS: bool = True
+    HTTP_CA_BUNDLE: Optional[str] = None
+
     # ── Webhook Security ──────────────────────────────────────
     WEBHOOK_SECRET: str = "change-me-webhook-secret"
 
@@ -321,6 +336,26 @@ class Settings(BaseSettings):
     @property
     def chroma_host_url(self) -> str:
         return f"http://{self.CHROMA_HOST}:{self.CHROMA_PORT}"
+
+    @property
+    def public_base_url(self) -> str:
+        """Externally-reachable dashboard URL for notification links.
+
+        Resolution order:
+          1. ``PUBLIC_BASE_URL`` env var (explicit, recommended in production).
+          2. First entry of ``CORS_ORIGINS`` (typically the ingress hostname).
+          3. ``http://localhost:3000`` (development fallback).
+
+        Always returned without a trailing slash so callers can append paths
+        directly: ``f"{settings.public_base_url}/runs/{run_id}"``.
+        """
+        explicit = (self.PUBLIC_BASE_URL or "").strip().rstrip("/")
+        if explicit:
+            return explicit
+        origins = self.CORS_ORIGINS
+        if origins:
+            return origins[0].rstrip("/")
+        return "http://localhost:3000"
 
 
     def validate_production_secrets(self) -> list[str]:

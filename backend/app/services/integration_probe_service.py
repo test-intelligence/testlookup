@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from app.core.http_client import http_verify
+
 logger = logging.getLogger("services.integration_probe")
 
 ALERT_THRESHOLD = 3  # consecutive failures before alerting
@@ -67,7 +69,7 @@ async def probe_splunk() -> ProbeResult:
     try:
         url = f"{settings.SPLUNK_BASE_URL}/services/server/info"
         headers = {"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"}
-        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=http_verify()) as client:
             resp = await client.get(url, headers=headers)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
@@ -118,7 +120,7 @@ async def probe_ocp() -> ProbeResult:
     start = time.monotonic()
     try:
         headers = {"Authorization": f"Bearer {settings.OCP_SA_TOKEN}"}
-        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=http_verify()) as client:
             resp = await client.get(f"{settings.OCP_API_URL}/api/v1/namespaces/{settings.OCP_DEFAULT_NAMESPACE}", headers=headers)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:

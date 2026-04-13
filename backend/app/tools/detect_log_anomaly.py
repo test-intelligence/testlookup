@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.http_client import http_verify
 from app.services.input_sanitizer import sanitize_query_param, sanitize_service_name
 
 logger = logging.getLogger("tools.detect_log_anomaly")
@@ -21,7 +22,7 @@ async def _count_splunk_events(service: str, level: str, start: str, end: str) -
     try:
         import httpx
         spl = f'index={settings.SPLUNK_INDEX} service="{service}" level="{level}" earliest="{start}" latest="{end}" | stats count'
-        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=http_verify()) as client:
             resp = await client.post(
                 f"{settings.SPLUNK_BASE_URL}/services/search/jobs/export",
                 headers={"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"},

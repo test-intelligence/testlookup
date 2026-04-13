@@ -1,4 +1,7 @@
 """JWT authentication and security utilities."""
+import hashlib
+import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
@@ -16,18 +19,36 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
+def hash_token(raw: str) -> str:
+    """SHA-256 hex digest — used for share-link tokens and refresh-token jtis."""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def create_access_token(subject: Any, expires_delta: Optional[timedelta] = None) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    payload = {"sub": str(subject), "exp": expire, "type": "access"}
+    payload = {
+        "sub": str(subject),
+        "exp": expire,
+        "type": "access",
+        "jti": uuid.uuid4().hex,
+    }
     return cast(str, jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM))
 
 
-def create_refresh_token(subject: Any) -> str:
+def create_refresh_token(subject: Any, jti: Optional[str] = None) -> tuple[str, str, datetime]:
+    """Return (encoded_token, jti, expires_at).
+
+    Callers must persist a `RefreshTokenRecord` using ``hash_token(jti)`` so
+    rotation and replay detection can be enforced at refresh time.
+    """
     expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": str(subject), "exp": expire, "type": "refresh"}
-    return cast(str, jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM))
+    if jti is None:
+        jti = secrets.token_urlsafe(24)
+    payload = {"sub": str(subject), "exp": expire, "type": "refresh", "jti": jti}
+    token = cast(str, jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM))
+    return token, jti, expire
 
 
 def decode_token(token: str) -> dict[Any, Any]:

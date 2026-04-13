@@ -254,7 +254,7 @@ export function buildDigestWorkflow(
     }),
     toStage({
       stage_name: 'digest_compilation',
-      status: preview ? 'completed' : 'running',
+      status: preview ? 'completed' : 'pending',
       label: 'Digest Compilation',
       description: 'Rank blockers and summarize the week or day',
       result_data: preview ? {
@@ -358,7 +358,7 @@ export function buildAIEvalWorkflow(
     }),
     toStage({
       stage_name: 'quality_evaluation',
-      status: dashboard?.recent_eval_runs.length ? 'completed' : 'running',
+      status: dashboard?.recent_eval_runs.length ? 'completed' : 'pending',
       label: 'Quality Evaluation',
       description: 'Measure accuracy, F1, agreement, and drift',
       result_data: {
@@ -506,7 +506,7 @@ export function buildOverviewWorkflow(
     }),
     toStage({
       stage_name: 'trend_analysis',
-      status: trendPoints.length > 0 ? 'completed' : 'running',
+      status: trendPoints.length > 0 ? 'completed' : 'pending',
       label: 'Trend Analysis',
       description: 'Review pass rate, automation growth, and duration trends',
       result_data: { trend_points: trendPoints.length },
@@ -570,7 +570,7 @@ export function buildRunsWorkflow(
     }),
     toStage({
       stage_name: 'release_context',
-      status: passedRuns.length > 0 ? 'completed' : 'running',
+      status: passedRuns.length > 0 ? 'completed' : 'pending',
       label: 'Release Context',
       description: 'Keep passing runs available for comparison and release checks',
       result_data: { passed_runs: passedRuns.length },
@@ -619,7 +619,7 @@ export function buildIntelligenceHubWorkflow(runs: Array<{ id: string; status: s
     }),
     toStage({
       stage_name: 'passing_context',
-      status: passedRuns.length > 0 ? 'completed' : 'running',
+      status: passedRuns.length > 0 ? 'completed' : 'pending',
       label: 'Passing Context',
       description: 'Keep green runs ready for comparison',
       result_data: { passing_runs: passedRuns.length },
@@ -645,7 +645,7 @@ export function buildFailureAnalysisWorkflow(
   const stages = [
     toStage({
       stage_name: 'flaky_detection',
-      status: flakyCount > 0 ? 'completed' : 'running',
+      status: flakyCount > 0 ? 'completed' : 'pending',
       label: 'Flaky Detection',
       description: 'Detect unstable tests across the selected time window',
       result_data: { flaky_count: flakyCount, days },
@@ -653,7 +653,7 @@ export function buildFailureAnalysisWorkflow(
     }),
     toStage({
       stage_name: 'category_clustering',
-      status: categoryCount > 0 ? 'completed' : 'running',
+      status: categoryCount > 0 ? 'completed' : 'pending',
       label: 'Category Clustering',
       description: 'Group failures into human-readable categories',
       result_data: { category_count: categoryCount },
@@ -661,7 +661,7 @@ export function buildFailureAnalysisWorkflow(
     }),
     toStage({
       stage_name: 'hotspot_ranking',
-      status: topCount > 0 ? 'completed' : 'running',
+      status: topCount > 0 ? 'completed' : 'pending',
       label: 'Hotspot Ranking',
       description: 'Rank the worst failing tests for remediation',
       result_data: { hotspot_count: topCount },
@@ -710,7 +710,7 @@ export function buildCoverageWorkflow(
     }),
     toStage({
       stage_name: 'suite_breadth',
-      status: suites.length > 0 ? 'completed' : 'running',
+      status: suites.length > 0 ? 'completed' : 'pending',
       label: 'Suite Breadth',
       description: 'Map execution coverage across suites and project scope',
       result_data: {
@@ -779,7 +779,7 @@ export function buildDefectsWorkflow(
     }),
     toStage({
       stage_name: 'jira_linkage',
-      status: linked.length > 0 ? 'completed' : 'running',
+      status: linked.length > 0 ? 'completed' : 'pending',
       label: 'Jira Linkage',
       description: 'Track which defects are already routed to Jira',
       result_data: {
@@ -790,7 +790,7 @@ export function buildDefectsWorkflow(
     }),
     toStage({
       stage_name: 'resolution_flow',
-      status: resolvedItems.length > 0 ? 'completed' : 'running',
+      status: resolvedItems.length > 0 ? 'completed' : 'pending',
       label: 'Resolution Flow',
       description: 'Show how open, in-progress, and resolved defects move through the system',
       result_data: {
@@ -846,7 +846,7 @@ export function buildTrendsWorkflow(
     }),
     toStage({
       stage_name: 'signal_comparison',
-      status: enabledCharts.length > 0 ? 'completed' : 'running',
+      status: enabledCharts.length > 0 ? 'completed' : 'pending',
       label: 'Signal Comparison',
       description: 'Compare pass rate, failure rate, and volume movements',
       result_data: {
@@ -895,7 +895,7 @@ export function buildValueMetricsWorkflow(
     }),
     toStage({
       stage_name: 'roi_calculation',
-      status: metrics ? 'completed' : 'running',
+      status: metrics ? 'completed' : 'pending',
       label: 'ROI Calculation',
       description: 'Quantify defects grouped, duplicates avoided, and releases blocked',
       result_data: metrics ? {
@@ -940,7 +940,7 @@ export function buildDeepInvestigationWorkflow(
   const stages = [
     toStage({
       stage_name: 'failure_clustering',
-      status: clusters.length > 0 ? 'completed' : 'running',
+      status: clusters.length > 0 ? 'completed' : 'pending',
       label: 'Failure Clustering',
       description: 'Group failures into investigation-ready clusters',
       result_data: {
@@ -951,7 +951,7 @@ export function buildDeepInvestigationWorkflow(
     }),
     toStage({
       stage_name: 'root_cause_analysis',
-      status: findings.length > 0 ? 'completed' : 'running',
+      status: findings.length > 0 ? 'completed' : 'pending',
       label: 'Root Cause Analysis',
       description: 'Trace symptoms to likely causes and services',
       result_data: {
@@ -962,7 +962,7 @@ export function buildDeepInvestigationWorkflow(
     }),
     toStage({
       stage_name: 'evidence_synthesis',
-      status: evidenceCount > 0 ? 'completed' : 'running',
+      status: evidenceCount > 0 ? 'completed' : 'pending',
       label: 'Evidence Synthesis',
       description: 'Collect traces, logs, contract signals, and recommendations',
       result_data: {
@@ -1019,7 +1019,7 @@ export function buildSearchWorkflow(
     }),
     toStage({
       stage_name: 'ranking',
-      status: total > 0 ? 'completed' : 'running',
+      status: total > 0 ? 'completed' : 'pending',
       label: 'Ranking',
       description: 'Rank the best matches by relevance and evidence',
       result_data: { total_results: total, pages: results?.pages ?? 0 },

@@ -7,6 +7,7 @@ import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.http_client import http_verify
 from app.services.input_sanitizer import sanitize_query_param, sanitize_service_name
 from app.services.resilience import async_retry
 
@@ -60,7 +61,7 @@ async def query_splunk_logs(service_name: str, timestamp_utc: str) -> str:
     headers = {"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"}
 
     async def _do_splunk_query() -> list:
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:  # noqa: S501
+        async with httpx.AsyncClient(verify=http_verify(), timeout=30.0) as client:
             create_resp = await client.post(
                 f"{settings.SPLUNK_BASE_URL}/services/search/jobs",
                 headers=headers,

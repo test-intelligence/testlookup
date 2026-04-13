@@ -8,6 +8,7 @@ import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.http_client import http_verify
 
 logger = logging.getLogger("tools.reconstruct_trace")
 
@@ -16,7 +17,7 @@ async def _query_splunk(spl: str, earliest: str = "-10m", latest: str = "now") -
     if not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
         return []
     try:
-        async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=20.0, verify=http_verify()) as client:
             search_url = f"{settings.SPLUNK_BASE_URL}/services/search/jobs/export"
             resp = await client.post(
                 search_url,

@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import require_role
-from app.core.security import create_access_token, create_refresh_token
+from app.core.security import create_access_token
+from app.services.refresh_token_service import issue_refresh_token
 from app.db.postgres import get_db
 from app.models.postgres import (
     IdentityEventType,
@@ -165,7 +166,7 @@ async def saml_acs(
 
     # Issue tokens
     access_token = create_access_token(str(user.id))
-    refresh_token = create_refresh_token(str(user.id))
+    refresh_token = await issue_refresh_token(db, user.id)
 
     await log_identity_event(
         db,

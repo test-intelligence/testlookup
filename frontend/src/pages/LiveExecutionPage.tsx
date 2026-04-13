@@ -255,12 +255,12 @@ testImplementation 'io.testlookup:testlookup-reporter:1.0.0:all'`
   }
 }
 
-function getRunnerSnippet(lang: SDKLang, projectId: string): string {
+function getRunnerSnippet(lang: SDKLang, projectId: string, serverUrl: string): string {
   switch (lang) {
     case 'python':
       return `# Option 1: Zero-config — add testlookup.yaml to project root:
 # server:
-#   url: "http://server:8000"
+#   url: "${serverUrl}"
 # auth:
 #   api_key: "<api-key>"       # or token: "<jwt>"
 # project:
@@ -268,13 +268,13 @@ function getRunnerSnippet(lang: SDKLang, projectId: string): string {
 pytest
 
 # Option 2: CLI flags
-pytest --testlookup-url http://server:8000 \\
+pytest --testlookup-url ${serverUrl} \\
        --testlookup-token <jwt-or-api-key> \\
        --testlookup-project ${projectId} \\
        --testlookup-build build-42
 
 # Option 3: Environment variables
-export TESTLOOKUP_URL=http://server:8000
+export TESTLOOKUP_URL=${serverUrl}
 export TESTLOOKUP_API_KEY=<api-key>
 export TESTLOOKUP_PROJECT_ID=${projectId}
 pytest`
@@ -283,7 +283,7 @@ pytest`
 # Just add suite parameters to your testng.xml:
 
 # <suite name="My Suite">
-#   <parameter name="testlookup.url" value="http://server:8000"/>
+#   <parameter name="testlookup.url" value="${serverUrl}"/>
 #   <parameter name="testlookup.apiKey" value="qai_..."/>
 #   <parameter name="testlookup.projectId" value="${projectId}"/>
 #   <listeners>
@@ -296,14 +296,14 @@ pytest`
 mvn test -DsuiteXmlFiles=testng.xml
 
 # Option 2: Environment variables (works with JUnit 5 too)
-export TESTLOOKUP_URL=http://server:8000
+export TESTLOOKUP_URL=${serverUrl}
 export TESTLOOKUP_API_KEY=<api-key>
 export TESTLOOKUP_PROJECT_ID=${projectId}
 mvn test
 
 # Option 3: JVM system properties
 mvn test \\
-  -Dtestlookup.url=http://server:8000 \\
+  -Dtestlookup.url=${serverUrl} \\
   -Dtestlookup.apiKey=<api-key> \\
   -Dtestlookup.projectId=${projectId} \\
   -Dtestlookup.build=build-42
@@ -315,7 +315,7 @@ module.exports = {
   reporters: [
     "default",
     ["testlookup-reporter/jest-reporter", {
-      url: "http://server:8000",
+      url: "${serverUrl}",
       token: "<jwt>",
       projectId: "${projectId}",
     }],
@@ -324,10 +324,10 @@ module.exports = {
 
 // Mocha — run with reporter flag
 mocha --reporter testlookup-reporter/mocha-reporter \\
-  --reporter-options url=http://server:8000,token=<jwt>,projectId=${projectId}`
+  --reporter-options url=${serverUrl},token=<jwt>,projectId=${projectId}`
     case 'go':
       return `// Set environment variables
-export TESTLOOKUP_URL=http://server:8000
+export TESTLOOKUP_URL=${serverUrl}
 export TESTLOOKUP_TOKEN=<jwt>
 export TESTLOOKUP_PROJECT=${projectId}
 
@@ -338,7 +338,7 @@ func TestMain(m *testing.M) {
   }
 }
 
-function getAPISnippet(lang: SDKLang, projectId: string): string {
+function getAPISnippet(lang: SDKLang, projectId: string, serverUrl: string): string {
   switch (lang) {
     case 'python':
       return `from testlookup_reporter import TestLookupReporter
@@ -348,7 +348,7 @@ reporter = TestLookupReporter()
 
 # Or pass explicitly with API key (recommended for CI/CD):
 # reporter = TestLookupReporter(
-#     base_url="http://server:8000",
+#     base_url="${serverUrl}",
 #     api_key="qai_...",               # project-scoped API key
 #     project_id="${projectId}",
 # )
@@ -372,7 +372,7 @@ TestLookupReporter reporter = new TestLookupReporter.Builder().build();
 
 // Or pass explicitly with API key (recommended for CI/CD):
 // TestLookupReporter reporter = new TestLookupReporter.Builder()
-//     .baseUrl("http://server:8000")
+//     .baseUrl("${serverUrl}")
 //     .apiKey("qai_...")               // project-scoped API key
 //     .projectId("${projectId}")
 //     .build();
@@ -398,7 +398,7 @@ try (LiveSession session = reporter.startSession(
       return `import { TestLookupReporter } from 'testlookup-reporter';
 
 const reporter = new TestLookupReporter({
-  url: 'http://server:8000',
+  url: '${serverUrl}',
   token: '<jwt>',
   projectId: '${projectId}',
 });
@@ -420,7 +420,7 @@ await session.close();`
 import "github.com/testlookup/testlookup-go/testlookup"
 
 reporter, _ := testlookup.NewReporter(testlookup.Config{
-    BaseURL:   "http://server:8000",
+    BaseURL:   "${serverUrl}",
     Token:     "<jwt>",
     ProjectID: "${projectId}",
 })
@@ -467,8 +467,11 @@ function CodeBlock({ code }: { code: string }) {
   )
 }
 
-// Direct backend URL — bypasses the Vite proxy which can't stream binary responses
-const SDK_API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+// Direct backend URL — bypasses the Vite proxy which can't stream binary responses.
+// Falls back to same-origin so it Just Works behind any ingress (k8s/gcp/aws/homelab).
+const SDK_API_BASE =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+  (typeof window !== 'undefined' ? window.location.origin : '')
 
 const SDK_DOWNLOADS: { sdkLang: SDKLang; label: string; backendLang: string }[] = [
   { sdkLang: 'python',     label: 'Python (.py)',         backendLang: 'python' },
@@ -553,13 +556,13 @@ function ClientSDKGuide({ projectId }: { projectId?: string }) {
           <p className="text-[var(--color-text-muted)] mb-2 font-medium">
             2. {lang === 'python' ? 'Run pytest with the plugin' : lang === 'java' ? 'Configure TestNG XML or env vars (zero-code)' : lang === 'javascript' ? 'Use the Jest or Mocha reporter' : 'Use the testing helper'}
           </p>
-          <CodeBlock code={getRunnerSnippet(lang, pid)} />
+          <CodeBlock code={getRunnerSnippet(lang, pid, SDK_API_BASE)} />
         </div>
         <div>
           <p className="text-[var(--color-text-muted)] mb-2 font-medium">
             3. Or use the {lang === 'python' ? 'Python' : lang === 'java' ? 'Java' : lang === 'javascript' ? 'JavaScript' : 'Go'} API directly
           </p>
-          <CodeBlock code={getAPISnippet(lang, pid)} />
+          <CodeBlock code={getAPISnippet(lang, pid, SDK_API_BASE)} />
         </div>
         <div>
           <p className="text-[var(--color-text-muted)] mb-2 font-medium">4. Stream stats appear here in real-time</p>
@@ -642,22 +645,33 @@ export default function LiveExecutionPage() {
   }, [visibleSessions])
 
   const workflow = useMemo(() => {
+    // Only surface a confidence score for the stream when the socket state
+    // actually implies something meaningful. For "closed"/"error"/idle we
+    // leave it undefined so the UI hides the pill instead of showing a
+    // fabricated percentage.
+    const streamConfidence =
+      wsStatus === 'open' ? 100 : wsStatus === 'connecting' ? 60 : undefined
+
+    // Likewise, zero-valued evidence counts are meaningless and should be
+    // omitted so the "0 evidence" pill doesn't render on empty pages.
+    const omitIfZero = (n: number): number | undefined => (n > 0 ? n : undefined)
+
     const workflowStages = [
       {
         stage_name: 'stream_connection',
         status: wsStatus === 'open' ? 'completed' : wsStatus === 'connecting' ? 'running' : wsStatus === 'error' ? 'failed' : 'pending',
         label: 'Stream Connection',
         description: 'Keep the live execution channel healthy',
-        confidence_score: wsStatus === 'open' ? 100 : wsStatus === 'connecting' ? 60 : 20,
-        evidence_count: recentEvents.length,
+        confidence_score: streamConfidence,
+        evidence_count: omitIfZero(recentEvents.length),
         result_data: { ws_status: wsStatus },
       },
       {
         stage_name: 'run_monitoring',
-        status: runningSessions.length > 0 ? 'running' : 'completed',
+        status: runningSessions.length > 0 ? 'running' : 'pending',
         label: 'Run Monitoring',
         description: 'Track active runs and current tests',
-        evidence_count: runningSessions.length,
+        evidence_count: omitIfZero(runningSessions.length),
         result_data: { running_sessions: runningSessions.length, visible_sessions: visibleSessions.length },
       },
       {
@@ -665,7 +679,7 @@ export default function LiveExecutionPage() {
         status: recentEvents.length > 0 ? 'completed' : 'pending',
         label: 'Event Rollup',
         description: 'Roll execution events into a single live pulse',
-        evidence_count: recentEvents.length,
+        evidence_count: omitIfZero(recentEvents.length),
         result_data: { recent_events: recentEvents.length },
       },
       {
@@ -673,7 +687,7 @@ export default function LiveExecutionPage() {
         status: sessions.length > 0 ? 'completed' : 'pending',
         label: 'Release Readout',
         description: 'Summarize the current execution state for release and QA',
-        evidence_count: sessions.length,
+        evidence_count: omitIfZero(sessions.length),
         result_data: { total_sessions: sessions.length, visible_pass_rate: visibleStats.overallPassRate },
       },
     ]

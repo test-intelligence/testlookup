@@ -5,7 +5,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import (
+    get_current_active_user,
+    require_knowledge_source_access,
+    require_role,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
@@ -71,6 +75,7 @@ async def get_knowledge_source(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_knowledge_source_access()),
 ):
     return await svc.get_source_or_404(db, source_id, current_user)
 
@@ -78,7 +83,10 @@ async def get_knowledge_source(
 @router.patch(
     "/{source_id}",
     response_model=KnowledgeSourceResponse,
-    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_ENGINEER)),
+        Depends(require_knowledge_source_access()),
+    ],
 )
 async def update_knowledge_source(
     source_id: uuid.UUID,
@@ -92,7 +100,10 @@ async def update_knowledge_source(
 @router.delete(
     "/{source_id}",
     status_code=204,
-    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_ENGINEER)),
+        Depends(require_knowledge_source_access()),
+    ],
 )
 async def delete_knowledge_source(
     source_id: uuid.UUID,
@@ -108,7 +119,10 @@ async def delete_knowledge_source(
 @router.post(
     "/{source_id}/sync",
     response_model=KnowledgeSourceSyncResponse,
-    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+    dependencies=[
+        Depends(require_role(UserRole.QA_ENGINEER)),
+        Depends(require_knowledge_source_access()),
+    ],
 )
 async def trigger_sync(
     source_id: uuid.UUID,
@@ -127,6 +141,7 @@ async def get_sync_history(
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_knowledge_source_access()),
 ):
     await svc.require_rag_enabled_async(db)
     await svc.get_source_or_404(db, source_id, current_user)
@@ -142,6 +157,7 @@ async def get_freshness(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_knowledge_source_access()),
 ):
     await svc.require_rag_enabled_async(db)
     source = await svc.get_source_or_404(db, source_id, current_user)

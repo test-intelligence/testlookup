@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_current_active_user, require_project_access, require_role
 from app.core.security import get_password_hash
 from app.db.postgres import get_db
 from app.models.postgres import Project, ProjectMember, User, UserInvitation, UserRole
@@ -334,6 +334,7 @@ async def list_project_members(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
     """List all members of a project."""
     # Verify project exists
@@ -361,6 +362,7 @@ async def add_project_member(
     payload: AddProjectMemberRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Add a user to a project with a role. Requires QA_LEAD or higher."""
     # Verify project
@@ -410,6 +412,7 @@ async def update_project_member_role(
     payload: UpdateProjectMemberRoleRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Update a project member's role. Requires QA_LEAD or higher."""
     result = await db.execute(
@@ -439,6 +442,7 @@ async def remove_project_member(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
 ):
     """Remove a user from a project. Requires ADMIN."""
     result = await db.execute(

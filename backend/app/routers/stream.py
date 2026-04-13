@@ -16,7 +16,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_api_key_context, get_current_active_user
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_api_key_context,
+    get_current_active_user,
+    require_live_session_access,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.models.schemas import ActiveSessionsResponse, LiveEventBatch, LiveSessionCreate
@@ -53,6 +58,7 @@ async def get_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
+    _: User = Depends(require_live_session_access()),
 ):
     return await stream_service.get_session(db, session_id)
 
@@ -62,6 +68,7 @@ async def close_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
+    _: User = Depends(require_live_session_access()),
 ):
     await stream_service.close_session(db, session_id)
 
@@ -93,13 +100,47 @@ async def sse_stream(
     request: Request,
     token: str,
 ):
-    from app.core.security import decode_token
+    # SSE routes can't go through the usual require_project_access dependency
+    # because the token arrives as a query param (browsers don't send auth
+    # headers on EventSource requests) and the handler streams forever. We
+    # inline the equivalent membership check against a short-lived DB session
+    # so the streaming generator doesn't hold a pool slot.
+    import uuid as _uuid
+
+    from sqlalchemy import select as _select
     from jose import JWTError
 
+    from app.core.security import decode_token
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import ProjectMember, User, UserRole
+
     try:
-        decode_token(token)
+        claims = decode_token(token)
+        user_id = claims.get("sub", "")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
     except (JWTError, Exception):
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        project_uuid = _uuid.UUID(project_id)
+        user_uuid = _uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project or user ID")
+
+    async with AsyncSessionLocal() as _db:
+        user = (await _db.execute(_select(User).where(User.id == user_uuid))).scalar_one_or_none()
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        if user.role != UserRole.ADMIN and str(user.role) != UserRole.ADMIN.value:
+            member = (await _db.execute(
+                _select(ProjectMember.id).where(
+                    ProjectMember.user_id == user_uuid,
+                    ProjectMember.project_id == project_uuid,
+                )
+            )).scalar_one_or_none()
+            if member is None:
+                raise HTTPException(status_code=403, detail="You do not have access to this project")
 
     queue: asyncio.Queue = asyncio.Queue(maxsize=500)
     _sse_subscribers.setdefault(project_id, set()).add(queue)

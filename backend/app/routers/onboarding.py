@@ -90,7 +90,7 @@ async def mark_step_skipped(
     project_id: uuid.UUID,
     body: StepAction,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
     """Mark an onboarding step as skipped."""
     try:

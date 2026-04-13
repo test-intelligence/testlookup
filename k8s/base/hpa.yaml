@@ -44,7 +44,7 @@ spec:
     scaleDown:
       stabilizationWindowSeconds: 120
       policies:
-        - type: Replicas
+        - type: Pods
           value: 1
           periodSeconds: 60
 ---
@@ -110,7 +110,7 @@ spec:
     scaleDown:
       stabilizationWindowSeconds: 300  # hold capacity during burst windows
       policies:
-        - type: Replicas
+        - type: Pods
           value: 1
           periodSeconds: 120
 ---

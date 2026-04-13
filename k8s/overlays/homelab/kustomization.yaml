@@ -1,0 +1,193 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - ingress-traefik.yaml
+  - infra-postgres.yaml
+  - infra-mongo.yaml
+  - infra-redis.yaml
+  - infra-minio.yaml
+  - infra-chromadb.yaml
+
+namespace: testlookup
+
+patches:
+  # ── Remove the base nginx Ingress (replaced by Traefik IngressRoute) ──────
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-ingress
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
+  # ── Remove the base template Secret (homelab creates real secrets via kubectl) ──
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: testlookup-secrets
+    target:
+      kind: Secret
+      name: testlookup-secrets
+
+  # ── Single-replica deployments for homelab ────────────────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-backend
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-frontend
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-critical
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ingestion
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ai
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-default
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Cap HPAs for homelab resource limits ──────────────────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+
+  # ── Ollama PVC: use local-path StorageClass (K3s built-in) ────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/storageClassName
+        value: local-path
+    target:
+      kind: PersistentVolumeClaim
+      name: ollama-models-pvc
+
+  # ── Lower Ollama memory for homelab (models are smaller) ──────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 16Gi
+    target:
+      kind: Deployment
+      name: testlookup-ollama
+
+  # ── Frontend: nginx runs as root — disable runAsNonRoot ────────────────────
+  # The templated base nginx (BACKEND_UPSTREAM=testlookup-backend:8000) is
+  # used as-is; Traefik intercepts /api before it reaches the pod.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: testlookup-frontend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: frontend
+                securityContext:
+                  runAsNonRoot: false
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: false
+    target:
+      kind: Deployment
+      name: testlookup-frontend
+
+  # ── Beat: write celerybeat-schedule to /tmp (writable by uid 1000) ──────────
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/command
+        value:
+          - celery
+          - -A
+          - app.worker.celery_app
+          - beat
+          - --loglevel=info
+          - -s
+          - /tmp/celerybeat-schedule
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Environment configuration ─────────────────────────────────────────────
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        APP_ENV: "production"
+        LOG_LEVEL: "INFO"
+        AI_OFFLINE_MODE: "true"
+        CORS_ORIGINS: "http://testlookup.local,http://192.168.0.200"
+        PUBLIC_BASE_URL: "http://testlookup.local"
+        STORAGE_BACKEND: "minio"
+        ANALYSIS_MODE: "auto"
+        DEEP_INVESTIGATION_ENABLED: "true"
+        DEV_AUTO_LOGIN_ENABLED: "false"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
+images:
+  - name: testlookup/backend
+    newName: registry.local:5000/testlookup/backend
+    newTag: latest
+  - name: testlookup/frontend
+    newName: registry.local:5000/testlookup/frontend
+    newTag: latest
+  - name: testlookup/mcp
+    newName: registry.local:5000/testlookup/mcp
+    newTag: latest

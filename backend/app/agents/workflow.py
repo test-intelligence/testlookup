@@ -462,7 +462,17 @@ def _make_checkpointed_node(original_node, stage_name: str):
             )
             return {"completed_stages": [stage_name], "current_stage": stage_name}
 
-        result = cast(dict[str, Any], await original_node(state))
+        try:
+            result = cast(dict[str, Any], await original_node(state))
+        except Exception as exc:
+            # Mark the individual stage as failed so it doesn't stay stuck in "running"
+            error_msg = f"{stage_name} failed: {exc}"
+            logger.error("Stage '%s' raised an exception: %s", stage_name, exc, exc_info=True)
+            try:
+                await _mark_stage_failed(pipeline_run_id, stage_name, error_msg)
+            except Exception:
+                logger.warning("Failed to mark stage '%s' as failed in DB", stage_name)
+            raise
 
         # Persist checkpoint
         if pipeline_run_id:
@@ -706,6 +716,39 @@ async def _write_stage_skipped(
                 await db.commit()
     except Exception as exc:
         logger.warning("Could not write skipped stage metadata for %s/%s: %s", pipeline_run_id, stage_name, exc)
+
+
+async def _mark_stage_failed(
+    pipeline_run_id: str,
+    stage_name: str,
+    error: str,
+) -> None:
+    """Mark an AgentStageResult as failed when a node raises an unhandled exception."""
+    if not pipeline_run_id:
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+            result = await db.execute(
+                sa_select(AgentStageResult).where(
+                    AgentStageResult.pipeline_run_id == pipeline_run_id,
+                    AgentStageResult.stage_name == stage_name,
+                )
+            )
+            stage = result.scalar_one_or_none()
+            if stage:
+                stage.status = "failed"
+                stage.error = error[:2000]
+                stage.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+        await emit_event(
+            pipeline_run_id, "stage_failed",
+            stage_name=stage_name,
+            detail={"error": error[:500]},
+        )
+    except Exception as exc:
+        logger.warning("Could not mark stage %s/%s as failed: %s", pipeline_run_id, stage_name, exc)
 
 
 async def _persist_memory(

@@ -1,0 +1,236 @@
+ 1. Tear down the existing deployment (destroys all data)                                
+                                                                                                                                                                                                                                                                                                                    
+  kubectl delete namespace testlookup --wait=true                                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                                                                    
+  2. Rebuild and push the updated images                                                                                                                                                                                                                                                                            
+                                                            
+  cd /c/Users/anand/Downloads/Projects/testlookup_new
+
+  docker build -t registry.local:30500/testlookup/backend:latest --target production -f backend/Dockerfile backend/
+  docker build -t registry.local:30500/testlookup/frontend:latest --target production -f frontend/Dockerfile frontend/
+  docker build -t registry.local:30500/testlookup/mcp:latest -f mcp/Dockerfile mcp/
+
+  docker push registry.local:30500/testlookup/backend:latest
+  docker push registry.local:30500/testlookup/frontend:latest
+  docker push registry.local:30500/testlookup/mcp:latest
+
+  3. Recreate namespace and secrets
+
+  kubectl create namespace testlookup
+
+  APP_SECRET=$(openssl rand -hex 32)
+  JWT_SECRET=$(openssl rand -hex 32)
+  PG_PASSWORD=$(openssl rand -base64 16 | tr -d '=/+' | head -c 24)
+  MINIO_ACCESS="testlookup_minio"
+  MINIO_SECRET=$(openssl rand -base64 16 | tr -d '=/+' | head -c 24)
+  WEBHOOK_SECRET=$(openssl rand -hex 32)
+  MCP_USER="mcp_service"
+  MCP_PASS=$(openssl rand -base64 12 | tr -d '=/+' | head -c 16)
+
+  DATABASE_URL="postgresql+asyncpg://testlookup_user:${PG_PASSWORD}@testlookup-postgres:5432/testlookup"
+  MONGO_URI="mongodb://testlookup-mongo:27017"
+
+  kubectl -n testlookup create secret generic testlookup-secrets \
+    --from-literal=APP_SECRET_KEY="${APP_SECRET}" \
+    --from-literal=JWT_SECRET_KEY="${JWT_SECRET}" \
+    --from-literal=DATABASE_URL="${DATABASE_URL}" \
+    --from-literal=POSTGRES_PASSWORD="${PG_PASSWORD}" \
+    --from-literal=MINIO_ACCESS_KEY="${MINIO_ACCESS}" \
+    --from-literal=MINIO_SECRET_KEY="${MINIO_SECRET}" \
+    --from-literal=MONGO_URI="${MONGO_URI}" \
+    --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}" \
+    --from-literal=MCP_USERNAME="${MCP_USER}" \
+    --from-literal=MCP_PASSWORD="${MCP_PASS}"
+
+  echo "PG=${PG_PASSWORD}  MINIO=${MINIO_SECRET}  MCP=${MCP_PASS}"
+
+  Save the printed credentials — you'll need MINIO_SECRET for the bucket step.
+ output to save: 
+ ====
+ anand@ANANDTOPU-PC MINGW64 ~/Downloads/Projects/testlookup_new (feature/bug_fixes_to_live_reports_04112026)
+$ kubectl -n testlookup create secret generic testlookup-secrets \
+    --from-literal=APP_SECRET_KEY="${APP_SECRET}" \
+    --from-literal=JWT_SECRET_KEY="${JWT_SECRET}" \
+    --from-literal=DATABASE_URL="${DATABASE_URL}" \
+    --from-literal=POSTGRES_PASSWORD="${PG_PASSWORD}" \
+    --from-literal=MINIO_ACCESS_KEY="${MINIO_ACCESS}" \
+    --from-literal=MINIO_SECRET_KEY="${MINIO_SECRET}" \
+    --from-literal=MONGO_URI="${MONGO_URI}" \
+    --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}" \
+    --from-literal=MCP_USERNAME="${MCP_USER}" \
+    --from-literal=MCP_PASSWORD="${MCP_PASS}"
+
+  echo "PG=${PG_PASSWORD}  MINIO=${MINIO_SECRET}  MCP=${MCP_PASS}"
+secret/testlookup-secrets created
+PG=xVu2yrphrlVKf3U9BuR39w  MINIO=7vKYfVJLomWC5YGU4IdD2Q  MCP=7ywYmerMqHwnxzkj
+PG=xVu2yrphrlVKf3U9BuR39w  MINIO=7vKYfVJLomWC5YGU4IdD2Q  MCP=7ywYmerMqHwnxzkj
+
+=======
+  4. Apply the updated kustomize overlay
+
+  kubectl apply -k k8s/overlays/homelab
+
+  5. Wait for infrastructure
+
+  kubectl -n testlookup wait --for=condition=ready pod -l app=testlookup-postgres --timeout=180s
+  kubectl -n testlookup wait --for=condition=ready pod -l app=testlookup-mongo    --timeout=180s
+  kubectl -n testlookup wait --for=condition=ready pod -l app=testlookup-redis    --timeout=180s
+  kubectl -n testlookup wait --for=condition=ready pod -l app=testlookup-minio    --timeout=180s
+  kubectl -n testlookup wait --for=condition=ready pod -l app=testlookup-backend  --timeout=300s
+
+  6. Create MinIO buckets
+
+  kubectl -n testlookup port-forward svc/testlookup-minio 9000:9000 &
+  PF=$!; sleep 3
+  mc alias set homelab http://localhost:9000 testlookup_minio "${MINIO_SECRET}"
+  mc mb homelab/test-telemetry --ignore-existing
+  mc mb homelab/knowledge-docs --ignore-existing
+  kill $PF 2>/dev/null
+
+
+ -- alternative: 
+  kubectl -n testlookup exec -it deployment/testlookup-minio -- sh -c '                                                                                                                                                                                                                                             
+    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &&
+    mc mb local/test-telemetry --ignore-existing &&                                                                                                                                                                                                                                                                 
+    mc mb local/knowledge-docs --ignore-existing &&         
+    mc ls local
+  '
+
+
+  7. Pull Ollama models (one-time, ~5 GB)
+
+  kubectl -n testlookup exec -it deployment/testlookup-ollama -- ollama pull qwen2.5:7b
+  kubectl -n testlookup exec -it deployment/testlookup-ollama -- ollama pull nomic-embed-text
+
+  8. Create the initial admin user
+
+  kubectl -n testlookup exec -it deployment/testlookup-backend -- \
+    python /app/scripts/create_admin.py
+	
+working command:
+kubectl -n testlookup exec -it deployment/testlookup-backend -- python //app/scripts/create_admin.py
+
+  ==================================================
+  Admin user created successfully!
+  ==================================================
+    username : admin
+    email    : admin@testlookup.local
+    password : Ckc9hnM826LdfYr3kTQN2g
+    role     : ADMIN
+  ==================================================
+  ** Password was auto-generated. Save it now — it cannot be retrieved later. **
+  ==================================================
+
+
+  Save the printed password — it can't be retrieved later. To use custom credentials instead:
+
+  kubectl -n testlookup exec -it deployment/testlookup-backend -- \
+    env ADMIN_EMAIL=you@example.com \
+        ADMIN_USERNAME=myadmin \
+        ADMIN_PASSWORD='MyStr0ngP@ss!' \
+    python /app/scripts/create_admin.py
+
+  9. Verify
+
+  kubectl -n testlookup get pods
+  curl -H "Host: testlookup.local" http://192.168.0.200/health/live
+
+  Then open http://testlookup.local and log in with the admin credentials from step 8.
+
+  ---
+  Note on the recent changes: the homelab overlay no longer mounts a custom nginx config — the rebuilt frontend image uses an envsubst template with BACKEND_UPSTREAM=testlookup-backend:8000 set in the base k8s deployment, so a fresh image pull in step 2 is required for the new behavior to take effect. The
+  DEPLOY_TESTLOOKUP.md references to nginx-k8s.conf and frontend-nginx-config are now stale and can be ignored.
+  
+  
+  ======
+  restart command:
+  
+  kubectl apply -k k8s/overlays/homelab
+                                                                                                                                                                                                                                                                                                                    
+  kubectl -n testlookup rollout restart deployment/testlookup-beat
+  kubectl -n testlookup rollout restart deployment/testlookup-chromadb                                                                                                                                                                                                                                              
+  kubectl -n testlookup rollout restart deployment/testlookup-mcp
+
+  kubectl -n testlookup rollout status deployment/testlookup-beat    --timeout=120s
+  kubectl -n testlookup rollout status deployment/testlookup-chromadb --timeout=120s
+  kubectl -n testlookup rollout status deployment/testlookup-mcp     --timeout=120s
+
+  kubectl -n testlookup get pods
+  
+  
+  
+  
+  ===== bug fix deployment
+   cd /c/Users/anand/Downloads/Projects/testlookup_new                                                                                                                                                                                                                                                               
+   
+  docker build -t registry.local:30500/testlookup/frontend:latest \                                                                                                                                                                                                                                                 
+    --target production -f frontend/Dockerfile frontend/    
+  docker push registry.local:30500/testlookup/frontend:latest
+
+  kubectl -n testlookup rollout restart deployment/testlookup-frontend
+  kubectl -n testlookup rollout status deployment/testlookup-frontend --timeout=120s
+
+  Then hard-refresh the browser (Ctrl+Shift+R) to clear the cached bundle.
+  
+  
+  docker build -t registry.local:30500/testlookup/backend:latest \
+    --target production -f backend/Dockerfile backend/                                                                                                                                                                                                                                                              
+  docker push registry.local:30500/testlookup/backend:latest
+
+  kubectl -n testlookup rollout restart deployment/testlookup-backend
+  kubectl -n testlookup rollout status deployment/testlookup-backend --timeout=180s
+  
+  
+   docker build -t registry.local:30500/testlookup/frontend:latest \
+    --target production -f frontend/Dockerfile frontend/                                                                                                                                                                                                                                                            
+  docker push registry.local:30500/testlookup/frontend:latest
+
+  kubectl -n testlookup rollout restart deployment/testlookup-frontend
+  kubectl -n testlookup rollout status deployment/testlookup-frontend --timeout=120s
+
+
+  docker build -t registry.local:30500/testlookup/backend:latest \
+    --target production -f backend/Dockerfile backend/                                                                                                                                                                                                                                                              
+  docker build -t registry.local:30500/testlookup/frontend:latest \
+    --target production -f frontend/Dockerfile frontend/
+
+  docker push registry.local:30500/testlookup/backend:latest
+  docker push registry.local:30500/testlookup/frontend:latest
+
+  kubectl -n testlookup rollout restart deployment/testlookup-backend
+  kubectl -n testlookup rollout restart deployment/testlookup-frontend
+  kubectl -n testlookup rollout status deployment/testlookup-backend  --timeout=180s
+  kubectl -n testlookup rollout status deployment/testlookup-frontend --timeout=120s
+  
+                                                                                                                                                                                                                                                                                                                      
+  docker build -t registry.local:30500/testlookup/frontend:latest \                                                                                                                                                                                                                                                 
+    --target production -f frontend/Dockerfile frontend/                                                                                                                                                                                                                                                            
+  docker push registry.local:30500/testlookup/frontend:latest                                                                                                                                                                                                                                                       
+                                                            
+  kubectl -n testlookup rollout restart deployment/testlookup-frontend
+  kubectl -n testlookup rollout status deployment/testlookup-frontend --timeout=120s
+  
+  
+   docker build -t registry.local:30500/testlookup/backend:latest \
+    --target production -f backend/Dockerfile backend/                                                                                                                                                                                                                                                              
+  docker push registry.local:30500/testlookup/backend:latest
+
+  kubectl -n testlookup rollout restart deployment/testlookup-backend
+  kubectl -n testlookup rollout status deployment/testlookup-backend --timeout=180s
+  
+  
+  
+===================
+
+Review the schema and identify bugs and design flaws.
+
+  
+    Root cause: backend/app/services/analytics_service.py:287 referenced tr.release_name, but the test_runs table has no such column — release membership is stored in the release_test_run_links association table, and the release name lives on releases.name. (The only release_name column in the schema is on
+  live_sessions, unrelated to this query.)
+
+  Fix: added two LEFT JOINs (release_test_run_links → releases) and aliased r.name AS release_name so the response shape is unchanged. LEFT JOINs keep defects whose test run isn't linked to any release — they just get release_name: null, which is what the old code intended.
+
+  If a defect's test run is linked to multiple releases, this query will duplicate the defect row. If you see duplicates in the UI after deploying, tell me and I'll switch it to a correlated subquery pulling the latest release only.
+
+  
+  
