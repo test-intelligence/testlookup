@@ -70,8 +70,9 @@ async def analysis_node(state: WorkflowState) -> dict:
     if not state.get("failed_test_ids"):
         pipeline_run_id = state.get("pipeline_run_id", "")
         logger.info(
-            "Pipeline %s: no failures — skipping root_cause_analysis (fast-path)",
-            pipeline_run_id,
+            "fast_path_skip",
+            stage="root_cause_analysis",
+            pipeline_run_id=pipeline_run_id,
         )
         await _write_stage_skipped(
             pipeline_run_id,
@@ -103,8 +104,9 @@ async def cluster_node(state: WorkflowState) -> dict:
     if not state.get("failed_test_ids"):
         pipeline_run_id = state.get("pipeline_run_id", "")
         logger.info(
-            "Pipeline %s: no failures — skipping failure_clustering (fast-path)",
-            pipeline_run_id,
+            "fast_path_skip",
+            stage="failure_clustering",
+            pipeline_run_id=pipeline_run_id,
         )
         await _write_stage_skipped(
             pipeline_run_id,
@@ -136,6 +138,58 @@ async def release_risk_node(state: WorkflowState) -> dict:
 
 # ── Routing functions (conditional edges) ────────────────────────────────────
 
+def _emit_route_decision(
+    state: WorkflowState,
+    *,
+    decision_point: str,
+    chosen: str,
+    rationale: str,
+    alternatives: list[str] | None = None,
+    context: dict | None = None,
+) -> None:
+    """Fire-and-forget structured decision record from a sync router function.
+
+    LangGraph calls routing functions synchronously, so we cannot await the
+    Mongo write here. Scheduling via ``asyncio.create_task`` keeps the routing
+    fast-path non-blocking while still getting the decision into the event log
+    for timeline reconstruction and debugging.
+    """
+    pipeline_run_id = state.get("pipeline_run_id", "")
+    if not pipeline_run_id:
+        return
+    payload: dict[str, Any] = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "decision_point": decision_point,
+        "chosen": chosen,
+        "rationale": rationale,
+    }
+    if alternatives:
+        payload["alternatives"] = alternatives
+    if context:
+        payload["context"] = context
+
+    logger.info(
+        "workflow_route_decision",
+        pipeline_run_id=pipeline_run_id,
+        decision_point=decision_point,
+        chosen=chosen,
+        rationale=rationale,
+    )
+    try:
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            emit_event(
+                pipeline_run_id,
+                "decision_made",
+                stage_name="workflow",
+                detail=payload,
+            )
+        )
+    except RuntimeError:
+        # No running loop (e.g. sync test harness) — structlog entry is enough.
+        pass
+
+
 def _route_after_ingestion(state: WorkflowState) -> str:
     """
     Fast-path: if the run has no failures there is nothing to analyse.
@@ -144,11 +198,21 @@ def _route_after_ingestion(state: WorkflowState) -> str:
     via the branching edges added in the graph).
     """
     if not state.get("failed_test_ids"):
-        logger.info(
-            "Pipeline %s: no failures detected — skipping analysis stages",
-            state.get("pipeline_run_id"),
+        _emit_route_decision(
+            state,
+            decision_point="route_after_ingestion",
+            chosen="summary",
+            rationale="no failed tests — skipping anomaly_detection and root_cause_analysis",
+            alternatives=["anomaly_detection"],
+            context={"total_tests": state.get("total_tests")},
         )
         return "summary"
+    _emit_route_decision(
+        state,
+        decision_point="route_after_ingestion",
+        chosen="anomaly_detection",
+        rationale=f"{len(state.get('failed_test_ids', []))} failed tests — fan out to analysis",
+    )
     return "anomaly_detection"
 
 
@@ -160,17 +224,31 @@ def _route_after_summary(state: WorkflowState) -> str:
     """
     analyses = state.get("analyses", {})
     threshold = settings.AI_CONFIDENCE_THRESHOLD
-    has_triageable = any(
-        a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
-        for a in analyses.values()
-    )
-    if not has_triageable:
-        logger.info(
-            "Pipeline %s: no analyses above confidence threshold (%d) — skipping triage",
-            state.get("pipeline_run_id"), threshold,
+    triageable = [
+        tc_id for tc_id, a in analyses.items()
+        if a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
+    ]
+    if not triageable:
+        _emit_route_decision(
+            state,
+            decision_point="route_after_summary",
+            chosen="end",
+            rationale=(
+                f"no analyses above confidence threshold {threshold} — skipping triage"
+            ),
+            alternatives=["triage"],
+            context={
+                "analyses_count": len(analyses),
+                "threshold": threshold,
+            },
         )
-        # Fire-and-forget: persist skip context (sync route fn can't await — handled in _mark_pipeline_done)
         return END
+    _emit_route_decision(
+        state,
+        decision_point="route_after_summary",
+        chosen="triage",
+        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+    )
     return "triage"
 
 
@@ -184,17 +262,32 @@ def _route_after_summary_deep(state: WorkflowState) -> str:
     """
     analyses = state.get("analyses", {})
     threshold = settings.AI_CONFIDENCE_THRESHOLD
-    has_triageable = any(
-        a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
-        for a in analyses.values()
-    )
-    if not has_triageable:
-        logger.info(
-            "Pipeline %s: no analyses above confidence threshold (%d) — skipping triage, "
-            "proceeding directly to specialist stages",
-            state.get("pipeline_run_id"), threshold,
+    triageable = [
+        tc_id for tc_id, a in analyses.items()
+        if a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
+    ]
+    if not triageable:
+        _emit_route_decision(
+            state,
+            decision_point="route_after_summary_deep",
+            chosen="flaky_sentinel",
+            rationale=(
+                f"no analyses above confidence threshold {threshold} — skipping triage, "
+                "continuing to specialist stages"
+            ),
+            alternatives=["triage"],
+            context={
+                "analyses_count": len(analyses),
+                "threshold": threshold,
+            },
         )
         return "flaky_sentinel"
+    _emit_route_decision(
+        state,
+        decision_point="route_after_summary_deep",
+        chosen="triage",
+        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+    )
     return "triage"
 
 
@@ -364,7 +457,12 @@ async def _checkpoint_stage(pipeline_run_id: str, stage_name: str, stage_output:
                 stage.checkpoint_data = _safe_serialize(stage_output)
                 await db.commit()
     except Exception as exc:
-        logger.warning("Checkpoint write failed for %s/%s: %s", pipeline_run_id, stage_name, exc)
+        logger.warning(
+            "checkpoint_write_failed",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error=str(exc),
+        )
 
 
 async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dict]:
@@ -423,7 +521,11 @@ async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dic
                 return merged_state
 
     except Exception as exc:
-        logger.warning("Checkpoint load failed for test_run %s: %s", test_run_id, exc)
+        logger.warning(
+            "checkpoint_load_failed",
+            test_run_id=test_run_id,
+            error=str(exc),
+        )
 
     return None
 
@@ -455,7 +557,7 @@ def _make_checkpointed_node(original_node, stage_name: str):
         # Skip if this stage was loaded from a checkpoint
         checkpoint_stages = cast(list[str], state.get("_checkpoint_stages", []))
         if stage_name in checkpoint_stages:
-            logger.info("Skipping stage '%s' — restored from checkpoint", stage_name)
+            logger.info("stage_restored_from_checkpoint", stage_name=stage_name)
             await emit_event(
                 pipeline_run_id, "checkpoint_restored",
                 stage_name=stage_name,
@@ -467,11 +569,16 @@ def _make_checkpointed_node(original_node, stage_name: str):
         except Exception as exc:
             # Mark the individual stage as failed so it doesn't stay stuck in "running"
             error_msg = f"{stage_name} failed: {exc}"
-            logger.error("Stage '%s' raised an exception: %s", stage_name, exc, exc_info=True)
+            logger.error(
+                "stage_unhandled_exception",
+                stage_name=stage_name,
+                error=str(exc),
+                exc_info=True,
+            )
             try:
                 await _mark_stage_failed(pipeline_run_id, stage_name, error_msg)
             except Exception:
-                logger.warning("Failed to mark stage '%s' as failed in DB", stage_name)
+                logger.warning("mark_stage_failed_db_error", stage_name=stage_name)
             raise
 
         # Persist checkpoint
@@ -715,7 +822,12 @@ async def _write_stage_skipped(
                 stage.execution_path = execution_path.value
                 await db.commit()
     except Exception as exc:
-        logger.warning("Could not write skipped stage metadata for %s/%s: %s", pipeline_run_id, stage_name, exc)
+        logger.warning(
+            "skipped_stage_write_failed",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error=str(exc),
+        )
 
 
 async def _mark_stage_failed(
@@ -748,7 +860,12 @@ async def _mark_stage_failed(
             detail={"error": error[:500]},
         )
     except Exception as exc:
-        logger.warning("Could not mark stage %s/%s as failed: %s", pipeline_run_id, stage_name, exc)
+        logger.warning(
+            "mark_stage_failed_error",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error=str(exc),
+        )
 
 
 async def _persist_memory(
@@ -766,10 +883,18 @@ async def _persist_memory(
                 db, project_id, test_run_id, pipeline_run_id, final_state,
             )
             if count:
-                logger.info("Persisted %d memory entries for pipeline %s", count, pipeline_run_id)
+                logger.info(
+                    "persisted_memory_entries",
+                    count=count,
+                    pipeline_run_id=pipeline_run_id,
+                )
     except Exception as exc:
         # Memory persistence is non-critical — don't fail the pipeline
-        logger.warning("Memory persistence failed for pipeline %s: %s", pipeline_run_id, exc)
+        logger.warning(
+            "memory_persistence_failed",
+            pipeline_run_id=pipeline_run_id,
+            error=str(exc),
+        )
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────

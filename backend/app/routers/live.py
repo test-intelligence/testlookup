@@ -31,13 +31,18 @@ class ConnectionManager:
         total = self.active_connections
         if total >= settings.WS_MAX_TOTAL_CONNECTIONS:
             await websocket.close(code=1008, reason="Server connection limit reached")
-            logger.warning("WS rejected: global limit %d reached", settings.WS_MAX_TOTAL_CONNECTIONS)
+            logger.warning(
+                f"ws_rejected_global_limit limit={settings.WS_MAX_TOTAL_CONNECTIONS}"
+            )
             return False
 
         project_count = len(self._channels.get(project_id, set()))
         if project_count >= settings.WS_MAX_CONNECTIONS_PER_PROJECT:
             await websocket.close(code=1008, reason="Project connection limit reached")
-            logger.warning("WS rejected: project=%s limit %d reached", project_id, settings.WS_MAX_CONNECTIONS_PER_PROJECT)
+            logger.warning(
+                f"ws_rejected_project_limit project_id={project_id} "
+                f"limit={settings.WS_MAX_CONNECTIONS_PER_PROJECT}"
+            )
             return False
 
         await websocket.accept()
@@ -66,7 +71,17 @@ class ConnectionManager:
         async def _send(ws: WebSocket) -> None:
             try:
                 await asyncio.wait_for(ws.send_text(payload), timeout=timeout)
-            except Exception:
+            except asyncio.TimeoutError:
+                logger.debug(f"ws_broadcast_timeout project_id={project_id}")
+                dead.add(ws)
+            except (RuntimeError, ConnectionError):
+                # RuntimeError: WebSocket already in CLOSED state.
+                # ConnectionError: peer vanished mid-send.
+                dead.add(ws)
+            except Exception as exc:  # noqa: BLE001 — defensive: never let one dead socket poison gather
+                logger.warning(
+                    f"ws_broadcast_failed project_id={project_id}: {exc}"
+                )
                 dead.add(ws)
 
         await asyncio.gather(*[_send(ws) for ws in list(channel)], return_exceptions=True)

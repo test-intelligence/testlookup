@@ -37,6 +37,10 @@ class BaseAgent(ABC):
         # Track per-run start times and OTEL spans so mark_stage_done can calculate duration
         self._stage_start: dict[str, float] = {}
         self._stage_spans: dict[str, Any] = {}
+        # Per-run decision trail accumulated by ``log_decision`` — flushed to
+        # AgentStageResult.decision_log in mark_stage_done and to the
+        # pipeline event log as individual ``decision_made`` events.
+        self._stage_decisions: dict[str, list[dict[str, Any]]] = {}
 
     @abstractmethod
     async def run(self, state: dict) -> dict:
@@ -44,20 +48,119 @@ class BaseAgent(ABC):
 
     # ── Stage tracking helpers ─────────────────────────────────────
 
-    async def mark_stage_running(self, pipeline_run_id: str) -> None:
-        # Emit pipeline event
+    async def log_decision(
+        self,
+        pipeline_run_id: str,
+        decision_point: str,
+        chosen: str,
+        rationale: str,
+        *,
+        alternatives: Optional[list[str]] = None,
+        test_case_id: Optional[str] = None,
+        context: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Record a structured decision taken by this agent.
+
+        Call this at every non-trivial branch: route selection, fallback
+        trigger, stage skip, confidence clamp, retry, specialist-stage pick.
+        Decisions end up in three places so operators, developers, and
+        downstream consumers can all trace them:
+
+        * Structlog info event — grep-friendly, correlates with other logs.
+        * Pipeline event log (Mongo, immutable) — ``decision_made`` event
+          typed by event_type, queryable via the existing timeline API.
+        * ``AgentStageResult.decision_log`` (JSON array) — committed when
+          the stage ends so the UI can render the trail alongside the
+          result without querying Mongo.
+
+        Args:
+            pipeline_run_id: The active pipeline run ID.
+            decision_point: Short identifier, e.g. ``"route_analysis_mode"``,
+                ``"triage_skip"``, ``"confidence_clamp"``, ``"retry_low_confidence"``.
+            chosen: The option taken (e.g., ``"ml"``, ``"skip_low_confidence"``).
+            rationale: One-line explanation the reader can act on.
+            alternatives: Other options considered but rejected (optional).
+            test_case_id: Per-test context (optional).
+            context: Any additional structured data worth persisting.
+        """
+        entry: dict[str, Any] = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "decision_point": decision_point,
+            "chosen": chosen,
+            "rationale": rationale,
+        }
+        if alternatives:
+            entry["alternatives"] = alternatives
+        if test_case_id:
+            entry["test_case_id"] = test_case_id
+        if context:
+            # Only store scalars/shallow dicts — deeply nested objects bloat the row.
+            entry["context"] = {
+                k: v for k, v in context.items()
+                if v is None or isinstance(v, (str, int, float, bool, list, dict))
+            }
+
+        self._stage_decisions.setdefault(pipeline_run_id, []).append(entry)
+
+        # Structlog — searchable + correlated with other log fields.
+        self.logger.info(
+            "agent_decision",
+            pipeline_run_id=pipeline_run_id,
+            decision_point=decision_point,
+            chosen=chosen,
+            rationale=rationale,
+            test_case_id=test_case_id,
+        )
+
+        # Pipeline event log (immutable audit trail).
+        await emit_event(
+            pipeline_run_id,
+            "decision_made",
+            stage_name=self.stage_name,
+            test_case_id=test_case_id,
+            detail=entry,
+        )
+
+        # OTEL span event so Jaeger timelines show the decision point inline.
+        span = self._stage_spans.get(pipeline_run_id)
+        if span is not None:
+            try:
+                span.add_event(
+                    f"decision.{decision_point}",
+                    attributes={
+                        "decision.chosen": chosen,
+                        "decision.rationale": rationale[:500],
+                    },
+                )
+            except Exception:  # pragma: no cover — tracing is best-effort
+                pass
+
+    async def mark_stage_running(
+        self,
+        pipeline_run_id: str,
+        *,
+        input_keys: Optional[list[str]] = None,
+    ) -> None:
+        # Emit pipeline event — include a snapshot of which state keys the
+        # stage received so a failing stage can be debugged by looking at the
+        # event log alone, without reconstructing the upstream state.
         await emit_event(
             pipeline_run_id, "stage_started",
             stage_name=self.stage_name,
+            detail={"input_state_keys": input_keys} if input_keys else None,
         )
 
         # Start OTEL span
+        attrs: dict[str, Any] = {
+            "pipeline.run_id": pipeline_run_id,
+            "agent.stage": self.stage_name,
+        }
+        if input_keys:
+            # Limit to 40 keys; otel attribute values have a size cap.
+            attrs["stage.input_keys"] = ",".join(sorted(input_keys)[:40])
         span = self._tracer.start_span(
             f"agent.{self.stage_name}",
-            attributes={
-                "pipeline.run_id": pipeline_run_id,
-                "agent.stage": self.stage_name,
-            },
+            attributes=attrs,
         )
         self._stage_spans[pipeline_run_id] = span
         self._stage_start[pipeline_run_id] = time.perf_counter()
@@ -92,6 +195,7 @@ class BaseAgent(ABC):
         confidence_score: Optional[int] = None,
         evidence_count: Optional[int] = None,
         route_rationale: Optional[str] = None,
+        analysis_mode: Optional[str] = None,
     ) -> None:
         status = "failed" if error else "completed"
         total_tokens = input_tokens + output_tokens
@@ -152,7 +256,10 @@ class BaseAgent(ABC):
                 stage_name=self.stage_name, error_category=error_category
             ).inc()
 
-        # Close OTEL span
+        # Close OTEL span — enrich with decision attributes so the Jaeger
+        # timeline shows *why* the stage ran as it did, not just how long it
+        # took. Consumers filter spans by analysis.mode, fallback.used,
+        # error.category to audit agent behaviour in aggregate.
         span = self._stage_spans.pop(pipeline_run_id, None)
         if span is not None:
             try:
@@ -168,6 +275,24 @@ class BaseAgent(ABC):
                 span.set_attribute("tokens.total", total_tokens)
                 span.set_attribute("cost_usd", round(cost_usd, 6))
                 span.set_attribute("llm_calls", llm_calls_count)
+                if analysis_mode:
+                    span.set_attribute("analysis.mode", analysis_mode)
+                if route_rationale:
+                    span.set_attribute("route.rationale", route_rationale[:500])
+                if fallback_reason:
+                    span.set_attribute("fallback.used", True)
+                    span.set_attribute("fallback.reason", fallback_reason[:200])
+                if error_category:
+                    span.set_attribute("error.category", error_category)
+                if confidence_score is not None:
+                    span.set_attribute("result.confidence_score", confidence_score)
+                if evidence_count is not None:
+                    span.set_attribute("result.evidence_count", evidence_count)
+                # Summarise decision trail cardinality so dashboards can flag
+                # unusually-chatty stages without pulling the full JSON.
+                decisions = self._stage_decisions.get(pipeline_run_id, [])
+                if decisions:
+                    span.set_attribute("decisions.count", len(decisions))
             except ImportError:
                 pass
             finally:
@@ -200,8 +325,14 @@ class BaseAgent(ABC):
                 stage.confidence_score = confidence_score
                 stage.evidence_count = evidence_count
                 stage.route_rationale = route_rationale
+                stage.analysis_mode = analysis_mode
                 if fallback_reason:
                     stage.fallback_used = True
+                    stage.fallback_reason = fallback_reason[:200]
+                # Flush the accumulated decision trail for this run.
+                decisions = self._stage_decisions.pop(pipeline_run_id, None)
+                if decisions:
+                    stage.decision_log = decisions
                 await db.commit()
 
     def track_active(self, workflow_type: str, delta: float) -> None:
@@ -217,4 +348,4 @@ class BaseAgent(ABC):
                 {"type": "pipeline_progress", "stage": self.stage_name, **payload},
             )
         except Exception as exc:
-            self.logger.debug("WebSocket broadcast failed (non-critical): %s", exc)
+            self.logger.debug("ws_broadcast_failed", error=str(exc))

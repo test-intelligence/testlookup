@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import AppLayout from '@/components/layout/AppLayout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useWebVitals } from '@/hooks/useWebVitals'
 import { usePermissions } from '@/hooks/usePermissions'
 import LoginPage from '@/pages/LoginPage'
@@ -113,11 +114,35 @@ function RouteFallback() {
   )
 }
 
-function renderLazyRoute(Component: ComponentType) {
+function RouteErrorFallback({ error }: { error: Error }) {
   return (
-    <Suspense fallback={<RouteFallback />}>
-      <Component />
-    </Suspense>
+    <div className="mx-auto max-w-2xl p-8">
+      <h2 className="mb-2 text-lg font-semibold text-[var(--color-text)]">
+        Something went wrong loading this page.
+      </h2>
+      <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
+        {error.message || 'An unexpected error occurred. Try navigating back or refreshing.'}
+      </p>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-sm hover:bg-[var(--color-bg-hover)]"
+      >
+        Reload
+      </button>
+    </div>
+  )
+}
+
+function renderLazyRoute(Component: ComponentType) {
+  // ErrorBoundary wraps each lazy route so a render-phase throw in one page
+  // cannot blank the whole app shell — the rest of the navigation stays live.
+  return (
+    <ErrorBoundary fallback={(error) => <RouteErrorFallback error={error} />}>
+      <Suspense fallback={<RouteFallback />}>
+        <Component />
+      </Suspense>
+    </ErrorBoundary>
   )
 }
 

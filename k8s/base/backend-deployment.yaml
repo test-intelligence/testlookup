@@ -25,8 +25,8 @@ spec:
       serviceAccountName: testlookup-sa
       containers:
         - name: backend
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
               name: http
@@ -65,15 +65,21 @@ spec:
             httpGet:
               path: /health/live
               port: 8000
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30
             periodSeconds: 5
-            failureThreshold: 12
+            failureThreshold: 24
             timeoutSeconds: 5
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       # Spread replicas across nodes; fall back to best-effort if topology unavailable
       topologySpreadConstraints:
         - maxSkew: 1

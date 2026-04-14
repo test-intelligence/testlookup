@@ -141,6 +141,15 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Idempotency guard: a previous close_session for this session has already
+    # cleared Redis state and queued the persistence task. Returning early here
+    # closes the race where two concurrent close requests would each clear state
+    # and enqueue persist_live_session, producing duplicate log lines and —
+    # depending on Celery worker timing — duplicate DB upserts.
+    if session.status == "completed":
+        logger.info(f"close_session: already completed, skipping session_id={session_id}")
+        return
+
     from app.streams.live_run_state import RedisLiveRunState
 
     state = await RedisLiveRunState.complete(session.run_id)
@@ -163,7 +172,9 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
                 test_run_id=uuid.UUID(session.run_id),
             )
         except Exception as rel_err:
-            logger.warning("Release linking failed for live session %s: %s", session_id, rel_err)
+            logger.warning(
+                f"live_session_release_link_failed session_id={session_id}: {rel_err}"
+            )
 
     # stage-only: handler commits the LiveSession close, the upserted
     # TestRun, and any release link together.
@@ -185,9 +196,11 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             queue="ingestion",
             priority=7,
         )
-        logger.info("Queued persist_live_session for session %s", session_id)
+        logger.info(f"queued_persist_live_session session_id={session_id}")
     except Exception as exc:
-        logger.warning("Failed to queue persist_live_session for session %s: %s", session_id, exc)
+        logger.warning(
+            f"persist_live_session_queue_failed session_id={session_id}: {exc}"
+        )
 
     try:
         from app.worker.tasks import run_agent_pipeline
@@ -203,9 +216,13 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             priority=6,
             countdown=45,
         )
-        logger.info("Queued AI pipeline for session %s (run %s)", session_id, session.run_id)
+        logger.info(
+            f"ai_pipeline_queued_from_live session_id={session_id} run_id={session.run_id}"
+        )
     except Exception as exc:
-        logger.warning("Failed to queue AI pipeline for session %s: %s", session_id, exc)
+        logger.warning(
+            f"ai_pipeline_queue_failed session_id={session_id}: {exc}"
+        )
 
 
 async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
@@ -335,12 +352,28 @@ def build_test_run_fallback_state(run) -> LiveSessionState:
     )
 
 
-async def list_active_sessions(db: AsyncSession, project_id: Optional[str] = None) -> ActiveSessionsResponse:
+async def list_active_sessions(
+    db: AsyncSession,
+    project_id: Optional[str] = None,
+    allowed_project_ids: Optional[set[uuid.UUID]] = None,
+) -> ActiveSessionsResponse:
+    """
+    List active + recent live sessions, enforcing tenant isolation.
+
+    - ``project_id`` (when set) narrows the result to that single project.
+    - ``allowed_project_ids`` (when set) constrains the result to the caller's
+      accessible project set — used for non-admin callers without a pinned
+      project. A value of ``None`` means no constraint (ADMIN or a project_id
+      that has already been verified).
+    """
     from app.streams.live_run_state import RedisLiveRunState
 
     all_active = await RedisLiveRunState.get_all_active()
     if project_id:
         all_active = [session for session in all_active if session.get("project_id") == project_id]
+    elif allowed_project_ids is not None:
+        allowed_str = {str(pid) for pid in allowed_project_ids}
+        all_active = [s for s in all_active if s.get("project_id") in allowed_str]
 
     active_run_ids = {session.get("run_id") for session in all_active}
     active_sessions = [build_live_session_state(session) for session in all_active]
@@ -357,6 +390,10 @@ async def list_active_sessions(db: AsyncSession, project_id: Optional[str] = Non
             stmt = stmt.where(LiveSession.project_id == uuid.UUID(project_id))
         except ValueError:
             pass
+    elif allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return ActiveSessionsResponse(sessions=[], count=0)
+        stmt = stmt.where(LiveSession.project_id.in_(allowed_project_ids))
 
     db_sessions = (await db.execute(stmt)).scalars().all()
     seen_run_ids = set(active_run_ids)
@@ -378,6 +415,8 @@ async def list_active_sessions(db: AsyncSession, project_id: Optional[str] = Non
             tr_stmt = tr_stmt.where(TestRun.project_id == uuid.UUID(project_id))
         except ValueError:
             pass
+    elif allowed_project_ids is not None:
+        tr_stmt = tr_stmt.where(TestRun.project_id.in_(allowed_project_ids))
 
     tr_runs = (await db.execute(tr_stmt)).scalars().all()
     for run in tr_runs:
@@ -427,7 +466,9 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
             end_time=now,
         )
         db.add(run)
-        logger.info("Created TestRun %s for live session %s", run_uuid, session.id)
+        logger.info(
+            f"test_run_created_for_live_session run_id={run_uuid} session_id={session.id}"
+        )
     else:
         run.status = run_status
         run.total_tests = total
@@ -437,4 +478,6 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         run.broken_tests = broken
         run.pass_rate = pass_rate
         run.end_time = now
-        logger.info("Updated TestRun %s for live session %s", run_uuid, session.id)
+        logger.info(
+            f"test_run_updated_for_live_session run_id={run_uuid} session_id={session.id}"
+        )

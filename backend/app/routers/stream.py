@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,11 +91,33 @@ async def list_active_sessions(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
+    # Tenant isolation:
+    # - ADMIN (accessible=None): sees everything; no filter.
+    # - Non-admin with specific project_id: verify they are a member of that project.
+    # - Non-admin without project_id: scope the listing to every project they belong
+    #   to (previously this branch returned an empty list, hiding the user's own
+    #   sessions from the live dashboard).
+    accessible = await get_accessible_project_ids(db, current_user)
+    if project_id:
         if accessible is not None:
-            return ActiveSessionsResponse(sessions=[], total=0)
-    return await stream_service.list_active_sessions(db, project_id)
+            try:
+                if uuid.UUID(project_id) not in accessible:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="You do not have access to this project",
+                    )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid project_id",
+                )
+        return await stream_service.list_active_sessions(db, project_id)
+
+    return await stream_service.list_active_sessions(
+        db,
+        project_id=None,
+        allowed_project_ids=accessible,
+    )
 
 
 @router.get("/sse/{project_id}")

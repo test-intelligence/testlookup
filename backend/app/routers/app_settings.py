@@ -152,7 +152,7 @@ async def update_smtp_config(
     )
     await db.commit()
 
-    logger.info("SMTP configuration updated by %s", current_user.username)
+    logger.info("SMTP configuration updated by user_id=%s", current_user.id)
     return _build_smtp_config_read(
         enabled=payload.enabled,
         host=payload.host,
@@ -195,7 +195,7 @@ async def test_smtp_config(
             use_tls=bool(cfg.get("tls", True)),
             start_tls=not bool(cfg.get("tls", True)),
         )
-        logger.info("SMTP test email sent to %s", current_user.email)
+        logger.info("SMTP test email sent for user_id=%s", current_user.id)
         return SmtpTestResult(success=True, message=f"Test email sent to {current_user.email}")
     except Exception:
         logger.exception("SMTP test failed")
@@ -324,7 +324,7 @@ async def update_ai_config(
     except Exception:
         pass  # Redis cache is best-effort
 
-    logger.info("AI configuration updated by %s (fields: %s)", current_user.username, list(updates.keys()))
+    logger.info("AI configuration updated by user_id=%s (fields: %s)", current_user.id, list(updates.keys()))
 
     # ML model status for response
     ml_available = False
@@ -453,7 +453,7 @@ async def update_integrations_config(
 
     await log_settings_change(db, _INTEGRATIONS_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
-    logger.info("Integrations configuration updated by %s", current_user.username)
+    logger.info("Integrations configuration updated by user_id=%s", current_user.id)
     return IntegrationsConfigRead(
         jira_enabled=merged["jira_enabled"],
         jira_domain=merged["jira_domain"],
@@ -525,7 +525,7 @@ async def update_storage_config(
 
     await log_settings_change(db, _STORAGE_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
-    logger.info("Storage configuration updated by %s", current_user.username)
+    logger.info("Storage configuration updated by user_id=%s", current_user.id)
     return StorageConfigRead(
         storage_backend=merged.get("storage_backend", settings.STORAGE_BACKEND),
         minio_endpoint=merged.get("minio_endpoint", settings.MINIO_ENDPOINT),

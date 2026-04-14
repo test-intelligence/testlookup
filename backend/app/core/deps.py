@@ -64,7 +64,13 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
     token: str = Depends(oauth2_scheme),
 ) -> User:
-    """Validate JWT access token and return the matching User row."""
+    """Validate JWT access token and return the matching User row.
+
+    In addition to signature/exp validation, this also consults the token
+    revocation store so explicit logouts and password changes actually
+    invalidate existing tokens before their natural expiry. See
+    ``app/core/token_revocation.py`` for the revocation scopes.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -88,6 +94,19 @@ async def get_current_user(
     try:
         uid = uuid.UUID(user_id)
     except ValueError:
+        raise credentials_exception
+
+    # Revocation checks. Fail-open on Redis errors — see
+    # token_revocation.py for the rationale.
+    from app.core.token_revocation import is_jti_revoked, is_token_before_cutoff
+    jti = payload.get("jti")
+    iat = payload.get("iat")
+    iat_int: Optional[int] = None
+    if isinstance(iat, (int, float)):
+        iat_int = int(iat)
+    if jti and await is_jti_revoked(str(jti)):
+        raise credentials_exception
+    if await is_token_before_cutoff(uid, iat_int):
         raise credentials_exception
 
     result = await db.execute(select(User).where(User.id == uid))
@@ -314,7 +333,10 @@ async def get_accessible_project_ids(
     if _normalize_user_role(user.role) == UserRole.ADMIN:
         return None  # ADMIN sees everything
 
-    # P3-2: Check Redis cache first
+    # P3-2: Check Redis cache first. A persistent Redis failure would silently
+    # cascade into every request hitting the DB; log the first occurrence per
+    # process so ops can see the dependency degrade instead of only noticing
+    # the tail-latency symptom.
     cache_key = f"membership:{user.id}"
     try:
         from app.db.redis_client import get_redis
@@ -322,15 +344,14 @@ async def get_accessible_project_ids(
         cached = await redis.get(cache_key)
         if cached is not None:
             return {uuid.UUID(pid) for pid in json.loads(cached)}
-    except Exception:
-        pass  # Redis unavailable — fall through to DB
+    except Exception as exc:
+        _warn_membership_cache_degraded("read", exc)
 
     result = await db.execute(
         select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
     )
     project_ids = {row[0] for row in result.all()}
 
-    # Store in Redis cache
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
@@ -339,10 +360,75 @@ async def get_accessible_project_ids(
             json.dumps([str(pid) for pid in project_ids]),
             ex=_MEMBERSHIP_CACHE_TTL,
         )
-    except Exception:
-        pass  # Cache write failure is non-blocking
+    except Exception as exc:
+        _warn_membership_cache_degraded("write", exc)
 
     return project_ids
+
+
+# Throttle noisy warnings — log once per hour per op if Redis is down.
+_last_cache_warn_ts: dict[str, float] = {}
+
+
+def _warn_membership_cache_degraded(op: str, exc: Exception) -> None:
+    import time as _time
+    now = _time.monotonic()
+    last = _last_cache_warn_ts.get(op, 0.0)
+    if now - last < 3600:
+        return
+    _last_cache_warn_ts[op] = now
+    logger.warning(
+        "membership cache %s failed — falling back to DB on every request: %s",
+        op, exc,
+    )
+
+
+async def resolve_project_scope(
+    db: AsyncSession,
+    user: User,
+    requested_project_id: Optional[str],
+) -> tuple[Optional[uuid.UUID], Optional[set[uuid.UUID]]]:
+    """
+    Resolve the effective project scope for a query, enforcing tenant isolation.
+
+    Returns a tuple ``(project_id, allowed_project_ids)``:
+
+    - ADMIN, no request  → ``(None, None)``               — unrestricted
+    - ADMIN, specific    → ``(UUID, None)``               — unrestricted, pinned to one project
+    - Non-admin, no req  → ``(None, {member_ids})``       — scoped to user's memberships
+    - Non-admin, specific & allowed → ``(UUID, None)``    — pinned, access verified
+    - Non-admin, specific & denied  → raises HTTP 403
+    - Non-admin with zero memberships → ``(None, set())`` — caller returns empty results
+
+    The two return slots are mutually exclusive: callers filter by ``project_id``
+    when set, otherwise by ``allowed_project_ids.in_(...)`` when non-None.
+    """
+    parsed: Optional[uuid.UUID] = None
+    if requested_project_id:
+        try:
+            parsed = uuid.UUID(requested_project_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid project ID",
+            )
+
+    accessible = await get_accessible_project_ids(db, user)
+    # ADMIN: accessible is None, no restriction
+    if accessible is None:
+        return parsed, None
+
+    # Non-admin
+    if parsed is not None:
+        if parsed not in accessible:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this project",
+            )
+        return parsed, None
+
+    # Non-admin, no specific project → scope to membership set
+    return None, accessible
 
 
 async def invalidate_membership_cache(user_id: uuid.UUID) -> None:

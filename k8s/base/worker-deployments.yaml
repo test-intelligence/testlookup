@@ -38,8 +38,8 @@ spec:
       terminationGracePeriodSeconds: 60   # allow in-flight tasks to finish
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -91,8 +91,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -129,8 +135,8 @@ spec:
       terminationGracePeriodSeconds: 120   # parsing can take time
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -182,8 +188,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -220,8 +232,8 @@ spec:
       terminationGracePeriodSeconds: 1860  # match Celery hard time limit (31 min)
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -273,8 +285,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -311,8 +329,8 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -364,8 +382,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
 ---
 # ── beat: Celery beat scheduler (always exactly 1 replica — never scaled) ─────
 apiVersion: apps/v1
@@ -392,8 +416,8 @@ spec:
       serviceAccountName: testlookup-sa
       containers:
         - name: beat
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -426,5 +450,11 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault

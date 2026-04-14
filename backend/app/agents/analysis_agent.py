@@ -96,7 +96,7 @@ class AnalysisAgent(BaseAgent):
         try:
             results_list = await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as gather_exc:
-            logger.error("asyncio.gather failed unexpectedly: %s", gather_exc)
+            logger.error("asyncio_gather_failed", error=str(gather_exc))
             results_list = [gather_exc] * len(prioritized_ids)
 
         analyses: dict[str, dict] = {}
@@ -105,11 +105,17 @@ class AnalysisAgent(BaseAgent):
         retried = 0
         low_confidence = 0
         error_count = 0
+        from app.services.privacy_service import sanitize_for_logging
         for tc_id, result in zip(prioritized_ids, results_list):
             if isinstance(result, BaseException):
                 error_count += 1
-                errors.append(f"Analysis failed for {tc_id}: {result}")
-                analyses[tc_id] = {"error": str(result), "confidence_score": 0}
+                # Exception messages may contain stack traces, payload snippets,
+                # URLs, or raw customer data. Strip PII before persisting the
+                # error on state — it later flows through logs and any LLM-
+                # assisted debugging view.
+                safe_msg = sanitize_for_logging(str(result))
+                errors.append(f"Analysis failed for {tc_id}: {safe_msg}")
+                analyses[tc_id] = {"error": safe_msg, "confidence_score": 0}
             else:
                 analyses[tc_id] = result
                 if result.get("timed_out"):
@@ -131,6 +137,23 @@ class AnalysisAgent(BaseAgent):
         # Batch persist all analyses in chunked upserts (single session)
         await self._batch_upsert_analyses(analyses)
 
+        # Summarise routing across all analyses — the dominant mode is what
+        # ran for the majority; fallbacks are tallied separately so degradation
+        # is visible on the stage row without joining the event log.
+        mode_counts: dict[str, int] = {}
+        fallback_count = 0
+        for a in analyses.values():
+            audit = a.get("_audit") or {}
+            m = audit.get("analysis_mode") or "unknown"
+            mode_counts[m] = mode_counts.get(m, 0) + 1
+            if audit.get("fallback_from"):
+                fallback_count += 1
+        dominant_mode = max(mode_counts, key=mode_counts.get) if mode_counts else None
+        stage_fallback_reason = (
+            f"{fallback_count}/{total_analysed} tests fell back from requested engine"
+            if fallback_count else None
+        )
+
         await self.mark_stage_done(
             pipeline_run_id,
             result_data={
@@ -141,7 +164,11 @@ class AnalysisAgent(BaseAgent):
                 "low_confidence": low_confidence,
                 "stage_quality": stage_quality,
                 "error_ratio": round(error_ratio, 3),
+                "mode_distribution": mode_counts,
+                "fallback_count": fallback_count,
             },
+            analysis_mode=dominant_mode,
+            fallback_reason=stage_fallback_reason,
         )
 
         quality_msg = ""
@@ -205,9 +232,9 @@ class AnalysisAgent(BaseAgent):
             and _MAX_ANALYSIS_RETRIES > 0
         ):
             logger.info(
-                "Low confidence (%d) for %s — retrying analysis",
-                result.get("confidence_score", 0),
-                tc_id,
+                "low_confidence_retry",
+                confidence_score=result.get("confidence_score", 0),
+                test_case_id=tc_id,
             )
             retry_result = await self._analyse_one(semaphore, tc_id, meta, state)
             # Keep the result with higher confidence
@@ -227,12 +254,32 @@ class AnalysisAgent(BaseAgent):
         state: dict,
     ) -> dict:
         start_time = time.perf_counter()
+        pipeline_run_id = state.get("pipeline_run_id", "")
         async with semaphore:
-            logger.info("Analysing test case %s: %s", tc_id, meta.get("test_name", ""))
+            logger.info(
+                "Analysing test case",
+                test_case_id=tc_id,
+                test_name=meta.get("test_name", ""),
+            )
 
             # Check analysis mode — dispatch to ML/Rules if LLM is disabled
             from app.services.analysis_router import AnalysisMode, get_analysis_mode
             mode = get_analysis_mode()
+
+            # Record the routing decision so downstream consumers (UI, reports)
+            # can see *which* engine ran and why, without scraping logs.
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="route_analysis_mode",
+                chosen=mode,
+                rationale=(
+                    "configured ANALYSIS_MODE resolved via get_analysis_mode()"
+                    if mode != AnalysisMode.AUTO
+                    else "auto resolution: ML→LLM→Rules availability chain"
+                ),
+                test_case_id=tc_id,
+                context={"severity": meta.get("severity")},
+            )
 
             if mode in (AnalysisMode.ML, AnalysisMode.RULES):
                 # Non-LLM path: use analysis_router (no timeout needed, <5ms)
@@ -273,12 +320,18 @@ class AnalysisAgent(BaseAgent):
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "ReAct agent timed out after %ds for test %s — using progressive fallback",
-                        settings.AI_TIMEOUT_SECONDS, tc_id,
+                        "react_agent_timeout",
+                        timeout_seconds=settings.AI_TIMEOUT_SECONDS,
+                        test_case_id=tc_id,
+                        fallback="progressive",
                     )
                     analysis = await self._build_progressive_fallback(tc_id, meta)
                 except Exception as exc:
-                    logger.error("ReAct agent failed for %s: %s", tc_id, exc)
+                    logger.error(
+                        "react_agent_failed",
+                        test_case_id=tc_id,
+                        error=str(exc),
+                    )
                     analysis = self._build_error_analysis(exc)
 
             # Attach flakiness data from historical enrichment for P2-6 validation
@@ -289,15 +342,35 @@ class AnalysisAgent(BaseAgent):
             analysis = self._validate_confidence(analysis)
             analysis = self._sanitize_category(analysis)
 
-            # Record audit metadata
+            # Record audit metadata. Includes the routing decision returned
+            # by the router so callers can see which engine ran (and, on
+            # fallback, which engine was requested and why it was swapped).
             elapsed = time.perf_counter() - start_time
+            routing = analysis.get("_routing") or {}
             analysis["_audit"] = {
                 "analysis_duration_seconds": round(elapsed, 3),
                 "test_severity": meta.get("severity"),
                 "had_error_message": bool(meta.get("error_message")),
                 "had_stack_trace": bool(meta.get("stack_trace")),
                 "historical_failure_count": meta.get("historical_failure_count", 0),
+                "analysis_mode": routing.get("mode_used") or mode,
+                "mode_requested": routing.get("mode_requested") or mode,
+                "fallback_from": routing.get("fallback_from"),
+                "fallback_reason": routing.get("fallback_reason"),
+                "confidence_adjustments": analysis.pop("_confidence_adjustments", []),
             }
+
+            # If the router recorded a fallback, surface it as a decision entry
+            # so the stage-level decision_log reflects per-test anomalies.
+            if routing.get("fallback_from") and pipeline_run_id:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="analysis_engine_fallback",
+                    chosen=routing.get("mode_used") or "rules",
+                    rationale=routing.get("fallback_reason") or "unspecified",
+                    alternatives=[routing.get("fallback_from")],
+                    test_case_id=tc_id,
+                )
 
             # Store full analysis payload to object storage for large payloads
             pipeline_run_id = state.get("pipeline_run_id", "")
@@ -351,7 +424,7 @@ class AnalysisAgent(BaseAgent):
 
                 return meta
         except Exception as db_exc:
-            logger.error("Failed to fetch test metadata: %s", db_exc)
+            logger.error("fetch_test_metadata_failed", error=str(db_exc))
             return {}
 
     async def _enrich_historical_counts(
@@ -385,7 +458,7 @@ class AnalysisAgent(BaseAgent):
                     meta[tc_id]["historical_failure_count"] = stats["fail_count"]
                     meta[tc_id]["flakiness_data"] = stats
         except Exception as exc:
-            logger.debug("Historical count enrichment failed (non-critical): %s", exc)
+            logger.debug("historical_count_enrichment_failed", error=str(exc))
 
     async def _enrich_stack_traces(
         self, meta: dict[str, dict], tc_ids: list[str]
@@ -405,7 +478,7 @@ class AnalysisAgent(BaseAgent):
                     if trace:
                         meta[tc_id]["stack_trace"] = trace
         except Exception as exc:
-            logger.debug("Stack trace enrichment from MongoDB failed (non-critical): %s", exc)
+            logger.debug("stack_trace_enrichment_failed", error=str(exc))
 
     def _validate_confidence(self, analysis: dict) -> dict:
         """
@@ -429,19 +502,29 @@ class AnalysisAgent(BaseAgent):
         summary = analysis.get("root_cause_summary") or ""
         has_tools = bool(analysis.get("tools_used"))
 
+        # Record every confidence adjustment so the per-test _audit block can
+        # explain the final number — ops can see "LLM said 85, we capped to 50
+        # because no evidence" without reading debug logs.
+        adjustments: list[dict] = []
+
         # Penalty: no evidence references at all
         if not evidence and confidence > 50:
-            logger.debug(
-                "Confidence capped 50 (was %d): no evidence references", confidence,
-            )
+            adjustments.append({
+                "rule": "no_evidence_references",
+                "from": confidence,
+                "to": 50,
+                "reason": "LLM returned no evidence_references",
+            })
             confidence = min(confidence, 50)
 
         # Penalty: very short or generic summary
         if len(summary) < 30 and confidence > 30:
-            logger.debug(
-                "Confidence capped 30 (was %d): summary too short (%d chars)",
-                confidence, len(summary),
-            )
+            adjustments.append({
+                "rule": "summary_too_short",
+                "from": confidence,
+                "to": 30,
+                "reason": f"root_cause_summary only {len(summary)} chars",
+            })
             confidence = min(confidence, 30)
 
         # P2-6: Validate flakiness using actual historical data instead of LLM guess.
@@ -466,14 +549,35 @@ class AnalysisAgent(BaseAgent):
 
         # Penalty: no tools used and not a cache hit (suspicious high confidence)
         if not has_tools and not analysis.get("cache_hit") and not analysis.get("classified_by") and confidence > 60:
-            logger.debug(
-                "Confidence capped 60 (was %d): no tools used and not cached", confidence,
-            )
+            adjustments.append({
+                "rule": "no_tools_no_cache",
+                "from": confidence,
+                "to": 60,
+                "reason": "LLM reached conclusion without invoking any tools",
+            })
             confidence = min(confidence, 60)
 
         # Bonus: multiple evidence sources increase trustworthiness
         if len(evidence) >= 3 and confidence < 90:
+            bonus_from = confidence
             confidence = min(confidence + 5, 100)
+            adjustments.append({
+                "rule": "evidence_multiplier_bonus",
+                "from": bonus_from,
+                "to": confidence,
+                "reason": f"{len(evidence)} evidence references — +5 trust bonus",
+            })
+
+        if adjustments:
+            # Stashed under a private key; _analyse_one pops it into _audit so
+            # we don't double-persist the list on the AIAnalysis row.
+            analysis["_confidence_adjustments"] = adjustments
+            logger.debug(
+                "confidence_adjusted",
+                raw=raw_confidence,
+                final=confidence,
+                adjustment_count=len(adjustments),
+            )
 
         analysis["confidence_score"] = confidence
         analysis["requires_human_review"] = confidence < settings.AI_CONFIDENCE_THRESHOLD
@@ -514,17 +618,21 @@ class AnalysisAgent(BaseAgent):
             if quick is not None:
                 quick["fallback_tier"] = 1
                 quick["fallback_reason"] = "timeout_fast_classifier"
-                logger.info("Progressive fallback tier 1 succeeded for %s", tc_id)
+                logger.info("progressive_fallback_tier1_ok", test_case_id=tc_id)
                 return quick
         except Exception as exc:
-            logger.debug("Progressive fallback tier 1 failed for %s: %s", tc_id, exc)
+            logger.debug(
+                "progressive_fallback_tier1_failed",
+                test_case_id=tc_id,
+                error=str(exc),
+            )
 
         # Tier 2: Pattern-based heuristic
         heuristic = self._pattern_based_analysis(error_msg, test_name)
         if heuristic["failure_category"] != self.UNKNOWN_CATEGORY:
             heuristic["fallback_tier"] = 2
             heuristic["fallback_reason"] = "timeout_pattern_match"
-            logger.info("Progressive fallback tier 2 succeeded for %s", tc_id)
+            logger.info("progressive_fallback_tier2_ok", test_case_id=tc_id)
             return heuristic
 
         # Tier 3: Generic fallback
@@ -730,5 +838,8 @@ class AnalysisAgent(BaseAgent):
                     await db.commit()
             except Exception as exc:
                 logger.error(
-                    "Batch upsert failed for chunk %d-%d: %s", i, i + len(chunk), exc
+                    "batch_upsert_failed",
+                    chunk_start=i,
+                    chunk_end=i + len(chunk),
+                    error=str(exc),
                 )

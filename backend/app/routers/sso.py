@@ -115,7 +115,15 @@ async def saml_acs(
     client_ip = request.client.host if request.client else None
 
     try:
-        parsed = parse_saml_response(str(saml_response_b64))
+        # Pass the configured IdP X.509 cert so parse_saml_response can
+        # cryptographically verify the assertion's XML-DSig signature
+        # before extracting any claims. Passing the cert is mandatory in
+        # the production flow — the None-cert branch exists only for unit
+        # tests that exercise structural parsing in isolation.
+        parsed = parse_saml_response(
+            str(saml_response_b64),
+            idp_certificate_pem=config.idp_certificate,
+        )
         validate_saml_issuer(parsed, config)
     except ValueError as exc:
         await log_identity_event(

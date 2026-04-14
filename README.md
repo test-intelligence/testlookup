@@ -1,4 +1,3 @@
-# TestLookup 🔭
 
 > **360° AI-Powered Software Testing Intelligence Platform**
 > Local-LLM capable · Multi-framework · OpenShift/Kubernetes native · MCP-enabled

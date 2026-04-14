@@ -53,6 +53,9 @@ flower==2.0.1
 # ── XML / JSON Parsing ───────────────────────────────────────
 lxml==5.3.0
 defusedxml==0.7.1
+# XML-DSig verification for SAML assertion signatures. Uses lxml +
+# cryptography (already pulled in via python-jose) under the hood.
+signxml==3.2.2
 
 # ── HTTP Client ──────────────────────────────────────────────
 httpx==0.28.1

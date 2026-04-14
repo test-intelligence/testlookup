@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user
+from app.core.deps import get_current_active_user, resolve_project_scope
 from app.core.metrics import semantic_search_duration_seconds, semantic_search_total
 from app.db.postgres import get_db
 from app.models.postgres import User
@@ -89,11 +89,13 @@ async def search_test_cases(
     The response always includes search_type to reflect the mode actually used
     (may fall back to keyword if ChromaDB is unavailable).
     """
-    # Tenant isolation: non-admin users must specify a project
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"items": [], "total": 0, "query": q, "search_type": search_type, "page": page, "size": size, "pages": 0}
+    # Tenant isolation: resolve the effective project scope. ADMIN gets
+    # unrestricted access; non-admin is pinned to their accessible set (and
+    # receives 403 when requesting a specific project they don't belong to).
+    scoped_project_id, allowed_project_ids = await resolve_project_scope(
+        db, current_user, project_id,
+    )
+    scoped_project_id_str = str(scoped_project_id) if scoped_project_id else None
 
     actual_type = search_type
     start = time.monotonic()
@@ -102,13 +104,15 @@ async def search_test_cases(
         from app.services.semantic_search import semantic_search
         items, total, pages = await semantic_search(
             db, q=q, page=page, size=size,
-            project_id=project_id, status=status, days=days,
+            project_id=scoped_project_id_str, status=status, days=days,
+            allowed_project_ids=allowed_project_ids,
         )
         if total == 0:
             # ChromaDB returned nothing — fall back to keyword so users always get results
             items, total, pages = await search_test_cases_query(
                 db, q=q, page=page, size=size,
-                project_id=project_id, status=status, days=days,
+                project_id=scoped_project_id_str, status=status, days=days,
+                allowed_project_ids=allowed_project_ids,
             )
             actual_type = "keyword"
             semantic_search_total.labels(search_type="semantic", status="fallback").inc()
@@ -119,12 +123,14 @@ async def search_test_cases(
         from app.services.semantic_search import hybrid_search
         items, total, pages = await hybrid_search(
             db, q=q, page=page, size=size,
-            project_id=project_id, status=status, days=days,
+            project_id=scoped_project_id_str, status=status, days=days,
+            allowed_project_ids=allowed_project_ids,
         )
         if total == 0:
             items, total, pages = await search_test_cases_query(
                 db, q=q, page=page, size=size,
-                project_id=project_id, status=status, days=days,
+                project_id=scoped_project_id_str, status=status, days=days,
+                allowed_project_ids=allowed_project_ids,
             )
             actual_type = "keyword"
             semantic_search_total.labels(search_type="hybrid", status="fallback").inc()
@@ -134,7 +140,8 @@ async def search_test_cases(
     else:
         items, total, pages = await search_test_cases_query(
             db, q=q, page=page, size=size,
-            project_id=project_id, status=status, days=days,
+            project_id=scoped_project_id_str, status=status, days=days,
+            allowed_project_ids=allowed_project_ids,
         )
         actual_type = "keyword"
         semantic_search_total.labels(search_type="keyword", status="success").inc()
@@ -169,11 +176,12 @@ async def global_search_endpoint(
     Searches test cases, test runs, suites, defects, flaky tests, and releases.
     Returns mixed results with entity badges and navigation URLs.
     """
-    # Tenant isolation: non-admin users must specify a project
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"items": [], "total": 0, "query": q, "page": page, "size": size, "pages": 0}
+    # Tenant isolation: resolve the effective scope. Non-admin users without a
+    # specific project get fanned out across their membership set; non-admin
+    # users requesting a project they don't belong to get 403 from the helper.
+    scoped_project_id, allowed_project_ids = await resolve_project_scope(
+        db, current_user, project_id,
+    )
 
     from app.services.global_search_service import global_search, ALL_ENTITY_TYPES
 
@@ -184,9 +192,10 @@ async def global_search_endpoint(
     return await global_search(
         db=db,
         q=q,
-        project_id=project_id,
+        project_id=str(scoped_project_id) if scoped_project_id else None,
         entity_types=types or None,
         days=days,
         page=page,
         size=size,
+        allowed_project_ids=allowed_project_ids,
     )

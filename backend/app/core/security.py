@@ -25,11 +25,17 @@ def hash_token(raw: str) -> str:
 
 
 def create_access_token(subject: Any, expires_delta: Optional[timedelta] = None) -> str:
-    expire = datetime.now(timezone.utc) + (
+    now = datetime.now(timezone.utc)
+    expire = now + (
         expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     )
+    # ``iat`` enables bulk revocation (password change, account compromise):
+    # any token whose iat precedes the user's ``tokens_valid_from`` marker
+    # is rejected without having to enumerate individual jtis. See
+    # app/core/token_revocation.py.
     payload = {
         "sub": str(subject),
+        "iat": now,
         "exp": expire,
         "type": "access",
         "jti": uuid.uuid4().hex,

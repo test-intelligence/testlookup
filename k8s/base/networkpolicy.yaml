@@ -1,0 +1,185 @@
+# ── Default-deny + explicit allows ──────────────────────────────────────────
+# Baseline NetworkPolicy set. Denies all ingress/egress by default and then
+# explicitly allows only the flows the application needs. This eliminates
+# lateral-movement surface area if any pod is compromised.
+#
+# NOTE: these policies assume the stateful data stores (postgres, mongo, redis,
+# minio, chroma) run OUTSIDE the testlookup namespace (managed services or a
+# shared "data" namespace). If you colocate them here, add matching allows.
+# ───────────────────────────────────────────────────────────────────────────
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: testlookup
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow DNS egress for every pod (kube-dns / CoreDNS in kube-system).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: testlookup
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Frontend: accept ingress from the ingress controller namespace; egress to
+# backend service only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app: testlookup-frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backend
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# Backend API: ingress from ingress-nginx + frontend + workers (for internal
+# service-to-service calls). Egress is allowed to anywhere in-cluster — the
+# backend talks to Ollama, MCP, and data stores; tightening this further needs
+# explicit per-service labels which vary by environment.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app: testlookup-backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app: testlookup-frontend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - {}   # allow all egress — data stores are external to this namespace
+
+---
+# Workers: no ingress, egress to everywhere in-cluster + data stores.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-workers
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - {}
+
+---
+# MCP server: accept SSE ingress from backend and from outside the namespace
+# (assistant clients via ingress); egress to backend only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mcp
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app: testlookup-mcp
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app: testlookup-backend
+      ports:
+        - protocol: TCP
+          port: 8002
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backend
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# Ollama: in-cluster only, reachable by backend + workers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ollama
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app: testlookup-ollama
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: 11434

@@ -10,6 +10,7 @@ Usage:
     response = await global_search(db, q="payment", project_id=None)
 """
 import math
+import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -40,13 +41,30 @@ async def global_search(
     days: Optional[int] = None,
     page: int = 1,
     size: int = 20,
+    allowed_project_ids: Optional[set[uuid.UUID]] = None,
 ) -> dict[str, Any]:
     """Execute a global search across multiple entity types.
+
+    Tenant isolation is enforced by passing one of:
+
+    - ``project_id`` — pin results to a single project (caller must verify access)
+    - ``allowed_project_ids`` — fan out across this membership set (non-admin)
+    - Neither — admin only, unrestricted
+
+    An empty ``allowed_project_ids`` set short-circuits to zero results without
+    touching the database.
 
     Returns a dict matching GlobalSearchResponse shape.
     """
     types = entity_types or ALL_ENTITY_TYPES
     period_start = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+
+    # Short-circuit: non-admin with no project memberships cannot see anything.
+    if project_id is None and allowed_project_ids is not None and not allowed_project_ids:
+        return {
+            "items": [], "total": 0, "query": q, "search_type": "keyword",
+            "entity_counts": {}, "page": page, "size": size, "pages": 0,
+        }
 
     # Fan out to adapters
     all_results: list[dict] = []
@@ -54,7 +72,7 @@ async def global_search(
         adapter = _ADAPTERS.get(entity_type)
         if adapter:
             try:
-                results = await adapter(db, q, project_id, period_start)
+                results = await adapter(db, q, project_id, period_start, allowed_project_ids)
                 all_results.extend(results)
             except Exception as exc:
                 logger.warning("search_adapter_failed", entity_type=entity_type, error=str(exc))
@@ -85,8 +103,21 @@ async def global_search(
 # ── Entity Adapters ────────────────────────────────────────────────────────
 
 
+def _apply_tenant_filter(stmt, column, project_id, allowed_project_ids):
+    """Apply either a single-project pin or an accessible-set ``IN`` filter."""
+    if project_id:
+        return stmt.where(column == project_id)
+    if allowed_project_ids is not None:
+        return stmt.where(column.in_(list(allowed_project_ids)))
+    return stmt
+
+
 async def _search_test_cases(
-    db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
+    db: AsyncSession,
+    q: str,
+    project_id: Optional[str],
+    period_start: Optional[datetime],
+    allowed_project_ids: Optional[set] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -101,8 +132,7 @@ async def _search_test_cases(
         .order_by(TestCase.created_at.desc())
         .limit(50)
     )
-    if project_id:
-        stmt = stmt.where(TestRun.project_id == project_id)
+    stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(TestCase.created_at >= period_start)
 
@@ -124,7 +154,11 @@ async def _search_test_cases(
 
 
 async def _search_test_runs(
-    db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
+    db: AsyncSession,
+    q: str,
+    project_id: Optional[str],
+    period_start: Optional[datetime],
+    allowed_project_ids: Optional[set] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -138,8 +172,7 @@ async def _search_test_runs(
         .order_by(TestRun.created_at.desc())
         .limit(20)
     )
-    if project_id:
-        stmt = stmt.where(TestRun.project_id == project_id)
+    stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(TestRun.created_at >= period_start)
 
@@ -161,7 +194,11 @@ async def _search_test_runs(
 
 
 async def _search_suites(
-    db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
+    db: AsyncSession,
+    q: str,
+    project_id: Optional[str],
+    period_start: Optional[datetime],
+    allowed_project_ids: Optional[set] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -179,8 +216,7 @@ async def _search_suites(
         .order_by(func.count().desc())
         .limit(15)
     )
-    if project_id:
-        stmt = stmt.where(TestRun.project_id == project_id)
+    stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
 
     rows = (await db.execute(stmt)).all()
     return [
@@ -199,7 +235,11 @@ async def _search_suites(
 
 
 async def _search_defects(
-    db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
+    db: AsyncSession,
+    q: str,
+    project_id: Optional[str],
+    period_start: Optional[datetime],
+    allowed_project_ids: Optional[set] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -210,8 +250,7 @@ async def _search_defects(
         .order_by(Defect.created_at.desc())
         .limit(20)
     )
-    if project_id:
-        stmt = stmt.where(Defect.project_id == project_id)
+    stmt = _apply_tenant_filter(stmt, Defect.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(Defect.created_at >= period_start)
 
@@ -233,7 +272,11 @@ async def _search_defects(
 
 
 async def _search_flaky_tests(
-    db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
+    db: AsyncSession,
+    q: str,
+    project_id: Optional[str],
+    period_start: Optional[datetime],
+    allowed_project_ids: Optional[set] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     # Find test fingerprints with intermittent pass/fail that match the query
@@ -252,8 +295,7 @@ async def _search_flaky_tests(
         .having(func.count() >= 5)
         .limit(15)
     )
-    if project_id:
-        stmt = stmt.where(TestRun.project_id == project_id)
+    stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
 
     rows = (await db.execute(stmt)).all()
     results = []
@@ -275,7 +317,11 @@ async def _search_flaky_tests(
 
 
 async def _search_releases(
-    db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
+    db: AsyncSession,
+    q: str,
+    project_id: Optional[str],
+    period_start: Optional[datetime],
+    allowed_project_ids: Optional[set] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -287,8 +333,7 @@ async def _search_releases(
         .order_by(Release.created_at.desc())
         .limit(10)
     )
-    if project_id:
-        stmt = stmt.where(Release.project_id == project_id)
+    stmt = _apply_tenant_filter(stmt, Release.project_id, project_id, allowed_project_ids)
 
     releases = (await db.execute(stmt)).scalars().all()
     return [

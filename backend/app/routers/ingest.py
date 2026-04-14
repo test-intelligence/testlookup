@@ -8,7 +8,9 @@ Accepts either:
 Returns 202 Accepted with run_id. Processing is async via Celery.
 
 Auth: JWT Bearer OR API key (via get_api_key_context).
-Project-scoped API keys are restricted to their bound project.
+Project-scoped API keys are restricted to their bound project; non-scoped
+keys / JWTs must still be members of the target project (enforced by
+``resolve_project_scope``).
 """
 import uuid
 
@@ -16,7 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_api_key_context, get_db
+from app.core.deps import get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import User
 from app.models.schemas import IngestPayload, IngestResponse
 
@@ -24,6 +26,43 @@ router = APIRouter(prefix="/api/v1/ingest", tags=["Ingest"])
 logger = structlog.get_logger("routers.ingest")
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_READ_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB chunks when streaming uploads
+
+
+async def _read_upload_bounded(file: UploadFile, max_size: int) -> bytes:
+    """
+    Read an uploaded file in chunks, aborting as soon as the running total
+    exceeds ``max_size``. This prevents an attacker from OOM-ing the server
+    by POSTing a multi-gigabyte file — the previous implementation called
+    ``await file.read()`` unconditionally and only checked the length
+    afterwards, so the entire payload was already resident in memory by
+    the time the size check could fire.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_READ_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File exceeds {max_size // (1024 * 1024)}MB limit",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _parse_project_uuid(raw: str) -> uuid.UUID:
+    """Validate a user-supplied project_id string as a UUID (400 otherwise)."""
+    try:
+        return uuid.UUID(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid project_id — expected a UUID",
+        )
 
 
 @router.post(
@@ -45,13 +84,20 @@ async def ingest_batch(
     AI analysis pipeline.
     """
     current_user, bound_project_id = auth
+    target_project_id = _parse_project_uuid(str(payload.project_id))
 
     # Project-scoped API key: enforce that ingestion targets the bound project
-    if bound_project_id is not None and str(bound_project_id) != str(payload.project_id):
+    if bound_project_id is not None and bound_project_id != target_project_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This API key is restricted to a different project",
         )
+
+    # Tenant isolation: verify the caller is actually a member of the target
+    # project (or ADMIN). Previously, a non-project-scoped API key or JWT
+    # could POST test data into ANY project and pollute another tenant's
+    # run history / trigger their AI pipeline.
+    await resolve_project_scope(db, current_user, str(target_project_id))
 
     from app.worker.tasks import ingest_uploaded_results
 
@@ -101,22 +147,24 @@ async def ingest_file(
     Set format=auto (default) for automatic detection based on content.
     """
     current_user, bound_project_id = auth
+    target_project_id = _parse_project_uuid(project_id)
 
     # Project-scoped API key: enforce that ingestion targets the bound project
-    if bound_project_id is not None and str(bound_project_id) != project_id:
+    if bound_project_id is not None and bound_project_id != target_project_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This API key is restricted to a different project",
         )
 
+    # Tenant isolation: non-admin users can only ingest into projects they
+    # are members of (raises 403 otherwise).
+    await resolve_project_scope(db, current_user, str(target_project_id))
+
     from app.worker.tasks import ingest_uploaded_file
 
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds {MAX_FILE_SIZE // (1024*1024)}MB limit",
-        )
+    # Stream-read the upload with a hard cap so an attacker cannot OOM the
+    # server by POSTing a multi-gigabyte file.
+    content = await _read_upload_bounded(file, MAX_FILE_SIZE)
 
     detected_format = format
     if format == "auto":

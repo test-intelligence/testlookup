@@ -15,7 +15,7 @@ from app.bootstrap import configure_metrics, configure_middlewares, register_rou
 from app.core.config import settings
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
-from app.db.mongo import close_mongo, get_mongo_db
+from app.db.mongo import close_mongo, ensure_indexes as ensure_mongo_indexes
 from app.db.postgres import close_db
 from app.db.redis_client import close_redis
 
@@ -70,16 +70,10 @@ async def lifespan(app: FastAPI):
             f"security issue(s): {'; '.join(critical_warnings)}"
         )
 
-    # Ensure MongoDB indexes exist
-    db = get_mongo_db()
+    # Ensure MongoDB indexes exist — centralized spec lives in app/db/mongo.py
+    # so new collections/lookups only need to be registered in one place.
     try:
-        await db["raw_allure_json"].create_index("test_case_id", unique=True, background=True)
-        await db["ai_analysis_payloads"].create_index("test_case_id", background=True)
-        await db["ocp_pod_events"].create_index("test_run_id", background=True)
-        await db["run_summaries"].create_index("test_run_id", unique=True, background=True)
-        await db["live_execution_events"].create_index("run_id", background=True)
-        await db["rest_api_payloads"].create_index("test_case_id", background=True)
-        await db["rest_api_payloads"].create_index("endpoint", background=True)
+        await ensure_mongo_indexes()
         logger.info("MongoDB indexes verified")
     except Exception as e:
         logger.warning("Failed to create MongoDB indexes", error=str(e))
