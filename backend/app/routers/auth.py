@@ -1,6 +1,7 @@
 """Authentication endpoints — register, login, refresh, me, change-password."""
 import logging
 import uuid as _uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -9,17 +10,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, oauth2_scheme
 from app.core.security import (
     create_access_token,
     decode_token,
     get_password_hash,
     verify_password,
 )
+from app.core.token_revocation import revoke_all_user_tokens, revoke_jti
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User, UserRole
 from app.services.refresh_token_service import (
     RefreshTokenError,
+    _revoke_family as _revoke_refresh_family,
     issue_refresh_token,
     rotate_refresh_token,
 )
@@ -288,7 +291,12 @@ async def first_time_reset(
         )
     current_user.hashed_password = get_password_hash(payload.new_password)
     current_user.must_change_password = False
+    # Revoke every access token and refresh token issued before this
+    # password change so the bootstrap token used to call this endpoint
+    # cannot be replayed after the password is set.
+    await _revoke_refresh_family(db, current_user.id, reason="password_reset")
     await db.commit()
+    await revoke_all_user_tokens(current_user.id)
     logger.info("First-time password reset completed for user: %s", current_user.username)
     return None
 
@@ -373,11 +381,32 @@ async def update_me(
 
 
 @router.post("/logout", status_code=204)
-async def logout(current_user: User = Depends(get_current_active_user)):
+async def logout(
+    current_user: User = Depends(get_current_active_user),
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+):
     """
-    Client-side logout — instructs the client to discard its tokens.
-    For full server-side revocation, add a Redis token denylist keyed on jti.
+    Server-side logout — revokes the caller's access-token jti until its
+    natural expiry and revokes all live refresh tokens for the user so the
+    session cannot be re-minted via /auth/refresh.
     """
+    try:
+        payload = decode_token(token)
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if jti and exp:
+            remaining = int(exp) - int(datetime.now(timezone.utc).timestamp())
+            await revoke_jti(str(jti), remaining)
+    except JWTError:
+        # Token was accepted by get_current_user but can't be decoded now?
+        # Skip the jti denylist entry — the refresh-token revocation below
+        # still limits the blast radius.
+        pass
+
+    await _revoke_refresh_family(db, current_user.id, reason="logout")
+    await db.commit()
+
     logger.info("User logged out: %s", current_user.username)
     return None
 
@@ -411,6 +440,11 @@ async def change_password(
             detail="Current password is incorrect",
         )
     current_user.hashed_password = get_password_hash(payload.new_password)
+    # A password change is an explicit "revoke every existing session"
+    # signal — wipe refresh tokens in Postgres and set the access-token
+    # cutoff in Redis so every previously-issued JWT is rejected.
+    await _revoke_refresh_family(db, current_user.id, reason="password_change")
     await db.commit()
+    await revoke_all_user_tokens(current_user.id)
     logger.info("Password changed for user: %s", current_user.username)
     return None

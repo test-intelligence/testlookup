@@ -64,7 +64,13 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
     token: str = Depends(oauth2_scheme),
 ) -> User:
-    """Validate JWT access token and return the matching User row."""
+    """Validate JWT access token and return the matching User row.
+
+    In addition to signature/exp validation, this also consults the token
+    revocation store so explicit logouts and password changes actually
+    invalidate existing tokens before their natural expiry. See
+    ``app/core/token_revocation.py`` for the revocation scopes.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -88,6 +94,19 @@ async def get_current_user(
     try:
         uid = uuid.UUID(user_id)
     except ValueError:
+        raise credentials_exception
+
+    # Revocation checks. Fail-open on Redis errors — see
+    # token_revocation.py for the rationale.
+    from app.core.token_revocation import is_jti_revoked, is_token_before_cutoff
+    jti = payload.get("jti")
+    iat = payload.get("iat")
+    iat_int: Optional[int] = None
+    if isinstance(iat, (int, float)):
+        iat_int = int(iat)
+    if jti and await is_jti_revoked(str(jti)):
+        raise credentials_exception
+    if await is_token_before_cutoff(uid, iat_int):
         raise credentials_exception
 
     result = await db.execute(select(User).where(User.id == uid))
