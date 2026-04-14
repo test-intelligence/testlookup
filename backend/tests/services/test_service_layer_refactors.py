@@ -148,7 +148,9 @@ async def test_deprecate_managed_test_case_sets_status_and_audits():
 
     assert test_case.status == "deprecated"
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: the service only mutates + audits. The router handler owns
+    # the commit, so this unit test should not see commit called.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -173,8 +175,9 @@ async def test_apply_review_action_updates_review_and_test_case():
     assert review.human_notes == "Looks good"
     assert review.reviewed_at is not None
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once_with(test_case)
+    # Item #2: the service only mutates; router handler owns commit+refresh.
+    db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -294,7 +297,8 @@ async def test_generate_ai_cases_persists_created_cases_when_requested():
     assert len(result["created_ids"]) == 1
     assert result["test_cases"][0]["title"] == "AI Login Case"
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -341,7 +345,8 @@ async def test_review_test_case_with_ai_creates_review_when_missing():
     assert test_case.ai_quality_score == 91
     assert any(type(obj).__name__ == "TestCaseReview" for obj in db.added)
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -374,7 +379,8 @@ async def test_generate_ai_strategy_creates_strategy_and_audits():
     assert strategy.objective == "Reduce checkout risk"
     assert strategy.scope == "Payments"
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits + refreshes.
+    db.commit.assert_not_awaited()
 
 
 def test_get_ai_task_status_maps_success_failure_and_pending():
@@ -460,8 +466,11 @@ async def test_upsert_notification_preference_updates_existing_preference():
     assert pref.events == ["run_failed"]
     assert pref.failure_rate_threshold == 75.0
     assert pref.email_override == "qa@example.com"
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once_with(pref)
+    # After the item-#2 refactor, the service only mutates the attached
+    # row. The router handler owns commit+refresh, so this unit test
+    # should not see either called.
+    db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -688,8 +697,11 @@ async def test_stream_service_create_session_stores_token_and_initializes_live_s
     assert result.session_token == "token-123"
     redis.setex.assert_awaited_once()
     live_state_module.RedisLiveRunState.start.assert_awaited_once()
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once()
+    # Item #2: service stages + flushes so Redis ops can see the row, but
+    # the router handler owns the commit so an aborted transaction never
+    # leaves a dangling Redis session token.
+    db.commit.assert_not_awaited()
+    db.flush.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -794,7 +806,8 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     assert session.extra_metadata["final_state"]["total"] == 5
     upsert_mock.assert_awaited_once()
     release_linker.auto_link_release.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: service stages; router handler commits.
+    db.commit.assert_not_awaited()
     persist_task.apply_async.assert_called_once()
     pipeline_task.apply_async.assert_called_once()
 
@@ -859,7 +872,8 @@ async def test_feedback_service_jira_resolution_webhook_creates_feedback_for_inv
     assert result["defect_id"] == str(defect.id)
     assert defect.resolution_status == "INVALID"
     assert any(getattr(obj, "source", None) == "jira_invalid" for obj in db.added)
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

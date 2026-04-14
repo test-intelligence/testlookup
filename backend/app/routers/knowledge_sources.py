@@ -67,7 +67,10 @@ async def create_knowledge_source(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return await svc.create_source(db, project_id, payload.model_dump(), current_user)
+    source = await svc.create_source(db, project_id, payload.model_dump(), current_user)
+    await db.commit()
+    await db.refresh(source)
+    return source
 
 
 @router.get("/{source_id}", response_model=KnowledgeSourceResponse)
@@ -94,7 +97,10 @@ async def update_knowledge_source(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return await svc.update_source(db, source_id, payload.model_dump(exclude_none=True), current_user)
+    source = await svc.update_source(db, source_id, payload.model_dump(exclude_none=True), current_user)
+    await db.commit()
+    await db.refresh(source)
+    return source
 
 
 @router.delete(
@@ -111,6 +117,7 @@ async def delete_knowledge_source(
     current_user: User = Depends(get_current_active_user),
 ):
     await svc.delete_source(db, source_id, current_user)
+    await db.commit()
 
 
 # ── RAG-1: Sync trigger ──────────────────────────────────────────────────────
@@ -129,7 +136,9 @@ async def trigger_sync(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return await svc.trigger_sync(db, source_id, current_user)
+    result = await svc.trigger_sync(db, source_id, current_user)
+    await db.commit()
+    return result
 
 
 # ── RAG-4: Sync history ───────────────────────────────────────────────────────
@@ -211,4 +220,5 @@ async def update_domain_allowlist(
     _: User = Depends(get_current_active_user),
 ):
     domains = await svc.set_domain_allowlist(db, payload.domains)
+    await db.commit()
     return {"domains": domains}

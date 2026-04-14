@@ -37,6 +37,12 @@ async def publish_event_batch(session_id: str, run_id: str, events):
 
 
 async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
+    """Stage a new LiveSession and return the response shape. Handler commits.
+
+    Redis session-token registration and in-memory run state happen *after*
+    the handler's commit so an aborted transaction never leaves a dangling
+    session token that authenticates a run which doesn't exist in Postgres.
+    """
     project = await db.get(Project, payload.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -63,8 +69,7 @@ async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
         extra_metadata=payload.metadata or {},
     )
     db.add(session)
-    await db.commit()
-    await db.refresh(session)
+    await db.flush()
 
     redis = get_redis()
     await redis.setex(SESSION_TOKEN_KEY.format(token=session_token), SESSION_TTL, session_id)
@@ -160,7 +165,8 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
         except Exception as rel_err:
             logger.warning("Release linking failed for live session %s: %s", session_id, rel_err)
 
-    await db.commit()
+    # stage-only: handler commits the LiveSession close, the upserted
+    # TestRun, and any release link together.
 
     try:
         from app.worker.tasks import persist_live_session

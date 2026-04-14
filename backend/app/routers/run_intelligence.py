@@ -90,11 +90,18 @@ async def get_run_intelligence_endpoint(
         result = await get_run_intelligence(run_id, db, mongo, include=include_set)
         run_intelligence_requests_total.labels(status="success").inc()
 
-        # Cache the result for future requests (async-safe, no failure on save error)
+        # Cache the result for future requests.
+        #
+        # Item #4 (command/query separation): the snapshot write runs in a
+        # **dedicated write session** so this GET handler's own transaction
+        # stays read-only. If the write fails, the response still returns
+        # successfully — the next GET will just recompute.
         if not include_set:
             try:
                 fallback = result.get("provenance", {}).get("fallback_used", False) if isinstance(result.get("provenance"), dict) else False
-                await save_snapshot(db, run_id, result, fallback_used=fallback)
+                from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
+                async with _AsyncSessionLocal() as write_db:
+                    await save_snapshot(write_db, run_id, result, fallback_used=fallback)
             except Exception as cache_err:
                 logger.warning("Failed to save intelligence snapshot: %s", cache_err)
 

@@ -74,7 +74,7 @@ async def generate_ai_cases(
                 details=f"AI generated from requirements: {payload.requirements[:100]}",
             )
             created_ids.append(str(test_case.id))
-        await db.commit()
+        # stage-only: router handler commits
 
     return {
         "test_cases": result.get("test_cases", []),
@@ -160,7 +160,7 @@ async def review_test_case_with_ai(
         current_user,
         new_values={"ai_quality_score": result.get("quality_score")},
     )
-    await db.commit()
+    # stage-only: router handler commits
     return result
 
 
@@ -215,10 +215,9 @@ async def generate_ai_strategy(
         created_by_id=current_user.id,
     )
     db.add(strategy)
-    await db.flush()
+    await db.flush()  # materialize strategy.id for the audit row
     await audit_event(db, "test_strategy", strategy.id, payload.project_id, "ai_generated", current_user, details="AI-generated test strategy")
-    await db.commit()
-    await db.refresh(strategy)
+    # stage-only: router handler commits + refreshes
     return strategy
 
 
@@ -263,6 +262,5 @@ async def update_strategy(
         db, "test_strategy", strategy.id, strategy.project_id, "updated", current_user,
         old_values=old_values, new_values=changes,
     )
-    await db.commit()
-    await db.refresh(strategy)
+    # stage-only: router handler commits + refreshes
     return strategy

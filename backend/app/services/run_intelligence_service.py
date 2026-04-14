@@ -461,69 +461,51 @@ async def get_run_intelligence(
 
 
 
-async def _load_or_build_defect_candidates(
+def _serialize_persisted_candidate(c) -> dict:
+    return {
+        "cluster_id": c.cluster_id,
+        "label": c.title or c.cluster_id,
+        "severity_hint": c.severity or "HIGH",
+        "failure_category": c.failure_category or "UNKNOWN",
+        "confidence": int(c.composite_score * 100) if c.composite_score else 0,
+        "recommended_actions": [],
+        "status": c.status,
+        "duplicate_detected": c.is_duplicate,
+        "duplicate_defect_id": str(c.duplicate_of) if c.duplicate_of else None,
+        "promoted_defect_id": str(c.promoted_defect_id) if c.promoted_defect_id else None,
+        "composite_score": c.composite_score,
+        "evidence_bundle": c.evidence_bundle or {},
+    }
+
+
+async def _build_and_persist_defect_candidates(
     run_id: uuid.UUID,
     failure_clusters: list[dict],
-    top_analyses: list[dict],
-    db: AsyncSession,
 ) -> list[dict]:
-    """
-    Load persisted defect candidates for this run, or build them from the
-    real defect_promotion_service. Falls back to a lightweight heuristic
-    if the full service is unavailable.
+    """Command-path helper: open a **dedicated write session**, compute the
+    top candidates via the real promotion service, persist them, and return
+    the serialized result.
 
-    Returns candidates enriched with lifecycle status (pending/promoted/duplicate/dismissed).
+    Item #4 (command/query separation): this is explicitly the write half
+    of the read-path cache populate. Keeping it on its own session means
+    the GET handler's primary transaction stays read-only even when the
+    cache is cold.
     """
+    from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import DefectCandidate as DefectCandidateModel
+    from app.services.defect_promotion_service import get_defect_candidate
 
-    if not failure_clusters:
-        return []
+    results: list[dict] = []
 
-    # ── 1. Check for already-persisted candidates ────────────────────────────
-    try:
-        persisted_result = await db.execute(
-            select(DefectCandidateModel)
-            .where(DefectCandidateModel.run_id == run_id)
-            .order_by(DefectCandidateModel.composite_score.desc().nulls_last())
-            .limit(10)
-        )
-        persisted = persisted_result.scalars().all()
-
-        if persisted:
-            return [
-                {
-                    "cluster_id": c.cluster_id,
-                    "label": c.title or c.cluster_id,
-                    "severity_hint": c.severity or "HIGH",
-                    "failure_category": c.failure_category or "UNKNOWN",
-                    "confidence": int(c.composite_score * 100) if c.composite_score else 0,
-                    "recommended_actions": [],
-                    "status": c.status,
-                    "duplicate_detected": c.is_duplicate,
-                    "duplicate_defect_id": str(c.duplicate_of) if c.duplicate_of else None,
-                    "promoted_defect_id": str(c.promoted_defect_id) if c.promoted_defect_id else None,
-                    "composite_score": c.composite_score,
-                    "evidence_bundle": c.evidence_bundle or {},
-                }
-                for c in persisted
-            ]
-    except Exception as exc:
-        logger.warning("Failed to load persisted defect candidates: %s", exc)
-
-    # ── 2. Try the real promotion service for top clusters ───────────────────
-    try:
-        from app.services.defect_promotion_service import get_defect_candidate
-
-        candidates = []
-        for cluster in failure_clusters[:5]:
-            cluster_id = cluster.get("cluster_id", "")
-            if not cluster_id:
-                continue
-            try:
-                candidate = await get_defect_candidate(str(run_id), cluster_id, db)
-                # Persist the candidate for future reads
+    async with AsyncSessionLocal() as write_db:
+        try:
+            for cluster in failure_clusters[:5]:
+                cluster_id = cluster.get("cluster_id", "")
+                if not cluster_id:
+                    continue
                 try:
-                    db.add(DefectCandidateModel(
+                    candidate = await get_defect_candidate(str(run_id), cluster_id, write_db)
+                    write_db.add(DefectCandidateModel(
                         run_id=run_id,
                         cluster_id=cluster_id,
                         title=candidate.get("title", "")[:500],
@@ -540,36 +522,79 @@ async def _load_or_build_defect_candidates(
                         member_count=candidate.get("member_count", 0),
                         status="pending",
                     ))
+                    results.append({
+                        "cluster_id": cluster_id,
+                        "label": candidate.get("title", cluster.get("label", "")),
+                        "severity_hint": candidate.get("severity", "HIGH"),
+                        "failure_category": candidate.get("failure_category", "UNKNOWN"),
+                        "confidence": int((candidate.get("composite_score") or 0) * 100),
+                        "recommended_actions": [],
+                        "status": "pending",
+                        "duplicate_detected": candidate.get("duplicate_detected", False),
+                        "duplicate_defect_id": candidate.get("duplicate_defect_id"),
+                        "promoted_defect_id": None,
+                        "composite_score": candidate.get("composite_score"),
+                        "evidence_bundle": candidate.get("evidence_bundle", {}),
+                    })
+                except Exception as exc:
+                    logger.debug("Skipping candidate for cluster %s: %s", cluster_id, exc)
+
+            if results:
+                try:
+                    await write_db.commit()
                 except Exception:
-                    pass  # Persist failure is non-blocking
+                    await write_db.rollback()
+                    # Even if the persist fails, we still return the computed
+                    # candidates for this request — next call will retry.
+        except Exception as exc:
+            logger.warning("Full defect candidate generation failed: %s", exc)
+            await write_db.rollback()
 
-                candidates.append({
-                    "cluster_id": cluster_id,
-                    "label": candidate.get("title", cluster.get("label", "")),
-                    "severity_hint": candidate.get("severity", "HIGH"),
-                    "failure_category": candidate.get("failure_category", "UNKNOWN"),
-                    "confidence": int((candidate.get("composite_score") or 0) * 100),
-                    "recommended_actions": [],
-                    "status": "pending",
-                    "duplicate_detected": candidate.get("duplicate_detected", False),
-                    "duplicate_defect_id": candidate.get("duplicate_defect_id"),
-                    "promoted_defect_id": None,
-                    "composite_score": candidate.get("composite_score"),
-                    "evidence_bundle": candidate.get("evidence_bundle", {}),
-                })
-            except Exception as exc:
-                logger.debug("Skipping candidate for cluster %s: %s", cluster_id, exc)
+    return results
 
-        if candidates:
-            try:
-                await db.commit()
-            except Exception:
-                await db.rollback()
-            return candidates
+
+async def _load_or_build_defect_candidates(
+    run_id: uuid.UUID,
+    failure_clusters: list[dict],
+    top_analyses: list[dict],
+    db: AsyncSession,
+) -> list[dict]:
+    """
+    Load persisted defect candidates for this run, or trigger a dedicated
+    build-and-persist pass if the cache is cold.
+
+    **Pure read** on the caller's ``db`` session — the cache populate runs
+    in a separate write session (see ``_build_and_persist_defect_candidates``)
+    so ``GET /run-intelligence`` never mutates its own transaction.
+
+    Returns candidates enriched with lifecycle status.
+    """
+    from app.models.postgres import DefectCandidate as DefectCandidateModel
+
+    if not failure_clusters:
+        return []
+
+    # ── 1. Cache hit: return persisted candidates ──────────────────────────
+    try:
+        persisted_result = await db.execute(
+            select(DefectCandidateModel)
+            .where(DefectCandidateModel.run_id == run_id)
+            .order_by(DefectCandidateModel.composite_score.desc().nulls_last())
+            .limit(10)
+        )
+        persisted = persisted_result.scalars().all()
+
+        if persisted:
+            return [_serialize_persisted_candidate(c) for c in persisted]
     except Exception as exc:
-        logger.warning("Full defect candidate generation failed, using fallback: %s", exc)
+        logger.warning("Failed to load persisted defect candidates: %s", exc)
 
-    # ── 3. Fallback: lightweight heuristic (same as old stub) ────────────────
+    # ── 2. Cache miss: build + persist on a dedicated write session ────────
+    built = await _build_and_persist_defect_candidates(run_id, failure_clusters)
+    if built:
+        return built
+
+    # ── 3. Fallback: lightweight heuristic ─────────────────────────────────
     return _build_fallback_candidates(failure_clusters, top_analyses)
 
 

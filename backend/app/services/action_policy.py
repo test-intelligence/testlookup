@@ -190,6 +190,10 @@ async def approve_action(
     Approve a pending action (defect or release decision).
     Updates approval_status, approved_by, approved_at.
     Returns True if the record was found and updated.
+
+    Stage-only: the router handler owns ``db.commit()`` so the approval
+    status flip can land in the same transaction as any follow-up work
+    (Jira ticket linking, audit row, etc.).
     """
     result = await db.execute(
         update(model_class)
@@ -204,7 +208,6 @@ async def approve_action(
         )
     )
     if result.rowcount > 0:
-        await db.commit()
         logger.info(
             "Action approved: %s %s by %s",
             model_class.__tablename__,
@@ -227,6 +230,8 @@ async def reject_action(
     """
     Reject a pending action.
     Returns True if the record was found and updated.
+
+    Stage-only: the router handler owns ``db.commit()``.
     """
     result = await db.execute(
         update(model_class)
@@ -241,7 +246,6 @@ async def reject_action(
         )
     )
     if result.rowcount > 0:
-        await db.commit()
         logger.info(
             "Action rejected: %s %s by %s — reason: %s",
             model_class.__tablename__,

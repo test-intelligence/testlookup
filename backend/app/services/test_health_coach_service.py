@@ -181,8 +181,14 @@ async def persist_test_health_findings(
     db: AsyncSession,
 ) -> int:
     """
-    Persist test health findings from the pipeline into the DB.
-    Idempotent: deletes existing findings for the run before inserting.
+    Stage test health findings from the pipeline. Caller owns ``db.commit()``.
+
+    Idempotent: deletes existing findings for the run before inserting so
+    the latest pipeline run's findings are authoritative.
+
+    Currently unused — intended to be called from the deep-investigation
+    pipeline once findings are wired in. Staged-only so it integrates
+    cleanly with whichever handler eventually owns the transaction.
     """
     if not findings:
         return 0
@@ -214,11 +220,46 @@ async def persist_test_health_findings(
         db.add(rec)
         count += 1
 
-    await db.commit()
     return count
 
 
 # ── Project-level flaky coach ────────────────────────────────────────────────
+
+async def _load_flaky_cache(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    limit: int,
+):
+    """Pure read: return cached flaky-coach rows ordered by impact."""
+    result = await db.execute(
+        select(FlakyCoachResult)
+        .where(FlakyCoachResult.project_id == project_id)
+        .order_by(FlakyCoachResult.impact_score.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def _populate_flaky_cache_in_new_session(
+    project_id: uuid.UUID,
+    days: int,
+) -> None:
+    """Item #4 (command/query separation): the GET endpoint must not
+    mutate persistent state on its own transaction, but we still want
+    first-page-load to show data. Compromise: open a **dedicated write
+    session**, stage the refresh there, commit it, and return. The GET
+    handler's own transaction stays read-only; the next read of
+    ``FlakyCoachResult`` sees the committed rows.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    async with AsyncSessionLocal() as write_db:
+        try:
+            await refresh_flaky_coach(project_id, write_db, days=days)
+            await write_db.commit()
+        except Exception as exc:
+            logger.warning("Flaky cache populate failed: %s", exc)
+            await write_db.rollback()
+
 
 async def get_flaky_coach(
     project_id: uuid.UUID,
@@ -228,27 +269,19 @@ async def get_flaky_coach(
 ) -> FlakyCoachResponse:
     """
     Project-level flaky test leaderboard ranked by impact.
-    Reads from pre-computed flaky_coach_results table.
-    Auto-computes on first access if no cached results exist.
+
+    Pure read from the caller's perspective — if the cache is empty, we
+    fire a one-shot populate on a dedicated write session and re-read.
+    The caller's ``db`` session is never mutated here, so this function
+    could be served from a read replica once pooling supports it.
     """
-    result = await db.execute(
-        select(FlakyCoachResult)
-        .where(FlakyCoachResult.project_id == project_id)
-        .order_by(FlakyCoachResult.impact_score.desc())
-        .limit(limit)
-    )
-    rows = result.scalars().all()
+    rows = await _load_flaky_cache(db, project_id, limit)
 
     if not rows:
-        # No cached results — compute on-the-fly so the first page load shows data
-        await refresh_flaky_coach(project_id, db, days=days)
-        result = await db.execute(
-            select(FlakyCoachResult)
-            .where(FlakyCoachResult.project_id == project_id)
-            .order_by(FlakyCoachResult.impact_score.desc())
-            .limit(limit)
-        )
-        rows = result.scalars().all()
+        # Cache miss: populate via a dedicated write session so this
+        # endpoint stays pure-read on the caller's transaction.
+        await _populate_flaky_cache_in_new_session(project_id, days)
+        rows = await _load_flaky_cache(db, project_id, limit)
 
     entries = []
     for row in rows:
@@ -411,5 +444,8 @@ async def refresh_flaky_coach(
         ))
         count += 1
 
-    await db.commit()
+    # Stage-only: the caller owns the commit. Called from:
+    #   (a) POST /flaky-coach/refresh — the router handler commits.
+    #   (b) ``_populate_flaky_cache_in_new_session`` — its own dedicated
+    #       write session commits.
     return count

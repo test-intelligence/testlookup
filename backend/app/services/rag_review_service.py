@@ -74,7 +74,11 @@ async def accept_case(
     edits: Optional[dict],
     user: User,
 ) -> ManagedTestCase:
-    """Accept a generated case, apply optional edits, transition to draft status."""
+    """Stage accept of a generated case. Handler commits.
+
+    Applies optional edits, flips status to draft, increments the batch
+    accept counter atomically with the case mutation.
+    """
     batch = await _get_batch_or_404(db, batch_id, user)
 
     result = await db.execute(
@@ -95,8 +99,6 @@ async def accept_case(
 
     case.status = "draft"
     batch.cases_accepted = (batch.cases_accepted or 0) + 1
-    await db.commit()
-    await db.refresh(case)
 
     logger.info("Case accepted: %s (batch=%s)", case_id, batch_id)
     return case
@@ -109,7 +111,7 @@ async def reject_case(
     reason: Optional[str],
     user: User,
 ) -> None:
-    """Reject a generated case — marks as rejected, preserves lineage."""
+    """Stage reject of a generated case. Handler commits."""
     batch = await _get_batch_or_404(db, batch_id, user)
 
     result = await db.execute(
@@ -126,7 +128,6 @@ async def reject_case(
     if reason:
         case.description = f"[Rejected: {reason}]\n\n{case.description or ''}"
     batch.cases_rejected = (batch.cases_rejected or 0) + 1
-    await db.commit()
 
     logger.info("Case rejected: %s (batch=%s, reason=%s)", case_id, batch_id, reason)
 
@@ -137,7 +138,9 @@ async def bulk_accept(
     case_ids: list[uuid.UUID],
     user: User,
 ) -> list[ManagedTestCase]:
-    """Accept multiple cases in one call."""
+    """Stage acceptance of multiple cases. Handler commits once for the
+    whole batch, so bulk-accept costs one transaction instead of N.
+    """
     accepted = []
     for cid in case_ids:
         case = await accept_case(db, batch_id, cid, edits=None, user=user)

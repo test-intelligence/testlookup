@@ -141,7 +141,8 @@ async def complete_step(
             completed_by=user_id,
         ))
 
-    await db.commit()
+    # Item #2: stage only. The router handler commits.
+    await db.flush()
     return await get_onboarding_status(project_id, db)
 
 
@@ -150,7 +151,7 @@ async def skip_step(
     step_key: str,
     db: AsyncSession,
 ) -> dict:
-    """Mark an onboarding step as skipped."""
+    """Mark an onboarding step as skipped. Stage-only; handler commits."""
     valid_keys = {s["key"] for s in ONBOARDING_STEPS}
     if step_key not in valid_keys:
         raise ValueError(f"Invalid step key: {step_key}")
@@ -175,7 +176,7 @@ async def skip_step(
             status="skipped",
         ))
 
-    await db.commit()
+    await db.flush()
     return await get_onboarding_status(project_id, db)
 
 
@@ -183,39 +184,38 @@ async def auto_detect_progress(
     project_id: uuid.UUID,
     db: AsyncSession,
 ) -> dict:
-    """Auto-detect which onboarding steps are already complete by checking DB state."""
+    """Auto-detect which onboarding steps are already complete by checking DB state.
+
+    Stage-only: the router handler commits (or rolls back on failure). The
+    service flushes between auto-complete steps so subsequent queries see
+    the intermediate state in the same transaction.
+    """
     if not await _table_exists(db):
         logger.info("Onboarding table not yet created — returning defaults")
         return _build_default_status(project_id)
 
-    try:
-        # Auto-complete create_project (it obviously exists if we're here)
-        await _auto_complete_if_pending(db, project_id, "create_project")
+    # Auto-complete create_project (it obviously exists if we're here)
+    await _auto_complete_if_pending(db, project_id, "create_project")
+    await db.flush()
+
+    # Check if project has runs
+    run_count_result = await db.execute(
+        select(sa_func.count(TestRun.id)).where(TestRun.project_id == project_id)
+    )
+    has_runs = (run_count_result.scalar() or 0) > 0
+    if has_runs:
+        await _auto_complete_if_pending(db, project_id, "upload_run")
         await db.flush()
 
-        # Check if project has runs
-        run_count_result = await db.execute(
-            select(sa_func.count(TestRun.id)).where(TestRun.project_id == project_id)
-        )
-        has_runs = (run_count_result.scalar() or 0) > 0
-        if has_runs:
-            await _auto_complete_if_pending(db, project_id, "upload_run")
-            await db.flush()
-
-        # Check Jira config
-        from app.models.postgres import AppSetting
-        jira_result = await db.execute(
-            select(AppSetting).where(AppSetting.key == "integrations_config")
-        )
-        jira_row = jira_result.scalar_one_or_none()
-        if jira_row and jira_row.value and jira_row.value.get("jira_enabled"):
-            await _auto_complete_if_pending(db, project_id, "connect_jira")
-            await db.flush()
-
-        await db.commit()
-    except Exception as exc:
-        logger.warning("Auto-detect onboarding failed, rolling back: %s", exc)
-        await db.rollback()
+    # Check Jira config
+    from app.models.postgres import AppSetting
+    jira_result = await db.execute(
+        select(AppSetting).where(AppSetting.key == "integrations_config")
+    )
+    jira_row = jira_result.scalar_one_or_none()
+    if jira_row and jira_row.value and jira_row.value.get("jira_enabled"):
+        await _auto_complete_if_pending(db, project_id, "connect_jira")
+        await db.flush()
 
     return await get_onboarding_status(project_id, db)
 
@@ -253,7 +253,14 @@ async def track_event(
     project_id: Optional[uuid.UUID] = None,
     payload: Optional[dict] = None,
 ) -> None:
-    """Record a product usage event. Fire-and-forget — errors are logged, not raised."""
+    """Stage a product usage event row.
+
+    Fire-and-forget semantics: the service swallows staging errors (e.g.
+    table missing in a partially-migrated env) so callers don't have to
+    wrap usage tracking in try/except. The router handler owns the actual
+    commit; if commit fails, that's a harder error the caller can surface
+    as needed.
+    """
     try:
         db.add(ProductUsageEvent(
             user_id=user_id,
@@ -261,13 +268,8 @@ async def track_event(
             event_name=event_name,
             event_payload=payload,
         ))
-        await db.commit()
     except Exception as exc:
-        logger.warning("Failed to track event %s: %s", event_name, exc)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        logger.warning("Failed to stage event %s: %s", event_name, exc)
 
 
 async def get_usage_events(

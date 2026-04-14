@@ -1,3 +1,12 @@
+"""
+Test management service — CRUD + review workflow for managed test cases and
+test plans.
+
+Transaction model (item #2): every function in this module stages changes
+only. The calling router handler owns ``await db.commit()`` so that a single
+commit covers the business mutation, the version snapshot, the audit row,
+and any downstream recomputed counts atomically.
+"""
 from __future__ import annotations
 
 import uuid
@@ -101,8 +110,6 @@ async def create_managed_test_case(
         db, "test_case", test_case.id, test_case.project_id, "created", current_user,
         details=f"Test case '{test_case.title}' created",
     )
-    await db.commit()
-    await db.refresh(test_case)
     return test_case
 
 
@@ -139,8 +146,6 @@ async def update_managed_test_case(
         db, "test_case", test_case.id, test_case.project_id, "updated", current_user,
         old_values=old, new_values=update_data,
     )
-    await db.commit()
-    await db.refresh(test_case)
     return test_case
 
 
@@ -156,7 +161,6 @@ async def deprecate_managed_test_case(
         db, "test_case", test_case.id, test_case.project_id, "deleted", current_user,
         old_values={"status": old_status}, new_values={"status": "deprecated"},
     )
-    await db.commit()
 
 
 async def request_test_case_review(db: AsyncSession, case_id: uuid.UUID, current_user: User) -> TestCaseReview:
@@ -167,12 +171,11 @@ async def request_test_case_review(db: AsyncSession, case_id: uuid.UUID, current
     test_case.status = "review_requested"
     review = TestCaseReview(test_case_id=case_id, requested_by_id=current_user.id, status="pending")
     db.add(review)
+    await db.flush()  # materialize review.id for the handler response
     await audit_event(
         db, "test_case", test_case.id, test_case.project_id, "status_changed", current_user,
         old_values={"status": previous_status}, new_values={"status": "review_requested"},
     )
-    await db.commit()
-    await db.refresh(review)
     return review
 
 
@@ -210,8 +213,6 @@ async def apply_review_action(
         review.reviewed_at = datetime.now(timezone.utc)
 
     await audit_event(db, "test_case", test_case.id, test_case.project_id, payload.action, current_user, details=payload.notes)
-    await db.commit()
-    await db.refresh(test_case)
     return test_case
 
 
@@ -228,8 +229,7 @@ async def add_test_case_comment(
         **payload.model_dump(exclude_unset=True),
     )
     db.add(comment)
-    await db.commit()
-    await db.refresh(comment)
+    await db.flush()  # materialize comment.id for the handler response
     return comment
 
 
@@ -271,10 +271,8 @@ async def list_test_plans(
 async def create_test_plan(db: AsyncSession, payload: TestPlanCreate, current_user: User) -> TestPlan:
     plan = TestPlan(**payload.model_dump(exclude_unset=True), created_by_id=current_user.id)
     db.add(plan)
-    await db.flush()
+    await db.flush()  # materialize plan.id so the audit row can reference it
     await audit_event(db, "test_plan", plan.id, plan.project_id, "created", current_user, details=f"Test plan '{plan.name}' created")
-    await db.commit()
-    await db.refresh(plan)
     return plan
 
 
@@ -287,8 +285,6 @@ async def update_test_plan(
     plan = await get_plan_or_404(db, plan_id)
     apply_model_updates(plan, payload.model_dump(exclude_unset=True))
     await audit_event(db, "test_plan", plan.id, plan.project_id, "updated", current_user)
-    await db.commit()
-    await db.refresh(plan)
     return plan
 
 
@@ -301,10 +297,8 @@ async def add_test_plan_item(
     plan = await get_plan_or_404(db, plan_id)
     item = TestPlanItem(plan_id=plan_id, **payload.model_dump(exclude_unset=True))
     db.add(item)
-    await db.flush()
+    await db.flush()  # materialize item.id and expose it to recompute_plan_counts
     await recompute_plan_counts(db, plan)
-    await db.commit()
-    await db.refresh(item)
     return item
 
 
@@ -313,7 +307,6 @@ async def remove_test_plan_item(db: AsyncSession, plan_id: uuid.UUID, item_id: u
     item = await get_plan_item_or_404(db, plan_id, item_id)
     await db.delete(item)
     await recompute_plan_counts(db, plan)
-    await db.commit()
 
 
 async def record_test_plan_execution(
@@ -333,6 +326,4 @@ async def record_test_plan_execution(
     item.execution_notes = execution_notes
     item.actual_duration_minutes = actual_duration_minutes
     await recompute_plan_counts(db, plan)
-    await db.commit()
-    await db.refresh(item)
     return item
