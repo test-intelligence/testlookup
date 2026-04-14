@@ -56,6 +56,13 @@ async def create_project(
 
     await db.commit()
     await db.refresh(project)
+
+    # Invalidate the creator's cached membership set so the new project
+    # shows up in their accessible-project queries immediately instead of
+    # after the 5-minute Redis TTL.
+    from app.core.deps import invalidate_membership_cache
+    await invalidate_membership_cache(current_user.id)
+
     return project
 
 

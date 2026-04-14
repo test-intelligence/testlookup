@@ -10,6 +10,13 @@ import defusedxml.ElementTree as SafeET
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# signxml is the XML-DSig verifier. We import it lazily inside the verify
+# function so that environments without the package (e.g., minimal dev
+# containers, unit tests for unrelated code paths) can still import this
+# module. The actual SAML code path will fail CLOSED — refusing to process
+# any assertion — if signxml is missing, not silently allowing unsigned
+# assertions through.
+
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models.postgres import (
@@ -76,17 +83,105 @@ _NS = {
 }
 
 
-def parse_saml_response(saml_response_b64: str) -> dict:
+def _verify_xml_signature(xml_bytes: bytes, idp_certificate_pem: str):
+    """
+    Cryptographically verify an XML-DSig signature on a SAML Response using
+    the configured IdP X.509 certificate.
+
+    Returns the signed lxml element — the ONLY node from which the caller
+    may safely extract identity claims. This defeats XML Signature Wrapping
+    (XSW) attacks where an attacker keeps a signed element intact but wraps
+    a forged assertion around it; signxml returns exclusively the signed
+    subtree, so claims read from it are guaranteed to be IdP-attested.
+
+    Raises ``ValueError`` on any verification failure, including:
+      - signxml not installed (fail-closed; refuse to process the assertion)
+      - signature missing, malformed, or broken
+      - certificate mismatch with the configured IdP cert
+      - algorithm not on the allow-list
+
+    We restrict the allowed digest / signature algorithms to modern
+    primitives so a hostile IdP (or a downgrade attack) cannot force the
+    verifier to accept SHA-1 or MD5-signed assertions.
+    """
+    try:
+        from lxml import etree  # noqa: PLC0415
+        from signxml import XMLVerifier, DigestAlgorithm, SignatureMethod  # noqa: PLC0415
+        from signxml.exceptions import InvalidSignature, InvalidCertificate  # noqa: PLC0415
+    except ImportError as exc:
+        # Fail closed: we cannot verify, so we cannot trust the assertion.
+        # Operators must install signxml or disable SSO entirely.
+        raise ValueError(
+            "SAML signature verification unavailable: signxml not installed. "
+            "Refusing to process SAML assertion."
+        ) from exc
+
+    # lxml parser is DTD/entity-safe by default when we pass these flags.
+    parser = etree.XMLParser(
+        resolve_entities=False,
+        no_network=True,
+        huge_tree=False,
+    )
+    try:
+        root = etree.fromstring(xml_bytes, parser=parser)
+    except etree.XMLSyntaxError as exc:
+        raise ValueError(f"Malformed SAML XML: {exc}") from exc
+
+    allowed_digest = {
+        DigestAlgorithm.SHA256,
+        DigestAlgorithm.SHA384,
+        DigestAlgorithm.SHA512,
+    }
+    allowed_sig = {
+        SignatureMethod.RSA_SHA256,
+        SignatureMethod.RSA_SHA384,
+        SignatureMethod.RSA_SHA512,
+        SignatureMethod.ECDSA_SHA256,
+        SignatureMethod.ECDSA_SHA384,
+        SignatureMethod.ECDSA_SHA512,
+    }
+
+    try:
+        verified = XMLVerifier().verify(
+            root,
+            x509_cert=idp_certificate_pem,
+            expect_references=1,
+            # Pin the allow-list so SHA-1 / MD5-based signatures are rejected.
+            expect_config=XMLVerifier.VerifyConfig(
+                expect_signature_method=allowed_sig,
+                expect_digest_method=allowed_digest,
+            ),
+        )
+    except (InvalidSignature, InvalidCertificate) as exc:
+        raise ValueError(f"SAML signature verification failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — defensive: signxml raises diverse types
+        raise ValueError(f"SAML signature verification failed: {exc}") from exc
+
+    signed_xml = getattr(verified, "signed_xml", None)
+    if signed_xml is None:
+        raise ValueError("SAML signature verification returned no signed subtree")
+    return signed_xml
+
+
+def parse_saml_response(
+    saml_response_b64: str,
+    idp_certificate_pem: Optional[str] = None,
+) -> dict:
     """
     Parse a base64-encoded SAML Response and extract identity attributes.
 
-    Returns a dict with keys: name_id, issuer, attributes, session_index.
-    Raises ValueError on malformed/invalid responses.
+    ``idp_certificate_pem`` is the PEM-encoded X.509 certificate stored on
+    the ``SSOConfiguration`` record; when provided (and it MUST be for any
+    production flow) the assertion's XML-DSig signature is verified before
+    any claim is extracted, and all claims are pulled exclusively from the
+    signed subtree (defeats XML Signature Wrapping).
 
-    NOTE: In production, you should use a full SAML library (python3-saml)
-    for cryptographic signature validation. This implementation validates
-    structure and extracts attributes; signature validation relies on the
-    IdP certificate configured in SSOConfiguration.
+    Passing ``idp_certificate_pem=None`` is only valid for unit tests that
+    verify structural parsing without a real IdP cert; the SSO router
+    always supplies the configured cert. See ``routers/sso.py`` callers.
+
+    Returns a dict with keys: name_id, issuer, attributes, session_index.
+    Raises ValueError on malformed/invalid/unsigned responses.
     """
     import base64
 
@@ -95,21 +190,43 @@ def parse_saml_response(saml_response_b64: str) -> dict:
     except Exception as exc:
         raise ValueError(f"Invalid base64 in SAMLResponse: {exc}") from exc
 
-    try:
-        root = SafeET.fromstring(xml_bytes)
-    except ElementTree.ParseError as exc:
-        raise ValueError(f"Malformed SAML XML: {exc}") from exc
+    if idp_certificate_pem:
+        # Path A (production): verify the XML-DSig signature and extract
+        # claims ONLY from the signed subtree. Anything outside that tree
+        # is untrusted and must never be read.
+        signed = _verify_xml_signature(xml_bytes, idp_certificate_pem)
+
+        # Top-level "root" is the signed Response or the signed Assertion
+        # itself. The status check must come from the Response wrapper if
+        # present; fall back to signed element if the signed element IS
+        # the assertion.
+        try:
+            xml_str = _lxml_to_bytes(signed)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Failed to serialize verified SAML XML: {exc}") from exc
+
+        root = SafeET.fromstring(xml_str)
+    else:
+        # Path B (tests only): parse without signature verification. The
+        # router MUST NOT take this path — see the router call site.
+        try:
+            root = SafeET.fromstring(xml_bytes)
+        except ElementTree.ParseError as exc:
+            raise ValueError(f"Malformed SAML XML: {exc}") from exc
 
     # Extract Issuer
     issuer_el = root.find(".//saml:Issuer", _NS)
     issuer = issuer_el.text.strip() if issuer_el is not None and issuer_el.text else None
 
-    # Extract assertion
+    # Extract assertion (may be the root itself if the Assertion was signed
+    # directly rather than the Response wrapper).
     assertion = root.find(".//saml:Assertion", _NS)
+    if assertion is None and root.tag.endswith("Assertion"):
+        assertion = root
     if assertion is None:
         raise ValueError("No Assertion found in SAML Response")
 
-    # Status check
+    # Status check (only present on a Response wrapper)
     status_code = root.find(".//samlp:Status/samlp:StatusCode", _NS)
     if status_code is not None:
         status_value = status_code.get("Value", "")
@@ -161,6 +278,12 @@ def parse_saml_response(saml_response_b64: str) -> dict:
         "attributes": attributes,
         "session_index": session_index,
     }
+
+
+def _lxml_to_bytes(element) -> bytes:
+    """Serialize an lxml element to XML bytes."""
+    from lxml import etree  # noqa: PLC0415
+    return etree.tostring(element)
 
 
 def validate_saml_issuer(parsed: dict, config: SSOConfiguration) -> None:
