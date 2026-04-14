@@ -60,8 +60,13 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: ${MONGO_DB:-testlookup_logs}
+      # Root credentials — required to prevent unauthenticated access on 27017.
+      # Defined in .env; MONGO_URI in backend/worker services must include these.
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-testlookup}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD is required}
+    # Bind to loopback only so a laptop cannot accidentally expose the DB on LAN.
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -108,7 +113,7 @@ services:
   # ──────────────────────────────────────────────────────────
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
     container_name: testlookup_minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -130,7 +135,7 @@ services:
 
   # MinIO setup: create bucket and configure webhook notification
   minio-setup:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2024-11-05T11-29-45Z
     container_name: testlookup_minio_setup
     depends_on:
       minio:
@@ -157,7 +162,7 @@ services:
   # ──────────────────────────────────────────────────────────
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.5.4
     container_name: testlookup_ollama
     profiles: ["local-llm"]
     restart: unless-stopped
@@ -182,7 +187,7 @@ services:
       - testlookup_net
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.5.20
     container_name: testlookup_chroma
     profiles: ["local-llm"]
     restart: unless-stopped
@@ -242,7 +247,7 @@ services:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
@@ -279,7 +284,7 @@ services:
       target: development
     container_name: testlookup_worker
     restart: unless-stopped
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=4 -Q default,ingestion,ai_analysis --max-tasks-per-child=200
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,ingestion,ai_analysis --max-tasks-per-child=200
     volumes:
       - ./backend:/app
     env_file:
@@ -292,7 +297,7 @@ services:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
@@ -330,14 +335,21 @@ services:
     networks:
       - testlookup_net
 
-  # Flower — Celery monitoring UI
+  # Flower — Celery monitoring UI. Requires HTTP basic auth so the Celery
+  # control plane (inspect, revoke, terminate) is not exposed to anyone on
+  # the LAN. Credentials are loaded from .env (FLOWER_USER / FLOWER_PASSWORD).
   flower:
-    image: mher/flower:latest
+    image: mher/flower:2.0
     container_name: testlookup_flower
     restart: unless-stopped
-    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    command:
+      - celery
+      - --broker=redis://redis:6379/0
+      - flower
+      - --port=5555
+      - --basic-auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:?FLOWER_PASSWORD is required}
     ports:
-      - "5555:5555"
+      - "127.0.0.1:5555:5555"
     depends_on:
       - redis
     networks:

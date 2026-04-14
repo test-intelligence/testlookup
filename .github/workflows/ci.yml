@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Default to least-privilege — every job must opt in to any write scope it needs.
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
@@ -46,10 +50,10 @@ jobs:
         working-directory: ./backend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.11"
           cache: pip
@@ -85,14 +89,14 @@ jobs:
             --junit-xml=test-results.xml
 
       - name: Upload coverage report
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v4.6.0
         if: always()
         with:
           files: ./backend/coverage.xml
           flags: backend
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         if: always()
         with:
           name: backend-test-results
@@ -110,10 +114,10 @@ jobs:
         working-directory: ./frontend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4.1.0
         with:
           node-version: "20"
           cache: npm
@@ -159,10 +163,10 @@ jobs:
         working-directory: ./mcp
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.11"
           cache: pip
@@ -231,12 +235,12 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4.2.2
 
       # Generate package-lock.json before Docker build so npm ci works inside the image.
       # This avoids needing to commit a lockfile while still getting reproducible installs.
       - name: Set up Node.js 20
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4.1.0
         with:
           node-version: "20"
 
@@ -245,25 +249,25 @@ jobs:
         run: npm install --package-lock-only
 
       - name: Log in to Docker Hub (avoids pull rate limits on base images and buildkit)
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.3.0
         if: env.DOCKERHUB_USERNAME != ''
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.3.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.7.1
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v5.5.1
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
@@ -275,7 +279,7 @@ jobs:
             type=semver,pattern={{version}}
 
       - name: Build & push backend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.9.0
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -287,7 +291,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build & push frontend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.9.0
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
@@ -299,7 +303,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build & push MCP server
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.9.0
         with:
           context: ./mcp
           file: ./mcp/Dockerfile
@@ -325,13 +329,13 @@ jobs:
     environment: development
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v4.0.0
 
       - name: Set up kustomize
-        uses: imranismail/setup-kustomize@v2
+        uses: imranismail/setup-kustomize@v2.1.0
         with:
           kustomize-version: "5.4.2"
 

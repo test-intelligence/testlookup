@@ -333,7 +333,10 @@ async def get_accessible_project_ids(
     if _normalize_user_role(user.role) == UserRole.ADMIN:
         return None  # ADMIN sees everything
 
-    # P3-2: Check Redis cache first
+    # P3-2: Check Redis cache first. A persistent Redis failure would silently
+    # cascade into every request hitting the DB; log the first occurrence per
+    # process so ops can see the dependency degrade instead of only noticing
+    # the tail-latency symptom.
     cache_key = f"membership:{user.id}"
     try:
         from app.db.redis_client import get_redis
@@ -341,15 +344,14 @@ async def get_accessible_project_ids(
         cached = await redis.get(cache_key)
         if cached is not None:
             return {uuid.UUID(pid) for pid in json.loads(cached)}
-    except Exception:
-        pass  # Redis unavailable — fall through to DB
+    except Exception as exc:
+        _warn_membership_cache_degraded("read", exc)
 
     result = await db.execute(
         select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
     )
     project_ids = {row[0] for row in result.all()}
 
-    # Store in Redis cache
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
@@ -358,10 +360,27 @@ async def get_accessible_project_ids(
             json.dumps([str(pid) for pid in project_ids]),
             ex=_MEMBERSHIP_CACHE_TTL,
         )
-    except Exception:
-        pass  # Cache write failure is non-blocking
+    except Exception as exc:
+        _warn_membership_cache_degraded("write", exc)
 
     return project_ids
+
+
+# Throttle noisy warnings — log once per hour per op if Redis is down.
+_last_cache_warn_ts: dict[str, float] = {}
+
+
+def _warn_membership_cache_degraded(op: str, exc: Exception) -> None:
+    import time as _time
+    now = _time.monotonic()
+    last = _last_cache_warn_ts.get(op, 0.0)
+    if now - last < 3600:
+        return
+    _last_cache_warn_ts[op] = now
+    logger.warning(
+        "membership cache %s failed — falling back to DB on every request: %s",
+        op, exc,
+    )
 
 
 async def resolve_project_scope(

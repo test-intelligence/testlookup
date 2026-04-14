@@ -86,8 +86,14 @@ restart: ## Restart all services
 	$(DOCKER_COMPOSE) --profile local-llm restart
 
 clean: ## Stop services and remove volumes (WARNING: deletes all data)
+	@echo "This will PERMANENTLY delete all PostgreSQL/MongoDB/Redis/MinIO/Chroma data."
+	@echo "Set CONFIRM=yes to proceed (e.g. 'make clean CONFIRM=yes')."
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "Aborted — no changes made."; \
+		exit 1; \
+	fi
 	$(DOCKER_COMPOSE) --profile local-llm down -v --remove-orphans
-	@echo "WARNING: All volumes removed."
+	@echo "All volumes removed."
 
 # ── Database ─────────────────────────────────────────────────
 

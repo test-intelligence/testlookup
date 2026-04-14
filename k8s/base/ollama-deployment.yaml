@@ -20,8 +20,8 @@ spec:
       #   nvidia.com/gpu: "true"
       containers:
         - name: ollama
-          image: ollama/ollama:latest
-          imagePullPolicy: Always
+          image: ollama/ollama:0.5.4
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 11434
               name: ollama

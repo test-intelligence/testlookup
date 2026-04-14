@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
 import chatService from '@/services/chatService'
 import type { ChatMessage, ChatSession, RunSummary } from '@/types/chat'
@@ -48,12 +48,18 @@ export function useChat(sessionId: string | null, projectId?: string | null): Us
     ...optimisticMessages.filter((m: ChatMessage) => !fetchedIds.has(m.id)),
   ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
+  // Use a ref for the in-flight guard so the useCallback identity stays stable
+  // across isSending state transitions. A dependency on `isSending` would
+  // re-create sendMessage mid-flight and break parent memoization / optimistic
+  // update bookkeeping.
+  const isSendingRef = useRef(false)
   const sendMessage = useCallback(
     // overrideSessionId allows callers to pass a freshly-created session ID
     // before React has re-rendered with the updated state (avoids stale closure).
     async (text: string, overrideSessionId?: string) => {
       const sid = overrideSessionId ?? sessionId
-      if (!sid || !text.trim() || isSending) return
+      if (!sid || !text.trim() || isSendingRef.current) return
+      isSendingRef.current = true
 
       const tempUserMsg: ChatMessage = {
         id: `temp-user-${Date.now()}`,
@@ -93,9 +99,10 @@ export function useChat(sessionId: string | null, projectId?: string | null): Us
         setError(axiosErr?.response?.data?.detail ?? 'Failed to send message')
       } finally {
         setIsSending(false)
+        isSendingRef.current = false
       }
     },
-    [sessionId, projectId, isSending],
+    [sessionId, projectId],
   )
 
   return {

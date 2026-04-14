@@ -72,7 +72,7 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    logger.info("New user self-registered: %s (role=QA_ENGINEER, must_change_password=True)", user.username)
+    logger.info("New user self-registered: user_id=%s (role=QA_ENGINEER, must_change_password=True)", user.id)
     return user
 
 
@@ -124,7 +124,7 @@ async def login(
                     detail={"method": "password", "reason": "admin_fallback"},
                     ip_address=client_ip,
                 )
-                logger.info("Admin fallback login for: %s", user.username)
+                logger.info("Admin fallback login for user_id=%s", user.id)
             else:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -134,7 +134,7 @@ async def login(
     access_token = create_access_token(str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
     await db.commit()
-    logger.info("User logged in: %s (must_change_password=%s)", user.username, user.must_change_password)
+    logger.info("User logged in: user_id=%s (must_change_password=%s)", user.id, user.must_change_password)
 
     return TokenResponse(
         access_token=access_token,
@@ -255,7 +255,7 @@ async def dev_login(
     access_token = create_access_token(str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
     await db.commit()
-    logger.info("dev-login: issued token for %s (%s)", user.username, role)
+    logger.info("dev-login: issued token for user_id=%s (%s)", user.id, role)
 
     return TokenResponse(
         access_token=access_token,
@@ -297,7 +297,7 @@ async def first_time_reset(
     await _revoke_refresh_family(db, current_user.id, reason="password_reset")
     await db.commit()
     await revoke_all_user_tokens(current_user.id)
-    logger.info("First-time password reset completed for user: %s", current_user.username)
+    logger.info("First-time password reset completed: user_id=%s", current_user.id)
     return None
 
 
@@ -342,7 +342,7 @@ async def refresh_tokens(
         new_refresh = await rotate_refresh_token(db, uid, jti)
     except RefreshTokenError as exc:
         await db.commit()  # persist any family revocation from replay detection
-        logger.warning("Refresh token rejected for %s: %s", user.username, exc)
+        logger.warning("Refresh token rejected for user_id=%s: %s", user.id, exc)
         raise credentials_exception
 
     new_access = create_access_token(str(user.id))
@@ -407,7 +407,7 @@ async def logout(
     await _revoke_refresh_family(db, current_user.id, reason="logout")
     await db.commit()
 
-    logger.info("User logged out: %s", current_user.username)
+    logger.info("User logged out: user_id=%s", current_user.id)
     return None
 
 
@@ -446,5 +446,5 @@ async def change_password(
     await _revoke_refresh_family(db, current_user.id, reason="password_change")
     await db.commit()
     await revoke_all_user_tokens(current_user.id)
-    logger.info("Password changed for user: %s", current_user.username)
+    logger.info("Password changed: user_id=%s", current_user.id)
     return None

@@ -126,42 +126,52 @@ async def finalize_run(
     rid = uuid.UUID(run_id)
     pid = uuid.UUID(project_id)
 
+    # Step 1: aggregates — critical, must succeed for the run to be usable.
+    # Commits in its own transaction so subsequent non-blocking steps can't poison it.
     async with AsyncSessionLocal() as db:
         try:
-            # Update aggregated counts
             await _update_run_aggregates(db, rid)
-
-            # Sync suite membership traceability
-            try:
-                from app.services.suite_sync_service import sync_suite_membership
-                await sync_suite_membership(db, pid, rid)
-            except Exception as e:
-                logger.warning("Suite sync failed (non-blocking): %s", e)
-
-            # Auto-tag test cases and run
-            try:
-                from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
-                await auto_tag_test_cases(db, rid)
-                await auto_tag_test_run(db, rid)
-            except Exception as e:
-                logger.warning("Auto-tagging failed (non-blocking): %s", e)
-
-            # Link to release
-            if release_name and release_name.strip():
-                try:
-                    from app.services.release_linker import auto_link_release
-                    await auto_link_release(
-                        db=db, project_id=pid,
-                        release_name=release_name.strip(),
-                        test_run_id=rid,
-                    )
-                except Exception as e:
-                    logger.warning("Release linking failed: %s", e)
-
             await db.commit()
         except Exception:
             await db.rollback()
             raise
+
+    # Steps 2-4: each runs in an isolated session so a failure in one does not
+    # leave the SQLAlchemy session in a failed state and does not skip subsequent
+    # steps. Each step commits or rolls back independently.
+    async def _run_isolated(step_name: str, coro_factory):
+        async with AsyncSessionLocal() as step_db:
+            try:
+                await coro_factory(step_db)
+                await step_db.commit()
+            except Exception as e:
+                await step_db.rollback()
+                logger.warning("%s failed (non-blocking): %s", step_name, e)
+
+    from app.services.suite_sync_service import sync_suite_membership
+    from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
+
+    await _run_isolated(
+        "suite_sync",
+        lambda d: sync_suite_membership(d, pid, rid),
+    )
+
+    async def _tag(d: AsyncSession) -> None:
+        await auto_tag_test_cases(d, rid)
+        await auto_tag_test_run(d, rid)
+
+    await _run_isolated("auto_tagging", _tag)
+
+    if release_name and release_name.strip():
+        from app.services.release_linker import auto_link_release
+        await _run_isolated(
+            "release_linking",
+            lambda d: auto_link_release(
+                db=d, project_id=pid,
+                release_name=release_name.strip(),
+                test_run_id=rid,
+            ),
+        )
 
     # Fetch run for notification data
     async with AsyncSessionLocal() as db:

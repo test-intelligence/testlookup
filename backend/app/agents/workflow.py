@@ -136,6 +136,58 @@ async def release_risk_node(state: WorkflowState) -> dict:
 
 # ── Routing functions (conditional edges) ────────────────────────────────────
 
+def _emit_route_decision(
+    state: WorkflowState,
+    *,
+    decision_point: str,
+    chosen: str,
+    rationale: str,
+    alternatives: list[str] | None = None,
+    context: dict | None = None,
+) -> None:
+    """Fire-and-forget structured decision record from a sync router function.
+
+    LangGraph calls routing functions synchronously, so we cannot await the
+    Mongo write here. Scheduling via ``asyncio.create_task`` keeps the routing
+    fast-path non-blocking while still getting the decision into the event log
+    for timeline reconstruction and debugging.
+    """
+    pipeline_run_id = state.get("pipeline_run_id", "")
+    if not pipeline_run_id:
+        return
+    payload: dict[str, Any] = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "decision_point": decision_point,
+        "chosen": chosen,
+        "rationale": rationale,
+    }
+    if alternatives:
+        payload["alternatives"] = alternatives
+    if context:
+        payload["context"] = context
+
+    logger.info(
+        "workflow_route_decision",
+        pipeline_run_id=pipeline_run_id,
+        decision_point=decision_point,
+        chosen=chosen,
+        rationale=rationale,
+    )
+    try:
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            emit_event(
+                pipeline_run_id,
+                "decision_made",
+                stage_name="workflow",
+                detail=payload,
+            )
+        )
+    except RuntimeError:
+        # No running loop (e.g. sync test harness) — structlog entry is enough.
+        pass
+
+
 def _route_after_ingestion(state: WorkflowState) -> str:
     """
     Fast-path: if the run has no failures there is nothing to analyse.
@@ -144,11 +196,21 @@ def _route_after_ingestion(state: WorkflowState) -> str:
     via the branching edges added in the graph).
     """
     if not state.get("failed_test_ids"):
-        logger.info(
-            "Pipeline %s: no failures detected — skipping analysis stages",
-            state.get("pipeline_run_id"),
+        _emit_route_decision(
+            state,
+            decision_point="route_after_ingestion",
+            chosen="summary",
+            rationale="no failed tests — skipping anomaly_detection and root_cause_analysis",
+            alternatives=["anomaly_detection"],
+            context={"total_tests": state.get("total_tests")},
         )
         return "summary"
+    _emit_route_decision(
+        state,
+        decision_point="route_after_ingestion",
+        chosen="anomaly_detection",
+        rationale=f"{len(state.get('failed_test_ids', []))} failed tests — fan out to analysis",
+    )
     return "anomaly_detection"
 
 
@@ -160,17 +222,31 @@ def _route_after_summary(state: WorkflowState) -> str:
     """
     analyses = state.get("analyses", {})
     threshold = settings.AI_CONFIDENCE_THRESHOLD
-    has_triageable = any(
-        a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
-        for a in analyses.values()
-    )
-    if not has_triageable:
-        logger.info(
-            "Pipeline %s: no analyses above confidence threshold (%d) — skipping triage",
-            state.get("pipeline_run_id"), threshold,
+    triageable = [
+        tc_id for tc_id, a in analyses.items()
+        if a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
+    ]
+    if not triageable:
+        _emit_route_decision(
+            state,
+            decision_point="route_after_summary",
+            chosen="end",
+            rationale=(
+                f"no analyses above confidence threshold {threshold} — skipping triage"
+            ),
+            alternatives=["triage"],
+            context={
+                "analyses_count": len(analyses),
+                "threshold": threshold,
+            },
         )
-        # Fire-and-forget: persist skip context (sync route fn can't await — handled in _mark_pipeline_done)
         return END
+    _emit_route_decision(
+        state,
+        decision_point="route_after_summary",
+        chosen="triage",
+        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+    )
     return "triage"
 
 
@@ -184,17 +260,32 @@ def _route_after_summary_deep(state: WorkflowState) -> str:
     """
     analyses = state.get("analyses", {})
     threshold = settings.AI_CONFIDENCE_THRESHOLD
-    has_triageable = any(
-        a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
-        for a in analyses.values()
-    )
-    if not has_triageable:
-        logger.info(
-            "Pipeline %s: no analyses above confidence threshold (%d) — skipping triage, "
-            "proceeding directly to specialist stages",
-            state.get("pipeline_run_id"), threshold,
+    triageable = [
+        tc_id for tc_id, a in analyses.items()
+        if a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
+    ]
+    if not triageable:
+        _emit_route_decision(
+            state,
+            decision_point="route_after_summary_deep",
+            chosen="flaky_sentinel",
+            rationale=(
+                f"no analyses above confidence threshold {threshold} — skipping triage, "
+                "continuing to specialist stages"
+            ),
+            alternatives=["triage"],
+            context={
+                "analyses_count": len(analyses),
+                "threshold": threshold,
+            },
         )
         return "flaky_sentinel"
+    _emit_route_decision(
+        state,
+        decision_point="route_after_summary_deep",
+        chosen="triage",
+        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+    )
     return "triage"
 
 

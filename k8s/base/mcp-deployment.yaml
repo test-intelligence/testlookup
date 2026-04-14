@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: mcp
-          image: testlookup/mcp:latest
+          image: testlookup/mcp:0.0.1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002
               name: sse
@@ -56,8 +57,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           livenessProbe:
             tcpSocket:
               port: 8002

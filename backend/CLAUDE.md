@@ -298,9 +298,60 @@ analysis_agent._analyse_one()
 ### Adding a new analysis mode
 1. Add mode constant to `AnalysisMode` in `analysis_router.py`
 2. Create engine in `services/ml/` or `services/` with `classify(features) -> dict` method
-3. Add dispatch branch in `analysis_router.classify_test()`
+3. Add dispatch branch in `analysis_router.classify_test()` — **must populate `routing` dict** with `mode_used` and, on fallback, `fallback_from` + `fallback_reason`
 4. Add mode to config validation regex in `schemas.py:AIConfigUpdate.analysis_mode`
 5. Add radio option in `frontend/src/pages/settings/AIConfigPage.tsx:ANALYSIS_MODES`
+
+### Decision traceability contract
+
+Every `classify_test()` return now carries a `_routing` dict:
+
+```python
+result["_routing"] = {
+    "mode_requested": "auto",       # what caller asked for
+    "mode_resolved": "llm",         # what get_analysis_mode() picked
+    "mode_used": "rules",           # what actually ran (may differ on fallback)
+    "fallback_from": "llm",         # set when mode_used != mode_resolved
+    "fallback_reason": "llm_error: TimeoutError: ...",
+    "auto_probe": {"ollama_model_available": True, "probe_age_seconds": 12.4},
+}
+```
+
+The per-test `analysis_agent` block copies this into `_audit.analysis_mode` /
+`_audit.fallback_from` / `_audit.fallback_reason` and pops
+`_confidence_adjustments` into `_audit.confidence_adjustments`. The stage-level
+`mark_stage_done(analysis_mode=..., fallback_reason=...)` call persists the
+**dominant** mode and an aggregate fallback-count summary to
+`agent_stage_results.analysis_mode` / `.fallback_reason`.
+
+### Agent decision logging
+
+All agents inherit `BaseAgent.log_decision(pipeline_run_id, decision_point, chosen, rationale, …)`:
+
+```python
+await self.log_decision(
+    pipeline_run_id,
+    decision_point="route_analysis_mode",
+    chosen="ml",
+    rationale="configured ANALYSIS_MODE=ml",
+    test_case_id=tc_id,
+    context={"severity": meta.get("severity")},
+)
+```
+
+Decisions land in three places simultaneously so every consumer has what it needs:
+
+1. **structlog** — searchable, correlated with other log fields (`event=agent_decision`).
+2. **Pipeline event log** (Mongo, immutable) — `decision_made` event type; queryable via `get_pipeline_timeline()`.
+3. **`AgentStageResult.decision_log`** (Postgres JSONB, migration 0061) — committed at `mark_stage_done`; the UI renders this alongside the stage result without querying Mongo.
+
+Workflow router functions emit route decisions via `_emit_route_decision()` in `workflow.py` — fire-and-forget via `asyncio.create_task` since LangGraph routers are synchronous.
+
+**When to call `log_decision`:** every non-trivial branch. Route selection, fallback trigger, stage skip, confidence clamp, retry, specialist-stage pick, threshold check. **Do not** log trivial branches (simple null checks, early returns on empty input) — the signal-to-noise ratio matters.
+
+### OTEL span enrichment
+
+`mark_stage_running` records `stage.input_keys` (comma-joined, sorted) so Jaeger shows what state each stage received. `mark_stage_done` adds `analysis.mode`, `route.rationale`, `fallback.used`, `fallback.reason`, `error.category`, `result.confidence_score`, `result.evidence_count`, `decisions.count`. Each call to `log_decision` also adds a `decision.<point>` span event inline with the stage timeline.
 
 ## Test Patterns
 

@@ -173,9 +173,12 @@ export function useLiveExecution(projectId?: string) {
     if (!projectId || !token) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
+    // Mirror the page protocol (https → wss, http → ws) so production over HTTPS
+    // never downgrades to an insecure WebSocket. Explicit env overrides still win.
+    const pageWsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const wsBase = (import.meta.env.VITE_WS_URL as string | undefined) ||
-      (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/^http/, 'ws') ||
-      `ws://${window.location.host}`
+      (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/^https?/, pageWsScheme) ||
+      `${pageWsScheme}://${window.location.host}`
 
     const url = `${wsBase}/ws/live/${projectId}`
     const ws = new WebSocket(url)

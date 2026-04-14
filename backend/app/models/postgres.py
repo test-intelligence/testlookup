@@ -243,8 +243,8 @@ class TestCaseHistory(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    test_case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"))
-    test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"))
+    test_case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False)
+    test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
     test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[TestStatus] = mapped_column(String(20), nullable=False)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
@@ -471,6 +471,13 @@ class AgentStageResult(Base):
     confidence_score: Mapped[Optional[int]] = mapped_column(Integer)     # 0-100
     evidence_count: Mapped[Optional[int]] = mapped_column(Integer)       # number of evidence items produced
     route_rationale: Mapped[Optional[str]] = mapped_column(Text)         # why this stage was selected/skipped
+    # Migration 0061: structured decision trail — ordered list of
+    # {at, decision_point, chosen, rationale, context} records produced by
+    # BaseAgent.log_decision(). This is the authoritative per-stage record
+    # of *why* the agent chose each branch, used by the traceability UI.
+    decision_log: Mapped[Optional[list]] = mapped_column(JSON)
+    fallback_reason: Mapped[Optional[str]] = mapped_column(String(200))  # short reason when fallback_used=True
+    analysis_mode: Mapped[Optional[str]] = mapped_column(String(20))     # llm|ml|rules|auto — engine actually used
 
     # Relationships
     pipeline_run: Mapped["AgentPipelineRun"] = relationship("AgentPipelineRun", back_populates="stages")
@@ -1170,6 +1177,15 @@ class LiveSession(Base):
         Index("ix_live_sessions_project_status", "project_id", "status"),
         Index("ix_live_sessions_token_hash", "session_token_hash"),
         Index("ix_live_sessions_started_at", "started_at"),
+        # Partial UNIQUE: only one *active* session may exist per (project, run).
+        # Completed/stale sessions do not participate, so a CI job can retry safely.
+        # Protects against duplicate event streams when two runners race on the same run_id.
+        Index(
+            "ux_live_sessions_active_project_run",
+            "project_id", "run_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

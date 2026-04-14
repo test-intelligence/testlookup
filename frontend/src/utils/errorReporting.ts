@@ -102,10 +102,18 @@ function _sanitizeMessage(msg: string): string {
     .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]')
     // Phone numbers
     .replace(/\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '[REDACTED_PHONE]')
-    // Bearer tokens
-    .replace(/Bearer\s+[A-Za-z0-9\-_.]{20,}/gi, 'Bearer [REDACTED]')
-    // API keys
-    .replace(/api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9\-_]{16,}['"]?/gi, 'api_key=[REDACTED]')
+    // Bearer tokens — lowered floor from 20 → 8 to catch short opaque tokens
+    // (e.g., session IDs) while still avoiding obvious false positives like
+    // "Bearer token".
+    .replace(/Bearer\s+[A-Za-z0-9\-_.=]{8,}/gi, 'Bearer [REDACTED]')
+    // API keys — accept shorter keys (8+) because some integrations ship
+    // 10-12 character keys and would otherwise leak.
+    .replace(/api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9\-_]{8,}['"]?/gi, 'api_key=[REDACTED]')
+    // Known TestLookup API key prefixes (tl_, qai_, scim_) — catches keys
+    // that appear bare in a message without the "api_key=" antecedent.
+    .replace(/\b(?:tl|qai|scim)_[A-Za-z0-9\-_]{16,}/g, '[REDACTED_KEY]')
+    // JWT tokens (three base64url-ish sections separated by dots)
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]')
     // Connection strings with passwords
     .replace(/(\/\/[^:]+:)[^@]{4,}(@)/g, '$1[REDACTED]$2')
 }

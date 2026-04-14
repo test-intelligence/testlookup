@@ -37,6 +37,38 @@ class AnalysisMode:
 _cached_mode: str | None = None
 _cached_mode_ts: float = 0
 
+# Ollama model availability probe result. None = not probed yet, True/False = last result.
+# Refreshed asynchronously by refresh_analysis_mode_from_cache() to avoid blocking the
+# event loop with a synchronous httpx.get() call inside async code paths.
+_ollama_model_available: bool | None = None
+_ollama_probe_ts: float = 0
+_OLLAMA_PROBE_TTL_SECONDS = 60
+
+
+async def _probe_ollama_model_async() -> bool | None:
+    """Async, non-blocking probe for Ollama model availability.
+
+    Returns True if the configured model is installed, False if Ollama is reachable
+    but the model is missing, None if the probe itself could not run.
+    """
+    if settings.LLM_PROVIDER != "ollama":
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
+        if resp.status_code != 200:
+            return None
+        installed = [m.get("name", "") for m in resp.json().get("models", [])]
+        model_base = settings.LLM_MODEL.split(":")[0]
+        return any(
+            settings.LLM_MODEL in name or name.startswith(model_base)
+            for name in installed
+        )
+    except Exception as exc:
+        logger.debug("Ollama probe failed: %s", exc)
+        return None
+
 
 def get_analysis_mode() -> str:
     """Resolve the effective analysis mode.
@@ -71,34 +103,15 @@ def get_analysis_mode() -> str:
 
     # Check if LLM is likely reachable (heuristic: provider is configured)
     if settings.LLM_PROVIDER and settings.LLM_PROVIDER != "none":
-        # For Ollama: verify the configured model is actually installed.
-        # A 404 "model not found" from Ollama is not a transient error — it means
-        # the model was never pulled.  Detect it here so auto mode degrades to rules
-        # immediately instead of burning a LLM attempt on every task.
-        if settings.LLM_PROVIDER == "ollama":
-            try:
-                import httpx
-                resp = httpx.get(
-                    f"{settings.OLLAMA_BASE_URL}/api/tags",
-                    timeout=3.0,
-                )
-                if resp.status_code == 200:
-                    installed = [m.get("name", "") for m in resp.json().get("models", [])]
-                    # Match "qwen2.5:7b" against full tag names like "qwen2.5:7b" or "qwen2.5:latest"
-                    model_base = settings.LLM_MODEL.split(":")[0]
-                    model_available = any(
-                        settings.LLM_MODEL in name or name.startswith(model_base)
-                        for name in installed
-                    )
-                    if not model_available:
-                        logger.warning(
-                            "Auto mode: Ollama model '%s' not installed (available: %s) — using rules",
-                            settings.LLM_MODEL,
-                            installed or "none",
-                        )
-                        return AnalysisMode.RULES
-            except Exception as probe_exc:
-                logger.debug("Auto mode: Ollama probe failed (%s) — attempting LLM anyway", probe_exc)
+        # Ollama probe result is refreshed asynchronously by refresh_analysis_mode_from_cache().
+        # Only degrade to rules when we have a *definitive* False result — unknown (None)
+        # means we haven't probed yet; attempt LLM and let _classify_llm fall back on error.
+        if settings.LLM_PROVIDER == "ollama" and _ollama_model_available is False:
+            logger.warning(
+                "Auto mode: Ollama model '%s' not installed (cached probe) — using rules",
+                settings.LLM_MODEL,
+            )
+            return AnalysisMode.RULES
 
         logger.debug("Auto mode: LLM provider configured — using LLM")
         return AnalysisMode.LLM
@@ -110,10 +123,21 @@ def get_analysis_mode() -> str:
 async def refresh_analysis_mode_from_cache() -> str:
     """Read analysis_mode from Redis (set by Settings UI) and update in-process cache.
 
+    Also refreshes the Ollama model availability probe using an async HTTP client, so
+    the synchronous get_analysis_mode() can consult a cached result instead of blocking
+    the event loop.
+
     Called at the start of pipeline tasks so the worker picks up UI changes.
     """
-    global _cached_mode, _cached_mode_ts
+    global _cached_mode, _cached_mode_ts, _ollama_model_available, _ollama_probe_ts
     import time
+
+    # Refresh Ollama probe (throttled to TTL) — never raises.
+    now = time.monotonic()
+    if (now - _ollama_probe_ts) > _OLLAMA_PROBE_TTL_SECONDS:
+        _ollama_model_available = await _probe_ollama_model_async()
+        _ollama_probe_ts = now
+
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
@@ -143,17 +167,49 @@ async def classify_test(
 
     Returns:
         Dict matching AIAnalysis shape with failure_category, confidence_score, etc.
+        Always includes a ``_routing`` dict describing which engine ran and why
+        (mode_requested, mode_resolved, mode_used, fallback_from, fallback_reason,
+        auto_probe). This is the authoritative decision record for the call —
+        downstream code should read it instead of re-deriving the decision.
     """
-    effective_mode = mode or get_analysis_mode()
+    requested = mode
+    resolved = mode or get_analysis_mode()
 
-    if effective_mode == AnalysisMode.ML:
-        return _classify_ml(test_case, history, run_context)
+    routing: dict[str, Any] = {
+        "mode_requested": requested,
+        "mode_resolved": resolved,
+        "mode_used": resolved,
+        "fallback_from": None,
+        "fallback_reason": None,
+        "auto_probe": {
+            "ollama_model_available": _ollama_model_available,
+            "probe_age_seconds": None,
+        },
+    }
+    if _ollama_probe_ts:
+        import time as _time
+        routing["auto_probe"]["probe_age_seconds"] = round(
+            _time.monotonic() - _ollama_probe_ts, 1,
+        )
 
-    if effective_mode == AnalysisMode.RULES:
-        return _classify_rules(test_case, history, run_context)
+    logger.debug(
+        "classify_test dispatching",
+        mode_requested=requested,
+        mode_resolved=resolved,
+        test_case_id=test_case.get("test_case_id"),
+    )
 
-    # LLM mode — delegate to existing triage agent
-    return await _classify_llm(test_case, history, run_context)
+    if resolved == AnalysisMode.ML:
+        result = _classify_ml(test_case, history, run_context, routing=routing)
+    elif resolved == AnalysisMode.RULES:
+        result = _classify_rules(test_case, history, run_context)
+    else:
+        result = await _classify_llm(test_case, history, run_context, routing=routing)
+
+    # Attach the routing record. Private dispatchers may have updated routing
+    # in-place (e.g., ML fallback to rules) — reflect the final state here.
+    result["_routing"] = routing
+    return result
 
 
 async def generate_summary(
@@ -204,7 +260,11 @@ def _classify_rules(
 
 
 def _classify_ml(
-    test_case: dict, history: dict | None, run_context: dict | None,
+    test_case: dict,
+    history: dict | None,
+    run_context: dict | None,
+    *,
+    routing: dict | None = None,
 ) -> dict:
     try:
         from app.services.ml.feature_extractor import extract_features
@@ -212,17 +272,39 @@ def _classify_ml(
 
         features = extract_features(test_case, history, run_context)
         return MLClassifier.classify(features)
-    except RuntimeError:
+    except RuntimeError as exc:
         # Model not available — fall back to rules
-        logger.warning("ML model unavailable — falling back to rules engine")
+        reason = f"ml_model_unavailable: {exc}"
+        logger.warning(
+            "ML classification fell back to rules",
+            reason=reason,
+            test_case_id=test_case.get("test_case_id"),
+        )
+        if routing is not None:
+            routing["mode_used"] = AnalysisMode.RULES
+            routing["fallback_from"] = AnalysisMode.ML
+            routing["fallback_reason"] = reason[:200]
         return _classify_rules(test_case, history, run_context)
-    except Exception as exc:
-        logger.error("ML classification failed: %s — falling back to rules", exc)
+    except Exception as exc:  # noqa: BLE001
+        reason = f"ml_error: {type(exc).__name__}: {exc}"
+        logger.error(
+            "ML classification failed, falling back to rules",
+            reason=reason,
+            test_case_id=test_case.get("test_case_id"),
+        )
+        if routing is not None:
+            routing["mode_used"] = AnalysisMode.RULES
+            routing["fallback_from"] = AnalysisMode.ML
+            routing["fallback_reason"] = reason[:200]
         return _classify_rules(test_case, history, run_context)
 
 
 async def _classify_llm(
-    test_case: dict, history: dict | None, run_context: dict | None,
+    test_case: dict,
+    history: dict | None,
+    run_context: dict | None,
+    *,
+    routing: dict | None = None,
 ) -> dict:
     """Delegate to the existing LLM-based triage agent."""
     try:
@@ -234,6 +316,15 @@ async def _classify_llm(
             error_message=test_case.get("error_message"),
             stack_trace=test_case.get("stack_trace"),
         )
-    except Exception as exc:
-        logger.warning("LLM triage failed: %s — falling back to rules", exc)
+    except Exception as exc:  # noqa: BLE001
+        reason = f"llm_error: {type(exc).__name__}: {exc}"
+        logger.warning(
+            "LLM triage failed, falling back to rules",
+            reason=reason,
+            test_case_id=test_case.get("test_case_id"),
+        )
+        if routing is not None:
+            routing["mode_used"] = AnalysisMode.RULES
+            routing["fallback_from"] = AnalysisMode.LLM
+            routing["fallback_reason"] = reason[:200]
         return _classify_rules(test_case, history, run_context)

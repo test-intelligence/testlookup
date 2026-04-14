@@ -121,6 +121,15 @@ patches:
       kind: HorizontalPodAutoscaler
       name: testlookup-mcp-hpa
 
+  # ── Staging uses mutable tags (staging-latest); force fresh pulls ───────
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+    target:
+      kind: Deployment
+      labelSelector: "app.kubernetes.io/component in (api,worker,frontend)"
+
   # ── Environment configuration ─────────────────────────────────────────────
   - patch: |-
       apiVersion: v1

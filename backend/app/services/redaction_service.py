@@ -127,6 +127,14 @@ def redact_dict(data: dict | None, *, _depth: int = 0) -> dict | None:
     if not data:
         return data
     if _depth > _MAX_RECURSION_DEPTH:
+        # Depth limit protects against cycles and pathological inputs, but any
+        # PII nested below this point will pass through unredacted. Emit a
+        # single warning so the caller can spot inputs that need pre-flattening
+        # instead of silently leaking data.
+        logger.warning(
+            "redact_dict: max recursion depth %d exceeded — returning subtree unredacted",
+            _MAX_RECURSION_DEPTH,
+        )
         return data
 
     result: dict[str, Any] = {}

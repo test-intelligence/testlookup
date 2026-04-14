@@ -34,6 +34,44 @@ async def close_mongo() -> None:
         _client = None
 
 
+async def ensure_indexes() -> None:
+    """
+    Create indexes on hot-path Mongo collections.
+
+    Idempotent — safe to call on every startup. Runs in the background so a
+    transient Mongo hiccup cannot block the API lifespan. Must be kept in sync
+    with the query patterns in ``app/tools/`` and ``app/services/ingestion.py``
+    — any new lookup field needs a matching index here.
+    """
+    db = get_mongo_db()
+    specs = [
+        # Hot path: tools/fetch_rest_payload.py — lookup by test_case_id.
+        (Collections.REST_API_PAYLOADS, [("test_case_id", 1)], {}),
+        # Hot path: tools/fetch_stacktrace.py
+        (Collections.RAW_ALLURE_JSON, [("test_case_id", 1)], {}),
+        (Collections.RAW_TESTNG_XML, [("test_case_id", 1)], {}),
+        # Splunk log correlation window — by run + timestamp.
+        (Collections.EXECUTION_LOGS, [("test_run_id", 1), ("timestamp", -1)], {}),
+        # AI analysis audit — lookup per test case.
+        (Collections.AI_ANALYSIS_PAYLOADS, [("test_case_id", 1)], {}),
+        # OCP pod events correlation — by run + timestamp.
+        (Collections.OCP_POD_EVENTS, [("test_run_id", 1), ("timestamp", -1)], {}),
+        # Run summaries keyed by run_id.
+        (Collections.RUN_SUMMARIES, [("test_run_id", 1)], {"unique": True}),
+        # Live event timeline — session_id + seq.
+        (Collections.LIVE_EXECUTION_EVENTS, [("session_id", 1), ("seq", 1)], {}),
+    ]
+    for coll, keys, kwargs in specs:
+        try:
+            await db[coll].create_index(keys, background=True, **kwargs)
+        except Exception as exc:  # pragma: no cover — non-fatal
+            # Never let index creation block startup; the query path still works.
+            import logging
+            logging.getLogger("db.mongo").warning(
+                "Failed to create index on %s %s: %s", coll, keys, exc,
+            )
+
+
 # Collection name constants
 class Collections:
     RAW_ALLURE_JSON = "raw_allure_json"

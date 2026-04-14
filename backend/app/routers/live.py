@@ -66,7 +66,15 @@ class ConnectionManager:
         async def _send(ws: WebSocket) -> None:
             try:
                 await asyncio.wait_for(ws.send_text(payload), timeout=timeout)
-            except Exception:
+            except asyncio.TimeoutError:
+                logger.debug("WS broadcast timed out for project=%s, dropping connection", project_id)
+                dead.add(ws)
+            except (RuntimeError, ConnectionError):
+                # RuntimeError: WebSocket already in CLOSED state.
+                # ConnectionError: peer vanished mid-send.
+                dead.add(ws)
+            except Exception as exc:  # noqa: BLE001 — defensive: never let one dead socket poison gather
+                logger.warning("WS broadcast failed for project=%s: %s", project_id, exc)
                 dead.add(ws)
 
         await asyncio.gather(*[_send(ws) for ws in list(channel)], return_exceptions=True)
