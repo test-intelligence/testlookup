@@ -147,7 +147,7 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
     # and enqueue persist_live_session, producing duplicate log lines and —
     # depending on Celery worker timing — duplicate DB upserts.
     if session.status == "completed":
-        logger.info("close_session: already completed, skipping", session_id=session_id)
+        logger.info(f"close_session: already completed, skipping session_id={session_id}")
         return
 
     from app.streams.live_run_state import RedisLiveRunState
@@ -173,9 +173,7 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             )
         except Exception as rel_err:
             logger.warning(
-                "live_session_release_link_failed",
-                session_id=session_id,
-                error=str(rel_err),
+                f"live_session_release_link_failed session_id={session_id}: {rel_err}"
             )
 
     # stage-only: handler commits the LiveSession close, the upserted
@@ -198,12 +196,10 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             queue="ingestion",
             priority=7,
         )
-        logger.info("queued_persist_live_session", session_id=session_id)
+        logger.info(f"queued_persist_live_session session_id={session_id}")
     except Exception as exc:
         logger.warning(
-            "persist_live_session_queue_failed",
-            session_id=session_id,
-            error=str(exc),
+            f"persist_live_session_queue_failed session_id={session_id}: {exc}"
         )
 
     try:
@@ -221,15 +217,11 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             countdown=45,
         )
         logger.info(
-            "ai_pipeline_queued_from_live",
-            session_id=session_id,
-            run_id=session.run_id,
+            f"ai_pipeline_queued_from_live session_id={session_id} run_id={session.run_id}"
         )
     except Exception as exc:
         logger.warning(
-            "ai_pipeline_queue_failed",
-            session_id=session_id,
-            error=str(exc),
+            f"ai_pipeline_queue_failed session_id={session_id}: {exc}"
         )
 
 
@@ -475,9 +467,7 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         )
         db.add(run)
         logger.info(
-            "test_run_created_for_live_session",
-            run_id=str(run_uuid),
-            session_id=str(session.id),
+            f"test_run_created_for_live_session run_id={run_uuid} session_id={session.id}"
         )
     else:
         run.status = run_status
@@ -489,7 +479,5 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         run.pass_rate = pass_rate
         run.end_time = now
         logger.info(
-            "test_run_updated_for_live_session",
-            run_id=str(run_uuid),
-            session_id=str(session.id),
+            f"test_run_updated_for_live_session run_id={run_uuid} session_id={session.id}"
         )

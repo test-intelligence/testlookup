@@ -32,8 +32,7 @@ class ConnectionManager:
         if total >= settings.WS_MAX_TOTAL_CONNECTIONS:
             await websocket.close(code=1008, reason="Server connection limit reached")
             logger.warning(
-                "ws_rejected_global_limit",
-                limit=settings.WS_MAX_TOTAL_CONNECTIONS,
+                f"ws_rejected_global_limit limit={settings.WS_MAX_TOTAL_CONNECTIONS}"
             )
             return False
 
@@ -41,9 +40,8 @@ class ConnectionManager:
         if project_count >= settings.WS_MAX_CONNECTIONS_PER_PROJECT:
             await websocket.close(code=1008, reason="Project connection limit reached")
             logger.warning(
-                "ws_rejected_project_limit",
-                project_id=project_id,
-                limit=settings.WS_MAX_CONNECTIONS_PER_PROJECT,
+                f"ws_rejected_project_limit project_id={project_id} "
+                f"limit={settings.WS_MAX_CONNECTIONS_PER_PROJECT}"
             )
             return False
 
@@ -74,7 +72,7 @@ class ConnectionManager:
             try:
                 await asyncio.wait_for(ws.send_text(payload), timeout=timeout)
             except asyncio.TimeoutError:
-                logger.debug("ws_broadcast_timeout", project_id=project_id)
+                logger.debug(f"ws_broadcast_timeout project_id={project_id}")
                 dead.add(ws)
             except (RuntimeError, ConnectionError):
                 # RuntimeError: WebSocket already in CLOSED state.
@@ -82,9 +80,7 @@ class ConnectionManager:
                 dead.add(ws)
             except Exception as exc:  # noqa: BLE001 — defensive: never let one dead socket poison gather
                 logger.warning(
-                    "ws_broadcast_failed",
-                    project_id=project_id,
-                    error=str(exc),
+                    f"ws_broadcast_failed project_id={project_id}: {exc}"
                 )
                 dead.add(ws)
 

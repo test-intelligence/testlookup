@@ -53,7 +53,7 @@ async def test_ingest_batch_happy_path(client, auth_as, mock_celery_dispatch):
             {
                 "test_name": "t1",
                 "suite_name": "suite_a",
-                "status": "passed",
+                "status": "PASSED",
                 "duration_ms": 10,
             }
         ],
@@ -78,7 +78,7 @@ async def test_ingest_batch_non_member_rejected(client, auth_as, mock_celery_dis
         "project_id": str(uuid.uuid4()),  # the victim project
         "build_number": "b-1",
         "results": [
-            {"test_name": "t", "suite_name": "s", "status": "passed"}
+            {"test_name": "t", "suite_name": "s", "status": "PASSED"}
         ],
     }
     resp = await client.post("/api/v1/ingest", json=payload)
@@ -94,7 +94,7 @@ async def test_ingest_batch_admin_bypasses_membership(
         "project_id": str(uuid.uuid4()),
         "build_number": "b-1",
         "results": [
-            {"test_name": "t", "suite_name": "s", "status": "passed"}
+            {"test_name": "t", "suite_name": "s", "status": "PASSED"}
         ],
     }
     resp = await client.post("/api/v1/ingest", json=payload)
@@ -113,7 +113,7 @@ async def test_ingest_batch_project_scoped_key_must_match(
         "project_id": str(other),
         "build_number": "b-1",
         "results": [
-            {"test_name": "t", "suite_name": "s", "status": "passed"}
+            {"test_name": "t", "suite_name": "s", "status": "PASSED"}
         ],
     }
     resp = await client.post("/api/v1/ingest", json=payload)
@@ -129,7 +129,7 @@ async def test_ingest_batch_invalid_uuid_rejected(
         "project_id": "not-a-uuid",
         "build_number": "b-1",
         "results": [
-            {"test_name": "t", "suite_name": "s", "status": "passed"}
+            {"test_name": "t", "suite_name": "s", "status": "PASSED"}
         ],
     }
     resp = await client.post("/api/v1/ingest", json=payload)

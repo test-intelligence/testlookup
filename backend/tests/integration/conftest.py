@@ -133,6 +133,25 @@ class FakeAsyncSession:
         return result
 
     def add(self, obj):
+        # Real PostgreSQL fills server-default columns (``id``, ``created_at``,
+        # ``updated_at``, ``is_active``, etc.) on INSERT; the fake session must
+        # mimic that so FastAPI's ``response_model`` serialization doesn't see
+        # ``None`` values for non-optional fields. We only populate attributes
+        # that already exist on the ORM instance and are currently ``None``,
+        # so this is a no-op for anything the caller already set explicitly.
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        for attr, default in (
+            ("id", uuid.uuid4()),
+            ("created_at", now),
+            ("updated_at", now),
+            ("is_active", True),
+        ):
+            if hasattr(obj, attr) and getattr(obj, attr, None) is None:
+                try:
+                    setattr(obj, attr, default)
+                except Exception:  # noqa: BLE001 — some mapped attrs reject assignment
+                    pass
         self.added.append(obj)
 
     async def delete(self, obj):
@@ -148,6 +167,8 @@ class FakeAsyncSession:
         self.flushed += 1
 
     async def refresh(self, _obj):
+        # Noop — ``add`` already applied the fake server defaults so the
+        # instance is ready for response_model serialization.
         pass
 
     def begin_nested(self):
@@ -200,7 +221,7 @@ def override_db(fake_db: FakeAsyncSession) -> Iterator[FakeAsyncSession]:
 
 
 @pytest.fixture
-def auth_as():
+def auth_as(monkeypatch):
     """
     Factory that installs auth dependency overrides for a given user.
 
@@ -209,6 +230,13 @@ def auth_as():
         async def test_x(client, auth_as):
             user = auth_as(role=UserRole.ADMIN)
             resp = await client.get("/api/v1/auth/me")
+
+    In addition to swapping the FastAPI dependencies, the factory patches
+    ``app.core.deps.get_accessible_project_ids`` directly because
+    ``resolve_project_scope`` calls it as a regular Python function — the
+    FastAPI ``dependency_overrides`` map only substitutes DI resolutions, not
+    direct imports. Without the monkeypatch, the real implementation queries
+    the DB and returns empty, so every non-admin test sees 403.
     """
     if not HAVE_INTEGRATION_DEPS:
         pytest.skip("integration deps not installed")
@@ -229,6 +257,18 @@ def auth_as():
         async def _current():
             return user
 
+        async def _current_active():
+            # Mirror ``get_current_active_user``: reject inactive users with
+            # a 403 instead of silently returning them. Tests that pass
+            # ``is_active=False`` rely on this guard.
+            if not user.is_active:
+                from fastapi import HTTPException, status as _s
+                raise HTTPException(
+                    status_code=_s.HTTP_403_FORBIDDEN,
+                    detail="Inactive user",
+                )
+            return user
+
         async def _accessible(_db, _user):
             # ADMIN sees everything (None); others see the supplied set.
             if role == UserRole.ADMIN:
@@ -244,10 +284,18 @@ def auth_as():
         # missing Authorization header, and returns 401 before the handler
         # ever gets to its own auth dep. Override it too.
         app.dependency_overrides[get_current_user] = _current
-        app.dependency_overrides[get_current_active_user] = _current
-        app.dependency_overrides[get_current_user_or_api_key] = _current
+        app.dependency_overrides[get_current_active_user] = _current_active
+        app.dependency_overrides[get_current_user_or_api_key] = _current_active
         app.dependency_overrides[get_accessible_project_ids] = _accessible
         app.dependency_overrides[get_api_key_context] = _api_key_ctx
+
+        # Also patch the direct import so ``resolve_project_scope`` (which
+        # calls get_accessible_project_ids as a regular function) sees the
+        # same scripted accessible set as the DI path. Monkeypatch's cleanup
+        # runs at fixture teardown.
+        monkeypatch.setattr(
+            "app.core.deps.get_accessible_project_ids", _accessible
+        )
         installed.append(user)
         return user
 
