@@ -87,9 +87,15 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "unit of work; commit at the end of the full parse/persist cycle.",
     ),
     "ingestion_pipeline.py": (
-        1,
-        "Same as ingestion.py — outermost orchestration layer used by "
-        "both the ingest router and Celery tasks.",
+        2,
+        "Outermost orchestration used by both the ingest router and Celery "
+        "tasks. After the 2026-04-14 data-corruption fix, finalize_run commits "
+        "the run-aggregates update in its own session and then runs each "
+        "post-step (suite_sync, auto_tagging, release_linking) in a "
+        "``_run_isolated`` helper that commits per step — the helper contains "
+        "the second commit. A single-commit model re-introduced the bug where "
+        "a failing post-step left the SQLAlchemy session in a rollback-required "
+        "state and poisoned subsequent steps.",
     ),
     "integration_probe_service.py": (
         1,

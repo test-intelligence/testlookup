@@ -348,4 +348,4 @@ class BaseAgent(ABC):
                 {"type": "pipeline_progress", "stage": self.stage_name, **payload},
             )
         except Exception as exc:
-            self.logger.debug("WebSocket broadcast failed (non-critical): %s", exc)
+            self.logger.debug("ws_broadcast_failed", error=str(exc))

@@ -47,6 +47,7 @@ try:
         get_api_key_context,
         get_current_active_user,
         get_current_user,
+        get_current_user_or_api_key,
         get_db,
     )
     from app.main import app
@@ -68,12 +69,17 @@ def make_user(
     user_id: uuid.UUID | None = None,
 ) -> SimpleNamespace:
     """Build a stand-in for app.models.postgres.User with the fields routers read."""
+    from datetime import datetime, timezone
     if role is None and HAVE_INTEGRATION_DEPS:
         role = UserRole.QA_ENGINEER
     role_value = role.value if hasattr(role, "value") else str(role) if role else "QA_ENGINEER"
+    now = datetime.now(timezone.utc)
     return SimpleNamespace(
         id=user_id or uuid.uuid4(),
-        email=f"user-{uuid.uuid4().hex[:6]}@test.local",
+        # Use a non-reserved domain (example.com) so pydantic's email-validator
+        # accepts it — ``.local`` is special-use per IETF and some newer
+        # email-validator versions reject it during serialization/parsing.
+        email=f"user-{uuid.uuid4().hex[:6]}@example.com",
         username=f"user_{uuid.uuid4().hex[:6]}",
         full_name="Test User",
         hashed_password="$2b$fake",
@@ -81,6 +87,8 @@ def make_user(
         is_active=is_active,
         must_change_password=must_change_password,
         avatar_color=None,
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -230,8 +238,14 @@ def auth_as():
         async def _api_key_ctx():
             return user, bound_project_id
 
+        # ``get_current_user_or_api_key`` is injected as a router-level
+        # dependency on every PROTECTED router by bootstrap.py. Without an
+        # override it runs on every request to a protected path, reads a
+        # missing Authorization header, and returns 401 before the handler
+        # ever gets to its own auth dep. Override it too.
         app.dependency_overrides[get_current_user] = _current
         app.dependency_overrides[get_current_active_user] = _current
+        app.dependency_overrides[get_current_user_or_api_key] = _current
         app.dependency_overrides[get_accessible_project_ids] = _accessible
         app.dependency_overrides[get_api_key_context] = _api_key_ctx
         installed.append(user)
@@ -242,6 +256,7 @@ def auth_as():
     for dep in (
         get_current_user,
         get_current_active_user,
+        get_current_user_or_api_key,
         get_accessible_project_ids,
         get_api_key_context,
     ):

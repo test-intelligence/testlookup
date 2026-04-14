@@ -172,7 +172,11 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
                 test_run_id=uuid.UUID(session.run_id),
             )
         except Exception as rel_err:
-            logger.warning("Release linking failed for live session %s: %s", session_id, rel_err)
+            logger.warning(
+                "live_session_release_link_failed",
+                session_id=session_id,
+                error=str(rel_err),
+            )
 
     # stage-only: handler commits the LiveSession close, the upserted
     # TestRun, and any release link together.
@@ -194,9 +198,13 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             queue="ingestion",
             priority=7,
         )
-        logger.info("Queued persist_live_session for session %s", session_id)
+        logger.info("queued_persist_live_session", session_id=session_id)
     except Exception as exc:
-        logger.warning("Failed to queue persist_live_session for session %s: %s", session_id, exc)
+        logger.warning(
+            "persist_live_session_queue_failed",
+            session_id=session_id,
+            error=str(exc),
+        )
 
     try:
         from app.worker.tasks import run_agent_pipeline
@@ -212,9 +220,17 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             priority=6,
             countdown=45,
         )
-        logger.info("Queued AI pipeline for session %s (run %s)", session_id, session.run_id)
+        logger.info(
+            "ai_pipeline_queued_from_live",
+            session_id=session_id,
+            run_id=session.run_id,
+        )
     except Exception as exc:
-        logger.warning("Failed to queue AI pipeline for session %s: %s", session_id, exc)
+        logger.warning(
+            "ai_pipeline_queue_failed",
+            session_id=session_id,
+            error=str(exc),
+        )
 
 
 async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
@@ -458,7 +474,11 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
             end_time=now,
         )
         db.add(run)
-        logger.info("Created TestRun %s for live session %s", run_uuid, session.id)
+        logger.info(
+            "test_run_created_for_live_session",
+            run_id=str(run_uuid),
+            session_id=str(session.id),
+        )
     else:
         run.status = run_status
         run.total_tests = total
@@ -468,4 +488,8 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         run.broken_tests = broken
         run.pass_rate = pass_rate
         run.end_time = now
-        logger.info("Updated TestRun %s for live session %s", run_uuid, session.id)
+        logger.info(
+            "test_run_updated_for_live_session",
+            run_id=str(run_uuid),
+            session_id=str(session.id),
+        )

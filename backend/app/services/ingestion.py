@@ -389,7 +389,7 @@ async def _store_raw_allure_batch(docs: list[tuple[dict, dict]]) -> None:
     try:
         await db[Collections.RAW_ALLURE_JSON].bulk_write(operations, ordered=False)
     except Exception as e:
-        logger.warning("MongoDB bulk_write failed, falling back to individual writes: %s", e)
+        logger.warning("mongo_bulk_write_fallback", error=str(e))
         for case_data, raw_json in docs:
             await _store_raw_allure(case_data, raw_json)
 

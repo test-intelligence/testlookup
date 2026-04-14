@@ -95,6 +95,19 @@ async def test_release_linker_link_run_idempotent():
         def add(self, obj):
             self.added.append(obj)
 
+        async def flush(self):
+            pass
+
+        def begin_nested(self):
+            # ``link_run_to_release`` wraps the INSERT in a SAVEPOINT to tolerate
+            # concurrent race winners. Provide a minimal async-context-manager
+            # stand-in so the unit test doesn't need a real SQLAlchemy session.
+            from unittest.mock import AsyncMock
+            sp = AsyncMock()
+            sp.__aenter__ = AsyncMock(return_value=sp)
+            sp.__aexit__ = AsyncMock(return_value=False)
+            return sp
+
     with patch.dict(
         "sys.modules",
         {"app.models.postgres": SimpleNamespace(Release=object, ReleaseTestRunLink=FakeLink)},

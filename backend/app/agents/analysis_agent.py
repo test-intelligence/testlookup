@@ -96,7 +96,7 @@ class AnalysisAgent(BaseAgent):
         try:
             results_list = await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as gather_exc:
-            logger.error("asyncio.gather failed unexpectedly: %s", gather_exc)
+            logger.error("asyncio_gather_failed", error=str(gather_exc))
             results_list = [gather_exc] * len(prioritized_ids)
 
         analyses: dict[str, dict] = {}
@@ -232,9 +232,9 @@ class AnalysisAgent(BaseAgent):
             and _MAX_ANALYSIS_RETRIES > 0
         ):
             logger.info(
-                "Low confidence (%d) for %s — retrying analysis",
-                result.get("confidence_score", 0),
-                tc_id,
+                "low_confidence_retry",
+                confidence_score=result.get("confidence_score", 0),
+                test_case_id=tc_id,
             )
             retry_result = await self._analyse_one(semaphore, tc_id, meta, state)
             # Keep the result with higher confidence
@@ -320,12 +320,18 @@ class AnalysisAgent(BaseAgent):
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "ReAct agent timed out after %ds for test %s — using progressive fallback",
-                        settings.AI_TIMEOUT_SECONDS, tc_id,
+                        "react_agent_timeout",
+                        timeout_seconds=settings.AI_TIMEOUT_SECONDS,
+                        test_case_id=tc_id,
+                        fallback="progressive",
                     )
                     analysis = await self._build_progressive_fallback(tc_id, meta)
                 except Exception as exc:
-                    logger.error("ReAct agent failed for %s: %s", tc_id, exc)
+                    logger.error(
+                        "react_agent_failed",
+                        test_case_id=tc_id,
+                        error=str(exc),
+                    )
                     analysis = self._build_error_analysis(exc)
 
             # Attach flakiness data from historical enrichment for P2-6 validation
@@ -418,7 +424,7 @@ class AnalysisAgent(BaseAgent):
 
                 return meta
         except Exception as db_exc:
-            logger.error("Failed to fetch test metadata: %s", db_exc)
+            logger.error("fetch_test_metadata_failed", error=str(db_exc))
             return {}
 
     async def _enrich_historical_counts(
@@ -452,7 +458,7 @@ class AnalysisAgent(BaseAgent):
                     meta[tc_id]["historical_failure_count"] = stats["fail_count"]
                     meta[tc_id]["flakiness_data"] = stats
         except Exception as exc:
-            logger.debug("Historical count enrichment failed (non-critical): %s", exc)
+            logger.debug("historical_count_enrichment_failed", error=str(exc))
 
     async def _enrich_stack_traces(
         self, meta: dict[str, dict], tc_ids: list[str]
@@ -472,7 +478,7 @@ class AnalysisAgent(BaseAgent):
                     if trace:
                         meta[tc_id]["stack_trace"] = trace
         except Exception as exc:
-            logger.debug("Stack trace enrichment from MongoDB failed (non-critical): %s", exc)
+            logger.debug("stack_trace_enrichment_failed", error=str(exc))
 
     def _validate_confidence(self, analysis: dict) -> dict:
         """
@@ -612,17 +618,21 @@ class AnalysisAgent(BaseAgent):
             if quick is not None:
                 quick["fallback_tier"] = 1
                 quick["fallback_reason"] = "timeout_fast_classifier"
-                logger.info("Progressive fallback tier 1 succeeded for %s", tc_id)
+                logger.info("progressive_fallback_tier1_ok", test_case_id=tc_id)
                 return quick
         except Exception as exc:
-            logger.debug("Progressive fallback tier 1 failed for %s: %s", tc_id, exc)
+            logger.debug(
+                "progressive_fallback_tier1_failed",
+                test_case_id=tc_id,
+                error=str(exc),
+            )
 
         # Tier 2: Pattern-based heuristic
         heuristic = self._pattern_based_analysis(error_msg, test_name)
         if heuristic["failure_category"] != self.UNKNOWN_CATEGORY:
             heuristic["fallback_tier"] = 2
             heuristic["fallback_reason"] = "timeout_pattern_match"
-            logger.info("Progressive fallback tier 2 succeeded for %s", tc_id)
+            logger.info("progressive_fallback_tier2_ok", test_case_id=tc_id)
             return heuristic
 
         # Tier 3: Generic fallback
@@ -828,5 +838,8 @@ class AnalysisAgent(BaseAgent):
                     await db.commit()
             except Exception as exc:
                 logger.error(
-                    "Batch upsert failed for chunk %d-%d: %s", i, i + len(chunk), exc
+                    "batch_upsert_failed",
+                    chunk_start=i,
+                    chunk_end=i + len(chunk),
+                    error=str(exc),
                 )

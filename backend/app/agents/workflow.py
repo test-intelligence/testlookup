@@ -70,8 +70,9 @@ async def analysis_node(state: WorkflowState) -> dict:
     if not state.get("failed_test_ids"):
         pipeline_run_id = state.get("pipeline_run_id", "")
         logger.info(
-            "Pipeline %s: no failures — skipping root_cause_analysis (fast-path)",
-            pipeline_run_id,
+            "fast_path_skip",
+            stage="root_cause_analysis",
+            pipeline_run_id=pipeline_run_id,
         )
         await _write_stage_skipped(
             pipeline_run_id,
@@ -103,8 +104,9 @@ async def cluster_node(state: WorkflowState) -> dict:
     if not state.get("failed_test_ids"):
         pipeline_run_id = state.get("pipeline_run_id", "")
         logger.info(
-            "Pipeline %s: no failures — skipping failure_clustering (fast-path)",
-            pipeline_run_id,
+            "fast_path_skip",
+            stage="failure_clustering",
+            pipeline_run_id=pipeline_run_id,
         )
         await _write_stage_skipped(
             pipeline_run_id,
@@ -455,7 +457,12 @@ async def _checkpoint_stage(pipeline_run_id: str, stage_name: str, stage_output:
                 stage.checkpoint_data = _safe_serialize(stage_output)
                 await db.commit()
     except Exception as exc:
-        logger.warning("Checkpoint write failed for %s/%s: %s", pipeline_run_id, stage_name, exc)
+        logger.warning(
+            "checkpoint_write_failed",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error=str(exc),
+        )
 
 
 async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dict]:
@@ -514,7 +521,11 @@ async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dic
                 return merged_state
 
     except Exception as exc:
-        logger.warning("Checkpoint load failed for test_run %s: %s", test_run_id, exc)
+        logger.warning(
+            "checkpoint_load_failed",
+            test_run_id=test_run_id,
+            error=str(exc),
+        )
 
     return None
 
@@ -546,7 +557,7 @@ def _make_checkpointed_node(original_node, stage_name: str):
         # Skip if this stage was loaded from a checkpoint
         checkpoint_stages = cast(list[str], state.get("_checkpoint_stages", []))
         if stage_name in checkpoint_stages:
-            logger.info("Skipping stage '%s' — restored from checkpoint", stage_name)
+            logger.info("stage_restored_from_checkpoint", stage_name=stage_name)
             await emit_event(
                 pipeline_run_id, "checkpoint_restored",
                 stage_name=stage_name,
@@ -558,11 +569,16 @@ def _make_checkpointed_node(original_node, stage_name: str):
         except Exception as exc:
             # Mark the individual stage as failed so it doesn't stay stuck in "running"
             error_msg = f"{stage_name} failed: {exc}"
-            logger.error("Stage '%s' raised an exception: %s", stage_name, exc, exc_info=True)
+            logger.error(
+                "stage_unhandled_exception",
+                stage_name=stage_name,
+                error=str(exc),
+                exc_info=True,
+            )
             try:
                 await _mark_stage_failed(pipeline_run_id, stage_name, error_msg)
             except Exception:
-                logger.warning("Failed to mark stage '%s' as failed in DB", stage_name)
+                logger.warning("mark_stage_failed_db_error", stage_name=stage_name)
             raise
 
         # Persist checkpoint
@@ -806,7 +822,12 @@ async def _write_stage_skipped(
                 stage.execution_path = execution_path.value
                 await db.commit()
     except Exception as exc:
-        logger.warning("Could not write skipped stage metadata for %s/%s: %s", pipeline_run_id, stage_name, exc)
+        logger.warning(
+            "skipped_stage_write_failed",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error=str(exc),
+        )
 
 
 async def _mark_stage_failed(
@@ -839,7 +860,12 @@ async def _mark_stage_failed(
             detail={"error": error[:500]},
         )
     except Exception as exc:
-        logger.warning("Could not mark stage %s/%s as failed: %s", pipeline_run_id, stage_name, exc)
+        logger.warning(
+            "mark_stage_failed_error",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error=str(exc),
+        )
 
 
 async def _persist_memory(
@@ -857,10 +883,18 @@ async def _persist_memory(
                 db, project_id, test_run_id, pipeline_run_id, final_state,
             )
             if count:
-                logger.info("Persisted %d memory entries for pipeline %s", count, pipeline_run_id)
+                logger.info(
+                    "persisted_memory_entries",
+                    count=count,
+                    pipeline_run_id=pipeline_run_id,
+                )
     except Exception as exc:
         # Memory persistence is non-critical — don't fail the pipeline
-        logger.warning("Memory persistence failed for pipeline %s: %s", pipeline_run_id, exc)
+        logger.warning(
+            "memory_persistence_failed",
+            pipeline_run_id=pipeline_run_id,
+            error=str(exc),
+        )
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────

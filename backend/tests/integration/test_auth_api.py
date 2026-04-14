@@ -59,7 +59,10 @@ async def test_register_creates_qa_engineer_with_must_change_password(
     ])
 
     payload = {
-        "email": "newuser@test.local",
+        # ``.local`` is reserved under RFC 2606; pydantic's email-validator
+        # rejects it at serialization, so use example.com (also reserved for
+        # test use but explicitly permitted by the validator).
+        "email": "newuser@example.com",
         "username": "newuser",
         "full_name": "New User",
         "password": "ValidPass123!",
@@ -69,7 +72,7 @@ async def test_register_creates_qa_engineer_with_must_change_password(
 
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["email"] == "newuser@test.local"
+    assert body["email"] == "newuser@example.com"
     assert body["role"] in {"QA_ENGINEER", UserRole.QA_ENGINEER.value}
     assert body["must_change_password"] is True
     assert fake_db.committed >= 1  # the new User was committed
@@ -93,7 +96,7 @@ async def test_register_rejects_duplicate_email(client, override_db, fake_db):
 
 async def test_register_rejects_short_password(client, override_db):
     payload = {
-        "email": "x@test.local",
+        "email": "x@example.com",
         "username": "shortpw",
         "full_name": "X",
         "password": "abc",  # < min_length=8

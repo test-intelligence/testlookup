@@ -66,7 +66,7 @@ async def _probe_ollama_model_async() -> bool | None:
             for name in installed
         )
     except Exception as exc:
-        logger.debug("Ollama probe failed: %s", exc)
+        logger.debug("ollama_probe_failed", error=str(exc))
         return None
 
 

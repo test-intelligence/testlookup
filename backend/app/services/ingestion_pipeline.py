@@ -146,7 +146,11 @@ async def finalize_run(
                 await step_db.commit()
             except Exception as e:
                 await step_db.rollback()
-                logger.warning("%s failed (non-blocking): %s", step_name, e)
+                logger.warning(
+                    "isolated_step_failed",
+                    step=step_name,
+                    error=str(e),
+                )
 
     from app.services.suite_sync_service import sync_suite_membership
     from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
@@ -198,7 +202,7 @@ async def finalize_run(
             project_name=result_proj.name if result_proj else str(pid),
         )
     except Exception as e:
-        logger.warning("Failed to enqueue notifications: %s", e)
+        logger.warning("notification_enqueue_failed", error=str(e))
 
     # Trigger agent pipeline
     try:
@@ -209,6 +213,6 @@ async def finalize_run(
             build_number=build_number,
             workflow_type="offline",
         )
-        logger.info("Agent pipeline queued for run %s", run_id)
+        logger.info("agent_pipeline_queued", run_id=run_id)
     except Exception as e:
-        logger.warning("Failed to queue agent pipeline: %s", e)
+        logger.warning("agent_pipeline_queue_failed", error=str(e))
