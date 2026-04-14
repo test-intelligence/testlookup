@@ -855,9 +855,18 @@ def dispatch_ai_summary_email(
                             "executive_panel": executive_panel,
                         },
                     )
-                    # Update delivery tracking
-                    sub.delivery_count = (sub.delivery_count or 0) + 1
-                    sub.last_delivered_at = datetime.now(timezone.utc)
+                    # Update delivery tracking atomically so concurrent
+                    # PER_RUN dispatches (different runs landing at the same
+                    # time) cannot lose a delivery_count increment.
+                    from sqlalchemy import update as _sql_update
+                    await db.execute(
+                        _sql_update(DigestSubscription)
+                        .where(DigestSubscription.id == sub.id)
+                        .values(
+                            delivery_count=DigestSubscription.delivery_count + 1,
+                            last_delivered_at=datetime.now(timezone.utc),
+                        )
+                    )
                     await db.commit()
                     logger.debug("[AI Email] Per-run email sent to %s for run %s (sub %s)", user.email, test_run_id, sub.id)
         except Exception as sub_exc:
@@ -1292,7 +1301,7 @@ def dispatch_scheduled_digests(self):
     logger.info("[Task %s] Dispatching scheduled digests", self.request.id)
 
     async def _dispatch():
-        from sqlalchemy import select
+        from sqlalchemy import select, update
 
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import DigestSubscription, NotificationLog, User
@@ -1300,38 +1309,87 @@ def dispatch_scheduled_digests(self):
 
         now = datetime.now(timezone.utc)
 
+        # Step 1: discover due subscriptions. We only read IDs here; the actual
+        # claim happens per-row via an atomic UPDATE so concurrent invocations
+        # of this task (beat hiccup, worker retry, manual trigger) cannot
+        # double-dispatch the same email.
         async with AsyncSessionLocal() as db:
-            # Find subscriptions due for delivery
-            # Only process time-based subscriptions (DAILY, WEEKLY).
-            # Event-driven subscriptions (PER_RUN, PER_RELEASE, PER_SUITE)
-            # are dispatched by their respective event triggers.
-            result = await db.execute(
-                select(DigestSubscription).where(
-                    DigestSubscription.is_active == True,  # noqa: E712
-                    DigestSubscription.is_paused == False,  # noqa: E712
+            discovery = await db.execute(
+                select(DigestSubscription.id, DigestSubscription.schedule).where(
+                    DigestSubscription.is_active.is_(True),
+                    DigestSubscription.is_paused.is_(False),
                     DigestSubscription.next_delivery_at <= now,
                     DigestSubscription.schedule.in_(["DAILY", "WEEKLY"]),
                 )
             )
-            subs = result.scalars().all()
-            logger.info("Found %d digest subscriptions due for delivery", len(subs))
+            due = discovery.all()
+        logger.info("Found %d digest subscriptions due for delivery", len(due))
 
-            for sub in subs:
-                try:
-                    period = "daily" if sub.schedule == "DAILY" else "weekly"
-                    digest = await generate_digest(db, sub.project_id, period)
+        # Step 2: for each candidate, try to atomically CLAIM it by advancing
+        # next_delivery_at in the same UPDATE that still sees it as due. A
+        # concurrent worker that already claimed the row will find its WHERE
+        # clause false and get rowcount=0 — we skip those.
+        #
+        # We deliberately advance next_delivery_at BEFORE sending the email.
+        # If the send fails later we log the failure but do NOT revert the
+        # claim: missing a digest (which the user can manually re-trigger) is
+        # always better than spamming users with duplicates because a crash
+        # between send and commit left the row "still due".
+        for sub_id, schedule in due:
+            delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
+            period = "daily" if schedule == "DAILY" else "weekly"
+
+            # Each claim runs in its own short transaction so the UPDATE is
+            # visible to sibling workers immediately.
+            async with AsyncSessionLocal() as claim_db:
+                claim = await claim_db.execute(
+                    update(DigestSubscription)
+                    .where(
+                        DigestSubscription.id == sub_id,
+                        DigestSubscription.is_active.is_(True),
+                        DigestSubscription.is_paused.is_(False),
+                        DigestSubscription.next_delivery_at <= now,
+                    )
+                    .values(
+                        last_delivered_at=now,
+                        next_delivery_at=now + delta,
+                        delivery_count=DigestSubscription.delivery_count + 1,
+                    )
+                    .returning(
+                        DigestSubscription.user_id,
+                        DigestSubscription.project_id,
+                        DigestSubscription.channel,
+                    )
+                )
+                claimed = claim.first()
+                await claim_db.commit()
+
+            if claimed is None:
+                # Another worker won the race for this subscription.
+                continue
+            user_id, project_id, channel = claimed
+
+            # Step 3: actually deliver. A failure here only affects the log
+            # row — the claim is already persisted so we will not retry at
+            # the next beat tick.
+            status = "sent"
+            try:
+                async with AsyncSessionLocal() as db:
+                    digest = await generate_digest(db, project_id, period)
                     html_body = render_digest_html(digest)
 
-                    # Get user email
                     user_result = await db.execute(
-                        select(User).where(User.id == sub.user_id)
+                        select(User).where(User.id == user_id)
                     )
                     user = user_result.scalar_one_or_none()
                     if not user:
+                        logger.warning(
+                            "Claimed subscription %s references missing user %s",
+                            sub_id, user_id,
+                        )
                         continue
 
-                    # Dispatch via email (primary channel for digests)
-                    if sub.channel == "email":
+                    if channel == "email":
                         try:
                             from app.services.notification.email_service import send_email
                             await send_email(
@@ -1339,34 +1397,23 @@ def dispatch_scheduled_digests(self):
                                 subject=f"TestLookup — {period.title()} Quality Digest",
                                 html_body=html_body,
                             )
-                            status = "sent"
                         except Exception as e:
                             status = "failed"
                             logger.warning("Digest email failed for %s: %s", user.email, e)
-                    else:
-                        status = "sent"  # Slack/Teams handled by notification manager
+                    # Slack/Teams handled by notification manager; status stays "sent".
 
-                    # Log delivery
                     db.add(NotificationLog(
-                        user_id=sub.user_id,
-                        project_id=sub.project_id,
-                        channel=sub.channel,
+                        user_id=user_id,
+                        project_id=project_id,
+                        channel=channel,
                         event_type="digest_delivery",
                         title=f"{period.title()} Quality Digest",
                         body=f"Digest for {digest.get('project_name', 'All Projects')}",
                         status=status,
                     ))
-
-                    # Update subscription
-                    sub.last_delivered_at = now
-                    sub.delivery_count = (sub.delivery_count or 0) + 1
-                    delta = timedelta(days=1) if sub.schedule == "DAILY" else timedelta(weeks=1)
-                    sub.next_delivery_at = now + delta
-
-                except Exception as exc:
-                    logger.error("Digest delivery failed for subscription %s: %s", sub.id, exc)
-
-            await db.commit()
+                    await db.commit()
+            except Exception as exc:
+                logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
 
     _run_async(_dispatch())
     logger.info("[Task %s] Digest dispatch completed", self.request.id)
