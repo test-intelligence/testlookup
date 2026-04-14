@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Bot, ChevronDown, ChevronUp,
@@ -57,7 +57,7 @@ function SessionItem({
 
 // ── Message bubble ─────────────────────────────────────────────────────────
 
-function MessageBubble({ role, content, sources }: {
+const MessageBubble = memo(function MessageBubble({ role, content, sources }: {
   role: 'user' | 'assistant'
   content: string
   sources?: Array<{ type: string; id?: string }> | null
@@ -100,7 +100,7 @@ function MessageBubble({ role, content, sources }: {
       </div>
     </div>
   )
-}
+})
 
 // ── Run summary card ───────────────────────────────────────────────────────
 
