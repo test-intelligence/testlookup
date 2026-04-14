@@ -135,14 +135,6 @@ export function getInstanceChartType(instance: VisualizationInstance): ChartType
   return getWidgetDef(instance.templateId)?.chartType
 }
 
-/**
- * Backward compat: convert a legacy widget ID array to instances.
- * Each ID becomes a default instance with no user overrides.
- */
-export function migrateWidgetIds(ids: string[]): VisualizationInstance[] {
-  return ids.map(id => createInstance(id))
-}
-
 /** Get default instances for a page (from defaultEnabled templates). */
 export function getDefaultInstances(page: string): VisualizationInstance[] {
   return getPageWidgets(page)

@@ -202,22 +202,36 @@ async def test_recompute_plan_counts_updates_all_aggregates():
 
 @pytest.mark.asyncio
 async def test_list_project_runs_enriches_paginated_runs():
+    """After the load-test pagination optimization, ``list_project_runs``
+    issues two direct queries (count + items with LEFT JOIN on Project)
+    instead of calling the generic ``paginate_query`` + a separate
+    ``fetch_project_name_map`` round-trip. The release map is still
+    fetched separately because release links aren't UNIQUE.
+    """
     run_id = uuid.uuid4()
     run = _fake_run(run_id, status="failed")
-    db = FakeAsyncDB([])
 
-    with (
-        patch.object(runs_service, "paginate_query", AsyncMock(return_value=([run], 1, 1))),
-        patch.object(
-            runs_service,
-            "fetch_release_map",
-            AsyncMock(return_value={str(run_id): {"id": "rel-1", "name": "Release 1"}}),
-        ),
-        patch.object(
-            runs_service,
-            "fetch_project_name_map",
-            AsyncMock(return_value={}),
-        ),
+    # Items query returns Row objects with the TestRun at index 0 and
+    # ``project_name`` exposed as a labeled column attribute. SQLAlchemy
+    # rows support both indexing (``row[0]``) and attribute access
+    # (``row.project_name``); the fake mirrors that contract.
+    class _FakeRow:
+        def __init__(self, run_obj, project_name):
+            self._run = run_obj
+            self.project_name = project_name
+
+        def __getitem__(self, idx):
+            return (self._run, self.project_name)[idx]
+
+    db = FakeAsyncDB([
+        FakeExecuteResult(scalar=1),                                  # count
+        FakeExecuteResult(rows=[_FakeRow(run, "Checkout")]),          # items
+    ])
+
+    with patch.object(
+        runs_service,
+        "fetch_release_map",
+        AsyncMock(return_value={str(run_id): {"id": "rel-1", "name": "Release 1"}}),
     ):
         items, total, pages = await runs_service.list_project_runs(db, "project-1", 1, 20, "FAILED", None)
 

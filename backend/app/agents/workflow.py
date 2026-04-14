@@ -326,7 +326,7 @@ def _build_live_graph() -> StateGraph:
     """
     Lightweight post-live-run graph: skip anomaly detection and full analysis,
     just generate a summary from the live monitor's aggregated state.
-    Used when LiveMonitorAgent triggers a pipeline after run_complete.
+    Used when the live run consumer triggers a pipeline after run_complete.
     """
     graph = StateGraph(WorkflowState)
 

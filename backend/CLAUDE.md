@@ -290,7 +290,7 @@ analysis_agent._analyse_one()
 ### Key files
 - `services/analysis_router.py` — central dispatcher, mode resolution, fallback chain
 - `services/rules_engine.py` — 14 keyword patterns + historical flakiness + regression + suite-level + template summaries
-- `services/ml/feature_extractor.py` — 32-feature numeric vector (FEATURE_NAMES list defines canonical order)
+- `services/ml/feature_extractor.py` — 31-feature numeric vector (FEATURE_NAMES list defines canonical order)
 - `services/ml/classifier.py` — scikit-learn HistGradientBoosting wrapper, ~2ms/test, model cached per-process
 - `services/ml/summary_generator.py` — enriches rules templates with ML metadata
 - `services/ml/trainer.py` — gathers labeled data, trains model, saves .joblib, evaluates on holdout

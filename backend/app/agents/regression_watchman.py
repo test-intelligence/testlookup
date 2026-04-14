@@ -35,7 +35,7 @@ from app.services.category_normalizer import normalize_category
 from app.models.llm_schemas import ClusterClassification, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
-from app.services.prompt_redaction import redact_text
+from app.services.redaction_service import redact_text
 
 _LLM_CLASSIFY_TIMEOUT = min(90, settings.AI_TIMEOUT_SECONDS)
 

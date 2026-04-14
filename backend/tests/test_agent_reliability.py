@@ -184,7 +184,7 @@ class TestRegressionWatchmanClassification:
 # WS4: Prompt redaction tests
 # ============================================================================
 
-from app.services.prompt_redaction import redact_text, redact_dict  # noqa: E402
+from app.services.redaction_service import redact_text, redact_dict  # noqa: E402
 
 
 class TestPromptRedaction:

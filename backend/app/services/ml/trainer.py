@@ -7,7 +7,7 @@ Data sources:
 
 Training pipeline:
   1. Query labeled data from PostgreSQL (with full history + run context)
-  2. Extract complete 32-feature vectors for all samples
+  2. Extract complete 31-feature vectors for all samples
   3. Compute class weights for imbalanced category handling
   4. Train HistGradientBoostingClassifier with stratified 5-fold cross-validation
   5. Select best hyperparameters via RandomizedSearchCV

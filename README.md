@@ -22,7 +22,7 @@ It also ships a first-class **MCP (Model Context Protocol) server** so AI assist
 |--------|-----------|
 | **Ingestion** | TestNG, JUnit, Allure, Cucumber, pytest, Robot Framework, JUnit XML (universal) |
 | **AI Triage** | LangChain ReAct agent · 5 investigation tools · Ollama/OpenAI/Gemini |
-| **ML Analysis Engine** | LLM-free test analysis using trained ML classifiers (scikit-learn) or rule-based heuristics · 32-feature Gradient Boosted Trees · ~2ms/test · 100K tests/day on a single core · admin-configurable via Settings UI |
+| **ML Analysis Engine** | LLM-free test analysis using trained ML classifiers (scikit-learn) or rule-based heuristics · 31-feature Gradient Boosted Trees · ~2ms/test · 100K tests/day on a single core · admin-configurable via Settings UI |
 | **Analysis Modes** | **LLM** (full ReAct agent) · **ML** (trained classifier, no LLM) · **Rules** (pattern matching, zero deps) · **Auto** (smart fallback chain) — toggle via `ANALYSIS_MODE` env var or Settings > AI Configuration |
 | **RAG Test Generation** | Knowledge-grounded test case generation from Jira, Confluence, URLs, documents · citation tracking · requirement coverage · staleness detection |
 | **Deep Investigation** | Multi-agent network (LangGraph) — semantic clustering, distributed trace reconstruction, log anomaly detection, API contract validation, flaky lifecycle, test health scoring |

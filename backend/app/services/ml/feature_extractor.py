@@ -1,8 +1,8 @@
 """
 ML Feature Extractor — builds a fixed-size numeric feature vector from test case data.
 
-Produces 32 features across 4 groups:
-  Group 1: Error message signals (13 features — keywords, text stats, stack trace)
+Produces 31 features across 4 groups:
+  Group 1: Error message signals (12 features — keywords, text stats, stack trace)
   Group 2: Test execution context (7 numeric features)
   Group 3: Historical signals (8 features from TestCaseHistory)
   Group 4: Environment signals (4 run-level features)
@@ -14,7 +14,7 @@ models without additional encoding. Missing values are represented as -1 or 0
 Usage:
     from app.services.ml.feature_extractor import extract_features
     features = extract_features(test_case_dict, history_dict, run_context_dict)
-    # features: dict with 32 keys, all numeric values
+    # features: dict with 31 keys, all numeric values
 """
 import math
 import re
@@ -47,7 +47,6 @@ FEATURE_NAMES: list[str] = [
     "has_element_keyword",
     "has_setup_keyword",
     "has_http_error_keyword",
-    "has_stack_trace",
     # Group 2: Execution context
     "duration_ms",
     "duration_vs_median_ratio",
@@ -93,7 +92,7 @@ def extract_features(
     history: dict[str, Any] | None = None,
     run_context: dict[str, Any] | None = None,
 ) -> dict[str, float]:
-    """Extract a 32-feature numeric vector from test case data.
+    """Extract a 31-feature numeric vector from test case data.
 
     Args:
         test_case: Dict with error_message, duration_ms, severity, etc.
@@ -103,7 +102,7 @@ def extract_features(
                      cross_suite_failure_rate, same_error_count, start_time.
 
     Returns:
-        Dict mapping feature name → numeric value. All 32 features guaranteed present.
+        Dict mapping feature name → numeric value. All 31 features guaranteed present.
     """
     history = history or {}
     run_context = run_context or {}
@@ -122,8 +121,6 @@ def extract_features(
     }
     for feat_name, keywords in _KEYWORD_GROUPS.items():
         features[feat_name] = 1.0 if any(kw in error_msg for kw in keywords) else 0.0
-    # Legacy proxy kept for backward compatibility with existing models
-    features["has_stack_trace"] = 1.0 if len(error_msg) > 100 else 0.0
 
     # ── Group 2: Execution context ──────────────────────────────────────
     duration = test_case.get("duration_ms") or 0

@@ -230,12 +230,13 @@ services:
       - ./backend:/app                   # Hot-reload in development
       - ./backend/app:/app/app
       - ./client:/app/client_sdks:ro     # Client SDK files served at /api/v1/sdk/
+      - ./infra:/app/infra:ro            # Read-only access for SLO drift test (item #8)
+      - ./cli:/cli:ro                    # Read-only access for CLI structure tests
     env_file:
       - .env
     environment:
       - POSTGRES_HOST=postgres
       - MONGO_HOST=mongo
-      - REDIS_HOST=redis
       - MINIO_ENDPOINT=minio:9000
       - OLLAMA_BASE_URL=http://ollama:11434
       - CHROMA_HOST=chromadb
@@ -286,7 +287,6 @@ services:
     environment:
       - POSTGRES_HOST=postgres
       - MONGO_HOST=mongo
-      - REDIS_HOST=redis
       - MINIO_ENDPOINT=minio:9000
       - OLLAMA_BASE_URL=http://ollama:11434
       - CHROMA_HOST=chromadb

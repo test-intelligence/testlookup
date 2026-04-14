@@ -2,10 +2,14 @@
 Agent Cost & Alert Service -- Phase 6: Observability and Cost Control.
 
 Provides:
-  - Per-model token cost estimation
-  - Per-pipeline cost aggregation from stage results
+  - Per-pipeline cost aggregation from stage results (already-recorded values)
   - Threshold-based alerting for repeated failures and cost spikes
-  - Error taxonomy classification
+
+Note: per-call cost estimation and standalone error taxonomy were removed
+in item #10 cleanup — they had no production callers, only standalone
+unit tests. If you need either, the implementations live in git history
+(commit "Item #10 retire legacy paths") and can be revived with fresh
+callers.
 """
 from __future__ import annotations
 
@@ -20,54 +24,11 @@ from app.models.postgres import AgentPipelineRun, AgentStageResult
 
 logger = logging.getLogger("services.agent_cost")
 
-# ── Cost estimation per 1K tokens (USD) ─────────────────────────────────────
-
-_COST_PER_1K_TOKENS: dict[str, dict[str, float]] = {
-    # provider -> {input: $/1K, output: $/1K}
-    "ollama": {"input": 0.0, "output": 0.0},  # local inference — free
-    "lmstudio": {"input": 0.0, "output": 0.0},
-    "vllm": {"input": 0.0, "output": 0.0},
-    "openai": {"input": 0.005, "output": 0.015},       # GPT-4o estimate
-    "gemini": {"input": 0.00125, "output": 0.005},      # Gemini 1.5 Pro
-}
-
-# Default for unknown providers
-_DEFAULT_COST = {"input": 0.002, "output": 0.006}
-
 # ── Alert thresholds ─────────────────────────────────────────────────────────
 
 ALERT_CONSECUTIVE_FAILURES = 3        # alert after N consecutive stage failures
 ALERT_COST_SPIKE_FACTOR = 3.0         # alert if cost > N× the rolling average
 ALERT_COST_BUDGET_USD = 5.0           # alert if single pipeline exceeds this
-
-
-def estimate_cost(
-    provider: str,
-    input_tokens: int,
-    output_tokens: int,
-) -> float:
-    """Estimate USD cost for a given LLM call."""
-    rates = _COST_PER_1K_TOKENS.get(provider.lower(), _DEFAULT_COST)
-    cost = (input_tokens / 1000) * rates["input"] + (output_tokens / 1000) * rates["output"]
-    return round(cost, 6)
-
-
-def classify_error(error_message: str) -> str:
-    """Classify an error into a taxonomy category."""
-    if not error_message:
-        return "unknown"
-    err = error_message.lower()
-    if any(kw in err for kw in ("timeout", "timed out", "deadline exceeded")):
-        return "timeout"
-    if any(kw in err for kw in ("token", "context length", "maximum context", "too long")):
-        return "token_limit"
-    if any(kw in err for kw in ("connection", "unreachable", "dns", "refused", "503", "502")):
-        return "transient"
-    if any(kw in err for kw in ("rate limit", "429", "throttle", "quota")):
-        return "provider_error"
-    if any(kw in err for kw in ("invalid", "parse", "json", "schema", "validation")):
-        return "permanent"
-    return "permanent"
 
 
 async def get_pipeline_cost_summary(

@@ -246,6 +246,208 @@
       ],
       "title": "Test Cases Ingested (5m)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "id": 40,
+      "title": "SLO Compliance",
+      "description": "Per-endpoint p95 latency vs documented budgets. Thresholds and queries mirror infra/monitoring/prometheus-rules/testlookup-alerts.yml::testlookup.slo and backend/app/services/performance_budgets.py::LATENCY_BUDGETS — change one and the test_slo_alerts_match_budgets ratchet will tell you to update the others.",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "p95 over a 5m rolling window for every endpoint covered by an SLO alert. Each series is annotated with its budget in the legend.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 37 },
+      "id": 41,
+      "options": { "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/projects\", method=\"GET\"}[5m])))",
+          "legendFormat": "project_list (budget 200ms)",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/runs\", method=\"GET\"}[5m])))",
+          "legendFormat": "run_list (budget 250ms)",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/runs/{run_id}\", method=\"GET\"}[5m])))",
+          "legendFormat": "run_scoped_guard (budget 250ms)",
+          "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/runs/{run_id}/intelligence\", method=\"GET\"}[5m])))",
+          "legendFormat": "run_intelligence (budget 800ms)",
+          "refId": "D"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/search\", method=\"GET\"}[5m])))",
+          "legendFormat": "keyword_search (budget 300ms)",
+          "refId": "E"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/projects/{project_id}/flaky-coach\", method=\"GET\"}[5m])))",
+          "legendFormat": "flaky_coach (budget 600ms)",
+          "refId": "F"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/health/details\", method=\"GET\"}[5m])))",
+          "legendFormat": "health_details (budget 2.5s)",
+          "refId": "G"
+        }
+      ],
+      "title": "SLO p95 — all monitored endpoints",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Current p95 for project_list (budget 200ms). Green ≤ 200ms, yellow ≤ 250ms, red above.",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.2 }, { "color": "red", "value": 0.25 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 47 },
+      "id": 42,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/projects\", method=\"GET\"}[5m])))",
+          "legendFormat": "project_list",
+          "refId": "A"
+        }
+      ],
+      "title": "project_list",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Current p95 for run_list (budget 250ms). Bumped after the LEFT JOIN + count optimization in item #7.",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.25 }, { "color": "red", "value": 0.4 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 47 },
+      "id": 43,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/runs\", method=\"GET\"}[5m])))",
+          "legendFormat": "run_list",
+          "refId": "A"
+        }
+      ],
+      "title": "run_list",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Current p95 for run detail (budget 250ms). Includes require_run_access guard overhead.",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.25 }, { "color": "red", "value": 0.4 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 47 },
+      "id": 44,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/runs/{run_id}\", method=\"GET\"}[5m])))",
+          "legendFormat": "run_detail",
+          "refId": "A"
+        }
+      ],
+      "title": "run_scoped_guard",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Current p95 for run intelligence (budget 800ms). Cold-cache populates run via dedicated write session (item #4).",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 1.5 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 47 },
+      "id": 45,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/runs/{run_id}/intelligence\", method=\"GET\"}[5m])))",
+          "legendFormat": "run_intelligence",
+          "refId": "A"
+        }
+      ],
+      "title": "run_intelligence",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Current p95 for keyword search (budget 300ms). Backed by pg_trgm GIN indexes from fix #5.",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.3 }, { "color": "red", "value": 0.5 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 51 },
+      "id": 46,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/search\", method=\"GET\"}[5m])))",
+          "legendFormat": "keyword_search",
+          "refId": "A"
+        }
+      ],
+      "title": "keyword_search",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Current p95 for flaky coach (budget 600ms). Cold-cache populate uses a dedicated write session (item #4).",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.6 }, { "color": "red", "value": 1.0 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 51 },
+      "id": 47,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/api/v1/projects/{project_id}/flaky-coach\", method=\"GET\"}[5m])))",
+          "legendFormat": "flaky_coach",
+          "refId": "A"
+        }
+      ],
+      "title": "flaky_coach",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Current p95 for /health/details (budget 2.5s). Each non-critical probe bounded at 1.5s by httpx.Timeout(connect/read/write/pool).",
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 2.5 }, { "color": "red", "value": 4.0 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 51 },
+      "id": 48,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"testlookup-backend\", handler=\"/health/details\", method=\"GET\"}[5m])))",
+          "legendFormat": "health_details",
+          "refId": "A"
+        }
+      ],
+      "title": "health_details",
+      "type": "stat"
     }
   ],
   "refresh": "30s",

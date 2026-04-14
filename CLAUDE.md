@@ -495,7 +495,7 @@ The system supports three test analysis engines, configurable via `ANALYSIS_MODE
 **Key files:**
 - `services/analysis_router.py` — central dispatcher
 - `services/rules_engine.py` — enhanced pattern matching + template summaries
-- `services/ml/feature_extractor.py` — 32-feature numeric vector
+- `services/ml/feature_extractor.py` — 31-feature numeric vector
 - `services/ml/classifier.py` — HistGradientBoosting wrapper
 - `services/ml/summary_generator.py` — template summaries enriched with ML metadata
 - `services/ml/trainer.py` — training pipeline (Celery beat, nightly)

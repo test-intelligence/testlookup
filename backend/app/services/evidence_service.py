@@ -4,7 +4,6 @@ Evidence Service — manages evidence artifacts and provenance records.
 Provides:
   - collect_evidence_for_run: gathers all evidence from pipeline outputs
   - build_enriched_provenance: constructs full provenance with confidence and sources
-  - persist_provenance: saves provenance record for an entity
   - get_evidence_for_run: retrieves persisted evidence artifacts
 
 Evidence sources are collected from:
@@ -23,10 +22,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import (
-    AIProvenanceRecord,
-    EvidenceArtifact,
-)
+from app.models.postgres import EvidenceArtifact
 
 logger = logging.getLogger("services.evidence")
 
@@ -188,79 +184,6 @@ def _build_confidence_reason(
         level = "Low confidence"
 
     return f"{level}: {'; '.join(parts)}."
-
-
-async def persist_evidence_artifacts(
-    db: AsyncSession,
-    run_id: uuid.UUID,
-    analyses: list,
-    clusters: list,
-) -> int:
-    """
-    Stage evidence artifacts from pipeline outputs.
-
-    Idempotent: skips if evidence already exists for this run. Returns the
-    count of artifacts staged. The caller owns ``db.commit()`` — typically
-    this runs inside the deep-investigation pipeline handler alongside the
-    analyses and clusters that produced the evidence.
-    """
-    # Check if already persisted
-    existing = await db.execute(
-        select(EvidenceArtifact.id).where(EvidenceArtifact.run_id == run_id).limit(1)
-    )
-    if existing.scalar_one_or_none():
-        return 0
-
-    count = 0
-
-    # Evidence from AI analyses
-    for a in analyses:
-        for ref in (a.get("evidence_references") or []):
-            db.add(EvidenceArtifact(
-                run_id=run_id,
-                test_case_id=uuid.UUID(a["test_case_id"]) if a.get("test_case_id") else None,
-                artifact_type=ref.get("source", "unknown"),
-                source_system=ref.get("source", "unknown"),
-                summary_excerpt=(ref.get("excerpt") or "")[:500],
-                uri_or_ref=ref.get("reference_id"),
-            ))
-            count += 1
-
-    # Evidence from clusters
-    for c in clusters:
-        if c.get("representative_error"):
-            db.add(EvidenceArtifact(
-                run_id=run_id,
-                cluster_id=c.get("cluster_id"),
-                artifact_type="cluster_error",
-                source_system="cluster_analysis",
-                summary_excerpt=c["representative_error"][:500],
-            ))
-            count += 1
-
-    return count
-
-
-async def persist_provenance(
-    db: AsyncSession,
-    entity_type: str,
-    entity_id: uuid.UUID,
-    run_id: uuid.UUID,
-    provenance: dict,
-) -> None:
-    """Stage a provenance record for an entity. Caller owns ``db.commit()``."""
-    db.add(AIProvenanceRecord(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        run_id=run_id,
-        model_name=provenance.get("generated_by"),
-        fallback_used=provenance.get("fallback_used", False),
-        confidence=provenance.get("confidence"),
-        confidence_reason=provenance.get("confidence_reason"),
-        evidence_count=provenance.get("evidence_count", 0),
-        sources_used=provenance.get("sources_used"),
-        deterministic_checks_used=provenance.get("deterministic_checks_used"),
-    ))
 
 
 async def get_evidence_for_run(

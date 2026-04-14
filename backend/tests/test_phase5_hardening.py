@@ -262,18 +262,33 @@ import os  # noqa: E402
 
 
 class TestAlertRulesExist:
+    """The alert YAML lives at the repo root under ``infra/`` and is
+    mounted into the test container at ``/app/infra`` (see
+    ``docker-compose.yml`` backend volumes — added with item #8 so the
+    SLO drift test can find it). When run on the host outside Docker,
+    walk upward to find ``infra/`` from this test file's location.
+    """
+
+    @staticmethod
+    def _find_alerts_path() -> str | None:
+        from pathlib import Path
+        rel = Path("infra") / "monitoring" / "prometheus-rules" / "testlookup-alerts.yml"
+        here = Path(__file__).resolve()
+        for ancestor in [here, *here.parents]:
+            candidate = ancestor / rel
+            if candidate.exists():
+                return str(candidate)
+        return None
+
     def test_alerts_yml_exists(self):
-        alerts_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "infra", "monitoring",
-            "prometheus-rules", "testlookup-alerts.yml",
+        alerts_path = self._find_alerts_path()
+        assert alerts_path is not None and os.path.isfile(alerts_path), (
+            "Alert rules file should exist at infra/monitoring/prometheus-rules/testlookup-alerts.yml"
         )
-        assert os.path.isfile(alerts_path), "Alert rules file should exist"
 
     def test_alerts_yml_contains_infrastructure_group(self):
-        alerts_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "infra", "monitoring",
-            "prometheus-rules", "testlookup-alerts.yml",
-        )
+        alerts_path = self._find_alerts_path()
+        assert alerts_path is not None, "Alert rules file should be discoverable"
         content = open(alerts_path).read()
         assert "testlookup.infrastructure" in content
         assert "TestLookupDBPoolExhausted" in content
