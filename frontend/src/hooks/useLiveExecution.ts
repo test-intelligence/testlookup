@@ -64,7 +64,7 @@ export function useLiveExecution(projectId?: string) {
     ['live-active', projectId],
     () => liveStreamService.getActiveSessions(projectId),
     {
-      refreshInterval: wsStatus === 'open' ? 10_000 : 2_000,
+      refreshInterval: wsStatus === 'open' ? 10_000 : 5_000,
       revalidateOnFocus: false,
       onSuccess: (d) => {
         if (!mountedRef.current) return

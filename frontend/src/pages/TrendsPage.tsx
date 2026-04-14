@@ -396,8 +396,7 @@ export default function TrendsPage() {
       const projectLabel = isAllProjects ? 'All-Projects' : (project?.name ?? 'QA')
       pdf.save(`QA-Insight-Trends-${projectLabel}-${days}d.pdf`)
       toast.success('PDF exported successfully')
-    } catch (err) {
-      console.error('PDF export failed', err)
+    } catch {
       toast.error('PDF export failed — please try again')
     } finally {
       setExportingPdf(false)

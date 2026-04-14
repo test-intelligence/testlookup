@@ -12,6 +12,7 @@ import { buildDefectsWorkflow } from '@/components/workflow/workflowPresets'
 import { useDefects } from '@/hooks/useMetrics'
 import { useTableSort } from '@/hooks/useTableSort'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { isSafeExternalUrl } from '@/utils/safeUrl'
 
 const RESOLUTION_FILTERS = [
   { label: 'All',        value: undefined       },
@@ -192,15 +193,19 @@ export default function DefectsPage() {
                     </td>
                     <td className="td">
                       {d.jira_ticket_id ? (
-                        <a
-                          href={d.jira_ticket_url ?? '#'}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-1 text-[var(--color-text)] hover:text-[var(--color-text-secondary)] font-mono text-xs"
-                        >
-                          {d.jira_ticket_id}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
+                        isSafeExternalUrl(d.jira_ticket_url) ? (
+                          <a
+                            href={d.jira_ticket_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center gap-1 text-[var(--color-text)] hover:text-[var(--color-text-secondary)] font-mono text-xs"
+                          >
+                            {d.jira_ticket_id}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : (
+                          <span className="font-mono text-xs text-[var(--color-text-muted)]">{d.jira_ticket_id}</span>
+                        )
                       ) : (
                         <span className="text-[var(--color-text-muted)] text-xs">Not linked</span>
                       )}

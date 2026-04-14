@@ -12,6 +12,7 @@ import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useDefectCandidate, usePromoteCluster } from '@/hooks/useDefectPromotion'
 import type { DefectPromotionRequest } from '@/types/defect-promotion'
+import { isSafeExternalUrl } from '@/utils/safeUrl'
 
 const SEVERITY_OPTIONS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 type Severity = (typeof SEVERITY_OPTIONS)[number]
@@ -179,7 +180,7 @@ export default function DefectPromotionModal({
                   <span className="font-mono">{promotionResult.duplicate_defect_id}</span>
                 </p>
               )}
-              {promotionResult.jira_url && (
+              {isSafeExternalUrl(promotionResult.jira_url) && (
                 <a
                   href={promotionResult.jira_url}
                   target="_blank"

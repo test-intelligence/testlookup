@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/testLookup_Logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Content-Security-Policy — baseline hardening against XSS.
+      'unsafe-inline' on style-src is required by Tailwind's dynamic CSS
+      variables and react-hot-toast. script-src stays strict ('self') because
+      the production bundle is fully self-served via Vite and contains no
+      inline scripts. connect-src covers same-origin API, WebSockets, and
+      https for external integrations (Jira, Confluence) rendered in anchors.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss: https:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'" />
     <title>TestLookup — Instant Answers from Your Test Results</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
