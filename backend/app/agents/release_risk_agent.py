@@ -47,7 +47,7 @@ from app.services.criticality_service import (
 from app.models.llm_schemas import ReleaseReasoning, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
-from app.services.prompt_redaction import redact_text
+from app.services.redaction_service import redact_text
 
 logger = structlog.get_logger("agents.release_risk")
 

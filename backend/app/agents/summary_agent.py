@@ -27,7 +27,7 @@ from app.models.llm_schemas import (
     validate_llm_output,
 )
 from app.services.llm_json_parser import parse_llm_json
-from app.services.prompt_redaction import redact_text
+from app.services.redaction_service import redact_text
 from app.services.resilience import truncate_to_token_budget
 
 logger = structlog.get_logger("agents.summary")

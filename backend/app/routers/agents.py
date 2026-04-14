@@ -246,8 +246,8 @@ async def get_pipeline_timeline(
 @router.get("/active-runs")
 async def get_active_live_runs(_: Any = Depends(get_current_active_user)):
     """Get all currently monitored live test runs."""
-    from app.agents.live_monitor import LiveMonitorAgent
-    return {"active_runs": await LiveMonitorAgent.get_active_runs()}
+    from app.streams.live_run_state import RedisLiveRunState
+    return {"active_runs": await RedisLiveRunState.get_all_active()}
 
 
 @router.get("/active-runs/{run_id}")
@@ -256,8 +256,8 @@ async def get_live_run_state(
     _: Any = Depends(require_run_access()),
 ):
     """Get the current state for a single live test run."""
-    from app.agents.live_monitor import LiveMonitorAgent
-    state = await LiveMonitorAgent.get_run_state(run_id)
+    from app.streams.live_run_state import RedisLiveRunState
+    state = await RedisLiveRunState.get(run_id)
     if not state:
         raise HTTPException(404, detail="Live run not found or already completed")
     return state

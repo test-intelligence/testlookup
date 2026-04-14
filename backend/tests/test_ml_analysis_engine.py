@@ -218,9 +218,9 @@ from app.services.ml.feature_extractor import (  # noqa: E402
 
 
 class TestFeatureExtractor:
-    def test_returns_all_32_features(self):
+    def test_returns_all_features(self):
         features = extract_features({"error_message": "timeout"})
-        assert len(features) == 32
+        assert len(features) == len(FEATURE_NAMES)
         assert set(features.keys()) == set(FEATURE_NAMES)
 
     def test_all_values_are_numeric(self):
@@ -272,7 +272,7 @@ class TestFeatureExtractor:
     def test_features_to_array_order(self):
         features = extract_features({"error_message": "timeout"})
         arr = features_to_array(features)
-        assert len(arr) == 32
+        assert len(arr) == len(FEATURE_NAMES)
         assert arr[0] == features["error_msg_length"]
 
     def test_error_word_count(self):

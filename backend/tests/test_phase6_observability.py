@@ -54,88 +54,10 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
         yield
 
 
-# ── Cost Estimation Tests ────────────────────────────────────────────────────
-
-
-class TestCostEstimation:
-    """Per-provider token cost estimation."""
-
-    def test_ollama_is_free(self):
-        from app.services.agent_cost_service import estimate_cost
-        cost = estimate_cost("ollama", 1000, 500)
-        assert cost == 0.0
-
-    def test_openai_nonzero(self):
-        from app.services.agent_cost_service import estimate_cost
-        cost = estimate_cost("openai", 1000, 500)
-        assert cost > 0
-        # 1K input @ $0.005 + 0.5K output @ $0.015 = $0.005 + $0.0075 = $0.0125
-        assert abs(cost - 0.0125) < 0.001
-
-    def test_gemini_cost(self):
-        from app.services.agent_cost_service import estimate_cost
-        cost = estimate_cost("gemini", 2000, 1000)
-        assert cost > 0
-        # 2K input @ $0.00125 + 1K output @ $0.005 = $0.0025 + $0.005 = $0.0075
-        assert abs(cost - 0.0075) < 0.001
-
-    def test_unknown_provider_uses_default(self):
-        from app.services.agent_cost_service import estimate_cost
-        cost = estimate_cost("some_new_provider", 1000, 500)
-        assert cost > 0  # Default rates applied
-
-    def test_zero_tokens_zero_cost(self):
-        from app.services.agent_cost_service import estimate_cost
-        cost = estimate_cost("openai", 0, 0)
-        assert cost == 0.0
-
-    def test_lmstudio_is_free(self):
-        from app.services.agent_cost_service import estimate_cost
-        cost = estimate_cost("lmstudio", 5000, 2000)
-        assert cost == 0.0
-
-
-# ── Error Classification Tests ───────────────────────────────────────────────
-
-
-class TestErrorClassification:
-    """Error taxonomy classification from error messages."""
-
-    def test_timeout(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("Request timed out after 30s") == "timeout"
-
-    def test_token_limit(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("Maximum context length exceeded: 4096 tokens") == "token_limit"
-
-    def test_transient_connection(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("Connection refused to localhost:11434") == "transient"
-
-    def test_provider_rate_limit(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("Rate limit exceeded (429 Too Many Requests)") == "provider_error"
-
-    def test_permanent_parse_error(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("JSON parse error: invalid syntax") == "permanent"
-
-    def test_empty_string_unknown(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("") == "unknown"
-
-    def test_generic_error_permanent(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("Something completely unexpected happened") == "permanent"
-
-    def test_dns_failure_transient(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("DNS resolution failed for api.example.com") == "transient"
-
-    def test_503_transient(self):
-        from app.services.agent_cost_service import classify_error
-        assert classify_error("HTTP 503 Service Unavailable from LLM provider") == "transient"
+# Note: TestCostEstimation and TestErrorClassification classes were removed
+# in item #10 cleanup. The ``estimate_cost`` and ``classify_error`` helpers
+# they covered had no production callers — only their own unit tests. They
+# were removed from agent_cost_service.py at the same time.
 
 
 # ── Prometheus Metrics Registration ──────────────────────────────────────────

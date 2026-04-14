@@ -36,7 +36,7 @@ from app.models.postgres import (
     TestRun,
 )
 from app.services.llm_factory import get_llm
-from app.services.prompt_redaction import redact_text
+from app.services.redaction_service import redact_text
 
 logger = structlog.get_logger("agents.conversation")
 

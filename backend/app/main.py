@@ -166,11 +166,9 @@ async def rate_limit_auth(request: Request, call_next):
     return await call_next(request)
 
 
-# ── Legacy single-endpoint health shim (keeps old K8s probes working) ────────
-@app.get("/health", tags=["Health"], include_in_schema=False)
-async def health_shim():
-    """Legacy liveness shim — prefer /health/live and /health/ready."""
-    return {"status": "ok", "version": settings.APP_VERSION}
+# Note: the legacy ``GET /health`` shim was retired in item #10 cleanup —
+# K8s probes should target ``/health/live`` (liveness) and ``/health/ready``
+# (readiness). See ``backend/app/routers/health.py`` for the current contract.
 
 
 @app.get("/", tags=["System"])

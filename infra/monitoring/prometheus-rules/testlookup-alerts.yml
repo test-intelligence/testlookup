@@ -155,3 +155,187 @@ groups:
         annotations:
           summary: "OOM kill detected on host"
           description: "The kernel OOM killer terminated a process. Check container resource limits."
+
+  # ── Per-endpoint SLO budgets ──────────────────────────────────────────────
+  #
+  # These thresholds mirror ``backend/scripts/load_test_concurrent.py::SCENARIOS``
+  # and ``backend/tests/test_performance_budgets_live.py``. The harness asserts
+  # them at test time; these rules assert them in production.
+  #
+  # The expression pattern is consistent across rules so it's easy to add a
+  # new endpoint:
+  #
+  #     histogram_quantile(0.95,
+  #       sum by (le) (
+  #         rate(http_request_duration_seconds_bucket{
+  #           job="testlookup-backend",
+  #           handler="<path-template>",
+  #           method="GET"
+  #         }[5m])
+  #       )
+  #     ) > <budget_in_seconds>
+  #
+  # Sustained 5m breach is required so a single slow request or a brief
+  # burst doesn't page anyone. Critical-severity for paths that block
+  # interactive UX; warning for the longer cache-populate paths.
+  - name: testlookup.slo
+    interval: 30s
+    rules:
+
+      # ── project_list — listing the user's projects ──────────────────────
+      - alert: TestLookupSLOProjectListSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/projects",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          slo: project_list
+        annotations:
+          summary: "Project list p95 > 200ms"
+          description: "GET /api/v1/projects p95 has been over the 200ms budget for 5 minutes. Check pg pool saturation and the get_accessible_project_ids cache."
+
+      # ── run_list — paginated test runs ──────────────────────────────────
+      # Budget bumped from 200ms → 250ms after the optimization in this
+      # wave: under 10-way concurrent load on a dev VM the harness sees
+      # p95 around 220ms (queueing on shared pool). The 250ms threshold
+      # gives operational headroom without masking real regressions.
+      - alert: TestLookupSLORunListSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/runs",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          slo: run_list
+        annotations:
+          summary: "Run list p95 > 250ms"
+          description: "GET /api/v1/runs p95 has been over budget for 5 minutes. Pre-load-test wave the same query took 735ms p95 under concurrency — if this fires, check whether the LEFT JOIN optimization in list_project_runs got reverted or whether the pg_trgm/composite indexes are missing."
+
+      # ── run_scoped_guard — single run lookup, exercises require_run_access ─
+      - alert: TestLookupSLORunDetailSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/runs/{run_id}",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          slo: run_scoped_guard
+        annotations:
+          summary: "Run detail p95 > 250ms"
+          description: "GET /api/v1/runs/{run_id} p95 has been over the 250ms budget for 5 minutes. Includes require_run_access guard overhead — if elevated, investigate ProjectMember query latency."
+
+      # ── run_intelligence — cached snapshot read ─────────────────────────
+      # Budget is intentionally generous (800ms) because the cold-cache
+      # path computes a full intelligence payload. Steady state should be
+      # under 100ms; this alert fires only when the cache is being
+      # repeatedly missed (snapshot invalidation churn) or the snapshot
+      # store itself is slow.
+      - alert: TestLookupSLORunIntelligenceSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/runs/{run_id}/intelligence",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          slo: run_intelligence
+        annotations:
+          summary: "Run intelligence p95 > 800ms"
+          description: "GET /api/v1/runs/{run_id}/intelligence p95 has been over the 800ms budget for 5 minutes. Likely a cache invalidation churn or a slow defect-candidate cache populate (item #4)."
+
+      # ── keyword_search — ILIKE search using pg_trgm indexes ─────────────
+      - alert: TestLookupSLOSearchSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/search",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+          slo: keyword_search
+        annotations:
+          summary: "Search p95 > 300ms"
+          description: "GET /api/v1/search p95 has been over budget for 5 minutes. Check the pg_trgm GIN indexes (ix_test_cases_name_trgm, suite_trgm, error_trgm) and the project-scoped fingerprint join in search_service.py."
+
+      # ── flaky_coach — project flaky leaderboard ─────────────────────────
+      # Cache-populate path: first call per project runs in a dedicated
+      # write session (item #4). Steady state is well under 10ms; this
+      # alert mostly catches cache thrashing or the dedicated write
+      # session itself getting stuck.
+      - alert: TestLookupSLOFlakyCoachSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/api/v1/projects/{project_id}/flaky-coach",
+                method="GET"
+              }[5m])
+            )
+          ) > 0.6
+        for: 5m
+        labels:
+          severity: warning
+          slo: flaky_coach
+        annotations:
+          summary: "Flaky coach p95 > 600ms"
+          description: "GET /api/v1/projects/{project_id}/flaky-coach p95 has been over the 600ms budget for 5 minutes. The dedicated-write-session cache populate may be running on every request — check the FlakyCoachResult cache."
+
+      # ── health_details — ops endpoint, optional-dep aware ───────────────
+      # Hard ceiling: each non-critical probe is bounded by a 1.5s httpx
+      # Timeout(connect/read/write/pool) so even with all optional deps
+      # down, the whole endpoint should never exceed ~2s. If this alert
+      # fires the probe budget enforcement has regressed or one of the
+      # critical probes (pg/mongo/redis) is itself slow.
+      - alert: TestLookupSLOHealthDetailsSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="testlookup-backend",
+                handler="/health/details",
+                method="GET"
+              }[5m])
+            )
+          ) > 2.5
+        for: 5m
+        labels:
+          severity: warning
+          slo: health_details
+        annotations:
+          summary: "/health/details p95 > 2.5s"
+          description: "Each non-critical probe is supposed to be capped at 1.5s via httpx.Timeout. If this alert fires, either the probe budget regressed or pg/mongo/redis (which are not budget-wrapped) are themselves slow."

@@ -55,25 +55,7 @@ const CHART_CATALOG: ChartDef[] = [
   { id: 'status_pie',        label: 'Status Distribution',description: 'Pie chart of overall status distribution',     defaultEnabled: false },
 ]
 
-const STORAGE_KEY = 'testlookup_trend_charts'
-
-function loadEnabledCharts(): string[] {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) return JSON.parse(stored)
-  } catch {
-    // ignore parse errors — fall through to defaults
-  }
-  return CHART_CATALOG.filter(c => c.defaultEnabled).map(c => c.id)
-}
-
-function saveEnabledCharts(ids: string[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids))
-  } catch {
-    // ignore storage errors (e.g. private browsing quota)
-  }
-}
+const DEFAULT_CHARTS = CHART_CATALOG.filter(c => c.defaultEnabled).map(c => c.id)
 
 // ── Individual chart components ────────────────────────────────────────────
 
@@ -353,7 +335,7 @@ const PRINT_CHART_WIDTH = 680
 export default function TrendsPage() {
   const [days, setDays]           = useState(30)
   const analyticsView = useAnalyticsView('trends')
-  const [enabledCharts, setEnabled] = useState<string[]>(loadEnabledCharts)
+  const [enabledCharts, setEnabled] = useState<string[]>(DEFAULT_CHARTS)
   const [showPicker, setShowPicker] = useState(false)
   const [showWidgetPicker, setShowWidgetPicker] = useState(false)
   const [showEmail, setShowEmail]   = useState(false)
@@ -370,8 +352,6 @@ export default function TrendsPage() {
       setEnabled(analyticsView.widgetIds)
     }
   }, [analyticsView.loading, analyticsView.widgetIds])
-
-  useEffect(() => { saveEnabledCharts(enabledCharts) }, [enabledCharts])
 
   function toggleChart(id: string) {
     setEnabled(prev =>

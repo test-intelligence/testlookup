@@ -158,12 +158,11 @@ class TestRedactionService:
         assert redact_value("password", "x") == "[REDACTED]"
         assert redact_dict({"token": "abc"})["token"] == "[REDACTED]"
 
-    def test_backward_compat_prompt_redaction_import(self):
-        """prompt_redaction re-exports from redaction_service."""
-        from app.services.prompt_redaction import redact_text, redact_dict, redact_for_llm
-        assert redact_for_llm("password=abc123") != "password=abc123"
-        assert callable(redact_dict)
-        assert callable(redact_text)
+    # Note: ``test_backward_compat_prompt_redaction_import`` was removed in
+    # item #10 cleanup. The ``app.services.prompt_redaction`` shim itself
+    # was retired; all 4 agent callers now import from
+    # ``app.services.redaction_service`` directly, which is covered by
+    # the test_backward_compat_audit_dashboard_import case above.
 
 
 # ═════════════════════════════════════════════════════════════════════════════
