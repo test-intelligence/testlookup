@@ -353,6 +353,7 @@ async def review_defect(
             if any("Jira" in r for r in policy_eval.get("policy_reasons", [])):
                 logger.info("Approved defect %s — Jira creation deferred to manual step", defect_id)
 
+        await db.commit()
         return DefectApprovalResponse(
             defect_id=str(defect_id),
             approval_status=ActionStatus.APPROVED,
@@ -374,6 +375,7 @@ async def review_defect(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Defect not found or not in pending_review status.",
             )
+        await db.commit()
         return DefectApprovalResponse(
             defect_id=str(defect_id),
             approval_status=ActionStatus.REJECTED,

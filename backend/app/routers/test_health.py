@@ -92,5 +92,6 @@ async def refresh_project_flaky_coach(
                 detail="Project not found.",
             )
         count = await refresh_flaky_coach(project_id, db, days=days)
+        await db.commit()
 
     return {"status": "completed", "flaky_tests_found": count}

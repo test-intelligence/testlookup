@@ -50,7 +50,9 @@ async def create_session(
             detail="This API key is restricted to a different project",
         )
 
-    return await stream_service.create_session(db, payload)
+    response = await stream_service.create_session(db, payload)
+    await db.commit()
+    return response
 
 
 @router.get("/sessions/{session_id}")
@@ -71,6 +73,7 @@ async def close_session(
     _: User = Depends(require_live_session_access()),
 ):
     await stream_service.close_session(db, session_id)
+    await db.commit()
 
 
 @router.post("/events/batch", response_model=stream_service.LiveEventBatchResponse, status_code=202)

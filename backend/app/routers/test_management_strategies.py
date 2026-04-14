@@ -48,7 +48,10 @@ async def ai_generate_strategy(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await generate_ai_strategy(db, payload, current_user), TestStrategyResponse)
+    strategy = await generate_ai_strategy(db, payload, current_user)
+    await db.commit()
+    await db.refresh(strategy)
+    return row(strategy, TestStrategyResponse)
 
 
 @router.post("/strategies/ai-generate/async", response_model=AITaskEnqueueResponse)
@@ -75,4 +78,7 @@ async def update_strategy(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await update_strategy_model(db, strategy_id, payload, current_user), TestStrategyResponse)
+    strategy = await update_strategy_model(db, strategy_id, payload, current_user)
+    await db.commit()
+    await db.refresh(strategy)
+    return row(strategy, TestStrategyResponse)

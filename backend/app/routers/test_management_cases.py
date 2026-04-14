@@ -75,7 +75,10 @@ async def create_test_case(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await create_managed_test_case(db, payload, current_user), ManagedTestCaseResponse)
+    test_case = await create_managed_test_case(db, payload, current_user)
+    await db.commit()
+    await db.refresh(test_case)
+    return row(test_case, ManagedTestCaseResponse)
 
 
 @router.get("/cases/{case_id}", response_model=ManagedTestCaseResponse)
@@ -94,7 +97,10 @@ async def update_test_case(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await update_managed_test_case(db, case_id, payload, current_user), ManagedTestCaseResponse)
+    test_case = await update_managed_test_case(db, case_id, payload, current_user)
+    await db.commit()
+    await db.refresh(test_case)
+    return row(test_case, ManagedTestCaseResponse)
 
 
 @router.delete("/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -104,6 +110,7 @@ async def deprecate_test_case(
     current_user: User = Depends(get_current_active_user),
 ):
     await deprecate_managed_test_case(db, case_id, current_user)
+    await db.commit()
 
 
 @router.get("/cases/{case_id}/history", response_model=list[TestCaseVersionResponse])
@@ -122,7 +129,10 @@ async def request_review(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await request_test_case_review(db, case_id, current_user), TestCaseReviewResponse)
+    review = await request_test_case_review(db, case_id, current_user)
+    await db.commit()
+    await db.refresh(review)
+    return row(review, TestCaseReviewResponse)
 
 
 @router.post("/cases/{case_id}/review-action", response_model=ManagedTestCaseResponse)
@@ -132,7 +142,10 @@ async def review_action(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await apply_review_action(db, case_id, payload, current_user), ManagedTestCaseResponse)
+    test_case = await apply_review_action(db, case_id, payload, current_user)
+    await db.commit()
+    await db.refresh(test_case)
+    return row(test_case, ManagedTestCaseResponse)
 
 
 @router.get("/cases/{case_id}/reviews", response_model=list[TestCaseReviewResponse])
@@ -162,4 +175,7 @@ async def add_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await add_test_case_comment(db, case_id, payload, current_user), TestCaseCommentResponse)
+    comment = await add_test_case_comment(db, case_id, payload, current_user)
+    await db.commit()
+    await db.refresh(comment)
+    return row(comment, TestCaseCommentResponse)

@@ -53,7 +53,9 @@ async def submit_feedback(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    return await feedback_service.submit_feedback(db, analysis_id, body, current_user)
+    result = await feedback_service.submit_feedback(db, analysis_id, body, current_user)
+    await db.commit()
+    return result
 
 
 @router.put("/feedback/{analysis_id}", status_code=200)
@@ -63,7 +65,9 @@ async def update_feedback(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    return await feedback_service.update_feedback(db, analysis_id, body, current_user)
+    result = await feedback_service.update_feedback(db, analysis_id, body, current_user)
+    await db.commit()
+    return result
 
 
 @router.get("/feedback/stats")
@@ -97,7 +101,9 @@ async def promote_model(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_role(UserRole.ADMIN)),
 ):
-    return await feedback_service.promote_model(db, body, settings_provider())
+    result = await feedback_service.promote_model(db, body, settings_provider())
+    await db.commit()
+    return result
 
 
 @router.get("/training/status")
@@ -113,7 +119,9 @@ async def jira_resolution_webhook(
     payload: dict = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
-    return await feedback_service.jira_resolution_webhook(db, payload)
+    result = await feedback_service.jira_resolution_webhook(db, payload)
+    await db.commit()
+    return result
 
 
 def settings_provider() -> str:

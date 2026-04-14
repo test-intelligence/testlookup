@@ -208,8 +208,7 @@ async def create_source(
         sync_status=KnowledgeSyncStatus.PENDING.value,
     )
     db.add(source)
-    await db.commit()
-    await db.refresh(source)
+    await db.flush()  # materialize source.id for the log line and handler refresh
     logger.info("Knowledge source created: %s (project=%s, type=%s)", source.id, project_id, source_type)
     return source
 
@@ -234,14 +233,13 @@ async def update_source(
     payload: dict,
     user: User,
 ) -> KnowledgeSource:
+    """Stage updates to a knowledge source. Handler commits + refreshes."""
     source = await get_source_or_404(db, source_id, user)
     for field, value in payload.items():
         if value is not None:
             if field == "classification" and value not in VALID_CLASSIFICATIONS:
                 raise HTTPException(status_code=422, detail=f"Invalid classification: {value}")
             setattr(source, field, value)
-    await db.commit()
-    await db.refresh(source)
     logger.info("Knowledge source updated: %s", source_id)
     return source
 
@@ -251,9 +249,9 @@ async def delete_source(
     source_id: uuid.UUID,
     user: User,
 ) -> None:
+    """Stage deletion of a knowledge source. Handler commits."""
     source = await get_source_or_404(db, source_id, user)
     await db.delete(source)
-    await db.commit()
     logger.info("Knowledge source deleted: %s", source_id)
 
 
@@ -262,6 +260,12 @@ async def trigger_sync(
     source_id: uuid.UUID,
     user: User,
 ) -> dict:
+    """Stage a sync state transition and enqueue the Celery task.
+
+    Mutates ``sync_status`` to SYNCING (or FAILED if enqueue fails) and
+    returns the response payload. The handler owns the commit so both the
+    status transition and any fallback state land atomically.
+    """
     source = await get_source_or_404(db, source_id, user)
 
     if source.is_archived:
@@ -273,8 +277,6 @@ async def trigger_sync(
 
     source.sync_status = KnowledgeSyncStatus.SYNCING.value
     source.sync_error = None
-    await db.commit()
-    await db.refresh(source)
 
     # Enqueue Celery task — stub for now, real task in Epic 2 (RAG-4)
     task_id = str(uuid.uuid4())
@@ -286,10 +288,10 @@ async def trigger_sync(
         )
         task_id = result.id
     except Exception:
-        # Celery not available — mark as failed
+        # Celery not available — mark as failed. The handler's single commit
+        # will land this terminal state instead of the SYNCING one above.
         source.sync_status = KnowledgeSyncStatus.FAILED.value
         source.sync_error = "Task queue unavailable"
-        await db.commit()
 
     logger.info("Knowledge source sync triggered: %s (task=%s)", source_id, task_id)
     return {"source_id": source.id, "task_id": task_id, "sync_status": source.sync_status}
@@ -312,6 +314,7 @@ async def get_domain_allowlist(db: AsyncSession) -> list[str]:
 
 
 async def set_domain_allowlist(db: AsyncSession, domains: list[str]) -> list[str]:
+    """Stage domain allowlist changes. Handler commits."""
     cleaned = sorted({d.strip().lower() for d in domains if d.strip()})
     result = await db.execute(
         select(AppSetting).where(AppSetting.key == ALLOWLIST_SETTINGS_KEY)
@@ -321,7 +324,6 @@ async def set_domain_allowlist(db: AsyncSession, domains: list[str]) -> list[str
         setting.value = json.dumps(cleaned)
     else:
         db.add(AppSetting(key=ALLOWLIST_SETTINGS_KEY, value=json.dumps(cleaned)))
-    await db.commit()
     logger.info("Domain allowlist updated: %d domains", len(cleaned))
     return cleaned
 

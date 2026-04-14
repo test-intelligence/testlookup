@@ -197,9 +197,12 @@ async def persist_evidence_artifacts(
     clusters: list,
 ) -> int:
     """
-    Persist evidence artifacts from pipeline outputs.
-    Idempotent: skips if evidence already exists for this run.
-    Returns count of artifacts saved.
+    Stage evidence artifacts from pipeline outputs.
+
+    Idempotent: skips if evidence already exists for this run. Returns the
+    count of artifacts staged. The caller owns ``db.commit()`` — typically
+    this runs inside the deep-investigation pipeline handler alongside the
+    analyses and clusters that produced the evidence.
     """
     # Check if already persisted
     existing = await db.execute(
@@ -235,9 +238,6 @@ async def persist_evidence_artifacts(
             ))
             count += 1
 
-    if count > 0:
-        await db.commit()
-
     return count
 
 
@@ -248,7 +248,7 @@ async def persist_provenance(
     run_id: uuid.UUID,
     provenance: dict,
 ) -> None:
-    """Persist a provenance record for an entity."""
+    """Stage a provenance record for an entity. Caller owns ``db.commit()``."""
     db.add(AIProvenanceRecord(
         entity_type=entity_type,
         entity_id=entity_id,
@@ -261,7 +261,6 @@ async def persist_provenance(
         sources_used=provenance.get("sources_used"),
         deterministic_checks_used=provenance.get("deterministic_checks_used"),
     ))
-    await db.commit()
 
 
 async def get_evidence_for_run(

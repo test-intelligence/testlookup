@@ -582,7 +582,9 @@ async def update_feature_flag(
 ):
     """Create or update a feature flag. Requires ADMIN."""
     from app.services.feature_flag_service import set_flag
-    return await set_flag(db, flag_key, body.enabled, body.scope, body.config, body.description)
+    result = await set_flag(db, flag_key, body.enabled, body.scope, body.config, body.description)
+    await db.commit()
+    return result
 
 
 @router.delete("/flags/{flag_key}", status_code=204)
@@ -594,6 +596,7 @@ async def remove_feature_flag(
     """Delete a feature flag. Requires ADMIN."""
     from app.services.feature_flag_service import delete_flag
     await delete_flag(db, flag_key)
+    await db.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -85,7 +85,7 @@ async def set_flag(
     config: Optional[dict] = None,
     description: Optional[str] = None,
 ) -> dict:
-    """Create or update a feature flag."""
+    """Stage creation/update of a feature flag. Handler commits."""
     result = await db.execute(
         select(FeatureFlag).where(FeatureFlag.flag_key == flag_key)
     )
@@ -107,18 +107,17 @@ async def set_flag(
             description=description,
         ))
 
-    await db.commit()
     return {"flag_key": flag_key, "enabled": enabled, "scope": scope}
 
 
 async def delete_flag(db: AsyncSession, flag_key: str) -> bool:
-    """Delete a feature flag. Returns True if deleted."""
+    """Stage deletion of a feature flag. Handler commits. Returns True if
+    a row was scheduled for deletion."""
     result = await db.execute(
         select(FeatureFlag).where(FeatureFlag.flag_key == flag_key)
     )
     existing = result.scalar_one_or_none()
     if existing:
         await db.delete(existing)
-        await db.commit()
         return True
     return False

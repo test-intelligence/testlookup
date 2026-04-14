@@ -60,7 +60,10 @@ async def create_plan(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await create_test_plan(db, payload, current_user), TestPlanResponse)
+    plan = await create_test_plan(db, payload, current_user)
+    await db.commit()
+    await db.refresh(plan)
+    return row(plan, TestPlanResponse)
 
 
 @router.get("/plans/{plan_id}", response_model=TestPlanResponse)
@@ -79,7 +82,10 @@ async def update_plan(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await update_test_plan(db, plan_id, payload, current_user), TestPlanResponse)
+    plan = await update_test_plan(db, plan_id, payload, current_user)
+    await db.commit()
+    await db.refresh(plan)
+    return row(plan, TestPlanResponse)
 
 
 @router.get("/plans/{plan_id}/items", response_model=list[TestPlanItemResponse])
@@ -100,7 +106,10 @@ async def add_plan_item(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return row(await add_test_plan_item(db, plan_id, payload, current_user), TestPlanItemResponse)
+    item = await add_test_plan_item(db, plan_id, payload, current_user)
+    await db.commit()
+    await db.refresh(item)
+    return row(item, TestPlanItemResponse)
 
 
 @router.delete("/plans/{plan_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -111,6 +120,7 @@ async def remove_plan_item(
     current_user: User = Depends(get_current_active_user),
 ):
     await remove_test_plan_item(db, plan_id, item_id)
+    await db.commit()
 
 
 @router.patch("/plans/{plan_id}/items/{item_id}/execute", response_model=TestPlanItemResponse)
@@ -130,6 +140,8 @@ async def record_execution(
         payload.actual_duration_minutes,
         current_user,
     )
+    await db.commit()
+    await db.refresh(item)
     return row(item, TestPlanItemResponse)
 
 

@@ -59,8 +59,11 @@ async def detect_progress(
 ):
     """Auto-detect and update onboarding progress from existing data."""
     try:
-        return await auto_detect_progress(project_id, db)
+        result = await auto_detect_progress(project_id, db)
+        await db.commit()
+        return result
     except Exception as exc:
+        await db.rollback()
         logger.error("Onboarding detect failed: %s", exc, exc_info=True)
         return {
             "project_id": str(project_id), "steps": [], "completed_count": 0,
@@ -77,7 +80,9 @@ async def mark_step_complete(
 ):
     """Mark an onboarding step as completed."""
     try:
-        return await complete_step(project_id, body.step_key, current_user.id, db)
+        result = await complete_step(project_id, body.step_key, current_user.id, db)
+        await db.commit()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -94,7 +99,9 @@ async def mark_step_skipped(
 ):
     """Mark an onboarding step as skipped."""
     try:
-        return await skip_step(project_id, body.step_key, db)
+        result = await skip_step(project_id, body.step_key, db)
+        await db.commit()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -116,6 +123,14 @@ async def track_usage_event(
         except ValueError:
             pass
     await track_event(db, body.event_name, user_id=current_user.id, project_id=project_uuid, payload=body.payload)
+    # Preserve fire-and-forget semantics: if the commit itself fails,
+    # log it but still report "tracked" since usage analytics shouldn't
+    # surface errors to the caller.
+    try:
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Failed to commit usage event %s: %s", body.event_name, exc)
+        await db.rollback()
     return {"status": "tracked"}
 
 
