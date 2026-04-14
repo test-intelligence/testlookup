@@ -25,6 +25,7 @@ from app.models.postgres import (
     TestCaseHistory,
     TestRun,
 )
+from app.services.sql_utils import like_contains
 logger = structlog.get_logger("services.global_search")
 
 # Supported entity types
@@ -87,15 +88,15 @@ async def global_search(
 async def _search_test_cases(
     db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
 ) -> list[dict]:
-    pattern = f"%{q}%"
+    pattern = like_contains(q)
     stmt = (
         select(TestCase, TestRun.project_id)
         .join(TestRun, TestCase.test_run_id == TestRun.id)
         .where(or_(
-            TestCase.test_name.ilike(pattern),
-            TestCase.suite_name.ilike(pattern),
-            TestCase.error_message.ilike(pattern),
-            cast(TestCase.tags, String).ilike(pattern),
+            TestCase.test_name.ilike(pattern, escape="\\"),
+            TestCase.suite_name.ilike(pattern, escape="\\"),
+            TestCase.error_message.ilike(pattern, escape="\\"),
+            cast(TestCase.tags, String).ilike(pattern, escape="\\"),
         ))
         .order_by(TestCase.created_at.desc())
         .limit(50)
@@ -125,14 +126,14 @@ async def _search_test_cases(
 async def _search_test_runs(
     db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
 ) -> list[dict]:
-    pattern = f"%{q}%"
+    pattern = like_contains(q)
     stmt = (
         select(TestRun)
         .where(or_(
-            TestRun.build_number.ilike(pattern),
-            TestRun.branch.ilike(pattern),
-            TestRun.jenkins_job.ilike(pattern),
-            cast(TestRun.tags, String).ilike(pattern),
+            TestRun.build_number.ilike(pattern, escape="\\"),
+            TestRun.branch.ilike(pattern, escape="\\"),
+            TestRun.jenkins_job.ilike(pattern, escape="\\"),
+            cast(TestRun.tags, String).ilike(pattern, escape="\\"),
         ))
         .order_by(TestRun.created_at.desc())
         .limit(20)
@@ -162,7 +163,7 @@ async def _search_test_runs(
 async def _search_suites(
     db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
 ) -> list[dict]:
-    pattern = f"%{q}%"
+    pattern = like_contains(q)
     stmt = (
         select(
             TestCase.suite_name,
@@ -170,7 +171,7 @@ async def _search_suites(
         )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
         .where(
-            TestCase.suite_name.ilike(pattern),
+            TestCase.suite_name.ilike(pattern, escape="\\"),
             TestCase.suite_name.isnot(None),
             TestCase.suite_name != "",
         )
@@ -200,11 +201,11 @@ async def _search_suites(
 async def _search_defects(
     db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
 ) -> list[dict]:
-    pattern = f"%{q}%"
+    pattern = like_contains(q)
     stmt = (
         select(Defect)
         .where(or_(
-            Defect.jira_ticket_id.ilike(pattern),
+            Defect.jira_ticket_id.ilike(pattern, escape="\\"),
         ))
         .order_by(Defect.created_at.desc())
         .limit(20)
@@ -234,7 +235,7 @@ async def _search_defects(
 async def _search_flaky_tests(
     db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
 ) -> list[dict]:
-    pattern = f"%{q}%"
+    pattern = like_contains(q)
     # Find test fingerprints with intermittent pass/fail that match the query
     stmt = (
         select(
@@ -246,7 +247,7 @@ async def _search_flaky_tests(
         )
         .join(TestCase, TestCaseHistory.test_case_id == TestCase.id)
         .join(TestRun, TestCaseHistory.test_run_id == TestRun.id)
-        .where(TestCase.test_name.ilike(pattern))
+        .where(TestCase.test_name.ilike(pattern, escape="\\"))
         .group_by(TestCaseHistory.test_fingerprint)
         .having(func.count() >= 5)
         .limit(15)
@@ -276,12 +277,12 @@ async def _search_flaky_tests(
 async def _search_releases(
     db: AsyncSession, q: str, project_id: Optional[str], period_start: Optional[datetime],
 ) -> list[dict]:
-    pattern = f"%{q}%"
+    pattern = like_contains(q)
     stmt = (
         select(Release)
         .where(or_(
-            Release.name.ilike(pattern),
-            Release.version.ilike(pattern),
+            Release.name.ilike(pattern, escape="\\"),
+            Release.version.ilike(pattern, escape="\\"),
         ))
         .order_by(Release.created_at.desc())
         .limit(10)

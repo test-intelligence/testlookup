@@ -74,7 +74,8 @@ async def list_managed_test_cases(
     if ai_generated is not None:
         query = query.where(ManagedTestCase.ai_generated == ai_generated)
     if search:
-        query = query.where(ManagedTestCase.title.ilike(f"%{search}%"))
+        from app.services.sql_utils import like_contains
+        query = query.where(ManagedTestCase.title.ilike(like_contains(search), escape="\\"))
     return await paginate_scalars(db, query.order_by(ManagedTestCase.created_at.desc()), page, size)
 
 
