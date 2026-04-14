@@ -6,13 +6,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
       Content-Security-Policy — baseline hardening against XSS.
-      'unsafe-inline' on style-src is required by Tailwind's dynamic CSS
-      variables and react-hot-toast. script-src stays strict ('self') because
-      the production bundle is fully self-served via Vite and contains no
-      inline scripts. connect-src covers same-origin API, WebSockets, and
-      https for external integrations (Jira, Confluence) rendered in anchors.
+
+      script-src: strict 'self' — the production bundle is fully self-served
+        via Vite and contains no inline scripts.
+      style-src: 'unsafe-inline' is required by Tailwind arbitrary values and
+        react-hot-toast's dynamic styles. Scoped to 'self' + Google Fonts.
+      connect-src: same-origin API + WebSockets only. Anchors to external
+        systems (Jira, Confluence) are full page navigations, not fetches,
+        so they do not need a connect-src entry.
+      img-src: 'self' + data: + blob: + https: — https: covers arbitrary
+        gravatars / project logos embedded in user data.
+      frame-ancestors 'none': prevent clickjacking (X-Frame-Options equiv).
+      form-action 'self': block form exfiltration to 3rd-party origins.
+      base-uri 'self': prevent <base> tag relative-url hijacking.
+      object-src 'none': block Flash / legacy plugin XSS vectors.
+      upgrade-insecure-requests: auto-upgrade any http:// subresource to
+        https:// so a mis-configured integration URL cannot downgrade the
+        page (harmless in dev where the page is already http://localhost).
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss: https:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), payment=(), usb=()" />
     <title>TestLookup — Instant Answers from Your Test Results</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

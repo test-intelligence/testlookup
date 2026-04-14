@@ -11,6 +11,21 @@ import type { Project } from '@/types/projects'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
 
+// Build an invitation URL safely. The backend returns a relative path like
+// "/accept-invite?token=...". We refuse to render anything that tries to
+// escape the current origin (protocol-relative "//evil.com", absolute
+// "https://evil.com", or javascript:) — that would turn a compromised or
+// buggy backend into a full phishing redirect.
+function buildInvitationUrl(rawPath: string): string {
+  if (typeof rawPath !== 'string' || rawPath.length === 0) return ''
+  if (!rawPath.startsWith('/') || rawPath.startsWith('//')) return ''
+  try {
+    return new URL(rawPath, window.location.origin).toString()
+  } catch {
+    return ''
+  }
+}
+
 const ROLE_COLORS: Record<UserRole, string> = {
   VIEWER: 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]',
   TESTER: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]',
@@ -629,21 +644,31 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
         <h2 className="text-lg font-semibold text-[var(--color-text)]">Invite User</h2>
-        {result ? (
-          <div className="space-y-3">
-            <p className="text-sm text-[var(--color-text-secondary)]">Invitation created. Share this link with the user:</p>
-            <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded p-3">
-              <code className="text-xs text-emerald-400 break-all">
-                {window.location.origin}{result.invitation_link}
-              </code>
+        {result ? (() => {
+          const inviteUrl = buildInvitationUrl(result.invitation_link)
+          return (
+            <div className="space-y-3">
+              <p className="text-sm text-[var(--color-text-secondary)]">Invitation created. Share this link with the user:</p>
+              <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded p-3">
+                <code className="text-xs text-emerald-400 break-all">
+                  {inviteUrl || 'Invalid invitation link received from server.'}
+                </code>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  disabled={!inviteUrl}
+                  onClick={() => {
+                    if (!inviteUrl) return
+                    navigator.clipboard.writeText(inviteUrl)
+                    toast.success('Copied!')
+                  }}
+                  className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] mr-3 disabled:opacity-40"
+                >Copy link</button>
+                <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] text-sm px-4 py-2 rounded">Close</button>
+              </div>
             </div>
-            <div className="flex justify-end">
-              <button onClick={() => { navigator.clipboard.writeText(window.location.origin + result.invitation_link); toast.success('Copied!') }}
-                className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] mr-3">Copy link</button>
-              <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] text-sm px-4 py-2 rounded">Close</button>
-            </div>
-          </div>
-        ) : (
+          )
+        })() : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
