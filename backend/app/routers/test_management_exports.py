@@ -108,7 +108,8 @@ async def export_test_cases_excel(
     if priority:
         stmt = stmt.where(ManagedTestCase.priority == priority)
     if search:
-        stmt = stmt.where(ManagedTestCase.title.ilike(f"%{search}%"))
+        from app.services.sql_utils import like_contains
+        stmt = stmt.where(ManagedTestCase.title.ilike(like_contains(search), escape="\\"))
 
     cases = (await db.execute(stmt)).all()
     logger.info("exporting_test_cases_excel", count=len(cases), project_id=str(project_id) if project_id else None)
@@ -665,6 +666,7 @@ async def list_test_suites(
 
     # Manual managed test cases (suite_name added in migration 0013)
     manual_where = "AND project_id = :project_id" if project_id else ""
+    manual_params: dict = {"project_id": project_id} if project_id else {}
     manual_query = sa_text(f"""
         SELECT
             suite_name,
@@ -678,7 +680,7 @@ async def list_test_suites(
         GROUP BY suite_name
     """)
     try:
-        manual_rows = (await db.execute(manual_query, auto_params)).fetchall()
+        manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
     except Exception as exc:
         logger.warning("managed_test_cases.suite_name not available, skipping manual suites", error=str(exc))
         await db.rollback()

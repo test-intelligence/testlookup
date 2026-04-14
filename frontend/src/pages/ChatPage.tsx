@@ -17,6 +17,11 @@ import chatService from '@/services/chatService'
 import { useProjectStore } from '@/store/projectStore'
 import type { ChatSession, RunSummary } from '@/types/chat'
 
+// Upper bound on a single chat message. Enforced client-side to avoid sending
+// unbounded prompts that would blow up LLM context windows and token cost.
+// Backend should enforce a matching limit as defense-in-depth.
+const MAX_CHAT_MESSAGE_LENGTH = 5000
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function fromNow(iso: string): string {
@@ -270,6 +275,11 @@ export default function ChatPage() {
   const handleSend = async (text?: string) => {
     const msg = text ?? input
     if (!msg.trim() || isSending) return
+    // Hard cap to prevent runaway LLM context cost / DoS on the backend.
+    if (msg.length > MAX_CHAT_MESSAGE_LENGTH) {
+      toast.error(`Message too long (${msg.length}/${MAX_CHAT_MESSAGE_LENGTH} characters).`)
+      return
+    }
     if (!text) setInput('')
 
     let sid = activeSessionId
@@ -439,7 +449,7 @@ export default function ChatPage() {
               <div className="flex gap-2 items-end">
                 <textarea
                   value={input}
-                  onChange={e => setInput(e.target.value)}
+                  onChange={e => setInput(e.target.value.slice(0, MAX_CHAT_MESSAGE_LENGTH))}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
@@ -448,6 +458,7 @@ export default function ChatPage() {
                   }}
                   placeholder="Ask about test results, failures, trends…"
                   rows={1}
+                  maxLength={MAX_CHAT_MESSAGE_LENGTH}
                   className="input flex-1 resize-none text-sm py-2 leading-relaxed"
                   style={{ maxHeight: '120px', overflow: 'auto' }}
                 />

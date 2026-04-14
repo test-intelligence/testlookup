@@ -7,14 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.models.postgres import TestCase, TestRun
+from app.services.sql_utils import like_contains
 
 
 def build_search_filters(q: str, project_id: str | None, status: str | None, days: int | None):
+    pattern = like_contains(q)
     filters = [
         or_(
-            TestCase.test_name.ilike(f"%{q}%"),
-            TestCase.suite_name.ilike(f"%{q}%"),
-            TestCase.error_message.ilike(f"%{q}%"),
+            TestCase.test_name.ilike(pattern, escape="\\"),
+            TestCase.suite_name.ilike(pattern, escape="\\"),
+            TestCase.error_message.ilike(pattern, escape="\\"),
         )
     ]
     if project_id:

@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Release, ReleaseTestRunLink
@@ -40,10 +40,14 @@ async def resolve_or_create_release(
     (release, created)
         created=True when a brand-new release was inserted.
     """
-    # Case-insensitive lookup
+    # Case-insensitive equality lookup. Using lower() comparison (not ILIKE)
+    # because the input is untrusted user data — ILIKE would interpret any
+    # ``_`` or ``%`` in the release name as a wildcard, causing it to match
+    # a different existing release and silently mis-link the run.
+    normalized = release_name.strip()
     stmt = select(Release).where(
         Release.project_id == project_id,
-        Release.name.ilike(release_name.strip()),
+        func.lower(Release.name) == normalized.lower(),
     )
     existing = (await db.execute(stmt)).scalar_one_or_none()
     if existing:
@@ -51,7 +55,7 @@ async def resolve_or_create_release(
 
     release = Release(
         project_id=project_id,
-        name=release_name.strip(),
+        name=normalized,
         status="planning",
         description="Auto-created from test run metadata.",
     )

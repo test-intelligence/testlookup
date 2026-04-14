@@ -169,5 +169,6 @@ async def list_run_test_cases(
     if status:
         query = query.where(TestCase.status == status.upper())
     if suite:
-        query = query.where(TestCase.suite_name.ilike(f"%{suite}%"))
+        from app.services.sql_utils import like_contains
+        query = query.where(TestCase.suite_name.ilike(like_contains(suite), escape="\\"))
     return await paginate_query(db, query.order_by(TestCase.status, TestCase.test_name), page, size)
