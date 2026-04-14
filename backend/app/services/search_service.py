@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Iterable
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +12,13 @@ from app.models.postgres import TestCase, TestRun
 from app.services.sql_utils import like_contains
 
 
-def build_search_filters(q: str, project_id: str | None, status: str | None, days: int | None):
+def build_search_filters(
+    q: str,
+    project_id: str | None,
+    status: str | None,
+    days: int | None,
+    allowed_project_ids: Iterable[uuid.UUID] | None = None,
+):
     pattern = like_contains(q)
     filters = [
         or_(
@@ -20,7 +28,17 @@ def build_search_filters(q: str, project_id: str | None, status: str | None, day
         )
     ]
     if project_id:
+        # Single-project pin (access already verified by the router).
         filters.append(TestRun.project_id == project_id)
+    elif allowed_project_ids is not None:
+        # Non-admin fan-out across the user's accessible projects. Empty set
+        # means "no memberships" → we inject a guaranteed-false predicate so
+        # the query returns zero rows without a database round-trip.
+        allowed = list(allowed_project_ids)
+        if not allowed:
+            filters.append(TestRun.project_id.in_([]))
+        else:
+            filters.append(TestRun.project_id.in_(allowed))
     if status:
         filters.append(TestCase.status == status.upper())
     if days:
@@ -36,6 +54,7 @@ async def search_test_cases_query(
     project_id: str | None = None,
     status: str | None = None,
     days: int | None = None,
+    allowed_project_ids: Iterable[uuid.UUID] | None = None,
 ):
     # Correlated subquery for failure_count — scoped to the *same project* as
     # the matched test case. The previous implementation used an unscoped join
@@ -56,7 +75,7 @@ async def search_test_cases_query(
         .scalar_subquery()
     )
 
-    filters = build_search_filters(q, project_id, status, days)
+    filters = build_search_filters(q, project_id, status, days, allowed_project_ids)
     query = (
         select(
             TestCase.id.label("test_case_id"),

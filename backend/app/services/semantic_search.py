@@ -235,6 +235,7 @@ async def semantic_search(
     project_id: Optional[str] = None,
     status: Optional[str] = None,
     days: Optional[int] = None,
+    allowed_project_ids: Optional[set] = None,
 ) -> tuple[list[dict], int, int]:
     """
     Vector-similarity search against ChromaDB.
@@ -249,6 +250,11 @@ async def semantic_search(
         conditions: list[dict] = []
         if project_id:
             conditions.append({"project_id": {"$eq": project_id}})
+        elif allowed_project_ids is not None:
+            allowed = [str(pid) for pid in allowed_project_ids]
+            if not allowed:
+                return [], 0, 0
+            conditions.append({"project_id": {"$in": allowed}})
         if status:
             conditions.append({"status": {"$eq": status.upper()}})
 
@@ -326,6 +332,15 @@ async def semantic_search(
             TestCase.suite_name, TestCase.status, TestCase.created_at,
         )
     )
+    # Defense in depth: re-apply the tenant filter at the Postgres layer so a
+    # stale or mis-indexed ChromaDB document cannot leak cross-tenant rows.
+    if project_id:
+        pg_query = pg_query.where(TestRun.project_id == project_id)
+    elif allowed_project_ids is not None:
+        allowed_uuids = list(allowed_project_ids)
+        if not allowed_uuids:
+            return [], 0, 0
+        pg_query = pg_query.where(TestRun.project_id.in_(allowed_uuids))
 
     rows = (await db.execute(pg_query)).all()
 
@@ -366,6 +381,7 @@ async def hybrid_search(
     project_id: Optional[str] = None,
     status: Optional[str] = None,
     days: Optional[int] = None,
+    allowed_project_ids: Optional[set] = None,
 ) -> tuple[list[dict], int, int]:
     """
     Hybrid search: merge keyword + semantic results, deduplicate by test_case_id,
@@ -375,11 +391,15 @@ async def hybrid_search(
 
     # Run both in parallel
     semantic_task = asyncio.create_task(
-        semantic_search(db, q, 1, size * 2, project_id, status, days)
+        semantic_search(
+            db, q, 1, size * 2, project_id, status, days,
+            allowed_project_ids=allowed_project_ids,
+        )
     )
     keyword_results, kw_total, _ = await search_test_cases_query(
         db, q=q, page=1, size=size * 2,
         project_id=project_id, status=status, days=days,
+        allowed_project_ids=allowed_project_ids,
     )
     sem_results, _, _ = await semantic_task
 

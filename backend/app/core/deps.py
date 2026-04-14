@@ -345,6 +345,54 @@ async def get_accessible_project_ids(
     return project_ids
 
 
+async def resolve_project_scope(
+    db: AsyncSession,
+    user: User,
+    requested_project_id: Optional[str],
+) -> tuple[Optional[uuid.UUID], Optional[set[uuid.UUID]]]:
+    """
+    Resolve the effective project scope for a query, enforcing tenant isolation.
+
+    Returns a tuple ``(project_id, allowed_project_ids)``:
+
+    - ADMIN, no request  → ``(None, None)``               — unrestricted
+    - ADMIN, specific    → ``(UUID, None)``               — unrestricted, pinned to one project
+    - Non-admin, no req  → ``(None, {member_ids})``       — scoped to user's memberships
+    - Non-admin, specific & allowed → ``(UUID, None)``    — pinned, access verified
+    - Non-admin, specific & denied  → raises HTTP 403
+    - Non-admin with zero memberships → ``(None, set())`` — caller returns empty results
+
+    The two return slots are mutually exclusive: callers filter by ``project_id``
+    when set, otherwise by ``allowed_project_ids.in_(...)`` when non-None.
+    """
+    parsed: Optional[uuid.UUID] = None
+    if requested_project_id:
+        try:
+            parsed = uuid.UUID(requested_project_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid project ID",
+            )
+
+    accessible = await get_accessible_project_ids(db, user)
+    # ADMIN: accessible is None, no restriction
+    if accessible is None:
+        return parsed, None
+
+    # Non-admin
+    if parsed is not None:
+        if parsed not in accessible:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this project",
+            )
+        return parsed, None
+
+    # Non-admin, no specific project → scope to membership set
+    return None, accessible
+
+
 async def invalidate_membership_cache(user_id: uuid.UUID) -> None:
     """Invalidate the cached project membership set for a user.
 
