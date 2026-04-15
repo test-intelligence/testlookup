@@ -24,7 +24,7 @@ control is enforced at the router layer via ``resolve_project_scope``.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 import structlog

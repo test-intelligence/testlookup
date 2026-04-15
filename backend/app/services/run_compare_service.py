@@ -32,7 +32,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import TestCase, TestRun, TestStatus
+from app.models.postgres import TestCase, TestRun
 
 logger = structlog.get_logger("services.run_compare")
 

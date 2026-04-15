@@ -18,7 +18,6 @@ pytest.importorskip("jose")
 pytest.importorskip("asyncpg")
 
 from app.models.postgres import UserRole  # noqa: E402
-from tests.integration.conftest import fake_execute_result  # noqa: E402
 
 pytestmark = pytest.mark.asyncio
 

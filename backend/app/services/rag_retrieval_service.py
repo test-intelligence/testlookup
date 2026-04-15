@@ -10,7 +10,6 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.postgres import KnowledgeSource
 from app.services.knowledge_chunking_service import _get_or_create_knowledge_collection
 

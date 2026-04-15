@@ -40,7 +40,6 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
     CompliancePack,
     Defect,
@@ -298,7 +297,7 @@ def _build_readme(
     generated_at: datetime,
 ) -> bytes:
     lines = [
-        f"# TestLookup Compliance Pack",
+        "# TestLookup Compliance Pack",
         "",
         f"**Release:** {release.name}" + (f" {release.version}" if release.version else ""),
         f"**Release ID:** {release.id}",

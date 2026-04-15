@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import structlog
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal

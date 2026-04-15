@@ -17,8 +17,6 @@ Three user-facing surfaces:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -32,7 +30,7 @@ from app.core.deps import (
     require_role,
     resolve_project_scope,
 )
-from app.models.postgres import Project, ProjectLlmUsage, User, UserRole
+from app.models.postgres import Project, User, UserRole
 from app.models.schemas import (
     BillingOverviewProject,
     BillingOverviewResponse,

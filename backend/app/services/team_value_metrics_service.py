@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
 from typing import Any, Optional
 
-from sqlalchemy import func as sa_func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (

@@ -37,8 +37,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.models.postgres import FeatureFlag, User, UserRole
+from app.models.postgres import FeatureFlag, User
 
 logger = structlog.get_logger("services.feature_flags")
 

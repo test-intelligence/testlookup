@@ -241,10 +241,10 @@ function QuarantineRow({
               disabled={busy}
               onClick={() =>
                 doAction(
-                  (async () => {
+                  async () => {
                     const notes = window.prompt('Approval notes (optional)') ?? undefined
                     return flakyQuarantineService.approve(row.id, { notes })
-                  })(),
+                  },
                   'Quarantine approved',
                 )
               }
@@ -258,10 +258,10 @@ function QuarantineRow({
               disabled={busy}
               onClick={() =>
                 doAction(
-                  (async () => {
+                  async () => {
                     const notes = window.prompt('Rejection reason (optional)') ?? undefined
                     return flakyQuarantineService.reject(row.id, { notes })
-                  })(),
+                  },
                   'Proposal rejected',
                 )
               }
@@ -277,10 +277,10 @@ function QuarantineRow({
             disabled={busy}
             onClick={() =>
               doAction(
-                (async () => {
+                async () => {
                   const notes = window.prompt('Release notes (optional)') ?? undefined
                   return flakyQuarantineService.release(row.id, { notes })
-                })(),
+                },
                 'Quarantine released',
               )
             }
@@ -317,7 +317,7 @@ function StatusPill({ status }: { status: QuarantineStatus }) {
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
     <span className={`text-[10px] px-2 py-0.5 rounded border ${toneClass}`}>
-      {status.replaceAll('_', ' ')}
+      {status.replace(/_/g, ' ')}
     </span>
   )
 }

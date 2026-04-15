@@ -6,7 +6,6 @@ and are covered by integration tests.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.services import flaky_quarantine_service as svc
@@ -30,7 +29,6 @@ def test_live_states_constant_excludes_terminal_states():
 
 
 def test_snapshot_captures_audit_fields():
-    now = datetime.now(timezone.utc)
     row = SimpleNamespace(
         status="PROPOSED",
         flip_rate=0.42,
