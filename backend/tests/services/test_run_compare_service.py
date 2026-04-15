@@ -244,7 +244,7 @@ def test_greedy_fuzzy_pair_no_duplicate_assignment():
     ]
     pairs = svc._greedy_fuzzy_pair(removed, added)
     assert len(pairs) == 2
-    left_fps = {l.test_fingerprint for l, _, _ in pairs}
-    right_fps = {r.test_fingerprint for _, r, _ in pairs}
+    left_fps = {left.test_fingerprint for left, _, _ in pairs}
+    right_fps = {right.test_fingerprint for _, right, _ in pairs}
     assert len(left_fps) == 2
     assert len(right_fps) == 2
