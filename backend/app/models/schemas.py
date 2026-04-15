@@ -2548,3 +2548,457 @@ class RagStatusResponse(BaseModel):
     total_sources: int = 0
     total_batches: int = 0
     total_chunks: int = 0
+
+
+# ── Feature Flags (Tier 0A) ──────────────────────────────────────────────────
+
+
+class FeatureFlagCreate(BaseModel):
+    key: str = Field(..., min_length=2, max_length=80, pattern=r"^[a-z][a-z0-9_]*$")
+    description: Optional[str] = Field(None, max_length=2000)
+    enabled_global: bool = False
+    enabled_projects: Optional[List[uuid.UUID]] = None
+    enabled_roles: Optional[List[str]] = None
+    rollout_percent: int = Field(100, ge=0, le=100)
+
+
+class FeatureFlagUpdate(BaseModel):
+    """All fields optional — partial update. None means keep existing."""
+    description: Optional[str] = Field(None, max_length=2000)
+    enabled_global: Optional[bool] = None
+    enabled_projects: Optional[List[uuid.UUID]] = None
+    enabled_roles: Optional[List[str]] = None
+    rollout_percent: Optional[int] = Field(None, ge=0, le=100)
+
+
+class FeatureFlagResponse(BaseModel):
+    id: uuid.UUID
+    key: str
+    description: Optional[str] = None
+    enabled_global: bool
+    enabled_projects: Optional[List[uuid.UUID]] = None
+    enabled_roles: Optional[List[str]] = None
+    rollout_percent: int
+    created_at: datetime
+    updated_at: datetime
+    updated_by_user_id: Optional[uuid.UUID] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Decision Trail (Tier 0B) ─────────────────────────────────────────────────
+
+
+class DecisionLogEntry(BaseModel):
+    """A single structured decision made by an agent — mirror of
+    ``BaseAgent.log_decision`` output stored on AgentStageResult.decision_log."""
+    at: str                              # ISO timestamp
+    decision_point: str                  # e.g. "route_analysis_mode", "triage_skip"
+    chosen: str                          # option taken
+    rationale: str                       # why
+    alternatives: Optional[List[str]] = None
+    test_case_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+class StageDecisionSummary(BaseModel):
+    stage_name: str
+    status: str                          # pending|running|completed|failed|skipped
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    analysis_mode: Optional[str] = None  # llm|ml|rules|auto|mixed
+    fallback_used: Optional[bool] = None
+    fallback_reason: Optional[str] = None
+    route_rationale: Optional[str] = None
+    error_category: Optional[str] = None
+    skipped_reason: Optional[str] = None
+    execution_path: Optional[str] = None
+    confidence_score: Optional[int] = None
+    evidence_count: Optional[int] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    decision_log: List[DecisionLogEntry] = Field(default_factory=list)
+
+
+class PerTestRouting(BaseModel):
+    test_case_id: uuid.UUID
+    test_name: Optional[str] = None
+    analysis_mode: Optional[str] = None
+    mode_requested: Optional[str] = None
+    fallback_from: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    confidence_adjustments: Optional[List[Dict[str, Any]]] = None
+    retry_count: Optional[int] = None
+    duration_seconds: Optional[float] = None
+
+
+class WorkflowDecisionEvent(BaseModel):
+    at: str
+    decision_point: str
+    chosen: str
+    rationale: str
+    alternatives: Optional[List[str]] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+class DecisionTrailResponse(BaseModel):
+    """Full decision trail for a pipeline run — the user-facing audit surface."""
+    run_id: uuid.UUID
+    pipeline_run_id: Optional[uuid.UUID] = None
+    workflow_type: Optional[str] = None
+    pipeline_status: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    total_cost_usd: float = 0.0
+    total_tokens: int = 0
+    # Stage-level decisions, in execution order.
+    stages: List[StageDecisionSummary] = Field(default_factory=list)
+    # Workflow router decisions (fast-path skips, specialist-stage selection).
+    workflow_events: List[WorkflowDecisionEvent] = Field(default_factory=list)
+    # Per-test routing rollup — one entry per analysed test.
+    per_test: List[PerTestRouting] = Field(default_factory=list)
+    # Aggregate: how many tests used each engine and how many fell back.
+    mode_distribution: Dict[str, int] = Field(default_factory=dict)
+    fallback_count: int = 0
+
+
+# ── LLM Cost Budget (Tier 1 item 2) ──────────────────────────────────────────
+
+
+class LlmQuotaWrite(BaseModel):
+    """Admin-editable billing config for a project."""
+    enabled: bool = True
+    period_type: str = Field("MONTHLY", pattern=r"^(MONTHLY)$")
+    included_usd: float = Field(0.0, ge=0)
+    overage_rate_usd: float = Field(1.0, ge=0)
+    hard_cap_usd: float = Field(0.0, ge=0)
+    soft_warn_threshold_pct: int = Field(100, ge=1, le=100)
+    at_cap_action: str = Field(
+        "AUTO_DOWNGRADE_TO_ML",
+        pattern=r"^(SOFT_WARN|AUTO_DOWNGRADE_TO_ML|AUTO_DOWNGRADE_TO_RULES|HARD_BLOCK)$",
+    )
+
+
+class LlmQuotaRead(LlmQuotaWrite):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+    updated_by_user_id: Optional[uuid.UUID] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LlmUsageRead(BaseModel):
+    project_id: uuid.UUID
+    period_start: datetime
+    period_end: datetime
+    total_cost_usd: float
+    total_input_tokens: int
+    total_output_tokens: int
+    total_llm_calls: int
+    cap_hits: int
+    # Derived fields — populated by the service, not persisted:
+    included_usd: Optional[float] = None
+    hard_cap_usd: Optional[float] = None
+    utilization_pct: Optional[float] = None  # total_cost_usd / hard_cap_usd * 100
+    status: Optional[str] = None  # OK | SOFT_WARN | CAPPED
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LlmUsageHistoryEntry(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    total_cost_usd: float
+    total_llm_calls: int
+    cap_hits: int
+
+
+class BillingOverviewProject(BaseModel):
+    project_id: uuid.UUID
+    project_name: str
+    current_cost_usd: float
+    hard_cap_usd: Optional[float] = None
+    utilization_pct: Optional[float] = None
+    status: str  # OK | SOFT_WARN | CAPPED | UNLIMITED
+    cap_hits: int
+
+
+class BillingOverviewResponse(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    total_cost_usd: float
+    total_llm_calls: int
+    projects: List[BillingOverviewProject]
+
+
+# ── Flaky Auto-Quarantine (Tier 1 item 3) ───────────────────────────────────
+
+
+class FlakyQuarantineRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    status: str
+    detection_method: str
+    flip_rate: Optional[float] = None
+    flip_window_size: Optional[int] = None
+    pass_count: Optional[int] = None
+    fail_count: Optional[int] = None
+    detected_at: datetime
+    last_failure_at: Optional[datetime] = None
+    proposed_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by_user_id: Optional[uuid.UUID] = None
+    rejected_at: Optional[datetime] = None
+    rejected_by_user_id: Optional[uuid.UUID] = None
+    quarantine_start: Optional[datetime] = None
+    quarantine_expires_at: Optional[datetime] = None
+    quarantine_duration_days: int
+    recheck_at: Optional[datetime] = None
+    rationale: Optional[Dict[str, Any]] = None
+    reviewer_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QuarantineDecisionRequest(BaseModel):
+    """Body for approve / reject / release endpoints."""
+    notes: Optional[str] = Field(None, max_length=2000)
+    quarantine_duration_days: Optional[int] = Field(None, ge=1, le=90)
+
+
+class QuarantineProposeRequest(BaseModel):
+    """Manual proposal — rarely used. Detection agent is the primary path."""
+    project_id: uuid.UUID
+    test_fingerprint: str = Field(..., min_length=1, max_length=64)
+    test_name: Optional[str] = Field(None, max_length=500)
+    suite_name: Optional[str] = Field(None, max_length=500)
+    detection_method: str = Field("manual", max_length=50)
+    flip_rate: Optional[float] = Field(None, ge=0, le=1)
+    flip_window_size: Optional[int] = Field(None, ge=1)
+    pass_count: Optional[int] = Field(None, ge=0)
+    fail_count: Optional[int] = Field(None, ge=0)
+    rationale: Optional[Dict[str, Any]] = None
+    quarantine_duration_days: int = Field(14, ge=1, le=90)
+
+
+class QuarantineStatsResponse(BaseModel):
+    """Counts per status for the /quarantine page header tiles."""
+    proposed: int = 0
+    approved: int = 0
+    quarantined: int = 0
+    recheck_scheduled: int = 0
+    released: int = 0
+    rejected: int = 0
+    expired: int = 0
+    re_quarantined: int = 0
+    detected: int = 0
+    total_live: int = 0
+
+
+# ── Release Compliance Pack (Tier 1 item 4) ─────────────────────────────────
+
+
+class CompliancePackGenerateRequest(BaseModel):
+    """Body for POST /api/v1/releases/{id}/compliance-pack."""
+    notes: Optional[str] = Field(None, max_length=2000)
+    retention_days: Optional[int] = Field(
+        None,
+        ge=1,
+        le=3650,
+        description="Override retention window (default 2557 = ~7 years)",
+    )
+
+
+class CompliancePackRead(BaseModel):
+    id: uuid.UUID
+    release_id: Optional[uuid.UUID] = None
+    project_id: uuid.UUID
+    test_run_id: Optional[uuid.UUID] = None
+    minio_key: str
+    manifest_sha256: str
+    file_count: int
+    bytes: int
+    retention_expires_at: datetime
+    generated_at: datetime
+    generated_by_user_id: Optional[uuid.UUID] = None
+    metadata_snapshot: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CompliancePackDownloadResponse(BaseModel):
+    """Response for the download endpoint — either a presigned URL or
+    a streaming hint."""
+    pack_id: uuid.UUID
+    download_url: Optional[str] = None
+    expires_in_seconds: Optional[int] = None
+    bytes: int
+    manifest_sha256: str
+
+
+# ── GitHub Integration (Tier 1 item 5) ──────────────────────────────────────
+
+
+class GitHubIntegrationWrite(BaseModel):
+    enabled: bool = True
+    repo_owner: str = Field(..., min_length=1, max_length=255, pattern=r"^[A-Za-z0-9._-]+$")
+    repo_name: str = Field(..., min_length=1, max_length=255, pattern=r"^[A-Za-z0-9._-]+$")
+    api_base_url: str = Field("https://api.github.com", max_length=500)
+    # When provided, the PAT is upserted into secret_service and the
+    # ``has_pat`` flag is flipped on. When null, the existing secret (if
+    # any) is left alone — send an empty string to clear it.
+    pat: Optional[str] = Field(None, max_length=200)
+
+
+class GitHubIntegrationRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    enabled: bool
+    repo_owner: str
+    repo_name: str
+    api_base_url: str
+    has_pat: bool
+    last_posted_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GitHubConnectionTestResponse(BaseModel):
+    success: bool
+    status_code: Optional[int] = None
+    message: str
+    repo_html_url: Optional[str] = None
+
+
+# ── Outbound Webhooks (Tier 2 item 6) ───────────────────────────────────────
+
+
+class WebhookSubscriptionWrite(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    target_url: str = Field(..., min_length=8, max_length=1000, pattern=r"^https?://")
+    events: List[str] = Field(..., min_length=1)
+    enabled: bool = True
+    max_retries: int = Field(5, ge=0, le=10)
+    # Null = leave existing secret alone; "" = clear; any value = upsert.
+    secret: Optional[str] = Field(None, max_length=200)
+
+
+class WebhookSubscriptionRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    target_url: str
+    events: List[str]
+    enabled: bool
+    has_secret: bool
+    max_retries: int
+    last_delivered_at: Optional[datetime] = None
+    last_failure_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    failure_count: int
+    total_delivered: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookDeliveryRead(BaseModel):
+    id: uuid.UUID
+    subscription_id: uuid.UUID
+    event_type: str
+    event_payload: Optional[Dict[str, Any]] = None
+    status: str
+    attempt_count: int
+    http_status: Optional[int] = None
+    response_preview: Optional[str] = None
+    error: Optional[str] = None
+    delivered_at: Optional[datetime] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookTestResponse(BaseModel):
+    success: bool
+    status_code: Optional[int] = None
+    message: str
+    latency_ms: Optional[int] = None
+
+
+class WebhookEventCatalogEntry(BaseModel):
+    event_type: str
+    description: str
+
+
+class WebhookEventCatalogResponse(BaseModel):
+    events: List[WebhookEventCatalogEntry]
+
+
+# ── Run Compare (Tier 2 item 8) ─────────────────────────────────────────────
+
+
+class RunCompareSummary(BaseModel):
+    """One side of the compare view — the subset of TestRun fields used
+    by the diff UI. Kept tiny so the JSON payload is fast even on big runs."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    build_number: Optional[str] = None
+    branch: Optional[str] = None
+    commit_hash: Optional[str] = None
+    status: Optional[str] = None
+    total_tests: int = 0
+    passed_tests: int = 0
+    failed_tests: int = 0
+    broken_tests: int = 0
+    skipped_tests: int = 0
+    pass_rate: Optional[float] = None
+    duration_ms: Optional[int] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+
+
+class RunCompareTestDelta(BaseModel):
+    """A single test whose status or duration differed between the two runs."""
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    left_status: Optional[str] = None   # None = test did not exist in left run
+    right_status: Optional[str] = None
+    left_duration_ms: Optional[int] = None
+    right_duration_ms: Optional[int] = None
+    delta_duration_ms: Optional[int] = None
+    classification: str
+    # One of: new_failure | fixed | still_failing | regressed |
+    # improved | new_test | removed_test | duration_spike
+
+
+class RunCompareResponse(BaseModel):
+    left: RunCompareSummary
+    right: RunCompareSummary
+    # Aggregate deltas (right - left).
+    delta_total: int = 0
+    delta_passed: int = 0
+    delta_failed: int = 0
+    delta_broken: int = 0
+    delta_skipped: int = 0
+    delta_pass_rate: Optional[float] = None
+    delta_duration_ms: Optional[int] = None
+    # Category counts from the per-test diff.
+    new_failures: int = 0
+    fixed: int = 0
+    still_failing: int = 0
+    regressed: int = 0
+    improved: int = 0
+    new_tests: int = 0
+    removed_tests: int = 0
+    duration_spikes: int = 0
+    # Detailed per-test diff — capped at 500 entries.
+    test_deltas: List[RunCompareTestDelta] = Field(default_factory=list)
+    truncated: bool = False

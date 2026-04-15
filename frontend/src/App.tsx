@@ -48,6 +48,12 @@ const PolicyEditorPage = lazy(() => import('@/pages/PolicyEditorPage'))
 const OwnershipEditorPage = lazy(() => import('@/pages/OwnershipEditorPage'))
 const ProfilePage = lazy(() => import('@/pages/settings/ProfilePage'))
 const SeedDataPage = lazy(() => import('@/pages/settings/SeedDataPage'))
+const FeatureFlagsPage = lazy(() => import('@/pages/settings/FeatureFlagsPage'))
+const BillingPage = lazy(() => import('@/pages/settings/BillingPage'))
+const QuarantinePage = lazy(() => import('@/pages/QuarantinePage'))
+const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrationPage'))
+const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
+const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
 
 type AppRoute = {
   path: string
@@ -60,6 +66,7 @@ const appRoutes: AppRoute[] = [
   { path: 'value-metrics', component: ValueMetricsPage },
   { path: 'intelligence', component: IntelligenceHubPage },
   { path: 'runs', component: RunsPage },
+  { path: 'runs/compare', component: RunComparePage },
   { path: 'runs/:runId', component: RunDetailPage },
   { path: 'runs/:runId/intelligence', component: RunIntelligencePage },
   { path: 'runs/:runId/tests/:testId', component: TestCasePage },
@@ -77,6 +84,7 @@ const appRoutes: AppRoute[] = [
   { path: 'release-gate', component: ReleaseGatePage },
   { path: 'release-gate/:runId', component: ReleaseGatePage },
   { path: 'flaky-coach', component: FlakyCoachPage },
+  { path: 'quarantine', component: QuarantinePage },
   { path: 'test-management', component: TestManagementPage },
   { path: 'live', component: LiveExecutionPage },
   // Profile is accessible to ALL authenticated roles
@@ -100,6 +108,10 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/ai-eval', component: AIEvalDashboardPage },
   { path: 'settings/performance', component: PerformancePage },
   { path: 'settings/seed-data', component: SeedDataPage },
+  { path: 'settings/feature-flags', component: FeatureFlagsPage },
+  { path: 'settings/billing', component: BillingPage },
+  { path: 'settings/github', component: GitHubIntegrationPage },
+  { path: 'settings/webhooks', component: OutboundWebhooksPage },
   { path: 'policies', component: PolicyEditorPage },
   { path: 'policies/new', component: PolicyEditorPage },
   { path: 'policies/:policyId', component: PolicyEditorPage },

@@ -61,6 +61,35 @@ def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
     return int(delay + jitter)
 
 
+def _beat_span(task_name: str):
+    """Return a context manager that produces an OTEL span for the named
+    Celery beat task.
+
+    Naming convention (Phase E-3): ``celery.beat.<task_name>``. All Tier
+    0-2 beat tasks use this helper so Jaeger surfaces them in a single
+    swim lane. The context yields a span-like object that supports
+    ``set_attribute`` + ``set_status`` — callers can enrich the span
+    with result counts, flag state, or error category without worrying
+    about whether OpenTelemetry is actually wired up in the current
+    environment (tests, offline-mode, missing SDK).
+    """
+    try:
+        from app.core.tracing import get_tracer
+        tracer = get_tracer("celery.beat")
+        return tracer.start_as_current_span(f"celery.beat.{task_name}")
+    except Exception:
+        from contextlib import nullcontext
+
+        class _NullSpan:
+            def set_attribute(self, *args, **kwargs) -> None:  # noqa: D401
+                pass
+
+            def set_status(self, *args, **kwargs) -> None:  # noqa: D401
+                pass
+
+        return nullcontext(_NullSpan())
+
+
 # ── Deduplication helper ──────────────────────────────────────────────────────
 
 async def _is_duplicate(key: str, ttl: int = 3600) -> bool:
@@ -433,7 +462,12 @@ def ingest_uploaded_file(
 
 
 def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -> list[dict]:
-    """Parse a test result file into normalized result dicts."""
+    """Parse a test result file into normalized result dicts.
+
+    Dispatch table — each parser returns ``list[dict]`` matching the
+    TestLookup ingestion contract. New frameworks register here and add
+    their content-sniff rules in ``routers/ingest._detect_format``.
+    """
     import json as _json
 
     if fmt == "allure":
@@ -454,6 +488,14 @@ def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -
     if fmt == "testng":
         from app.services.testng_parser import parse_testng_xml
         return parse_testng_xml(content, run_id)
+
+    if fmt == "cypress":
+        from app.services.cypress_parser import parse_cypress_json
+        return parse_cypress_json(content, run_id)
+
+    if fmt == "playwright":
+        from app.services.playwright_parser import parse_playwright_json
+        return parse_playwright_json(content, run_id)
 
     # junit (default) — reuse testng_parser which handles standard JUnit XML too
     from app.services.testng_parser import parse_testng_xml
@@ -1224,6 +1266,139 @@ def resync_stale_knowledge_sources(self) -> dict:
     return cast(dict[str, Any], _run_async(_find_and_enqueue()))
 
 
+# ── Performance baseline refresh (Tier 2 item 10) ──────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.refresh_perf_baselines",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def refresh_perf_baselines(self) -> dict:
+    """Nightly sweep that extends each per-test duration baseline with
+    the newest observations from the TestCase table.
+
+    No-op until the ``perf_regression_detection`` feature flag is on.
+    """
+    async def _run():
+        from app.services.perf_regression_service import refresh_baselines
+        with _beat_span("refresh_perf_baselines") as span:
+            out = await refresh_baselines()
+            span.set_attribute("result.observed", int(out.get("observed", 0)))
+            span.set_attribute("result.baselines", int(out.get("baselines", 0)))
+            span.set_attribute("flag_enabled", not bool(out.get("skipped", 0)))
+            logger.info(
+                "[Task %s] perf baselines refresh: observed=%d baselines=%d",
+                self.request.id, out.get("observed", 0), out.get("baselines", 0),
+            )
+            return out
+
+    return cast(dict, _run_async(_run()))
+
+
+# ── Outbound webhook delivery (Tier 2 item 6) ──────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.deliver_webhook",
+    queue="default",
+    bind=True,
+    max_retries=5,
+    default_retry_delay=30,
+)
+def deliver_webhook(self, delivery_id: str) -> dict:
+    """Deliver a single webhook subscription event.
+
+    Delegates the actual HTTP work to ``webhook_service.deliver`` which
+    holds the DB row as the authoritative outcome. When that function
+    signals a retryable failure, we schedule an exponential retry via
+    ``self.retry`` so Celery's own backoff policy drives the cadence.
+    """
+    import uuid as _uuid_mod
+
+    async def _run():
+        from app.services.webhook_service import deliver
+        try:
+            return await deliver(_uuid_mod.UUID(delivery_id))
+        except Exception as exc:
+            logger.warning(
+                "[Task %s] deliver_webhook unhandled error: %s",
+                self.request.id, exc,
+            )
+            return {"error": str(exc), "retry": False}
+
+    result = cast(dict, _run_async(_run()))
+
+    if result.get("retry"):
+        # Exponential backoff — 30s, 60s, 120s, 240s, 480s. The webhook
+        # service already knows whether the subscription has retries left;
+        # we only reach this branch when it signals retry=True.
+        delay = min(30 * (2 ** self.request.retries), 480)
+        raise self.retry(countdown=delay, max_retries=5)
+
+    return result
+
+
+# ── Flaky quarantine maintenance (Tier 1 item 3) ────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.run_flaky_quarantine_maintenance",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def run_flaky_quarantine_maintenance(self) -> dict:
+    """Nightly housekeeping for the flaky auto-quarantine workflow.
+
+    Runs three passes in order:
+
+      1. ``expire_stale_proposals`` — PROPOSED rows older than 7 days
+         flip to EXPIRED so the UI stays readable.
+      2. ``schedule_pending_rechecks`` — QUARANTINED rows whose
+         ``recheck_at`` has passed move to RECHECK_SCHEDULED.
+      3. ``run_recheck_cycle`` — evaluates RECHECK_SCHEDULED rows against
+         recent TestCase history and either releases or re-quarantines
+         the test.
+
+    Every pass is a no-op when the ``flaky_auto_quarantine`` feature flag
+    is off, so enabling this beat entry is safe on existing deployments.
+    """
+    async def _run():
+        from app.services.flaky_quarantine_service import (
+            expire_stale_proposals,
+            run_recheck_cycle,
+            schedule_pending_rechecks,
+        )
+        with _beat_span("run_flaky_quarantine_maintenance") as span:
+            expired = await expire_stale_proposals()
+            rechecks_scheduled = await schedule_pending_rechecks()
+            outcomes = await run_recheck_cycle()
+            span.set_attribute("result.expired", int(expired))
+            span.set_attribute("result.rechecks_scheduled", int(rechecks_scheduled))
+            span.set_attribute("result.released", int(outcomes["released"]))
+            span.set_attribute("result.re_quarantined", int(outcomes["re_quarantined"]))
+            span.set_attribute("result.insufficient_data", int(outcomes["insufficient_data"]))
+            logger.info(
+                "[Task %s] flaky quarantine maintenance: expired=%d scheduled=%d "
+                "released=%d re_quarantined=%d insufficient_data=%d",
+                self.request.id,
+                expired,
+                rechecks_scheduled,
+                outcomes["released"],
+                outcomes["re_quarantined"],
+                outcomes["insufficient_data"],
+            )
+            return {
+                "expired": expired,
+                "rechecks_scheduled": rechecks_scheduled,
+                **outcomes,
+            }
+
+    return cast(dict[str, Any], _run_async(_run()))
+
+
 # ── DLQ helper ────────────────────────────────────────────────────────────────
 
 async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -> None:
@@ -1319,7 +1494,11 @@ def dispatch_scheduled_digests(self):
                     DigestSubscription.is_active.is_(True),
                     DigestSubscription.is_paused.is_(False),
                     DigestSubscription.next_delivery_at <= now,
-                    DigestSubscription.schedule.in_(["DAILY", "WEEKLY"]),
+                    # Tier 2 item 12: ``WEEKLY_RETRO`` subscriptions use
+                    # the same dispatcher but are routed to the retro
+                    # renderer below. The extra schedule type is
+                    # feature-flag gated inside ``generate_weekly_retro``.
+                    DigestSubscription.schedule.in_(["DAILY", "WEEKLY", "WEEKLY_RETRO"]),
                 )
             )
             due = discovery.all()
@@ -1338,6 +1517,7 @@ def dispatch_scheduled_digests(self):
         for sub_id, schedule in due:
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
             period = "daily" if schedule == "DAILY" else "weekly"
+            is_retro = schedule == "WEEKLY_RETRO"
 
             # Each claim runs in its own short transaction so the UPDATE is
             # visible to sibling workers immediately.
@@ -1375,7 +1555,20 @@ def dispatch_scheduled_digests(self):
             status = "sent"
             try:
                 async with AsyncSessionLocal() as db:
-                    digest = await generate_digest(db, project_id, period)
+                    if is_retro:
+                        # Tier 2 item 12 — route WEEKLY_RETRO through the
+                        # retro-specific renderer. Falls back to the
+                        # plain weekly digest when the feature flag is off
+                        # so paused-but-not-deleted subscriptions still
+                        # deliver something useful.
+                        from app.services.retro_digest_service import (
+                            generate_weekly_retro,
+                        )
+                        digest = await generate_weekly_retro(db, project_id)
+                        if digest is None:
+                            digest = await generate_digest(db, project_id, "weekly")
+                    else:
+                        digest = await generate_digest(db, project_id, period)
                     html_body = render_digest_html(digest)
 
                     user_result = await db.execute(
@@ -1415,5 +1608,12 @@ def dispatch_scheduled_digests(self):
             except Exception as exc:
                 logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
 
-    _run_async(_dispatch())
+    with _beat_span("dispatch_scheduled_digests") as span:
+        try:
+            _run_async(_dispatch())
+            span.set_attribute("status", "ok")
+        except Exception as exc:
+            span.set_attribute("status", "error")
+            span.set_attribute("error.category", type(exc).__name__)
+            raise
     logger.info("[Task %s] Digest dispatch completed", self.request.id)

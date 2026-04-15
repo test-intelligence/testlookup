@@ -15,6 +15,14 @@ Tool Domains:
   - Reports (release readiness, share links)
   - Metrics & Analytics (dashboard, trends, flaky, categories)
   - AI Analysis (trigger root-cause analysis)
+  # Tier 2 item 7 additions — enterprise surface parity
+  - Decision Trail (explain why the AI made every stage + per-test decision)
+  - Compliance Packs (signed audit ZIPs for regulated releases)
+  - Flaky Quarantine (review queue, approve, reject — QA Lead workflow)
+  - LLM Cost Budget (workspace overview, per-project usage + quota)
+  - Defects (list by project with severity + Jira link)
+  - Governance (release gate policies, saved views, digest subs,
+                ownership rules, feature flags + status check)
 
 Transport: stdio (default) or SSE
 Auth:      JWT via TESTLOOKUP_USERNAME / TESTLOOKUP_PASSWORD env vars
@@ -51,6 +59,8 @@ from mcp.server.fastmcp import FastMCP  # type: ignore[import]
 
 from tools import auth, projects, runs, metrics, analytics, analysis, release
 from tools import intelligence, deep, search, reports
+# Tier 2 item 7 — enterprise surface parity.
+from tools import decision_trail, compliance_pack, quarantine, billing, defects, governance
 from resources import registry
 from prompts import templates
 
@@ -64,7 +74,15 @@ mcp = FastMCP(
         "Start with `health_check` to verify connectivity, then `list_projects` to discover "
         "available projects. Use `get_run_intelligence` for AI-powered run analysis, "
         "`trigger_deep_analysis` for multi-agent investigation, and `global_search` "
-        "to find anything in the system."
+        "to find anything in the system.\n\n"
+        "Enterprise-QA surface (Tier 2 item 7): "
+        "`get_decision_trail` explains *why* the AI made every pipeline decision for a run. "
+        "`list_compliance_packs` and `generate_compliance_pack` manage audit ZIPs for "
+        "regulated releases. `list_quarantine_requests`, `approve_quarantine`, and "
+        "`reject_quarantine` drive the flaky-test review queue. `get_billing_overview` "
+        "shows LLM spend against quotas. `list_defects` + `list_release_gate_policies` + "
+        "`list_ownership_rules` expose the governance surface. `check_feature_flag` "
+        "resolves a flag for the current caller."
     ),
 )
 
@@ -81,6 +99,13 @@ intelligence.register(mcp)
 deep.register(mcp)
 search.register(mcp)
 reports.register(mcp)
+# Tier 2 item 7 — enterprise surface parity with the web UI.
+decision_trail.register(mcp)   # Tier 0B — explain why the AI did X
+compliance_pack.register(mcp)  # Tier 1-4 — audit ZIP lifecycle
+quarantine.register(mcp)       # Tier 1-3 — flaky review queue
+billing.register(mcp)          # Tier 1-2 — LLM cost budget
+defects.register(mcp)          # defect list reads
+governance.register(mcp)       # policies, saved views, digests, ownership, flags
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)

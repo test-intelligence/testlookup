@@ -1,13 +1,18 @@
 """
-Feature Flag Service — controlled rollout of new features.
+Legacy feature flag facade — kept for backward compatibility with the
+``app_settings`` router. New code should use ``services/feature_flags`` which
+supports per-project, per-role, and percentage rollout gating.
 
-Provides:
-  - is_enabled: check if a flag is on (with optional scope filtering)
-  - get_all_flags: list all flags for admin UI
-  - set_flag: create or update a flag
-  - Flag keys are simple strings like "secure_settings", "onboarding_wizard", "demo_mode"
+The Tier 0A rewrite collapsed the ``FeatureFlag`` model onto a single
+(key, enabled_global, enabled_projects, enabled_roles, rollout_percent)
+schema. This module bridges the legacy call sites which only cared about
+the global on/off toggle.
 
-Default behavior: unknown flags are treated as ENABLED (fail-open for safety).
+Legacy semantics preserved:
+  - ``is_enabled`` is fail-open (unknown flags default to enabled).
+  - ``set_flag`` / ``delete_flag`` / ``get_all_flags`` operate on the global
+    toggle only. ``scope`` and ``config`` args are accepted but ignored —
+    callers that need scoped gating must migrate to ``services/feature_flags``.
 """
 from __future__ import annotations
 
@@ -36,15 +41,10 @@ async def is_enabled(
     flag_key: str,
     default: bool = True,
 ) -> bool:
-    """
-    Check if a feature flag is enabled.
-
-    Default is True (fail-open) — unknown flags are treated as enabled.
-    This means new code paths work immediately; flags are used to DISABLE features.
-    """
+    """Fail-open global-toggle check. Unknown flags return ``default``."""
     try:
         result = await db.execute(
-            select(FeatureFlag.enabled).where(FeatureFlag.flag_key == flag_key)
+            select(FeatureFlag.enabled_global).where(FeatureFlag.key == flag_key)
         )
         value = result.scalar_one_or_none()
         if value is None:
@@ -59,14 +59,14 @@ async def get_all_flags(db: AsyncSession) -> list[dict]:
     """Return all feature flags for the admin UI."""
     try:
         result = await db.execute(
-            select(FeatureFlag).order_by(FeatureFlag.flag_key)
+            select(FeatureFlag).order_by(FeatureFlag.key)
         )
         return [
             {
-                "flag_key": f.flag_key,
-                "scope": f.scope,
-                "enabled": f.enabled,
-                "config": f.config,
+                "flag_key": f.key,
+                "scope": "global",
+                "enabled": f.enabled_global,
+                "config": None,
                 "description": f.description,
                 "updated_at": f.updated_at.isoformat() if f.updated_at else None,
             }
@@ -81,40 +81,35 @@ async def set_flag(
     db: AsyncSession,
     flag_key: str,
     enabled: bool,
-    scope: str = "global",
-    config: Optional[dict] = None,
+    scope: str = "global",  # accepted for compat, ignored
+    config: Optional[dict] = None,  # accepted for compat, ignored
     description: Optional[str] = None,
 ) -> dict:
-    """Stage creation/update of a feature flag. Handler commits."""
+    """Create or toggle the global on/off state of a flag. Handler commits."""
     result = await db.execute(
-        select(FeatureFlag).where(FeatureFlag.flag_key == flag_key)
+        select(FeatureFlag).where(FeatureFlag.key == flag_key)
     )
     existing = result.scalar_one_or_none()
 
     if existing:
-        existing.enabled = enabled
-        existing.scope = scope
-        if config is not None:
-            existing.config = config
+        existing.enabled_global = enabled
         if description is not None:
             existing.description = description
     else:
         db.add(FeatureFlag(
-            flag_key=flag_key,
-            scope=scope,
-            enabled=enabled,
-            config=config,
+            key=flag_key,
+            enabled_global=enabled,
             description=description,
+            rollout_percent=100,
         ))
 
-    return {"flag_key": flag_key, "enabled": enabled, "scope": scope}
+    return {"flag_key": flag_key, "enabled": enabled, "scope": "global"}
 
 
 async def delete_flag(db: AsyncSession, flag_key: str) -> bool:
-    """Stage deletion of a feature flag. Handler commits. Returns True if
-    a row was scheduled for deletion."""
+    """Stage deletion of a feature flag. Returns True if a row was found."""
     result = await db.execute(
-        select(FeatureFlag).where(FeatureFlag.flag_key == flag_key)
+        select(FeatureFlag).where(FeatureFlag.key == flag_key)
     )
     existing = result.scalar_one_or_none()
     if existing:

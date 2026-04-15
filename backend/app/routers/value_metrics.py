@@ -30,6 +30,29 @@ async def get_metrics(
     return await get_value_metrics(db, project_id=pid, days=days)
 
 
+@router.get("/by-team")
+async def get_metrics_by_team(
+    project_id: str = Query(...),
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Tier 2 item 11 — partition value metrics by owning team.
+
+    Uses ``ServiceOwnershipRule`` rows to bucket tests + defects by
+    team. Requires a ``project_id`` because ownership rules are
+    project-scoped. Returns a per-team rollup with test count, pass
+    rate, defect count, MTTR hours, and estimated minutes saved so
+    the dashboard can render per-team tiles without any further
+    transformation.
+    """
+    from app.core.deps import resolve_project_scope
+    await resolve_project_scope(db, current_user, project_id)
+    from app.services.team_value_metrics_service import get_team_value_metrics
+    pid = uuid.UUID(project_id)
+    return await get_team_value_metrics(db, project_id=pid, days=days)
+
+
 @router.get("/export")
 async def export_metrics(
     project_id: Optional[str] = Query(None),

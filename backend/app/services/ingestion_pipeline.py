@@ -166,6 +166,44 @@ async def finalize_run(
 
     await _run_isolated("auto_tagging", _tag)
 
+    # Tier 1 item 3 — tag any test cases in this run that are currently
+    # under active quarantine so release gate scoring, dashboards, and
+    # defect promotion can exclude them. The service returns an empty set
+    # when the ``flaky_auto_quarantine`` feature flag is off, making this
+    # step a no-op for deployments that haven't enabled the workflow.
+    async def _apply_quarantine_tags(d: AsyncSession) -> None:
+        from app.services.flaky_quarantine_service import active_quarantines_for_project
+        from app.models.postgres import TestCase as _TC
+        from sqlalchemy import select as _sel
+        fingerprints = await active_quarantines_for_project(d, pid)
+        if not fingerprints:
+            return
+        # Fetch all test cases in this run whose fingerprint matches. Bounded
+        # by the run so the query is cheap even when the fingerprint set is
+        # large.
+        result = await d.execute(
+            _sel(_TC).where(
+                _TC.test_run_id == rid,
+                _TC.test_fingerprint.in_(fingerprints),
+            )
+        )
+        rows = list(result.scalars().all())
+        if not rows:
+            return
+        for row in rows:
+            tags = list(row.tags or [])
+            if "quarantined" not in tags:
+                tags.append("quarantined")
+                row.tags = tags
+        logger.info(
+            "quarantine_tags_applied",
+            run_id=str(rid),
+            project_id=str(pid),
+            count=len(rows),
+        )
+
+    await _run_isolated("quarantine_tagging", _apply_quarantine_tags)
+
     if release_name and release_name.strip():
         from app.services.release_linker import auto_link_release
         await _run_isolated(
@@ -177,6 +215,25 @@ async def finalize_run(
             ),
         )
 
+    # Tier 1 item 5 — post a GitHub check run for this commit SHA. The
+    # service is the hard kill switch: it returns a ``skipped`` dict
+    # when the ``github_checks`` feature flag is off, ``AI_OFFLINE_MODE``
+    # is on, there's no integration configured for the project, or the
+    # run lacks a full 40-char commit SHA. Ingestion never blocks on a
+    # GitHub outage — errors land in ``github_integrations.last_error``
+    # so the Integration Health dashboard surfaces them.
+    try:
+        from app.services.github_checks_service import post_check_run_for_run
+        gh_result = await post_check_run_for_run(rid)
+        if gh_result and not gh_result.get("skipped"):
+            logger.info("github_check_post_result", run_id=str(rid), result=gh_result)
+    except Exception as gh_exc:
+        logger.warning(
+            "github_check_post_unhandled",
+            run_id=str(rid),
+            error=str(gh_exc),
+        )
+
     # Fetch run for notification data
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(TestRun).where(TestRun.id == rid))
@@ -184,6 +241,39 @@ async def finalize_run(
         if not run:
             logger.warning("Run not found for post-ingestion", run_id=run_id)
             return
+
+    # Tier 2 item 6 — fan out the ``run.completed`` event to any
+    # customer-managed webhook subscriptions. Gated by feature flag +
+    # AI_OFFLINE_MODE. Failures land in per-subscription last_error for
+    # the settings UI; ingestion never blocks on delivery.
+    try:
+        from app.services.webhook_service import emit_event
+        await emit_event(
+            "run.completed",
+            project_id=pid,
+            payload={
+                "run_id": str(rid),
+                "project_id": str(pid),
+                "build_number": run.build_number,
+                "branch": run.branch,
+                "commit_hash": run.commit_hash,
+                "total_tests": int(run.total_tests or 0),
+                "passed_tests": int(run.passed_tests or 0),
+                "failed_tests": int(run.failed_tests or 0),
+                "broken_tests": int(run.broken_tests or 0),
+                "skipped_tests": int(run.skipped_tests or 0),
+                "pass_rate": float(run.pass_rate or 0.0),
+                "status": run.status,
+                "start_time": run.start_time.isoformat() if run.start_time else None,
+                "end_time": run.end_time.isoformat() if run.end_time else None,
+            },
+        )
+    except Exception as wh_exc:
+        logger.warning(
+            "webhook_emit_run_completed_failed",
+            run_id=str(rid),
+            error=str(wh_exc),
+        )
 
     # Enqueue notifications
     try:

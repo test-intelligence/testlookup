@@ -4,7 +4,7 @@ import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FlaskConical,
   Gauge, GitBranch, HeartPulse, Layers, LayoutDashboard, MessageSquare,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
-  ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
+  ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -66,12 +66,13 @@ const GROUPS: NavGroup[] = [
     label: 'AI Reports',
     icon: Brain,
     to: '/intelligence',
-    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/chat'],
+    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/quarantine', '/chat'],
     children: [
       { to: '/agents',           icon: Bot,           label: 'AI Pipeline'   },
       { to: '/deep-investigate', icon: Layers,         label: 'Deep Analysis' },
       { to: '/release-gate',     icon: Shield,         label: 'Release Gate'  },
       { to: '/flaky-coach',      icon: HeartPulse,     label: 'Flaky Coach'   },
+      { to: '/quarantine',       icon: ShieldAlert,    label: 'Quarantine'    },
       { to: '/chat',             icon: MessageSquare,  label: 'Chat'          },
     ],
   },

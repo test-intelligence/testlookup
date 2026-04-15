@@ -10,7 +10,6 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.postgres import KnowledgeSource
 from app.services.knowledge_chunking_service import _get_or_create_knowledge_collection
 
@@ -41,7 +40,8 @@ async def retrieve_chunks(
     Query ChromaDB knowledge_chunks collection and return ranked results
     with citation metadata. Filters by project scope and optionally by source_ids.
     """
-    if not settings.KNOWLEDGE_RAG_ENABLED:
+    from app.services.feature_flags import is_enabled
+    if not await is_enabled("knowledge_rag"):
         return []
 
     try:

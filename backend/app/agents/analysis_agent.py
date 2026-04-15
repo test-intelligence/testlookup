@@ -64,6 +64,31 @@ class AnalysisAgent(BaseAgent):
         failed_ids: list[str] = state.get("failed_test_ids", [])
 
         await self.mark_stage_running(pipeline_run_id)
+
+        # Tier 1 item 2 — LLM cost budget enforcement. Evaluate the quota
+        # BEFORE the first classification so every test in this stage sees
+        # the same mode. A downgrade here is recorded as a decision log
+        # entry so the Run Intelligence "Decision Trail" drawer explains
+        # why the AI ran in reduced mode without operators having to grep
+        # Prometheus.
+        from app.services.llm_cost_budget import check_and_apply_cap
+        cap_decision = await check_and_apply_cap(project_id)
+        if cap_decision.is_capped():
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="llm_cost_budget_cap",
+                chosen=cap_decision.action,
+                rationale=cap_decision.rationale,
+                context={
+                    "utilization_pct": cap_decision.utilization_pct,
+                    "mode_override": cap_decision.mode_override,
+                    "block": cap_decision.block,
+                },
+            )
+        # Stash on state so _analyse_one can see it without a second DB hit.
+        state["_cost_budget_mode_override"] = cap_decision.mode_override
+        state["_cost_budget_block"] = cap_decision.block
+
         await self.broadcast_progress(
             project_id,
             {
@@ -73,11 +98,39 @@ class AnalysisAgent(BaseAgent):
         )
 
         if not failed_ids:
-            await self.mark_stage_done(pipeline_run_id, result_data={"analysed": 0})
+            await self.mark_stage_done(
+                pipeline_run_id,
+                result_data={"analysed": 0},
+                project_id=project_id,
+            )
             return {
                 "analyses": {},
                 "completed_stages": ["root_cause_analysis"],
                 "errors": [],
+                "current_stage": "summary",
+            }
+
+        # Hard block short-circuits the entire stage. Return an empty result
+        # set with a stage_quality marker so the summary agent can explain
+        # the gap instead of pretending all tests passed.
+        if cap_decision.block:
+            await self.mark_stage_done(
+                pipeline_run_id,
+                result_data={
+                    "analysed": 0,
+                    "stage_quality": "cost_budget_blocked",
+                    "blocked_reason": cap_decision.rationale,
+                },
+                analysis_mode="blocked",
+                fallback_reason=cap_decision.rationale[:200],
+                project_id=project_id,
+            )
+            return {
+                "analyses": {},
+                "completed_stages": ["root_cause_analysis"],
+                "errors": [],
+                "stage_errors": {"root_cause_analysis": [cap_decision.rationale]},
+                "stage_quality": "cost_budget_blocked",
                 "current_stage": "summary",
             }
 
@@ -169,6 +222,7 @@ class AnalysisAgent(BaseAgent):
             },
             analysis_mode=dominant_mode,
             fallback_reason=stage_fallback_reason,
+            project_id=project_id,
         )
 
         quality_msg = ""
@@ -262,9 +316,16 @@ class AnalysisAgent(BaseAgent):
                 test_name=meta.get("test_name", ""),
             )
 
-            # Check analysis mode — dispatch to ML/Rules if LLM is disabled
+            # Check analysis mode — dispatch to ML/Rules if LLM is disabled.
+            # If the LLM cost budget (checked once at the top of run()) forced
+            # a downgrade, it wins over the configured mode — every test in
+            # this stage runs under the downgraded engine.
             from app.services.analysis_router import AnalysisMode, get_analysis_mode
-            mode = get_analysis_mode()
+            budget_override = state.get("_cost_budget_mode_override")
+            if budget_override in ("ml", "rules"):
+                mode = budget_override
+            else:
+                mode = get_analysis_mode()
 
             # Record the routing decision so downstream consumers (UI, reports)
             # can see *which* engine ran and why, without scraping logs.
@@ -802,6 +863,10 @@ class AnalysisAgent(BaseAgent):
                     for tc_id, analysis in chunk:
                         if analysis.get("error") and not analysis.get("root_cause_summary"):
                             continue  # Skip error-only entries with no useful data
+                        # Persist the per-test decision audit so the trail UI
+                        # can show "why did the AI route this test to engine X"
+                        # without hitting the Mongo event log.
+                        routing_metadata = analysis.get("_audit") or None
                         stmt = pg_insert(AIAnalysis).values(
                             test_case_id=tc_id,
                             root_cause_summary=analysis.get("root_cause_summary"),
@@ -817,6 +882,7 @@ class AnalysisAgent(BaseAgent):
                             llm_provider=analysis.get("llm_provider"),
                             llm_model=analysis.get("llm_model"),
                             requires_human_review=analysis.get("requires_human_review", True),
+                            routing_metadata=routing_metadata,
                             created_at=now,
                         ).on_conflict_do_update(
                             index_elements=["test_case_id"],
@@ -832,6 +898,7 @@ class AnalysisAgent(BaseAgent):
                                 "tools_used": analysis.get("tools_used"),
                                 "role_actions": analysis.get("role_actions"),
                                 "requires_human_review": analysis.get("requires_human_review", True),
+                                "routing_metadata": routing_metadata,
                             },
                         )
                         await db.execute(stmt)

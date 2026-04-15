@@ -18,16 +18,22 @@ from app.routers import (
     audit_dashboard,
     auth,
     chat,
+    compliance_packs,
     deep_investigation,
     debug,
+    decision_trail,
     digests,
+    feature_flags as feature_flags_router,
     feedback,
+    flaky_quarantine,
+    github_integration,
     identity_events,
     ingest,
     integration_health,
     integrations,
     knowledge_sources,
     live,
+    llm_cost_budget as llm_cost_budget_router,
     metrics,
     notifications,
     onboarding,
@@ -39,6 +45,7 @@ from app.routers import (
     release_readiness,
     releases,
     reports,
+    run_compare,
     run_intelligence,
     runs,
     saved_views,
@@ -55,6 +62,7 @@ from app.routers import (
     users,
     value_metrics,
     webhooks,
+    webhooks_outbound,
 )
 from app.routers.health import router as health_router
 from app.routers.observability import router as observability_router
@@ -114,6 +122,14 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     ingest.router,                     # Unified test data ingestion (JSON batch + file upload)
     knowledge_sources.router,          # Knowledge source registry (RAG-1/2/3)
     rag_generation.router,             # RAG grounded generation (RAG-7 through RAG-14)
+    feature_flags_router.router,       # Tier 0A: generic feature flag store (ADMIN)
+    decision_trail.router,             # Tier 0B: AI decision audit trail per run
+    llm_cost_budget_router.router,     # Tier 1 item 2: LLM cost budget + usage meter
+    flaky_quarantine.router,           # Tier 1 item 3: flaky-test quarantine workflow
+    compliance_packs.router,           # Tier 1 item 4: release compliance export pack
+    github_integration.router,         # Tier 1 item 5: GitHub Checks integration
+    webhooks_outbound.router,          # Tier 2 item 6: outbound webhook subscriptions
+    run_compare.router,                # Tier 2 item 8: two-run compare
 )
 
 

@@ -1,0 +1,282 @@
+"""
+Two-run compare — Tier 2 item 8.
+
+Compares two ``TestRun`` rows and produces a per-test diff classified
+by how the test's status changed between the left and right run. The
+user picks the two runs in the UI; the classifier does the pairing.
+
+Pairing uses ``TestCase.test_fingerprint`` — the stable hash of test
+name + suite + package — so the same logical test matches across
+builds even when its UUID changes.
+
+Classifications:
+
+* ``new_failure``   — left=passed,   right=failed/broken
+* ``fixed``         — left=failed,   right=passed
+* ``still_failing`` — left=failed,   right=failed
+* ``regressed``     — left=passed,   right=skipped/broken (partial fail)
+* ``improved``      — left=broken,   right=passed
+* ``new_test``      — did not exist in left run
+* ``removed_test``  — did not exist in right run
+* ``duration_spike``— same status, right_duration > 3× left_duration
+
+The response includes aggregate counts so the UI's summary tiles can
+render without re-computing the classification client-side.
+"""
+from __future__ import annotations
+
+import uuid
+from typing import Any, Optional
+
+import structlog
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.postgres import TestCase, TestRun
+
+logger = structlog.get_logger("services.run_compare")
+
+
+# Tests whose right-side duration is more than this multiple of the
+# left-side duration count as duration_spikes — one of the release-gate
+# signals planned in Tier 2 item 10.
+_DURATION_SPIKE_MULTIPLIER = 3.0
+
+# Hard cap on the number of per-test delta rows returned so a diff
+# between two enormous runs doesn't DOS the frontend.
+_MAX_DELTA_ROWS = 500
+
+
+def _status_bucket(status: Optional[str]) -> str:
+    """Collapse a TestStatus into ``passed`` | ``failed`` | ``skipped`` |
+    ``broken`` | ``unknown`` for classification. Accepts None."""
+    if not status:
+        return "unknown"
+    s = str(status).upper()
+    if s in ("PASSED", "PASS"):
+        return "passed"
+    if s in ("FAILED", "FAIL"):
+        return "failed"
+    if s in ("BROKEN", "ERROR"):
+        return "broken"
+    if s in ("SKIPPED", "SKIP"):
+        return "skipped"
+    return "unknown"
+
+
+def _classify(
+    left_status: Optional[str],
+    right_status: Optional[str],
+    left_duration: Optional[int],
+    right_duration: Optional[int],
+) -> Optional[str]:
+    """Return a classification label or ``None`` when there's no change
+    worth surfacing (both sides identical pass + similar duration)."""
+    if left_status is None and right_status is not None:
+        return "new_test" if _status_bucket(right_status) == "passed" else "new_failure"
+    if right_status is None and left_status is not None:
+        return "removed_test"
+
+    lb = _status_bucket(left_status)
+    rb = _status_bucket(right_status)
+
+    if lb == "passed" and rb in ("failed", "broken"):
+        return "new_failure"
+    if lb in ("failed", "broken") and rb == "passed":
+        return "fixed"
+    if lb == "failed" and rb == "failed":
+        return "still_failing"
+    if lb == "broken" and rb == "broken":
+        return "still_failing"
+    if lb == "passed" and rb == "skipped":
+        return "regressed"
+    if lb == "passed" and rb == "passed":
+        # Same status — only surface on duration spike.
+        if (
+            left_duration is not None
+            and right_duration is not None
+            and left_duration > 0
+            and right_duration >= left_duration * _DURATION_SPIKE_MULTIPLIER
+        ):
+            return "duration_spike"
+        return None
+    if lb == "skipped" and rb == "passed":
+        return "fixed"
+    if lb != rb:
+        # Any other status change — surface as regressed for triage.
+        return "regressed"
+    return None
+
+
+async def _load_summary(db: AsyncSession, run_id: uuid.UUID) -> Optional[TestRun]:
+    result = await db.execute(select(TestRun).where(TestRun.id == run_id))
+    return result.scalar_one_or_none()
+
+
+async def _load_test_rows(
+    db: AsyncSession, run_id: uuid.UUID,
+) -> dict[str, TestCase]:
+    """Return a map keyed by ``test_fingerprint``.
+
+    Same-fingerprint duplicates inside a single run (e.g. retries) are
+    resolved by keeping the last-observed row — matches how the release
+    dashboards render the run.
+    """
+    result = await db.execute(
+        select(TestCase).where(TestCase.test_run_id == run_id)
+    )
+    rows: dict[str, TestCase] = {}
+    for tc in result.scalars().all():
+        fp = tc.test_fingerprint
+        if not fp:
+            continue
+        rows[fp] = tc
+    return rows
+
+
+def _summary_dict(run: TestRun) -> dict[str, Any]:
+    return {
+        "id": run.id,
+        "project_id": run.project_id,
+        "build_number": run.build_number,
+        "branch": run.branch,
+        "commit_hash": run.commit_hash,
+        "status": run.status,
+        "total_tests": int(run.total_tests or 0),
+        "passed_tests": int(run.passed_tests or 0),
+        "failed_tests": int(run.failed_tests or 0),
+        "broken_tests": int(run.broken_tests or 0),
+        "skipped_tests": int(run.skipped_tests or 0),
+        "pass_rate": float(run.pass_rate) if run.pass_rate is not None else None,
+        "duration_ms": int(run.duration_ms) if run.duration_ms is not None else None,
+        "start_time": run.start_time,
+        "end_time": run.end_time,
+    }
+
+
+async def compare_runs(
+    db: AsyncSession,
+    left_id: uuid.UUID,
+    right_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Build the compare document. Returns a plain dict suitable for
+    passing straight into ``RunCompareResponse``.
+
+    Caller is expected to have already enforced tenant isolation via
+    ``resolve_project_scope`` on both runs' projects.
+
+    Raises ``LookupError`` when either run is missing.
+    """
+    left_run = await _load_summary(db, left_id)
+    right_run = await _load_summary(db, right_id)
+    if left_run is None:
+        raise LookupError(f"Left run {left_id} not found")
+    if right_run is None:
+        raise LookupError(f"Right run {right_id} not found")
+
+    left_tests = await _load_test_rows(db, left_id)
+    right_tests = await _load_test_rows(db, right_id)
+
+    all_fingerprints = set(left_tests.keys()) | set(right_tests.keys())
+
+    counts = {
+        "new_failure": 0,
+        "fixed": 0,
+        "still_failing": 0,
+        "regressed": 0,
+        "improved": 0,
+        "new_test": 0,
+        "removed_test": 0,
+        "duration_spike": 0,
+    }
+
+    deltas: list[dict[str, Any]] = []
+    for fp in all_fingerprints:
+        left_tc = left_tests.get(fp)
+        right_tc = right_tests.get(fp)
+        left_status = left_tc.status if left_tc else None
+        right_status = right_tc.status if right_tc else None
+        left_duration = left_tc.duration_ms if left_tc else None
+        right_duration = right_tc.duration_ms if right_tc else None
+
+        classification = _classify(
+            left_status, right_status, left_duration, right_duration,
+        )
+        if classification is None:
+            continue
+        counts[classification] = counts.get(classification, 0) + 1
+
+        # Prefer the right-side name/suite when available (the "target"
+        # run reflects the current state).
+        display_tc = right_tc or left_tc
+        delta_duration = (
+            (right_duration - left_duration)
+            if right_duration is not None and left_duration is not None
+            else None
+        )
+        deltas.append({
+            "test_fingerprint": fp,
+            "test_name": display_tc.test_name if display_tc else None,
+            "suite_name": display_tc.suite_name if display_tc else None,
+            "left_status": str(left_status) if left_status else None,
+            "right_status": str(right_status) if right_status else None,
+            "left_duration_ms": left_duration,
+            "right_duration_ms": right_duration,
+            "delta_duration_ms": delta_duration,
+            "classification": classification,
+        })
+
+    # Sort: most urgent categories first, then by largest duration delta.
+    priority = {
+        "new_failure": 0,
+        "regressed": 1,
+        "still_failing": 2,
+        "duration_spike": 3,
+        "removed_test": 4,
+        "fixed": 5,
+        "improved": 6,
+        "new_test": 7,
+    }
+    deltas.sort(
+        key=lambda d: (
+            priority.get(d["classification"], 99),
+            -(d["delta_duration_ms"] if d["delta_duration_ms"] is not None else 0),
+        )
+    )
+
+    truncated = len(deltas) > _MAX_DELTA_ROWS
+    if truncated:
+        deltas = deltas[:_MAX_DELTA_ROWS]
+
+    left_summary = _summary_dict(left_run)
+    right_summary = _summary_dict(right_run)
+
+    delta_pass_rate: Optional[float] = None
+    if left_run.pass_rate is not None and right_run.pass_rate is not None:
+        delta_pass_rate = round(float(right_run.pass_rate) - float(left_run.pass_rate), 3)
+
+    delta_duration_ms: Optional[int] = None
+    if left_run.duration_ms is not None and right_run.duration_ms is not None:
+        delta_duration_ms = int(right_run.duration_ms) - int(left_run.duration_ms)
+
+    return {
+        "left": left_summary,
+        "right": right_summary,
+        "delta_total": right_summary["total_tests"] - left_summary["total_tests"],
+        "delta_passed": right_summary["passed_tests"] - left_summary["passed_tests"],
+        "delta_failed": right_summary["failed_tests"] - left_summary["failed_tests"],
+        "delta_broken": right_summary["broken_tests"] - left_summary["broken_tests"],
+        "delta_skipped": right_summary["skipped_tests"] - left_summary["skipped_tests"],
+        "delta_pass_rate": delta_pass_rate,
+        "delta_duration_ms": delta_duration_ms,
+        "new_failures": counts["new_failure"],
+        "fixed": counts["fixed"],
+        "still_failing": counts["still_failing"],
+        "regressed": counts["regressed"],
+        "improved": counts["improved"],
+        "new_tests": counts["new_test"],
+        "removed_tests": counts["removed_test"],
+        "duration_spikes": counts["duration_spike"],
+        "test_deltas": deltas,
+        "truncated": truncated,
+    }

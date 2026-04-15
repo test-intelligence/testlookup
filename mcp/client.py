@@ -75,16 +75,79 @@ async def get(path: str, params: Optional[dict] = None) -> Any:
     return resp.json()
 
 
-async def post(path: str, json_body: Optional[dict] = None) -> Any:
+async def post(
+    path: str,
+    json_body: Optional[dict] = None,
+    params: Optional[dict] = None,
+) -> Any:
     client = _get_client()
     headers = await _auth_headers()
-    resp = await client.post(path, json=json_body, headers=headers)
+    resp = await client.post(
+        path, json=json_body, params=_clean_params(params), headers=headers,
+    )
 
     if resp.status_code == 401 and settings.username:
         global _access_token
         _access_token = None
         headers = await _auth_headers()
-        resp = await client.post(path, json=json_body, headers=headers)
+        resp = await client.post(
+            path, json=json_body, params=_clean_params(params), headers=headers,
+        )
 
     resp.raise_for_status()
+    # Handle 204 No Content responses (empty body) gracefully.
+    if resp.status_code == 204 or not resp.content:
+        return None
     return resp.json()
+
+
+async def patch(path: str, json_body: Optional[dict] = None) -> Any:
+    """PATCH helper — identical 401-retry semantics as ``post``."""
+    client = _get_client()
+    headers = await _auth_headers()
+    resp = await client.patch(path, json=json_body, headers=headers)
+
+    if resp.status_code == 401 and settings.username:
+        global _access_token
+        _access_token = None
+        headers = await _auth_headers()
+        resp = await client.patch(path, json=json_body, headers=headers)
+
+    resp.raise_for_status()
+    if resp.status_code == 204 or not resp.content:
+        return None
+    return resp.json()
+
+
+async def put(path: str, json_body: Optional[dict] = None) -> Any:
+    """PUT helper — used by config upserts (feature flags, quotas)."""
+    client = _get_client()
+    headers = await _auth_headers()
+    resp = await client.put(path, json=json_body, headers=headers)
+
+    if resp.status_code == 401 and settings.username:
+        global _access_token
+        _access_token = None
+        headers = await _auth_headers()
+        resp = await client.put(path, json=json_body, headers=headers)
+
+    resp.raise_for_status()
+    if resp.status_code == 204 or not resp.content:
+        return None
+    return resp.json()
+
+
+async def delete(path: str) -> None:
+    """DELETE helper — most endpoints return 204 No Content."""
+    client = _get_client()
+    headers = await _auth_headers()
+    resp = await client.delete(path, headers=headers)
+
+    if resp.status_code == 401 and settings.username:
+        global _access_token
+        _access_token = None
+        headers = await _auth_headers()
+        resp = await client.delete(path, headers=headers)
+
+    resp.raise_for_status()
+    return None

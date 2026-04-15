@@ -5,7 +5,9 @@ import {
   Layers, TicketCheck, XCircle, AlertCircle,
   GitCompare, ArrowDown, ArrowUp, Minus, Filter,
   HeartPulse, RefreshCw, FileDown, Share2, Package,
+  FileSearch,
 } from 'lucide-react'
+import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -675,6 +677,7 @@ export default function RunIntelligencePage() {
   const baselineDiffRef = useRef<HTMLDivElement>(null)
   const workflowRef = useRef<HTMLDivElement>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
 
   async function handleRefresh() {
     if (!runId) return
@@ -752,11 +755,32 @@ export default function RunIntelligencePage() {
             >
               <Share2 className="h-3.5 w-3.5" /> Share
             </button>
+            <button
+              type="button"
+              onClick={() => setDecisionTrailOpen(true)}
+              className="btn-secondary text-xs flex items-center gap-1.5"
+              title="AI decision trail — why the AI chose each step"
+            >
+              <FileSearch className="h-3.5 w-3.5" /> Decision Trail
+            </button>
+            <Link
+              to={`/runs/compare?left=${run.id}`}
+              className="btn-secondary text-xs flex items-center gap-1.5"
+              title="Compare this run against another — pick the right side on the compare page"
+            >
+              <GitCompare className="h-3.5 w-3.5" /> Compare
+            </Link>
             <Link to={`/runs/${run.id}`} className="btn-secondary text-sm flex items-center gap-2">
               View Test Cases <ChevronRight className="h-4 w-4" />
             </Link>
           </div>
         }
+      />
+
+      <DecisionTrailDrawer
+        runId={run.id}
+        open={decisionTrailOpen}
+        onClose={() => setDecisionTrailOpen(false)}
       />
 
       {/* Sticky action bar */}

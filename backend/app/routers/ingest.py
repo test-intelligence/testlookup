@@ -123,11 +123,14 @@ async def ingest_batch(
     )
 
 
+_SUPPORTED_FORMATS = {"auto", "junit", "testng", "allure", "cypress", "playwright"}
+
+
 @router.post(
     "/file",
     response_model=IngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload test result file (JUnit/TestNG XML, Allure JSON)",
+    summary="Upload test result file (JUnit/TestNG XML, Allure/Cypress/Playwright JSON)",
 )
 async def ingest_file(
     file: UploadFile = File(...),
@@ -143,9 +146,21 @@ async def ingest_file(
     """
     Upload a test result file for async parsing and ingestion.
 
-    Supported formats: JUnit XML, TestNG XML, Allure JSON.
-    Set format=auto (default) for automatic detection based on content.
+    Supported formats: ``junit`` | ``testng`` | ``allure`` | ``cypress`` |
+    ``playwright``. Use ``format=auto`` (default) for content-based detection.
+    The Cypress and Playwright parsers are gated behind the ``cypress_ingest``
+    and ``playwright_ingest`` feature flags respectively — 503 is returned if
+    a disabled format is requested.
     """
+    if format not in _SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported format '{format}'. Expected one of: "
+                + ", ".join(sorted(_SUPPORTED_FORMATS))
+            ),
+        )
+
     current_user, bound_project_id = auth
     target_project_id = _parse_project_uuid(project_id)
 
@@ -169,6 +184,27 @@ async def ingest_file(
     detected_format = format
     if format == "auto":
         detected_format = _detect_format(file.filename or "", content)
+
+    # Feature-flag gate: refuse parser invocations for flags that aren't
+    # enabled for this project. The flags are seeded by migration 0064 and
+    # default to OFF, so existing deployments are unaffected until an ADMIN
+    # toggles them from Settings > Feature Flags.
+    if detected_format in ("cypress", "playwright"):
+        from app.services.feature_flags import is_enabled
+        flag_key = f"{detected_format}_ingest"
+        if not await is_enabled(
+            flag_key,
+            db=db,
+            project_id=target_project_id,
+            user=current_user,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    f"{detected_format.title()} ingestion is disabled. "
+                    f"Ask an admin to enable the '{flag_key}' feature flag."
+                ),
+            )
 
     run_id = str(uuid.uuid4())
     task = ingest_uploaded_file.delay(
@@ -202,26 +238,55 @@ async def ingest_file(
 
 
 def _detect_format(filename: str, content: bytes) -> str:
-    """Auto-detect test result file format from filename and first 2 KB of content."""
+    """Auto-detect test result file format from filename and first 4 KB of content.
+
+    Detection order is deliberate — most-specific markers first so a file
+    that looks like multiple formats (e.g. a Mochawesome payload that also
+    contains a ``"status"`` key) lands on the right parser.
+    """
     lower = filename.lower()
+    text = content[:4096].decode("utf-8", errors="replace")
 
-    # Extension-based hints
-    if lower.endswith(".json"):
-        return "allure"
-
-    # Content-based detection
-    text = content[:2048].decode("utf-8", errors="replace")
-
+    # ── XML formats first — their markers are unambiguous. ─────────────────
     # TestNG has distinctive markers
-    if "<testng-results" in text or "configurationMethod" in text.lower():
+    if "<testng-results" in text or "configurationmethod" in text.lower():
         return "testng"
-
     # Standard JUnit/Surefire XML
     if "<testsuite" in text or "<testsuites" in text:
         return "junit"
 
-    # Allure JSON markers
-    if '"uuid"' in text and '"name"' in text and '"status"' in text:
+    # ── JSON formats — require the root to look like an object. ──────────
+    stripped = text.lstrip()
+    looks_like_json = stripped.startswith("{") or stripped.startswith("[")
+
+    # Playwright's JSON reporter includes a top-level ``config`` object with
+    # ``projects``. The combination is distinctive — Cypress Mochawesome
+    # never has ``config.projects`` and Allure never has ``config``.
+    if looks_like_json and (
+        '"config"' in stripped[:2048]
+        and '"projects"' in stripped[:2048]
+        and '"suites"' in stripped[:2048]
+    ):
+        return "playwright"
+
+    # Cypress Mochawesome ships a top-level ``stats`` object with
+    # ``tests``/``passes``/``failures`` + a ``results`` array keyed by spec
+    # ``file``. No other supported format has ``stats`` + ``passes`` at
+    # the root, so this is an unambiguous marker.
+    if looks_like_json and (
+        '"stats"' in stripped[:2048]
+        and '"passes"' in stripped[:2048]
+        and '"results"' in stripped[:2048]
+    ):
+        return "cypress"
+
+    # Allure single-result JSON: ``uuid``/``name``/``status`` at root.
+    if looks_like_json and '"uuid"' in stripped and '"name"' in stripped and '"status"' in stripped:
+        return "allure"
+
+    # Extension-based fallback — .json files that don't match any JSON
+    # sniffer above are treated as Allure for backwards compatibility.
+    if lower.endswith(".json"):
         return "allure"
 
     # Default to JUnit — most common format

@@ -64,33 +64,19 @@ def require_rag_enabled() -> None:
 
 
 async def require_rag_enabled_async(db: AsyncSession) -> None:
-    """Async gate — checks Redis cache, then DB, then env-var fallback."""
-    # Fast path: check Redis cache first
-    try:
-        from app.db.redis_client import get_redis
-        redis = get_redis()
-        cached = await redis.get("config:knowledge_rag_enabled")
-        if cached is not None:
-            val = cached.decode() if isinstance(cached, bytes) else str(cached)
-            if val == "1":
-                return  # enabled
-            if val == "0":
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Knowledge RAG feature is not enabled. Enable it from Settings > AI Configuration.",
-                )
-    except HTTPException:
-        raise
-    except Exception:
-        pass  # Redis unavailable — fall through to DB
+    """Async gate — delegates to the generic feature flag service.
 
-    # DB check
-    enabled = await _is_rag_enabled_from_db(db)
-    if not enabled:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Knowledge RAG feature is not enabled. Enable it from Settings > AI Configuration.",
-        )
+    Uses the ``knowledge_rag`` flag in the ``feature_flags`` table (seeded
+    by migration 0062). Falls back to the legacy ``KNOWLEDGE_RAG_ENABLED``
+    env var during the cutover window via ``LEGACY_ENV_VAR_MAP``.
+    """
+    from app.services.feature_flags import is_enabled
+    if await is_enabled("knowledge_rag", db=db):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Knowledge RAG feature is not enabled. Enable it from Settings > AI Configuration.",
+    )
 
 
 # ── Project access ────────────────────────────────────────────────────────────
