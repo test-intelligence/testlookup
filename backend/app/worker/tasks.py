@@ -61,6 +61,35 @@ def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
     return int(delay + jitter)
 
 
+def _beat_span(task_name: str):
+    """Return a context manager that produces an OTEL span for the named
+    Celery beat task.
+
+    Naming convention (Phase E-3): ``celery.beat.<task_name>``. All Tier
+    0-2 beat tasks use this helper so Jaeger surfaces them in a single
+    swim lane. The context yields a span-like object that supports
+    ``set_attribute`` + ``set_status`` — callers can enrich the span
+    with result counts, flag state, or error category without worrying
+    about whether OpenTelemetry is actually wired up in the current
+    environment (tests, offline-mode, missing SDK).
+    """
+    try:
+        from app.core.tracing import get_tracer
+        tracer = get_tracer("celery.beat")
+        return tracer.start_as_current_span(f"celery.beat.{task_name}")
+    except Exception:
+        from contextlib import nullcontext
+
+        class _NullSpan:
+            def set_attribute(self, *args, **kwargs) -> None:  # noqa: D401
+                pass
+
+            def set_status(self, *args, **kwargs) -> None:  # noqa: D401
+                pass
+
+        return nullcontext(_NullSpan())
+
+
 # ── Deduplication helper ──────────────────────────────────────────────────────
 
 async def _is_duplicate(key: str, ttl: int = 3600) -> bool:
@@ -1254,12 +1283,16 @@ def refresh_perf_baselines(self) -> dict:
     """
     async def _run():
         from app.services.perf_regression_service import refresh_baselines
-        out = await refresh_baselines()
-        logger.info(
-            "[Task %s] perf baselines refresh: observed=%d baselines=%d",
-            self.request.id, out.get("observed", 0), out.get("baselines", 0),
-        )
-        return out
+        with _beat_span("refresh_perf_baselines") as span:
+            out = await refresh_baselines()
+            span.set_attribute("result.observed", int(out.get("observed", 0)))
+            span.set_attribute("result.baselines", int(out.get("baselines", 0)))
+            span.set_attribute("flag_enabled", not bool(out.get("skipped", 0)))
+            logger.info(
+                "[Task %s] perf baselines refresh: observed=%d baselines=%d",
+                self.request.id, out.get("observed", 0), out.get("baselines", 0),
+            )
+            return out
 
     return cast(dict, _run_async(_run()))
 
@@ -1338,24 +1371,30 @@ def run_flaky_quarantine_maintenance(self) -> dict:
             run_recheck_cycle,
             schedule_pending_rechecks,
         )
-        expired = await expire_stale_proposals()
-        rechecks_scheduled = await schedule_pending_rechecks()
-        outcomes = await run_recheck_cycle()
-        logger.info(
-            "[Task %s] flaky quarantine maintenance: expired=%d scheduled=%d "
-            "released=%d re_quarantined=%d insufficient_data=%d",
-            self.request.id,
-            expired,
-            rechecks_scheduled,
-            outcomes["released"],
-            outcomes["re_quarantined"],
-            outcomes["insufficient_data"],
-        )
-        return {
-            "expired": expired,
-            "rechecks_scheduled": rechecks_scheduled,
-            **outcomes,
-        }
+        with _beat_span("run_flaky_quarantine_maintenance") as span:
+            expired = await expire_stale_proposals()
+            rechecks_scheduled = await schedule_pending_rechecks()
+            outcomes = await run_recheck_cycle()
+            span.set_attribute("result.expired", int(expired))
+            span.set_attribute("result.rechecks_scheduled", int(rechecks_scheduled))
+            span.set_attribute("result.released", int(outcomes["released"]))
+            span.set_attribute("result.re_quarantined", int(outcomes["re_quarantined"]))
+            span.set_attribute("result.insufficient_data", int(outcomes["insufficient_data"]))
+            logger.info(
+                "[Task %s] flaky quarantine maintenance: expired=%d scheduled=%d "
+                "released=%d re_quarantined=%d insufficient_data=%d",
+                self.request.id,
+                expired,
+                rechecks_scheduled,
+                outcomes["released"],
+                outcomes["re_quarantined"],
+                outcomes["insufficient_data"],
+            )
+            return {
+                "expired": expired,
+                "rechecks_scheduled": rechecks_scheduled,
+                **outcomes,
+            }
 
     return cast(dict[str, Any], _run_async(_run()))
 
@@ -1569,5 +1608,12 @@ def dispatch_scheduled_digests(self):
             except Exception as exc:
                 logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
 
-    _run_async(_dispatch())
+    with _beat_span("dispatch_scheduled_digests") as span:
+        try:
+            _run_async(_dispatch())
+            span.set_attribute("status", "ok")
+        except Exception as exc:
+            span.set_attribute("status", "error")
+            span.set_attribute("error.category", type(exc).__name__)
+            raise
     logger.info("[Task %s] Digest dispatch completed", self.request.id)

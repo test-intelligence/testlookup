@@ -12,6 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `backend/CLAUDE.md` — Backend patterns, adding endpoints/agents/tools, test patterns
 - `frontend/CLAUDE.md` — Frontend patterns, adding pages/hooks/services
 
+**Work tracking:**
+- `docs/PROGRESS.md` — What's been shipped, migration ledger, current build state
+- `docs/BACKLOG.md` — Ordered next-task list, tech debt, risks, cursor for where to pick up
+- Start any resumed session by reading both.
+
 ---
 
 ## Architecture

@@ -339,3 +339,131 @@ groups:
         annotations:
           summary: "/health/details p95 > 2.5s"
           description: "Each non-critical probe is supposed to be capped at 1.5s via httpx.Timeout. If this alert fires, either the probe budget regressed or pg/mongo/redis (which are not budget-wrapped) are themselves slow."
+
+  # ── Tier 0-2 operations (Phase E-3, 2026-04-15) ──────────────────────────
+  #
+  # Alerts that cover the Tier 0-2 batch: outbound webhooks, flaky
+  # auto-quarantine, release compliance packs, perf regression
+  # detection, weekly retro digest. Each rule targets a counter defined
+  # in backend/app/core/metrics.py. Severities are conservative —
+  # operational degradation rather than user-facing outage — so these
+  # page during business hours but don't wake anyone up.
+  - name: testlookup.tier_0_2
+    interval: 30s
+    rules:
+
+      # ── 2-6 Outbound webhooks: delivery failure rate ───────────────────
+      # Fires when more than 5% of webhook delivery attempts are failing
+      # for a sustained 15 minutes. Retries count as their own label so
+      # a flaky customer receiver (5xx → retry → success) doesn't trip
+      # the alert — only terminal failures and DLQ rows do. A real
+      # misbehaving subscriber usually shows up as a persistent 4xx,
+      # which goes straight to `result="failure"` without retry.
+      - alert: TestLookupWebhookDeliveryFailureRate
+        expr: |
+          (
+            sum(rate(testlookup_webhook_delivery_attempts_total{result="failure"}[15m]))
+            /
+            clamp_min(sum(rate(testlookup_webhook_delivery_attempts_total[15m])), 1)
+          ) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+          tier: "2-6"
+          feature: outbound_webhooks
+        annotations:
+          summary: "Outbound webhook delivery failure rate > 5% for 15 min"
+          description: "More than 5% of webhook delivery attempts are terminal failures over the last 15 minutes. Check the Webhook Deliveries panel in /settings/webhooks for the DLQ rows and the most recent error text, and consider quarantining the offending subscription until the receiver is fixed."
+
+      # ── 1-3 Flaky quarantine maintenance: back-to-back failures ────────
+      # The beat runs once daily at 04:00 UTC. Two failures in a row
+      # leaves the quarantine queue unmanaged for 48+ hours, during
+      # which PROPOSED rows won't expire and approved rows won't be
+      # re-checked. Scoped to the specific Celery task name so other
+      # task failures don't page the quarantine on-call.
+      - alert: TestLookupFlakyQuarantineMaintenanceFailing
+        expr: |
+          increase(
+            testlookup_celery_tasks_total{
+              task_name="app.worker.tasks.run_flaky_quarantine_maintenance",
+              status="failure"
+            }[2d]
+          ) >= 2
+        for: 0m
+        labels:
+          severity: warning
+          tier: "1-3"
+          feature: flaky_auto_quarantine
+        annotations:
+          summary: "Flaky quarantine maintenance beat failed twice in a row"
+          description: "The run_flaky_quarantine_maintenance Celery beat (04:00 UTC) has failed on two consecutive runs. PROPOSED rows aren't being expired and approved rows aren't being rechecked. Check the worker logs for the most recent traceback and the celery.beat.run_flaky_quarantine_maintenance spans in Jaeger."
+
+      # ── 2-12 Weekly retro digest: missed Monday dispatch ───────────────
+      # The Monday 07:05 UTC beat entry produces a WEEKLY_RETRO digest
+      # for each subscribed project. If the success counter hasn't
+      # incremented in the last 2 hours of the Monday 08:00-10:00 UTC
+      # window, the dispatch almost certainly didn't fire — either the
+      # beat scheduler is down, the feature flag got flipped off, or
+      # the retro_digest_service crashed inside the dispatcher loop.
+      # The day-of-week+hour guard narrows the alert to the window
+      # where we'd actually expect traffic.
+      - alert: TestLookupWeeklyRetroDigestMissedMonday
+        expr: |
+          (
+            increase(
+              testlookup_retro_digest_dispatch_total{status="success"}[2h]
+            ) == 0
+          )
+          and (day_of_week() == 1)
+          and (hour() >= 8 and hour() < 10)
+        for: 15m
+        labels:
+          severity: warning
+          tier: "2-12"
+          feature: weekly_retro_digest
+        annotations:
+          summary: "Weekly retro digest didn't dispatch on Monday"
+          description: "No retro_digest_dispatch_total{status=\"success\"} increments have been observed during the Monday 08:00-10:00 UTC window. The Monday 07:05 UTC beat either didn't fire, the weekly_retro_digest feature flag got flipped off, or every generate_weekly_retro call raised. Check the celery.beat.dispatch_scheduled_digests span in Jaeger for the most recent Monday and the worker logs."
+
+      # ── 2-10 Perf baseline refresh: back-to-back failures ──────────────
+      # The nightly refresh is best-effort (the release gate falls back
+      # to the hardcoded config thresholds if no baseline exists), so a
+      # single miss is not a page. Two consecutive failures mean the
+      # baselines are frozen on stale data and spike detection at gate
+      # time degrades to "no signal".
+      - alert: TestLookupPerfBaselineRefreshFailing
+        expr: |
+          increase(
+            testlookup_celery_tasks_total{
+              task_name="app.worker.tasks.refresh_perf_baselines",
+              status="failure"
+            }[2d]
+          ) >= 2
+        for: 0m
+        labels:
+          severity: warning
+          tier: "2-10"
+          feature: perf_regression_detection
+        annotations:
+          summary: "Perf baseline refresh beat failed twice in a row"
+          description: "The refresh_perf_baselines Celery beat (04:30 UTC) has failed on two consecutive runs. Release-gate spike detection will degrade to 'no signal' against stale baselines. Check the celery.beat.refresh_perf_baselines spans in Jaeger and the worker logs."
+
+      # ── 1-4 Release compliance pack generation errors ──────────────────
+      # Pack generation is user-triggered (QA Lead clicks "Generate
+      # pack" on a release). A small trickle of `not_available` results
+      # is expected — that's the normal "release has no linked run
+      # yet" signal. We alert on `error` specifically, which is the
+      # unexpected-internal-failure branch.
+      - alert: TestLookupCompliancePackGenerationErrors
+        expr: |
+          increase(
+            testlookup_compliance_pack_generated_total{result="error"}[1h]
+          ) > 3
+        for: 0m
+        labels:
+          severity: warning
+          tier: "1-4"
+          feature: release_compliance_pack
+        annotations:
+          summary: "Compliance pack generation errors in the last hour"
+          description: "More than 3 compliance_pack_generated_total{result=\"error\"} increments in the last hour. This is the service's error branch — not the 'release has no linked run' or 'feature disabled' branches. Likely MinIO write failure, a missing policy snapshot, or a collection helper raising. Check structlog for `compliance_pack_generated` events and the worker logs."

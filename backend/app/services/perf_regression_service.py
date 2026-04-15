@@ -172,7 +172,10 @@ async def refresh_baselines() -> dict[str, int]:
 
     Feature-flag gated. Returns telemetry counts for the celery task.
     """
+    from app.core.metrics import perf_baseline_refresh_runs_total
+
     if not await _feature_enabled():
+        perf_baseline_refresh_runs_total.labels(status="skipped").inc()
         return {"observed": 0, "baselines": 0, "skipped": 1}
 
     observed = 0
@@ -214,6 +217,7 @@ async def refresh_baselines() -> dict[str, int]:
         observed=observed,
         distinct_baselines=len(baselines_touched),
     )
+    perf_baseline_refresh_runs_total.labels(status="success").inc()
     return {"observed": observed, "baselines": len(baselines_touched), "skipped": 0}
 
 

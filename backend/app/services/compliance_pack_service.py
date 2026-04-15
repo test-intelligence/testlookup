@@ -481,13 +481,20 @@ async def generate_pack(
     ``CompliancePackNotAvailableError`` when the release has no linked
     run to snapshot.
     """
+    from app.core.metrics import compliance_pack_generated_total
+
     if not await _feature_enabled(db):
+        compliance_pack_generated_total.labels(result="disabled").inc()
         raise CompliancePackDisabledError(
             "Release compliance pack feature is disabled. "
             "Enable 'release_compliance_pack' in Settings > Feature Flags."
         )
 
-    zip_bytes, metadata = await _build_pack_payload(db, release)
+    try:
+        zip_bytes, metadata = await _build_pack_payload(db, release)
+    except CompliancePackNotAvailableError:
+        compliance_pack_generated_total.labels(result="not_available").inc()
+        raise
 
     pack_id = uuid.uuid4()
     generated_at = datetime.now(timezone.utc)
@@ -521,11 +528,12 @@ async def generate_pack(
         notes=notes,
     )
     db.add(row)
-    await db.commit()
-    await db.refresh(row)
+    await db.flush()
 
     # Audit trail — use the existing settings_audit_log convention with a
     # release-scoped key so the unified audit dashboard picks it up.
+    # Stage-only (Phase E-1): router's get_db owns the commit so the pack
+    # row and its audit entry land in the same transaction.
     try:
         from app.models.postgres import SettingsAuditLog
         entry = SettingsAuditLog(
@@ -538,9 +546,8 @@ async def generate_pack(
             changed_fields=["compliance_pack"],
         )
         db.add(entry)
-        await db.commit()
     except Exception as exc:
-        logger.warning("compliance pack audit log failed", error=str(exc))
+        logger.warning("compliance pack audit stage failed", error=str(exc))
 
     logger.info(
         "compliance_pack_generated",
@@ -551,6 +558,7 @@ async def generate_pack(
         bytes=metadata["bytes"],
         manifest_sha256=metadata["manifest_sha256"],
     )
+    compliance_pack_generated_total.labels(result="success").inc()
     return row
 
 

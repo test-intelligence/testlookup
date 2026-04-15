@@ -457,6 +457,11 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             subscription.last_error = delivery.error[:2000]
             subscription.failure_count = int(subscription.failure_count or 0) + 1
             await db.commit()
+            from app.core.metrics import webhook_delivery_attempts_total
+            webhook_delivery_attempts_total.labels(
+                event_type=delivery.event_type,
+                result="retry" if delivery.status == "PENDING" else "failure",
+            ).inc()
             return {"retry": delivery.status == "PENDING", "error": str(exc)}
 
         delivery.http_status = resp.status_code
@@ -471,6 +476,11 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             subscription.last_failure_at = None
             subscription.total_delivered = int(subscription.total_delivered or 0) + 1
             await db.commit()
+            from app.core.metrics import webhook_delivery_attempts_total
+            webhook_delivery_attempts_total.labels(
+                event_type=delivery.event_type,
+                result="success",
+            ).inc()
             return {"status": "SUCCESS", "http_status": resp.status_code}
 
         # Non-2xx — retry on 5xx/429, mark FAILED on 4xx (customer bug).
@@ -483,8 +493,18 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
         if retryable and delivery.attempt_count < (subscription.max_retries or 5):
             delivery.status = "PENDING"  # Celery task will retry with backoff
             await db.commit()
+            from app.core.metrics import webhook_delivery_attempts_total
+            webhook_delivery_attempts_total.labels(
+                event_type=delivery.event_type,
+                result="retry",
+            ).inc()
             return {"retry": True, "http_status": resp.status_code}
 
         delivery.status = "DLQ" if delivery.attempt_count >= (subscription.max_retries or 5) else "FAILED"
         await db.commit()
+        from app.core.metrics import webhook_delivery_attempts_total
+        webhook_delivery_attempts_total.labels(
+            event_type=delivery.event_type,
+            result="failure",
+        ).inc()
         return {"status": delivery.status, "http_status": resp.status_code}

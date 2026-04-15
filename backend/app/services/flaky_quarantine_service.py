@@ -262,8 +262,16 @@ async def propose_quarantine(
     No-op when the feature flag is off; returns ``None`` so callers can
     skip downstream work.
     """
+    from app.core.metrics import quarantine_proposals_total
+
     if not await _feature_enabled():
         return None
+
+    # "auto" source = detection method didn't originate from an explicit
+    # QA-Lead Propose click; everything else is manual. The propose_quarantine
+    # entry point is called from both detection workers (auto) and from the
+    # manual-propose router handler (actor=user, detection_method="manual").
+    source_label = "manual" if detection_method == "manual" else "auto"
 
     async with AsyncSessionLocal() as db:
         try:
@@ -332,6 +340,7 @@ async def propose_quarantine(
                 project_id=project_id,
                 after=_snapshot(row),
             )
+            quarantine_proposals_total.labels(source=source_label).inc()
             return row
         except Exception as exc:
             await db.rollback()
@@ -396,6 +405,8 @@ async def approve(
         before=before,
         after=_snapshot(row),
     )
+    from app.core.metrics import quarantine_approvals_total
+    quarantine_approvals_total.labels(outcome="approved").inc()
 
     # Tier 2 item 6 — emit webhook event so external systems (PagerDuty,
     # Slack, Jira) can react to the quarantine. Non-blocking.
@@ -461,6 +472,8 @@ async def reject(
         before=before,
         after=_snapshot(row),
     )
+    from app.core.metrics import quarantine_approvals_total
+    quarantine_approvals_total.labels(outcome="rejected").inc()
     return row
 
 
@@ -643,6 +656,11 @@ async def run_recheck_cycle() -> dict[str, int]:
 
         if rows:
             await db.commit()
+    from app.core.metrics import quarantine_expired_total
+    if released:
+        quarantine_expired_total.labels(terminal_state="released").inc(released)
+    if re_quarantined:
+        quarantine_expired_total.labels(terminal_state="re_quarantined").inc(re_quarantined)
     return {
         "released": released,
         "re_quarantined": re_quarantined,

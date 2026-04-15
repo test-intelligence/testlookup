@@ -171,7 +171,10 @@ async def generate_weekly_retro(
     type cleanly. Returns a dict ready for
     ``digest_content_service.render_digest_html`` when enabled.
     """
+    from app.core.metrics import retro_digest_dispatch_total
+
     if not await _feature_enabled(db):
+        retro_digest_dispatch_total.labels(status="skipped").inc()
         return None
 
     # Start with the existing weekly digest — we extend it rather
@@ -198,6 +201,7 @@ async def generate_weekly_retro(
     # Wrap the existing digest with retro-specific sections. The
     # ``schedule_type`` discriminator lets the email template pick
     # a retro-themed header + subject line.
+    retro_digest_dispatch_total.labels(status="success").inc()
     return {
         **digest,
         "schedule_type": "WEEKLY_RETRO",

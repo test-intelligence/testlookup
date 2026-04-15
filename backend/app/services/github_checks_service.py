@@ -154,10 +154,11 @@ async def upsert_integration(
             )
             row.has_pat = True
 
-    await db.commit()
-    await db.refresh(row)
+    await db.flush()
 
-    # Audit.
+    # Audit — staged under the router session (Phase E-1). Router's
+    # get_db owns the single commit so integration row, secret row, and
+    # audit entry land in one transaction.
     try:
         from app.models.postgres import SettingsAuditLog
         entry = SettingsAuditLog(
@@ -169,9 +170,8 @@ async def upsert_integration(
             + (["pat"] if pat is not None else []),
         )
         db.add(entry)
-        await db.commit()
     except Exception as exc:
-        logger.warning("github integration audit log failed", error=str(exc))
+        logger.warning("github integration audit stage failed", error=str(exc))
 
     return row
 

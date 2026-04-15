@@ -283,10 +283,12 @@ async def create_flag(
         updated_by_user_id=actor.id,
     )
     db.add(flag)
-    await db.commit()
-    await db.refresh(flag)
+    # flush populates id + server defaults (created_at, updated_at) so the
+    # audit row below can reference them and the response serialization
+    # below sees the fully-hydrated row. Router owns the commit.
+    await db.flush()
+    _write_audit_entry(db, actor, action="create", key=key, after=_serialize_flag(flag))
     await _invalidate(key)
-    await _write_audit_entry(db, actor, action="create", key=key, after=_serialize_flag(flag))
     return flag
 
 
@@ -318,12 +320,11 @@ async def update_flag(
         flag.rollout_percent = int(updates["rollout_percent"])
     flag.updated_by_user_id = actor.id
     flag.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(flag)
-    await _invalidate(key)
-    await _write_audit_entry(
+    await db.flush()
+    _write_audit_entry(
         db, actor, action="update", key=key, before=before, after=_serialize_flag(flag),
     )
+    await _invalidate(key)
     return flag
 
 
@@ -337,12 +338,12 @@ async def delete_flag(db: AsyncSession, *, key: str, actor: User) -> None:
         )
     before = _serialize_flag(flag)
     await db.delete(flag)
-    await db.commit()
+    await db.flush()
+    _write_audit_entry(db, actor, action="delete", key=key, before=before)
     await _invalidate(key)
-    await _write_audit_entry(db, actor, action="delete", key=key, before=before)
 
 
-async def _write_audit_entry(
+def _write_audit_entry(
     db: AsyncSession,
     actor: User,
     *,
@@ -351,7 +352,12 @@ async def _write_audit_entry(
     before: Optional[dict[str, Any]] = None,
     after: Optional[dict[str, Any]] = None,
 ) -> None:
-    """Write a SettingsAuditLog row. Non-blocking — never raises.
+    """Stage a SettingsAuditLog row in the caller's transaction.
+
+    Stage-only: the row is added via ``db.add`` and lands when the router's
+    unit-of-work commits. This guarantees the audit row is atomic with the
+    primary mutation — either both land or neither does — without the
+    service owning its own commit.
 
     Uses the existing ``settings_audit_log`` schema so enterprise customers
     can filter the audit dashboard on ``setting_key LIKE 'feature_flag:%'``
@@ -381,7 +387,6 @@ async def _write_audit_entry(
             changed_fields=changed,
         )
         db.add(entry)
-        await db.commit()
 
         # Structlog receives the full before/after for forensic reconstruction.
         logger.info(

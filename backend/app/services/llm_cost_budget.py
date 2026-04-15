@@ -398,7 +398,13 @@ async def upsert_quota(
     actor: User,
     **fields: Any,
 ) -> ProjectLlmQuota:
-    """Create or update a project's billing config. Writes an audit entry."""
+    """Create or update a project's billing config. Stages an audit entry.
+
+    Stage-only (Phase E-1): the quota row and its audit entry are added
+    via ``db.add`` and flushed; the router's ``get_db`` dependency owns
+    the single commit so the quota mutation and its audit row land
+    atomically.
+    """
     quota = await _load_quota(db, project_id)
     before: Optional[dict[str, Any]] = None
     if quota is None:
@@ -413,8 +419,7 @@ async def upsert_quota(
             setattr(quota, key, value)
     quota.updated_by_user_id = actor.id
     quota.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(quota)
+    await db.flush()
 
     # Audit — settings_audit_log uses field names only, no secret values.
     try:
@@ -428,9 +433,8 @@ async def upsert_quota(
             changed_fields=changed,
         )
         db.add(entry)
-        await db.commit()
     except Exception as exc:
-        logger.warning("quota audit write failed", error=str(exc))
+        logger.warning("quota audit stage failed", error=str(exc))
     return quota
 
 
