@@ -152,6 +152,12 @@ Migrations run **automatically** at container startup (`alembic upgrade head` pr
 - **Email:** Use `services/email_service.py` async. Dispatch via Celery — never sync in request handlers.
 - **AI config:** `services/ai_config_resolver.py`. Precedence: DB → secrets → env. Cached in Redis (60s TTL).
 - **Ingestion:** New paths must use `create_run_from_payload()` → `ingest_test_results()` → `finalize_run()` from `ingestion_pipeline.py`. Never duplicate post-ingestion orchestration.
+- **Feature flags:** Every new capability ships behind a flag. Check via `services/feature_flags.is_enabled(key, project_id, user)`. Resolution: in-proc cache (30s) → Redis (30s) → Postgres `feature_flags` row → env fallback. CRUD is audited in `settings_audit_log`. Never bypass the gate.
+- **Offline mode kill switch:** `AI_OFFLINE_MODE=true` is a hard gate above every outbound integration (GitHub Checks, webhooks, hosted LLM, hosted Ragas). Services must check it before any network call; feature flags alone are insufficient.
+- **Decision trail:** Aggregated by `services/decision_trail_service.build_trail()` from Postgres (`AgentStageResult.decision_log` JSONB + `AIAnalysis.routing_metadata`) + Mongo (`pipeline_event_log`). Use `BaseAgent.log_decision()` at non-trivial branches only — signal > noise.
+- **Webhook signing:** Outbound events via `services/webhook_service.emit_event()`. Delivery worker signs payloads with HMAC-SHA256 using the subscription secret and retries with exponential backoff. Never emit events synchronously in request handlers.
+- **Perf baselines:** `PerfBaseline` uses Welford's online algorithm (`sample_count`, `mean_ms`, `m2`, `stddev_ms`, `p95_ms`). Update via `perf_regression_service.update_baseline()` — never recompute from TestCase history at gate time.
+- **RAG faithfulness:** `rag_faithfulness_service.evaluate()` is pluggable (Ollama default, Ragas optional). When `AI_OFFLINE_MODE=true` the evaluator falls back to Ollama regardless of config. Low-score cases get `needs_review_reason="faithfulness_below_threshold"`.
 - **Client SDK config:** Constructor args > env vars > `testlookup.yaml` > defaults.
 
 ### Frontend
@@ -195,6 +201,12 @@ Critical bugs encountered and fixed — avoid reintroducing:
 23. **Release gate policy fallback** — When no `ReleaseGatePolicy`, falls back to hardcoded thresholds in `config.py`. Policy precedence: project → system default → hardcoded. `dimension_weights` must sum to 1.0 (±0.01).
 24. **Report composition uses cached snapshot** — reads from `RunIntelligenceSnapshot.payload`, not individual tables.
 25. **Suite membership sync** — must run after ingestion aggregates computed. Deleted tests → `<suite>-deleted` bucket with `needs_review`.
+26. **Feature flag double-declare** — `FeatureFlag` lives exactly once in `models/postgres.py` (Tier 0A). Never resurrect the legacy `flag_key`/`scope`/`enabled` shape — it conflicts on `__tablename__` and the new schema uses `key`/`enabled_global`/`enabled_projects`/`enabled_roles`/`rollout_percent`.
+27. **JSONB columns on new tables** — `feature_flags.enabled_projects`, `feature_flags.enabled_roles`, `ai_analysis.routing_metadata`, `flaky_quarantine_requests.rationale`, `compliance_packs.metadata_snapshot`, `webhook_subscriptions.events`, `webhook_deliveries.event_payload` are all `JSONB` in Postgres. ORM declarations must use `sqlalchemy.dialects.postgresql.JSONB`, not generic `JSON`, so containment operators and GIN indexes work.
+28. **Flaky quarantine state machine** — `RE_QUARANTINED` is a distinct terminal state for tests that failed a release recheck. The ingestion enforcement path treats both `QUARANTINED` and `RE_QUARANTINED` as "active" — do not collapse them at the end of `run_recheck_cycle`, or the re-quarantine signal is lost in reports.
+29. **Service ownership rule fields** — `ServiceOwnershipRule` columns are `match_pattern` / `service_name` / `team_name` (NOT `glob_pattern` / `owner` / `team`). Filter by `is_active.is_(True)` and order by `priority.desc()`. `team_value_metrics_service` walks these rules — keep it in sync with the ORM field names.
+30. **LLM cost budget lookups** — `project_llm_usage` must be indexed on `(project_id)` and `(period_start)`. Budget checks filter by project; missing indexes table-scan at scale. See migration 0070 for the follow-up index.
+31. **Weekly retro digest** — uses the same `dispatch_scheduled_digests` task as daily digests, gated by `DigestSchedule.WEEKLY_RETRO` and a Monday-morning Celery beat entry. Narrative is rendered by `retro_digest_service._compose_narrative`; offline mode forces the template path without calling the LLM.
 
 ---
 
@@ -212,6 +224,34 @@ Critical bugs encountered and fixed — avoid reintroducing:
 Dispatch: `analysis_agent._analyse_one()` → `analysis_router.get_analysis_mode()` → engine. Mode persisted in `app_settings` (key `ai_config.analysis_mode`), cached in Redis.
 
 **ML cold start:** When `ANALYSIS_MODE=ml` but no trained model, falls back to rules. Minimum 200 labeled samples for training.
+
+---
+
+## Tier 0-2 Feature Map (migrations 0062–0070)
+
+All features ship behind feature flags and honour `AI_OFFLINE_MODE`. See the
+service/router/migration column for the entry points.
+
+| Tier | Feature | Service | Router | Migration | Flag key |
+|------|---------|---------|--------|-----------|----------|
+| 0A | Feature flag service | `services/feature_flags.py` | `routers/feature_flags.py` | 0062 | — |
+| 0B | Decision trail UI | `services/decision_trail_service.py` | `routers/decision_trail.py` | 0061/0062 | `decision_trail_ui` |
+| 1-1 | Cypress + Playwright parsers | `services/cypress_parser.py`, `playwright_parser.py` | (ingest) | 0063 | `cypress_ingest`, `playwright_ingest` |
+| 1-2 | LLM cost budget | `services/llm_cost_budget.py` | `routers/llm_cost_budget.py` | 0064, 0070 | `llm_cost_budget` |
+| 1-3 | Flaky auto-quarantine | `services/flaky_quarantine_service.py` | `routers/flaky_quarantine.py` | 0065 | `flaky_auto_quarantine` |
+| 1-4 | Release compliance pack | `services/compliance_pack_service.py` | `routers/compliance_packs.py` | 0066 | `release_compliance_pack` |
+| 1-5 | GitHub Checks integration | `services/github_checks_service.py` | `routers/github_integration.py` | 0067 | `github_checks` |
+| 2-6 | Outbound webhooks | `services/webhook_service.py` | `routers/webhooks_outbound.py` | 0068 | `outbound_webhooks` |
+| 2-7 | MCP tool parity | `mcp/tools/{decision_trail,compliance_pack,quarantine,billing,defects,governance}.py` | — | — | — |
+| 2-8 | Two-run compare | `services/run_compare_service.py` | `routers/run_compare.py` | — | — |
+| 2-9 | RAG faithfulness guardrails | `services/rag_faithfulness_service.py` | — | 0069 | `rag_faithfulness` |
+| 2-10 | Perf regression detection | `services/perf_regression_service.py` | — | 0069 | `perf_regression_detection` |
+| 2-11 | Team value metrics split | `services/team_value_metrics_service.py` | (value metrics) | — | — |
+| 2-12 | Weekly auto-retro digest | `services/retro_digest_service.py` | (digests) | 0069 | `weekly_retro_digest` |
+
+Celery beat additions: `nightly-flaky-quarantine-maintenance` (04:00 UTC),
+`nightly-perf-baseline-refresh` (04:30 UTC), `monday-weekly-retro-digests`
+(Mon 07:05 UTC). See `backend/app/worker/celery_app.py`.
 
 ---
 

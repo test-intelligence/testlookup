@@ -41,7 +41,8 @@ async def retrieve_chunks(
     Query ChromaDB knowledge_chunks collection and return ranked results
     with citation metadata. Filters by project scope and optionally by source_ids.
     """
-    if not settings.KNOWLEDGE_RAG_ENABLED:
+    from app.services.feature_flags import is_enabled
+    if not await is_enabled("knowledge_rag"):
         return []
 
     try:

@@ -140,6 +140,41 @@ class FlakySentinelAgent(BaseAgent):
         else:
             recommendation = "MONITOR -- low flakiness rate, worth tracking but not yet critical"
 
+        # Tier 1 item 3 — if the flip rate crosses the quarantine floor,
+        # propose the test for QA Lead approval via the quarantine service.
+        # Threshold matches the acceptance criterion (>= 20% flip rate over
+        # 10 runs). The service is idempotent: repeat runs just refresh the
+        # existing PROPOSED row. Feature-flag gated, never raises.
+        quarantine_request_id: str | None = None
+        if failure_rate >= 0.20 and len(statuses) >= 10:
+            try:
+                from app.services.flaky_quarantine_service import propose_quarantine
+                from app.models.postgres import TestStatus as _TS
+                passes = sum(1 for s in statuses if s == _TS.PASSED)
+                fails = sum(1 for s in statuses if s in (_TS.FAILED, _TS.BROKEN))
+                request = await propose_quarantine(
+                    project_id=tc.project_id if hasattr(tc, "project_id") else project_id,
+                    test_fingerprint=tc.test_fingerprint,
+                    test_name=tc.test_name,
+                    suite_name=tc.suite_name,
+                    detection_method="flaky_sentinel_agent",
+                    flip_rate=round(failure_rate, 3),
+                    flip_window_size=len(statuses),
+                    pass_count=passes,
+                    fail_count=fails,
+                    rationale={
+                        "method": "flaky_sentinel_pass_fail_ratio",
+                        "flaky_since_build": flaky_since_build,
+                        "last_stable_build": last_stable_build,
+                        "sample_history": [str(s) for s in statuses[-10:]],
+                        "change_summary": change_summary,
+                    },
+                )
+                if request is not None:
+                    quarantine_request_id = str(request.id)
+            except Exception as exc:  # pragma: no cover — best-effort
+                logger.debug("quarantine proposal failed", error=str(exc))
+
         return {
             "test_case_id": tc_id,
             "test_name": tc.test_name,
@@ -151,4 +186,5 @@ class FlakySentinelAgent(BaseAgent):
             "change_summary": change_summary,
             "recommendation": recommendation,
             "status_history": [str(s) for s in statuses[-10:]],
+            "quarantine_request_id": quarantine_request_id,
         }

@@ -83,6 +83,27 @@ celery_app.conf.update(
             "task": "app.worker.tasks.resync_stale_knowledge_sources",
             "schedule": crontab(minute=0, hour="*/4"),
         },
+        # Tier 1 item 3: flaky-test quarantine maintenance (nightly at 04:00 UTC).
+        # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.
+        "nightly-flaky-quarantine-maintenance": {
+            "task": "app.worker.tasks.run_flaky_quarantine_maintenance",
+            "schedule": crontab(hour=4, minute=0),
+        },
+        # Tier 2 item 10: per-test duration baseline refresh (nightly at
+        # 04:30 UTC, after quarantine maintenance so its reclassifications
+        # land first). No-op until ``perf_regression_detection`` flag is on.
+        "nightly-perf-baseline-refresh": {
+            "task": "app.worker.tasks.refresh_perf_baselines",
+            "schedule": crontab(hour=4, minute=30),
+        },
+        # Tier 2 item 12: weekly auto-retro digest dispatch (Mondays
+        # 07:00 UTC, same time as the existing daily digest pass). The
+        # dispatcher inspects each subscription and only fires those
+        # with ``schedule == WEEKLY_RETRO`` on the right day of week.
+        "monday-weekly-retro-digests": {
+            "task": "app.worker.tasks.dispatch_scheduled_digests",
+            "schedule": crontab(hour=7, minute=5, day_of_week="monday"),
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,

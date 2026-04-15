@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Activity, Bot, BrainCircuit, Database, Gauge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, UserCircle2 } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, Github, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, UserCircle2, Webhook } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -72,6 +72,30 @@ const sections = [
     title: 'Performance',
     desc: 'Latency budgets, search indexing config, and scale scenarios',
     href: '/settings/performance',
+  },
+  {
+    icon: Flag,
+    title: 'Feature Flags',
+    desc: 'Gate capabilities by global kill switch, project, role, or rollout percent',
+    href: '/settings/feature-flags',
+  },
+  {
+    icon: DollarSign,
+    title: 'LLM Cost Budget',
+    desc: 'Usage-based billing: per-project spend caps, at-cap downgrade policy, workspace overview',
+    href: '/settings/billing',
+  },
+  {
+    icon: Github,
+    title: 'GitHub Integration',
+    desc: 'Post check runs to PRs on every test run — per-project repo + token + offline-mode aware',
+    href: '/settings/github',
+  },
+  {
+    icon: Webhook,
+    title: 'Outbound Webhooks',
+    desc: 'Subscribe external systems to run.completed, defect.promoted, release.decided, flaky.quarantined, quota.exceeded',
+    href: '/settings/webhooks',
   },
   ...(isDev
     ? [

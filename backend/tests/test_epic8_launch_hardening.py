@@ -168,10 +168,12 @@ class TestFeatureFlagModel:
     def test_columns(self):
         from app.models.postgres import FeatureFlag
         columns = {c.name for c in FeatureFlag.__table__.columns}
-        assert "flag_key" in columns
-        assert "scope" in columns
-        assert "enabled" in columns
-        assert "config" in columns
+        # Tier 0A rewrote FeatureFlag onto a per-project/per-role/rollout schema.
+        assert "key" in columns
+        assert "enabled_global" in columns
+        assert "enabled_projects" in columns
+        assert "enabled_roles" in columns
+        assert "rollout_percent" in columns
         assert "description" in columns
 
 

@@ -18,7 +18,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres import Base
@@ -279,6 +279,13 @@ class AIAnalysis(Base):
     llm_model: Mapped[Optional[str]] = mapped_column(String(100))
     requires_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Migration 0063: per-test decision audit. Contains the ``_audit`` dict
+    # that analysis_agent builds at classification time — analysis_mode,
+    # mode_requested, fallback_from, fallback_reason, confidence_adjustments,
+    # retry_count, duration. Rendered by the decision-trail UI so QA leads
+    # can answer "why did the AI choose this engine for this test?" without
+    # querying Mongo event logs.
+    routing_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # Relationships
     test_case: Mapped["TestCase"] = relationship("TestCase", back_populates="ai_analysis")
@@ -772,6 +779,18 @@ class ManagedTestCase(Base):
     )
     is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     stale_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Tier 2 item 9 — RAG faithfulness guardrails.
+    # Score in the range 0.0-1.0 produced by
+    # ``services/rag_faithfulness_service.evaluate`` when the case was
+    # generated. Null = never evaluated. The auto-accept path in the RAG
+    # review workflow refuses to mark a case accepted below the
+    # configured threshold and sets ``needs_review_reason`` to surface
+    # the case on the review queue instead.
+    faithfulness_score: Mapped[Optional[float]] = mapped_column(Float)
+    faithfulness_evaluator: Mapped[Optional[str]] = mapped_column(String(30))  # ollama|ragas|human
+    faithfulness_evaluated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    needs_review_reason: Mapped[Optional[str]] = mapped_column(String(500))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -1575,18 +1594,6 @@ class RunDiff(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class FeatureFlag(Base):
-    """Feature flags for controlled rollout."""
-    __tablename__ = "feature_flags"
-
-    flag_key: Mapped[str] = mapped_column(String(100), primary_key=True)
-    scope: Mapped[str] = mapped_column(String(50), nullable=False, default="global")
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    config: Mapped[Optional[dict]] = mapped_column(JSON)
-    description: Mapped[Optional[str]] = mapped_column(String(500))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
-
-
 class IntegrationHealthCheck(Base):
     """Integration provider health status (latest snapshot per provider)."""
     __tablename__ = "integration_health_checks"
@@ -2011,6 +2018,9 @@ class DigestSchedule(str, PyEnum):
     PER_RUN = "PER_RUN"
     PER_RELEASE = "PER_RELEASE"
     PER_SUITE = "PER_SUITE"
+    # Tier 2 item 12 — auto-retro. Fires every Monday 07:00 UTC and
+    # renders an AI-written "week in review" for the subscribed team.
+    WEEKLY_RETRO = "WEEKLY_RETRO"
 
 
 class DigestSubscription(Base):
@@ -2192,3 +2202,570 @@ class AgentMemoryEntry(Base):
     resolution: Mapped[Optional[str]] = mapped_column(String(50))  # resolved | open | wont_fix | duplicate
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Feature Flags (Tier 0A) ──────────────────────────────────────────────────
+#
+# Generic feature flag store replacing the hand-rolled ``KNOWLEDGE_RAG_ENABLED``
+# Redis→DB→env fallback. Every new feature lands behind a flag so enterprise
+# customers can toggle it per-project, per-role, or by gradual rollout.
+#
+# Resolution order consulted by ``services/feature_flags.is_enabled``:
+#   1. In-process cache (30s TTL)   — avoids hammering Redis on every request
+#   2. Redis cache (30s TTL)         — shared across workers
+#   3. Postgres row (authoritative)  — this table
+#   4. Environment variable fallback — only for legacy flags during migration
+#
+# Every create/update/delete writes a SettingsAuditLog entry so the flag
+# history is a first-class audit trail for regulated customers.
+
+
+class FeatureFlag(Base):
+    """Named capability toggle gated by project, role, and rollout percent."""
+    __tablename__ = "feature_flags"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Short machine-readable identifier, e.g. "cypress_ingest", "llm_cost_budget".
+    # Unique — there's exactly one row per flag.
+    key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Global kill switch. When False, the flag is off for everyone regardless
+    # of project/role/rollout overrides — use this to disable a flag that's
+    # misbehaving in production without losing its project-scoped history.
+    enabled_global: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Project allow-list. NULL or empty = all projects. When populated, only
+    # projects whose UUID is in the list see the flag as enabled (subject to
+    # ``enabled_global`` still being True).
+    enabled_projects: Mapped[Optional[list]] = mapped_column(JSONB)  # list[str UUID]
+
+    # Role allow-list using the UserRole enum values as strings. NULL or empty
+    # = all roles. Otherwise the user's role must be in the list.
+    enabled_roles: Mapped[Optional[list]] = mapped_column(JSONB)  # list[str]
+
+    # Deterministic percentage rollout (0-100). 0 = disabled for rollout; 100
+    # = enabled for everyone who passed the project/role gates. Bucket hash is
+    # ``sha1(f"{key}:{user_id or project_id}")`` for stable assignment.
+    rollout_percent: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now(),
+    )
+    # Last admin to change the flag — populated by the router from the JWT claims.
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+# ── LLM Cost Budget (Tier 1 item 2) ──────────────────────────────────────────
+#
+# Usage-based billing primitive. Every project gets:
+#
+# * ``ProjectLlmQuota`` (optional, one row per project) — the billing config:
+#   how many included dollars per period, the overage rate, the hard cap,
+#   and what to do when the cap is hit (soft warn, auto-downgrade to ML,
+#   auto-downgrade to rules, or hard block).
+#
+# * ``ProjectLlmUsage`` (one row per project per period) — the running meter:
+#   atomically incremented by ``services/llm_cost_budget.record_usage`` from
+#   ``BaseAgent.mark_stage_done`` every time a stage persists its cost.
+#
+# When no ``ProjectLlmQuota`` row exists the project is considered unlimited —
+# usage is still recorded for reporting, but no cap is enforced.
+#
+# The at-cap behaviour is evaluated inside ``analysis_agent.run`` *before*
+# the per-test routing decision so every classification for the rest of the
+# stage sees the downgraded mode. The downgrade is recorded as a decision
+# log entry so the decision trail UI surfaces it.
+
+
+class QuotaCapAction(str, PyEnum):
+    SOFT_WARN = "SOFT_WARN"                         # log + metric, do not gate
+    AUTO_DOWNGRADE_TO_ML = "AUTO_DOWNGRADE_TO_ML"   # force analysis_mode=ml
+    AUTO_DOWNGRADE_TO_RULES = "AUTO_DOWNGRADE_TO_RULES"  # force analysis_mode=rules
+    HARD_BLOCK = "HARD_BLOCK"                        # refuse LLM work entirely
+
+
+class ProjectLlmQuota(Base):
+    """Per-project LLM spend config used by the usage-based billing gate."""
+    __tablename__ = "project_llm_quota"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Billing period length. Currently only ``MONTHLY`` is supported; the
+    # column exists so we can add daily/quarterly budgets without a migration.
+    period_type: Mapped[str] = mapped_column(String(20), default="MONTHLY", nullable=False)
+
+    # Dollars included in the plan per period (what the customer pre-paid for).
+    included_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Overage rate charged per dollar above ``included_usd``. Used purely for
+    # display on the billing dashboard — the gate does not use it.
+    overage_rate_usd: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+
+    # The absolute ceiling. Below ``hard_cap_usd`` the ``at_cap_action`` may
+    # trigger at ``soft_warn_pct``. Above ``hard_cap_usd`` the hard action
+    # always fires regardless of config.
+    hard_cap_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Percentage of ``hard_cap_usd`` at which the configured action starts
+    # firing. Default 100 means "only trigger at the hard cap". Setting it to
+    # 80 gives ops a warning lane that surfaces on the billing page before
+    # customers hit the wall.
+    soft_warn_threshold_pct: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+
+    # Behaviour when usage crosses ``soft_warn_threshold_pct * hard_cap_usd``.
+    at_cap_action: Mapped[str] = mapped_column(
+        String(32),
+        default=QuotaCapAction.AUTO_DOWNGRADE_TO_ML.value,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+# ── Flaky Auto-Quarantine (Tier 1 item 3) ───────────────────────────────────
+#
+# Workflow:
+#
+#   [DETECTED] agent spots a flaky pattern
+#        ↓ (agent proposes immediately if flip-rate >= configured floor)
+#   [PROPOSED] waiting for QA Lead approval
+#        ↓ (QA Lead clicks Approve)            ↘ (Reject)
+#   [APPROVED] approved, will be active on next ingestion  → [REJECTED]
+#        ↓ (first ingestion after approval)
+#   [QUARANTINED] active — test cases tagged 'quarantined', excluded
+#                  from release gate scoring                ↙ (Release manually)
+#        ↓ (quarantine window nearing end)                  → [RELEASED]
+#   [RECHECK_SCHEDULED] celery beat task evaluates recent runs
+#        ↓ flip-rate below threshold → [RELEASED]
+#        ↓ flip-rate still high → [RE_QUARANTINED] → QUARANTINED (new window)
+#
+# Auxiliary terminal states:
+#   - EXPIRED  — proposal sat in PROPOSED too long without action
+#   - REJECTED — QA Lead refused the proposal
+#
+# Uniqueness: at most one row per (project_id, test_fingerprint) may be in a
+# live (non-terminal) state at a time. Terminal-state rows are retained
+# as history so QA leads can see previous quarantine decisions for a test.
+
+
+class FlakyQuarantineStatus(str, PyEnum):
+    DETECTED = "DETECTED"
+    PROPOSED = "PROPOSED"
+    APPROVED = "APPROVED"
+    QUARANTINED = "QUARANTINED"
+    RECHECK_SCHEDULED = "RECHECK_SCHEDULED"
+    RELEASED = "RELEASED"
+    RE_QUARANTINED = "RE_QUARANTINED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+
+
+# Non-terminal states — used in the partial UNIQUE index and the "active
+# quarantine" lookup that the ingestion pipeline runs on every ingest.
+_LIVE_QUARANTINE_STATES = (
+    FlakyQuarantineStatus.DETECTED.value,
+    FlakyQuarantineStatus.PROPOSED.value,
+    FlakyQuarantineStatus.APPROVED.value,
+    FlakyQuarantineStatus.QUARANTINED.value,
+    FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
+    FlakyQuarantineStatus.RE_QUARANTINED.value,
+)
+
+
+# ── Performance Baselines (Tier 2 item 10) ─────────────────────────────────
+#
+# Running duration statistics per (project_id, test_fingerprint). Used by
+# ``perf_regression_service`` to detect per-test latency spikes and surface
+# them as a first-class category in release gate scoring.
+#
+# Design: rolling stats updated in O(1) by Welford's online algorithm so
+# we never have to scan the full TestCase history at scoring time. The
+# nightly beat task ``refresh_perf_baselines`` sweeps new test cases
+# into their baselines; the release gate reads the table directly.
+
+
+class PerfBaseline(Base):
+    """Per-test running duration statistics."""
+    __tablename__ = "perf_baselines"
+    __table_args__ = (
+        Index("ix_perf_baseline_project", "project_id"),
+        UniqueConstraint(
+            "project_id", "test_fingerprint", name="uq_perf_baseline_fingerprint",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Denormalized for the release gate UI — avoids a second lookup per
+    # baseline when rendering "top perf regressions".
+    test_name: Mapped[Optional[str]] = mapped_column(String(500))
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))
+
+    sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mean_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    # Welford accumulator for variance — see ``perf_regression_service``.
+    # Stored as-is so the nightly refresh can keep extending the series
+    # without re-scanning history.
+    m2: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    stddev_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    p95_ms: Mapped[Optional[float]] = mapped_column(Float)
+    last_observed_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    last_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+
+
+# ── Outbound Webhook Subscriptions (Tier 2 item 6) ─────────────────────────
+#
+# Per-project customer-managed subscriptions to TestLookup events. When a
+# supported event fires (``run.completed``, ``defect.promoted``, etc.) the
+# webhook service scans active subscriptions that include the event type
+# in their ``events`` list and enqueues one delivery job per match.
+#
+# The secret used to HMAC-sign each delivery lives in ``secret_service``
+# under scope ``webhook_subscription`` so a DB dump cannot recover it.
+# This table stores only the boolean ``has_secret`` flag for the UI.
+
+
+class WebhookSubscription(Base):
+    """Customer-managed outbound webhook subscription."""
+    __tablename__ = "webhook_subscriptions"
+    __table_args__ = (
+        Index("ix_webhook_sub_project", "project_id"),
+        Index("ix_webhook_sub_enabled", "enabled", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+
+    # Array of event types this subscription wants — e.g.
+    # ``["run.completed", "defect.promoted"]``. Validated server-side
+    # against the ``_SUPPORTED_EVENTS`` set in
+    # ``services/webhook_service.py`` before insert/update.
+    events: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    has_secret: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Per-subscription retry budget. The delivery Celery task honours
+    # this — defaults to 5 attempts so a transient outage still delivers
+    # via exponential backoff.
+    max_retries: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+
+    # Bookkeeping surfaces to the settings UI + Integration Health page.
+    last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_failure_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_delivered: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+class WebhookDelivery(Base):
+    """Audit trail for every webhook delivery attempt.
+
+    One row per (subscription, event emission). Retries update the same
+    row — ``attempt_count`` is incremented and the final outcome lands in
+    ``status``. Rows older than 30 days are pruned by a celery beat task
+    to keep the table bounded.
+    """
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        Index("ix_webhook_delivery_sub_created", "subscription_id", "created_at"),
+        Index("ix_webhook_delivery_status", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"), nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_payload: Mapped[Optional[dict]] = mapped_column(JSONB)  # full JSON sent to the target
+
+    # PENDING | SUCCESS | FAILED (retries exhausted) | DLQ (hit max and aborted)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer)
+    response_preview: Mapped[Optional[str]] = mapped_column(String(2000))
+    error: Mapped[Optional[str]] = mapped_column(Text)
+
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── GitHub Integration (Tier 1 item 5) ─────────────────────────────────────
+#
+# Per-project outbound GitHub Checks API integration. When a test run
+# finishes, the ingestion pipeline posts a check run to the commit SHA
+# from the run, giving developers a green/red check on their PR that
+# deep-links back to Run Intelligence.
+#
+# Token storage: the Personal Access Token is NOT stored on this row.
+# Instead, ``services/secret_service`` holds the encrypted value under
+# scope ``github_integration`` + key ``project:{project_id}:pat``. This
+# row only holds a boolean ``has_pat`` hint for the UI so we can render
+# "token configured" without exposing the value.
+
+
+class GitHubIntegration(Base):
+    """Per-project GitHub Checks API integration config."""
+    __tablename__ = "github_integrations"
+    __table_args__ = (
+        Index("ix_github_integrations_project", "project_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    repo_owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    repo_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Defaults to public GitHub. Enterprise customers override this to
+    # e.g. ``https://ghe.corp.example.com/api/v3`` so the service points
+    # at GitHub Enterprise Server. No trailing slash.
+    api_base_url: Mapped[str] = mapped_column(
+        String(500),
+        default="https://api.github.com",
+        nullable=False,
+    )
+
+    # Cosmetic only — the real token lives in secret_service under
+    # scope "github_integration", key "project:{project_id}:pat". This
+    # flag lets the UI show "token configured" without roundtripping
+    # through the secret service for the list view.
+    has_pat: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Last successful post bookkeeping — surfaced on the Integration
+    # Health dashboard so stale configs are visible.
+    last_posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    last_error_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+# ── Release Compliance Export Pack (Tier 1 item 4) ─────────────────────────
+#
+# One row per generated signoff ZIP. The actual pack lives in MinIO — this
+# table is the authoritative index so ops can find every pack ever produced
+# for a given release, verify its SHA-256 manifest, and re-download it for
+# regulators. Rows are retained for the full retention window even after
+# the release itself is deleted (``ondelete=SET NULL`` on ``release_id``)
+# so the audit trail survives production housekeeping.
+
+
+class CompliancePack(Base):
+    """Generated compliance export pack (ZIP) for a release decision."""
+    __tablename__ = "compliance_packs"
+    __table_args__ = (
+        Index("ix_compliance_packs_release", "release_id"),
+        Index("ix_compliance_packs_project", "project_id", "generated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    # Which test run the decision was computed against. Kept even if the
+    # run is later purged — the snapshot we captured into the pack remains
+    # in MinIO, this column is just a pointer for fast lookups.
+    test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # MinIO object key for the ZIP. Bucket is implicit (``compliance-packs``).
+    minio_key: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # SHA-256 of the generated manifest.json. ``manifest.json`` itself
+    # contains SHA-256 digests of every other file in the ZIP, so this
+    # single hex digest bootstraps the entire tamper-detection chain:
+    # if this hash matches the manifest, and the manifest matches each
+    # file, the pack is authentic.
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Retention window. Default 7 years (2557 days) matches the common
+    # SOX/HIPAA/SOC-2 retention floor; ADMIN can override at generation time.
+    retention_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    generated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Structured metadata written by the service: policy_version, run_id,
+    # recommendation, dim_scores. Lets the list view render without pulling
+    # the ZIP.
+    metadata_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class FlakyQuarantineRequest(Base):
+    """Workflow record for proposing, approving, and enforcing quarantine
+    of a flaky test.
+
+    One row per quarantine lifecycle. When an approved quarantine is
+    ``RELEASED`` and the test flakes again, a fresh row is created rather
+    than reusing the old one — this keeps the history immutable and lets
+    QA leads see every past decision on the same test.
+    """
+    __tablename__ = "flaky_quarantine_requests"
+    __table_args__ = (
+        Index("ix_fqr_project_status", "project_id", "status"),
+        Index("ix_fqr_fingerprint", "project_id", "test_fingerprint"),
+        # Partial unique: only one LIVE row per (project, fingerprint). Uses
+        # a raw ``text()`` predicate because Alembic's autogenerate cannot
+        # express enum-membership with mapped_column metadata alone. The
+        # corresponding index is created in migration 0065.
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[Optional[str]] = mapped_column(String(500))   # denormalized for display
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))  # denormalized for display
+
+    status: Mapped[str] = mapped_column(
+        String(32),
+        default=FlakyQuarantineStatus.PROPOSED.value,
+        nullable=False,
+    )
+
+    # Detection context — populated when the agent or a human creates the row.
+    detection_method: Mapped[str] = mapped_column(String(50), default="pass_fail_ratio")
+    flip_rate: Mapped[Optional[float]] = mapped_column(Float)          # 0.0-1.0
+    flip_window_size: Mapped[Optional[int]] = mapped_column(Integer)   # runs considered
+    pass_count: Mapped[Optional[int]] = mapped_column(Integer)
+    fail_count: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Lifecycle timestamps.
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    last_failure_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    proposed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    approved_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    rejected_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    # Quarantine window — populated on approval.
+    quarantine_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    quarantine_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    quarantine_duration_days: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
+    recheck_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Structured rationale for display — used by both the detection agent
+    # ({"method": "...", "flip_rate": 0.42, "sample_size": 20, "last_5": "PFPFP"})
+    # and by humans to record the reason for approve/reject/release.
+    rationale: Mapped[Optional[dict]] = mapped_column(JSONB)
+    reviewer_notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class ProjectLlmUsage(Base):
+    """Running per-period LLM cost meter for a project.
+
+    One row per ``(project_id, period_start)``. ``record_usage`` upserts with
+    atomic arithmetic increments so two workers writing concurrently don't
+    clobber each other. The ``(project_id, period_start)`` unique index is
+    what makes the upsert safe.
+    """
+    __tablename__ = "project_llm_usage"
+    __table_args__ = (
+        UniqueConstraint("project_id", "period_start", name="uq_project_period"),
+        Index("ix_llm_usage_period", "period_start"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    total_input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_llm_calls: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Incremented every time ``check_and_apply_cap`` returns a downgrade /
+    # hard-block decision. Used by the billing dashboard to show whether a
+    # project has been capped in the current period.
+    cap_hits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    last_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )

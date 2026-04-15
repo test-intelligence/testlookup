@@ -196,6 +196,7 @@ class BaseAgent(ABC):
         evidence_count: Optional[int] = None,
         route_rationale: Optional[str] = None,
         analysis_mode: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> None:
         status = "failed" if error else "completed"
         total_tokens = input_tokens + output_tokens
@@ -255,6 +256,23 @@ class BaseAgent(ABC):
             pipeline_stage_errors_by_category.labels(
                 stage_name=self.stage_name, error_category=error_category
             ).inc()
+
+        # Tier 1 item 2 — feed the LLM cost meter. Runs only when the caller
+        # passed project_id (every agent that owns state["project_id"]
+        # propagates it). Best-effort; the service itself is a no-op unless
+        # the ``llm_cost_budget`` feature flag is on.
+        if project_id and (cost_usd > 0 or llm_calls_count > 0):
+            try:
+                from app.services.llm_cost_budget import record_usage
+                await record_usage(
+                    project_id,
+                    cost_usd=float(cost_usd or 0.0),
+                    input_tokens=int(input_tokens or 0),
+                    output_tokens=int(output_tokens or 0),
+                    llm_calls=int(llm_calls_count or 0),
+                )
+            except Exception as exc:  # pragma: no cover — metering is best-effort
+                self.logger.debug("llm usage record failed", error=str(exc))
 
         # Close OTEL span — enrich with decision attributes so the Jaeger
         # timeline shows *why* the stage ran as it did, not just how long it

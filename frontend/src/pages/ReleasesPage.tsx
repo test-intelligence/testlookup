@@ -10,6 +10,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
+import CompliancePackPanel from '@/components/compliance/CompliancePackPanel'
 import { buildReleaseWorkflow } from '@/components/workflow/workflowPresets'
 import { useReleases, useRelease } from '@/hooks/useReleases'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -448,6 +449,9 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
         compact
         showInspector
       />
+
+      {/* Tier 1 item 4 — Compliance export pack for audit reviewers. */}
+      <CompliancePackPanel releaseId={releaseId} releaseName={detail.name} />
 
       {/* Auto-complete banner — shown when all phases done and release not yet released */}
       {detail.status !== 'released' && detail.status !== 'cancelled' && (detail.phases ?? []).length > 0 &&
