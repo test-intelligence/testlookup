@@ -64,6 +64,11 @@ export interface WebhookTestResponse {
   latency_ms: number | null
 }
 
+export interface WebhookDeliveryReplayResponse {
+  delivery_id: string
+  status: 'PENDING'
+}
+
 export const outboundWebhookService = {
   events: () => getData<WebhookEventCatalogResponse>('/api/v1/webhooks/events'),
 
@@ -96,5 +101,11 @@ export const outboundWebhookService = {
     getData<WebhookDeliveryRead[]>(
       `/api/v1/webhooks/${id}/deliveries`,
       { params: { limit } },
+    ),
+
+  replayDelivery: (subscriptionId: string, deliveryId: string) =>
+    postData<WebhookDeliveryReplayResponse>(
+      `/api/v1/webhooks/${subscriptionId}/deliveries/${deliveryId}/replay`,
+      {},
     ),
 }

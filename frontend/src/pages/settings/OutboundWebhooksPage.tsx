@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Clock,
   Plus,
+  RefreshCw,
   Send,
   Trash2,
   Webhook,
@@ -152,6 +153,17 @@ export default function OutboundWebhooksPage() {
       setDeliveries((prev) => ({ ...prev, [subId]: list }))
     } catch {
       /* silent */
+    }
+  }
+
+  async function replayDelivery(subId: string, deliveryId: string) {
+    try {
+      await outboundWebhookService.replayDelivery(subId, deliveryId)
+      toast.success('Replay enqueued')
+      // Give the worker a beat to pick up the new row before refreshing.
+      setTimeout(() => loadDeliveries(subId), 1500)
+    } catch (err) {
+      toast.error(`Replay failed: ${(err as Error).message}`)
     }
   }
 
@@ -304,7 +316,10 @@ export default function OutboundWebhooksPage() {
             )}
 
             {expandedSub === sub.id && (
-              <DeliveryHistoryPanel deliveries={deliveries[sub.id] ?? []} />
+              <DeliveryHistoryPanel
+                deliveries={deliveries[sub.id] ?? []}
+                onReplay={(deliveryId) => replayDelivery(sub.id, deliveryId)}
+              />
             )}
           </div>
         ))}
@@ -438,7 +453,13 @@ function CreateForm({
 
 // ── Delivery history drawer ───────────────────────────────────────────────
 
-function DeliveryHistoryPanel({ deliveries }: { deliveries: WebhookDeliveryRead[] }) {
+function DeliveryHistoryPanel({
+  deliveries,
+  onReplay,
+}: {
+  deliveries: WebhookDeliveryRead[]
+  onReplay: (deliveryId: string) => void | Promise<void>
+}) {
   if (deliveries.length === 0) {
     return (
       <div className="px-3 pb-3 text-xs text-[var(--color-text-faint)]">
@@ -452,7 +473,9 @@ function DeliveryHistoryPanel({ deliveries }: { deliveries: WebhookDeliveryRead[
         <ActivitySquare className="h-3 w-3" /> Recent deliveries
       </div>
       <ul className="space-y-0.5">
-        {deliveries.map((d) => (
+        {deliveries.map((d) => {
+          const replayable = d.status === 'FAILED' || d.status === 'DLQ'
+          return (
           <li key={d.id} className="flex items-center gap-2 text-[11px]">
             {d.status === 'SUCCESS' ? (
               <CheckCircle2 className="h-3 w-3 text-emerald-400" />
@@ -476,8 +499,19 @@ function DeliveryHistoryPanel({ deliveries }: { deliveries: WebhookDeliveryRead[
                 {d.error}
               </span>
             )}
+            {replayable && (
+              <button
+                type="button"
+                onClick={() => { void onReplay(d.id) }}
+                className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-accent)]/40 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10 inline-flex items-center gap-1"
+                title="Replay this failed delivery as a fresh attempt"
+              >
+                <RefreshCw className="h-2.5 w-2.5" /> Replay
+              </button>
+            )}
           </li>
-        ))}
+          )
+        })}
       </ul>
     </div>
   )

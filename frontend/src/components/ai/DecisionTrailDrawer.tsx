@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ActivitySquare,
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   FileSearch,
   GitBranch,
   Info,
+  Search,
   SkipForward,
   X,
 } from 'lucide-react'
@@ -42,6 +43,24 @@ interface Props {
  */
 export default function DecisionTrailDrawer({ runId, open, onClose }: Props) {
   const { data, error, isLoading } = useDecisionTrail(runId, open)
+  const [query, setQuery] = useState('')
+  const [stageFilter, setStageFilter] = useState<string>('all')
+
+  // Reset filters when the drawer is closed so reopening a different run
+  // doesn't inherit stale query state. useEffect keeps the hook-order
+  // discipline intact even though the component early-returns null.
+  useEffect(() => {
+    if (!open) {
+      setQuery('')
+      setStageFilter('all')
+    }
+  }, [open])
+
+  const normQuery = query.trim().toLowerCase()
+  const filtered = useMemo(() => {
+    if (!data) return null
+    return filterTrail(data, normQuery, stageFilter)
+  }, [data, normQuery, stageFilter])
 
   if (!open) return null
 
@@ -80,17 +99,192 @@ export default function DecisionTrailDrawer({ runId, open, onClose }: Props) {
             description={String((error as Error).message || error)}
           />
         )}
-        {!isLoading && !error && data && (
+        {!isLoading && !error && data && filtered && (
           <div className="p-4 space-y-5">
             <TrailHeader data={data} />
-            <WorkflowEventsSection events={data.workflow_events} />
-            <StageTimelineSection stages={data.stages} />
-            <PerTestSection perTest={data.per_test} fallbackCount={data.fallback_count} />
+            <FilterBar
+              query={query}
+              onQueryChange={setQuery}
+              stageFilter={stageFilter}
+              onStageFilterChange={setStageFilter}
+              stageOptions={data.stages.map((s) => s.stage_name)}
+              matchCounts={{
+                stages: filtered.stages.length,
+                workflowEvents: filtered.workflow_events.length,
+                perTest: filtered.per_test.length,
+              }}
+              queryActive={normQuery !== '' || stageFilter !== 'all'}
+            />
+            <WorkflowEventsSection events={filtered.workflow_events} />
+            <StageTimelineSection stages={filtered.stages} />
+            <PerTestSection
+              perTest={filtered.per_test}
+              fallbackCount={data.fallback_count}
+            />
           </div>
         )}
       </div>
     </div>
   )
+}
+
+// ── Filter bar ───────────────────────────────────────────────────────────
+
+function FilterBar({
+  query,
+  onQueryChange,
+  stageFilter,
+  onStageFilterChange,
+  stageOptions,
+  matchCounts,
+  queryActive,
+}: {
+  query: string
+  onQueryChange: (value: string) => void
+  stageFilter: string
+  onStageFilterChange: (value: string) => void
+  stageOptions: string[]
+  matchCounts: { stages: number; workflowEvents: number; perTest: number }
+  queryActive: boolean
+}) {
+  return (
+    <section className="space-y-1">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="h-3 w-3 text-[var(--color-text-muted)] absolute left-2 top-1/2 -translate-y-1/2" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="Filter rationale, decision point, test name…"
+            aria-label="Search decision trail"
+            className="w-full pl-7 pr-2 py-1.5 text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+          />
+        </div>
+        <select
+          value={stageFilter}
+          onChange={(e) => onStageFilterChange(e.target.value)}
+          aria-label="Stage filter"
+          className="text-xs px-2 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded max-w-[160px]"
+        >
+          <option value="all">All stages</option>
+          {stageOptions.map((stage) => (
+            <option key={stage} value={stage}>
+              {stage}
+            </option>
+          ))}
+        </select>
+      </div>
+      {queryActive && (
+        <p className="text-[10px] text-[var(--color-text-faint)]">
+          {matchCounts.stages} stage{matchCounts.stages === 1 ? '' : 's'} ·{' '}
+          {matchCounts.workflowEvents} workflow event
+          {matchCounts.workflowEvents === 1 ? '' : 's'} ·{' '}
+          {matchCounts.perTest} per-test row
+          {matchCounts.perTest === 1 ? '' : 's'} match the filter.
+        </p>
+      )}
+    </section>
+  )
+}
+
+/**
+ * Apply the stage filter and free-text query to a decision trail
+ * response. The matcher is case-insensitive substring — adequate for
+ * the "grep a single run" ask in the backlog. Matches against:
+ *
+ *  - stage_name, route_rationale, fallback_reason, decision log entries
+ *    (decision_point, chosen, rationale, alternatives)
+ *  - workflow event decision_point / chosen / rationale
+ *  - per-test test_name, analysis_mode, fallback_from, fallback_reason
+ *
+ * When the query matches a stage's decision log entries, the returned
+ * stage keeps only the matching entries so the drawer renders the hit
+ * in context. When the stage itself matches (by name or rationale) but
+ * none of its log entries match, the full log is preserved.
+ */
+function filterTrail(
+  data: {
+    stages: StageDecisionSummary[]
+    workflow_events: WorkflowDecisionEvent[]
+    per_test: PerTestRouting[]
+  },
+  query: string,
+  stageFilter: string,
+): {
+  stages: StageDecisionSummary[]
+  workflow_events: WorkflowDecisionEvent[]
+  per_test: PerTestRouting[]
+} {
+  const hit = (text: string | null | undefined) =>
+    query === '' ? true : !!text && text.toLowerCase().includes(query)
+
+  const stageIncluded = (name: string) =>
+    stageFilter === 'all' || stageFilter === name
+
+  const matchedStages: StageDecisionSummary[] = []
+  for (const stage of data.stages) {
+    if (!stageIncluded(stage.stage_name)) continue
+    if (query === '') {
+      matchedStages.push(stage)
+      continue
+    }
+    const stageHit =
+      hit(stage.stage_name) ||
+      hit(stage.route_rationale) ||
+      hit(stage.fallback_reason) ||
+      hit(stage.analysis_mode) ||
+      hit(stage.error_category) ||
+      hit(stage.skipped_reason)
+    const matchingLogs = stage.decision_log.filter(
+      (entry) =>
+        hit(entry.decision_point) ||
+        hit(entry.chosen) ||
+        hit(entry.rationale) ||
+        (entry.alternatives || []).some((alt) => hit(alt)),
+    )
+    if (stageHit || matchingLogs.length > 0) {
+      matchedStages.push({
+        ...stage,
+        // Keep the full log when the stage itself matched; narrow to
+        // just the matching log rows when the hit came from inside.
+        decision_log: stageHit ? stage.decision_log : matchingLogs,
+      })
+    }
+  }
+
+  // Workflow events: only filtered by the free-text query. The stage
+  // dropdown doesn't apply — these are router-level, not stage-scoped.
+  const matchedEvents =
+    query === ''
+      ? data.workflow_events
+      : data.workflow_events.filter(
+          (ev) =>
+            hit(ev.decision_point) ||
+            hit(ev.chosen) ||
+            hit(ev.rationale) ||
+            (ev.alternatives || []).some((alt) => hit(alt)),
+        )
+
+  // Per-test: drop rows that don't match either filter. When the stage
+  // filter narrows to one stage we don't filter per_test by stage name
+  // (the per-test row doesn't carry it), so we just honour the query.
+  const matchedPerTest =
+    query === ''
+      ? data.per_test
+      : data.per_test.filter(
+          (row) =>
+            hit(row.test_name) ||
+            hit(row.analysis_mode) ||
+            hit(row.fallback_from) ||
+            hit(row.fallback_reason),
+        )
+
+  return {
+    stages: matchedStages,
+    workflow_events: matchedEvents,
+    per_test: matchedPerTest,
+  }
 }
 
 // ── Header / summary ────────────────────────────────────────────────────────
