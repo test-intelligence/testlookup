@@ -266,6 +266,72 @@ async def list_deliveries(
     return list(result.scalars().all())
 
 
+async def replay_delivery(
+    delivery_id: uuid.UUID,
+) -> Optional[uuid.UUID]:
+    """Create a fresh PENDING delivery from a failed/DLQ'd one and enqueue it.
+
+    Returns the new delivery's id, or ``None`` when:
+    * The feature flag / offline-mode gate is off (no-op).
+    * The source delivery is missing.
+    * The source is not in a replayable state (``SUCCESS`` needs no
+      replay, ``PENDING`` is still in-flight).
+
+    A replay never mutates the original row — the old delivery stays
+    in place so customers can audit "this failed, we retried, here's
+    the new outcome". The new row gets a fresh ``attempt_count=0`` so
+    the existing exponential-backoff retry policy applies to it from
+    scratch.
+
+    Service owns its own transaction boundary for the same reason
+    ``emit_event`` does: the Celery task has to be enqueued *after*
+    the delivery row is committed or the worker may look up a row
+    that doesn't exist yet. See the COMMIT_ALLOWLIST entry for
+    webhook_service.py.
+    """
+    if not await _post_allowed():
+        return None
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(WebhookDelivery).where(WebhookDelivery.id == delivery_id)
+        )
+        original = result.scalar_one_or_none()
+        if original is None:
+            return None
+        if original.status not in ("FAILED", "DLQ"):
+            return None
+
+        new_row = WebhookDelivery(
+            subscription_id=original.subscription_id,
+            event_type=original.event_type,
+            event_payload=original.event_payload,
+            status="PENDING",
+            attempt_count=0,
+        )
+        db.add(new_row)
+        await db.flush()
+        new_id = new_row.id
+        await db.commit()
+
+    try:
+        from app.worker.tasks import deliver_webhook as _deliver
+        _deliver.delay(delivery_id=str(new_id))
+    except Exception as exc:
+        logger.warning(
+            "webhook replay enqueue failed",
+            delivery_id=str(new_id),
+            error=str(exc),
+        )
+
+    logger.info(
+        "webhook_delivery_replayed",
+        original_delivery_id=str(delivery_id),
+        new_delivery_id=str(new_id),
+    )
+    return new_id
+
+
 async def _audit(
     db: AsyncSession, actor: User, action: str, row: WebhookSubscription,
 ) -> None:

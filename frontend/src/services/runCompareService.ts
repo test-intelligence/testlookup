@@ -27,6 +27,9 @@ export type RunCompareClassification =
   | 'new_test'
   | 'removed_test'
   | 'duration_spike'
+  | 'renamed'
+
+export type RunComparePairedBy = 'fingerprint' | 'fuzzy_name_match'
 
 export interface RunCompareTestDelta {
   test_fingerprint: string
@@ -38,6 +41,12 @@ export interface RunCompareTestDelta {
   right_duration_ms: number | null
   delta_duration_ms: number | null
   classification: RunCompareClassification
+  // Backend adds these on the second-pass fuzzy-name matcher (run
+  // compare fuzzy pairing). Legacy responses omit them — default to
+  // ``"fingerprint"`` when absent.
+  paired_by?: RunComparePairedBy | null
+  previous_test_name?: string | null
+  previous_test_fingerprint?: string | null
 }
 
 export interface RunCompareResponse {
@@ -58,6 +67,7 @@ export interface RunCompareResponse {
   new_tests: number
   removed_tests: number
   duration_spikes: number
+  renamed: number
   test_deltas: RunCompareTestDelta[]
   truncated: boolean
 }

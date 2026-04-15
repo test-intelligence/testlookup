@@ -261,6 +261,7 @@ const FILTER_OPTIONS: Array<{
   { key: 'fixed', label: 'Fixed', countKey: 'fixed' },
   { key: 'new_test', label: 'New tests', countKey: 'new_tests' },
   { key: 'removed_test', label: 'Removed', countKey: 'removed_tests' },
+  { key: 'renamed', label: 'Renamed', countKey: 'renamed' },
 ]
 
 function DeltaFilterBar({
@@ -334,10 +335,25 @@ function DeltaTable({
             </tr>
           </thead>
           <tbody>
-            {deltas.map((d) => (
+            {deltas.map((d) => {
+              const isRenamed =
+                d.paired_by === 'fuzzy_name_match' &&
+                !!d.previous_test_name &&
+                d.previous_test_name !== d.test_name
+              return (
               <tr key={d.test_fingerprint} className="border-t border-[var(--color-border)]">
                 <td className="px-3 py-2 text-xs text-[var(--color-text)] truncate max-w-[260px]">
-                  {d.test_name || d.test_fingerprint.slice(0, 16)}
+                  <div className="truncate">
+                    {d.test_name || d.test_fingerprint.slice(0, 16)}
+                  </div>
+                  {isRenamed && (
+                    <div
+                      className="text-[10px] text-[var(--color-text-faint)] truncate"
+                      title={d.previous_test_name ?? undefined}
+                    >
+                      was: {d.previous_test_name}
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">
                   {d.suite_name || '—'}
@@ -358,7 +374,8 @@ function DeltaTable({
                   <ClassificationBadge c={d.classification} />
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -392,12 +409,14 @@ function ClassificationBadge({ c }: { c: RunCompareClassification }) {
     improved: { label: 'improved', tone: 'border-emerald-500/40 text-emerald-400' },
     new_test: { label: 'new test', tone: 'border-[var(--color-accent)]/40 text-[var(--color-accent)]' },
     removed_test: { label: 'removed', tone: 'border-[var(--color-border)] text-[var(--color-text-muted)]' },
+    renamed: { label: 'renamed', tone: 'border-sky-500/40 text-sky-400' },
   }
   const cfg = map[c]
   const Icon = c === 'new_failure' || c === 'regressed' ? XCircle
     : c === 'fixed' || c === 'improved' ? CheckCircle2
     : c === 'new_test' ? PlusCircle
     : c === 'removed_test' ? MinusCircle
+    : c === 'renamed' ? ArrowLeftRight
     : AlertTriangle
   return (
     <span className={`text-[10px] px-1.5 py-0.5 rounded border ${cfg.tone} inline-flex items-center gap-1`}>

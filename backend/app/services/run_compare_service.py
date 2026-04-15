@@ -26,6 +26,7 @@ render without re-computing the classification client-side.
 from __future__ import annotations
 
 import uuid
+from difflib import SequenceMatcher
 from typing import Any, Optional
 
 import structlog
@@ -45,6 +46,19 @@ _DURATION_SPIKE_MULTIPLIER = 3.0
 # Hard cap on the number of per-test delta rows returned so a diff
 # between two enormous runs doesn't DOS the frontend.
 _MAX_DELTA_ROWS = 500
+
+# Fuzzy-pair pass (carried-forward debt: "Run compare test pairing —
+# stable fingerprint works, but tests that get renamed between runs
+# don't pair. Consider a fuzzy match as a second pass."). Runs after
+# the primary fingerprint match; only considers TestCases that landed
+# as removed_test + new_test in the first pass.
+_FUZZY_PAIR_THRESHOLD = 0.82
+
+# Hard cap on how many unmatched rows we'll fuzzy-pair. The pairing is
+# O(removed × added) so we bail out on huge runs rather than spending
+# seconds in the matcher. Diff users looking at 500+ removed/added
+# tests already have a bigger problem than rename tracking.
+_FUZZY_PAIR_MAX_CANDIDATES = 500
 
 
 def _status_bucket(status: Optional[str]) -> str:
@@ -106,6 +120,81 @@ def _classify(
         # Any other status change — surface as regressed for triage.
         return "regressed"
     return None
+
+
+def _similarity(
+    left_name: Optional[str],
+    left_suite: Optional[str],
+    right_name: Optional[str],
+    right_suite: Optional[str],
+) -> float:
+    """SequenceMatcher ratio over ``suite::name`` strings.
+
+    A simple character-level ratio is enough for the rename patterns
+    we see in practice (common refactors: adding a suffix like
+    ``_with_valid_credentials``, renaming ``testX`` → ``test_x``,
+    reordering words in the test label). Jaro-Winkler would give
+    slightly better behaviour on short strings but difflib is stdlib
+    and ships zero-dependency.
+    """
+    left = f"{left_suite or ''}::{left_name or ''}"
+    right = f"{right_suite or ''}::{right_name or ''}"
+    if not left.strip(":") or not right.strip(":"):
+        return 0.0
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def _greedy_fuzzy_pair(
+    removed: list[TestCase],
+    added: list[TestCase],
+) -> list[tuple[TestCase, TestCase, float]]:
+    """Greedy best-match pairing between unmatched removed and added tests.
+
+    Returns a list of ``(left_tc, right_tc, score)`` triples. Each
+    TestCase appears at most once in the result. Pairs are picked
+    highest-score-first so the strongest rename signal wins a contested
+    target. Scores below ``_FUZZY_PAIR_THRESHOLD`` are not considered.
+
+    Returns an empty list when either side is empty or either side
+    exceeds ``_FUZZY_PAIR_MAX_CANDIDATES`` — at that scale the
+    O(n × m) scoring is too expensive for an interactive endpoint and
+    the user's mental model of "these are the renamed tests" breaks
+    down anyway.
+    """
+    if not removed or not added:
+        return []
+    if len(removed) > _FUZZY_PAIR_MAX_CANDIDATES or len(added) > _FUZZY_PAIR_MAX_CANDIDATES:
+        logger.info(
+            "run_compare fuzzy pair skipped: too many candidates",
+            removed=len(removed),
+            added=len(added),
+            cap=_FUZZY_PAIR_MAX_CANDIDATES,
+        )
+        return []
+
+    candidates: list[tuple[float, TestCase, TestCase]] = []
+    for r in removed:
+        for a in added:
+            score = _similarity(
+                r.test_name, r.suite_name,
+                a.test_name, a.suite_name,
+            )
+            if score >= _FUZZY_PAIR_THRESHOLD:
+                candidates.append((score, r, a))
+
+    candidates.sort(key=lambda t: -t[0])
+    used_removed: set[str] = set()
+    used_added: set[str] = set()
+    pairs: list[tuple[TestCase, TestCase, float]] = []
+    for score, r, a in candidates:
+        r_fp = r.test_fingerprint or ""
+        a_fp = a.test_fingerprint or ""
+        if r_fp in used_removed or a_fp in used_added:
+            continue
+        used_removed.add(r_fp)
+        used_added.add(a_fp)
+        pairs.append((r, a, score))
+    return pairs
 
 
 async def _load_summary(db: AsyncSession, run_id: uuid.UUID) -> Optional[TestRun]:
@@ -188,6 +277,14 @@ async def compare_runs(
         "new_test": 0,
         "removed_test": 0,
         "duration_spike": 0,
+        # Second-pass fuzzy matcher bucket: a test whose fingerprint
+        # doesn't match across the two runs but whose ``suite::name``
+        # is similar enough that it's almost certainly the same
+        # logical test after a rename/refactor. Landed delta entries
+        # also carry ``paired_by``, ``previous_test_name``, and
+        # ``previous_test_fingerprint`` so the UI can render a "was:"
+        # label alongside the current name.
+        "renamed": 0,
     }
 
     deltas: list[dict[str, Any]] = []
@@ -224,7 +321,75 @@ async def compare_runs(
             "right_duration_ms": right_duration,
             "delta_duration_ms": delta_duration,
             "classification": classification,
+            "paired_by": "fingerprint",
+            "previous_test_name": None,
+            "previous_test_fingerprint": None,
         })
+
+    # Second pass — fuzzy-pair the leftover removed_test + new_test
+    # buckets so renamed tests stop landing as "gone + appeared". The
+    # matcher only considers TestCases whose first-pass classification
+    # was removed_test or new_test; everything else is already paired.
+    fuzzy_removed = [
+        left_tests[d["test_fingerprint"]]
+        for d in deltas
+        if d["classification"] == "removed_test"
+    ]
+    fuzzy_added = [
+        right_tests[d["test_fingerprint"]]
+        for d in deltas
+        if d["classification"] == "new_test"
+    ]
+    fuzzy_pairs = _greedy_fuzzy_pair(fuzzy_removed, fuzzy_added)
+
+    if fuzzy_pairs:
+        paired_removed_fps = {r.test_fingerprint for r, _, _ in fuzzy_pairs}
+        paired_added_fps = {a.test_fingerprint for _, a, _ in fuzzy_pairs}
+
+        # Remove the originals — they'll be replaced by one paired delta
+        # per (left, right) tuple below.
+        deltas = [
+            d for d in deltas
+            if not (
+                (d["classification"] == "removed_test" and d["test_fingerprint"] in paired_removed_fps)
+                or (d["classification"] == "new_test" and d["test_fingerprint"] in paired_added_fps)
+            )
+        ]
+        counts["removed_test"] -= len(paired_removed_fps)
+        counts["new_test"] -= len(paired_added_fps)
+
+        for left_tc, right_tc, score in fuzzy_pairs:
+            base_class = _classify(
+                left_tc.status, right_tc.status,
+                left_tc.duration_ms, right_tc.duration_ms,
+            )
+            # Same-status-passed pairs return None from _classify. We
+            # still surface them in the diff (tagged as ``renamed``) so
+            # the user sees the rename.
+            classification = base_class or "renamed"
+            counts[classification] = counts.get(classification, 0) + 1
+
+            delta_duration = (
+                (right_tc.duration_ms - left_tc.duration_ms)
+                if right_tc.duration_ms is not None and left_tc.duration_ms is not None
+                else None
+            )
+            deltas.append({
+                # Right-side fingerprint wins — the post-rename identity
+                # is how the user now refers to the test.
+                "test_fingerprint": right_tc.test_fingerprint,
+                "test_name": right_tc.test_name,
+                "suite_name": right_tc.suite_name,
+                "left_status": str(left_tc.status) if left_tc.status else None,
+                "right_status": str(right_tc.status) if right_tc.status else None,
+                "left_duration_ms": left_tc.duration_ms,
+                "right_duration_ms": right_tc.duration_ms,
+                "delta_duration_ms": delta_duration,
+                "classification": classification,
+                "paired_by": "fuzzy_name_match",
+                "previous_test_name": left_tc.test_name,
+                "previous_test_fingerprint": left_tc.test_fingerprint,
+            })
 
     # Sort: most urgent categories first, then by largest duration delta.
     priority = {
@@ -236,6 +401,7 @@ async def compare_runs(
         "fixed": 5,
         "improved": 6,
         "new_test": 7,
+        "renamed": 8,
     }
     deltas.sort(
         key=lambda d: (
@@ -277,6 +443,7 @@ async def compare_runs(
         "new_tests": counts["new_test"],
         "removed_tests": counts["removed_test"],
         "duration_spikes": counts["duration_spike"],
+        "renamed": counts["renamed"],
         "test_deltas": deltas,
         "truncated": truncated,
     }

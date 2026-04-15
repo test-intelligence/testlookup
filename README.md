@@ -51,6 +51,26 @@ It also ships a first-class **MCP (Model Context Protocol) server** so AI assist
 | **SDK Downloads** | Client SDKs for Python, Java, JavaScript, Go with interactive setup guides |
 | **Integrations** | Jira, Confluence, Splunk, Prometheus, GitHub, OpenShift API, Slack, Teams, SMTP |
 
+### What's new — Tier 0-2 batch (2026-04)
+
+Every capability below ships behind a feature flag (see `docs/features/FEATURE_FLAG_INVENTORY.md`) and honours the `AI_OFFLINE_MODE` kill switch on every outbound network call. Walkthroughs, enable steps, and troubleshooting per feature live in **`docs/TESTLOOKUP_USER_GUIDE_TIER_0_2.md`**.
+
+| Domain | Capability |
+|--------|-----------|
+| **Feature Flags Admin** | Per-project / per-role / rollout-percent gates with audit history. Replaces the legacy hand-rolled env toggles. ADMIN-only CRUD at `/settings/feature-flags`. |
+| **Decision Trail** | Per-run "why did the AI do that" drawer — stage timeline, per-test routing, workflow events, fallback reasons. Free-text search + per-stage filter. Opens from Run Intelligence. |
+| **Cypress + Playwright ingest** | Native parsers for Cypress and Playwright JSON reports. Gated by `cypress_ingest` / `playwright_ingest` flags. |
+| **LLM Cost Budget** | Per-project quota + hard-cap enforcement with automatic downgrade to ML/Rules when the budget is exhausted. Billing overview page at `/settings/billing`. |
+| **Flaky Auto-Quarantine** | Detection → QA Lead approval → active quarantine → nightly recheck → release/re-quarantine state machine. Ingestion path excludes quarantined tests from failures. Page at `/quarantine`. |
+| **Release Compliance Pack** | One-click audit ZIP for a release decision — manifest, policy snapshot, decision trail, clusters, defects, audit events. SHA-256 tamper detection. 7-year retention default. |
+| **GitHub Checks Integration** | Per-project outbound GitHub Checks API — TestLookup posts a green/red check to the commit SHA on every ingested run, deep-linking back to Run Intelligence. |
+| **Outbound Webhooks** | HMAC-signed event fan-out with exponential-backoff retries and a per-delivery replay button for DLQ rows. 5 event types. Page at `/settings/webhooks`. |
+| **Two-Run Compare** | Side-by-side diff with classification (new failures, regressions, duration spikes, fixed, renamed). Fuzzy rename pairing so renamed tests don't land as gone-plus-appeared. Page at `/runs/compare`. |
+| **RAG Faithfulness Guardrails** | Pluggable Ollama (offline-safe) or Ragas (hosted) evaluator. Low-scoring generated cases land on the needs-review queue with a reason. |
+| **Perf Regression Detection** | Per-test duration baselines (Welford's online algorithm) with nightly refresh. Feeds 3σ spike detection into the release gate. |
+| **Weekly Retro Digest** | Monday-morning per-project retrospective — released flaky tests, new regressions, narrative rendered by the LLM (template fallback in offline mode). |
+| **Team Value Metrics Split** | Ownership-rule-aware team attribution using `match_pattern` + `service_name` + `team_name` on `ServiceOwnershipRule`. |
+
 ## Architecture
 
 ```mermaid

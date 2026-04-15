@@ -2932,6 +2932,15 @@ class WebhookTestResponse(BaseModel):
     latency_ms: Optional[int] = None
 
 
+class WebhookDeliveryReplayResponse(BaseModel):
+    """Result of POST /webhooks/{sub_id}/deliveries/{delivery_id}/replay."""
+    delivery_id: uuid.UUID
+    # The id of the *new* PENDING delivery row created by replay. The
+    # original row is left in place so delivery history remains
+    # auditable — a replay is never an in-place mutation.
+    status: str = "PENDING"
+
+
 class WebhookEventCatalogEntry(BaseModel):
     event_type: str
     description: str
@@ -2976,7 +2985,17 @@ class RunCompareTestDelta(BaseModel):
     delta_duration_ms: Optional[int] = None
     classification: str
     # One of: new_failure | fixed | still_failing | regressed |
-    # improved | new_test | removed_test | duration_spike
+    # improved | new_test | removed_test | duration_spike | renamed
+    paired_by: Optional[str] = None
+    # "fingerprint" (first-pass stable-hash match) or
+    # "fuzzy_name_match" (second-pass SequenceMatcher rename pairing).
+    # Legacy responses omit this field — frontend should default to
+    # "fingerprint" when absent.
+    previous_test_name: Optional[str] = None
+    previous_test_fingerprint: Optional[str] = None
+    # Set when ``paired_by == "fuzzy_name_match"``. Carries the
+    # pre-rename identity so the UI can render a "was: <old_name>"
+    # label next to the current name.
 
 
 class RunCompareResponse(BaseModel):
@@ -2999,6 +3018,11 @@ class RunCompareResponse(BaseModel):
     new_tests: int = 0
     removed_tests: int = 0
     duration_spikes: int = 0
+    renamed: int = 0
+    # ``renamed`` counts second-pass fuzzy-paired deltas whose base
+    # classification was None (same status, no duration spike). Tests
+    # paired by fuzzy match that also changed status are counted in
+    # their status-change bucket, not in ``renamed``.
     # Detailed per-test diff — capped at 500 entries.
     test_deltas: List[RunCompareTestDelta] = Field(default_factory=list)
     truncated: bool = False

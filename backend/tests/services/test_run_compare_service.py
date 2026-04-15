@@ -7,6 +7,8 @@ where every behaviour is deterministic and doesn't need a session.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.services import run_compare_service as svc
@@ -138,3 +140,111 @@ def test_priority_map_covers_every_classification():
     # And the full set of labels must be a subset of what ``_classify``
     # is capable of emitting.
     assert produced.issubset(labels)
+
+
+# ── _similarity ───────────────────────────────────────────────────────────
+
+
+def test_similarity_identical_strings_is_one():
+    assert svc._similarity("test_login", "auth", "test_login", "auth") == 1.0
+
+
+def test_similarity_completely_different_is_low():
+    score = svc._similarity("foo_bar_baz", "alpha", "qux_wibble_zap", "omega")
+    assert score < svc._FUZZY_PAIR_THRESHOLD
+
+
+def test_similarity_common_rename_suffix_clears_threshold():
+    """Adding a clarifying suffix is the most common rename."""
+    score = svc._similarity(
+        "test_login", "auth",
+        "test_login_with_valid_credentials", "auth",
+    )
+    assert score >= svc._FUZZY_PAIR_THRESHOLD
+
+
+def test_similarity_empty_inputs_return_zero():
+    assert svc._similarity(None, None, None, None) == 0.0
+    assert svc._similarity("", "", "test", "auth") == 0.0
+
+
+# ── _greedy_fuzzy_pair ────────────────────────────────────────────────────
+
+
+def _tc(fp: str, name: str, suite: str = "auth", status: str = "PASSED", duration: int = 100):
+    """Build a TestCase-shaped SimpleNamespace for the pairer."""
+    return SimpleNamespace(
+        test_fingerprint=fp,
+        test_name=name,
+        suite_name=suite,
+        status=status,
+        duration_ms=duration,
+    )
+
+
+def test_greedy_fuzzy_pair_empty_inputs():
+    assert svc._greedy_fuzzy_pair([], []) == []
+    assert svc._greedy_fuzzy_pair([_tc("fp1", "test_a")], []) == []
+    assert svc._greedy_fuzzy_pair([], [_tc("fp1", "test_a")]) == []
+
+
+def test_greedy_fuzzy_pair_matches_rename():
+    removed = [_tc("fp_old", "test_login")]
+    added = [_tc("fp_new", "test_login_with_valid_credentials")]
+    pairs = svc._greedy_fuzzy_pair(removed, added)
+    assert len(pairs) == 1
+    left, right, score = pairs[0]
+    assert left.test_fingerprint == "fp_old"
+    assert right.test_fingerprint == "fp_new"
+    assert score >= svc._FUZZY_PAIR_THRESHOLD
+
+
+def test_greedy_fuzzy_pair_ignores_below_threshold():
+    removed = [_tc("fp_old", "test_login")]
+    added = [_tc("fp_new", "test_payment_processing_edge_case")]
+    assert svc._greedy_fuzzy_pair(removed, added) == []
+
+
+def test_greedy_fuzzy_pair_picks_best_score_first():
+    """When one added test could match two removed tests, the better-scoring
+    pair wins and the loser stays unmatched."""
+    removed = [
+        _tc("fp_r1", "test_login"),
+        _tc("fp_r2", "test_login_old"),  # closer to the added one
+    ]
+    added = [_tc("fp_a1", "test_login_old_updated")]
+    pairs = svc._greedy_fuzzy_pair(removed, added)
+    assert len(pairs) == 1
+    left, right, _ = pairs[0]
+    # ``test_login_old`` → ``test_login_old_updated`` scores higher than
+    # ``test_login`` → ``test_login_old_updated``.
+    assert left.test_fingerprint == "fp_r2"
+    assert right.test_fingerprint == "fp_a1"
+
+
+def test_greedy_fuzzy_pair_skips_when_too_many_candidates(monkeypatch):
+    """Interactive diff mustn't burn seconds inside the matcher when both
+    sides are large — we bail out and leave rename tracking to the
+    user's eyes."""
+    monkeypatch.setattr(svc, "_FUZZY_PAIR_MAX_CANDIDATES", 2)
+    removed = [_tc(f"fp_r{i}", f"test_{i}") for i in range(5)]
+    added = [_tc(f"fp_a{i}", f"test_{i}_renamed") for i in range(5)]
+    assert svc._greedy_fuzzy_pair(removed, added) == []
+
+
+def test_greedy_fuzzy_pair_no_duplicate_assignment():
+    """Each TestCase appears in at most one pair."""
+    removed = [
+        _tc("fp_r1", "test_login_flow"),
+        _tc("fp_r2", "test_logout_flow"),
+    ]
+    added = [
+        _tc("fp_a1", "test_login_flow_v2"),
+        _tc("fp_a2", "test_logout_flow_v2"),
+    ]
+    pairs = svc._greedy_fuzzy_pair(removed, added)
+    assert len(pairs) == 2
+    left_fps = {l.test_fingerprint for l, _, _ in pairs}
+    right_fps = {r.test_fingerprint for _, r, _ in pairs}
+    assert len(left_fps) == 2
+    assert len(right_fps) == 2

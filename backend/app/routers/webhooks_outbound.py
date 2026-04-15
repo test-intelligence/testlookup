@@ -15,6 +15,7 @@ Endpoints:
 * ``DELETE /api/v1/webhooks/{id}``                 — remove
 * ``POST   /api/v1/webhooks/{id}/test``            — fire a synthetic ping event
 * ``GET    /api/v1/webhooks/{id}/deliveries``      — delivery history
+* ``POST   /api/v1/webhooks/{id}/deliveries/{delivery_id}/replay`` — retry a failed delivery
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from app.core.deps import (
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
     WebhookDeliveryRead,
+    WebhookDeliveryReplayResponse,
     WebhookEventCatalogEntry,
     WebhookEventCatalogResponse,
     WebhookSubscriptionRead,
@@ -225,3 +227,60 @@ async def list_webhook_deliveries(
 ):
     await _load_and_scope(db, current_user, subscription_id)
     return await svc.list_deliveries(db, subscription_id, limit=limit)
+
+
+@router.post(
+    "/{subscription_id}/deliveries/{delivery_id}/replay",
+    response_model=WebhookDeliveryReplayResponse,
+)
+async def replay_webhook_delivery(
+    subscription_id: uuid.UUID,
+    delivery_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """Replay a failed or DLQ'd webhook delivery.
+
+    Creates a fresh ``PENDING`` row with the same payload and enqueues
+    a delivery task. The original failed row is left in place so the
+    audit history is preserved. QA_LEAD+ only; caller must have project
+    access to the subscription. Fails with 409 when the delivery is
+    already in-flight (``PENDING``) or succeeded (``SUCCESS``), and 503
+    when the ``outbound_webhooks`` feature flag is off or offline mode
+    is enabled.
+    """
+    from sqlalchemy import select as _select
+    from app.models.postgres import WebhookDelivery as _Delivery
+
+    sub = await _load_and_scope(db, current_user, subscription_id)
+    result = await db.execute(
+        _select(_Delivery).where(
+            _Delivery.id == delivery_id,
+            _Delivery.subscription_id == sub.id,
+        )
+    )
+    original = result.scalar_one_or_none()
+    if original is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Delivery not found on this subscription",
+        )
+    if original.status not in ("FAILED", "DLQ"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot replay a delivery in status {original.status}: "
+                "only FAILED or DLQ deliveries are replayable."
+            ),
+        )
+
+    new_id = await svc.replay_delivery(delivery_id)
+    if new_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Webhook replay is unavailable — outbound_webhooks is "
+                "disabled or AI_OFFLINE_MODE is enabled."
+            ),
+        )
+    return WebhookDeliveryReplayResponse(delivery_id=new_id, status="PENDING")
