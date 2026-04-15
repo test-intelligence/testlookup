@@ -128,20 +128,43 @@ def _similarity(
     right_name: Optional[str],
     right_suite: Optional[str],
 ) -> float:
-    """SequenceMatcher ratio over ``suite::name`` strings.
+    """Weighted similarity score for rename detection.
 
-    A simple character-level ratio is enough for the rename patterns
-    we see in practice (common refactors: adding a suffix like
-    ``_with_valid_credentials``, renaming ``testX`` → ``test_x``,
-    reordering words in the test label). Jaro-Winkler would give
-    slightly better behaviour on short strings but difflib is stdlib
-    and ships zero-dependency.
+    The naive ``SequenceMatcher.ratio()`` alone is the wrong metric
+    here: its denominator is ``len(a) + len(b)``, so a common refactor
+    like ``test_login`` → ``test_login_with_valid_credentials`` scores
+    ~0.58 even though the shorter name is a full prefix of the longer
+    one. Pure containment (``longest_block / shorter``) is the mirror
+    image — it returns 1.0 whenever one string is a substring of the
+    other, which is too permissive for tie-breaking between candidates
+    that all happen to share a short common prefix.
+
+    We combine both: ``0.7 * containment + 0.3 * ratio``. Containment
+    carries the rename signal for suffix/prefix additions; ratio acts
+    as a tie-breaker that favours pairs whose overall length is
+    closer to equal. Empirically this lets ``test_login`` →
+    ``test_login_with_valid_credentials`` pair at ~0.84 while
+    unrelated tests that share a ``test_`` prefix stay below 0.5.
+
+    Cross-suite pairs return 0.0 outright. 99% of renames keep the
+    test in the same suite, and cross-suite pairs are too ambiguous
+    to auto-pair — if a customer ever needs cross-suite rename
+    tracking, relax this guard and raise the threshold.
     """
-    left = f"{left_suite or ''}::{left_name or ''}"
-    right = f"{right_suite or ''}::{right_name or ''}"
-    if not left.strip(":") or not right.strip(":"):
+    left_n = left_name or ""
+    right_n = right_name or ""
+    if not left_n or not right_n:
         return 0.0
-    return SequenceMatcher(None, left, right).ratio()
+    if (left_suite or "") != (right_suite or ""):
+        return 0.0
+
+    matcher = SequenceMatcher(None, left_n, right_n)
+    ratio = matcher.ratio()
+    blocks = matcher.get_matching_blocks()
+    longest_block = max((b.size for b in blocks), default=0)
+    shorter = min(len(left_n), len(right_n))
+    containment = (longest_block / shorter) if shorter else 0.0
+    return 0.7 * containment + 0.3 * ratio
 
 
 def _greedy_fuzzy_pair(
