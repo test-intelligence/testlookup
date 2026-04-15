@@ -8,6 +8,7 @@ integration fixtures so no real PostgreSQL is needed.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -43,8 +44,8 @@ async def test_list_feature_flags_ok_for_admin(client, auth_as, override_db, fak
         enabled_projects=None,
         enabled_roles=None,
         rollout_percent=100,
-        created_at=None,
-        updated_at=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
         updated_by_user_id=None,
     )
     with patch(
@@ -93,8 +94,8 @@ async def test_create_feature_flag_happy_path(client, auth_as):
         enabled_projects=None,
         enabled_roles=None,
         rollout_percent=100,
-        created_at=None,
-        updated_at=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
         updated_by_user_id=None,
     )
     with patch(
@@ -128,8 +129,8 @@ async def test_update_feature_flag_passes_only_set_fields(client, auth_as):
         enabled_projects=None,
         enabled_roles=None,
         rollout_percent=50,
-        created_at=None,
-        updated_at=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
         updated_by_user_id=None,
     )
     with patch(

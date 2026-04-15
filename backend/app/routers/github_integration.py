@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import (
     get_current_active_user,
     get_db,
+    require_project_access,
     require_role,
-    resolve_project_scope,
 )
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
@@ -47,8 +47,8 @@ async def get_github_integration(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
-    await resolve_project_scope(db, current_user, str(project_id))
     row = await svc.get_integration(db, project_id)
     if row is None:
         raise HTTPException(
@@ -67,9 +67,9 @@ async def upsert_github_integration(
     payload: GitHubIntegrationWrite,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Create or replace the GitHub integration for a project. QA_LEAD+."""
-    await resolve_project_scope(db, current_user, str(project_id))
     row = await svc.upsert_integration(
         db,
         project_id=project_id,
@@ -91,10 +91,10 @@ async def test_github_integration(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Probe the configured repo + PAT and report whether the
     integration can actually reach GitHub. QA_LEAD+."""
-    await resolve_project_scope(db, current_user, str(project_id))
     result = await svc.test_connection(db, project_id)
     return GitHubConnectionTestResponse(**result)
 
@@ -107,11 +107,11 @@ async def delete_github_integration(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Delete the GitHub integration row for a project. The stored PAT
     secret is cleared from ``secret_service`` via the standard upsert
     path with an empty value."""
-    await resolve_project_scope(db, current_user, str(project_id))
     row = await svc.get_integration(db, project_id)
     if row is None:
         return None

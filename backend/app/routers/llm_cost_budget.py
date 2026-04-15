@@ -27,8 +27,8 @@ from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
     get_db,
+    require_project_access,
     require_role,
-    resolve_project_scope,
 )
 from app.models.postgres import Project, User, UserRole
 from app.models.schemas import (
@@ -53,9 +53,9 @@ async def get_project_quota(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
     """Read the billing config for a project. QA_LEAD+ or project member."""
-    await resolve_project_scope(db, current_user, str(project_id))
     quota = await cost_service.get_quota(db, project_id)
     if quota is None:
         raise HTTPException(
@@ -71,11 +71,9 @@ async def upsert_project_quota(
     payload: LlmQuotaWrite,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
 ):
     """Create or replace the billing config for a project. ADMIN only."""
-    # Still enforce scope so the admin's project_id is a real one they know
-    # about — keeps audit trails clean.
-    await resolve_project_scope(db, current_user, str(project_id))
     quota = await cost_service.upsert_quota(
         db,
         project_id=project_id,
@@ -99,9 +97,9 @@ async def get_current_usage(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
     """Current-period usage with cap status, for the project overview card."""
-    await resolve_project_scope(db, current_user, str(project_id))
     return await cost_service.get_current_usage(db, project_id)
 
 
@@ -114,9 +112,9 @@ async def get_usage_history(
     limit: int = 12,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
     """Most recent ``limit`` billing periods for a project (default 12)."""
-    await resolve_project_scope(db, current_user, str(project_id))
     limit = max(1, min(limit, 60))
     rows = await cost_service.list_usage_history(db, project_id, limit=limit)
     return [

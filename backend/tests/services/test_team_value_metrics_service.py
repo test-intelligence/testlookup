@@ -11,7 +11,13 @@ from app.services import team_value_metrics_service as svc
 
 
 def _rule(pattern: str, owner: str, priority: int = 0) -> SimpleNamespace:
-    return SimpleNamespace(glob_pattern=pattern, owner=owner, team=owner, priority=priority)
+    return SimpleNamespace(
+        match_pattern=pattern,
+        service_name=owner,
+        team_name=owner,
+        priority=priority,
+        is_active=True,
+    )
 
 
 def test_match_owner_first_rule_wins():

@@ -152,7 +152,7 @@ async def _compose_narrative(
         text = getattr(response, "content", None) or str(response)
         return str(text).strip()[:1000]
     except Exception as exc:
-        logger.warning("retro narrative LLM failed", error=str(exc))
+        logger.warning("retro narrative LLM failed: %s", exc)
         return (
             f"Week in review: {numbers['runs_total']} runs, "
             f"{numbers['pass_rate_pct']}% pass rate, "

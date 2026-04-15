@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import (
     get_current_active_user,
     get_db,
+    require_release_access,
     require_role,
     resolve_project_scope,
 )
@@ -56,6 +57,7 @@ async def generate_compliance_pack(
     payload: CompliancePackGenerateRequest,
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_release_access()),
 ):
     """Generate a new compliance pack for a release. QA_LEAD+ only."""
     release = (
@@ -63,8 +65,6 @@ async def generate_compliance_pack(
     ).scalar_one_or_none()
     if release is None:
         raise HTTPException(status_code=404, detail="Release not found")
-
-    await resolve_project_scope(db, current_user, str(release.project_id))
 
     try:
         pack = await svc.generate_pack(
@@ -98,14 +98,9 @@ async def list_compliance_packs(
     release_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_release_access()),
 ):
     """List every historical pack ever generated for a release."""
-    release = (
-        await db.execute(select(Release).where(Release.id == release_id))
-    ).scalar_one_or_none()
-    if release is None:
-        raise HTTPException(status_code=404, detail="Release not found")
-    await resolve_project_scope(db, current_user, str(release.project_id))
     return await svc.list_packs_for_release(db, release_id)
 
 

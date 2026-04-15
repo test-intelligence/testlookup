@@ -173,6 +173,9 @@ async def test_manual_propose_503_when_flag_disabled(client, auth_as):
     The router translates that into a 503 with a user-facing message."""
     auth_as(role=UserRole.QA_LEAD)
     with patch(
+        "app.routers.flaky_quarantine.resolve_project_scope",
+        AsyncMock(return_value=None),
+    ), patch(
         "app.services.flaky_quarantine_service.propose_quarantine",
         AsyncMock(return_value=None),
     ):

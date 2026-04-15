@@ -132,7 +132,7 @@ class TestDigestScheduleEnum:
 
     def test_all_values(self):
         values = {s.value for s in DigestSchedule}
-        assert values == {"DAILY", "WEEKLY", "PER_RUN", "PER_RELEASE", "PER_SUITE"}
+        assert values == {"DAILY", "WEEKLY", "PER_RUN", "PER_RELEASE", "PER_SUITE", "WEEKLY_RETRO"}
 
 
 class TestDigestSubscriptionModel:
