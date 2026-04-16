@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="AuthSuite" tests="6" failures="2" skipped="1" errors="0" time="12.456">
+  <testcase classname="com.testlookup.demo.AuthTest" name="test_login_success" time="1.234">
+  </testcase>
+  <testcase classname="com.testlookup.demo.AuthTest" name="test_login_invalid_password" time="0.892">
+  </testcase>
+  <testcase classname="com.testlookup.demo.AuthTest" name="test_login_expired_token" time="2.100">
+    <failure message="Expected 401 but got 500" type="AssertionError">
+      java.lang.AssertionError: Expected 401 but got 500
+        at com.testlookup.demo.AuthTest.test_login_expired_token(AuthTest.java:45)
+        at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+    </failure>
+  </testcase>
+  <testcase classname="com.testlookup.demo.AuthTest" name="test_register_new_user" time="3.210">
+  </testcase>
+  <testcase classname="com.testlookup.demo.AuthTest" name="test_password_reset_flow" time="4.120">
+    <failure message="SMTP connection refused" type="ConnectionError">
+      ConnectionError: SMTP connection refused on port 587
+        at com.testlookup.demo.AuthTest.test_password_reset_flow(AuthTest.java:78)
+    </failure>
+  </testcase>
+  <testcase classname="com.testlookup.demo.AuthTest" name="test_oauth_google_redirect" time="0.900">
+    <skipped message="OAuth provider not configured in test environment"/>
+  </testcase>
+</testsuite>

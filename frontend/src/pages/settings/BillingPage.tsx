@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, DollarSign, Save, ShieldAlert } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
@@ -47,6 +48,7 @@ export default function BillingPage() {
       </div>
       <PageHeader
         title="LLM Cost Budget"
+        actions={<ExperimentalBadge />}
         subtitle={`Current period: ${formatDate(overview.period_start)} — ${formatDate(overview.period_end)}`}
       />
 

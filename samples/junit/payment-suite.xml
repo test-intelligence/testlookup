@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="PaymentSuite" tests="8" failures="1" skipped="0" errors="1" time="28.730">
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_charge_visa_success" time="3.200">
+  </testcase>
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_charge_mastercard_success" time="2.900">
+  </testcase>
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_charge_amex_success" time="3.100">
+  </testcase>
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_charge_declined_card" time="1.500">
+  </testcase>
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_refund_full_amount" time="4.230">
+  </testcase>
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_refund_partial_amount" time="3.800">
+  </testcase>
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_payment_gateway_timeout" time="5.500">
+    <failure message="Gateway timeout after 5000ms" type="TimeoutError">
+      TimeoutError: Payment gateway did not respond within 5000ms
+        at com.testlookup.demo.PaymentTest.test_payment_gateway_timeout(PaymentTest.java:112)
+        at com.testlookup.demo.PaymentGatewayClient.charge(PaymentGatewayClient.java:45)
+    </failure>
+  </testcase>
+  <testcase classname="com.testlookup.demo.PaymentTest" name="test_concurrent_charges_race_condition" time="4.500">
+    <error message="Database deadlock detected" type="DatabaseError">
+      org.postgresql.util.PSQLException: ERROR: deadlock detected
+        at com.testlookup.demo.PaymentTest.test_concurrent_charges_race_condition(PaymentTest.java:134)
+    </error>
+  </testcase>
+</testsuite>

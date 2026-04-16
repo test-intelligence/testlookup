@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, CheckCircle2, Github, Save, TestTube, Trash2, XCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
@@ -78,7 +79,7 @@ export default function GitHubIntegrationPage() {
   if (isAllProjects) {
     return (
       <div className="space-y-4">
-        <PageHeader title="GitHub Integration" subtitle="Per-project GitHub Checks API configuration" />
+        <PageHeader title="GitHub Integration" subtitle="Per-project GitHub Checks API configuration" actions={<ExperimentalBadge />} />
         <EmptyState
           title="Select a project"
           description="GitHub integration settings are configured per project. Switch the project selector in the top bar to continue."
