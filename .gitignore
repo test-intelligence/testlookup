@@ -38,7 +38,7 @@ client/java/target/
 
 # Docker
 docker-compose.override.yml
-
+website/
 # IDE
 .vscode/
 .idea/
