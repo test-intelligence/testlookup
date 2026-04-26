@@ -55,7 +55,9 @@ lxml==5.3.0
 defusedxml==0.7.1
 # XML-DSig verification for SAML assertion signatures. Uses lxml +
 # cryptography (already pulled in via python-jose) under the hood.
-signxml==3.2.2
+# 4.0.x removes references to deprecated EC curves (SECT163K1 etc.) that
+# `cryptography` >= 43.0 dropped — pinning < 4.0 breaks at import time.
+signxml==4.0.4
 
 # ── HTTP Client ──────────────────────────────────────────────
 httpx==0.28.1
