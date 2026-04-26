@@ -651,6 +651,25 @@ make k8s-deploy-homelab-update
 
 ## Troubleshooting
 
+> **Real-world gotchas from the 2026-04-25 deploy session — read this first.**
+> Three issues hit during a fresh-cluster bring-up that aren't obvious from the manifests:
+>
+> 1. **NetworkPolicy blocks colocated data stores.** The base `default-deny-all` policy in `k8s/base/networkpolicy.yaml` denies all ingress to every pod in `testlookup`. The base file's own comment flags this — it assumes data stores live OUTSIDE the namespace. The homelab overlay colocates them, so backend → postgres connections fail with `Connection refused` to the postgres ClusterIP. **Fix**: this overlay now ships `netpol-homelab.yaml` (`allow-data-stores` + `allow-traefik-ingress`). If you see backend `ConnectionRefusedError` to a `10.43.x.x:5432`-shaped IP, verify `kubectl -n testlookup get networkpolicy` shows `allow-data-stores`.
+>
+> 2. **Frontend nginx needs `runAsUser: 0` AND default capabilities.** `nginx:alpine`'s entrypoint envsubst writes to `/etc/nginx/conf.d/`, which UID 101 can't write. The homelab overlay sets `runAsUser: 0`, but you also can't `drop: [ALL]` capabilities — nginx master needs `CHOWN`/`SETUID`/`SETGID` to fork workers. The overlay also mounts a pre-rendered `frontend-nginx-configmap.yaml` over the nginx config and bypasses `/docker-entrypoint.sh` via `command: [nginx, "-g", "daemon off;"]`. If you see `chown(...) Operation not permitted` or `mkdir(...) Permission denied`, check that `kubectl -n testlookup get deployment testlookup-frontend -o yaml | grep -A20 securityContext` shows no `capabilities.drop`.
+>
+> 3. **Rancher Desktop's insecure-registry config keeps disappearing.** The `%LOCALAPPDATA%\rancher-desktop\provisioning\insecure-registry.start` script approach is fragile (factory resets / version upgrades wipe it). Reliable workaround when `docker push` fails with `http: server gave HTTP response to HTTPS client`: skip the registry, sideload images directly into containerd on each node:
+>     ```bash
+>     docker save registry.local:5000/testlookup/backend:$TAG -o /tmp/img.tar
+>     for node in 192.168.0.101 192.168.0.102 192.168.0.103; do
+>       scp /tmp/img.tar labadmin@$node:/tmp/
+>       ssh labadmin@$node "sudo k3s ctr images import /tmp/img.tar"
+>     done
+>     ```
+>     With `imagePullPolicy: IfNotPresent` and a non-`:latest` tag, K3s uses the local image without trying the registry.
+>
+> **K3s `:latest` cache trap.** When you overwrite a `:latest` image in the registry, neither `kubectl rollout restart` nor `imagePullPolicy: Always` reliably pulls the new content on K3s — the local containerd cache wins. Either `crictl rmi` on every node, or (much better) tag with the git SHA: `kubectl set image deployment/testlookup-backend backend=registry.local:5000/testlookup/backend:$(git rev-parse --short HEAD)`.
+
 ### Backend pod in CrashLoopBackOff
 
 ```bash

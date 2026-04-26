@@ -3,6 +3,11 @@
 # ============================================================
 .PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset demo benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
+# Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
+# breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
+# /usr/bin/bash; on Linux/macOS it's at /bin/bash — both resolve via PATH.
+SHELL := bash
+
 DOCKER_COMPOSE = docker compose
 BACKEND_CONTAINER = testlookup_backend
 OLLAMA_CONTAINER = ollama

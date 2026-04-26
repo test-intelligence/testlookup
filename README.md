@@ -124,6 +124,7 @@ For the full architecture diagram, component descriptions, and deployment matrix
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Data flow, offline guarantees, auth boundaries, PII redaction scope |
 | [benchmarks/](benchmarks/) | Classification accuracy + throughput benchmarks with methodology (`make benchmark`) |
 | [README_FULL.md](README_FULL.md) | Full feature documentation (SDK setup, ingestion options, MCP config, CLI reference, etc.) |
+| [docs/deployment/](docs/deployment/) | Multi-cloud deployment guides (AWS EKS / GCP GKE / Azure AKS / self-hosted K8s) — start with [docs/deployment/README.md](docs/deployment/README.md) |
 
 ## License
 

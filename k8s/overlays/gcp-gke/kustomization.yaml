@@ -1,0 +1,90 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# GCP GKE overlay — production-grade defaults assuming:
+#   - GKE Autopilot or Standard cluster (1.27+)
+#   - Built-in GCE Ingress controller (ingressClassName: gce)
+#   - Built-in pd.csi.storage.gke.io driver (StorageClass: standard-rwo)
+#   - Google-managed certificates via networking.gke.io/managed-certificates
+#   - For production, prefer Cloud SQL (Postgres) / MongoDB Atlas / Memorystore
+#     (Redis) / GCS-compatible MinIO. The base manifests don't deploy those —
+#     wire DSNs into the testlookup-secrets Secret created out-of-band (see
+#     docs/deployment/gcp-gke.md).
+
+resources:
+  - ../prod
+  - managed-cert.yaml
+
+namespace: testlookup
+
+patches:
+  # ── Ingress: switch to GCE LoadBalancer ───────────────────────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-ingress
+        annotations:
+          # Drop nginx-only annotations
+          nginx.ingress.kubernetes.io/proxy-read-timeout: null
+          nginx.ingress.kubernetes.io/proxy-send-timeout: null
+          nginx.ingress.kubernetes.io/proxy-body-size: null
+          nginx.ingress.kubernetes.io/ssl-redirect: null
+          cert-manager.io/cluster-issuer: null
+          # GCE Ingress with managed certificate
+          kubernetes.io/ingress.class: "gce"
+          networking.gke.io/managed-certificates: "testlookup-cert"
+          kubernetes.io/ingress.global-static-ip-name: "testlookup-ip"
+      spec:
+        ingressClassName: gce
+        # GCE Ingress doesn't use the `tls` block — TLS is wired via the
+        # ManagedCertificate annotation above.
+        tls: null
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
+  # ── PVCs: pin to standard-rwo (GKE default SSD-backed) ───────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/storageClassName
+        value: standard-rwo
+    target:
+      kind: PersistentVolumeClaim
+
+  # ── Backend Service: needs container-native LB annotation for GCE ─────────
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: testlookup-backend
+        annotations:
+          cloud.google.com/neg: '{"ingress": true}'
+    target:
+      kind: Service
+      name: testlookup-backend
+
+  - patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: testlookup-frontend
+        annotations:
+          cloud.google.com/neg: '{"ingress": true}'
+    target:
+      kind: Service
+      name: testlookup-frontend
+
+images:
+  # Replace PROJECT/REGION with your Artifact Registry path.
+  # Example: docker tag testlookup/backend:0.0.1 \
+  #   us-docker.pkg.dev/my-project/testlookup/backend:0.0.1
+  - name: testlookup/backend
+    newName: REGION-docker.pkg.dev/PROJECT/testlookup/backend
+    newTag: "0.0.1"
+  - name: testlookup/frontend
+    newName: REGION-docker.pkg.dev/PROJECT/testlookup/frontend
+    newTag: "0.0.1"
+  - name: testlookup/mcp
+    newName: REGION-docker.pkg.dev/PROJECT/testlookup/mcp
+    newTag: "0.0.1"
