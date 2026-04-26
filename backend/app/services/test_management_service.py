@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     ManagedTestCase,
+    Project,
     TestCaseComment,
     TestCaseReview,
     TestCaseVersion,
@@ -84,6 +85,15 @@ async def create_managed_test_case(
     payload: ManagedTestCaseCreate,
     current_user: User,
 ) -> ManagedTestCase:
+    # Validate the project exists before insert — otherwise asyncpg surfaces a
+    # ForeignKeyViolationError that becomes an opaque 500. This commonly hits
+    # when the frontend has a stale activeProjectId in localStorage.
+    project = await db.get(Project, payload.project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project {payload.project_id} not found — refresh the page or pick a different project.",
+        )
     test_case = ManagedTestCase(
         **payload.model_dump(exclude_unset=True, exclude={"change_summary"}),
         author_id=current_user.id,
@@ -270,6 +280,12 @@ async def list_test_plans(
 
 
 async def create_test_plan(db: AsyncSession, payload: TestPlanCreate, current_user: User) -> TestPlan:
+    project = await db.get(Project, payload.project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project {payload.project_id} not found — refresh the page or pick a different project.",
+        )
     plan = TestPlan(**payload.model_dump(exclude_unset=True), created_by_id=current_user.id)
     db.add(plan)
     await db.flush()  # materialize plan.id so the audit row can reference it

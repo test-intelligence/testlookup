@@ -38,7 +38,7 @@ client/java/target/
 
 # Docker
 docker-compose.override.yml
-
+website/
 # IDE
 .vscode/
 .idea/
@@ -65,3 +65,18 @@ docs/
 BuildFailures/
 CSS_Samples/
 backend/celerybeat-schedule
+
+# Local virtual environments (any variant beyond the already-ignored .venv/)
+.venv_local/
+.venv-*/
+
+# Generated lint, typecheck, and test artifact dumps
+*_lint.txt
+*_mypy.txt
+*_tsc.txt
+*_errors.txt
+mypy_errors.txt
+
+# Local dev scratch
+*.tmp
+Thumbs.db

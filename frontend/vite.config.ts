@@ -10,8 +10,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: 'http://localhost:8000', changeOrigin: true },
-      '/webhooks': { target: 'http://localhost:8000', changeOrigin: true },
+      // VITE_PROXY_TARGET overrides the default for in-container dev (compose
+      // sets it to http://backend:8000). Plain `npm run dev` on the host falls
+      // back to localhost.
+      '/api': { target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000', changeOrigin: true, ws: true },
+      '/webhooks': { target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000', changeOrigin: true },
+      '/ws': { target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000', changeOrigin: true, ws: true },
     },
   },
   build: {

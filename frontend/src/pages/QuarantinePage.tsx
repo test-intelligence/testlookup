@@ -9,6 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
@@ -68,6 +69,7 @@ export default function QuarantinePage() {
       <PageHeader
         title="Flaky Quarantine"
         subtitle="Review and approve flaky test quarantine proposals"
+        actions={<ExperimentalBadge />}
       />
 
       {/* Stats tiles */}

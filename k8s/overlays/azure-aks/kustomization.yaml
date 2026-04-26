@@ -1,0 +1,79 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Azure AKS overlay — production-grade defaults assuming:
+#   - AKS cluster (1.27+) with managed-csi (Azure Disk) StorageClass available
+#   - NGINX Ingress Controller installed (ingressClassName: nginx) — common
+#     pattern on AKS. If you prefer Application Gateway Ingress Controller
+#     (AGIC), see the commented section below.
+#   - cert-manager + Let's Encrypt for TLS (or use AGIC + Key Vault if AGIC)
+#   - For production prefer Azure Database for PostgreSQL Flexible Server,
+#     Cosmos DB for MongoDB API, Azure Cache for Redis, and Azure Blob Storage
+#     (S3-compatible via blob-csi-driver, or use rclone). Wire connection
+#     strings into testlookup-secrets out-of-band — see docs/deployment/azure-aks.md.
+
+resources:
+  - ../prod
+
+namespace: testlookup
+
+patches:
+  # ── Ingress: NGINX (default AKS pattern) ──────────────────────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-ingress
+        annotations:
+          nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+          nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+          nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+          nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          cert-manager.io/cluster-issuer: "letsencrypt-prod"
+      spec:
+        ingressClassName: nginx
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
+  # ── Alternative: Application Gateway Ingress Controller (AGIC) ───────────
+  # Uncomment if you want AGIC instead of NGINX. AGIC integrates with Azure
+  # App Gateway + Key Vault for certificates. Requires AGIC add-on enabled
+  # on the AKS cluster.
+  # - patch: |-
+  #     apiVersion: networking.k8s.io/v1
+  #     kind: Ingress
+  #     metadata:
+  #       name: testlookup-ingress
+  #       annotations:
+  #         kubernetes.io/ingress.class: azure/application-gateway
+  #         appgw.ingress.kubernetes.io/ssl-redirect: "true"
+  #         appgw.ingress.kubernetes.io/request-timeout: "120"
+  #         appgw.ingress.kubernetes.io/appgw-ssl-certificate: "testlookup-cert"
+  #     spec:
+  #       ingressClassName: azure-application-gateway
+  #   target:
+  #     kind: Ingress
+  #     name: testlookup-ingress
+
+  # ── PVCs: pin to managed-csi (Azure Disk Premium SSD) ────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/storageClassName
+        value: managed-csi
+    target:
+      kind: PersistentVolumeClaim
+
+images:
+  # Replace REGISTRY with your Azure Container Registry (ACR) login server.
+  # Example: docker tag testlookup/backend:0.0.1 \
+  #   mycorp.azurecr.io/testlookup/backend:0.0.1
+  - name: testlookup/backend
+    newName: REGISTRY.azurecr.io/testlookup/backend
+    newTag: "0.0.1"
+  - name: testlookup/frontend
+    newName: REGISTRY.azurecr.io/testlookup/frontend
+    newTag: "0.0.1"
+  - name: testlookup/mcp
+    newName: REGISTRY.azurecr.io/testlookup/mcp
+    newTag: "0.0.1"

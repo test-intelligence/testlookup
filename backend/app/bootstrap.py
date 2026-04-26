@@ -78,6 +78,10 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     scim.router,           # SCIM 2.0 — bearer-token auth (not JWT)
     shared_reports.router,  # Public shared report views (token-based, ENT-03)
     sdk.router,             # Client SDK downloads (no auth required)
+    # live.router has its own auth: WebSocket auths via post-connect message,
+    # POST /events uses verify_webhook_secret. Cannot be added to PROTECTED_ROUTERS
+    # because OAuth2PasswordBearer crashes on WebSocket scope (no Request object).
+    live.router,
 )
 
 PROTECTED_ROUTERS: Sequence[APIRouter] = (
@@ -90,7 +94,6 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     integrations.router,
     notifications.router,
     app_settings.router,
-    live.router,
     agents.router,
     chat.router,
     feedback.router,

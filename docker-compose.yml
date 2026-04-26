@@ -369,7 +369,12 @@ services:
       - ./frontend/public:/app/public
       - /app/node_modules               # Preserve node_modules from container
     environment:
-      - VITE_API_BASE_URL=http://localhost:8000
+      # Empty → bundle uses same-origin relative URLs (browser hits
+      # localhost:3000/api/...), avoiding cross-origin CORS/CSP issues.
+      - VITE_API_BASE_URL=
+      # Vite dev server proxies /api, /webhooks, /ws to the backend container
+      # (localhost from inside the container is the container itself, not the host).
+      - VITE_PROXY_TARGET=http://backend:8000
       - VITE_APP_NAME=TestLookup
       - VITE_APP_VERSION=0.0.1
     depends_on:

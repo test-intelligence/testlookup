@@ -1,0 +1,68 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# AWS EKS overlay — production-grade defaults assuming:
+#   - AWS Load Balancer Controller installed (ingressClassName: alb)
+#   - EBS CSI driver installed (StorageClass: gp3 — created by storageclass.yaml)
+#   - cert-manager + ACM (or Let's Encrypt) for TLS — see docs/deployment/aws-eks.md
+#   - Stateful workloads (postgres/mongo/redis) MAY run in-cluster with EBS, but
+#     for production we recommend RDS / DocumentDB / ElastiCache. The base
+#     manifests don't deploy those data stores; you wire ConnectionStrings via
+#     the testlookup-secrets Secret created out-of-band (see deploy guide).
+
+resources:
+  - ../prod
+  - storageclass.yaml
+
+namespace: testlookup
+
+patches:
+  # ── Ingress: switch to AWS ALB (ingressClassName: alb) ────────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-ingress
+        annotations:
+          # Drop nginx-only annotations
+          nginx.ingress.kubernetes.io/proxy-read-timeout: null
+          nginx.ingress.kubernetes.io/proxy-send-timeout: null
+          nginx.ingress.kubernetes.io/proxy-body-size: null
+          nginx.ingress.kubernetes.io/ssl-redirect: null
+          cert-manager.io/cluster-issuer: null
+          # AWS ALB controller
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+          alb.ingress.kubernetes.io/ssl-redirect: '443'
+          # Replace with your ACM certificate ARN
+          alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:REGION:ACCOUNT:certificate/REPLACE-ME
+          alb.ingress.kubernetes.io/healthcheck-path: /health/live
+          alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=120
+      spec:
+        ingressClassName: alb
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
+  # ── PVCs: pin to gp3 StorageClass (defined in storageclass.yaml) ──────────
+  - patch: |-
+      - op: replace
+        path: /spec/storageClassName
+        value: gp3
+    target:
+      kind: PersistentVolumeClaim
+
+images:
+  # Replace ACCOUNT/REGION below with your ECR registry path before applying.
+  # Example: docker tag testlookup/backend:0.0.1 \
+  #   123456789012.dkr.ecr.us-east-1.amazonaws.com/testlookup/backend:0.0.1
+  - name: testlookup/backend
+    newName: ACCOUNT.dkr.ecr.REGION.amazonaws.com/testlookup/backend
+    newTag: "0.0.1"
+  - name: testlookup/frontend
+    newName: ACCOUNT.dkr.ecr.REGION.amazonaws.com/testlookup/frontend
+    newTag: "0.0.1"
+  - name: testlookup/mcp
+    newName: ACCOUNT.dkr.ecr.REGION.amazonaws.com/testlookup/mcp
+    newTag: "0.0.1"

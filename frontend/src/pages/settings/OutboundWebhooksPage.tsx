@@ -13,6 +13,7 @@ import {
   Webhook,
   XCircle,
 } from 'lucide-react'
+import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -206,7 +207,9 @@ export default function OutboundWebhooksPage() {
         title="Outbound Webhooks"
         subtitle={`HMAC-signed event delivery for ${activeProject?.name || 'this project'}`}
         actions={
-          canEdit && (
+          <div className="flex items-center gap-2">
+          <ExperimentalBadge />
+          {canEdit && (
             <button
               type="button"
               onClick={() => setShowCreate(true)}
@@ -214,7 +217,8 @@ export default function OutboundWebhooksPage() {
             >
               <Plus className="h-3 w-3" /> New webhook
             </button>
-          )
+          )}
+          </div>
         }
       />
 

@@ -285,8 +285,16 @@ class TestSAMLSignatureVerification:
         rejected when a cert is configured. This is the exact shape of
         assertion that previously auth-bypassed.
         """
-        pytest.importorskip("signxml")
-        pytest.importorskip("cryptography")
+        # `pytest.importorskip` only catches ImportError. signxml < 4.0 raises
+        # AttributeError at import time when paired with `cryptography` >= 43
+        # (deprecated EC curves removed). Skip on any import-time failure so
+        # future cryptography/signxml drift surfaces as a skip, not a confusing
+        # AttributeError trace.
+        try:
+            import signxml  # noqa: F401, PLC0415
+            import cryptography  # noqa: F401, PLC0415
+        except (ImportError, AttributeError) as exc:
+            pytest.skip(f"signxml/cryptography not importable: {exc}")
         from app.services.sso_service import parse_saml_response
 
         b64 = _make_saml_response(name_id="attacker@evil.com")

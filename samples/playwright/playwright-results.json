@@ -1,0 +1,74 @@
+{
+  "config": {
+    "rootDir": "/app",
+    "testDir": "./tests/e2e"
+  },
+  "suites": [
+    {
+      "title": "User Profile",
+      "file": "tests/e2e/profile.spec.ts",
+      "specs": [
+        {
+          "title": "should display user name",
+          "ok": true,
+          "tests": [
+            {
+              "projectName": "chromium",
+              "status": "expected",
+              "duration": 1800,
+              "results": [{"status": "passed", "duration": 1800}]
+            }
+          ]
+        },
+        {
+          "title": "should update avatar colour",
+          "ok": true,
+          "tests": [
+            {
+              "projectName": "chromium",
+              "status": "expected",
+              "duration": 2400,
+              "results": [{"status": "passed", "duration": 2400}]
+            }
+          ]
+        },
+        {
+          "title": "should enforce password complexity on change",
+          "ok": false,
+          "tests": [
+            {
+              "projectName": "chromium",
+              "status": "unexpected",
+              "duration": 3200,
+              "results": [
+                {
+                  "status": "failed",
+                  "duration": 3200,
+                  "error": {
+                    "message": "expect(received).toBeVisible()\n\nReceived element is not visible",
+                    "stack": "Error: expect(received).toBeVisible()\n  at /app/tests/e2e/profile.spec.ts:34:42"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "should handle concurrent profile edits",
+          "ok": true,
+          "tests": [
+            {
+              "projectName": "chromium",
+              "status": "flaky",
+              "duration": 4500,
+              "results": [
+                {"status": "failed", "duration": 2100},
+                {"status": "passed", "duration": 2400}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

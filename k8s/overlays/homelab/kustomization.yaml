@@ -9,6 +9,8 @@ resources:
   - infra-redis.yaml
   - infra-minio.yaml
   - infra-chromadb.yaml
+  - netpol-homelab.yaml
+  - frontend-nginx-configmap.yaml
 
 namespace: testlookup
 
@@ -124,23 +126,48 @@ patches:
       kind: Deployment
       name: testlookup-ollama
 
-  # ── Frontend: nginx runs as root — disable runAsNonRoot ────────────────────
-  # The templated base nginx (BACKEND_UPSTREAM=testlookup-backend:8000) is
-  # used as-is; Traefik intercepts /api before it reaches the pod.
+  # ── Frontend: nginx:alpine needs root to write /var/cache/nginx and
+  # /etc/nginx/conf.d (envsubst target). The base sets runAsUser: 101, so we
+  # must override it to 0 here — strategic merge cannot remove a field by
+  # omitting it. Traefik intercepts /api before it reaches the pod.
+  #
+  # We also mount a pre-rendered nginx config from a ConfigMap. The base image's
+  # entrypoint envsubst was producing the Dockerfile ENV default ("backend:8000")
+  # rather than the K8s env override ("testlookup-backend:8000") — likely a quirk
+  # of the nginx:alpine version in the built image. The ConfigMap subPath mount
+  # bypasses templating entirely.
   - patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: testlookup-frontend
-      spec:
-        template:
-          spec:
-            containers:
-              - name: frontend
-                securityContext:
-                  runAsNonRoot: false
-                  allowPrivilegeEscalation: false
-                  readOnlyRootFilesystem: false
+      - op: replace
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          # nginx master forks workers as uid 101 — needs CHOWN/SETUID/SETGID
+          # capabilities to do so. Dropping ALL caps breaks nginx startup with
+          # `chown("/var/cache/nginx/client_temp") Operation not permitted`.
+          runAsNonRoot: false
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: nginx-conf
+            configMap:
+              name: frontend-nginx-conf
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: nginx-conf
+            mountPath: /etc/nginx/conf.d/default.conf
+            subPath: default.conf
+      # Bypass /docker-entrypoint.sh — its envsubst step fails on the read-only
+      # ConfigMap mount and `set -e` kills the container. We don't need
+      # templating since the ConfigMap is already rendered.
+      - op: add
+        path: /spec/template/spec/containers/0/command
+        value: [nginx, "-g", "daemon off;"]
     target:
       kind: Deployment
       name: testlookup-frontend

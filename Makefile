@@ -1,7 +1,12 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset demo benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+
+# Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
+# breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
+# /usr/bin/bash; on Linux/macOS it's at /bin/bash — both resolve via PATH.
+SHELL := bash
 
 DOCKER_COMPOSE = docker compose
 BACKEND_CONTAINER = testlookup_backend
@@ -257,6 +262,50 @@ seed-data: ## Seed demo users, projects, test cases, plans, strategies and relea
 
 seed-data-reset: ## Wipe seed data and regenerate from scratch
 	$(DOCKER_COMPOSE) exec backend python /app/scripts/seed_dev_data.py --reset
+
+demo: .env ## One-shot demo: start core stack, wait for health, seed data loads automatically
+	@echo "==> Starting core stack (no LLM)..."
+	$(DOCKER_COMPOSE) up -d --build
+	@echo "==> Waiting for backend health check..."
+	@until curl -sf http://localhost:8000/health > /dev/null 2>&1; do sleep 2; done
+	@echo "==> Backend healthy. Seed data loads automatically on first start."
+	@echo "==> Uploading sample test results..."
+	@for f in samples/junit/*.xml; do \
+		$(DOCKER_COMPOSE) exec -T backend python -c "\
+import asyncio, sys, httpx; \
+asyncio.run((lambda: httpx.AsyncClient(base_url='http://localhost:8000', timeout=30).post('/api/v1/auth/dev-login?role=admin'))())" 2>/dev/null; \
+		echo "  Uploading $$f"; \
+		curl -sf -X POST http://localhost:8000/api/v1/ingest/file \
+			-H "Authorization: Bearer $$(curl -sf -X POST http://localhost:8000/api/v1/auth/dev-login?role=admin | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))')" \
+			-F "file=@$$f" \
+			-F "project_id=$$(curl -sf http://localhost:8000/api/v1/projects -H "Authorization: Bearer $$(curl -sf -X POST http://localhost:8000/api/v1/auth/dev-login?role=admin | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))')" | python3 -c 'import sys,json; ps=json.load(sys.stdin); print(ps[0]["id"] if ps else "")')" \
+			-F "build_number=demo-$$(date +%s)" \
+			-F "format=auto" > /dev/null 2>&1 || true; \
+	done
+	@echo ""
+	@echo "==> Demo ready!"
+	@echo "    Dashboard:  http://localhost:3000"
+	@echo "    API docs:   http://localhost:8000/docs"
+	@echo "    MCP SSE:    http://localhost:8002/sse"
+	@echo ""
+	@echo "    Default login: use the dev-login endpoint or register via the API."
+	@echo "    To stop: make stop"
+
+benchmark: ## Run classification + throughput benchmarks (stack must be running)
+	@echo "==> Running classification benchmark (rules mode, in-container)..."
+	$(DOCKER_COMPOSE) exec backend python /app/benchmarks/classification/evaluate.py \
+		--mode rules \
+		--output /app/benchmarks/results/classification_rules.json
+	@echo ""
+	@echo "==> Running throughput benchmark..."
+	$(DOCKER_COMPOSE) exec backend python /app/scripts/load_test_concurrent.py bench \
+		--base-url http://localhost:8000 \
+		--iterations 20 \
+		--concurrency 5 \
+		--check-budgets \
+		--output /app/benchmarks/results/throughput.json
+	@echo ""
+	@echo "==> Benchmarks complete. Results in benchmarks/results/"
 
 setup-minio: ## Manually configure MinIO bucket and webhook (runs inside Docker — no host deps)
 	docker run --rm \

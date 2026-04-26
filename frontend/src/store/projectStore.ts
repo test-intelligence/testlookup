@@ -30,7 +30,26 @@ export const useProjectStore = create<ProjectStore>()(
         set({ activeProject: null, activeProjectId: ALL_PROJECTS_ID }),
       refreshProjects: async () => {
         const list = await projectsService.list()
-        set({ projects: list })
+        set((state) => {
+          const next: Partial<ProjectStore> = { projects: list }
+          // Validate the persisted active selection against the fresh list.
+          // Stale localStorage (e.g. project_id from a different deployment's
+          // database) would otherwise cause every mutation to fail with a
+          // foreign-key violation on the backend.
+          if (
+            state.activeProjectId &&
+            state.activeProjectId !== ALL_PROJECTS_ID &&
+            !list.find((p) => p.id === state.activeProjectId)
+          ) {
+            next.activeProject = null
+            next.activeProjectId = null
+          } else if (state.activeProjectId && state.activeProjectId !== ALL_PROJECTS_ID) {
+            // Refresh the cached project (name may have changed)
+            const fresh = list.find((p) => p.id === state.activeProjectId)
+            if (fresh) next.activeProject = fresh
+          }
+          return next as ProjectStore
+        })
         return list
       },
     }),
