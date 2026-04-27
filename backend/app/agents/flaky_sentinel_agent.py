@@ -148,12 +148,16 @@ class FlakySentinelAgent(BaseAgent):
         quarantine_request_id: str | None = None
         if failure_rate >= 0.20 and len(statuses) >= 10:
             try:
+                import uuid as _uuid
                 from app.services.flaky_quarantine_service import propose_quarantine
                 from app.models.postgres import TestStatus as _TS
                 passes = sum(1 for s in statuses if s == _TS.PASSED)
                 fails = sum(1 for s in statuses if s in (_TS.FAILED, _TS.BROKEN))
+                # TestCase has no project_id column — derive it from state.
+                # state["project_id"] is a str; coerce to UUID for the service contract.
+                proj_uuid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
                 request = await propose_quarantine(
-                    project_id=tc.project_id if hasattr(tc, "project_id") else project_id,
+                    project_id=proj_uuid,
                     test_fingerprint=tc.test_fingerprint,
                     test_name=tc.test_name,
                     suite_name=tc.suite_name,

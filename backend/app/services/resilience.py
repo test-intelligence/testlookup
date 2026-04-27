@@ -97,9 +97,14 @@ async def async_retry(
             )
             await asyncio.sleep(delay)
 
-    # Should not reach here, but satisfy type checker
-    if last_exception:
+    # The loop body either returns on success or raises on the final attempt,
+    # so this is reachable only when max_retries < 0 (caller misuse). Surface
+    # that as a clear error rather than silently returning None.
+    if last_exception is not None:
         raise last_exception
+    raise ValueError(
+        f"async_retry: max_retries must be >= 0 (got {max_retries})"
+    )
 
 
 def _backoff_delay(attempt: int, base: float, cap: float) -> float:

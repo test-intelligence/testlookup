@@ -82,6 +82,73 @@ class TestAsyncRetry:
             await async_retry(fn, max_retries=0, base_delay=0.01)
         assert fn.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_negative_max_retries_raises_value_error(self):
+        """Caller misuse — max_retries must be >= 0; otherwise the function
+        used to silently return None. It now raises ValueError so the bug
+        surfaces immediately at the call site."""
+        from app.services.resilience import async_retry
+
+        fn = AsyncMock(return_value="ok")
+        with pytest.raises(ValueError, match="max_retries must be >= 0"):
+            await async_retry(fn, max_retries=-1, base_delay=0.01)
+        # The coro factory is never called because the for-range is empty.
+        assert fn.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_http_retryable_exhausts_then_raises(self):
+        """HTTP 503 retried max_retries times then bubbles up the last error."""
+        from app.services.resilience import async_retry
+
+        response_503 = MagicMock()
+        response_503.status_code = 503
+        err = httpx.HTTPStatusError("svc unavailable", request=MagicMock(), response=response_503)
+
+        fn = AsyncMock(side_effect=[err, err, err])
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            await async_retry(fn, max_retries=2, base_delay=0.01)
+        assert excinfo.value.response.status_code == 503
+        assert fn.call_count == 3  # 1 initial + 2 retries
+
+    @pytest.mark.asyncio
+    async def test_custom_retryable_exception_class(self):
+        """Caller can override the retryable_exceptions tuple."""
+        from app.services.resilience import async_retry
+
+        class CustomBlip(RuntimeError):
+            pass
+
+        fn = AsyncMock(side_effect=[CustomBlip("flake"), "ok"])
+        result = await async_retry(
+            fn,
+            max_retries=2,
+            base_delay=0.01,
+            retryable_exceptions=(CustomBlip,),
+        )
+        assert result == "ok"
+        assert fn.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_exception_propagates_immediately(self):
+        """Exception type not in retryable_exceptions short-circuits."""
+        from app.services.resilience import async_retry
+
+        fn = AsyncMock(side_effect=ValueError("bad input"))
+        with pytest.raises(ValueError, match="bad input"):
+            await async_retry(fn, max_retries=3, base_delay=0.01)
+        assert fn.call_count == 1  # No retry
+
+    @pytest.mark.asyncio
+    async def test_passes_through_args_and_kwargs(self):
+        """async_retry forwards positional and keyword args to the coroutine."""
+        from app.services.resilience import async_retry
+
+        async def echo(*args, **kwargs):
+            return {"args": args, "kwargs": kwargs}
+
+        result = await async_retry(echo, "a", "b", x=1, y=2, max_retries=0)
+        assert result == {"args": ("a", "b"), "kwargs": {"x": 1, "y": 2}}
+
 
 # ── Token estimation & truncation tests ──────────────────────────────────────
 
