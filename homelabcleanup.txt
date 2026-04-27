@@ -65,3 +65,242 @@
   kubectl apply -k k8s/overlays/homelab
 
   Your PVC data on each node's /opt/local-path-provisioner/ persists across reboots — PostgreSQL, MongoDB, MinIO, and Ollama models will all come back with their data intact.
+  
+  
+  
+  =====
+  
+  troubleshoot
+  
+  
+ 
+  
+   You should see a rule for testlookup.local pointing to testlookup-frontend (and /api, /docs, /health paths to testlookup-backend). If the Ingress is missing, re-apply the homelab overlay — ingress-traefik.yaml is the relevant file (line 832 of the deploy doc).
+
+  kubectl -n kube-system logs -l app.kubernetes.io/name=traefik --tail=50 | grep -i testlookup
+
+  If Traefik logs show errors parsing the ingress (e.g. ingressClassName mismatch), that's the cause.
+
+  3. Confirm services have endpoints
+
+  kubectl -n testlookup get pods -o wide
+  kubectl -n testlookup get svc
+  kubectl -n testlookup get endpoints testlookup-frontend testlookup-backend
+
+  Endpoints columns must NOT be <none>. If empty:
+  - Pod label selectors don't match service selectors, OR
+  - Pods are running but failing readiness probes.
+
+  kubectl -n testlookup describe pod -l app=testlookup-frontend | grep -A5 -E "Readiness|Conditions"
+  kubectl -n testlookup logs -l app=testlookup-backend --tail=30
+
+  4. Confirm MetalLB has actually assigned the VIP
+
+  kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  # Must print: 192.168.0.200
+
+  curl http://192.168.0.200/  # any response, even 404, proves the VIP answers
+
+  If the LoadBalancer IP is empty or pending, the doc's troubleshooting at line 726+ applies (MetalLB speaker port 7946, firewall rules).
+
+  5. Confirm DNS / hosts file on Windows
+
+  ping testlookup.local
+  # Must reply from 192.168.0.200 (note: ICMP may not respond — see line 739 of doc — that's OK as long as it RESOLVES to .200)
+
+  nslookup testlookup.local
+
+  If it resolves to anything other than 192.168.0.200, fix C:\Windows\System32\drivers\etc\hosts:
+
+  192.168.0.200 testlookup.local
+
+  Then flush DNS: ipconfig /flushdns and clear HSTS in Chrome (chrome://net-internals/#hsts → delete testlookup.local — line 514 of the doc).
+
+  ---
+  Run step 1 first and paste the output — that one curl narrows the problem to either DNS, ingress, or backend endpoints in a single command.
+  
+  
+  ========
+    Get the crash reasons. Run all four in parallel:
+                                                                                                                                                                                                                                                                                                                    
+  # Backend crash logs (current crash + previous container's stdout)
+  kubectl -n testlookup logs -l app=testlookup-backend --tail=80                                                                                                                                                                                                                                                    
+  kubectl -n testlookup logs -l app=testlookup-backend --tail=80 --previous
+
+  # Frontend crash logs
+  kubectl -n testlookup logs -l app=testlookup-frontend --tail=80
+
+  kubectl -n testlookup logs -l app=testlookup-frontend --tail=80 --previous
+
+  --previous is important — by the time you kubectl logs a CrashLoopBackOff pod, it's often already restarted and the new container has only printed a few startup lines. --previous gets the logs from the container that actually crashed.
+
+  Also grab the pod events (these often show the real cause: image pull, OOMKill, failed probe, missing config):
+
+  kubectl -n testlookup describe pod -l app=testlookup-backend  | tail -40
+  kubectl -n testlookup describe pod -l app=testlookup-frontend | tail -40
+
+  What to look for
+
+  ┌──────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │                   Symptom in logs                    │                                                           Likely cause                                                            │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ connection refused to postgres / redis / mongo       │ Backend started before DB was ready — readiness probe should fix on next restart, but check DB pods are 1/1 Running (yours are ✓) │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ KeyError/pydantic.ValidationError on env var         │ Missing/malformed key in testlookup-secrets or testlookup-config                                                                  │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ alembic upgrade head failure                         │ Migration error — DB perms, conflicting head, network                                                                             │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ connect: no route to host to a pod IP                │ NetworkPolicy / CNI issue between nodes                                                                                           │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Permission denied on a path                          │ PVC mount permission                                                                                                              │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ nginx: [emerg] host not found in upstream (frontend) │ Frontend nginx is configured to proxy to a backend hostname that doesn't resolve                                                  │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Exit Code 137 in describe                            │ OOMKilled — bump memory limits                                                                                                    │
+  ├──────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Liveness probe failed                                │ App starts but probe path/port is wrong, OR app is too slow to start (raise initialDelaySeconds)                                  │
+  └──────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Side note
+
+  You have two backend ReplicaSets with pods (5485b8774 and 5774d47474) — that's a stuck rollout. After we fix the crash, the old RS will scale to zero on its own. If it doesn't, kubectl -n testlookup rollout history deployment/testlookup-backend will show the rollout state.
+
+  Paste the log output and I'll narrow it down.
+
+
+========
+
+● Apply the proper fix               
+                                                                                          
+  # Re-apply the homelab overlay
+  kubectl apply -k k8s/overlays/homelab                                                                                                                                                                                                                                                                             
+   
+  # Force a fresh rollout so frontend picks up the new securityContext                                                                                                                                                                                                                                              
+  kubectl -n testlookup rollout restart deployment/testlookup-frontend deployment/testlookup-backend
+
+  # Watch
+  kubectl -n testlookup get pods -w
+
+  Verify the policies are in place
+
+  kubectl -n testlookup get networkpolicy
+  # Should show: default-deny-all, allow-dns-egress, allow-frontend, allow-backend,
+  #              allow-workers, allow-mcp, allow-ollama, allow-data-stores, allow-traefik-ingress
+
+  kubectl -n testlookup get endpoints testlookup-postgres
+  # Should show: 10.42.x.y:5432  (proves Service has the postgres pod backing it)
+
+  Final reachability check
+
+  curl -H "Host: testlookup.local" http://192.168.0.200/health/live
+  curl -H "Host: testlookup.local" http://192.168.0.200/
+
+  Both should return 200, then http://testlookup.local in the browser will work.
+
+  Summary of root causes
+
+  ┌───────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────┐
+  │                        Symptom                        │                                                                          Root cause                                                                           │                                        File                                         │
+  ├───────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
+  │ Backend ConnectionRefused 5432                        │ default-deny-all blocks ingress to postgres; homelab overlay colocates data stores but never adds matching allows (the base file's own comment warns about    │ k8s/base/networkpolicy.yaml:6-9, fix in new                                         │
+  │                                                       │ this)                                                                                                                                                         │ k8s/overlays/homelab/netpol-homelab.yaml                                            │
+  ├───────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
+  │ Frontend mkdir /var/cache/nginx 13 (Permission        │ Patch tried to disable runAsNonRoot but didn't override runAsUser: 101 from base — strategic merge can't remove a field by omitting it                        │ k8s/overlays/homelab/kustomization.yaml:127-146 (now fixed)                         │
+  │ denied)                                               │                                                                                                                                                               │                                                                                     │
+  ├───────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────┤
+  │ (will surface next) Traefik can't reach frontend      │ Base policies allow ingress only from ingress-nginx, but K3s Traefik is in kube-system                                                                        │ new allow-traefik-ingress policy in netpol-homelab.yaml                             │
+  └───────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+kubectl -n testlookup patch deployment testlookup-frontend --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/command","value":["sleep","3600"]},{"op":"remove","path":"/spec/template/spec/containers/0/livenessProbe"},{"op":"remove","path":"/spec/template/spec/containers/0/readinessProbe"}]'
+
+kubectl -n testlookup patch deployment testlookup-frontend --type=json -p='[{"op":"add","path":"/spec/template/spec/volumes","value":[{"name":"nginx-conf","configMap":{"name":"frontend-nginx-conf"}}]},{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts","value":[{"name":"nginx-conf","mountPath":"/etc/nginx/conf.d/default.conf","subPath":"default.conf"}]}]'     
+
+
+
+====== CLEAN UP JOBS
+old
+  docker build --no-cache -t registry.local:30500/testlookup/backend:latest --target production -f backend/Dockerfile backend/                                                                                                                                                                                      
+                                                                                                                                                                                                                                                                                                                    
+  docker push registry.local:30500/testlookup/backend:latest
+                                                                                                                                                                                                                                                                                                                    
+  ssh labadmin@192.168.0.101 "sudo k3s crictl rmi registry.local:5000/testlookup/backend:latest"
+  ssh labadmin@192.168.0.102 "sudo k3s crictl rmi registry.local:5000/testlookup/backend:latest"
+  ssh labadmin@192.168.0.103 "sudo k3s crictl rmi registry.local:5000/testlookup/backend:latest"
+
+  kubectl -n testlookup rollout restart deployment/testlookup-backend
+  kubectl -n testlookup rollout status deployment/testlookup-backend --timeout=180s
+
+  Then reload the /defects page in browser — should return {"items": [], "total": 0, "page": 1, "size": 20, "pages": 0} (the defects table is empty per the DB check we ran earlier — no defects have been promoted yet for this project).
+
+  Side observations from the diagnostic
+
+  1. You have two backend pods running (vlcg7 no restarts, zlxsh 1 restart, both 1/1). Homelab overlay sets replicas: 1 so this is leftover from an older ReplicaSet that didn't get cleaned up. After the rollout above it should normalize. If not, kubectl -n testlookup delete rs <old-replicaset-name>.
+  2. Future debugging tip: kubectl logs -l <selector> defaults to ~10 lines per pod. When OTEL spans dominate the buffer, real exceptions get drowned. Use kubectl logs <specific-pod> --tail=200000 --since=30m per pod, or grep for Traceback directly. We lost ~30 minutes earlier because of this.
+  3. Tag images by SHA going forward so this kind of "running an old :latest" mystery is impossible:
+  TAG=$(git rev-parse --short HEAD)
+  docker build -t registry.local:30500/testlookup/backend:$TAG ...
+  
+  
+  ======================
+  new
+  The image running on the cluster has the OLD code despite the rebuild. Most likely :latest got overwritten in the registry but the K3s nodes still cached the old image (rmi might have failed silently, or one of the SSH sessions didn't connect). Let's bypass :latest ambiguity entirely with a unique tag.   
+                                                                                          
+  Build with a SHA-based tag, push, and update the deployment to use that explicit tag:                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                                                                                                    
+  TAG=fix-defects-$(date +%s)                                                                                                                                                                                                                                                                                       
+  echo "TAG=$TAG"                                                                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                                                                    
+  docker build --no-cache -t registry.local:30500/testlookup/backend:$TAG --target production -f backend/Dockerfile backend/                                                                                                                                                                                        
+                                                                                                                                                                                                                                                                                                                    
+  docker push registry.local:30500/testlookup/backend:$TAG                                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                                                                                                    
+  kubectl -n testlookup set image deployment/testlookup-backend backend=registry.local:5000/testlookup/backend:$TAG                                                                                                                                                                                                 
+
+  kubectl -n testlookup rollout status deployment/testlookup-backend --timeout=180s
+
+  This eliminates two failure modes at once:
+  1. Layer caching (we use --no-cache)
+  2. Stale node-level cache for :latest (we use a fresh tag that cannot have been cached)
+
+  After rollout, verify the file inside the new container:
+
+  POD=$(kubectl -n testlookup get pod -l app=testlookup-backend -o jsonpath='{.items[0].metadata.name}')
+  kubectl -n testlookup exec $POD -- sh -c 'grep -n "release_name\|JOIN releases" /app/app/services/analytics_service.py'
+
+  You should see lines like:
+  287:            r.name AS release_name
+  292:        LEFT JOIN releases r ON r.id = rtrl.release_id
+
+  If you DO see the right code, reload /defects in the browser — it'll return {"items": [], "total": 0, ...} (defects table is empty per our DB check earlier).
+
+  If after this rebuild the container still has tr.release_name, the build context isn't seeing your edited file. Sanity check that the file on disk matches the source you expect:
+
+  md5sum backend/app/services/analytics_service.py
+  git -C . log -1 --format='%H %s' backend/app/services/analytics_service.py
+  git -C . diff HEAD -- backend/app/services/analytics_service.py
+
+  If git diff shows changes, something's pinning the file to an older state on disk; if not, the build is reading the right source. Paste those three command outputs and I'll keep narrowing.
+  
+  
+  
+  
+   # load-image.sh
+  TAG=$1
+  docker tag registry.local:30500/testlookup/backend:$TAG registry.local:5000/testlookup/backend:$TAG
+  docker save registry.local:5000/testlookup/backend:$TAG -o /tmp/img.tar
+  for node in 192.168.0.101 192.168.0.102 192.168.0.103; do
+    scp /tmp/img.tar labadmin@$node:/tmp/
+    ssh labadmin@$node "sudo k3s ctr images import /tmp/img.tar"
+  done
+  rm /tmp/img.tar
+  
+  
+  kubectl -n testlookup get pods -l app=testlookup-backend -o wide                                                                                                                                                                                                                                                  
+   
+  kubectl -n testlookup describe pod -l app=testlookup-backend | grep -A3 -E "Events|State|Reason|Image|Node:" | tail -40                                                                                                                                                                                           
+                                                            
+  kubectl -n testlookup logs -l app=testlookup-backend --tail=30 --since=2m | tail -40
+  
+  

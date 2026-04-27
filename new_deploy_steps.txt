@@ -163,8 +163,7 @@ kubectl -n testlookup exec -it deployment/testlookup-backend -- python //app/scr
   ===== bug fix deployment
    cd /c/Users/anand/Downloads/Projects/testlookup_new                                                                                                                                                                                                                                                               
    
-  docker build -t registry.local:30500/testlookup/frontend:latest \                                                                                                                                                                                                                                                 
-    --target production -f frontend/Dockerfile frontend/    
+  docker build -t registry.local:30500/testlookup/frontend:latest --target production -f frontend/Dockerfile frontend/    
   docker push registry.local:30500/testlookup/frontend:latest
 
   kubectl -n testlookup rollout restart deployment/testlookup-frontend
@@ -189,11 +188,8 @@ kubectl -n testlookup exec -it deployment/testlookup-backend -- python //app/scr
   kubectl -n testlookup rollout status deployment/testlookup-frontend --timeout=120s
 
 
-  docker build -t registry.local:30500/testlookup/backend:latest \
-    --target production -f backend/Dockerfile backend/                                                                                                                                                                                                                                                              
-  docker build -t registry.local:30500/testlookup/frontend:latest \
-    --target production -f frontend/Dockerfile frontend/
-
+  docker build -t registry.local:30500/testlookup/backend:latest --target production -f backend/Dockerfile backend/                                                                                                                                                                                                                                                              
+  docker build -t registry.local:30500/testlookup/frontend:latest --target production -f frontend/Dockerfile frontend/
   docker push registry.local:30500/testlookup/backend:latest
   docker push registry.local:30500/testlookup/frontend:latest
 

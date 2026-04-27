@@ -510,7 +510,7 @@ async def run_regression_watchman(
 class _StandaloneWatchman(RegressionWatchman):
     """Variant that skips DB stage tracking for standalone API use."""
 
-    async def mark_stage_running(self, pipeline_run_id: str) -> None:
+    async def mark_stage_running(self, pipeline_run_id: str, **kwargs: Any) -> None:
         pass
 
     async def mark_stage_done(

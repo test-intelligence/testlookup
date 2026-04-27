@@ -259,7 +259,7 @@ async def run_defect_commander(
 class _StandaloneCommander(DefectCommander):
     """Variant that skips DB stage tracking."""
 
-    async def mark_stage_running(self, pipeline_run_id: str) -> None:
+    async def mark_stage_running(self, pipeline_run_id: str, **kwargs: Any) -> None:
         pass
 
     async def mark_stage_done(
@@ -267,6 +267,7 @@ class _StandaloneCommander(DefectCommander):
         pipeline_run_id: str,
         result_data: dict[Any, Any] | None = None,
         error: str | None = None,
+        **kwargs: Any,
     ) -> None:
         pass
 

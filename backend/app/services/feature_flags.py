@@ -162,7 +162,7 @@ def _evaluate(
 
     # Rollout percentage — deterministic by user or project to avoid
     # flap-flopping between requests.
-    rollout = flag.get("rollout_percent", 100)
+    rollout = int(flag.get("rollout_percent", 100) or 0)
     if rollout >= 100:
         return True
     if rollout <= 0:

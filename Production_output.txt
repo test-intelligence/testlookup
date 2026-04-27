@@ -1,3 +1,7 @@
+
+Account Number
+1536-6337-08
+
 12 Claude Code Features Every Engineer Should Know. YouTube video link at the end.
 
 1. CLAUDE. md: A project memory file to define custom rules and conventions. Claude reads at the start of every session.

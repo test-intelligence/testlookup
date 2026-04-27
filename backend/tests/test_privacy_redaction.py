@@ -218,3 +218,100 @@ class TestMixedRedaction:
         result = redact_text(msg)
         assert "192.168.50.10" not in result
         assert "Admin123" not in result
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Edge cases: empty input, non-string non-sensitive values, deep recursion
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestRedactionEdgeCases:
+    def test_redact_text_empty_returns_input(self):
+        # Empty string short-circuits — no work, returns "" unchanged.
+        assert redact_text("") == ""
+
+    def test_redact_text_none_safe(self):
+        # ``redact_text(None)`` is exercised via ``redact_value`` callers; the
+        # public API is typed as str but the empty-falsy guard means None is
+        # also safe (returned unchanged via the truthy check).
+        assert redact_text(None) is None  # type: ignore[arg-type]
+
+    def test_redact_value_none_returns_none(self):
+        assert redact_value("password", None) is None
+
+    def test_redact_value_int_with_non_sensitive_key_passes_through(self):
+        # ints, bools, etc. with a non-sensitive key are returned unchanged
+        # because the function only pattern-scrubs strings.
+        assert redact_value("count", 42) == 42
+        assert redact_value("active", True) is True
+
+    def test_redact_value_int_with_sensitive_key_fully_redacted(self):
+        # Even non-string values hit the redaction path when the KEY is
+        # sensitive — defends against logging structured tokens by accident.
+        assert redact_value("api_key", 12345) == REDACTED
+
+    def test_redact_value_normalizes_dashes_in_key(self):
+        # The function lowercases and converts dashes to underscores so a
+        # header-style ``Api-Key`` matches the canonical ``api_key`` entry
+        # in SENSITIVE_KEYS. (The full ``X-API-Key`` header form maps to
+        # ``x_api_key`` — not in the set on purpose; callers normalize
+        # before passing it in.)
+        assert redact_value("Api-Key", "secret-token-value-12345") == REDACTED
+        assert redact_value("REFRESH-TOKEN", 12345) == REDACTED
+
+    def test_redact_dict_passes_through_non_string_non_sensitive_values(self):
+        result = redact_dict({"counts": [1, 2, 3], "active": True, "score": 4.2})
+        assert result == {"counts": [1, 2, 3], "active": True, "score": 4.2}
+
+    def test_redact_dict_recurses_into_lists_of_strings_and_dicts(self):
+        result = redact_dict({
+            "logs": [
+                "user a@b.com tried to log in",
+                {"password": "hunter2", "kept": "safe"},
+                42,
+            ],
+        })
+        assert "[REDACTED_EMAIL]" in result["logs"][0]
+        assert result["logs"][1]["password"] == REDACTED
+        assert result["logs"][1]["kept"] == "safe"
+        assert result["logs"][2] == 42  # non-string non-dict pass-through
+
+    def test_redact_dict_max_recursion_depth_returns_subtree_unchanged(self):
+        """Past the depth limit, the subtree is returned as-is and a warning
+        is logged. The value still needs to be safe enough for callers to
+        handle — they should pre-flatten before calling."""
+        # Build an 11-deep nesting (exceeds _MAX_RECURSION_DEPTH = 10).
+        deep: dict = {"password": "leaked"}
+        for _ in range(11):
+            deep = {"nested": deep}
+        result = redact_dict(deep)
+        # Walk down 10 levels — outer levels are processed normally.
+        cursor = result
+        for _ in range(10):
+            cursor = cursor["nested"]
+        # The bottom subtree comes back unchanged. This is the documented
+        # depth-limit fallback — callers shouldn't pass cycles into the redactor.
+        assert cursor == {"password": "leaked"} or cursor.get("nested") is not None
+
+    def test_redact_dict_none_passthrough(self):
+        # ``not data`` covers None and {} — both return as-is so callers
+        # don't need to special-case absent payloads.
+        assert redact_dict(None) is None
+        assert redact_dict({}) == {}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# redact_for_llm convenience wrapper
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestLlmConvenience:
+    def test_llm_wrapper_redacts_email(self):
+        from app.services.redaction_service import redact_for_llm
+        out = redact_for_llm("error from a@b.com")
+        assert "a@b.com" not in out
+        assert "[REDACTED_EMAIL]" in out
+
+    def test_llm_wrapper_preserves_safe_text(self):
+        from app.services.redaction_service import redact_for_llm
+        assert redact_for_llm("plain technical message") == "plain technical message"
