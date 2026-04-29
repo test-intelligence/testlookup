@@ -5,7 +5,12 @@ import { ragService } from '@/services/ragGenerationService'
 export function useGenerationBatch(batchId: string | null) {
   return useSWR(
     batchId ? ['generation-batch', batchId] : null,
-    () => ragService.getBatch(batchId!),
+    () => {
+      if (!batchId) {
+        throw new Error('Batch ID is required')
+      }
+      return ragService.getBatch(batchId)
+    },
     {
       refreshInterval: (data) => {
         // Poll every 3s while pending, stop when complete/failed
@@ -19,7 +24,12 @@ export function useGenerationBatch(batchId: string | null) {
 export function useKnowledgeSources(projectId: string | null, params?: Record<string, unknown>) {
   return useSWR(
     projectId ? ['knowledge-sources', projectId, params] : null,
-    () => ragService.listSources(projectId!, params),
+    () => {
+      if (!projectId) {
+        throw new Error('Project ID is required')
+      }
+      return ragService.listSources(projectId, params)
+    },
     { refreshInterval: 30_000 },
   )
 }

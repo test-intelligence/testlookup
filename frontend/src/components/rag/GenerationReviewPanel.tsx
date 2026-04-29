@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Check, FileText, Loader2, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
-import type { Citation, GeneratedCase, RagGenerateResponse } from '@/types/rag-generation'
+import type { RagGenerateResponse } from '@/types/rag-generation'
 import CitationDrawer from './CitationDrawer'
 import { ragService } from '@/services/ragGenerationService'
 

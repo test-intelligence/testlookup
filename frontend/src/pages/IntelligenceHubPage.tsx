@@ -19,7 +19,7 @@ export default function IntelligenceHubPage() {
 
   // Load recent runs — prioritise failed runs for intelligence
   const { data, isLoading } = useRuns({ page: 1, size: 20 })
-  const runs = data?.items ?? []
+  const runs = useMemo(() => data?.items ?? [], [data?.items])
 
   // Split into failed (intelligence-ready) and passed
   const failedRuns = runs.filter(r => r.status === 'FAILED' || r.status === 'failed')

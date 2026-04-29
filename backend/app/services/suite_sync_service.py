@@ -13,6 +13,7 @@ Usage:
     summary = await sync_suite_membership(db, project_id, run_id)
 """
 import uuid
+from typing import Any
 
 import structlog
 from sqlalchemy import select, and_
@@ -88,7 +89,7 @@ async def _sync_one_suite(
     run_id: uuid.UUID,
     suite_name: str,
     run_cases: list[TestCase],
-) -> dict:
+) -> dict[str, Any]:
     """Sync membership for a single suite from the run's test cases."""
     summary = {
         "suite_name": suite_name,
@@ -109,7 +110,6 @@ async def _sync_one_suite(
     # Batch-fetch managed test cases for auto-linking (avoids N+1 per-fingerprint queries)
     managed_map: dict[str, uuid.UUID] = {}
     if run_map:
-        from sqlalchemy import and_
         managed_result = await db.execute(
             select(ManagedTestCase.id, ManagedTestCase.test_fingerprint).where(
                 and_(
@@ -267,22 +267,3 @@ def _add_event(
         new_values=new_values,
         details=details,
     ))
-
-
-async def _find_managed_test_case(
-    db: AsyncSession,
-    project_id: uuid.UUID,
-    fingerprint: str,
-) -> uuid.UUID | None:
-    """Find a managed test case with matching fingerprint for auto-linking."""
-    result = await db.execute(
-        select(ManagedTestCase.id).where(
-            and_(
-                ManagedTestCase.project_id == project_id,
-                ManagedTestCase.test_fingerprint == fingerprint,
-                ManagedTestCase.status != "deprecated",
-            )
-        ).limit(1)
-    )
-    row = result.scalar_one_or_none()
-    return row if row else None

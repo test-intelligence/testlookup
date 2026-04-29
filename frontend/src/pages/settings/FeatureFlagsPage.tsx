@@ -296,7 +296,7 @@ function EditFlagModal({
     try {
       projects = JSON.parse(projectsJson)
       roles = JSON.parse(rolesJson)
-    } catch (err) {
+    } catch {
       toast.error('Invalid JSON for scope fields')
       return
     }

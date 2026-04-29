@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Edit3, FlaskConical, Plus, Trash2, X } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { projectsService } from '@/services/projectsService'
@@ -40,9 +40,13 @@ export default function ProjectsPage() {
   const { isAdmin, isQaLead } = usePermissions()
   const canEdit = isAdmin || isQaLead
 
-  const load = () =>
-    refreshProjects().then(setProjects).catch(() => {})
-  useEffect(() => { load() }, [])
+  const load = useCallback(
+    () => refreshProjects().then(setProjects).catch(() => {}),
+    [refreshProjects],
+  )
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const handleNameChange = (name: string) => {
     setForm(f => ({ ...f, name, slug: slugify(name) }))

@@ -20,7 +20,12 @@ export function useDefectCandidate(
     shouldFetch
       ? `defect-candidate-${runId}-${clusterId}`
       : null,
-    () => defectPromotionService.getCandidate(runId!, clusterId!),
+    () => {
+      if (!runId || !clusterId) {
+        throw new Error('Run ID and cluster ID are required')
+      }
+      return defectPromotionService.getCandidate(runId, clusterId)
+    },
     { revalidateOnFocus: false },
   )
   return { candidate: data, isLoading, isError: Boolean(error), mutate }

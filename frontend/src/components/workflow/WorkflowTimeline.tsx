@@ -432,7 +432,6 @@ function StageNode({
   const key = stageKey(stage.stage_name)
   const meta = STAGE_META[stage.stage_name] ?? STAGE_META[key] ?? STAGE_META.default
   const status = STATUS_META[stage.status] ?? STATUS_META.pending
-  const Icon = meta.icon
   const StatusIcon = status.icon
   const duration = formatDuration(stage.started_at, stage.completed_at)
 

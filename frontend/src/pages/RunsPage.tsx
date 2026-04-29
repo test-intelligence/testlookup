@@ -51,7 +51,7 @@ export default function RunsPage() {
   const [days, setDays] = useState(6)
 
   const { data, isLoading } = useRuns({ page, size: 20, days, ...(statusFilter && { status: statusFilter }) })
-  const runs = (data?.items ?? []) as TestRun[]
+  const runs = useMemo(() => (data?.items ?? []) as TestRun[], [data?.items])
   const { sorted: sortedRuns, sortKey, sortDir, toggleSort } = useTableSort(runs, 'created_at', 'desc')
   const workflow = useMemo(() => buildRunsWorkflow(runs, statusFilter, isAllProjects), [runs, statusFilter, isAllProjects])
 
