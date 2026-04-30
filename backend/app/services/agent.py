@@ -8,8 +8,8 @@ Includes:
   - Token budget management (auto-truncation before LLM calls)
   - Redis-based analysis caching (identical failures skip LLM)
 """
-import json
 import importlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
@@ -17,14 +17,14 @@ from typing import Any, Optional, cast
 from app.core.config import settings
 from app.core.tracing import get_tracer
 from app.db.mongo import Collections, get_mongo_db
-from app.services.llm_factory import get_llm
-from app.services.pipeline_event_log import emit_event as _emit_event
 from app.services.input_sanitizer import (
     sanitize_error_message,
     sanitize_free_text,
     sanitize_service_name,
     sanitize_stack_trace,
 )
+from app.services.llm_factory import get_llm
+from app.services.pipeline_event_log import emit_event as _emit_event
 from app.services.resilience import (
     compute_analysis_cache_key,
     truncate_to_token_budget,
@@ -184,8 +184,8 @@ async def run_triage_agent(
     from langchain_core.prompts import PromptTemplate
 
     langchain_agents = importlib.import_module("langchain.agents")
-    create_react_agent = cast(Any, getattr(langchain_agents, "create_react_agent"))
-    AgentExecutor = cast(Any, getattr(langchain_agents, "AgentExecutor"))
+    create_react_agent = cast(Any, langchain_agents.create_react_agent)
+    AgentExecutor = cast(Any, langchain_agents.AgentExecutor)
 
     llm = await get_llm()
     tools = _get_tools()
