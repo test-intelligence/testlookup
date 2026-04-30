@@ -341,7 +341,7 @@ class TestAgentSanitizationIntegration:
         with (
             patch("app.services.agent._check_analysis_cache", return_value=None),
             patch("app.services.agent.truncate_to_token_budget", side_effect=lambda x, _: x),
-            patch("app.services.agent.get_llm"),
+            patch("app.services.agent.get_llm", AsyncMock(side_effect=RuntimeError("missing llm"))),
             patch("app.services.agent._get_tools", return_value=[]),
             patch("app.services.agent._store_audit_trail"),
             patch("app.services.agent._store_analysis_cache"),

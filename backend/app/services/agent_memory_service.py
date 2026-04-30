@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.postgres import AgentMemoryEntry
+from app.services.async_utils import await_if_needed
 
 logger = logging.getLogger("services.agent_memory")
 
@@ -148,7 +149,7 @@ async def persist_memory_entries(
             confidence=entry_data.get("confidence"),
             resolution=entry_data.get("resolution"),
         )
-        db.add(entry)
+        await await_if_needed(db.add(entry))
         count += 1
 
         # Index in ChromaDB if there's a searchable signature

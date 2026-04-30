@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import LaunchStatus, LiveSession, Project, TestRun
 from app.models.schemas import ActiveSessionsResponse, LiveEventBatchResponse, LiveSessionResponse, LiveSessionState
+from app.services.async_utils import await_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -267,22 +268,22 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
                 "tags":          event_dict.get("tags"),
                 "timestamp_ms":  event_dict.get("timestamp_ms"),
             })
-            pipe.rpush(list_key, entry)
+            await await_if_needed(pipe.rpush(list_key, entry))
 
             # Increment the appropriate counter in the live run state hash
             status_upper = (event_dict.get("status") or "UNKNOWN").upper()
             counter_field = counter_map.get(status_upper)
             if counter_field:
-                pipe.hincrby(state_key, counter_field, 1)
+                await await_if_needed(pipe.hincrby(state_key, counter_field, 1))
             last_test_name = event_dict.get("test_name") or last_test_name
 
-    pipe.expire(list_key, 90_000)  # 25 h TTL — same as consumer's buffer
+    await await_if_needed(pipe.expire(list_key, 90_000))  # 25 h TTL — same as consumer's buffer
     # Update metadata on the live state hash
     if last_test_name:
-        pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name})
+        await await_if_needed(pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name}))
     else:
-        pipe.hset(state_key, "last_event_at", now)
-    pipe.expire(state_key, 86_400)
+        await await_if_needed(pipe.hset(state_key, "last_event_at", now))
+    await await_if_needed(pipe.expire(state_key, 86_400))
     await pipe.execute()
 
     await redis.expire(SESSION_TOKEN_KEY.format(token=x_session_token), SESSION_TTL)
