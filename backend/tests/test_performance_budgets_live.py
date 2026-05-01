@@ -84,7 +84,7 @@ def _skip_if_unreachable() -> None:
 _ACTIVE_SCENARIOS = [sc for sc in SCENARIOS if not sc.env_dependent and sc.budget_p95_ms]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def _harness_context():
     """One-time setup: reachability check + token + fixtures shared across
     every parametrized run."""

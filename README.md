@@ -34,13 +34,39 @@ Three run modes. Pick the one that fits.
 ```bash
 git clone https://github.com/anandtopu/testlookup.git
 cd testlookup
-cp .env.example .env     # edit secrets before starting
+cp .env.example .env
+# edit .env before starting; see the required first-run secrets below
 make dev                 # or: make dev-llm for full mode
 ```
 
 Dashboard: http://localhost:3000 | API docs: http://localhost:8000/docs | MCP SSE: http://localhost:8002/sse
 
 Prerequisites: Docker + Compose v2. Core mode: 4 GB RAM / 2 vCPU. Full mode: 8 GB / 4 vCPU.
+
+### Required first-run secrets
+
+Docker Compose intentionally refuses to start until the required secrets in `.env` are set. After copying `.env.example`, replace these values:
+
+| Variable | Example generation |
+|----------|--------------------|
+| `POSTGRES_PASSWORD` | `openssl rand -hex 24` |
+| `MONGO_PASSWORD` | `openssl rand -hex 24` |
+| `MINIO_ACCESS_KEY` | `openssl rand -hex 12` |
+| `MINIO_SECRET_KEY` | `openssl rand -base64 32` |
+| `FLOWER_PASSWORD` | `openssl rand -hex 24` |
+| `APP_SECRET_KEY` | `openssl rand -hex 32` |
+| `JWT_SECRET_KEY` | `openssl rand -hex 32` |
+| `WEBHOOK_SECRET` | `openssl rand -hex 32` |
+
+Keep `DATABASE_URL` and `MONGO_URI` in sync with the database passwords you choose.
+
+### Ollama model storage
+
+Ollama model files are stored in Docker's named volume for this Compose project, normally `testlookup_ollama_models`, not in the repository directory. The volume name is prefixed by the Compose project name. Verify installed models with:
+
+```bash
+docker compose exec ollama ollama list
+```
 
 ## Feature matrix
 
