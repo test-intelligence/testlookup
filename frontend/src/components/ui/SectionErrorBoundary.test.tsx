@@ -51,11 +51,16 @@ describe('SectionErrorBoundary', () => {
     )
     expect(screen.getByText('Failed')).toBeInTheDocument()
 
-    // Click "Try again" — boundary resets, but child still throws
+    rerender(
+      <SectionErrorBoundary message="Failed">
+        <ThrowingChild shouldThrow={false} />
+      </SectionErrorBoundary>,
+    )
+
     fireEvent.click(screen.getByText('Try again'))
 
-    // The boundary will catch the error again since ThrowingChild still throws
-    expect(screen.getByText('Failed')).toBeInTheDocument()
+    // Boundary reset should re-render the child without an error.
+    expect(screen.getByTestId('child')).toHaveTextContent('OK')
   })
 
   it('does not affect sibling boundaries', () => {

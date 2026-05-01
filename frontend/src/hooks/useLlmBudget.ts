@@ -19,8 +19,11 @@ export function useProjectQuota(projectId: string | null) {
   const { data, error, isLoading, mutate } = useSWR<LlmQuotaRead | null>(
     projectId ? ['llm-quota', projectId] : null,
     async () => {
+      if (!projectId) {
+        throw new Error('Project ID is required')
+      }
       try {
-        return await llmBudgetService.getQuota(projectId!)
+        return await llmBudgetService.getQuota(projectId)
       } catch (err: unknown) {
         const axiosErr = err as { response?: { status?: number } }
         // 404 means "no quota configured" — valid state, return null.
@@ -35,7 +38,12 @@ export function useProjectQuota(projectId: string | null) {
 export function useProjectUsage(projectId: string | null) {
   const { data, error, isLoading, mutate } = useSWR<LlmUsageRead>(
     projectId ? ['llm-usage', projectId] : null,
-    () => llmBudgetService.getUsage(projectId!),
+    () => {
+      if (!projectId) {
+        throw new Error('Project ID is required')
+      }
+      return llmBudgetService.getUsage(projectId)
+    },
     { refreshInterval: 60_000 },
   )
   return { usage: data, isLoading, isError: !!error, refresh: mutate }

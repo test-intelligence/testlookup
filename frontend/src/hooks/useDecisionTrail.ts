@@ -11,7 +11,12 @@ import type { DecisionTrailResponse } from '@/types/decisionTrail'
 export function useDecisionTrail(runId: string | null, enabled: boolean = true) {
   return useSWR<DecisionTrailResponse>(
     enabled && runId ? ['decision-trail', runId] : null,
-    () => decisionTrailService.get(runId!),
+    () => {
+      if (!runId) {
+        throw new Error('Run ID is required')
+      }
+      return decisionTrailService.get(runId)
+    },
     { revalidateOnFocus: false },
   )
 }

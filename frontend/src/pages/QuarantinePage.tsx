@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import {
-  AlertTriangle,
   Check,
   Clock,
   FileText,
@@ -202,7 +201,6 @@ function QuarantineRow({
 
   async function doAction(fn: () => Promise<unknown>, successMsg: string) {
     if (busy) return
-    const notes = window.prompt('Reason for this decision (optional)') ?? undefined
     setBusy(true)
     try {
       await fn()

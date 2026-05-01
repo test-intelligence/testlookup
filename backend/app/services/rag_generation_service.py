@@ -23,6 +23,7 @@ from app.models.postgres import (
 import structlog
 
 from app.services.knowledge_source_service import require_rag_enabled_async
+from app.services.async_utils import await_if_needed
 from app.services.rag_retrieval_service import RetrievedChunk, retrieve_chunks
 
 logger = structlog.get_logger(__name__)
@@ -375,7 +376,7 @@ async def _map_coverage(
             requirement_id=req_id[:200],
             coverage_status=status,
         )
-        db.add(rc)
+        await await_if_needed(db.add(rc))
 
     score = int((covered / total) * 100) if total > 0 else 0
     summary = f"{covered}/{total} requirements covered ({score}%)"

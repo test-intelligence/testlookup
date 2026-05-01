@@ -286,7 +286,7 @@ class RulesEngine:
                 if a not in all_actions:
                     all_actions.append(a)
 
-        top_category = max(category_counts, key=category_counts.get) if category_counts else "UNKNOWN"
+        top_category = max(category_counts, key=lambda k: category_counts.get(k, 0)) if category_counts else "UNKNOWN"
         top_count = category_counts.get(top_category, 0)
 
         # Determine criticality and release impact

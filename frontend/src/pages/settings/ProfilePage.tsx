@@ -57,10 +57,10 @@ function getStrength(pw: string): StrengthResult {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function ProfilePage() {
-  const user       = useAuthStore(s => s.user)
-  const setAuth    = useAuthStore(s => s.setAuth)
-  const token      = useAuthStore(s => s.token)!
-  const refreshToken = useAuthStore(s => s.refreshToken)!
+  const user = useAuthStore(s => s.user)
+  const setAuth = useAuthStore(s => s.setAuth)
+  const token = useAuthStore(s => s.token)
+  const refreshToken = useAuthStore(s => s.refreshToken)
 
   // ── Profile form state ────────────────────────────────────────────────────
   const [fullName,     setFullName]     = useState(user?.full_name ?? '')
@@ -82,7 +82,7 @@ export default function ProfilePage() {
   useEffect(() => {
     setFullName(user?.full_name ?? '')
     setAvatarColor(user?.avatar_color ?? 'blue')
-  }, [user?.id])
+  }, [user?.full_name, user?.avatar_color])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleSaveProfile = async () => {
@@ -92,6 +92,9 @@ export default function ProfilePage() {
         full_name:    fullName.trim() || null,
         avatar_color: avatarColor,
       })
+      if (!token || !refreshToken) {
+        throw new Error('Authentication tokens are missing')
+      }
       setAuth(token, refreshToken, res.data)
       toast.success('Profile updated')
     } catch (err: unknown) {

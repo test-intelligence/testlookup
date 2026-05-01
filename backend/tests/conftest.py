@@ -1,9 +1,26 @@
 """Shared pytest fixtures."""
+import os
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+
+os.environ.setdefault("TESTING", "true")
+os.environ.setdefault("OTEL_ENABLED", "false")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Apply coarse-grained markers from test location/name."""
+    integration_marker = pytest.mark.integration
+    live_marker = pytest.mark.live
+    for item in items:
+        path = str(item.path).replace("\\", "/")
+        if "/tests/integration/" in path:
+            item.add_marker(integration_marker)
+        if path.endswith("/tests/test_performance_budgets_live.py"):
+            item.add_marker(integration_marker)
+            item.add_marker(live_marker)
 
 
 @dataclass

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FlaskConical,
+  BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList,
   Gauge, GitBranch, HeartPulse, Layers, LayoutDashboard, MessageSquare,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,

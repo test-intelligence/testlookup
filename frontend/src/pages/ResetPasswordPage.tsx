@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { KeyRound } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import LoadingSpinner from '../components/ui/LoadingSpinner';

@@ -7,7 +7,12 @@ import {
 export function useCompliancePacks(releaseId: string | null) {
   const { data, error, isLoading, mutate } = useSWR<CompliancePackRead[]>(
     releaseId ? ['compliance-packs', releaseId] : null,
-    () => compliancePackService.list(releaseId!),
+    () => {
+      if (!releaseId) {
+        throw new Error('Release ID is required')
+      }
+      return compliancePackService.list(releaseId)
+    },
     { revalidateOnFocus: false },
   )
   return {

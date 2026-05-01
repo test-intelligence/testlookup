@@ -10,6 +10,8 @@ Covers:
 """
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -143,7 +145,7 @@ class TestDeletedBucketNaming:
 # TS-2/3/4: Sync Service Logic (unit tests with direct function calls)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-from app.services.suite_sync_service import _add_event  # noqa: E402
+from app.services.suite_sync_service import _add_event, _sync_one_suite  # noqa: E402
 
 
 class TestSyncEventCreation:
@@ -203,6 +205,83 @@ class TestSyncEventCreation:
         event = mock_db.add.call_args[0][0]
         assert event.event_type == "deleted"
         assert "smoke-deleted" in event.details
+
+
+class _FakeResult:
+    def __init__(self, *, rows=None, scalars=None):
+        self._rows = rows or []
+        self._scalars = scalars or []
+
+    def all(self):
+        return self._rows
+
+    def scalars(self):
+        return _FakeScalars(self._scalars)
+
+
+class _FakeScalars:
+    def __init__(self, values):
+        self._values = values
+
+    def all(self):
+        return self._values
+
+
+class _FakeAsyncSession:
+    def __init__(self, results):
+        self._results = list(results)
+        self.execute_calls = 0
+        self.add = MagicMock()
+
+    async def execute(self, _statement):
+        self.execute_calls += 1
+        return self._results.pop(0)
+
+
+class TestSyncOneSuite:
+    @pytest.mark.asyncio
+    async def test_new_members_batch_fetch_managed_cases(self):
+        project_id = uuid.uuid4()
+        run_id = uuid.uuid4()
+        managed_id = uuid.uuid4()
+        run_cases = [
+            SimpleNamespace(
+                test_fingerprint="fp-login",
+                test_name="testLogin",
+                class_name="AuthTest",
+            ),
+            SimpleNamespace(
+                test_fingerprint="fp-logout",
+                test_name="testLogout",
+                class_name="AuthTest",
+            ),
+        ]
+        db = _FakeAsyncSession(
+            [
+                _FakeResult(
+                    rows=[SimpleNamespace(id=managed_id, test_fingerprint="fp-login")]
+                ),
+                _FakeResult(scalars=[]),
+                _FakeResult(scalars=[]),
+            ]
+        )
+
+        summary = await _sync_one_suite(db, project_id, run_id, "auth-suite", run_cases)
+
+        assert summary["added_count"] == 2
+        assert db.execute_calls == 3
+        added_members = [
+            call.args[0]
+            for call in db.add.call_args_list
+            if isinstance(call.args[0], SuiteMembership)
+        ]
+        assert len(added_members) == 2
+        linked_member = next(m for m in added_members if m.test_fingerprint == "fp-login")
+        execution_member = next(m for m in added_members if m.test_fingerprint == "fp-logout")
+        assert linked_member.managed_test_case_id == managed_id
+        assert linked_member.source == "linked"
+        assert execution_member.managed_test_case_id is None
+        assert execution_member.source == "execution"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

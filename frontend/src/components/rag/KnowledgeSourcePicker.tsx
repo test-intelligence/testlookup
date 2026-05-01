@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Check, Database, ExternalLink, FileText, Loader2, RefreshCw } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { KnowledgeSource } from '@/types/rag-generation'
