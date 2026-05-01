@@ -91,10 +91,6 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
                 get_current_active_user=MagicMock(),
                 verify_webhook_secret=MagicMock(),
                 require_project_role=MagicMock(return_value=MagicMock()),
-                # Wave 1 of item #1 added require_project_access to the
-                # members endpoints in users.py — keep the stub in sync.
-                require_project_access=MagicMock(return_value=MagicMock()),
-                # Lazy import inside members handlers (P3-2 cache invalidation)
                 invalidate_membership_cache=AsyncMock(),
             ),
         )
