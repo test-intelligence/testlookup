@@ -4,7 +4,7 @@
 
 # ── Web Framework ────────────────────────────────────────────
 fastapi==0.115.5
-uvicorn[standard]==0.32.1
+uvicorn[standard]==0.43.0
 python-multipart==0.0.22
 httpx==0.28.1
 
@@ -65,15 +65,15 @@ aiohttp==3.13.4
 
 # ── Observability: OpenTelemetry ─────────────────────────────
 # Core SDK + OTLP HTTP exporter (ships spans to Jaeger / any OTel Collector)
-opentelemetry-api==1.27.0
-opentelemetry-sdk==1.27.0
-opentelemetry-exporter-otlp-proto-http==1.27.0
-# Auto-instrumentors — must match sdk 1.27.0 → instrumentor 0.48b0
-opentelemetry-instrumentation-fastapi==0.48b0
-opentelemetry-instrumentation-sqlalchemy==0.48b0
-opentelemetry-instrumentation-httpx==0.48b0
-opentelemetry-instrumentation-redis==0.48b0
-opentelemetry-instrumentation-celery==0.48b0
+opentelemetry-api==1.40.0
+opentelemetry-sdk==1.40.0
+opentelemetry-exporter-otlp-proto-http==1.40.0
+# Auto-instrumentors — must match sdk 1.40.0 → instrumentor 0.61b0
+opentelemetry-instrumentation-fastapi==0.61b0
+opentelemetry-instrumentation-sqlalchemy==0.61b0
+opentelemetry-instrumentation-httpx==0.61b0
+opentelemetry-instrumentation-redis==0.61b0
+opentelemetry-instrumentation-celery==0.61b0
 
 # ── Observability: Prometheus metrics ────────────────────────
 prometheus-client==0.21.0
@@ -84,13 +84,13 @@ prometheus-fastapi-instrumentator==7.0.0
 python-dateutil==2.9.0.post0
 pytz==2024.2
 structlog==24.4.0
-tenacity==9.0.0
+tenacity==9.1.4
 click==8.1.8
 
 # ── Export: Excel / Word / PDF ───────────────────────────────
 openpyxl==3.1.5           # Excel export (.xlsx)
 python-docx==1.1.2        # Word export (.docx) + document ingestion
-reportlab==4.2.5          # PDF generation
+reportlab==4.4.10         # PDF generation
 pypdf==5.1.0              # PDF text extraction (knowledge RAG)
 beautifulsoup4==4.12.3    # HTML content extraction (knowledge RAG)
 

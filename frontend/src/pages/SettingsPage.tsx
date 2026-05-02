@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, Github, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, UserCircle2, Webhook } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, UserCircle2, Webhook } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -86,7 +86,7 @@ const sections = [
     href: '/settings/billing',
   },
   {
-    icon: Github,
+    icon: GitBranch,
     title: 'GitHub Integration',
     desc: 'Post check runs to PRs on every test run — per-project repo + token + offline-mode aware',
     href: '/settings/github',

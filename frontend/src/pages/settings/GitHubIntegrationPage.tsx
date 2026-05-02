@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, CheckCircle2, Github, Save, TestTube, Trash2, XCircle } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, GitBranch, Save, TestTube, Trash2, XCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
@@ -155,7 +155,7 @@ export default function GitHubIntegrationPage() {
 
       <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <Github className="h-4 w-4 text-[var(--color-accent)]" />
+          <GitBranch className="h-4 w-4 text-[var(--color-accent)]" />
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Repository</h3>
           {existing && (
             <span
