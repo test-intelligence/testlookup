@@ -18,7 +18,7 @@ Turn raw automated test results into actionable failure intelligence and release
 2. **Cluster failures** and surface regressions vs flaky recurrences vs infra anomalies
 3. **Explain likely root causes** using rules, ML classifiers, or a local LLM (Ollama) -- no cloud calls required
 4. **Provide release-risk signals** -- GO / CONDITIONAL_GO / NO_GO with reasons and override audit trail
-5. **Expose everything** through UI, REST API, CLI, and [MCP server](https://modelcontextprotocol.io) (36 tools, 9 resources, 6 prompt workflows)
+5. **Expose everything** through UI, REST API, CLI, and [MCP server](https://modelcontextprotocol.io) (48 tools, 9 resources, 6 prompt workflows)
 6. **Run fully offline** when required -- air-gapped mode blocks all outbound network calls
 
 ## Quick Start
@@ -87,7 +87,7 @@ Every feature is labelled **Core** (on by default in OSS), **Experimental** (in-
 | Flaky quarantine | Detection, QA Lead approval, active quarantine, nightly recheck, release/re-quarantine state machine |
 | Perf regression | Per-test duration baselines (Welford algorithm) with 3-sigma spike detection at release-gate time |
 | CLI | 11 command groups, multi-profile auth, table/JSON/YAML output |
-| MCP server | 36 tools, 9 resources, 6 prompts -- query test health from IDE or CI agents ([reference](mcp/README.md)) |
+| MCP server | 48 tools, 9 resources, 6 prompts -- query test health from IDE or CI agents ([reference](mcp/README.md)) |
 | Dashboards | 30+ customizable analytics widgets, drag-and-drop layout |
 | Live streaming | Real-time WebSocket dashboard during test execution via Redis Streams |
 | User management | RBAC (VIEWER / TESTER / QA_ENGINEER / QA_LEAD / ADMIN), JWT + API key auth |

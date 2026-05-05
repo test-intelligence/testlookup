@@ -15,7 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Work tracking:**
 - `docs/PROGRESS.md` — What's been shipped, migration ledger, current build state
 - `docs/BACKLOG.md` — Ordered next-task list, tech debt, risks, cursor for where to pick up
-- Start any resumed session by reading both.
+- `docs/features/FEATURE_FLAG_INVENTORY.md` — Live feature-flag inventory (defaults, owners, graduation criteria)
+- Start any resumed session by reading PROGRESS + BACKLOG.
 
 ---
 
@@ -101,6 +102,7 @@ docker compose exec backend pytest tests/test_agent.py::test_name -v
     - `ai_config_resolver.py` — single source of truth for AI config
   - `agents/` — LangGraph multi-agent pipelines
   - `tools/` — 11 LangChain agent tools
+  - `middleware/` — request middleware (PII redaction, request ID, rate limiting)
   - `streams/` — Redis Streams producer/consumer
   - `worker/` — Celery app + tasks
 - `backend/migrations/` — Alembic versions (use `git log` for full history)

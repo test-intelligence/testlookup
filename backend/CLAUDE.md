@@ -217,6 +217,8 @@ return {"status": "queued", "task_id": task.id}
 
 ## Adding a New LangGraph Agent
 
+See `AGENTS.md` (repo root) for the full prompt/workflow specs of existing agents — useful when modeling a new one.
+
 1. Subclass `BaseAgent` in `app/agents/new_agent.py`:
 ```python
 from app.agents.base import BaseAgent
