@@ -4,6 +4,8 @@
 
 Turn raw automated test results into actionable failure intelligence and release-risk signals -- locally, offline, and through API / CLI / UI / MCP.
 
+> 📖 **This README is the short, evaluator-facing pitch.** For the deep marketing/product walkthrough (architecture diagrams, full feature inventory, framework matrix, integrations), see [`README_FULL.md`](README_FULL.md). Contributors should also read [`CLAUDE.md`](CLAUDE.md) and the subdirectory guides under `backend/` and `frontend/`.
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB)](https://reactjs.org)

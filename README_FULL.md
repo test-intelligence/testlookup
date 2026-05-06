@@ -2,6 +2,8 @@
 > **360° AI-Powered Software Testing Intelligence Platform**
 > Local-LLM capable · Multi-framework · OpenShift/Kubernetes native · MCP-enabled
 
+> 📖 **This is the long-form, product-walkthrough README.** For the short evaluator pitch and quick-start, see [`README.md`](README.md). Contributor patterns live in [`CLAUDE.md`](CLAUDE.md).
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB)](https://reactjs.org)
