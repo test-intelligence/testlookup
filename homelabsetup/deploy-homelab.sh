@@ -394,6 +394,56 @@ CREDS
   log "Credentials saved to homelabsetup/.homelab-credentials (do NOT commit this file)"
 fi
 
+# ── Step 4b: Provision TLS Certificate for HTTPS Ingress ───
+header "Step 4b — Provision TLS Certificate"
+
+if kubectl -n "$NAMESPACE" get secret testlookup-tls-cert >/dev/null 2>&1; then
+  log "TLS cert secret already exists. Skipping generation."
+else
+  command -v openssl >/dev/null 2>&1 || error "openssl is required but not installed."
+  log "openssl: $(openssl version)"
+  log "Generating self-signed TLS cert for testlookup.local (10y validity)..."
+  CERT_DIR=$(mktemp -d)
+
+  # Use a config file rather than -addext so this works on older openssl
+  # builds (e.g. the one bundled with Git Bash on Windows, which predates 1.1.1).
+  cat >"$CERT_DIR/openssl.cnf" <<EOF
+[req]
+distinguished_name = dn
+prompt             = no
+x509_extensions    = v3_ext
+
+[dn]
+CN = testlookup.local
+O  = TestLookup Homelab
+
+[v3_ext]
+subjectAltName = @alt_names
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+
+[alt_names]
+DNS.1 = testlookup.local
+DNS.2 = localhost
+IP.1  = ${CONTROL_NODE}
+IP.2  = 127.0.0.1
+EOF
+
+  if ! openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -config "$CERT_DIR/openssl.cnf" \
+        -keyout "$CERT_DIR/tls.key" -out "$CERT_DIR/tls.crt" 2>"$CERT_DIR/err.log"; then
+    cat "$CERT_DIR/err.log" >&2
+    rm -rf "$CERT_DIR"
+    error "openssl cert generation failed (see error above)"
+  fi
+
+  kubectl -n "$NAMESPACE" create secret tls testlookup-tls-cert \
+    --cert="$CERT_DIR/tls.crt" --key="$CERT_DIR/tls.key" >/dev/null
+  rm -rf "$CERT_DIR"
+  log "TLS cert provisioned. First browser visit will require accepting the self-signed cert warning."
+fi
+
 # ── Step 5: Deploy with Kustomize ──────────────────────────
 header "Step 5 — Deploy with Kustomize"
 
@@ -602,8 +652,8 @@ echo ""
 # Health check
 TRAEFIK_IP=$(kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
 if [ -n "$TRAEFIK_IP" ]; then
-  log "Testing health endpoint via Traefik IP..."
-  HEALTH=$(curl -sf --max-time 5 -H "Host: testlookup.local" "http://${TRAEFIK_IP}/health/live" 2>/dev/null || echo "")
+  log "Testing health endpoint via Traefik IP (HTTPS, self-signed cert tolerated)..."
+  HEALTH=$(curl -skf --max-time 5 -H "Host: testlookup.local" "https://${TRAEFIK_IP}/health/live" 2>/dev/null || echo "")
   if [ -n "$HEALTH" ]; then
     log "Health check passed: $HEALTH"
   else
@@ -617,9 +667,11 @@ header "Deployment Complete"
 
 echo -e "${GREEN}TestLookup has been deployed to your K3s homelab cluster.${NC}"
 echo ""
-echo "  Dashboard:      http://testlookup.local"
-echo "  API Docs:       http://testlookup.local/docs"
-echo "  Health Check:   http://testlookup.local/health/live"
+echo "  Dashboard:      https://testlookup.local"
+echo "  API Docs:       https://testlookup.local/docs"
+echo "  Health Check:   https://testlookup.local/health/live"
+echo ""
+echo "  Note: First visit will prompt about a self-signed cert — accept once per browser."
 echo ""
 echo "Useful commands:"
 echo "  kubectl -n testlookup get pods           # Check pod status"

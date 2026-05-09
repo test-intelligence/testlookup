@@ -1,0 +1,13 @@
+# Traefik Middleware that redirects every HTTP request to HTTPS. Attached to
+# the web-entrypoint ingress so the browser ends up on a single canonical
+# https://testlookup.local origin — preventing the localStorage/JWT split-brain
+# that occurs when a browser auto-upgrades http:// to https:// mid-session.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: testlookup
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

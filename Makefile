@@ -199,6 +199,15 @@ else
   BASH_CMD := bash
 endif
 
+k8s-bootstrap-homelab: ## Bootstrap K3s on 3 homelab nodes via SSH (cluster only, no app)
+	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh $(ARGS)
+
+k8s-oneclick-homelab: ## One-click: bootstrap K3s + deploy TestLookup (HOMELAB_NODE{1,2,3}_PASS env or interactive)
+	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --deploy $(ARGS)
+
+k8s-teardown-homelab: ## Uninstall K3s from all 3 homelab nodes
+	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --teardown $(ARGS)
+
 k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS, e.g. make k8s-deploy-homelab ARGS="--skip-registry")
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh $(ARGS)
 

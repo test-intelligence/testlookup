@@ -47,12 +47,19 @@ MCP Server (mcp:8002)
 ```bash
 make dev                  # Start core stack (no LLM). Auto-creates .env, runs migrations + seed
 make dev-llm              # Full stack WITH Ollama + ChromaDB
+make dev-lite             # Minimal stack for low-resource machines (no Ollama/ChromaDB)
+make dev-setup            # First-time full setup: start stack + pull recommended LLM models
 make demo                 # Core stack + pre-loaded sample data
 make seed-data            # Re-run seed (idempotent)
+make seed-data-reset      # Wipe seed data and regenerate from scratch
+make simulate-upload      # Simulate a single Jenkins test run upload to MinIO
+make create-admin         # Create initial admin user (Docker Compose)
 make stop                 # Stop all services
 make clean                # Stop + remove volumes (destructive)
 make migrate              # Run pending migrations (manual fallback)
 make migrate-create MSG="name"  # Auto-generate new migration
+make migrate-down         # Rollback last migration
+make migrate-status       # Show migration status
 make test-backend         # pytest tests/ -v
 make test-frontend        # vitest
 make test-e2e             # playwright
@@ -62,6 +69,7 @@ make format               # ruff format + prettier
 make type-check           # mypy + tsc
 make shell-backend        # bash in backend container
 make build-java-sdk       # Build Java SDK fat JAR
+# Kubernetes deploys: make k8s-deploy-{dev,staging,prod,openshift,homelab} — see k8s/ overlays
 
 # Single backend test:
 docker compose exec backend pytest tests/test_agent.py::test_name -v
