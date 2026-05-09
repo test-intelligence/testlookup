@@ -45,6 +45,7 @@ class IngestionAgent(BaseAgent):
             )
             return {
                 "test_run_data": run_data,
+                "branch": run_data.get("branch"),
                 "failed_test_ids": failed_ids,
                 "total_tests": run_data["total_tests"],
                 "pass_rate": run_data.get("pass_rate") or 0.0,
@@ -59,6 +60,7 @@ class IngestionAgent(BaseAgent):
             await self.mark_stage_done(pipeline_run_id, error=error_msg)
             return {
                 "ingestion_enriched": False,
+                "branch": None,
                 "failed_test_ids": [],
                 "total_tests": 0,
                 "pass_rate": 0.0,
