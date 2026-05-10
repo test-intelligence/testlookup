@@ -1,4 +1,6 @@
 """TestLookup CLI — root application and command registration."""
+import sys
+
 import typer
 
 from testlookup_cli import __version__
@@ -21,9 +23,23 @@ app = typer.Typer(
 )
 
 
+# ANSI escapes that mirror the GUI's bracketed wordmark exactly:
+# blue brackets (#4493f8 ≈ 256-color slot 75), bold "testlookup", dim suffix.
+# Auto-disabled when stdout is not a TTY (piping to a file, CI logs without
+# colour, etc.) so test output stays clean.
+def _banner_for_version() -> str:
+    if sys.stdout.isatty():
+        BLUE = "\033[38;5;75m"
+        BOLD = "\033[1m"
+        DIM = "\033[2m"
+        RESET = "\033[0m"
+        return f"{BLUE}[{RESET}{BOLD}testlookup{RESET}{BLUE}]{RESET} {DIM}v{__version__} · local-first{RESET}"
+    return f"[testlookup] v{__version__} · local-first"
+
+
 def version_callback(value: bool):
     if value:
-        typer.echo(f"testlookup {__version__}")
+        typer.echo(_banner_for_version())
         raise typer.Exit()
 
 

@@ -185,7 +185,7 @@ export default function Sidebar() {
     <aside className="w-56 flex-shrink-0 border-r flex flex-col" style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}>
       {/* Logo */}
       <div className="px-4 py-5 border-b flex items-center justify-center" style={{ borderColor: 'var(--color-border)' }}>
-        <AppLogo className="h-12 w-auto" />
+        <AppLogo className="text-[20px]" />
       </div>
 
       {/* Navigation */}
