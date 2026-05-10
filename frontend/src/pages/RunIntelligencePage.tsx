@@ -1,710 +1,1238 @@
-import { useState, useMemo, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+/**
+ * Run Intelligence — verdict-led redesign per
+ * design_handoff_run_intelligence/README.md.
+ *
+ * Layout (1320 px max-width, 14 px section gaps):
+ *   Header  → title + crumb (build / branch / completed time)
+ *           + persona tabs (Executive / Developer / Manager, persisted in
+ *             localStorage as `tl.runIntel.persona`)
+ *           + Refresh / PDF / Evidence / Compare
+ *           + View Test Cases primary CTA
+ *           Share + Decision-Trail buttons were removed from the header per
+ *           the updated README §5.1; Decision Trail is still reachable via
+ *           the Provenance footer link (§5.11) and the per-failure action
+ *           row in the What-failed card (§5.7).
+ *   Verdict card  → 1.4fr | 1fr split. Left: pulsing dot eyebrow → 28 px
+ *                   "<Gate> · <action>" headline → lede → blocker line →
+ *                   gate-action buttons. Right: 44 px composite-risk score
+ *                   + threshold-marked meter + 2×2 dimension grid.
+ *   Pipeline ribbon → 9 equal columns, status icon (done/skipped/warn/run),
+ *                     name, duration, and a 2 px progress track per stage.
+ *   Body grid (1.6fr | 1fr on ≥1280 px, single column below)
+ *     Left  → Test outcome (5-stat strip + result distribution bar) +
+ *             What failed (failure cards with category pill + error block) +
+ *             Recommended actions (role rows: dev / qa / rm / sre).
+ *     Right → AI confidence (gaps + checks) + Failure category mix +
+ *             Provenance footer with Decision-trail link.
+ *
+ * Out of scope (Phase 2 — README §"Out of Scope"):
+ *   - Mobile (<768 px) — shows a "wider screen" notice
+ *   - Stage drawer body  — button wires up; drawer body shipped later
+ *   - Decision-trail modal body — opens existing DecisionTrailDrawer
+ *   - Print styles — server-side PDF renderer handles export
+ *   - i18n beyond key structure
+ *
+ * Data: a single useRunIntelligence(runId) call. Persona switching uses
+ * useRunModeSummary for non-executive modes (lazy — hook is null for
+ * Executive). Defect promotion still surfaces via the What-failed card
+ * actions; Decision Trail wires to the existing drawer.
+ */
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import {
-  AlertTriangle, Bot, CheckCircle, ChevronRight,
-  Layers, TicketCheck, XCircle, AlertCircle,
-  GitCompare, ArrowDown, ArrowUp, Minus, Filter,
-  HeartPulse, RefreshCw, FileDown, Share2, Package,
-  FileSearch,
+  AlertTriangle, ArrowRight, Bot, Check, ChevronRight, Copy as CopyIcon,
+  FileDown, FileText, GitCompare, Layers, Package, RefreshCw,
+  ShieldAlert, ShieldCheck, ShieldQuestion, Stethoscope,
+  TicketCheck, TriangleAlert, UserRound, Wrench, XCircle,
 } from 'lucide-react'
-import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
-import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
-import PageHeader from '@/components/ui/PageHeader'
+import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
-import CriticalityMatrix from '@/components/ai/CriticalityMatrix'
+import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
-import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import { useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
-import { useRunTestHealth } from '@/hooks/useTestHealth'
-import RoleActionCardShared from '@/components/ai/RoleActionCard'
-import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import type {
-  ReleaseDecisionIntel,
-  StructuredSummary,
+  DimensionScore,
   FailureClusterIntel,
-  BaselineDiff,
-  RunModeSummary,
+  PipelineStage,
+  ReleaseDecisionIntel,
+  RunIntelligence,
 } from '@/services/runIntelligenceService'
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── Types ───────────────────────────────────────────────────────────────────
+type Persona = 'executive' | 'developer' | 'manager'
+type Gate = 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'PENDING'
 
-const RECOMMENDATION_STYLES: Record<string, { bg: string; text: string; icon: React.ReactNode }> = {
-  GO:             { bg: 'bg-emerald-900/30 border-emerald-700/50', text: 'text-emerald-300', icon: <CheckCircle className="h-5 w-5" /> },
-  CONDITIONAL_GO: { bg: 'bg-amber-900/30 border-amber-700/50',    text: 'text-amber-300',   icon: <AlertCircle className="h-5 w-5" /> },
-  NO_GO:          { bg: 'bg-red-900/30 border-red-700/50',        text: 'text-red-300',     icon: <XCircle className="h-5 w-5" /> },
+const PERSONA_KEY = 'tl.runIntel.persona'
+
+// ── Verdict theming ─────────────────────────────────────────────────────────
+const GATE_THEME: Record<Gate, {
+  border: string
+  glow: string
+  bar: string
+  eyebrow: string
+  gate: string
+  pillBg: string
+  pillBd: string
+  pillFg: string
+  meter: string
+  label: string
+  action: string
+  Icon: typeof ShieldAlert
+}> = {
+  GO: {
+    border: 'rgba(34,197,94,0.35)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    bar:    'var(--gate-go)',
+    eyebrow:'#86efac',
+    gate:   '#86efac',
+    pillBg: 'rgba(34,197,94,0.15)',
+    pillBd: 'rgba(34,197,94,0.30)',
+    pillFg: '#86efac',
+    meter:  '#86efac',
+    label:  'Go',
+    action: 'ship cleared',
+    Icon:   ShieldCheck,
+  },
+  CONDITIONAL_GO: {
+    border: 'rgba(245,158,11,0.40)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-glow), transparent 55%)',
+    bar:    'var(--gate-conditional)',
+    eyebrow:'#fcd34d',
+    gate:   '#fcd34d',
+    pillBg: 'rgba(245,158,11,0.15)',
+    pillBd: 'rgba(245,158,11,0.30)',
+    pillFg: '#fcd34d',
+    meter:  '#fcd34d',
+    label:  'Conditional Go',
+    action: 'proceed with mitigation',
+    Icon:   TriangleAlert,
+  },
+  NO_GO: {
+    border: 'rgba(239,68,68,0.40)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, var(--alert-bg-soft), transparent 55%)',
+    bar:    'var(--gate-no-go)',
+    eyebrow:'#fca5a5',
+    gate:   '#fca5a5',
+    pillBg: 'rgba(239,68,68,0.15)',
+    pillBd: 'var(--alert-border-soft)',
+    pillFg: '#fca5a5',
+    meter:  '#fca5a5',
+    label:  'No-Go',
+    action: 'ship blocked',
+    Icon:   ShieldAlert,
+  },
+  PENDING: {
+    border: 'var(--color-border)',
+    glow:   'transparent',
+    bar:    'var(--color-border-light)',
+    eyebrow:'var(--color-text-muted)',
+    gate:   'var(--color-text-secondary)',
+    pillBg: 'var(--color-bg-secondary)',
+    pillBd: 'var(--color-border)',
+    pillFg: 'var(--color-text-muted)',
+    meter:  'var(--color-text-muted)',
+    label:  'Pending',
+    action: 'awaiting evidence',
+    Icon:   ShieldQuestion,
+  },
 }
 
-const CRITICALITY_COLOUR: Record<string, string> = {
-  CRITICAL: 'text-red-400',
-  HIGH:     'text-orange-400',
-  MEDIUM:   'text-amber-400',
-  LOW:      'text-emerald-400',
+function gateOf(decision: ReleaseDecisionIntel | null | undefined): Gate {
+  if (!decision?.recommendation) return 'PENDING'
+  return decision.recommendation
 }
 
-const CRITICALITY_BADGE: Record<string, string> = {
-  CRITICAL: 'bg-red-900/40 text-red-300 border border-red-700/40',
-  HIGH:     'bg-orange-900/40 text-orange-300 border border-orange-700/40',
-  MEDIUM:   'bg-amber-900/30 text-amber-300 border border-amber-700/30',
-  LOW:      'bg-emerald-900/30 text-emerald-300 border border-emerald-700/30',
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function formatDuration(startedAt: string | null, completedAt: string | null): string {
+  if (!startedAt || !completedAt) return '—'
+  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
-const CATEGORY_COLOUR: Record<string, string> = {
-  PRODUCT_BUG:       'bg-red-900/30 text-red-300',
-  INFRASTRUCTURE:    'bg-orange-900/30 text-orange-300',
-  TEST_DATA:         'bg-amber-900/30 text-amber-300',
-  AUTOMATION_DEFECT: 'bg-purple-900/30 text-purple-300',
-  FLAKY:             'bg-pink-900/30 text-pink-300',
-  UNKNOWN:           'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]',
+function totalElapsed(stages: PipelineStage[]): string {
+  if (stages.length === 0) return '—'
+  const starts = stages.map(s => s.started_at).filter(Boolean) as string[]
+  const ends = stages.map(s => s.completed_at).filter(Boolean) as string[]
+  if (starts.length === 0 || ends.length === 0) return '—'
+  const start = Math.min(...starts.map(s => new Date(s).getTime()))
+  const end = Math.max(...ends.map(s => new Date(s).getTime()))
+  return formatDuration(new Date(start).toISOString(), new Date(end).toISOString())
 }
 
-const REGRESSION_LABEL: Record<string, { text: string; colour: string }> = {
-  new_regression:  { text: 'New Regression',      colour: 'text-red-400' },
-  known_flaky:     { text: 'Known Flaky',          colour: 'text-amber-400' },
-  environmental:   { text: 'Environmental',        colour: 'text-orange-400' },
-  product_bug:     { text: 'Product Bug',          colour: 'text-red-400' },
-  infrastructure:  { text: 'Infrastructure',       colour: 'text-orange-400' },
-  unclassified:    { text: 'Unclassified',         colour: 'text-[var(--color-text-muted)]' },
+type StageDisplayStatus = 'done' | 'skipped' | 'warn' | 'failed' | 'running' | 'pending'
+function stageStatus(s: PipelineStage): StageDisplayStatus {
+  const x = (s.status || '').toLowerCase()
+  if (x === 'completed' || x === 'success' || x === 'done')   return 'done'
+  if (x === 'skipped')                                         return 'skipped'
+  if (x === 'failed' || x === 'error')                         return 'failed'
+  if (x === 'running' || x === 'in_progress')                  return 'running'
+  if (x === 'partial' || x === 'warning' || s.fallback_used)   return 'warn'
+  return 'pending'
 }
 
-function passRateColour(rate: number): string {
-  if (rate >= 90) return 'text-emerald-400'
-  if (rate >= 70) return 'text-amber-400'
-  return 'text-red-400'
+const STAGE_DISPLAY_NAME: Record<string, string> = {
+  ingestion:          'Ingestion',
+  anomaly:            'Anomaly detection',
+  rca:                'Root cause analysis',
+  failure_clustering: 'Failure clustering',
+  cluster:            'Failure clustering',
+  defect_triage:      'Defect triage',
+  triage:             'Defect triage',
+  flaky_sentinel:     'Flaky sentinel',
+  flaky:              'Flaky sentinel',
+  test_health:        'Test health',
+  health:             'Test health',
+  summary:            'Summary',
+  release_risk:       'Release risk',
+  release:            'Release risk',
 }
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
+const PIPELINE_ORDER = [
+  'ingestion', 'anomaly', 'rca', 'failure_clustering',
+  'defect_triage', 'flaky_sentinel', 'test_health', 'summary', 'release_risk',
+]
 
-function ReleaseGateBanner({
-  decision,
-  totalTests,
+function alignStages(raw: PipelineStage[]): (PipelineStage | null)[] {
+  // Project the raw stages onto the canonical 9-position pipeline. Keeps
+  // visual stability across runs even when some stages didn't execute.
+  const byKey = new Map<string, PipelineStage>()
+  for (const s of raw) {
+    const k = s.stage_name.toLowerCase()
+    byKey.set(k, s)
+    // alias the second key in pairs (cluster/failure_clustering, triage/defect_triage, …)
+  }
+  return PIPELINE_ORDER.map((slot) => byKey.get(slot) ?? byKey.get(slot.split('_')[0]) ?? null)
+}
+
+// ── Header ──────────────────────────────────────────────────────────────────
+// Per updated README §5.1, the header carries:
+//   Persona tabs · Refresh · PDF · Evidence · Compare · View Test Cases (CTA)
+// Share + Decision Trail were dropped from the header — Decision Trail is
+// still reachable via the Provenance footer link (§5.11) and the per-failure
+// action row in the What-failed card (§5.7).
+function Header({
+  run,
+  persona,
+  setPersona,
+  onRefresh,
+  onPdf,
+  onEvidence,
+  refreshing,
 }: {
-  decision: ReleaseDecisionIntel
-  totalTests: number
+  run: RunIntelligence['run']
+  persona: Persona
+  setPersona: (p: Persona) => void
+  onRefresh: () => void
+  onPdf: () => void
+  onEvidence: () => void
+  refreshing: boolean
 }) {
-  // When the run has no test evidence, the backend can still hand back a
-  // recommendation (often "GO" because composite risk == 0, or "NO_GO" when
-  // pass_rate < hard_floor). Either is misleading when the truth is "we
-  // don't have data to grade this run". Render a neutral Pending banner.
-  if (totalTests <= 0) {
-    return (
-      <div className="card border flex items-start gap-4 bg-[var(--color-bg-secondary)]/40 border-[var(--color-border)]">
-        <div className="mt-0.5 text-[var(--color-text-muted)]"><AlertCircle className="h-5 w-5" /></div>
-        <div className="flex-1">
-          <div className="flex items-center gap-3 mb-1">
-            <span className="text-lg font-bold text-[var(--color-text-secondary)]">PENDING</span>
-            <span className="text-sm text-[var(--color-text-muted)]">No risk score — run has no test results yet</span>
-          </div>
-          <p className="text-sm text-[var(--color-text-secondary)]">
-            The release decision will be computed once test results land for this run.
-          </p>
+  const completedAt = run.end_time ? new Date(run.end_time) : null
+  return (
+    <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
+      <div className="min-w-0">
+        <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]">
+          Run Intelligence
+        </h1>
+        <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
+          <span>Build <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{run.build_number}</code></span>
+          <span aria-hidden>·</span>
+          <span>Branch <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{run.branch || 'unknown'}</code></span>
+          {completedAt && (
+            <>
+              <span aria-hidden>·</span>
+              <span>Completed {completedAt.toLocaleString([], { month: 'numeric', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+            </>
+          )}
         </div>
       </div>
-    )
-  }
 
-  const style = RECOMMENDATION_STYLES[decision.recommendation] ?? RECOMMENDATION_STYLES.CONDITIONAL_GO
+      <div className="flex items-center gap-2 flex-wrap">
+        <PersonaTabs persona={persona} onChange={setPersona} />
+        <GhostBtn onClick={onRefresh} disabled={refreshing} title="Re-fetch intelligence and refresh stage data">
+          <RefreshCw className={clsx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          Refresh
+        </GhostBtn>
+        <GhostBtn onClick={onPdf} title="Export Executive PDF">
+          <FileDown className="h-3.5 w-3.5" />
+          PDF
+        </GhostBtn>
+        <GhostBtn onClick={onEvidence} title="Download evidence bundle (zip)">
+          <Package className="h-3.5 w-3.5" />
+          Evidence
+        </GhostBtn>
+        <Link
+          to={`/runs/compare?left=${run.id}`}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          <GitCompare className="h-3.5 w-3.5" /> Compare
+        </Link>
+        <Link
+          to={`/runs/${run.id}`}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
+          style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
+        >
+          View test cases <ChevronRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+    </header>
+  )
+}
+
+function GhostBtn({
+  children, onClick, title, disabled,
+}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean }) {
   return (
-    <div className={clsx('card border flex items-start gap-4', style.bg)}>
-      <div className={clsx('mt-0.5', style.text)}>{style.icon}</div>
-      <div className="flex-1">
-        <div className="flex items-center gap-3 mb-1">
-          <span className={clsx('text-lg font-bold', style.text)}>{decision.recommendation.replace('_', ' ')}</span>
-          <span className="text-sm text-[var(--color-text-muted)]">Risk score: {decision.risk_score}/100</span>
-        </div>
-        <p className="text-sm text-[var(--color-text-secondary)]">{decision.reasoning}</p>
-        {decision.blocking_issues.length > 0 && (
-          <div className="mt-2">
-            <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Blocking Issues</p>
-            <ul className="space-y-1">
-              {decision.blocking_issues.map((issue, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-[var(--color-text-secondary)]">
-                  <XCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-                  {issue}
-                </li>
-              ))}
-            </ul>
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50"
+      style={{ borderColor: 'var(--color-border)' }}
+      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
+    >
+      {children}
+    </button>
+  )
+}
+
+function PersonaTabs({ persona, onChange }: { persona: Persona; onChange: (p: Persona) => void }) {
+  const items: { id: Persona; label: string }[] = [
+    { id: 'executive', label: 'Executive' },
+    { id: 'developer', label: 'Developer' },
+    { id: 'manager',   label: 'Manager' },
+  ]
+  return (
+    <div
+      role="tablist"
+      aria-label="Persona view"
+      className="flex items-center gap-0 p-0.5 rounded-md"
+      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+    >
+      {items.map(t => {
+        const active = persona === t.id
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            onClick={() => onChange(t.id)}
+            className={clsx(
+              'px-3 py-1 text-[13px] font-medium rounded-sm transition-colors',
+              active
+                ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+            )}
+          >
+            {t.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Verdict card ────────────────────────────────────────────────────────────
+// Implementation lives in VerdictCardWithDimensions below; the standalone
+// VerdictCard scaffolded during the first pass was superseded once the
+// dimensions grid needed to share gate state with the meter.
+
+function RiskMeter({
+  gate, score, pillBg, pillBd, pillFg, pillLabel, meterColor,
+}: { gate: Gate; score: number; pillBg: string; pillBd: string; pillFg: string; pillLabel: string; meterColor: string }) {
+  const clamped = Math.max(0, Math.min(100, score))
+  return (
+    <div>
+      <div className="flex items-end justify-between">
+        <div>
+          <div
+            className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]"
+            style={{ letterSpacing: 'var(--tracking-wider)', marginBottom: 6 }}
+          >
+            Composite risk score
           </div>
-        )}
+          <span className="font-bold tabular-nums leading-none" style={{ fontSize: 44, color: meterColor, letterSpacing: '-0.02em' }}>
+            {gate === 'PENDING' ? '—' : clamped}
+          </span>
+          <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
+        </div>
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold"
+          style={{ background: pillBg, border: `1px solid ${pillBd}`, color: pillFg }}
+        >
+          {pillLabel}
+        </span>
+      </div>
+      <div className="relative mt-3 rounded-full overflow-hidden" style={{ height: 6, background: 'var(--color-bg-secondary)' }}>
+        <i
+          className="block h-full rounded-full"
+          style={{ width: `${clamped}%`, background: 'var(--gradient-risk)' }}
+        />
+        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
+          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
+          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
+        </div>
+      </div>
+      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
+        <span>Safe · 0</span>
+        <span>Conditional · 30</span>
+        <span>Block · 70</span>
+        <span>100</span>
       </div>
     </div>
   )
 }
 
-function LayeredSummary({ summary, mode }: { summary: StructuredSummary | RunModeSummary; mode?: string }) {
-  const layer2 = summary.layer2_incident
-  const layer3 = summary.layer3_evidence
-  const layer4 = summary.layer4_action_plan
-  // Epic 6: citations and similar failures from mode summary
-  const citations = (summary as RunModeSummary).citations ?? []
-  const similarFailures = (summary as RunModeSummary).similar_failures ?? []
-  const markdownReport = (summary as RunModeSummary).markdown_report
-  const fallbackUsed = (summary as RunModeSummary).fallback_used
+function DimensionGrid({ scores, fallback }: { scores: DimensionScore[]; fallback: null }) {
+  // Use up to 4 dimensions; pad with neutral placeholders so the grid stays
+  // visually balanced even when the backend hasn't scored every dimension.
+  const top = (scores ?? []).slice(0, 4)
+  const padded: (DimensionScore | null)[] = [...top]
+  while (padded.length < 4) padded.push(fallback)
 
-  const hasLayers = layer2 || layer3 || layer4
-
-  const handleCopy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      toast.success('Copied to clipboard')
-    } catch {
-      toast.error('Failed to copy')
-    }
+  // If we have nothing to show at all, render a single-cell empty hint.
+  if (top.length === 0) {
+    return (
+      <div
+        className="rounded-md border text-[12px] text-[var(--color-text-muted)] px-3 py-3 text-center"
+        style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+      >
+        Dimension scores will appear once the release-risk stage completes.
+      </div>
+    )
   }
 
-  const modeLabel = mode === 'developer' ? 'Developer Summary'
-    : mode === 'manager' ? 'Manager Summary'
-    : 'Executive Summary'
+  return (
+    <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+      {padded.map((d, i) => <DimensionTile key={i} score={d} />)}
+    </div>
+  )
+}
+
+function DimensionTile({ score }: { score: DimensionScore | null }) {
+  if (!score) {
+    return (
+      <div
+        className="rounded-sm px-2.5 py-2 border opacity-50"
+        style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+      >
+        <div
+          className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
+          style={{ letterSpacing: 'var(--tracking-wider)' }}
+        >
+          <span>—</span>
+        </div>
+      </div>
+    )
+  }
+  const pct = Math.round(score.score)
+  const tone: 'good' | 'warn' | 'bad' | 'neutral' =
+    pct >= 70 ? 'bad' : pct >= 40 ? 'warn' : pct > 0 ? 'good' : 'neutral'
+  const valueColor =
+    tone === 'bad' ? '#fca5a5' :
+    tone === 'warn' ? '#fcd34d' :
+    tone === 'good' ? '#34d399' : 'var(--color-text-secondary)'
+  const barColor =
+    tone === 'bad' ? '#ef4444' :
+    tone === 'warn' ? '#f59e0b' :
+    tone === 'good' ? '#22c55e' : 'var(--color-text-faint)'
+  return (
+    <div
+      className="rounded-sm px-2.5 py-2 border"
+      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+    >
+      <div
+        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        <span>{score.label}</span>
+        <span className="text-[var(--color-text-faint)] font-medium">{Math.round(score.weight * 100)}%</span>
+      </div>
+      <div className="flex items-center gap-2 mt-1.5">
+        <span className="text-[14px] font-semibold tabular-nums min-w-[36px]" style={{ color: valueColor }}>
+          {pct === 0 ? '—' : pct}
+        </span>
+        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
+          <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: barColor }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Pipeline ribbon ─────────────────────────────────────────────────────────
+function PipelineRibbon({
+  stages,
+  confidencePct,
+  evidenceCount,
+  toolCount,
+}: {
+  stages: PipelineStage[]
+  confidencePct: number
+  evidenceCount: number
+  toolCount: number
+}) {
+  const aligned = useMemo(() => alignStages(stages), [stages])
+  const completedCount = aligned.filter(s => s && stageStatus(s) === 'done').length
+  const skippedCount = aligned.filter(s => s && stageStatus(s) === 'skipped').length
+  const allDone = aligned.every(s => !s || ['done', 'skipped', 'failed'].includes(stageStatus(s)))
+  const total = totalElapsed(stages)
+
+  const confTone: 'good' | 'warn' | 'bad' | 'neutral' =
+    confidencePct >= 70 ? 'good' : confidencePct >= 40 ? 'warn' : confidencePct > 0 ? 'bad' : 'neutral'
+  const confBg =
+    confTone === 'good' ? 'rgba(34,197,94,0.12)' :
+    confTone === 'warn' ? 'rgba(245,158,11,0.12)' :
+    confTone === 'bad'  ? 'rgba(239,68,68,0.12)' :
+    'var(--color-bg-secondary)'
+  const confFg =
+    confTone === 'good' ? '#34d399' :
+    confTone === 'warn' ? '#fcd34d' :
+    confTone === 'bad'  ? '#fca5a5' : 'var(--color-text-muted)'
+  const confBd =
+    confTone === 'good' ? 'rgba(34,197,94,0.25)' :
+    confTone === 'warn' ? 'rgba(245,158,11,0.25)' :
+    confTone === 'bad'  ? 'rgba(239,68,68,0.25)' :
+    'var(--color-border)'
 
   return (
-    <div className="space-y-4">
-      {/* Mode indicator for non-executive views */}
-      {mode && mode !== 'executive' && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="bg-white/10 text-[var(--color-text-secondary)] border border-[var(--color-border-light)] px-2 py-0.5 rounded">
-            {modeLabel}
+    <section
+      className="card"
+      style={{ padding: '16px 18px 18px', marginBottom: 14, background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' }}
+    >
+      <div className="flex items-start justify-between gap-2.5 mb-3.5 flex-wrap">
+        <div>
+          <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">AI pipeline · Deep Analysis</h3>
+          <div className="text-[12px] text-[var(--color-text-muted)] mt-0.5">
+            <strong style={{ color: 'var(--status-passed)', fontWeight: 500 }}>● {allDone ? 'Completed' : 'Running'}</strong>
+            {' · '}
+            {aligned.length} stages
+            {' · '}{completedCount} done
+            {skippedCount > 0 && <> · {skippedCount} skipped</>}
+            {' · '}{total} total
+          </div>
+        </div>
+        <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+            style={{ background: confBg, color: confFg, border: `1px solid ${confBd}` }}
+            title="AI confidence"
+          >
+            Confidence {confidencePct}%
           </span>
-          {fallbackUsed && (
-            <span className="bg-amber-900/20 text-amber-400 border border-amber-700/30 px-2 py-0.5 rounded">
-              Fallback mode
+          <span>· {evidenceCount} evidence item{evidenceCount === 1 ? '' : 's'} · {toolCount} tool{toolCount === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(9, minmax(0, 1fr))' }}>
+        {aligned.map((s, i) => (
+          <StageCell key={i} num={i + 1} slot={PIPELINE_ORDER[i]} stage={s} isLast={i === aligned.length - 1} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function StageCell({ num, slot, stage, isLast }: { num: number; slot: string; stage: PipelineStage | null; isLast: boolean }) {
+  const status: StageDisplayStatus = stage ? stageStatus(stage) : 'pending'
+  const dur = stage ? formatDuration(stage.started_at, stage.completed_at) : '—'
+  const name = stage?.stage_name ? (STAGE_DISPLAY_NAME[stage.stage_name.toLowerCase()] ?? stage.stage_name) : (STAGE_DISPLAY_NAME[slot] ?? slot)
+
+  const ic = (() => {
+    if (status === 'done')    return { bg: 'var(--status-passed-soft)', fg: '#34d399', glyph: <Check className="h-[9px] w-[9px]" strokeWidth={3} /> }
+    if (status === 'warn')    return { bg: 'rgba(245,158,11,0.18)', fg: '#fcd34d', glyph: <AlertTriangle className="h-[9px] w-[9px]" strokeWidth={2.5} /> }
+    if (status === 'failed')  return { bg: 'rgba(239,68,68,0.18)', fg: '#fca5a5', glyph: <XCircle className="h-[9px] w-[9px]" strokeWidth={2.5} /> }
+    if (status === 'running') return { bg: 'rgba(68,147,248,0.18)', fg: 'var(--color-accent)', glyph: <RefreshCw className="h-[9px] w-[9px] animate-spin" /> }
+    if (status === 'skipped') return { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-faint)', glyph: <span className="text-[10px] leading-none">—</span> }
+    return { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-faint)', glyph: <span className="text-[10px] leading-none">·</span> }
+  })()
+
+  const trackFill = status === 'done' ? 'var(--status-passed)'
+    : status === 'warn' ? 'var(--gate-conditional)'
+    : status === 'failed' ? 'var(--gate-no-go)'
+    : status === 'running' ? 'var(--color-accent)'
+    : status === 'skipped' ? 'transparent'
+    : 'var(--color-border)'
+
+  return (
+    <button
+      type="button"
+      tabIndex={0}
+      aria-label={`Stage ${num}: ${name}, ${status}`}
+      title={status === 'skipped' ? (stage?.skipped_reason || 'Skipped') : `${name} · ${dur}`}
+      className={clsx(
+        'relative text-left transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]',
+        status === 'skipped' && 'opacity-55',
+      )}
+      style={{
+        padding: '10px 8px',
+        borderRight: isLast ? '0' : '1px solid var(--color-border)',
+      }}
+      onClick={() => { /* TODO: open stage drawer (Phase 2) */ }}
+    >
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-[10px] font-semibold tabular-nums text-[var(--color-text-faint)]">
+          {String(num).padStart(2, '0')}
+        </span>
+        <span
+          className="inline-flex items-center justify-center rounded-full"
+          style={{ width: 14, height: 14, background: ic.bg, color: ic.fg, border: status === 'skipped' ? '1px dashed var(--color-border-light)' : undefined }}
+        >
+          {ic.glyph}
+        </span>
+      </div>
+      <div className={clsx('text-[12px] font-semibold leading-[1.25]', status === 'skipped' ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]')}>
+        {name}
+        {status === 'skipped' && (
+          <span
+            className="block text-[9.5px] uppercase font-medium mt-0.5 text-[var(--color-text-faint)]"
+            style={{ letterSpacing: '.06em' }}
+          >
+            Skipped
+          </span>
+        )}
+      </div>
+      <div className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums mt-1">{dur}</div>
+
+      {/* progress track */}
+      <div className="absolute left-0 right-0 bottom-0 h-0.5" style={{ background: 'var(--color-border)' }}>
+        <i className="block h-full" style={{ width: status === 'skipped' ? '0%' : '100%', background: trackFill }} />
+      </div>
+    </button>
+  )
+}
+
+// ── Body: Test outcome ─────────────────────────────────────────────────────
+function CardShell({
+  title,
+  rightSlot,
+  children,
+}: {
+  title: string
+  rightSlot?: React.ReactNode
+  children?: React.ReactNode
+}) {
+  return (
+    <div
+      className="overflow-hidden rounded-xl"
+      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
+    >
+      <div
+        className="flex items-center justify-between gap-2.5 px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
+        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function TestOutcomeCard({
+  run,
+  failureClusters,
+  affectedSuites,
+  categoryBreakdown,
+}: {
+  run: RunIntelligence['run']
+  failureClusters: FailureClusterIntel[]
+  affectedSuites: Array<{ suite: string; failed_count: number }>
+  categoryBreakdown: Record<string, number>
+}) {
+  const total = run.total_tests ?? ((run.passed_tests ?? 0) + (run.failed_tests ?? 0) + (run.skipped_tests ?? 0) + (run.broken_tests ?? 0))
+  const passRate = total > 0 ? ((run.passed_tests ?? 0) / total) * 100 : 0
+  const failed = run.failed_tests ?? 0
+  const skipped = run.skipped_tests ?? 0
+  const dominantCategory = Object.entries(categoryBreakdown).sort((a, b) => b[1] - a[1])[0]?.[0]?.replace(/_/g, ' ').toLowerCase() ?? '—'
+  const topSuite = affectedSuites[0]?.suite
+
+  return (
+    <CardShell
+      title="Test outcome"
+      rightSlot={topSuite ? (
+        <>
+          <span>Affected suite</span>
+          <SuiteChip suite={topSuite} />
+        </>
+      ) : <span>—</span>}
+    >
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
+        <Stat tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'} label="Pass rate" value={`${passRate.toFixed(1)}`} unit="%" tiny={`${run.passed_tests ?? 0} / ${total} passed`} borderRight />
+        <Stat label="Total tests" value={`${total}`} tiny={`across ${affectedSuites.length || 1} suite${affectedSuites.length === 1 ? '' : 's'}`} borderRight />
+        <Stat tone={failed > 0 ? 'bad' : undefined} label="Failed" value={`${failed}`} tiny={failed > 0 ? dominantCategory : '—'} borderRight />
+        <Stat label="Skipped" value={`${skipped}`} tiny={skipped > 0 ? 'in run' : '—'} borderRight />
+        <Stat label="Anomalies" value={`${failureClusters.length}`} tiny={failureClusters.length > 0 ? `${failureClusters.length} cluster${failureClusters.length === 1 ? '' : 's'}` : 'no clusters'} />
+      </div>
+
+      <div className="px-4 pb-3 pt-2">
+        <div
+          className="flex items-baseline justify-between text-[11px] uppercase text-[var(--color-text-muted)] mb-1.5"
+          style={{ letterSpacing: 'var(--tracking-wider)' }}
+        >
+          <span>Result distribution</span>
+          <span className="text-[var(--color-text-secondary)] font-medium">{run.passed_tests ?? 0} passed · {failed} failed{skipped > 0 ? ` · ${skipped} skipped` : ''}</span>
+        </div>
+        <div className="h-2 rounded-full overflow-hidden flex" style={{ background: 'var(--color-bg-secondary)' }}>
+          {(run.passed_tests ?? 0) > 0 && <div style={{ flex: run.passed_tests ?? 0, background: '#22c55e' }} />}
+          {failed > 0 && <div style={{ flex: failed, background: '#ef4444' }} />}
+          {skipped > 0 && <div style={{ flex: skipped, background: '#fcd34d' }} />}
+        </div>
+        <div className="flex gap-3.5 mt-1.5 text-[11px] text-[var(--color-text-muted)]">
+          <Legend color="#22c55e" label="Passed" />
+          {failed > 0 && <Legend color="#ef4444" label={`Failed · ${dominantCategory}`} />}
+          {skipped > 0 && <Legend color="#fcd34d" label="Skipped" />}
+        </div>
+      </div>
+    </CardShell>
+  )
+}
+
+function Stat({
+  label, value, unit, tiny, tone, borderRight,
+}: { label: string; value: string; unit?: string; tiny?: string; tone?: 'warn' | 'bad' | 'good'; borderRight?: boolean }) {
+  const numColor = tone === 'bad' ? '#fca5a5' : tone === 'warn' ? '#fcd34d' : tone === 'good' ? '#34d399' : 'var(--color-text)'
+  return (
+    <div className="px-4 py-3.5 flex flex-col gap-1" style={{ borderRight: borderRight ? '1px solid var(--color-border)' : '0' }}>
+      <span
+        className="text-[10.5px] uppercase text-[var(--color-text-muted)]"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        {label}
+      </span>
+      <span className="text-[24px] font-bold tabular-nums leading-none" style={{ color: numColor }}>
+        {value}
+        {unit && <small className="text-[12px] font-medium text-[var(--color-text-muted)] ml-0.5">{unit}</small>}
+      </span>
+      {tiny && <span className="text-[10.5px] text-[var(--color-text-muted)]">{tiny}</span>}
+    </div>
+  )
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <i className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
+      {label}
+    </span>
+  )
+}
+
+function SuiteChip({ suite }: { suite: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[10.5px]"
+      style={{
+        background: 'rgba(68,147,248,0.12)',
+        color: 'var(--color-accent)',
+        border: '1px solid rgba(68,147,248,0.25)',
+      }}
+    >
+      {suite}
+    </span>
+  )
+}
+
+// ── Body: What failed ──────────────────────────────────────────────────────
+function WhatFailedCard({
+  clusters,
+  runId,
+  onPromote,
+  onDecisionTrail,
+}: {
+  clusters: FailureClusterIntel[]
+  runId: string
+  onPromote: (cluster: FailureClusterIntel) => void
+  onDecisionTrail: () => void
+}) {
+  if (clusters.length === 0) {
+    return (
+      <CardShell title="What failed" rightSlot={<span>0 failures</span>}>
+        <div className="px-4 py-6 text-[13px] text-[var(--color-text-secondary)]">
+          No failures in this run.
+        </div>
+      </CardShell>
+    )
+  }
+
+  return (
+    <CardShell title="What failed" rightSlot={<span>{clusters.length} of {clusters.length} failure{clusters.length === 1 ? '' : 's'} shown</span>}>
+      {clusters.slice(0, 3).map((c) => (
+        <FailureBlock
+          key={c.cluster_id}
+          cluster={c}
+          runId={runId}
+          onPromote={() => onPromote(c)}
+          onDecisionTrail={onDecisionTrail}
+        />
+      ))}
+      {clusters.length > 3 && (
+        <div className="px-4 py-2.5 text-[12px] text-[var(--color-text-muted)] border-t" style={{ borderColor: 'var(--color-border)' }}>
+          + {clusters.length - 3} more failure{clusters.length - 3 === 1 ? '' : 's'} not shown
+        </div>
+      )}
+    </CardShell>
+  )
+}
+
+function FailureBlock({
+  cluster,
+  runId,
+  onPromote,
+  onDecisionTrail,
+}: {
+  cluster: FailureClusterIntel
+  runId: string
+  onPromote: () => void
+  onDecisionTrail: () => void
+}) {
+  const firstTestId = cluster.member_test_ids[0]
+  const errPreview = cluster.representative_error?.split('\n').slice(0, 4).join('\n') ?? ''
+  return (
+    <div
+      className="relative"
+      style={{
+        padding: 16,
+        borderLeft: '3px solid #ef4444',
+        background: 'linear-gradient(90deg, rgba(239,68,68,0.06), transparent 30%), var(--color-bg-card)',
+        borderTop: '1px solid var(--color-border)',
+      }}
+    >
+      <div className="flex items-center justify-between gap-2.5 flex-wrap mb-2">
+        <span className="font-mono text-[13px] text-[var(--color-text)] font-medium truncate">
+          {cluster.label}
+        </span>
+        <ProductBugPill criticality={cluster.criticality_level} />
+      </div>
+      <div className="flex flex-wrap gap-3.5 text-[12px] text-[var(--color-text-muted)] mb-2.5">
+        <span>{cluster.size} test{cluster.size === 1 ? '' : 's'} in cluster</span>
+        {cluster.cohesion_score != null && (
+          <span>· cohesion {Math.round(cluster.cohesion_score * 100)}%</span>
+        )}
+      </div>
+      {errPreview && (
+        <pre
+          role="region"
+          aria-label="Error stack trace"
+          className="font-mono text-[12px] whitespace-pre-wrap m-0"
+          style={{
+            background: 'var(--color-bg)',
+            border: '1px solid var(--color-border)',
+            borderLeft: '2px solid rgba(239,68,68,0.55)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '10px 12px',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          {errPreview}
+        </pre>
+      )}
+      <div className="flex flex-wrap gap-2 mt-3">
+        {firstTestId && (
+          <Link
+            to={`/runs/${runId}/tests/${firstTestId}`}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            Open test case
+          </Link>
+        )}
+        <GhostBtn onClick={onDecisionTrail} title="Why the AI assigned this category">
+          Decision trail
+        </GhostBtn>
+        <GhostBtn onClick={onPromote} title="Promote this cluster to a defect (Jira)">
+          <TicketCheck className="h-3.5 w-3.5" /> File defect
+        </GhostBtn>
+      </div>
+    </div>
+  )
+}
+
+function ProductBugPill({ criticality }: { criticality: string | null }) {
+  const tone =
+    criticality === 'CRITICAL' || criticality === 'HIGH' ? 'bug' :
+    'neutral'
+  const bg = tone === 'bug' ? 'rgba(239,68,68,0.15)' : 'var(--color-bg-secondary)'
+  const fg = tone === 'bug' ? '#fca5a5' : 'var(--color-text-faint)'
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold uppercase"
+      style={{ background: bg, color: fg, letterSpacing: 'var(--tracking-wide)' }}
+    >
+      Product bug
+    </span>
+  )
+}
+
+// ── Body: Recommended actions ──────────────────────────────────────────────
+// Per updated README §5.8:
+//   - Default order: Developer → QA → Release Manager → SRE.
+//   - Persona-driven re-emphasis: Executive moves Release Manager to slot 1
+//     (rest stay in default order); Developer + Manager keep the default.
+//   - Rows that have no copy in `roleActions` are rendered dimmed (60 %
+//     opacity) and locked, not hidden — the spec wants the read of "this
+//     role has nothing to do this run" to be explicit, not invisible.
+function RecommendedActionsCard({
+  roleActions,
+  ownerHints,
+  persona,
+}: {
+  roleActions: Record<string, string>
+  ownerHints?: Record<string, string>
+  persona: Persona
+}) {
+  type Row = { id: string; label: string; tone: 'dev' | 'qa' | 'rm' | 'sre'; Icon: typeof Wrench }
+  const baseRows: Row[] = [
+    { id: 'DEVELOPER',       label: 'Developer',       tone: 'dev', Icon: Wrench      },
+    { id: 'QA',              label: 'QA',              tone: 'qa',  Icon: UserRound   },
+    { id: 'RELEASE_MANAGER', label: 'Release Manager', tone: 'rm',  Icon: ShieldCheck },
+    { id: 'SRE',             label: 'SRE',             tone: 'sre', Icon: Stethoscope },
+  ]
+
+  // Executive view: Release Manager floats to the top, the rest preserve
+  // their default order. Developer + Manager keep the canonical order
+  // (default IS the Manager view; Developer is already first by default).
+  const orderedRows: Row[] = (() => {
+    if (persona !== 'executive') return baseRows
+    const rm  = baseRows.find(r => r.id === 'RELEASE_MANAGER')
+    const rest = baseRows.filter(r => r.id !== 'RELEASE_MANAGER')
+    return rm ? [rm, ...rest] : baseRows
+  })()
+
+  // We render every canonical role even when the action prose is empty —
+  // dimmed rows are intentional per §5.8 ("de-prioritized roles").
+  const hasAnyAction = orderedRows.some(r => roleActions[r.id])
+  if (!hasAnyAction) {
+    return (
+      <CardShell title="Recommended actions" rightSlot={<span>Routed by role</span>}>
+        <div className="p-4 text-[13px] text-[var(--color-text-muted)]">
+          No role-specific actions generated for this run.
+        </div>
+      </CardShell>
+    )
+  }
+
+  const copyText = (text: string) => {
+    void navigator.clipboard.writeText(text).then(
+      () => toast.success('Action copied'),
+      () => toast.error('Copy failed'),
+    )
+  }
+
+  return (
+    <CardShell title="Recommended actions" rightSlot={<span>Routed by role</span>}>
+      <div className="p-3.5 grid gap-2.5">
+        {orderedRows.map((r) => {
+          const txt = roleActions[r.id]
+          const owner = ownerHints?.[r.id]
+          // Dim a row only when there's no action prose (de-prioritized
+          // role for this run). Persona controls *order*, not contrast —
+          // every role's row is fully legible in every persona.
+          const dim = !txt
+          return (
+            <RoleRow
+              key={r.id}
+              tone={r.tone}
+              Icon={r.Icon}
+              label={r.label}
+              owner={owner}
+              text={txt ?? 'No action required for this role this run.'}
+              dim={dim}
+              onCopy={() => txt && copyText(txt)}
+            />
+          )
+        })}
+      </div>
+    </CardShell>
+  )
+}
+
+function RoleRow({
+  tone, Icon, label, owner, text, dim, onCopy,
+}: {
+  tone: 'dev' | 'qa' | 'rm' | 'sre'
+  Icon: typeof Wrench
+  label: string
+  owner?: string
+  text: string
+  dim: boolean
+  onCopy: () => void
+}) {
+  const pal = {
+    dev: { bg: 'rgba(168,85,247,0.10)', fg: '#c084fc' },
+    qa:  { bg: 'rgba(68,147,248,0.10)', fg: 'var(--color-accent)' },
+    rm:  { bg: 'rgba(34,197,94,0.10)',  fg: '#4ade80' },
+    sre: { bg: 'rgba(245,158,11,0.10)', fg: '#fbbf24' },
+  }[tone]
+  return (
+    <div
+      className={clsx('grid gap-2.5 px-3 py-2.5 rounded-md border items-start', dim && 'opacity-65')}
+      style={{ gridTemplateColumns: '22px 1fr auto', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+    >
+      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: pal.bg, color: pal.fg }}>
+        <Icon className="h-3 w-3" />
+      </span>
+      <div className="min-w-0">
+        <div
+          className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5"
+          style={{ letterSpacing: 'var(--tracking-wider)' }}
+        >
+          {label}
+          {owner && (
+            <span
+              className="font-mono text-[11px] text-[var(--color-text-secondary)] px-1.5 py-px rounded-sm"
+              style={{ background: 'var(--color-bg-secondary)', textTransform: 'none', letterSpacing: 0 }}
+            >
+              @{owner}
             </span>
           )}
         </div>
-      )}
-
-      {/* Structured executive panel (preferred) or plain-text fallback */}
-      {(summary as StructuredSummary).executive_panel ? (
-        <ExecutiveSummaryPanel panel={(summary as StructuredSummary).executive_panel as NonNullable<StructuredSummary['executive_panel']>} />
-      ) : summary.executive_summary ? (
-        <div className="theme-bg-secondary border theme-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">{modeLabel}</p>
-            <button
-              onClick={() => handleCopy(summary.executive_summary ?? '')}
-              className="text-xs text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
-              title="Copy summary"
-            >
-              Copy
-            </button>
-          </div>
-          <p className="text-sm text-[var(--color-text)] leading-relaxed">{summary.executive_summary}</p>
-        </div>
-      ) : null}
-
-      {/* Render markdown_report as fallback when layer fields are all null */}
-      {!hasLayers && markdownReport && (
-        <div className="bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Detailed Analysis</p>
-            <button
-              onClick={() => handleCopy(markdownReport)}
-              className="text-xs text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
-              title="Copy report"
-            >
-              Copy
-            </button>
-          </div>
-          <div className="text-sm text-[var(--color-text-secondary)] leading-relaxed whitespace-pre-wrap">
-            {markdownReport}
-          </div>
-        </div>
-      )}
-
-      {layer2 && (
-        <div className="bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] rounded-xl p-4 space-y-3">
-          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Incident View</p>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            {layer2.what_failed && (
-              <div>
-                <span className="text-[var(--color-text-muted)] text-xs">What failed</span>
-                <p className="text-[var(--color-text)]">{layer2.what_failed}</p>
-              </div>
-            )}
-            {layer2.likely_cause && (
-              <div>
-                <span className="text-[var(--color-text-muted)] text-xs">Likely cause</span>
-                <p className="text-[var(--color-text)]">{layer2.likely_cause}</p>
-              </div>
-            )}
-            {layer2.scope && (
-              <div>
-                <span className="text-[var(--color-text-muted)] text-xs">Scope</span>
-                <p className="text-[var(--color-text)]">{layer2.scope}</p>
-              </div>
-            )}
-            {layer2.criticality && (
-              <div>
-                <span className="text-[var(--color-text-muted)] text-xs">Criticality</span>
-                <p className={clsx('font-semibold', CRITICALITY_COLOUR[layer2.criticality])}>{layer2.criticality}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {layer3 && (
-        <div className="bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] rounded-xl p-4 space-y-2">
-          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Evidence Pack</p>
-          {layer3.data_sources_used && layer3.data_sources_used.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {layer3.data_sources_used.map((src) => (
-                <span key={src} className="badge bg-white/10 text-[var(--color-text-secondary)] border border-[var(--color-border-light)] text-xs">{src}</span>
-              ))}
-            </div>
-          )}
-          {layer3.log_anomalies && layer3.log_anomalies.length > 0 && (
-            <ul className="space-y-1">
-              {layer3.log_anomalies.map((a, i) => (
-                <li key={i} className="text-sm text-[var(--color-text-secondary)] flex items-start gap-2">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                  {a}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {layer4 && (
-        <div className="bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] rounded-xl p-4 space-y-3">
-          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Action Plan</p>
-          {layer4.immediate_mitigation && (
-            <div className="bg-amber-900/20 border border-amber-700/30 rounded-lg px-3 py-2 text-sm">
-              <span className="text-amber-300 font-medium">Immediate: </span>
-              <span className="text-[var(--color-text)]">{layer4.immediate_mitigation}</span>
-            </div>
-          )}
-          {layer4.fix_recommendations && layer4.fix_recommendations.length > 0 && (
-            <div>
-              <p className="text-xs text-[var(--color-text-muted)] mb-1.5">Fix recommendations</p>
-              <ul className="space-y-1">
-                {layer4.fix_recommendations.map((r, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-[var(--color-text-secondary)]">
-                    <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
-                    {r}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Similar historical failures */}
-      {similarFailures.length > 0 && (
-        <div className="bg-[var(--color-bg-secondary)]/40 border border-[var(--color-border)]/30 rounded-xl p-4">
-          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-            Similar Historical Failures
-          </p>
-          <ul className="space-y-1">
-            {similarFailures.slice(0, 5).map((sf, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-[var(--color-text-muted)]">
-                <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
-                {typeof sf === 'string' ? sf : sf.test_name || JSON.stringify(sf)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Citations */}
-      {citations.length > 0 && (
-        <div className="bg-[var(--color-bg-secondary)]/40 border border-[var(--color-border)]/30 rounded-xl p-4">
-          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-            Evidence Citations
-          </p>
-          <ul className="space-y-2">
-            {citations.map((c, i) => (
-              <li key={i} className="space-y-0.5">
-                <span className="text-xs text-[var(--color-text)] font-mono">[{c.source}]</span>
-                <p className="text-xs text-[var(--color-text-muted)] pl-2 truncate">{c.excerpt}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ClusterCard({
-  cluster,
-  onPromote,
-}: {
-  cluster: FailureClusterIntel
-  onPromote?: (clusterId: string, label: string) => void
-}) {
-  const critLevel = cluster.criticality_level ?? 'MEDIUM'
-  const [showEvidence, setShowEvidence] = useState(false)
-
-  return (
-    <div className="card p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 min-w-0">
-          <Layers className="h-4 w-4 text-[var(--color-text-muted)] shrink-0" />
-          <span className="text-sm font-medium text-[var(--color-text)] truncate max-w-[240px]">{cluster.label}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={clsx('badge text-xs', CRITICALITY_BADGE[critLevel])}>{critLevel}</span>
-          <span className="badge bg-red-900/30 text-red-300 border border-red-700/30">{cluster.size} failures</span>
-        </div>
+        <p className="text-[13px] text-[var(--color-text-secondary)] m-0 mt-1 leading-relaxed">{text}</p>
       </div>
-
-      {cluster.representative_error && (
-        <p className="text-xs text-[var(--color-text-muted)] pl-6 truncate">{cluster.representative_error}</p>
-      )}
-
-      {/* Cluster action bar */}
-      <div className="pl-6 flex items-center gap-3">
-        {onPromote && (
-          <button
-            onClick={() => onPromote(cluster.cluster_id, cluster.label)}
-            className="flex items-center gap-1 text-[10px] text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors"
-          >
-            <TicketCheck className="h-3 w-3" />
-            Promote to Defect
-          </button>
-        )}
-        <button
-          onClick={() => setShowEvidence(!showEvidence)}
-          className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
-        >
-          {showEvidence ? 'Hide' : 'View'} Evidence
-        </button>
-        <Link
-          to={`/search?q=${encodeURIComponent(cluster.label)}&search_type=semantic`}
-          className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
-        >
-          Similar Failures
-        </Link>
-      </div>
-
-      {/* Evidence expansion */}
-      {showEvidence && cluster.dimension_scores.length > 0 && (
-        <div className="pl-6 space-y-1 pt-1 border-t border-[var(--color-border)]/50">
-          <p className="text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider">Criticality Dimensions</p>
-          {cluster.dimension_scores.map(d => (
-            <div key={d.name} className="flex items-center gap-2 text-[10px]">
-              <span className="text-[var(--color-text-muted)] w-24 truncate">{d.label}</span>
-              <div className="flex-1 h-1 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
-                <div className="h-full bg-neutral-300/60 rounded-full" style={{ width: `${d.score}%` }} />
-              </div>
-              <span className="text-[var(--color-text-faint)] tabular-nums w-8 text-right">{d.score.toFixed(0)}</span>
-            </div>
-          ))}
-          <p className="text-[10px] text-[var(--color-text-faint)]">{cluster.member_test_ids.length} member tests · cohesion {((cluster.cohesion_score ?? 0) * 100).toFixed(0)}%</p>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function WhatChangedPanel({ diff }: { diff: BaselineDiff }) {
-  const [activeFilter, setActiveFilter] = useState<string | null>(null)
-  const reg = REGRESSION_LABEL[diff.regression_classification] ?? REGRESSION_LABEL.unclassified
-  const deltaPositive = (diff.pass_rate_delta ?? 0) > 0
-  const deltaZero = diff.pass_rate_delta === null || diff.pass_rate_delta === 0
-
-  // Collect unique classifications from regression_clusters for filter chips
-  const clusterClassifications = useMemo(() => {
-    const seen = new Set<string>()
-    for (const rc of (diff.regression_clusters ?? [])) {
-      seen.add(rc.classification)
-    }
-    return Array.from(seen)
-  }, [diff.regression_clusters])
-
-  // Filter classified_new_failures by active chip
-  const classifiedFailures = diff.classified_new_failures ?? []
-  const filteredFailures = activeFilter
-    ? classifiedFailures.filter(f => f.classification === activeFilter)
-    : classifiedFailures
-
-  // Fallback to raw new_failures when classified list is empty
-  const displayNames = filteredFailures.length > 0
-    ? filteredFailures.map(f => f.name)
-    : (activeFilter ? [] : diff.new_failures)
-
-  return (
-    <div className="card space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <GitCompare className="h-4 w-4 text-[var(--color-text-muted)]" />
-          <p className="text-sm font-medium text-[var(--color-text-secondary)]">What Changed Since Last Good Run</p>
-        </div>
-        <span className={clsx('text-xs font-semibold', reg.colour)}>{reg.text}</span>
-      </div>
-
-      {/* Delta chips */}
-      <div className="flex flex-wrap gap-2">
-        {diff.pass_rate_delta !== null && (
-          <span className={clsx(
-            'flex items-center gap-1 text-xs font-mono px-2 py-1 rounded-full',
-            deltaZero ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]' :
-            deltaPositive ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300',
-          )}>
-            {deltaZero ? <Minus className="h-3 w-3" /> : deltaPositive ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
-            {Math.abs(diff.pass_rate_delta).toFixed(1)}pp pass-rate
-          </span>
-        )}
-        {diff.new_failures.length > 0 && (
-          <span className="flex items-center gap-1 text-xs font-mono px-2 py-1 rounded-full bg-red-900/30 text-red-300">
-            +{diff.new_failures.length} new failures
-          </span>
-        )}
-        {diff.resolved_failures.length > 0 && (
-          <span className="flex items-center gap-1 text-xs font-mono px-2 py-1 rounded-full bg-emerald-900/30 text-emerald-300">
-            <CheckCircle className="h-3 w-3" />
-            {diff.resolved_failures.length} resolved
-          </span>
-        )}
-        {(diff.suites_impacted_delta ?? 0) !== 0 && (
-          <span className={clsx(
-            'flex items-center gap-1 text-xs font-mono px-2 py-1 rounded-full',
-            (diff.suites_impacted_delta ?? 0) > 0 ? 'bg-orange-900/30 text-orange-300' : 'bg-emerald-900/30 text-emerald-300',
-          )}>
-            {(diff.suites_impacted_delta ?? 0) > 0 ? '+' : ''}{diff.suites_impacted_delta} suites
-          </span>
-        )}
-        {diff.baseline_build_number && (
-          <span className="text-xs text-[var(--color-text-muted)] py-1">
-            vs build #{diff.baseline_build_number}
-            {diff.selection_reason && diff.selection_reason !== 'latest_passing' && (
-              <span className="ml-1 text-[var(--color-text-faint)]">({diff.selection_reason.replace(/_/g, ' ')})</span>
-            )}
-          </span>
-        )}
-      </div>
-
-      {/* Commit range */}
-      {diff.commit_range && !diff.commit_range.same_commit && (
-        <div className="flex items-center gap-2 text-xs bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2">
-          <span className="text-[var(--color-text-muted)]">Commits:</span>
-          {diff.commit_range.from_commit && (
-            <code className="text-[var(--color-text-muted)] font-mono">{diff.commit_range.from_commit}</code>
-          )}
-          <span className="text-[var(--color-text-faint)]">→</span>
-          {diff.commit_range.to_commit && (
-            <code className="text-[var(--color-text)] font-mono">{diff.commit_range.to_commit}</code>
-          )}
-        </div>
-      )}
-      {diff.commit_range?.same_commit && (
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2">
-          Same commit — environment or data change suspected
-        </div>
-      )}
-
-      {/* Config drift */}
-      {diff.config_drift && diff.config_drift.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider">Config Drift Detected</p>
-          {diff.config_drift.map((d, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs bg-orange-900/10 border border-orange-700/20 rounded-lg px-3 py-1.5">
-              <span className="text-orange-400 font-medium">{d.field}</span>
-              <span className="text-[var(--color-text-muted)]">{d.old_value ?? '(empty)'}</span>
-              <span className="text-[var(--color-text-faint)]">→</span>
-              <span className="text-orange-300">{d.new_value ?? '(empty)'}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Classification filter chips */}
-      {clusterClassifications.length > 1 && diff.new_failures.length > 0 && (
-        <div>
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <Filter className="h-3 w-3 text-[var(--color-text-faint)]" />
-            <span className="text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider">Filter by type</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              onClick={() => setActiveFilter(null)}
-              className={clsx(
-                'text-xs px-2 py-0.5 rounded-full border transition-colors',
-                activeFilter === null
-                  ? 'bg-[var(--color-bg-hover)] border-[var(--color-border-light)] text-[var(--color-text)]'
-                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]',
-              )}
-            >
-              All
-            </button>
-            {clusterClassifications.map(cls => {
-              const meta = REGRESSION_LABEL[cls] ?? { text: cls, colour: 'text-[var(--color-text-muted)]' }
-              return (
-                <button
-                  key={cls}
-                  onClick={() => setActiveFilter(activeFilter === cls ? null : cls)}
-                  className={clsx(
-                    'text-xs px-2 py-0.5 rounded-full border transition-colors',
-                    activeFilter === cls
-                      ? clsx('bg-[var(--color-bg-hover)] border-[var(--color-border-light)]', meta.colour)
-                      : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]',
-                  )}
-                >
-                  {meta.text}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* New failure list — filtered by active chip */}
-      {displayNames.length > 0 && (
-        <div>
-          <p className="text-xs text-[var(--color-text-muted)] mb-1">
-            {activeFilter
-              ? `${filteredFailures.length} ${REGRESSION_LABEL[activeFilter]?.text ?? activeFilter} failures`
-              : 'New failures'}
-          </p>
-          <ul className="space-y-0.5">
-            {displayNames.slice(0, 5).map((name, i) => (
-              <li key={i} className="text-xs text-[var(--color-text-muted)] flex items-start gap-1.5 truncate">
-                <XCircle className="h-3 w-3 text-red-500 flex-shrink-0 mt-0.5" />
-                {name}
-              </li>
-            ))}
-            {displayNames.length > 5 && (
-              <li className="text-xs text-[var(--color-text-faint)]">+{displayNames.length - 5} more</li>
-            )}
-          </ul>
-          {activeFilter && filteredFailures.length === 0 && (
-            <p className="text-xs text-[var(--color-text-faint)] italic">No failures matching this filter.</p>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-
-// ── Test Health Panel ──────────────────────────────────────────────────────────
-
-const HEALTH_COLOUR: Record<string, string> = {
-  critical: 'text-red-400 bg-red-900/30',
-  warning:  'text-amber-400 bg-amber-900/30',
-  info:     'text-[var(--color-text)] bg-white/10',
-}
-
-function TestHealthPanel({ runId }: { runId: string }) {
-  const { health, isLoading } = useRunTestHealth(runId)
-  const [expanded, setExpanded] = useState(false)
-
-  if (isLoading) return null
-  if (!health || health.total_analyzed === 0) return null
-
-  const scoreColour = (score: number) => {
-    if (score >= 70) return 'text-emerald-400'
-    if (score >= 40) return 'text-amber-400'
-    return 'text-red-400'
-  }
-
-  return (
-    <div>
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 text-sm font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-3"
+        type="button"
+        onClick={onCopy}
+        title="Copy action text"
+        className="inline-flex items-center gap-1.5 px-2 py-1 text-[12px] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] rounded transition-colors self-start"
       >
-        <HeartPulse className="h-4 w-4" />
-        Test Health ({health.total_analyzed} analyzed, {health.with_violations} with issues)
-        {health.avg_health_score != null && (
-          <span className={clsx('ml-auto text-xs font-mono', scoreColour(health.avg_health_score))}>
-            avg {health.avg_health_score}
-          </span>
-        )}
+        <CopyIcon className="h-3 w-3" />
       </button>
-      {expanded && (
-        <div className="space-y-2">
-          {health.findings.slice(0, 10).map((f) => (
-            <div key={f.test_case_id} className="bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-[var(--color-text-secondary)] truncate max-w-[200px]" title={f.test_name}>
-                  {f.test_name}
-                </span>
-                <span className={clsx('text-xs font-mono', scoreColour(f.health_score))}>
-                  {f.health_score}
-                </span>
-              </div>
-              {f.violations.length > 0 && (
-                <div className="space-y-0.5 mt-1">
-                  {f.violations.slice(0, 3).map((v, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
-                      <span className={clsx('text-[10px] px-1 rounded', HEALTH_COLOUR[v.severity] ?? HEALTH_COLOUR.info)}>
-                        {v.severity}
-                      </span>
-                      <span className="text-[10px] text-[var(--color-text-muted)] truncate">{v.pattern}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {f.anti_patterns.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {f.anti_patterns.map((p) => (
-                    <span key={p} className="text-[10px] px-1.5 py-0.5 bg-purple-900/30 text-purple-400 rounded">
-                      {p.replace(/_/g, ' ')}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-          {health.findings.length > 10 && (
-            <p className="text-xs text-[var(--color-text-faint)]">+{health.findings.length - 10} more</p>
-          )}
-        </div>
-      )}
     </div>
   )
 }
 
-
-// ── Summary mode toggle ────────────────────────────────────────────────────────
-
-type SummaryMode = 'executive' | 'developer' | 'manager'
-
-function SummaryModeContent({
-  runId,
-  mode,
-  defaultSummary,
+// ── Body: AI confidence ────────────────────────────────────────────────────
+function AIConfidenceCard({
+  confidencePct,
+  evidenceCount,
+  toolCount,
+  hasBaseline,
+  llmUsed,
+  fallbackUsed,
 }: {
-  runId: string
-  mode: SummaryMode
-  defaultSummary: React.ReactNode
+  confidencePct: number
+  evidenceCount: number
+  toolCount: number
+  hasBaseline: boolean
+  llmUsed: boolean
+  fallbackUsed: boolean
 }) {
-  const isExecutive = mode === 'executive'
-  const { summary, isLoading, isError } = useRunModeSummary(isExecutive ? null : runId, mode)
+  const tone: 'good' | 'warn' | 'bad' =
+    confidencePct >= 70 ? 'good' : confidencePct >= 40 ? 'warn' : 'bad'
+  const pctColor = tone === 'good' ? '#34d399' : tone === 'warn' ? '#fcd34d' : '#fca5a5'
+  const barFill = tone === 'good'
+    ? 'linear-gradient(90deg, #22c55e, #34d399)'
+    : tone === 'warn'
+      ? 'linear-gradient(90deg, #f59e0b, #fcd34d)'
+      : 'linear-gradient(90deg, #ef4444, #f97316)'
 
-  if (isExecutive) return <>{defaultSummary}</>
-  if (isLoading) return <div className="py-6 text-center"><LoadingSpinner size="sm" /></div>
-  if (isError) {
-    return (
-      <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-4 text-sm text-red-300">
-        <p className="font-medium mb-1">Failed to load {mode} summary</p>
-        <p className="text-xs text-red-400">The AI pipeline may not have generated a {mode} summary for this run yet. Showing default view.</p>
-        <div className="mt-3">{defaultSummary}</div>
+  const why = !llmUsed
+    ? 'The pipeline ran and scored every dimension, but the LLM reasoning layer was unavailable. Treat the verdict as a deterministic fallback, not a high-trust recommendation.'
+    : fallbackUsed
+      ? 'LLM reasoning was attempted but fell back to deterministic rules for at least one stage. Confidence is reduced — verify recommendations before acting.'
+      : 'Pipeline ran end-to-end with LLM reasoning. Recommendation is supported by evidence collected during analysis.'
+
+  const gaps: { label: string; show: boolean }[] = [
+    { label: 'No evidence artifacts collected', show: evidenceCount === 0 },
+    { label: 'No baseline run for comparison',  show: !hasBaseline },
+    { label: '0 tools invoked during analysis', show: toolCount === 0 },
+  ]
+  const passedChecks: string[] = []
+  if (llmUsed && !fallbackUsed)  passedChecks.push('LLM reasoning')
+  if (toolCount > 0)             passedChecks.push(`${toolCount} tool${toolCount === 1 ? '' : 's'} invoked`)
+  if (evidenceCount > 0)         passedChecks.push(`${evidenceCount} evidence`)
+  if (hasBaseline)               passedChecks.push('Baseline available')
+  // Always-on indicators that the deep pipeline ran
+  passedChecks.push('Criticality scoring')
+  passedChecks.push('Release risk assessment')
+
+  return (
+    <CardShell
+      title="AI confidence"
+      rightSlot={<code className="text-[11px] text-[var(--color-text-secondary)]">v2 · pipeline</code>}
+    >
+      <div className="p-3.5">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[22px] font-bold tabular-nums" style={{ color: pctColor }}>
+            {confidencePct}%
+          </span>
+          <span className="text-[12px] text-[var(--color-text-muted)]">
+            {tone === 'good' ? 'High — recommendation supported by collected evidence'
+              : tone === 'warn' ? 'Moderate — review evidence before acting'
+              : 'Low — recommendation derived deterministically, not by LLM reasoning'}
+          </span>
+        </div>
+        <div className="rounded-full overflow-hidden mt-2" style={{ height: 4, background: 'var(--color-bg-secondary)' }}>
+          <i className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, confidencePct))}%`, background: barFill }} />
+        </div>
+
+        <p className="text-[12.5px] mt-2.5 leading-[1.5]" style={{ color: 'var(--color-text-secondary)' }}>
+          {why}
+        </p>
+
+        {gaps.some(g => g.show) && (
+          <div className="grid gap-1.5 mt-2.5">
+            {gaps.filter(g => g.show).map((g, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 text-[12px] text-[var(--color-text-secondary)] rounded-sm px-2.5 py-1.5"
+                style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+              >
+                <XCircle className="h-3.5 w-3.5 flex-none" style={{ color: '#fca5a5' }} />
+                {g.label}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {passedChecks.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2.5">
+            {passedChecks.map((c, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px]"
+                style={{ background: 'rgba(34,197,94,0.10)', color: '#34d399', border: '1px solid rgba(34,197,94,0.25)' }}
+              >
+                <Check className="h-2.5 w-2.5" strokeWidth={3} /> {c}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-    )
-  }
-  if (!summary) return <>{defaultSummary}</>
-  return <LayeredSummary summary={summary} mode={mode} />
+    </CardShell>
+  )
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Body: Failure category ─────────────────────────────────────────────────
+function FailureCategoryCard({ breakdown }: { breakdown: Record<string, number> }) {
+  const total = Object.values(breakdown).reduce((s, n) => s + n, 0)
+  const presentEntries = Object.entries(breakdown).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
+  const placeholderEntries = ['flaky', 'infrastructure', 'test_data'].filter(c => !(c in breakdown) || (breakdown[c] ?? 0) === 0)
+  return (
+    <CardShell title="Failure category" rightSlot={<span>{total} total</span>}>
+      <div className="p-3.5 flex flex-col gap-2">
+        {presentEntries.map(([cat, count]) => (
+          <CategoryRow key={cat} category={cat} count={count} totalAcrossAll={total} active />
+        ))}
+        {placeholderEntries.slice(0, 3 - presentEntries.length).map(c => (
+          <CategoryRow key={c} category={c} count={0} totalAcrossAll={total} active={false} />
+        ))}
+      </div>
+    </CardShell>
+  )
+}
 
+function CategoryRow({
+  category, count, totalAcrossAll, active,
+}: { category: string; count: number; totalAcrossAll: number; active: boolean }) {
+  const pretty = category
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, c => c.toUpperCase())
+  const isProductBug = /product/.test(category.toLowerCase()) || /bug/.test(category.toLowerCase())
+  const pillBg = active && isProductBug ? 'rgba(239,68,68,0.15)' : 'var(--color-bg-secondary)'
+  const pillFg = active && isProductBug ? '#fca5a5' : 'var(--color-text-faint)'
+  const rowBg = active && isProductBug ? 'rgba(239,68,68,0.06)' : 'var(--color-bg)'
+  const rowBd = active && isProductBug ? 'rgba(239,68,68,0.20)' : 'var(--color-border)'
+  const pct = totalAcrossAll > 0 ? Math.round((count / totalAcrossAll) * 100) : 0
+  return (
+    <div
+      className={clsx(
+        'flex items-center justify-between rounded-sm px-2.5 py-2',
+        !active && 'opacity-60',
+      )}
+      style={{
+        background: rowBg,
+        border: active ? `1px solid ${rowBd}` : '1px dashed var(--color-border)',
+      }}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold uppercase"
+          style={{ background: pillBg, color: pillFg, letterSpacing: 'var(--tracking-wide)' }}
+        >
+          {pretty}
+        </span>
+        <span className="text-[12px] text-[var(--color-text-secondary)] truncate">
+          {count > 0 ? `${count} failure${count === 1 ? '' : 's'}` : 'None detected this run'}
+        </span>
+      </div>
+      <span className="font-mono text-[12px]" style={{ color: active && isProductBug ? '#fca5a5' : 'var(--color-text-faint)' }}>
+        {count}{count > 0 && totalAcrossAll > 0 ? ` (${pct}%)` : ''}
+      </span>
+    </div>
+  )
+}
+
+// ── Body: Provenance footer ─────────────────────────────────────────────────
+function ProvenanceFooter({
+  evidenceCount, toolCount, schemaVersion, onDecisionTrail,
+}: {
+  evidenceCount: number
+  toolCount: number
+  schemaVersion?: number
+  onDecisionTrail: () => void
+}) {
+  return (
+    <div
+      className="flex items-center justify-between rounded-md px-3.5 py-2.5 text-[11.5px] text-[var(--color-text-muted)]"
+      style={{ background: 'var(--color-bg)', border: '1px dashed var(--color-border)' }}
+    >
+      <span>
+        <strong style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>Provenance</strong>
+        {' · '}
+        <code className="font-mono text-[11.5px]">pipeline v{schemaVersion ?? 2}</code>
+        {' · '}
+        {evidenceCount} evidence · {toolCount} tools
+      </span>
+      <button
+        type="button"
+        onClick={onDecisionTrail}
+        className="inline-flex items-center gap-1 hover:underline"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        Decision trail <ArrowRight className="h-3 w-3" />
+      </button>
+    </div>
+  )
+}
+
+// ── Page ────────────────────────────────────────────────────────────────────
 export default function RunIntelligencePage() {
   const { runId } = useParams<{ runId: string }>()
   useProjectChangeRedirect('/intelligence', Boolean(runId))
+
   const { intelligence, isLoading, isError, refresh } = useRunIntelligence(runId ?? null)
-  const [summaryMode, setSummaryMode] = useState<SummaryMode>('executive')
-  const [promoteClusterId, setPromoteClusterId] = useState<string | null>(null)
-  const [promoteClusterLabel, setPromoteClusterLabel] = useState<string>('')
-  const baselineDiffRef = useRef<HTMLDivElement>(null)
-  const workflowRef = useRef<HTMLDivElement>(null)
+  const [persona, setPersona] = useState<Persona>(() => {
+    const saved = localStorage.getItem(PERSONA_KEY)
+    return saved === 'developer' || saved === 'manager' ? saved : 'executive'
+  })
+  useEffect(() => { localStorage.setItem(PERSONA_KEY, persona) }, [persona])
+
   const [refreshing, setRefreshing] = useState(false)
   const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
+  const [promoteCluster, setPromoteCluster] = useState<FailureClusterIntel | null>(null)
+
+  // Fetch the persona-specific summary when not in Executive mode — drives
+  // the lede override in the verdict card. Hook is null for Executive so
+  // SWR doesn't fire.
+  const personaMode = persona === 'executive' ? 'executive' : persona
+  const { summary: personaSummary } = useRunModeSummary(
+    persona === 'executive' ? null : (runId ?? null),
+    personaMode,
+  )
 
   async function handleRefresh() {
     if (!runId) return
@@ -721,7 +1249,27 @@ export default function RunIntelligencePage() {
     }
   }
 
-  if (isLoading) return <LoadingSpinner />
+  async function handlePdf() {
+    if (!intelligence?.run?.id) return
+    try {
+      const { downloadPdf } = await import('@/services/reportExportService')
+      await downloadPdf(intelligence.run.id, 'executive')
+    } catch {
+      toast.error('PDF export failed')
+    }
+  }
+
+  async function handleEvidence() {
+    if (!intelligence?.run?.id) return
+    try {
+      const { downloadEvidenceBundle } = await import('@/services/reportExportService')
+      await downloadEvidenceBundle(intelligence.run.id)
+    } catch {
+      toast.error('Bundle export failed')
+    }
+  }
+
+  if (isLoading) return <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
   if (isError || !intelligence) {
     return (
       <EmptyState
@@ -735,74 +1283,106 @@ export default function RunIntelligencePage() {
   const {
     run, structured_summary, failure_clusters, category_breakdown,
     affected_suites, release_decision, role_actions, pipeline_stages,
-    intelligence_available, all_green, dimension_scores,
-    what_changed_since_last_good_run, defect_candidates, provenance,
+    avg_confidence, what_changed_since_last_good_run, provenance,
   } = intelligence
 
-  const summaryModes: SummaryMode[] = ['executive', 'developer', 'manager']
+  const confidencePct = Math.round((avg_confidence ?? 0) * (avg_confidence > 1 ? 1 : 100))
+  const evidenceCount = (structured_summary?.layer3_evidence?.data_sources_used?.length ?? 0)
+    + (structured_summary?.layer3_evidence?.top_stack_traces?.length ?? 0)
+    + (structured_summary?.layer3_evidence?.log_anomalies?.length ?? 0)
+  const toolCount = provenance?.tools_used_count ?? provenance?.sources_used?.length ?? 0
+  const llmUsed = !provenance?.fallback_used
+  const fallbackUsed = !!provenance?.fallback_used
+  const hasBaseline = !!what_changed_since_last_good_run
+
+  const ledeForPersona = persona === 'executive'
+    ? (release_decision?.reasoning ?? structured_summary?.executive_summary ?? undefined)
+    : (personaSummary?.executive_summary ?? personaSummary?.layer1_executive ?? release_decision?.reasoning ?? undefined)
+
+  // Approximate the "dimensions grid" inputs from the per-cluster
+  // dimension scores (the first cluster carries the run-level dimensions).
+  const runDimensionScores: DimensionScore[] = failure_clusters[0]?.dimension_scores ?? []
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Run Intelligence"
-        subtitle={`Build ${run.build_number}${run.branch ? ` · ${run.branch}` : ''}`}
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={async () => {
-                const { downloadPdf } = await import('@/services/reportExportService')
-                downloadPdf(run.id, 'executive').catch(() => toast.error('PDF export failed'))
-              }}
-              className="btn-secondary text-xs flex items-center gap-1.5"
-              title="Export Executive PDF"
-            >
-              <FileDown className="h-3.5 w-3.5" /> PDF
-            </button>
-            <button
-              onClick={async () => {
-                const { downloadEvidenceBundle } = await import('@/services/reportExportService')
-                downloadEvidenceBundle(run.id).catch(() => toast.error('Bundle export failed'))
-              }}
-              className="btn-secondary text-xs flex items-center gap-1.5"
-              title="Download Evidence Bundle"
-            >
-              <Package className="h-3.5 w-3.5" /> Evidence
-            </button>
-            <button
-              onClick={async () => {
-                const { createShareLink } = await import('@/services/reportExportService')
-                try {
-                  const link = await createShareLink(run.id, 'executive')
-                  await navigator.clipboard.writeText(link.share_url)
-                  toast.success('Share link copied to clipboard')
-                } catch { toast.error('Failed to create share link') }
-              }}
-              className="btn-secondary text-xs flex items-center gap-1.5"
-              title="Share Report"
-            >
-              <Share2 className="h-3.5 w-3.5" /> Share
-            </button>
-            <button
-              type="button"
-              onClick={() => setDecisionTrailOpen(true)}
-              className="btn-secondary text-xs flex items-center gap-1.5"
-              title="AI decision trail — why the AI chose each step"
-            >
-              <FileSearch className="h-3.5 w-3.5" /> Decision Trail
-            </button>
-            <Link
-              to={`/runs/compare?left=${run.id}`}
-              className="btn-secondary text-xs flex items-center gap-1.5"
-              title="Compare this run against another — pick the right side on the compare page"
-            >
-              <GitCompare className="h-3.5 w-3.5" /> Compare
-            </Link>
-            <Link to={`/runs/${run.id}`} className="btn-secondary text-sm flex items-center gap-2">
-              View Test Cases <ChevronRight className="h-4 w-4" />
-            </Link>
-          </div>
-        }
+    <main
+      className="mx-auto"
+      style={{
+        maxWidth: 1320,
+        padding: '24px 28px 80px',
+      }}
+    >
+      <Header
+        run={run}
+        persona={persona}
+        setPersona={setPersona}
+        onRefresh={handleRefresh}
+        onPdf={handlePdf}
+        onEvidence={handleEvidence}
+        refreshing={refreshing}
       />
+
+      {/* Verdict — risk meter + dimensions injected via custom variant since
+          DimensionGrid wasn't given the scores in the constructor (kept it
+          decoupled so multiple call-sites can pass different inputs). */}
+      <VerdictCardWithDimensions
+        decision={release_decision}
+        ledeOverride={ledeForPersona}
+        affectedSuite={affected_suites[0]?.suite}
+        dimensions={runDimensionScores}
+        onHold={() => toast('Hold release — wire to gate-decision endpoint', { icon: '⏸' })}
+        onOverride={() => toast('Override gate — opens sign-off flow', { icon: '🔓' })}
+        onApprove={() => toast('Approve with conditions — opens conditions form', { icon: '✓' })}
+      />
+
+      <PipelineRibbon
+        stages={pipeline_stages}
+        confidencePct={confidencePct}
+        evidenceCount={evidenceCount}
+        toolCount={toolCount}
+      />
+
+      <section
+        className="grid gap-3.5"
+        style={{ gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)' }}
+      >
+        <div className="flex flex-col gap-3.5 min-w-0">
+          <TestOutcomeCard
+            run={run}
+            failureClusters={failure_clusters}
+            affectedSuites={affected_suites}
+            categoryBreakdown={category_breakdown}
+          />
+          <WhatFailedCard
+            clusters={failure_clusters}
+            runId={run.id}
+            onPromote={(c) => setPromoteCluster(c)}
+            onDecisionTrail={() => setDecisionTrailOpen(true)}
+          />
+          <RecommendedActionsCard
+            roleActions={role_actions}
+            ownerHints={structured_summary?.layer4_action_plan?.owner_hints}
+            persona={persona}
+          />
+        </div>
+
+        <div className="flex flex-col gap-3.5 min-w-0">
+          <AIConfidenceCard
+            confidencePct={confidencePct}
+            evidenceCount={evidenceCount}
+            toolCount={toolCount}
+            hasBaseline={hasBaseline}
+            llmUsed={llmUsed}
+            fallbackUsed={fallbackUsed}
+          />
+          <FailureCategoryCard breakdown={category_breakdown} />
+          <ProvenanceFooter
+            evidenceCount={evidenceCount}
+            toolCount={toolCount}
+            schemaVersion={provenance?.schema_version}
+            onDecisionTrail={() => setDecisionTrailOpen(true)}
+          />
+        </div>
+      </section>
 
       <DecisionTrailDrawer
         runId={run.id}
@@ -810,492 +1390,144 @@ export default function RunIntelligencePage() {
         onClose={() => setDecisionTrailOpen(false)}
       />
 
-      {/* Sticky action bar */}
-      {intelligence_available && !all_green && (
-        <div className="sticky top-0 z-10 bg-[var(--color-bg)]/90 backdrop-blur-sm border-b border-[var(--color-border)]/60 -mx-6 px-6 py-2.5 flex items-center gap-2 flex-wrap">
-          {summaryModes.map((m) => (
-            <button
-              key={m}
-              onClick={() => setSummaryMode(m)}
-              className={clsx(
-                'text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors',
-                summaryMode === m
-                  ? 'bg-white/10 text-[var(--color-text-secondary)] border-[var(--color-border-light)]'
-                  : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]',
-              )}
-            >
-              {m === 'executive' ? 'Executive' : m === 'developer' ? 'Developer' : 'Manager'}
-            </button>
-          ))}
-          <span className="w-px h-4 bg-[var(--color-bg-secondary)] mx-1" />
-          {what_changed_since_last_good_run && (
-            <button
-              onClick={() => baselineDiffRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-light)] transition-colors"
-            >
-              <GitCompare className="h-3 w-3" />
-              Baseline
-            </button>
-          )}
-          {pipeline_stages.length > 0 && (
-            <button
-              onClick={() => workflowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-light)] transition-colors"
-            >
-              <Layers className="h-3 w-3" />
-              Workflow
-            </button>
-          )}
-          {failure_clusters.length > 0 && (
-            <button
-              onClick={() => setPromoteClusterId(failure_clusters[0]?.cluster_id)}
-              className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-light)] transition-colors"
-            >
-              <TicketCheck className="h-3 w-3" />
-              Promote Defect
-            </button>
-          )}
-          {release_decision && (
-            <Link
-              to={`/release-gate/${run.id}`}
-              className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-light)] transition-colors"
-            >
-              Release Gate
-            </Link>
-          )}
-          <span className="w-px h-4 bg-[var(--color-bg-secondary)] mx-1" />
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-light)] transition-colors disabled:opacity-50"
-            title="Refresh intelligence"
-          >
-            <RefreshCw className={clsx('h-3 w-3', refreshing && 'animate-spin')} />
-            {refreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
-        </div>
-      )}
-
-      {/* Stale snapshot warning */}
-      {intelligence._snapshot?.stale && (
-        <div className="flex items-center justify-between gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-3 py-2">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            This analysis may be outdated — a change occurred after it was generated.
-          </div>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="shrink-0 text-amber-300 hover:text-amber-200 font-medium disabled:opacity-50"
-          >
-            {refreshing ? 'Refreshing…' : 'Refresh now'}
-          </button>
-        </div>
-      )}
-
-      {/* Partial errors banner */}
-      {intelligence.partial_errors && (
-        <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-3 py-2">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          Some data is temporarily unavailable. Showing available sections.
-        </div>
-      )}
-
-      {/* Run stats row — hidden when executive panel provides these metrics */}
-      {!structured_summary?.executive_panel && <div className="grid grid-cols-4 gap-4">
-        <div className="card text-center">
-          <p className={clsx('text-3xl font-bold tabular-nums', passRateColour(run.pass_rate ?? 0))}>
-            {(run.pass_rate ?? 0).toFixed(1)}%
-          </p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">Pass Rate</p>
-        </div>
-        <div className="card text-center">
-          <p className="text-3xl font-bold text-[var(--color-text)]">
-            {run.total_tests || ((run.passed_tests ?? 0) + (run.failed_tests ?? 0) + (run.skipped_tests ?? 0) + (run.broken_tests ?? 0))}
-          </p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">Total Tests</p>
-        </div>
-        <div className="card text-center">
-          <p className={clsx('text-3xl font-bold', all_green ? 'text-emerald-400' : 'text-red-400')}>{run.failed_tests}</p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">{all_green ? 'All Passed' : 'Failures'}</p>
-        </div>
-        <div className="card text-center">
-          <p className="text-3xl font-bold text-[var(--color-text)]">{failure_clusters.length}</p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">Failure Clusters</p>
-        </div>
-      </div>}
-
-      {/* All-green fast path notice */}
-      {all_green && (
-        <div className="card border border-emerald-700/40 bg-emerald-900/20 flex items-center gap-3 py-3">
-          <CheckCircle className="h-5 w-5 text-emerald-400 flex-shrink-0" />
-          <p className="text-sm text-emerald-300">All tests passed — analysis stages were skipped (no AI work required).</p>
-        </div>
-      )}
-
-      {/* Release gate banner */}
-      {release_decision && <ReleaseGateBanner decision={release_decision} totalTests={run?.total_tests ?? 0} />}
-
-      {/* WF-4: Deep analysis status panel */}
-      {intelligence.deep_pipeline_status && intelligence.deep_pipeline_status.status !== 'never_run' && (
-        <div className={clsx(
-          'flex items-center gap-3 px-4 py-2.5 rounded-lg border text-sm',
-          intelligence.deep_pipeline_status.status === 'completed' ? 'bg-emerald-900/20 border-emerald-700/40 text-emerald-300' :
-          intelligence.deep_pipeline_status.status === 'partial' ? 'bg-amber-900/20 border-amber-700/40 text-amber-300' :
-          intelligence.deep_pipeline_status.status === 'running' ? 'bg-blue-900/20 border-blue-700/40 text-blue-300' :
-          intelligence.deep_pipeline_status.status === 'failed' ? 'bg-red-900/20 border-red-700/40 text-red-300' :
-          'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)]'
-        )}>
-          <span className="font-medium">Deep Analysis:</span>
-          <span className="capitalize">{intelligence.deep_pipeline_status.status}</span>
-          {intelligence.deep_pipeline_status.completed_at && (
-            <span className="text-xs opacity-75">
-              · Completed {new Date(intelligence.deep_pipeline_status.completed_at).toLocaleString()}
-            </span>
-          )}
-          {intelligence.deep_pipeline_status.status === 'running' && intelligence.deep_pipeline_status.started_at && (
-            <span className="text-xs opacity-75">
-              · Started {new Date(intelligence.deep_pipeline_status.started_at).toLocaleString()}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* What Changed panel */}
-      {what_changed_since_last_good_run && !all_green && (
-        <div ref={baselineDiffRef}>
-          <WhatChangedPanel diff={what_changed_since_last_good_run} />
-        </div>
-      )}
-
-      {pipeline_stages.length > 0 && (
-        <div ref={workflowRef} className="card space-y-3">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div>
-              <p className="text-sm font-semibold text-[var(--color-text)]">Workflow Progress</p>
-              <p className="text-xs text-[var(--color-text-muted)]">
-                How the AI pipeline moved through ingestion, analysis, clustering, triage, and release scoring.
-              </p>
-            </div>
-            <span className="text-xs text-[var(--color-text-muted)]">
-              {pipeline_stages.length} stages · {pipeline_stages.filter(s => s.status === 'completed').length} completed
-            </span>
-          </div>
-          <WorkflowTimeline
-            title=""
-            stages={pipeline_stages.map(stage => ({
-              ...stage,
-              label: stage.stage_name.replace(/_/g, ' '),
-              description: stage.execution_path
-                ? `Path: ${stage.execution_path.replace(/_/g, ' ')}`
-                : stage.skipped_reason ?? 'AI workflow stage',
-            }))}
-            compact
-          />
-        </div>
-      )}
-
-      {!intelligence_available && !all_green && (
-        <div className="card text-center py-10">
-          <Bot className="h-10 w-10 text-[var(--color-text-faint)] mx-auto mb-3" />
-          <p className="text-[var(--color-text-muted)] font-medium">AI analysis not yet available</p>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            Trigger the AI pipeline from the Test Runs page to generate intelligence.
-          </p>
-        </div>
-      )}
-
-      {intelligence_available && (
-        <div className="grid grid-cols-3 gap-6">
-          {/* Left: Summary + clusters (2 cols) */}
-          <div className="col-span-2 space-y-6">
-            {structured_summary && (
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">AI Analysis</p>
-                {runId && (
-                  <SummaryModeContent
-                    runId={runId}
-                    mode={summaryMode}
-                    defaultSummary={<LayeredSummary summary={structured_summary} />}
-                  />
-                )}
-                {provenance?.fallback_used && (
-                  <p className="text-xs text-[var(--color-text-faint)] mt-2 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    Deterministic fallback — LLM was unavailable when this summary was generated.
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Failure clusters */}
-            {failure_clusters.length > 0 && (
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">
-                  Failure Clusters ({failure_clusters.length})
-                </p>
-                <div className="space-y-2">
-                  {failure_clusters.map((c) => (
-                    <ClusterCard
-                      key={c.id}
-                      cluster={c}
-                      onPromote={(cid, label) => {
-                        setPromoteClusterId(cid)
-                        setPromoteClusterLabel(label)
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Defect candidates — promote top clusters */}
-            {defect_candidates && defect_candidates.length > 0 && (
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">
-                  Defect Candidates
-                </p>
-                <div className="space-y-2">
-                  {defect_candidates.map((dc) => {
-                    const status = dc.status
-                    const dupDetected = dc.duplicate_detected
-                    const promotedId = dc.promoted_defect_id
-                    return (
-                      <div
-                        key={dc.cluster_id}
-                        className={clsx('card p-3 flex items-center justify-between', status === 'promoted' && 'border-emerald-700/40 bg-emerald-900/10')}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <Layers className="h-4 w-4 text-[var(--color-text-muted)] shrink-0" />
-                            <span className="text-sm text-[var(--color-text)] truncate">{dc.label}</span>
-                            {/* Lifecycle badge */}
-                            {status === 'promoted' && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-400 border border-emerald-700/40">Promoted</span>
-                            )}
-                            {status === 'dismissed' && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]">Dismissed</span>
-                            )}
-                            {dupDetected && status !== 'promoted' && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400 border border-amber-700/30">Likely Duplicate</span>
-                            )}
-                            {!status && !dupDetected && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-[var(--color-text)]">Draft</span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1 pl-6">
-                            <span className={clsx('text-xs', dc.failure_category === 'PRODUCT_BUG' ? 'text-red-400' : 'text-[var(--color-text-muted)]')}>
-                              {dc.failure_category.replace('_', ' ')}
-                            </span>
-                            <span className="text-xs text-[var(--color-text-muted)]">·</span>
-                            <span className="text-xs text-[var(--color-text-muted)]">{dc.severity_hint}</span>
-                            {dc.confidence > 0 && (
-                              <>
-                                <span className="text-xs text-[var(--color-text-muted)]">·</span>
-                                <span className="text-xs text-[var(--color-text-muted)]">{dc.confidence}% confidence</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3 ml-3 shrink-0">
-                          <Link
-                            to={`/search?q=${encodeURIComponent(dc.label)}&search_type=semantic`}
-                            className="text-[10px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            Find similar
-                          </Link>
-                          {runId && status !== 'promoted' && (
-                            <button
-                              onClick={() => {
-                                setPromoteClusterId(dc.cluster_id)
-                                setPromoteClusterLabel(dc.label)
-                              }}
-                              className="flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors shrink-0"
-                            >
-                              <TicketCheck className="h-3.5 w-3.5" />
-                              {status === 'pending' ? 'Promote' : 'Promote'}
-                            </button>
-                          )}
-                          {promotedId && (
-                            <span className="text-[10px] text-emerald-500">Jira linked</span>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Affected suites */}
-            {affected_suites.length > 0 && (
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">Affected Suites</p>
-                <div className="space-y-1.5">
-                  {affected_suites.map((s) => (
-                    <div key={s.suite} className="flex items-center justify-between bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2">
-                      <span className="text-sm text-[var(--color-text-secondary)]">{s.suite}</span>
-                      <span className="text-sm font-mono text-red-400">{s.failed_count} failures</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Right: sidebar (1 col) */}
-          <div className="space-y-5">
-            {/* Dimension matrix */}
-            <CriticalityMatrix
-              dimensionScores={dimension_scores}
-              title="Risk Dimension Scores"
-            />
-
-            {/* Category breakdown */}
-            {Object.keys(category_breakdown).length > 0 && (
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">By Category</p>
-                <div className="space-y-2">
-                  {Object.entries(category_breakdown)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([cat, count]) => (
-                      <div key={cat} className="flex items-center justify-between">
-                        <span className={clsx('badge text-xs border-0', CATEGORY_COLOUR[cat] ?? CATEGORY_COLOUR.UNKNOWN)}>
-                          {cat.replace('_', ' ')}
-                        </span>
-                        <span className="text-sm font-mono text-[var(--color-text-muted)]">{count}</span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
-
-            {/* Role-aware actions */}
-            {Object.keys(role_actions).length > 0 && (
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">Actions by Role</p>
-                <RoleActionCardShared roleActions={role_actions} compact />
-              </div>
-            )}
-
-            {/* Pipeline stages */}
-            {pipeline_stages.length > 0 && (
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">Pipeline Stages</p>
-                <div className="space-y-1.5">
-                  {pipeline_stages.map((s) => (
-                    <div key={s.stage_name} className="space-y-0.5">
-                      <div className="flex items-center gap-2 text-sm">
-                        {s.status === 'completed'
-                          ? <CheckCircle className="h-4 w-4 text-emerald-400 flex-shrink-0" />
-                          : s.status === 'skipped'
-                            ? <div className="h-4 w-4 rounded-full border border-[var(--color-border)] flex-shrink-0" />
-                            : s.status === 'failed'
-                              ? <XCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                              : <div className="h-4 w-4 rounded-full bg-[var(--color-bg-hover)] flex-shrink-0" />}
-                        <span className={
-                          s.status === 'skipped' ? 'text-[var(--color-text-faint)]' :
-                          s.status === 'completed' ? 'text-[var(--color-text-secondary)]' :
-                          s.status === 'failed' ? 'text-red-400' : 'text-[var(--color-text-muted)]'
-                        }>
-                          {s.stage_name.replace(/_/g, ' ')}
-                        </span>
-                      </div>
-                      {s.skipped_reason && s.status === 'skipped' && (
-                        <p className="text-[10px] text-[var(--color-text-faint)] pl-6">{s.skipped_reason}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Test Health Coach */}
-            {runId && !all_green && (
-              <TestHealthPanel runId={runId} />
-            )}
-
-            {/* Provenance & Confidence */}
-            {provenance && (
-              <div className="bg-[var(--color-bg-card)]/60 rounded-lg p-3 space-y-2">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">AI Provenance</p>
-
-                {/* Confidence strip */}
-                {provenance.confidence != null && (
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-[var(--color-text-muted)]">Confidence</span>
-                      <span className={clsx('text-xs font-bold', provenance.confidence >= 70 ? 'text-emerald-400' : provenance.confidence >= 40 ? 'text-amber-400' : 'text-red-400')}>
-                        {provenance.confidence}%
-                      </span>
-                    </div>
-                    <div className="w-full h-1 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
-                      <div
-                        className={clsx('h-full rounded-full', provenance.confidence >= 70 ? 'bg-emerald-500' : provenance.confidence >= 40 ? 'bg-amber-500' : 'bg-red-500')}
-                        style={{ width: `${provenance.confidence}%` }}
-                      />
-                    </div>
-                    {provenance.confidence_reason && (
-                      <p className="text-[10px] text-[var(--color-text-faint)]">{provenance.confidence_reason}</p>
-                    )}
-                  </div>
-                )}
-
-                {/* Source chips */}
-                {provenance.sources_used.length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-[var(--color-text-faint)] mb-1">Sources</p>
-                    <div className="flex flex-wrap gap-1">
-                      {provenance.sources_used.map(s => (
-                        <span key={s} className="text-[9px] px-1.5 py-0.5 bg-white/10 text-[var(--color-text)] rounded">{s}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Deterministic checks */}
-                {provenance.deterministic_checks_used.length > 0 && (
-                  <div>
-                    <p className="text-[10px] text-[var(--color-text-faint)] mb-1">Checks</p>
-                    <div className="flex flex-wrap gap-1">
-                      {provenance.deterministic_checks_used.map(c => (
-                        <span key={c} className="text-[9px] px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 rounded">{c.replace(/_/g, ' ')}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Meta */}
-                <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-faint)] pt-1 border-t border-[var(--color-border)]/50">
-                  <span>v{provenance.schema_version}</span>
-                  <span>{provenance.evidence_count} evidence items</span>
-                  <span>{provenance.tools_used_count} tools</span>
-                </div>
-                {provenance.fallback_used && (
-                  <p className="text-[10px] text-amber-700">Deterministic fallback — LLM was unavailable</p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Defect Promotion Modal */}
-      {promoteClusterId && runId && (
+      {promoteCluster && (
         <DefectPromotionModal
-          runId={runId}
-          clusterId={promoteClusterId}
-          clusterLabel={promoteClusterLabel}
-          onClose={() => setPromoteClusterId(null)}
+          runId={run.id}
+          clusterId={promoteCluster.cluster_id}
+          clusterLabel={promoteCluster.label}
+          onClose={() => setPromoteCluster(null)}
           onSuccess={(_defectId, jiraUrl) => {
-            toast.success(
-              jiraUrl ? 'Defect promoted and Jira ticket created' : 'Defect promoted',
-            )
-            setPromoteClusterId(null)
+            toast.success(jiraUrl ? 'Defect promoted and Jira ticket created' : 'Defect promoted')
+            setPromoteCluster(null)
           }}
         />
       )}
-    </div>
+
+      {/* Mobile fallback notice — design Phase 2 */}
+      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2">
+        Wider screen needed for the full intelligence layout. Some sections may overflow on narrow viewports.
+      </div>
+    </main>
   )
 }
+
+// ── Verdict + Dimensions composed (so the meter and grid share gate state) ─
+function VerdictCardWithDimensions({
+  decision, ledeOverride, affectedSuite, dimensions, onHold, onOverride, onApprove,
+}: {
+  decision: ReleaseDecisionIntel | null
+  ledeOverride?: string
+  affectedSuite?: string
+  dimensions: DimensionScore[]
+  onHold: () => void
+  onOverride: () => void
+  onApprove: () => void
+}) {
+  const gate = gateOf(decision)
+  const t = GATE_THEME[gate]
+  const score = Math.round(decision?.composite_risk ?? decision?.risk_score ?? 0)
+  const blockerCount = decision?.blocking_issues?.length ?? 0
+  const lede = ledeOverride
+    ?? decision?.reasoning
+    ?? (gate === 'PENDING' ? 'Awaiting analysis — no release decision available yet.' : '')
+
+  return (
+    <section
+      aria-live="polite"
+      className="relative rounded-xl border overflow-hidden"
+      style={{
+        background: `${t.glow}, var(--color-bg-card)`,
+        borderColor: t.border,
+        padding: '18px 20px',
+        marginBottom: 14,
+      }}
+    >
+      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
+
+      <div className="grid gap-6 verdict-grid" style={{ gridTemplateColumns: '1.4fr 1fr' }}>
+        <div className="min-w-0" style={{ paddingLeft: 4 }}>
+          <span
+            className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
+            style={{ color: t.eyebrow, letterSpacing: 'var(--tracking-wider)' }}
+          >
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{
+                background: t.bar,
+                animation: gate === 'CONDITIONAL_GO' || gate === 'NO_GO' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
+              }}
+              aria-hidden
+            />
+            Release readiness
+          </span>
+          <h2
+            className="font-bold m-0"
+            style={{ fontSize: 28, lineHeight: 1.1, letterSpacing: '-0.02em', margin: '6px 0 6px' }}
+          >
+            <span style={{ color: t.gate }}>{t.label}</span>
+            <span className="text-[var(--color-text-muted)] mx-2">·</span>
+            <span>{t.action}</span>
+          </h2>
+          {lede && (
+            <p className="text-[13px] m-0 mb-3 max-w-[60ch]" style={{ color: 'var(--color-text-secondary)' }}>
+              {lede}
+            </p>
+          )}
+
+          {blockerCount > 0 && (
+            <div
+              className="flex items-center gap-2.5 px-3 py-2.5 rounded-md mb-1"
+              style={{ background: 'var(--alert-bg-soft)', border: '1px solid var(--alert-border-soft)' }}
+            >
+              <XCircle className="h-[18px] w-[18px] flex-none" style={{ color: '#fca5a5' }} />
+              <span className="text-[13px] text-[var(--color-text-secondary)]">
+                <strong style={{ color: '#fca5a5' }}>
+                  {blockerCount} blocking issue{blockerCount === 1 ? '' : 's'}
+                </strong>
+                {decision?.blocking_issues?.[0] && <> · {decision.blocking_issues[0]}</>}
+              </span>
+              {affectedSuite && (
+                <span className="ml-auto text-[var(--color-text-muted)] text-[13px]">{affectedSuite} suite</span>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2 mt-3.5">
+            <button
+              type="button"
+              onClick={onHold}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
+              style={{ color: '#fcd34d', borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}
+            >
+              <TriangleAlert className="h-3.5 w-3.5" />
+              Hold release
+            </button>
+            <GhostBtn onClick={onOverride} title="Override the gate decision (requires sign-off)">
+              Override gate
+            </GhostBtn>
+            <GhostBtn onClick={onApprove} title="Approve and ship with documented conditions">
+              Approve with conditions
+            </GhostBtn>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3.5 py-1">
+          <RiskMeter
+            gate={gate}
+            score={score}
+            pillBg={t.pillBg}
+            pillBd={t.pillBd}
+            pillFg={t.pillFg}
+            pillLabel={t.label}
+            meterColor={t.meter}
+          />
+          <DimensionGrid scores={dimensions} fallback={null} />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// Silence eslint for icons reserved for Phase 2 (stage drawer body / future
+// recommended-actions enrichment).
+void Bot; void FileText; void Layers; void TicketCheck;

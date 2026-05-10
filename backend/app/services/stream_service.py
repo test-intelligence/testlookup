@@ -32,6 +32,26 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def canonical_test_run_uuid(run_id: str) -> uuid.UUID:
+    """Map a live-session ``run_id`` (which may be a UUID *or* an arbitrary
+    user-supplied slug like ``local-abc12345``) to the canonical ``TestRun.id``
+    UUID we persist under.
+
+    SDKs frequently default to slug-style ids (the Python SDK's
+    ``f"local-{uuid.uuid4().hex[:8]}"`` is the canonical example). Without
+    this helper, callers had three choices — and the three call sites that
+    needed the mapping (``upsert_test_run``, ``persist_live_session``, and
+    the LiveSessionState builders) drifted: the first two derived a UUID5
+    via ``uuid.uuid5(NAMESPACE_DNS, run_id)`` while the live state response
+    returned the raw slug, so the frontend's ``/runs/<run_id>`` link 422'd
+    for any non-UUID slug. Centralising here keeps them in lockstep.
+    """
+    try:
+        return uuid.UUID(run_id)
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, run_id)
+
+
 def get_redis():
     from app.db.redis_client import get_redis as _get_redis
 
@@ -446,8 +466,10 @@ async def ingest_via_api_key(
 
 
 def build_live_session_state(payload: dict) -> LiveSessionState:
+    raw_run_id = payload.get("run_id", "")
     return LiveSessionState(
-        run_id=payload.get("run_id", ""),
+        run_id=raw_run_id,
+        test_run_id=str(canonical_test_run_uuid(raw_run_id)) if raw_run_id else None,
         project_id=payload.get("project_id", ""),
         build_number=payload.get("build_number", ""),
         status=payload.get("status", "running"),
@@ -471,6 +493,7 @@ def build_completed_session_state(session) -> LiveSessionState:
     final_state = (session.extra_metadata or {}).get("final_state", {})
     return LiveSessionState(
         run_id=session.run_id,
+        test_run_id=str(canonical_test_run_uuid(session.run_id)) if session.run_id else None,
         project_id=str(session.project_id),
         build_number=session.build_number or "",
         status="completed",
@@ -493,6 +516,7 @@ def build_completed_session_state(session) -> LiveSessionState:
 def build_test_run_fallback_state(run) -> LiveSessionState:
     return LiveSessionState(
         run_id=str(run.id),
+        test_run_id=str(run.id),
         project_id=str(run.project_id),
         build_number=run.build_number or "",
         status="completed",
@@ -588,10 +612,7 @@ async def list_active_sessions(
 
 
 async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -> None:
-    try:
-        run_uuid = uuid.UUID(session.run_id)
-    except ValueError:
-        run_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, session.run_id)
+    run_uuid = canonical_test_run_uuid(session.run_id)
 
     passed = int(state.get("passed", 0))
     failed = int(state.get("failed", 0))

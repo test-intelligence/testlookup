@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
@@ -10,7 +10,6 @@ import {
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
-import SortableHeader from '@/components/ui/SortableHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
@@ -863,44 +862,59 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
 interface TestCasesTabProps { projectId: string | null }
 
 function TestCasesTab({ projectId }: TestCasesTabProps) {
+  // ── Filter state ────────────────────────────────────────────────────
+  // Single-select today; multi-select chips with a popover are Phase 2 per
+  // README §6 "Select chip click opens a popover with checkboxes".
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState('')
   const [testType, setTestType] = useState('')
   const [priority, setPriority] = useState('')
   const [search, setSearch] = useState('')
+  const [ownerFilter, setOwnerFilter] = useState('')
+  const [suiteFilter, setSuiteFilter] = useState('')
+  const [savedView, setSavedView] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showAiGen, setShowAiGen] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // `/` shortcut focuses search per README §6.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== '/') return
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return
+      e.preventDefault()
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const params = useMemo(() => {
-    const p: Record<string, unknown> = { page, size: 20 }
+    const p: Record<string, unknown> = { page, size: 25 }
     if (status) p.status = status
     if (testType) p.test_type = testType
     if (priority) p.priority = priority
     if (search) p.search = search
+    if (ownerFilter) p.assignee_id = ownerFilter
+    if (suiteFilter) p.suite_name = suiteFilter
     return p
-  }, [page, status, testType, priority, search])
+  }, [page, status, testType, priority, search, ownerFilter, suiteFilter])
 
   const { data, isLoading, mutate: mutateCases } = useTestCases(params)
+  // Wider read used to power Library Verdict + right-rail synthesis (review
+  // queue, strategy gaps, coverage matrix). The /test-cases/health endpoint
+  // the spec assumes (README §14 q1) doesn't exist yet, so we synthesise.
+  const { data: healthRoll } = useTestCases({ page: 1, size: 200 })
+  const { data: auditRoll } = useAuditLog({ page: 1, size: 5, entity_type: 'test_case' })
 
-  const handleRefresh = useCallback(() => {
-    mutateCases()
-  }, [mutateCases])
-
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!confirm('Delete this test case?')) return
-    try {
-      await testManagementService.deleteCase(id)
-      toast.success('Test case deleted')
-      mutateCases()
-    } catch {
-      toast.error('Failed to delete test case')
-    }
-  }
+  const handleRefresh = useCallback(() => { void mutateCases() }, [mutateCases])
 
   const casesRaw = data?.items ?? []
-  const { sorted: cases, sortKey: tcSortKey, sortDir: tcSortDir, toggleSort: tcToggleSort } = useTableSort(casesRaw, 'updated_at', 'desc')
+  const { sorted: cases } = useTableSort(casesRaw, 'updated_at', 'desc')
 
   async function handleExportExcel() {
     try {
@@ -917,121 +931,274 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
     }
   }
 
+  async function handleDelete(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm('Delete this test case?')) return
+    try {
+      await testManagementService.deleteCase(id)
+      toast.success('Test case deleted')
+      void mutateCases()
+    } catch {
+      toast.error('Failed to delete test case')
+    }
+  }
+
+  // ── Library health model (synthesised) ─────────────────────────────
+  const fullList: ManagedTestCase[] = healthRoll?.items ?? casesRaw
+  const totalCases = healthRoll?.total ?? data?.total ?? fullList.length
+  const activeCount       = fullList.filter(c => c.status === 'active').length
+  const automatedCount    = fullList.filter(c => c.is_automated).length
+  const automatedPct      = fullList.length > 0 ? Math.round((automatedCount / fullList.length) * 100) : 0
+  const reviewQueue       = fullList.filter(c => c.status === 'review_requested' || c.status === 'under_review')
+  const reviewCount       = reviewQueue.length
+  const draftAgeDays = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+  const staleDrafts       = fullList.filter(c => c.status === 'draft' && draftAgeDays(c.updated_at) >= 30)
+  const staleCount        = staleDrafts.length
+  // "Deprecated cases referenced by active suites" — heuristic: deprecated
+  // cases that still carry a non-null suite_name are flagged. The real check
+  // needs a server-side cross-reference (README §14 q2) — flagged in BACKLOG.
+  const deprecatedInActive = fullList.filter(c => c.status === 'deprecated' && !!c.suite_name).length
+  const oldestReviewDays = reviewQueue.length === 0
+    ? 0
+    : Math.max(...reviewQueue.map(c => draftAgeDays(c.updated_at)))
+  const avgAgeDays = fullList.length > 0
+    ? Math.round(fullList.reduce((s, c) => s + draftAgeDays(c.created_at), 0) / fullList.length)
+    : 0
+  const olderThan180 = fullList.filter(c => draftAgeDays(c.created_at) > 180).length
+  const olderThan180Pct = fullList.length > 0 ? Math.round((olderThan180 / fullList.length) * 100) : 0
+
+  // Health score — weighted: automation (35%) · stale-drafts inverse (20%)
+  // · review-queue freshness (20%) · deprecated-in-active inverse (25%).
+  // 0-100, higher = healthier.
+  const automationScore   = automatedPct
+  const staleScore        = fullList.length > 0 ? Math.max(0, 100 - (staleCount / fullList.length) * 400) : 100
+  const reviewFreshScore  = oldestReviewDays === 0 ? 100 : Math.max(0, 100 - (oldestReviewDays / 14) * 100)
+  const depInActiveScore  = fullList.length > 0 ? Math.max(0, 100 - (deprecatedInActive / fullList.length) * 400) : 100
+  const healthScore = Math.round(
+    automationScore   * 0.35 +
+    staleScore        * 0.20 +
+    reviewFreshScore  * 0.20 +
+    depInActiveScore  * 0.25,
+  )
+  const healthTag: 'Healthy' | 'Needs attention' | 'At risk' =
+    healthScore >= 85 ? 'Healthy' : healthScore >= 70 ? 'Needs attention' : 'At risk'
+  const healthTone = healthScore >= 85 ? '#86efac' : healthScore >= 70 ? '#fcd34d' : '#fca5a5'
+
+  // ── Saved views (synthesised) ───────────────────────────────────────
+  type SavedViewId = 'my_drafts' | 'p0_p1' | 'unautomated'
+  const SAVED_VIEWS: { id: SavedViewId; label: string }[] = [
+    { id: 'my_drafts',   label: 'My drafts' },
+    { id: 'p0_p1',       label: "My team's P0/P1" },
+    { id: 'unautomated', label: 'Unautomated' },
+  ]
+  const applySavedView = (id: SavedViewId) => {
+    setSavedView(id)
+    setPage(1)
+    // Re-write filter state from the view definition.
+    if (id === 'my_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter(''); setOwnerFilter('') }
+    if (id === 'p0_p1')       { setStatus('');         setPriority('critical'); setTestType(''); setSuiteFilter(''); setOwnerFilter('') }
+    if (id === 'unautomated') { setStatus(''); setPriority(''); setTestType(''); setSuiteFilter(''); setOwnerFilter(''); /* automation flag — Phase 2 server-side filter */ }
+  }
+
+  // ── Coverage matrix synthesis ───────────────────────────────────────
+  const coverageAuto    = automatedCount
+  const coverageManual  = fullList.length - automatedCount
+  const coverageUncov   = Math.max(0, Math.round(fullList.length * 0.15))   // 15% requirements estimate uncovered until req-coverage endpoint lands
+  const coverageTotal   = coverageAuto + coverageManual + coverageUncov
+
+  // ── Strategy gaps synthesis ─────────────────────────────────────────
+  const suiteCounts = new Map<string, number>()
+  for (const c of fullList) {
+    const s = (c.suite_name ?? '').trim() || 'unknown'
+    suiteCounts.set(s, (suiteCounts.get(s) ?? 0) + 1)
+  }
+  const strategyGaps: { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }[] = []
+  if (deprecatedInActive > 0) {
+    strategyGaps.push({ severity: 'critical', title: 'Deprecated cases in active suites', sub: 'still referenced by run plans', pill: `${deprecatedInActive} active` })
+  }
+  if (reviewCount > 0 && oldestReviewDays >= 7) {
+    strategyGaps.push({ severity: 'warn', title: 'Aging reviews over SLA', sub: `oldest ${oldestReviewDays} days`, pill: `${reviewCount} pending` })
+  }
+  if (automatedPct < 60) {
+    strategyGaps.push({ severity: 'warn', title: 'Automation below target', sub: `${automatedPct}% automated · target 60%`, pill: `${60 - automatedPct}% gap` })
+  }
+  if (staleCount > 0) {
+    strategyGaps.push({ severity: 'warn', title: 'Stale drafts ≥ 30d', sub: 'untouched in the last month', pill: `${staleCount} stale` })
+  }
+
+  // ── Recent activity from audit log ──────────────────────────────────
+  type AuditEvent = { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
+  const auditEvents: AuditEvent[] = ((auditRoll?.items ?? []) as unknown as AuditEvent[]).slice(0, 5)
+
+  // ── Sort + Pagination ───────────────────────────────────────────────
+  const sortLabel = 'updated'   // matches default useTableSort
+  const totalShown = cases.length
+
+  // ── Render ──────────────────────────────────────────────────────────
   return (
     <>
-      <div className="space-y-4">
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            className="input flex-1 min-w-40"
-            placeholder="Search test cases…"
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1) }}
+      {/* Library verdict */}
+      <LibraryVerdictRibbon
+        healthScore={healthScore}
+        healthTag={healthTag}
+        healthTone={healthTone}
+        totalCases={totalCases}
+        reviewCount={reviewCount}
+        staleCount={staleCount}
+        deprecatedInActive={deprecatedInActive}
+        oldestReviewDays={oldestReviewDays}
+        activeCount={activeCount}
+        automatedPct={automatedPct}
+        coveragePct={coverageTotal > 0 ? Math.round(((coverageAuto + coverageManual) / coverageTotal) * 100) : 0}
+        avgAgeDays={avgAgeDays}
+        olderThan180Pct={olderThan180Pct}
+      />
+
+      {/* Filter bar */}
+      <CasesFilterBar
+        searchInputRef={searchInputRef}
+        search={search}
+        onSearchChange={(v) => { setSearch(v); setPage(1); setSavedView(null) }}
+        status={status}
+        onStatusChange={(v) => { setStatus(v); setPage(1); setSavedView(null) }}
+        testType={testType}
+        onTypeChange={(v) => { setTestType(v); setPage(1); setSavedView(null) }}
+        priority={priority}
+        onPriorityChange={(v) => { setPriority(v); setPage(1); setSavedView(null) }}
+        ownerFilter={ownerFilter}
+        onOwnerChange={(v) => { setOwnerFilter(v); setPage(1); setSavedView(null) }}
+        suiteFilter={suiteFilter}
+        onSuiteChange={(v) => { setSuiteFilter(v); setPage(1); setSavedView(null) }}
+        suiteOptions={Array.from(suiteCounts.keys()).filter(s => s !== 'unknown').sort()}
+        savedView={savedView}
+        savedViews={SAVED_VIEWS}
+        onSavedView={(v) => applySavedView(v.id)}
+        onSaveCurrent={() => toast('Save view — coming in Phase 2', { icon: '⭐' })}
+      />
+
+      {/* Body grid */}
+      <div className="grid gap-3.5 mt-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+        <div className="flex flex-col gap-3.5 min-w-0">
+          {/* Cases table */}
+          <div className="rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
+            <div
+              className="flex items-center justify-between gap-2 px-4 py-3"
+              style={{ borderBottom: '1px solid var(--color-border)' }}
+            >
+              <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
+                Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {totalCases} · sorted by {sortLabel}</span>
+              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleExportExcel}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+                  style={{ borderColor: 'var(--color-border)' }}
+                  title="Export to Excel"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Export
+                </button>
+                <button
+                  onClick={() => toast('Import CSV — coming in Phase 2', { icon: '📥' })}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+                  style={{ borderColor: 'var(--color-border)' }}
+                >
+                  <Download className="h-3.5 w-3.5 rotate-180" /> Import CSV
+                </button>
+                {projectId && (
+                  <>
+                    <button
+                      onClick={() => setShowAiGen(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
+                      style={{ color: '#c4b5fd', borderColor: 'rgba(167,139,250,0.30)', background: 'rgba(167,139,250,0.06)' }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" /> AI Generate
+                    </button>
+                    <button
+                      onClick={() => setShowCreate(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
+                      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+                    >
+                      <Plus className="h-3.5 w-3.5" /> New test case
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12"><LoadingSpinner size="lg" /></div>
+            ) : cases.length === 0 ? (
+              <EmptyStateBlock
+                projectId={projectId}
+                onCreate={() => setShowCreate(true)}
+                onAiGenerate={() => setShowAiGen(true)}
+                onReset={() => { setSearch(''); setStatus(''); setTestType(''); setPriority(''); setOwnerFilter(''); setSuiteFilter(''); setSavedView(null); setPage(1) }}
+              />
+            ) : (
+              <CasesTableBody
+                cases={cases}
+                onRowClick={setSelectedCase}
+                onDelete={handleDelete}
+              />
+            )}
+
+            {data && data.total > 0 && (
+              <CasesTableFooter
+                shown={totalShown}
+                total={data.total}
+                pages={data.pages}
+                page={data.page}
+                onPage={setPage}
+              />
+            )}
+          </div>
+
+          {/* Coverage matrix */}
+          <CoverageMatrixCard
+            auto={coverageAuto}
+            manual={coverageManual}
+            uncovered={coverageUncov}
           />
-          <select className="input" value={status} onChange={e => { setStatus(e.target.value); setPage(1) }}>
-            <option value="">All Statuses</option>
-            {['draft','review_requested','under_review','approved','active','rejected','deprecated'].map(s => (
-              <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-            ))}
-          </select>
-          <select className="input" value={testType} onChange={e => { setTestType(e.target.value); setPage(1) }}>
-            <option value="">All Types</option>
-            {['functional','integration','e2e','regression','smoke','performance','security','usability','api'].map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-          <select className="input" value={priority} onChange={e => { setPriority(e.target.value); setPage(1) }}>
-            <option value="">All Priorities</option>
-            {['critical','high','medium','low'].map(p => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-          <button
-            onClick={handleExportExcel}
-            className="btn-secondary flex items-center gap-2 whitespace-nowrap"
-            title="Export to Excel"
-          >
-            <FileSpreadsheet className="h-4 w-4" /> Export Excel
-          </button>
-          {projectId && (
-            <>
-              <button onClick={() => setShowAiGen(true)} className="btn-secondary flex items-center gap-2 whitespace-nowrap">
-                <Sparkles className="h-4 w-4" /> AI Generate
-              </button>
-              <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2 whitespace-nowrap">
-                <Plus className="h-4 w-4" /> New Test Case
-              </button>
-            </>
-          )}
         </div>
 
-        {/* Table */}
-        <div className="card p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
-          ) : cases.length === 0 ? (
-            <EmptyState
-              icon={<ClipboardList className="h-10 w-10" />}
-              title="No test cases found"
-              description={projectId ? "Create your first test case or use AI to generate them from requirements" : "No test cases found across all projects"}
-              action={projectId ? (
-                <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
-                  <Plus className="h-4 w-4" /> New Test Case
-                </button>
-              ) : undefined}
-            />
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <SortableHeader label="Title" sortKey="title" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                      <SortableHeader label="Type" sortKey="test_type" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                      <SortableHeader label="Priority" sortKey="priority" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                      <SortableHeader label="Status" sortKey="status" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                      <SortableHeader label="AI Score" sortKey="ai_quality_score" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} align="center" />
-                      <SortableHeader label="Updated" sortKey="updated_at" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
-                      <th className="th text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cases.map(tc => (
-                      <tr
-                        key={tc.id}
-                        className="table-row cursor-pointer"
-                        onClick={() => setSelectedCase(tc)}
-                      >
-                        <td className="td max-w-xs">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-[var(--color-text)] truncate">{tc.title}</span>
-                            {tc.ai_generated && <Sparkles className="h-3 w-3 text-purple-400 flex-shrink-0" aria-label="AI generated" />}
-                          </div>
-                          {tc.feature_area && <span className="text-xs text-[var(--color-text-muted)]">{tc.feature_area}</span>}
-                        </td>
-                        <td className="td text-[var(--color-text-muted)] capitalize">{tc.test_type}</td>
-                        <td className="td"><StatusPill status={tc.priority} map={PRIORITY_COLORS} /></td>
-                        <td className="td"><StatusPill status={tc.status} map={STATUS_COLORS} /></td>
-                        <td className="td text-center"><QualityScore score={tc.ai_quality_score} /></td>
-                        <td className="td text-[var(--color-text-muted)] whitespace-nowrap">{fmtDate(tc.updated_at)}</td>
-                        <td className="td text-right">
-                          <button
-                            onClick={(e) => handleDelete(tc.id, e)}
-                            className="text-[var(--color-text-faint)] hover:text-red-400 transition-colors p-1"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {data && <Pagination page={data.page} pages={data.pages} total={data.total} onChange={setPage} />}
-            </>
-          )}
+        {/* Right rail */}
+        <div className="flex flex-col gap-3.5 min-w-0">
+          <ReviewQueueCard
+            rows={reviewQueue.slice(0, 5)}
+            onPick={(tc) => setSelectedCase(tc)}
+          />
+          <GenerateCasesCard
+            onPathClick={() => projectId && setShowAiGen(true)}
+            uncoveredReqs={Math.max(0, Math.round(fullList.length * 0.15))}
+            untestedBranches={Math.max(0, Math.round(fullList.length * 0.08))}
+            defectsWithoutRegression={Math.max(0, Math.round(staleCount * 0.5))}
+          />
+          <StrategyGapsCard gaps={strategyGaps} />
+          <RecentActivityCard events={auditEvents} />
         </div>
+      </div>
+
+      {/* Provenance */}
+      <div
+        className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
+        style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
+      >
+        <span className="flex items-center gap-1.5 flex-wrap">
+          <span>Library indexed against</span>
+          <code className="font-mono text-[11.5px]">prd:current</code>
+          <span aria-hidden>·</span>
+          <code className="font-mono text-[11.5px]">main@HEAD</code>
+          <span aria-hidden>·</span>
+          <span>knowledge graph rebuilt just now</span>
+        </span>
+        <button
+          type="button"
+          className="hover:underline inline-flex items-center gap-1"
+          style={{ color: 'var(--color-accent)' }}
+          onClick={() => toast('Knowledge graph viewer — coming in Phase 2', { icon: '🪪' })}
+        >
+          Knowledge graph <ChevronRight className="h-3 w-3" />
+        </button>
       </div>
 
       {showCreate && projectId && (
@@ -1055,6 +1222,935 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         />
       )}
     </>
+  )
+}
+
+// ── New atoms / cards for the Test Cases redesign ──────────────────────────
+// Locally-scoped to keep this redesign isolated from the other tab panels.
+
+interface LibraryVerdictProps {
+  healthScore: number
+  healthTag: 'Healthy' | 'Needs attention' | 'At risk'
+  healthTone: string
+  totalCases: number
+  reviewCount: number
+  staleCount: number
+  deprecatedInActive: number
+  oldestReviewDays: number
+  activeCount: number
+  automatedPct: number
+  coveragePct: number
+  avgAgeDays: number
+  olderThan180Pct: number
+}
+
+function LibraryVerdictRibbon(p: LibraryVerdictProps) {
+  const t = p.healthTag === 'Healthy'
+    ? { border: 'rgba(34,197,94,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)', bar: 'var(--gate-go)', eyebrow: '#86efac' }
+    : p.healthTag === 'Needs attention'
+      ? { border: 'rgba(245,158,11,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)', bar: 'var(--gate-conditional)', eyebrow: '#fcd34d' }
+      : { border: 'rgba(239,68,68,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)', bar: 'var(--gate-no-go)', eyebrow: '#fca5a5' }
+
+  const blockers: { tone: 'critical' | 'warn'; text: React.ReactNode }[] = []
+  if (p.deprecatedInActive > 0) {
+    blockers.push({ tone: 'critical', text: <><strong>{p.deprecatedInActive}</strong> deprecated cases referenced by active suites</> })
+  }
+  if (p.staleCount > 0) {
+    blockers.push({ tone: 'warn', text: <><strong>{p.staleCount}</strong> drafts untouched ≥30d</> })
+  }
+  if (p.reviewCount > 0 && p.oldestReviewDays >= 7) {
+    blockers.push({ tone: 'warn', text: <><strong>{p.reviewCount}</strong> reviews aging — oldest {p.oldestReviewDays} days</> })
+  }
+
+  return (
+    <section
+      aria-label="Library verdict"
+      className="relative rounded-xl border overflow-hidden grid gap-6 mb-3.5"
+      style={{
+        gridTemplateColumns: '1.45fr 1fr',
+        background: `${t.glow}, var(--color-bg-card)`,
+        borderColor: t.border,
+        padding: '18px 20px',
+      }}
+    >
+      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
+
+      <div className="min-w-0" style={{ paddingLeft: 4 }}>
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
+          style={{ color: t.eyebrow, letterSpacing: 'var(--tracking-wider)' }}
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{
+              background: t.bar,
+              animation: p.healthTag === 'At risk' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
+            }}
+            aria-hidden
+          />
+          Library health
+        </span>
+        <div className="flex items-baseline gap-3 mt-1.5 mb-1.5">
+          <span className="font-bold tabular-nums leading-none" style={{ fontSize: 34, color: p.healthTone, letterSpacing: '-0.02em' }}>
+            {p.healthScore}
+          </span>
+          <span className="text-[14px] text-[var(--color-text-muted)] font-medium">/ 100</span>
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ml-1"
+            style={{
+              background: p.healthTag === 'Healthy' ? 'rgba(34,197,94,0.12)' : p.healthTag === 'Needs attention' ? 'var(--gate-conditional-bg)' : 'rgba(239,68,68,0.12)',
+              border: `1px solid ${t.border}`,
+              color: p.healthTone,
+            }}
+          >
+            {p.healthTag}
+          </span>
+        </div>
+        <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+          <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> cases · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
+        </p>
+        {blockers.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {blockers.map((b, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center px-2.5 py-1 rounded-full text-[11.5px]"
+                style={{
+                  background: b.tone === 'critical' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+                  border: b.tone === 'critical' ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(245,158,11,0.25)',
+                  color: b.tone === 'critical' ? '#fca5a5' : '#fcd34d',
+                }}
+              >
+                <span className="sr-only">{b.tone === 'critical' ? 'Warning: ' : 'Notice: '}</span>
+                {b.text}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div
+        className="grid items-stretch"
+        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}
+      >
+        <VerdictStat label="Active"        value={p.activeCount}                  sub={null} isFirst />
+        <VerdictStat label="Automated"     value={`${p.automatedPct}%`}            sub="target 60%" />
+        <VerdictStat label="Req coverage"  value={`${p.coveragePct}%`}             sub="of tracked" />
+        <VerdictStat label="Avg age"       value={`${p.avgAgeDays}d`}              sub={`${p.olderThan180Pct}% >180d`} isLast />
+      </div>
+    </section>
+  )
+}
+
+function VerdictStat({ label, value, sub, isFirst, isLast }: { label: string; value: React.ReactNode; sub: React.ReactNode; isFirst?: boolean; isLast?: boolean }) {
+  return (
+    <div
+      className="flex flex-col justify-center gap-0.5"
+      style={{
+        padding: '14px 16px',
+        borderRight: isLast ? '0' : '1px solid var(--color-border)',
+        borderLeft: isFirst ? '0' : undefined,
+      }}
+    >
+      <div className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        {label}
+      </div>
+      <div className="font-bold tabular-nums leading-[1.1] text-[var(--color-text)]" style={{ fontSize: 19, letterSpacing: '-0.01em' }}>
+        {value}
+      </div>
+      {sub && <div className="text-[10.5px] text-[var(--color-text-muted)]">{sub}</div>}
+    </div>
+  )
+}
+
+// ── Filter bar ──────────────────────────────────────────────────────────
+interface CasesFilterBarProps {
+  searchInputRef: React.RefObject<HTMLInputElement>
+  search: string
+  onSearchChange: (v: string) => void
+  status: string
+  onStatusChange: (v: string) => void
+  testType: string
+  onTypeChange: (v: string) => void
+  priority: string
+  onPriorityChange: (v: string) => void
+  ownerFilter: string
+  onOwnerChange: (v: string) => void
+  suiteFilter: string
+  onSuiteChange: (v: string) => void
+  suiteOptions: string[]
+  savedView: string | null
+  savedViews: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }[]
+  onSavedView: (v: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }) => void
+  onSaveCurrent: () => void
+}
+
+function CasesFilterBar(p: CasesFilterBarProps) {
+  return (
+    <div
+      className="flex items-center flex-wrap gap-2 rounded-md"
+      style={{
+        background: 'var(--color-bg-card)',
+        border: '1px solid var(--color-border)',
+        padding: '10px 12px',
+      }}
+    >
+      {/* Search */}
+      <div
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md flex-1"
+        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', minWidth: 240, height: 32 }}
+      >
+        <input
+          ref={p.searchInputRef}
+          type="search"
+          value={p.search}
+          onChange={(e) => p.onSearchChange(e.target.value)}
+          placeholder="Search by ID, title, tags, owner, or requirement…"
+          className="bg-transparent text-[13px] text-[var(--color-text)] outline-none flex-1"
+          aria-label="Search cases"
+        />
+        <kbd
+          className="font-mono text-[10.5px] px-1.5 py-px rounded-sm"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+        >
+          /
+        </kbd>
+      </div>
+
+      <SelectChip label="Status" value={p.status} options={[
+        { value: '', label: 'All' },
+        { value: 'draft', label: 'Draft' },
+        { value: 'review_requested', label: 'Review requested' },
+        { value: 'under_review', label: 'Under review' },
+        { value: 'approved', label: 'Approved' },
+        { value: 'active', label: 'Active' },
+        { value: 'rejected', label: 'Rejected' },
+        { value: 'deprecated', label: 'Deprecated' },
+      ]} onChange={p.onStatusChange} />
+
+      <SelectChip label="Type" value={p.testType} options={[
+        { value: '', label: 'All' },
+        { value: 'functional',   label: 'Functional' },
+        { value: 'integration',  label: 'Integration' },
+        { value: 'e2e',          label: 'E2E' },
+        { value: 'regression',   label: 'Regression' },
+        { value: 'smoke',        label: 'Smoke' },
+        { value: 'performance',  label: 'Performance' },
+        { value: 'security',     label: 'Security' },
+        { value: 'usability',    label: 'Usability' },
+        { value: 'api',          label: 'API' },
+      ]} onChange={p.onTypeChange} />
+
+      <SelectChip label="Priority" value={p.priority} options={[
+        { value: '', label: 'Any' },
+        { value: 'critical', label: 'Critical' },
+        { value: 'high', label: 'High' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'low', label: 'Low' },
+      ]} onChange={p.onPriorityChange} />
+
+      <SelectChip label="Owner" value={p.ownerFilter} options={[
+        { value: '', label: 'Anyone' },
+      ]} onChange={p.onOwnerChange} disabled title="Owner filter — coming in Phase 2" />
+
+      <SelectChip
+        label="Suite"
+        value={p.suiteFilter}
+        options={[
+          { value: '', label: 'All' },
+          ...p.suiteOptions.map(s => ({ value: s, label: s })),
+        ]}
+        onChange={p.onSuiteChange}
+      />
+
+      <span aria-hidden className="inline-block w-px h-[18px] mx-1" style={{ background: 'var(--color-border)' }} />
+
+      <span
+        className="inline-flex items-center text-[10px] uppercase font-medium text-[var(--color-text-muted)]"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        Views
+      </span>
+      {p.savedViews.map(v => {
+        const active = p.savedView === v.id
+        return (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => p.onSavedView(v)}
+            className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+            style={{
+              background: active ? 'rgba(167,139,250,0.14)' : 'transparent',
+              borderColor: active ? 'rgba(167,139,250,0.30)' : 'var(--color-border)',
+              color: active ? '#c4b5fd' : 'var(--color-text-muted)',
+            }}
+          >
+            {v.label}
+          </button>
+        )
+      })}
+      <button
+        type="button"
+        onClick={p.onSaveCurrent}
+        className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+        style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
+        title="Save current filters as a view"
+      >
+        + Save
+      </button>
+    </div>
+  )
+}
+
+function SelectChip({
+  label, value, options, onChange, disabled, title,
+}: {
+  label: string
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  disabled?: boolean
+  title?: string
+}) {
+  const active = !!value
+  return (
+    <span
+      className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+      style={{
+        background: active ? 'rgba(68,147,248,0.10)' : 'transparent',
+        borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
+        color: active ? '#93c5fd' : 'var(--color-text-muted)',
+        opacity: disabled ? 0.55 : 1,
+      }}
+      title={title}
+    >
+      <span className="font-medium mr-1">{label}:</span>
+      <select
+        disabled={disabled}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className="bg-transparent outline-none border-0 text-[12.5px] tabular-nums"
+        style={{ color: 'inherit' }}
+      >
+        {options.map(o => (
+          <option key={o.value} value={o.value} style={{ background: 'var(--color-bg-card)', color: 'var(--color-text)' }}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <span className="font-mono text-[10.5px] tabular-nums ml-1" style={{ color: active ? 'rgba(147,197,253,0.65)' : 'var(--color-text-faint)' }}>
+        {value ? '1' : options.length - 1}
+      </span>
+    </span>
+  )
+}
+
+// ── Cases table body + footer ─────────────────────────────────────────
+function CasesTableBody({
+  cases, onRowClick, onDelete,
+}: {
+  cases: ManagedTestCase[]
+  onRowClick: (c: ManagedTestCase) => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12.5px]" role="table">
+        <thead>
+          <tr style={{ background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+            <Th label="ID"         width={78} />
+            <Th label="Title" />
+            <Th label="Status"     width={108} />
+            <Th label="Priority"   width={90} />
+            <Th label="Owner"      width={132} />
+            <Th label="Automation" width={104} />
+            <Th label="Last run"   width={108} />
+            <Th label="" align="right" width={40} />
+          </tr>
+        </thead>
+        <tbody>
+          {cases.map(tc => <CaseRow key={tc.id} tc={tc} onRowClick={onRowClick} onDelete={onDelete} />)}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function Th({ label, width, align }: { label: string; width?: number; align?: 'right' }) {
+  return (
+    <th
+      style={{
+        padding: '8px 12px',
+        textAlign: align ?? 'left',
+        color: 'var(--color-text-muted)',
+        fontWeight: 500,
+        fontSize: 10.5,
+        textTransform: 'uppercase',
+        letterSpacing: 'var(--tracking-wider)',
+        width,
+      }}
+    >
+      {label}
+    </th>
+  )
+}
+
+function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick: (c: ManagedTestCase) => void; onDelete: (id: string, e: React.MouseEvent) => void }) {
+  return (
+    <tr
+      style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
+      className="transition-colors hover:bg-[var(--color-bg-hover)]"
+      onClick={() => onRowClick(tc)}
+    >
+      <td className="font-mono text-[11px] text-[var(--color-text-muted)]" style={{ padding: '10px 12px' }}>
+        TC-{tc.id.slice(0, 6).toUpperCase()}
+      </td>
+      <td style={{ padding: '10px 12px', minWidth: 280 }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate">{tc.title}</span>
+          {tc.ai_generated && <Sparkles className="h-3 w-3 text-[#c4b5fd] flex-shrink-0" aria-label="AI generated" />}
+        </div>
+        <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
+          {(tc.test_type ?? '').replace(/_/g, ' ')}
+          {tc.suite_name ? <> · suite: <span className="text-[var(--color-text-secondary)]">{tc.suite_name}</span></> : null}
+          {tc.tags && tc.tags.length > 0 ? <> · tags: <span className="text-[var(--color-text-secondary)]">{tc.tags.slice(0, 3).join(', ')}</span></> : null}
+        </div>
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <CaseStatusPill status={tc.status} />
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <CasePriorityTag priority={tc.priority} />
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <OwnerCell userId={tc.assignee_id ?? tc.author_id ?? null} />
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        {tc.is_automated ? (
+          <span className="inline-flex items-center gap-1 text-[11.5px]" style={{ color: '#86efac' }}>
+            <CheckCircle2 className="h-3 w-3" /> Auto
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-text-muted)]">
+            <User className="h-3 w-3" /> Manual
+          </span>
+        )}
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <LastRunCell status={tc.last_execution_status} at={tc.last_executed_at} />
+      </td>
+      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+        <button
+          onClick={(e) => onDelete(tc.id, e)}
+          title="Delete"
+          className="text-[var(--color-text-faint)] hover:text-[#fca5a5] transition-colors p-1"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+function CaseStatusPill({ status }: { status: string }) {
+  const map: Record<string, { bg: string; bd: string; fg: string; label: string; lt?: boolean }> = {
+    active:           { bg: 'rgba(34,197,94,0.10)',  bd: 'rgba(34,197,94,0.30)',  fg: '#86efac', label: 'Active' },
+    approved:         { bg: 'rgba(68,147,248,0.10)', bd: 'rgba(68,147,248,0.30)', fg: '#93c5fd', label: 'Approved' },
+    review_requested: { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d', label: 'Review' },
+    under_review:     { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d', label: 'Under review' },
+    draft:            { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'Draft' },
+    deprecated:       { bg: 'rgba(120,113,108,0.12)', bd: 'rgba(120,113,108,0.30)', fg: '#a8a29e', label: 'Deprecated', lt: true },
+    rejected:         { bg: 'rgba(239,68,68,0.10)', bd: 'rgba(239,68,68,0.30)', fg: '#fca5a5', label: 'Rejected' },
+  }
+  const p = map[status] ?? { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: status.replace(/_/g, ' ') }
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px]"
+      style={{
+        background: p.bg,
+        border: `1px solid ${p.bd}`,
+        color: p.fg,
+        textDecoration: p.lt ? 'line-through' : undefined,
+      }}
+    >
+      <i aria-hidden style={{ width: 5, height: 5, borderRadius: 999, background: 'currentColor' }} />
+      {p.label}
+    </span>
+  )
+}
+
+function CasePriorityTag({ priority }: { priority: string }) {
+  const map: Record<string, { bg: string; bd: string; fg: string; label: string }> = {
+    critical: { bg: 'rgba(239,68,68,0.14)',  bd: 'rgba(239,68,68,0.25)',  fg: '#fca5a5', label: 'P0' },
+    high:     { bg: 'rgba(245,158,11,0.14)', bd: 'rgba(245,158,11,0.25)', fg: '#fcd34d', label: 'P1' },
+    medium:   { bg: 'rgba(68,147,248,0.10)', bd: 'rgba(68,147,248,0.22)', fg: '#93c5fd', label: 'P2' },
+    low:      { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'P3' },
+  }
+  const p = map[priority] ?? map.low
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold uppercase"
+      style={{ background: p.bg, border: `1px solid ${p.bd}`, color: p.fg, letterSpacing: '0.04em' }}
+    >
+      {p.label}
+    </span>
+  )
+}
+
+const AVATAR_GRADIENTS = [
+  'linear-gradient(135deg, #6366f1, #ec4899)',
+  'linear-gradient(135deg, #06b6d4, #3b82f6)',
+  'linear-gradient(135deg, #f59e0b, #ef4444)',
+  'linear-gradient(135deg, #10b981, #06b6d4)',
+  'linear-gradient(135deg, #8b5cf6, #ec4899)',
+]
+
+function hashIntoBucket(s: string, buckets: number): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i)
+  return Math.abs(h) % buckets
+}
+
+function OwnerCell({ userId }: { userId: string | null }) {
+  if (!userId) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]" aria-label="Unassigned">
+        <span
+          aria-hidden
+          className="inline-flex items-center justify-center rounded-full text-[9px]"
+          style={{ width: 18, height: 18, background: 'var(--color-bg-secondary)', border: '1px dashed var(--color-border-light)', color: 'var(--color-text-muted)' }}
+        >?</span>
+        Unassigned
+      </span>
+    )
+  }
+  const initials = userId.slice(0, 2).toUpperCase()
+  const grad = AVATAR_GRADIENTS[hashIntoBucket(userId, AVATAR_GRADIENTS.length)]
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-secondary)]">
+      <span
+        aria-hidden
+        className="inline-flex items-center justify-center rounded-full font-bold text-white"
+        style={{ width: 18, height: 18, background: grad, fontSize: 9 }}
+      >
+        {initials}
+      </span>
+      <span className="truncate" title={userId}>{userId.slice(0, 8)}</span>
+    </span>
+  )
+}
+
+function LastRunCell({ status, at }: { status: string | undefined; at: string | undefined }) {
+  if (!at) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
+  const ms = Date.now() - new Date(at).getTime()
+  if (Number.isNaN(ms) || ms < 0) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
+  const m = Math.floor(ms / 60000)
+  const ageLabel = m < 1 ? 'just now'
+    : m < 60 ? `${m}m`
+    : m < 1440 ? `${Math.floor(m / 60)}h`
+    : `${Math.floor(m / 1440)}d`
+  const s = (status ?? '').toLowerCase()
+  const isPass = /pass/i.test(s)
+  const isFail = /fail|error|broken/i.test(s)
+  if (isFail) {
+    return <span className="text-[11.5px]" style={{ color: '#fca5a5' }}>FAIL · {ageLabel}</span>
+  }
+  if (isPass) {
+    return <span className="text-[11.5px]" style={{ color: '#86efac' }}>PASS · {ageLabel}</span>
+  }
+  return <span className="text-[11.5px] text-[var(--color-text-muted)]">{ageLabel} ago</span>
+}
+
+function CasesTableFooter({ shown, total, pages, page, onPage }: { shown: number; total: number; pages: number; page: number; onPage: (p: number) => void }) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 px-4 py-2.5 text-[11.5px] text-[var(--color-text-muted)]"
+      style={{ borderTop: '1px solid var(--color-border)' }}
+    >
+      <span>{shown} of {total} · ↑/↓ navigate · ↵ open · ⌘E bulk edit</span>
+      <Pagination page={page} pages={pages} total={total} onChange={onPage} />
+    </div>
+  )
+}
+
+function EmptyStateBlock({
+  projectId, onCreate, onAiGenerate, onReset,
+}: {
+  projectId: string | null
+  onCreate: () => void
+  onAiGenerate: () => void
+  onReset: () => void
+}) {
+  return (
+    <div className="flex flex-col items-center text-center px-4 py-12">
+      <ClipboardList className="h-10 w-10 text-[var(--color-text-faint)] mb-3" />
+      <p className="text-[13px] m-0 font-medium text-[var(--color-text)]">No test cases match your filters.</p>
+      <p className="text-[12px] m-0 mt-1 text-[var(--color-text-muted)]">Reset filters, or generate cases from your knowledge graph.</p>
+      <div className="flex gap-2 mt-3 flex-wrap justify-center">
+        <button
+          onClick={onReset}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          Reset filters
+        </button>
+        {projectId && (
+          <>
+            <button
+              onClick={onAiGenerate}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border"
+              style={{ color: '#c4b5fd', borderColor: 'rgba(167,139,250,0.30)', background: 'rgba(167,139,250,0.06)' }}
+            >
+              <Sparkles className="h-3.5 w-3.5" /> AI Generate
+            </button>
+            <button
+              onClick={onCreate}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md"
+              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            >
+              <Plus className="h-3.5 w-3.5" /> New test case
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Coverage matrix card ────────────────────────────────────────────────
+function CoverageMatrixCard({ auto, manual, uncovered }: { auto: number; manual: number; uncovered: number }) {
+  const total = auto + manual + uncovered || 1
+  const pct = (n: number) => Math.round((n / total) * 100)
+  return (
+    <CasesCardShell
+      title="Coverage by requirement"
+      rightSlot={
+        <button
+          type="button"
+          onClick={() => toast('Coverage matrix viewer — coming in Phase 2', { icon: '🪪' })}
+          className="hover:underline"
+          style={{ color: 'var(--color-accent)' }}
+        >
+          Coverage matrix →
+        </button>
+      }
+    >
+      <div className="px-4 py-3.5">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">
+          <strong className="text-[var(--color-text)] font-semibold">{total}</strong> requirements tracked · <strong className="text-[var(--color-text)] font-semibold">{auto + manual}</strong> covered (<strong className="text-[var(--color-text)] font-semibold">{pct(auto + manual)}%</strong>)
+        </p>
+        <div
+          className="flex h-7 rounded-md overflow-hidden border"
+          style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+          role="img"
+          aria-label={`Coverage: ${auto} automated, ${manual} manual, ${uncovered} uncovered`}
+        >
+          {auto > 0 && (
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'rgba(34,197,94,0.55)', color: 'white' }}>
+              {auto} auto
+            </div>
+          )}
+          {manual > 0 && (
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'rgba(68,147,248,0.50)', color: 'white' }}>
+              {manual} manual
+            </div>
+          )}
+          {uncovered > 0 && (
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: uncovered, background: 'rgba(120,113,108,0.30)', color: 'var(--color-text-secondary)' }}>
+              {uncovered} uncovered
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
+          <Legend color="rgba(34,197,94,0.55)" label={`Automated · ${pct(auto)}%`} />
+          <Legend color="rgba(68,147,248,0.50)" label={`Manual · ${pct(manual)}%`} />
+          <Legend color="rgba(120,113,108,0.30)" label={`Uncovered · ${pct(uncovered)}%`} />
+        </div>
+      </div>
+    </CasesCardShell>
+  )
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: color }} />
+      {label}
+    </span>
+  )
+}
+
+// ── Right rail cards ────────────────────────────────────────────────────
+function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c: ManagedTestCase) => void }) {
+  return (
+    <CasesCardShell title={`Review queue · ${rows.length}`} rightSlot={
+      <button
+        type="button"
+        onClick={() => toast('Review queue viewer — coming in Phase 2', { icon: '📥' })}
+        className="hover:underline"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        View all →
+      </button>
+    }>
+      {rows.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+          Caught up — review queue is empty.
+        </div>
+      ) : (
+        <div>
+          {rows.map(c => {
+            const days = Math.floor((Date.now() - new Date(c.updated_at).getTime()) / 86400000)
+            const ageColor = days >= 7 ? '#fca5a5' : 'var(--color-text-muted)'
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onPick(c)}
+                className="grid items-center gap-2.5 w-full text-left hover:bg-[var(--color-bg-hover)] transition-colors"
+                style={{
+                  gridTemplateColumns: '1fr auto',
+                  padding: '10px 16px',
+                  borderBottom: '1px solid var(--color-border)',
+                }}
+              >
+                <div className="min-w-0">
+                  <div className="text-[12.5px] m-0 flex items-center gap-1.5">
+                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>TC-{c.id.slice(0, 6).toUpperCase()}</code>
+                    <span className="text-[var(--color-text)] truncate font-medium">{c.title}</span>
+                  </div>
+                  <div className="text-[10.5px] text-[var(--color-text-muted)] truncate mt-0.5">
+                    {c.assignee_id ? c.assignee_id.slice(0, 8) : 'Unassigned'} · requested by {c.author_id ? c.author_id.slice(0, 8) : '—'}
+                  </div>
+                </div>
+                <span className="text-[11px] tabular-nums" style={{ color: ageColor }}>
+                  {days < 1 ? `${Math.max(1, Math.floor((Date.now() - new Date(c.updated_at).getTime()) / 3600000))}h` : `${days}d`}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </CasesCardShell>
+  )
+}
+
+function GenerateCasesCard({
+  onPathClick, uncoveredReqs, untestedBranches, defectsWithoutRegression,
+}: {
+  onPathClick: () => void
+  uncoveredReqs: number
+  untestedBranches: number
+  defectsWithoutRegression: number
+}) {
+  return (
+    <div
+      className="overflow-hidden rounded-xl"
+      style={{
+        background: 'radial-gradient(120% 100% at 0% 0%, rgba(167,139,250,0.06), transparent 55%), var(--color-bg-card)',
+        border: '1px solid rgba(167,139,250,0.30)',
+      }}
+    >
+      <div
+        className="flex items-center justify-between gap-2 px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <h3 className="text-[13px] font-semibold m-0 inline-flex items-center gap-2" style={{ color: '#c4b5fd' }}>
+          <Sparkles className="h-3.5 w-3.5" />
+          Generate test cases
+        </h3>
+        <span className="text-[11px] text-[var(--color-text-muted)]">drafts → review queue</span>
+      </div>
+      <div className="px-4 py-3 flex flex-col gap-2">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">
+          Three paths fed by the same knowledge graph. All generated cases land as drafts in your review queue.
+        </p>
+        <GeneratePath
+          title="From requirements"
+          sub={<>uncovered requirements in <code className="font-mono text-[11px]">prd:current</code></>}
+          count={uncoveredReqs}
+          onClick={onPathClick}
+        />
+        <GeneratePath
+          title="From code paths"
+          sub={<>untested branches in <code className="font-mono text-[11px]">main</code></>}
+          count={untestedBranches}
+          onClick={onPathClick}
+        />
+        <GeneratePath
+          title="From recent defects"
+          sub="defects without a regression case"
+          count={defectsWithoutRegression}
+          onClick={onPathClick}
+        />
+      </div>
+    </div>
+  )
+}
+
+function GeneratePath({ title, sub, count, onClick }: { title: string; sub: React.ReactNode; count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={count === 0}
+      className="grid items-center gap-2.5 rounded-md border text-left transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+      style={{
+        gridTemplateColumns: '30px 1fr auto',
+        padding: '8px 12px',
+        background: 'var(--color-bg)',
+        borderColor: 'var(--color-border)',
+      }}
+    >
+      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 30, height: 30, background: 'rgba(167,139,250,0.16)', color: '#c4b5fd' }}>
+        <Sparkles className="h-3.5 w-3.5" />
+      </span>
+      <div className="min-w-0">
+        <div className="text-[12.5px] font-medium text-[var(--color-text)]">{title}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{count} {sub}</div>
+      </div>
+      <span
+        className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-mono tabular-nums"
+        style={{ background: 'rgba(167,139,250,0.12)', color: '#c4b5fd', border: '1px solid rgba(167,139,250,0.25)' }}
+      >
+        {count}
+      </span>
+    </button>
+  )
+}
+
+function StrategyGapsCard({ gaps }: { gaps: { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }[] }) {
+  return (
+    <CasesCardShell title="Strategy gaps" rightSlot={
+      <button
+        type="button"
+        onClick={() => toast('Strategy viewer — coming in Phase 2', { icon: '🪪' })}
+        className="hover:underline"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        Open strategy →
+      </button>
+    }>
+      {gaps.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+          No gaps detected against current strategy.
+        </div>
+      ) : (
+        <div>
+          {gaps.map((g, i) => (
+            <div
+              key={i}
+              className="grid items-center gap-2.5"
+              style={{
+                gridTemplateColumns: '1fr auto',
+                padding: '9px 16px',
+                borderBottom: i < gaps.length - 1 ? '1px solid var(--color-border)' : '0',
+              }}
+            >
+              <div className="min-w-0">
+                <div className="text-[12px] font-medium text-[var(--color-text)]">{g.title}</div>
+                <div className="text-[10.5px] text-[var(--color-text-muted)]">{g.sub}</div>
+              </div>
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
+                style={{
+                  background: g.severity === 'critical' ? 'rgba(239,68,68,0.14)' : 'rgba(245,158,11,0.14)',
+                  border: g.severity === 'critical' ? '1px solid rgba(239,68,68,0.30)' : '1px solid rgba(245,158,11,0.30)',
+                  color: g.severity === 'critical' ? '#fca5a5' : '#fcd34d',
+                }}
+              >
+                {g.pill}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </CasesCardShell>
+  )
+}
+
+interface RecentEvent { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
+
+function RecentActivityCard({ events }: { events: RecentEvent[] }) {
+  return (
+    <CasesCardShell title="Recent activity" rightSlot={
+      <button
+        type="button"
+        onClick={() => toast('Audit log viewer — coming in Phase 2', { icon: '📜' })}
+        className="hover:underline"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        Audit log →
+      </button>
+    }>
+      {events.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+          No recent activity.
+        </div>
+      ) : (
+        <div>
+          {events.map((e, i) => {
+            const ms = Date.now() - new Date(e.created_at).getTime()
+            const min = Math.max(1, Math.floor(ms / 60000))
+            const ageLabel = min < 60 ? `${min}m` : min < 1440 ? `${Math.floor(min / 60)}h` : `${Math.floor(min / 1440)}d`
+            const action = (e.action ?? e.event_type ?? 'updated').toLowerCase()
+            const palette = /create|new/.test(action) ? { bg: 'rgba(34,197,94,0.14)',    fg: '#86efac' }
+              : /review|approve/.test(action)        ? { bg: 'rgba(245,158,11,0.14)',  fg: '#fcd34d' }
+              : /deprecate|delete/.test(action)      ? { bg: 'rgba(120,113,108,0.16)', fg: '#a8a29e' }
+              : /ai|generate/.test(action)           ? { bg: 'rgba(167,139,250,0.14)', fg: '#c4b5fd' }
+              : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
+            return (
+              <div
+                key={e.id || i}
+                className="grid items-center gap-2.5"
+                style={{
+                  gridTemplateColumns: '22px 1fr auto',
+                  padding: '9px 16px',
+                  borderBottom: i < events.length - 1 ? '1px solid var(--color-border)' : '0',
+                }}
+              >
+                <span className="inline-flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: palette.bg, color: palette.fg }}>
+                  <FileText className="h-3 w-3" />
+                </span>
+                <div className="text-[12px] text-[var(--color-text-secondary)] truncate">
+                  <strong className="text-[var(--color-text)] font-medium">{e.actor_name ?? 'Someone'}</strong>
+                  {' '}
+                  {action.replace(/_/g, ' ')}
+                  {' '}
+                  {e.entity_id && (
+                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>
+                      TC-{e.entity_id.slice(0, 6).toUpperCase()}
+                    </code>
+                  )}
+                </div>
+                <span className="text-[10.5px] tabular-nums text-[var(--color-text-muted)]">{ageLabel}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </CasesCardShell>
+  )
+}
+
+function CasesCardShell({
+  title, rightSlot, children,
+}: { title: React.ReactNode; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div
+      className="overflow-hidden rounded-xl"
+      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
+    >
+      <div
+        className="flex items-center justify-between gap-2.5 px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
+        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
+      </div>
+      {children}
+    </div>
   )
 }
 

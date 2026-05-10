@@ -24,6 +24,12 @@ export interface LiveSessionResponse {
 
 export interface LiveSessionState {
   run_id: string
+  /** Canonical TestRun.id this session resolves to. Use this — not `run_id`
+   *  — when constructing /runs/<id> links: SDKs frequently emit non-UUID
+   *  slugs (e.g. `local-abc12345`) and the backend stores the TestRun under
+   *  `uuid5(NAMESPACE_DNS, run_id)`. The legacy `run_id` field is preserved
+   *  for display and for deduping by build identity. */
+  test_run_id?: string | null
   project_id: string
   build_number: string
   status: string

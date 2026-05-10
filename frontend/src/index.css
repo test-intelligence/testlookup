@@ -2,6 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Slide animation for the running-stage progress bar in the AgentWorkflowPage
+   subway cards. A 35%-wide gradient sweeps the 2px-tall track at the bottom
+   of the card. Tailwind doesn't ship this keyframe out of the box. */
+@keyframes testlookup-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(420%); }
+}
+
+/* Pulse halo for the dashboard verdict-card eyebrow dot. Scales an outer
+   box-shadow ring out from the dot. Honors prefers-reduced-motion. */
+@keyframes testlookup-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.6); }
+  70%  { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .testlookup-verdict-pulse { animation: none !important; }
+}
+
 /* ═══════════════════════════════════════════════════
    Theme definitions — two professional dark themes
    Toggle via data-theme attribute on <html>
@@ -103,6 +122,68 @@
     --gate-go:          #22c55e;
     --gate-conditional: #eab308;
     --gate-no-go:       #ef4444;
+
+    /* Run Intelligence redesign tokens — soft fills for verdict / blocker
+       backgrounds and the green→amber→red risk-meter gradient. Defined
+       once so the page never reaches for raw rgba() literals. */
+    --gate-conditional-glow: rgba(245,158,11,0.10);
+    --alert-bg-soft:         rgba(239,68,68,0.10);
+    --alert-border-soft:     rgba(239,68,68,0.30);
+    --status-passed-soft:    rgba(34,197,94,0.18);
+    --gradient-risk:         linear-gradient(90deg, #22c55e, #fcd34d 50%, #ef4444);
+    /* Test-coverage health bar — mirror of --gradient-risk: red on the LOW
+       end and green on the HIGH end, since coverage scores are "more is
+       better" while risk scores are "more is worse". */
+    --gradient-health:       linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    /* Failure-analysis stability bar — same direction/colors as
+       --gradient-health (higher = better). Aliased so the failure page
+       reads semantically without leaking "health" into the variable name. */
+    --gradient-stability:    linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+
+    /* Verdict-card glow tints. Used by the radial-gradient backdrop on
+       the failure-analysis verdict variants. */
+    --gate-no-go-glow:       rgba(239,68,68,0.10);
+    --gate-go-glow:          rgba(34,197,94,0.10);
+
+    /* Soft fills for stage / pill icon backgrounds. The "passed-soft"
+       was added with run-intelligence; "failed-soft" lands here for the
+       failure-analysis stage and pill chrome. */
+    --status-failed-soft:    rgba(239,68,68,0.18);
+
+    /* Failure-category palette — promoted out of inline values for the
+       category distribution rows (Assertion / Timeout / Network / Infra
+       / Unknown). */
+    --cat-assertion: #ef4444;
+    --cat-timeout:   #f59e0b;
+    --cat-network:   #6366f1;
+    --cat-infra:     #06b6d4;
+    --cat-unknown:   #94a3b8;
+
+    /* Trends redesign tokens. The confidence-bar gradient is the same
+       red→amber→green direction as --gradient-health / --gradient-stability;
+       aliased here so the trends page reads semantically without leaking
+       "health" or "stability" into a name that's about historical signal
+       confidence. */
+    --gradient-confidence:        linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    /* Mixed-result heatmap cell — pass green at the bottom, red stripe on
+       top per the design. */
+    --pattern-mixed-day:          linear-gradient(180deg, var(--status-passed) 0% 80%, #fca5a5 80% 100%);
+    /* Three intensities for the conditional-amber backdrop / pill / border
+       used on warn-tinted issue rows, the trends Schedule-Paused callout,
+       and the cadence gap annotation strip. */
+    --gate-conditional-bg-soft:   rgba(245,158,11,0.06);
+    --gate-conditional-bg:        rgba(245,158,11,0.16);
+    --gate-conditional-border:    rgba(245,158,11,0.28);
+    /* Soft accent fill for info-issue rows + Open-link chips. */
+    --color-accent-bg-soft:       rgba(68,147,248,0.06);
+
+    /* Display sizes used by the verdict headlines / hero numbers across
+       the dashboard, run-intelligence, and test-coverage redesigns. Kept
+       as tokens so a future scale tweak hits all three pages at once. */
+    --text-display-sm: 26px;  /* verdict headline (h2)             */
+    --text-display-md: 28px;  /* run-intelligence verdict headline */
+    --text-display-lg: 44px;  /* hero numeric — risk / health      */
+    --text-stat-lg:    24px;  /* KPI strip values                   */
   }
 
   /* Typography scale — UI dense, optimised for data tables.

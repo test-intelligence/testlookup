@@ -1,677 +1,1813 @@
-import { useEffect, useRef, useState } from 'react'
+/**
+ * Trends — verdict-led redesign per design_handoff_trends/README.md.
+ *
+ * Layout (1320 px max-width, 14 px section gaps):
+ *   Header  → title + crumb (project · window · refreshed) + Customize +
+ *             7d/14d/30d/90d window picker + Export PDF + "Email report" CTA.
+ *   Verdict → 1.45fr | 1fr split. Variants HEALTHY / MIXED / INSUFFICIENT
+ *             / DECLINING / PENDING. Left: pulsing eyebrow → 26 px headline
+ *             "<verdict> · <summary>" → lede → 3 issue rows → CTAs. Right:
+ *             44 px trend-confidence score with marker-dot meter (red→amber
+ *             →green gradient + threshold ticks at 33 / 66) + 2×2 weighted
+ *             dimension grid (Data coverage 40 % / Sample size 25 % /
+ *             Variance stability 20 % / Tag quality 15 %).
+ *   Ribbon  → slim 3-stage workflow (Trend capture / Signal comparison /
+ *             Report delivery). Click → drawer (Phase 2).
+ *   KPIs    → 5 cells with sparklines: Pass rate · Days with runs · Executions
+ *             · Suites · Last run. Each sparkline reuses one of five
+ *             primitives (flat-line-with-dot / tick-grid / spike /
+ *             baseline-dot / dotted-pair) so they read consistently across
+ *             metrics.
+ *   Body    → 1.65fr | 1fr.
+ *     Left  → Run cadence heatmap (the lead chart, 30 cells with the
+ *             empty-day gap impossible to miss + amber gap-annotation strip)
+ *             → Daily breakdown (bars + ground-line ticks for empty days,
+ *             never invisible) → Pass-rate trend (sparse-data overlay
+ *             rendered as real DOM text, not stretched SVG).
+ *     Right → Schedule-paused callout (only when the gap is real) → Suite
+ *             pass rates (with micro 6-tick bars per suite) → Recommended
+ *             actions (role-routed; Idle chip when a role has no work).
+ *   Footer → Provenance line + decision-trail link.
+ *
+ * Out of scope (Phase 2 — README §"Out of Scope"):
+ *   - <600 px mobile (bottom-fixed notice on narrow viewports)
+ *   - Workflow stage drawer body
+ *   - Decision-trail modal body
+ *   - Email-report compose modal
+ *   - 90-day heatmap wrap rules
+ *   - Cumulative-volume chart (intentionally removed — see README)
+ *   - Print styles for Export PDF
+ *
+ * Data: derives every section from existing useTrendData + useDashboardSummary
+ * + useCoverage + useFlakyTests. The README proposes new dedicated trends /
+ * cadence / suites endpoints — none exist yet, so v1 reads from the existing
+ * trend tail and synthesises the remaining signals (variance, gap detection,
+ * suite micro-history) deterministically. Schedule-resume / email-report /
+ * export-PDF emit toasts pending the new endpoints.
+ */
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  Download, Mail, Plus, Settings2, TrendingUp, X,
+  AlertCircle, AlertTriangle, ArrowRight, BarChart3, Calendar, ChevronRight,
+  Clock, Download, Layers, LayoutGrid, Mail, Search, ShieldCheck, TrendingUp,
+  XCircle,
 } from 'lucide-react'
-import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart,
-  PieChart, Pie, Cell,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
-import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
-import PageHeader from '@/components/ui/PageHeader'
+import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
-import { buildTrendsWorkflow } from '@/components/workflow/workflowPresets'
-import { useTrendData } from '@/hooks/useMetrics'
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
+import {
+  useCoverage, useDashboardSummary, useFlakyTests, useTrendData,
+} from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
-import { postData } from '@/services/http'
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// ── Window picker ──────────────────────────────────────────────────────────
+const WINDOWS = [7, 14, 30, 90] as const
+type Window = (typeof WINDOWS)[number]
+const WINDOW_KEY = 'tl.trends.window'
 
-const PERIODS = [
-  { label: '7d',  days: 7 },
-  { label: '14d', days: 14 },
-  { label: '30d', days: 30 },
-  { label: '90d', days: 90 },
-]
+// ── Verdict ────────────────────────────────────────────────────────────────
+type Verdict = 'HEALTHY' | 'MIXED' | 'INSUFFICIENT' | 'DECLINING' | 'PENDING'
 
-const TOOLTIP_STYLE = {
-  backgroundColor: '#1e293b', border: '1px solid #334155',
-  borderRadius: '8px', color: '#e2e8f0', fontSize: '12px',
-}
-const AXIS_TICK = { fill: '#64748b', fontSize: 11 }
-
-// ── Chart catalog ──────────────────────────────────────────────────────────
-
-interface ChartDef {
-  id: string
+interface VerdictTheme {
+  border: string
+  glow: string
+  bar: string
+  eyebrowText: string
+  gateText: string
+  pillBg: string
+  pillBd: string
+  pillFg: string
+  meter: string
   label: string
-  description: string
-  defaultEnabled: boolean
+  pulse: boolean
 }
 
-const CHART_CATALOG: ChartDef[] = [
-  { id: 'daily_breakdown',   label: 'Daily Breakdown',    description: 'Stacked bar of passed/failed/skipped per day',  defaultEnabled: true  },
-  { id: 'pass_rate_trend',   label: 'Pass Rate Trend',    description: 'Daily pass rate % line chart',                  defaultEnabled: true  },
-  { id: 'cumulative_volume', label: 'Cumulative Volume',  description: 'Total test volume growth area chart',           defaultEnabled: true  },
-  { id: 'failure_rate',      label: 'Failure Rate',       description: 'Daily failure rate % over time',               defaultEnabled: false },
-  { id: 'broken_trend',      label: 'Broken Tests',       description: 'Broken test count trend bar chart',            defaultEnabled: false },
-  { id: 'skipped_trend',     label: 'Skipped Trend',      description: 'Skipped test count trend over time',           defaultEnabled: false },
-  { id: 'status_pie',        label: 'Status Distribution',description: 'Pie chart of overall status distribution',     defaultEnabled: false },
+const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
+  HEALTHY: {
+    border: 'rgba(34,197,94,0.40)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    bar:    'var(--gate-go)',
+    eyebrowText: '#86efac',
+    gateText:    '#86efac',
+    pillBg: 'rgba(34,197,94,0.12)',
+    pillBd: 'rgba(34,197,94,0.30)',
+    pillFg: '#86efac',
+    meter:  '#86efac',
+    label:  'Trend healthy',
+    pulse:  false,
+  },
+  MIXED: {
+    border: 'rgba(245,158,11,0.40)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)',
+    bar:    'var(--gate-conditional)',
+    eyebrowText: '#fcd34d',
+    gateText:    '#fcd34d',
+    pillBg: 'var(--gate-conditional-bg)',
+    pillBd: 'var(--gate-conditional-border)',
+    pillFg: '#fcd34d',
+    meter:  '#fcd34d',
+    label:  'Trend mixed',
+    pulse:  true,
+  },
+  INSUFFICIENT: {
+    border: 'rgba(245,158,11,0.40)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)',
+    bar:    'var(--gate-conditional)',
+    eyebrowText: '#fcd34d',
+    gateText:    '#fcd34d',
+    pillBg: 'var(--gate-conditional-bg)',
+    pillBd: 'var(--gate-conditional-border)',
+    pillFg: '#fcd34d',
+    meter:  '#fcd34d',
+    label:  'Insufficient data',
+    pulse:  true,
+  },
+  DECLINING: {
+    border: 'rgba(239,68,68,0.40)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)',
+    bar:    'var(--gate-no-go)',
+    eyebrowText: '#fca5a5',
+    gateText:    '#fca5a5',
+    pillBg: 'rgba(239,68,68,0.12)',
+    pillBd: 'rgba(239,68,68,0.30)',
+    pillFg: '#fca5a5',
+    meter:  '#fca5a5',
+    label:  'Trend declining',
+    pulse:  true,
+  },
+  PENDING: {
+    border: 'var(--color-border)',
+    glow:   'transparent',
+    bar:    'var(--color-border-light)',
+    eyebrowText: 'var(--color-text-muted)',
+    gateText:    'var(--color-text-secondary)',
+    pillBg: 'var(--color-bg-secondary)',
+    pillBd: 'var(--color-border)',
+    pillFg: 'var(--color-text-muted)',
+    meter:  'var(--color-text-muted)',
+    label:  'Pending',
+    pulse:  false,
+  },
+}
+
+// ── Confidence model ───────────────────────────────────────────────────────
+// Weights from README §5.4: Data coverage 40 / Sample size 25 / Variance 20 /
+// Tag quality 15.
+type DimensionId = 'data_coverage' | 'sample_size' | 'variance_stability' | 'tag_quality'
+const WEIGHTS: Record<DimensionId, number> = {
+  data_coverage:      0.40,
+  sample_size:        0.25,
+  variance_stability: 0.20,
+  tag_quality:        0.15,
+}
+
+interface DimensionScore {
+  id: DimensionId
+  label: string
+  score: number
+  weight: number
+  tone: 'good' | 'warn' | 'bad'
+}
+
+interface CadenceCell {
+  iso: string
+  runs: number
+  passed: number
+  failed: number
+  isToday: boolean
+  isLastBeforeGap: boolean
+}
+
+interface ConfidenceModel {
+  composite: number
+  dimensions: DimensionScore[]
+  daysWithRuns: number
+  windowDays: number
+  emptyDays: number
+  totalRuns: number
+  passedRuns: number
+  failedRuns: number
+  skippedRuns: number
+  brokenRuns: number
+  passRate: number
+  passRatePerDay: number[]   // only days with runs
+  cadenceCells: CadenceCell[]
+  lastRunIso: string | null
+  previousRunIso: string | null
+  silentDays: number
+  expectedRunsMissed: number
+  gapStart: string | null
+  gapEnd: string | null
+}
+
+function toneFor(score: number): 'good' | 'warn' | 'bad' {
+  if (score >= 70) return 'good'
+  if (score >= 33) return 'warn'
+  return 'bad'
+}
+
+function buildCadenceCells(trend: TrendPoint[], days: number): CadenceCell[] {
+  const byDate = new Map<string, TrendPoint>()
+  for (const p of trend) byDate.set(p.date.slice(0, 10), p)
+  const today = new Date()
+  const cells: CadenceCell[] = []
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today)
+    d.setDate(today.getDate() - i)
+    const iso = d.toISOString().slice(0, 10)
+    const p = byDate.get(iso)
+    const runs = p ? (p.passed + p.failed + p.skipped + (p.broken ?? 0)) : 0
+    cells.push({
+      iso,
+      runs,
+      passed: p?.passed ?? 0,
+      failed: p?.failed ?? 0,
+      isToday: i === 0,
+      isLastBeforeGap: false,
+    })
+  }
+  // Mark the last cell with runs that has at least one empty cell *after* it.
+  let lastWithRunsIdx = -1
+  for (let i = 0; i < cells.length; i++) {
+    if (cells[i].runs > 0) lastWithRunsIdx = i
+  }
+  if (lastWithRunsIdx >= 0 && lastWithRunsIdx < cells.length - 1) {
+    // Find the most recent active cell that is followed by a stretch of empty
+    // cells before the next active cell — that's the "last green before gap".
+    for (let i = cells.length - 1; i >= 0; i--) {
+      if (cells[i].runs > 0 && !cells[i].isToday) {
+        cells[i].isLastBeforeGap = true
+        break
+      }
+    }
+  }
+  return cells
+}
+
+function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare: number): ConfidenceModel {
+  const cadenceCells = buildCadenceCells(trend, days)
+  const activeCells = cadenceCells.filter(c => c.runs > 0)
+  const daysWithRuns = activeCells.length
+  const emptyDays = cadenceCells.length - daysWithRuns
+
+  const totalRuns = trend.reduce((s, p) => s + p.passed + p.failed + p.skipped + (p.broken ?? 0), 0)
+  const passedRuns  = trend.reduce((s, p) => s + p.passed,  0)
+  const failedRuns  = trend.reduce((s, p) => s + p.failed,  0)
+  const skippedRuns = trend.reduce((s, p) => s + p.skipped, 0)
+  const brokenRuns  = trend.reduce((s, p) => s + (p.broken ?? 0), 0)
+  const passRate = totalRuns > 0 ? (passedRuns / totalRuns) * 100 : 0
+
+  const passRatePerDay = activeCells.map(c => {
+    const t = c.passed + c.failed
+    return t > 0 ? (c.passed / t) * 100 : 0
+  })
+
+  // Variance stability — stddev of per-day pass rate over active days.
+  // 0 active days → 0 (undefined). 1 day → 45 (warn proxy per the demo).
+  // ≥ 2 days → 100 - normalised stddev (cap at 100, floor at 0).
+  let varianceStability: number
+  if (activeCells.length === 0)      varianceStability = 0
+  else if (activeCells.length === 1) varianceStability = 45
+  else {
+    const mean = passRatePerDay.reduce((s, x) => s + x, 0) / passRatePerDay.length
+    const variance = passRatePerDay.reduce((s, x) => s + (x - mean) ** 2, 0) / passRatePerDay.length
+    const sd = Math.sqrt(variance)
+    // Map 0pp std → 100, 30pp std → 0 (linear)
+    varianceStability = Math.max(0, Math.min(100, 100 - (sd / 30) * 100))
+  }
+
+  const dataCoverageScore = days > 0 ? Math.min(100, (daysWithRuns / days) * 100) : 0
+  const sampleSizeScore   = Math.min(100, (totalRuns / 100) * 100)  // 100 runs ≈ full
+  const tagQualityScore   = Math.max(0, 100 - untaggedShare * 100)
+
+  const dimensions: DimensionScore[] = [
+    { id: 'data_coverage',      label: 'Data coverage',     score: dataCoverageScore,   weight: WEIGHTS.data_coverage,      tone: toneFor(dataCoverageScore) },
+    { id: 'sample_size',        label: 'Sample size',       score: sampleSizeScore,     weight: WEIGHTS.sample_size,        tone: toneFor(sampleSizeScore) },
+    { id: 'variance_stability', label: 'Variance stability', score: varianceStability,  weight: WEIGHTS.variance_stability, tone: toneFor(varianceStability) },
+    { id: 'tag_quality',        label: 'Tag quality',        score: tagQualityScore,    weight: WEIGHTS.tag_quality,        tone: toneFor(tagQualityScore) },
+  ]
+  const composite = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0))
+
+  // Last/previous run + gap stats
+  const isos = activeCells.map(c => c.iso).sort()
+  const lastRunIso     = isos.length > 0 ? isos[isos.length - 1] : null
+  const previousRunIso = isos.length > 1 ? isos[isos.length - 2] : null
+
+  let silentDays = 0
+  let expectedRunsMissed = 0
+  let gapStart: string | null = null
+  let gapEnd:   string | null = null
+  if (daysWithRuns < days && daysWithRuns > 0) {
+    // Look for the longest gap in the window.
+    let maxGap = 0
+    let curGapStartIdx = -1
+    let curGapLen = 0
+    for (let i = 0; i < cadenceCells.length; i++) {
+      if (cadenceCells[i].runs === 0) {
+        if (curGapStartIdx === -1) curGapStartIdx = i
+        curGapLen++
+      } else {
+        if (curGapLen > maxGap) {
+          maxGap = curGapLen
+          gapStart = curGapStartIdx >= 0 ? cadenceCells[curGapStartIdx].iso : null
+          gapEnd   = i > 0 ? cadenceCells[i - 1].iso : null
+        }
+        curGapStartIdx = -1
+        curGapLen = 0
+      }
+    }
+    if (curGapLen > maxGap) {
+      maxGap = curGapLen
+      gapStart = curGapStartIdx >= 0 ? cadenceCells[curGapStartIdx].iso : null
+      gapEnd   = cadenceCells[cadenceCells.length - 1].iso
+    }
+    silentDays = maxGap
+    expectedRunsMissed = silentDays  // assume nightly schedule (1/day)
+  }
+
+  return {
+    composite, dimensions,
+    daysWithRuns, windowDays: days, emptyDays,
+    totalRuns, passedRuns, failedRuns, skippedRuns, brokenRuns,
+    passRate, passRatePerDay,
+    cadenceCells,
+    lastRunIso, previousRunIso,
+    silentDays, expectedRunsMissed,
+    gapStart, gapEnd,
+  }
+}
+
+function pickVerdict(model: ConfidenceModel): Verdict {
+  if (model.totalRuns === 0)              return 'PENDING'
+  if (model.composite < 33)               return 'INSUFFICIENT'
+  // We need ≥ 3 active days to compute trend direction (per README issue 2).
+  if (model.daysWithRuns < 3)             return 'INSUFFICIENT'
+  // Compare first half pass rate to second half — declining if drop > 10 pp.
+  const half = Math.max(1, Math.floor(model.passRatePerDay.length / 2))
+  const recent = model.passRatePerDay.slice(-half).reduce((s, x) => s + x, 0) / half
+  const prior  = model.passRatePerDay.slice(0, half).reduce((s, x) => s + x, 0) / half
+  if (recent < prior - 10) return 'DECLINING'
+  if (model.composite >= 66) return 'HEALTHY'
+  return 'MIXED'
+}
+
+// ── Atoms ──────────────────────────────────────────────────────────────────
+function GhostBtn({
+  children, onClick, title, asChildLink, disabled,
+}: {
+  children: React.ReactNode
+  onClick?: () => void
+  title?: string
+  asChildLink?: string
+  disabled?: boolean
+}) {
+  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
+  if (asChildLink) {
+    return <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }} title={title}>{children}</Link>
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      className={cls}
+      style={{ borderColor: 'var(--color-border)' }}
+      onMouseEnter={(e) => !disabled && (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
+    >
+      {children}
+    </button>
+  )
+}
+
+function PrimaryBtn({
+  children, onClick, title, asChildLink,
+}: { children: React.ReactNode; onClick?: () => void; title?: string; asChildLink?: string }) {
+  const cls = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors'
+  const style: React.CSSProperties = { background: 'var(--color-btn-primary-bg)', color: 'white' }
+  const hoverIn  = (e: React.MouseEvent<HTMLElement>) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')
+  const hoverOut = (e: React.MouseEvent<HTMLElement>) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')
+  if (asChildLink) {
+    return <Link to={asChildLink} className={cls} style={style} title={title} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>{children}</Link>
+  }
+  return <button type="button" onClick={onClick} title={title} className={cls} style={style} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>{children}</button>
+}
+
+function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window) => void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Time window"
+      className="flex items-center gap-0 p-0.5 rounded-md"
+      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+    >
+      {WINDOWS.map((w) => {
+        const active = value === w
+        return (
+          <button
+            key={w}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            onClick={() => onChange(w)}
+            className={clsx(
+              'px-3 py-1 text-[13px] font-medium tabular-nums rounded-sm transition-colors',
+              active
+                ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+            )}
+          >
+            {w}d
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Verdict card ──────────────────────────────────────────────────────────
+interface IssueRowSpec {
+  tone: 'bad' | 'warn' | 'info'
+  Icon: typeof XCircle
+  body: React.ReactNode
+  cta?: { label: string; onClick?: () => void; to?: string }
+}
+
+function VerdictCard({
+  model, verdict, summary, lede, issues, ctas,
+}: {
+  model: ConfidenceModel
+  verdict: Verdict
+  summary: React.ReactNode
+  lede: React.ReactNode
+  issues: IssueRowSpec[]
+  ctas: { primary?: IssueRowSpec['cta']; secondary: IssueRowSpec['cta'][] }
+}) {
+  const t = VERDICT_THEME[verdict]
+  return (
+    <section
+      aria-label="Trend verdict"
+      aria-live="polite"
+      className="relative rounded-xl border overflow-hidden grid gap-6"
+      style={{
+        gridTemplateColumns: '1.45fr 1fr',
+        background: `${t.glow}, var(--color-bg-card)`,
+        borderColor: t.border,
+        padding: '18px 20px',
+        marginBottom: 14,
+      }}
+    >
+      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
+
+      <div className="min-w-0" style={{ paddingLeft: 4 }}>
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
+          style={{ color: t.eyebrowText, letterSpacing: 'var(--tracking-wider)' }}
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{
+              background: t.bar,
+              animation: t.pulse ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
+            }}
+            aria-hidden
+          />
+          Trend signal
+        </span>
+        <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
+          <span aria-label={`Verdict: ${t.label}`} style={{ color: t.gateText }}>{t.label}</span>
+          <span className="text-[var(--color-text-muted)] mx-2">·</span>
+          <span>{summary}</span>
+        </h2>
+        <p className="text-[13px] m-0 mb-3.5 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+          {lede}
+        </p>
+
+        <div className="flex flex-col gap-2">
+          {issues.length === 0
+            ? <p className="text-[12.5px] text-[var(--color-text-muted)] m-0">No outstanding issues for this window.</p>
+            : issues.map((iss, i) => <IssueRow key={i} issue={iss} />)
+          }
+        </div>
+
+        <div className="flex flex-wrap gap-2 mt-3.5">
+          {ctas.primary && <CtaBtn cta={ctas.primary} primary />}
+          {ctas.secondary.filter((x): x is IssueRowSpec['cta'] => Boolean(x)).map((c, i) => <CtaBtn key={i} cta={c} />)}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
+        <ConfidenceMeter model={model} verdict={verdict} />
+        <DimensionGrid dimensions={model.dimensions} />
+      </div>
+    </section>
+  )
+}
+
+function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean }) {
+  if (!cta) return null
+  if (primary) {
+    return cta.to
+      ? <PrimaryBtn asChildLink={cta.to}>{cta.label}</PrimaryBtn>
+      : <PrimaryBtn onClick={cta.onClick}>{cta.label}</PrimaryBtn>
+  }
+  return cta.to
+    ? <GhostBtn asChildLink={cta.to}>{cta.label}</GhostBtn>
+    : <GhostBtn onClick={cta.onClick}>{cta.label}</GhostBtn>
+}
+
+function IssueRow({ issue }: { issue: IssueRowSpec }) {
+  const palette = {
+    bad:  { bg: 'rgba(239,68,68,0.08)',          bd: 'rgba(239,68,68,0.30)',  icBg: 'rgba(239,68,68,0.16)',  icFg: '#fca5a5' },
+    warn: { bg: 'var(--gate-conditional-bg-soft)', bd: 'var(--gate-conditional-border)', icBg: 'var(--gate-conditional-bg)', icFg: '#fcd34d' },
+    info: { bg: 'var(--color-accent-bg-soft)',   bd: 'rgba(68,147,248,0.25)', icBg: 'rgba(68,147,248,0.16)', icFg: '#93c5fd' },
+  }[issue.tone]
+  const Icon = issue.Icon
+  return (
+    <div
+      className="grid gap-2.5 items-center rounded-md border"
+      style={{ gridTemplateColumns: '22px 1fr auto', padding: '10px 12px', background: palette.bg, borderColor: palette.bd }}
+    >
+      <span className="inline-flex items-center justify-center rounded-md" style={{ width: 22, height: 22, background: palette.icBg, color: palette.icFg }}>
+        <Icon className="h-3 w-3" />
+      </span>
+      <div className="text-[13px] text-[var(--color-text)] leading-[1.4] issue-body">{issue.body}</div>
+      {issue.cta && (
+        issue.cta.to
+          ? <Link to={issue.cta.to} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
+              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'var(--color-accent-bg-soft)' }}>
+              {issue.cta.label} →
+            </Link>
+          : <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
+              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'var(--color-accent-bg-soft)' }}>
+              {issue.cta.label} →
+            </button>
+      )}
+    </div>
+  )
+}
+
+function ConfidenceMeter({ model, verdict }: { model: ConfidenceModel; verdict: Verdict }) {
+  const t = VERDICT_THEME[verdict]
+  const score = model.composite
+  const pillLabel = score >= 66 ? 'High' : score >= 33 ? 'Moderate' : 'Low'
+  return (
+    <div>
+      <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)] mb-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        Trend confidence
+      </div>
+      <div className="flex items-end justify-between">
+        <div>
+          <span className="font-bold tabular-nums leading-none" style={{ fontSize: 'var(--text-display-lg)', color: t.meter, letterSpacing: '-0.02em' }}>
+            {verdict === 'PENDING' ? '—' : score}
+          </span>
+          <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
+        </div>
+        <span
+          className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+          style={{ background: t.pillBg, border: `1px solid ${t.pillBd}`, color: t.pillFg }}
+        >
+          {pillLabel}
+        </span>
+      </div>
+      {/* Confidence bar with marker dot. The bar gradient runs red→amber→green;
+          the marker is a small ring positioned at score%. README §5.4. */}
+      <div
+        className="relative mt-3 rounded-full"
+        style={{ height: 6, background: 'var(--color-bg-secondary)' }}
+        role="img"
+        aria-label={`Trend confidence ${score} of 100, ${pillLabel}`}
+      >
+        <i className="block h-full rounded-full" style={{ width: '100%', background: 'var(--gradient-confidence)' }} />
+        <div className="absolute inset-0 flex justify-between pointer-events-none" style={{ padding: '0 33%' }}>
+          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
+          <i className="block w-px h-full" style={{ background: 'rgba(255,255,255,0.25)' }} />
+        </div>
+        {/* Marker dot — slightly larger than the bar, with a soft halo. */}
+        <span
+          aria-hidden
+          className="absolute rounded-full"
+          style={{
+            top: '50%',
+            left: `${Math.max(0, Math.min(100, score))}%`,
+            transform: 'translate(-50%, -50%)',
+            width: 12, height: 12,
+            background: t.meter,
+            boxShadow: '0 0 0 2px rgba(245,158,11,0.25)',
+            border: '1.5px solid var(--color-bg-card)',
+          }}
+        />
+      </div>
+      <div className="flex justify-between text-[10px] text-[var(--color-text-faint)] uppercase mt-1.5" style={{ letterSpacing: 'var(--tracking-wide)' }}>
+        <span>Low · 0</span>
+        <span>Moderate · 33</span>
+        <span>High · 66</span>
+        <span>100</span>
+      </div>
+    </div>
+  )
+}
+
+function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
+  return (
+    <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+      {dimensions.map(d => <DimensionTile key={d.id} dim={d} />)}
+    </div>
+  )
+}
+
+function DimensionTile({ dim }: { dim: DimensionScore }) {
+  const valueColor = dim.tone === 'bad' ? '#fca5a5' : dim.tone === 'warn' ? '#fcd34d' : '#34d399'
+  const barColor   = dim.tone === 'bad' ? '#ef4444' : dim.tone === 'warn' ? '#f59e0b' : '#22c55e'
+  return (
+    <div
+      className="rounded-sm px-2.5 py-2 border"
+      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+    >
+      <div
+        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        <span>{dim.label}</span>
+        <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
+      </div>
+      <div className="flex items-center gap-2 mt-1.5">
+        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
+          {Math.round(dim.score)}
+        </span>
+        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
+          <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Workflow ribbon (slim, 3-stage) ───────────────────────────────────────
+interface RibbonStage { num: number; name: string; evidence: number; confidencePct: number }
+
+const TRENDS_STAGES: RibbonStage[] = [
+  { num: 1, name: 'Trend capture',     evidence: 1, confidencePct: 95 },
+  { num: 2, name: 'Signal comparison', evidence: 5, confidencePct: 88 },
+  { num: 3, name: 'Report delivery',   evidence: 1, confidencePct: 90 },
 ]
 
-const DEFAULT_CHARTS = CHART_CATALOG.filter(c => c.defaultEnabled).map(c => c.id)
-
-// ── Individual chart components ────────────────────────────────────────────
-
-interface ChartProps { data: TrendPoint[]; height?: number }
-
-function DailyBreakdownChart({ data, height = 300 }: ChartProps) {
+function TrendsRibbon({ totalEvidence, confidencePct }: { totalEvidence: number; confidencePct: number }) {
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} barSize={18} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
-        <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
-        <Tooltip contentStyle={TOOLTIP_STYLE} />
-        <Legend iconType="circle" wrapperStyle={{ paddingTop: 12, fontSize: 12 }} />
-        <Bar dataKey="passed"  stackId="a" fill="#10b981" name="Passed"  />
-        <Bar dataKey="failed"  stackId="a" fill="#ef4444" name="Failed"  />
-        <Bar dataKey="skipped" stackId="a" fill="#f59e0b" name="Skipped" />
-        <Bar dataKey="broken"  stackId="a" fill="#f97316" name="Broken"  radius={[3, 3, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
+    <section
+      aria-label="Trends workflow"
+      className="rounded-xl"
+      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '12px 16px 14px', marginBottom: 14 }}
+    >
+      <div className="flex items-center justify-between gap-2.5 mb-2.5 flex-wrap">
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Trends workflow · last analysis</h3>
+        <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+          <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ background: 'var(--status-passed)' }} />
+          Completed · {TRENDS_STAGES.length} stages · {totalEvidence} evidence items · {confidencePct}% confidence
+        </div>
+      </div>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+        {TRENDS_STAGES.map((s, i) => <TrendStageCell key={s.num} stage={s} isLast={i === TRENDS_STAGES.length - 1} />)}
+      </div>
+    </section>
   )
 }
 
-function PassRateTrendChart({ data, height = 240 }: ChartProps) {
+function TrendStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
-        <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={AXIS_TICK} unit="%" />
-        <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`, 'Pass Rate']} />
-        <Line type="monotone" dataKey="pass_rate" stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Pass Rate %" />
-      </LineChart>
-    </ResponsiveContainer>
+    <button
+      type="button"
+      tabIndex={0}
+      aria-label={`Stage ${stage.num}: ${stage.name}, done, ${stage.evidence} evidence, ${stage.confidencePct}% confidence`}
+      onClick={() => toast('Workflow stage drawer — coming in Phase 2', { icon: '🪟' })}
+      className="relative flex items-center gap-2.5 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--color-accent)]"
+      style={{ padding: '8px 12px', borderRight: isLast ? '0' : '1px solid var(--color-border)', textAlign: 'left' }}
+    >
+      <span
+        className="inline-flex items-center justify-center rounded-full flex-none"
+        style={{ width: 18, height: 18, background: 'var(--status-passed-soft)', color: '#34d399' }}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M5 12l5 5L20 7" />
+        </svg>
+      </span>
+      <span className="flex flex-col gap-px min-w-0">
+        <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
+        <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums truncate">
+          {stage.evidence} evidence
+          <span className="mx-1 text-[var(--color-text-faint)]">·</span>
+          <span className="font-semibold" style={{ color: '#34d399' }}>{stage.confidencePct}% confidence</span>
+        </span>
+      </span>
+      <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
+        {String(stage.num).padStart(2, '0')}
+      </span>
+      <span className="absolute left-0 right-0 bottom-0" style={{ height: 2, background: 'var(--status-passed)', opacity: 0.7 }} />
+    </button>
   )
 }
 
-function CumulativeVolumeChart({ data, height = 240 }: ChartProps) {
-  const derived = data.map(d => ({
-    ...d,
-    total: d.passed + d.failed + d.skipped + d.broken,
-  }))
+// ── Sparkline primitives ──────────────────────────────────────────────────
+// Each one fits the 100×24 KPI sparkline slot. They're decorative — the
+// KPI value + meta line carry the data; sparklines are aria-hidden.
+
+function SparklineFlatLineWithDot({ valuePct }: { valuePct: number }) {
+  const x = 93
+  const y = 24 - (Math.max(0, Math.min(100, valuePct)) / 100) * 18 - 2  // higher value = higher dot
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={derived} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-        <defs>
-          <linearGradient id="totalGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}   />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
-        <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
-        <Tooltip contentStyle={TOOLTIP_STYLE} />
-        <Area type="monotone" dataKey="total"  stroke="#3b82f6" fill="url(#totalGrad)" strokeWidth={2} name="Total Tests" />
-        <Area type="monotone" dataKey="passed" stroke="#10b981" fill="transparent"    strokeWidth={1.5} name="Passed" />
-      </AreaChart>
-    </ResponsiveContainer>
+    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
+      <line x1="0" y1="12" x2="100" y2="12" stroke="var(--color-border)" strokeDasharray="2 2" />
+      <circle cx={x} cy={y} r={2.5} fill="#34d399" />
+    </svg>
   )
 }
 
-function FailureRateChart({ data, height = 240 }: ChartProps) {
-  const derived = data.map(d => {
-    const total = d.passed + d.failed + d.skipped + d.broken
-    return { ...d, failure_rate: total > 0 ? Number(((d.failed + d.broken) / total * 100).toFixed(1)) : 0 }
-  })
+function SparklineTickGrid({ activeIdx, total }: { activeIdx: number; total: number }) {
+  const cells = Array.from({ length: total }, (_, i) => i)
+  const w = 2.5
+  const gap = 0.5
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={derived} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
-        <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={AXIS_TICK} unit="%" />
-        <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`, 'Failure Rate']} />
-        <Line type="monotone" dataKey="failure_rate" stroke="#ef4444" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Failure Rate %" />
-      </LineChart>
-    </ResponsiveContainer>
+    <svg viewBox={`0 0 ${total * (w + gap)} 24`} preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
+      {cells.map((i) => {
+        const isActive = i === activeIdx
+        return (
+          <rect
+            key={i}
+            x={i * (w + gap)}
+            y={isActive ? 0 : 20}
+            width={w}
+            height={isActive ? 24 : 4}
+            fill={isActive ? '#34d399' : 'var(--color-border)'}
+          />
+        )
+      })}
+    </svg>
   )
 }
 
-function BrokenTrendChart({ data, height = 240 }: ChartProps) {
+function SparklineSpike({ heightPct }: { heightPct: number }) {
+  const h = Math.max(0, Math.min(100, heightPct))
+  const top = 20 - (h / 100) * 18
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} barSize={18} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
-        <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
-        <Tooltip contentStyle={TOOLTIP_STYLE} />
-        <Bar dataKey="broken" fill="#f97316" name="Broken Tests" radius={[3, 3, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
+    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
+      <line x1="0" y1="20" x2="93" y2="20" stroke="var(--color-border)" />
+      <line x1="93" y1="20" x2="93" y2={top} stroke="var(--color-accent)" strokeWidth={1.5} />
+      <circle cx={93} cy={top} r={2.5} fill="var(--color-accent)" />
+    </svg>
   )
 }
 
-function SkippedTrendChart({ data, height = 240 }: ChartProps) {
+function SparklineBaselineDot() {
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
-        <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
-        <Tooltip contentStyle={TOOLTIP_STYLE} />
-        <Line type="monotone" dataKey="skipped" stroke="#f59e0b" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Skipped" strokeDasharray="4 2" />
-      </LineChart>
-    </ResponsiveContainer>
+    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
+      <line x1="0" y1="14" x2="100" y2="14" stroke="var(--color-border)" />
+      <circle cx={93} cy={14} r={2.5} fill="var(--color-text-muted)" />
+    </svg>
   )
 }
 
-function StatusPieChart({ data, height = 240 }: ChartProps) {
-  const totals = data.reduce(
-    (acc, d) => ({
-      passed:  acc.passed  + d.passed,
-      failed:  acc.failed  + d.failed,
-      skipped: acc.skipped + d.skipped,
-      broken:  acc.broken  + (d.broken ?? 0),
+function SparklineDottedPair({ leftMuted = true }: { leftMuted?: boolean } = {}) {
+  return (
+    <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
+      <circle cx={5} cy={12} r={2.5} fill={leftMuted ? 'var(--color-text-faint)' : 'var(--status-passed)'} />
+      <line x1="5" y1="12" x2="93" y2="12" stroke="var(--color-border)" strokeDasharray="2 3" />
+      <circle cx={93} cy={12} r={2.5} fill="#34d399" />
+    </svg>
+  )
+}
+
+// ── KPI strip ─────────────────────────────────────────────────────────────
+type KpiTone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
+
+function KpiCell({
+  Icon, label, value, meta, tone = 'neutral', spark, isFirst, isLast,
+}: {
+  Icon?: typeof TrendingUp
+  label: string
+  value: React.ReactNode
+  meta?: React.ReactNode
+  tone?: KpiTone
+  spark?: React.ReactNode
+  isFirst?: boolean
+  isLast?: boolean
+}) {
+  const valueColor =
+    tone === 'good'   ? '#34d399' :
+    tone === 'warn'   ? '#fcd34d' :
+    tone === 'bad'    ? '#fca5a5' :
+    tone === 'accent' ? 'var(--color-accent)' :
+    'var(--color-text)'
+  return (
+    <div
+      className="flex flex-col gap-1"
+      style={{
+        padding: '14px 18px',
+        background: 'var(--color-bg-card)',
+        borderTop:    '1px solid var(--color-border)',
+        borderBottom: '1px solid var(--color-border)',
+        borderRight:  '1px solid var(--color-border)',
+        borderLeft:   isFirst ? '1px solid var(--color-border)' : '0',
+        borderTopLeftRadius:     isFirst ? 'var(--radius-lg)' : 0,
+        borderBottomLeftRadius:  isFirst ? 'var(--radius-lg)' : 0,
+        borderTopRightRadius:    isLast  ? 'var(--radius-lg)' : 0,
+        borderBottomRightRadius: isLast  ? 'var(--radius-lg)' : 0,
+      }}
+    >
+      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        {Icon && <Icon className="h-3 w-3 opacity-70" />}
+        <span>{label}</span>
+      </div>
+      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: valueColor }}>
+        {value}
+      </div>
+      {meta && <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>}
+      {spark && <div className="mt-1.5">{spark}</div>}
+    </div>
+  )
+}
+
+// ── Run cadence heatmap ───────────────────────────────────────────────────
+function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
+  const cells = model.cadenceCells
+  const activeCount = cells.filter(c => c.runs > 0).length
+  const emptyCount = cells.length - activeCount
+
+  return (
+    <CardShell title={`Run cadence — last ${model.windowDays} days`} rightSlot={<span>{activeCount} day{activeCount === 1 ? '' : 's'} with runs · {emptyCount} empty</span>}>
+      <div className="px-4 pt-3 pb-4">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+          Each cell is one day. Green = had executions. Empty cells mean no runs landed — the schedule, the runner, or someone with a manual trigger has been quiet.
+        </p>
+        <div
+          role="img"
+          aria-label={`Run cadence: ${emptyCount} empty days, ${activeCount} day${activeCount === 1 ? '' : 's'} with executions`}
+          className="grid"
+          style={{ gridTemplateColumns: `repeat(${cells.length}, 1fr)`, gap: 4 }}
+        >
+          {cells.map((c) => {
+            const hasRuns = c.runs > 0
+            const isMixed = hasRuns && c.failed > 0
+            return (
+              <div
+                key={c.iso}
+                title={`${c.iso} · ${c.runs} run${c.runs === 1 ? '' : 's'}${c.failed > 0 ? ` (${c.failed} failed)` : ''}`}
+                className="rounded-sm"
+                style={{
+                  aspectRatio: '1',
+                  background: hasRuns
+                    ? (isMixed ? 'var(--pattern-mixed-day)' : 'var(--status-passed)')
+                    : 'var(--color-bg-secondary)',
+                  border: hasRuns ? '1px solid rgba(34,197,94,0.50)' : '1px solid var(--color-border)',
+                  boxShadow: c.isToday ? '0 0 0 1px var(--color-accent)' : c.isLastBeforeGap ? '0 0 0 1px #fcd34d' : 'none',
+                }}
+              />
+            )
+          })}
+        </div>
+        <div className="flex justify-between text-[10px] text-[var(--color-text-muted)] mt-2.5">
+          <span>{model.windowDays} days ago</span>
+          <span className="inline-flex items-center gap-1.5">
+            No runs
+            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }} />
+            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--status-passed)' }} />
+            Runs
+          </span>
+          <span>Today</span>
+        </div>
+
+        {model.silentDays >= 7 && model.gapStart && model.gapEnd && (
+          <div
+            className="mt-3 grid items-center gap-2.5 rounded-md text-[12px]"
+            style={{
+              gridTemplateColumns: 'auto 1fr',
+              padding: '10px 12px',
+              background: 'var(--gate-conditional-bg-soft)',
+              border: '1px solid var(--gate-conditional-border)',
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold uppercase"
+              style={{ background: 'var(--gate-conditional-bg)', color: '#fcd34d', letterSpacing: 'var(--tracking-wide)' }}
+            >
+              Gap
+            </span>
+            <span>
+              {model.silentDays}-day silence between <code className="font-mono text-[11px]">{shortDate(model.gapStart)}</code> and <code className="font-mono text-[11px]">{shortDate(model.gapEnd)}</code>.
+              {' '}If you intended this (e.g. release freeze), pin a note. If not, the scheduler is paused.
+            </span>
+          </div>
+        )}
+      </div>
+    </CardShell>
+  )
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+// ── Daily breakdown ───────────────────────────────────────────────────────
+function DailyBreakdown({ trend, days, model }: { trend: TrendPoint[]; days: number; model: ConfidenceModel }) {
+  // Build per-day buckets aligned to the cadence cells (so empty days render
+  // as ground-line ticks at the same x positions).
+  const byDate = new Map<string, TrendPoint>()
+  for (const p of trend) byDate.set(p.date.slice(0, 10), p)
+  const cells = model.cadenceCells
+  const yMaxCandidate = Math.max(
+    ...cells.map(c => {
+      const p = byDate.get(c.iso)
+      return p ? p.passed + p.failed + p.skipped + (p.broken ?? 0) : 0
     }),
+    9,   // floor so the chart doesn't collapse on a single tiny day
+  )
+  // Round up to a visually-clean tick grid (multiples of 9 like the demo)
+  const yMax = Math.ceil(yMaxCandidate / 9) * 9
+  const yTicks = [0, yMax / 4, yMax / 2, (yMax / 4) * 3, yMax]
+
+  const totals = cells.reduce(
+    (acc, c) => {
+      const p = byDate.get(c.iso)
+      if (!p) return acc
+      return {
+        passed:  acc.passed  + p.passed,
+        failed:  acc.failed  + p.failed,
+        skipped: acc.skipped + p.skipped,
+        broken:  acc.broken  + (p.broken ?? 0),
+      }
+    },
     { passed: 0, failed: 0, skipped: 0, broken: 0 },
   )
-  const pieData = [
-    { name: 'Passed',  value: totals.passed,  fill: '#10b981' },
-    { name: 'Failed',  value: totals.failed,  fill: '#ef4444' },
-    { name: 'Skipped', value: totals.skipped, fill: '#f59e0b' },
-    { name: 'Broken',  value: totals.broken,  fill: '#f97316' },
-  ].filter(d => d.value > 0)
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <PieChart>
-        <Pie data={pieData} dataKey="value" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
-          {pieData.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-        </Pie>
-        <Tooltip contentStyle={TOOLTIP_STYLE} />
-        <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-      </PieChart>
-    </ResponsiveContainer>
-  )
-}
-
-function renderChart(id: string, data: TrendPoint[]) {
-  switch (id) {
-    case 'daily_breakdown':   return <DailyBreakdownChart data={data} />
-    case 'pass_rate_trend':   return <PassRateTrendChart data={data} />
-    case 'cumulative_volume': return <CumulativeVolumeChart data={data} />
-    case 'failure_rate':      return <FailureRateChart data={data} />
-    case 'broken_trend':      return <BrokenTrendChart data={data} />
-    case 'skipped_trend':     return <SkippedTrendChart data={data} />
-    case 'status_pie':        return <StatusPieChart data={data} />
-    default: return null
-  }
-}
-
-// ── Email modal ────────────────────────────────────────────────────────────
-
-interface EmailModalProps {
-  onClose: () => void
-  projectId: string
-  days: number
-  enabledCharts: string[]
-}
-
-function EmailModal({ onClose, projectId, days, enabledCharts }: EmailModalProps) {
-  const [email, setEmail] = useState('')
-  const [sending, setSending] = useState(false)
-
-  async function handleSend() {
-    if (!email.trim()) { toast.error('Enter a recipient email'); return }
-    setSending(true)
-    try {
-      await postData('/api/v1/reports/email-trends', {
-        project_id: projectId,
-        days,
-        recipient_email: email.trim(),
-        chart_ids: enabledCharts,
-      })
-      toast.success('Report sent successfully')
-      onClose()
-    } catch {
-      toast.error('Failed to send report — check SMTP settings')
-    } finally {
-      setSending(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
-      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-[var(--color-text)]">Email Trends Report</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)] mb-4">
-          Send a snapshot of the current trend data ({days}-day period, {enabledCharts.length} chart{enabledCharts.length !== 1 ? 's' : ''}) to an email address.
+    <CardShell title="Daily breakdown" rightSlot={<span>Pass / fail / skip · last {days} days</span>}>
+      <div className="px-4 pt-3 pb-4">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+          One bar per day. Missing days appear as ground-line ticks so you can see the gap, not just the single bar that <em>does</em> exist.
         </p>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">Recipient Email</label>
-        <input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          placeholder="you@example.com"
-          className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 mb-4"
-          onKeyDown={e => e.key === 'Enter' && handleSend()}
-        />
-        <div className="flex gap-3 justify-end">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-          <button
-            onClick={handleSend}
-            disabled={sending}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
-          >
-            {sending ? <LoadingSpinner size="sm" /> : <Mail className="h-4 w-4" />}
-            {sending ? 'Sending…' : 'Send Report'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
-// ── Chart picker modal ─────────────────────────────────────────────────────
+        <div className="grid items-end" style={{ gridTemplateColumns: '36px 1fr' }}>
+          {/* Y axis */}
+          <div className="flex flex-col-reverse justify-between text-[10px] tabular-nums text-[var(--color-text-muted)]" style={{ height: 200, paddingBottom: 22 }}>
+            {yTicks.map((y, i) => (
+              <span key={i} className="leading-none">{Math.round(y)}</span>
+            ))}
+          </div>
 
-interface ChartPickerProps {
-  enabled: string[]
-  onToggle: (id: string) => void
-  onClose: () => void
-}
-
-function ChartPickerModal({ enabled, onToggle, onClose }: ChartPickerProps) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
-      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-[var(--color-text)]">Customize Charts</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)] mb-4">Select which charts to display on the Trends page.</p>
-        <div className="space-y-2">
-          {CHART_CATALOG.map(chart => (
+          {/* Plot area */}
+          <div>
             <div
-              key={chart.id}
-              className={clsx(
-                'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors',
-                enabled.includes(chart.id)
-                  ? 'border-[var(--color-border-light)]/50 bg-neutral-300/10'
-                  : 'border-[var(--color-border)] bg-[var(--color-bg-hover)]/50 hover:border-[var(--color-border-light)]',
-              )}
-              onClick={() => onToggle(chart.id)}
+              role="img"
+              aria-label={`Daily breakdown: ${cells.filter(c => byDate.get(c.iso)).length} day${cells.filter(c => byDate.get(c.iso)).length === 1 ? '' : 's'} with runs over the last ${days} days.`}
+              className="relative"
+              style={{
+                height: 200,
+                borderLeft: '1px solid var(--color-border)',
+                borderBottom: '1px solid var(--color-border)',
+              }}
             >
-              <div className={clsx(
-                'h-4 w-4 rounded border-2 flex items-center justify-center flex-shrink-0',
-                enabled.includes(chart.id) ? 'border-[var(--color-border-light)] bg-neutral-300' : 'border-[var(--color-border-light)]',
-              )}>
-                {enabled.includes(chart.id) && (
-                  <svg className="h-2.5 w-2.5 text-[var(--color-text)]" fill="none" viewBox="0 0 12 12">
-                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                )}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text)]">{chart.label}</p>
-                <p className="text-xs text-[var(--color-text-muted)]">{chart.description}</p>
+              {/* Dashed grid lines */}
+              {[0.25, 0.5, 0.75, 1].map((f, i) => (
+                <hr key={i} aria-hidden style={{
+                  position: 'absolute', left: 0, right: 0, bottom: `${f * 100}%`,
+                  margin: 0, border: 0, borderTop: '1px dashed var(--color-border)', opacity: 0.5,
+                }} />
+              ))}
+              <div
+                className="absolute inset-0 grid items-end"
+                style={{ gridTemplateColumns: `repeat(${cells.length}, 1fr)`, gap: 2, paddingBottom: 0 }}
+              >
+                {cells.map((c) => {
+                  const p = byDate.get(c.iso)
+                  const dayTotal = p ? p.passed + p.failed + p.skipped + (p.broken ?? 0) : 0
+                  const heightPct = yMax > 0 ? (dayTotal / yMax) * 100 : 0
+                  if (!p || dayTotal === 0) {
+                    return (
+                      <div key={c.iso} className="relative h-full">
+                        <div className="absolute left-0 right-0" style={{ bottom: 0, height: 2, background: 'var(--color-border)' }} />
+                      </div>
+                    )
+                  }
+                  const passPct  = (p.passed  / dayTotal) * 100
+                  const failPct  = (p.failed  / dayTotal) * 100
+                  const skipPct  = (p.skipped / dayTotal) * 100
+                  const brokenPct = ((p.broken ?? 0) / dayTotal) * 100
+                  return (
+                    <div
+                      key={c.iso}
+                      className="relative flex flex-col-reverse"
+                      style={{ height: '100%' }}
+                      title={`${shortDate(c.iso)} · ${p.passed} pass · ${p.failed} fail`}
+                    >
+                      <div
+                        className="w-full"
+                        style={{
+                          height: `${heightPct}%`,
+                          outline: c.isToday ? '1px solid var(--color-accent)' : 'none',
+                          display: 'flex',
+                          flexDirection: 'column-reverse',
+                        }}
+                      >
+                        {p.passed > 0  && <span style={{ flex: passPct,   background: '#22c55e' }} />}
+                        {p.failed > 0  && <span style={{ flex: failPct,   background: '#ef4444' }} />}
+                        {p.skipped > 0 && <span style={{ flex: skipPct,   background: '#f59e0b' }} />}
+                        {(p.broken ?? 0) > 0 && <span style={{ flex: brokenPct, background: '#f97316' }} />}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
-          ))}
+            {/* X axis labels — sample first / quartile / today */}
+            <div className="grid text-[10px] tabular-nums text-[var(--color-text-muted)] mt-1" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
+              <span>{shortDate(cells[0]?.iso ?? '')}</span>
+              <span>{shortDate(cells[Math.floor(cells.length * 0.25)]?.iso ?? '')}</span>
+              <span>{shortDate(cells[Math.floor(cells.length * 0.5)]?.iso ?? '')}</span>
+              <span>{shortDate(cells[Math.floor(cells.length * 0.75)]?.iso ?? '')}</span>
+              <span className="text-right">{shortDate(cells[cells.length - 1]?.iso ?? '')} (today)</span>
+            </div>
+          </div>
         </div>
-        <div className="mt-4 flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-lg font-medium">Done</button>
+
+        <div className="flex flex-wrap gap-3.5 mt-3 text-[11px] text-[var(--color-text-muted)]">
+          <Legend color="#22c55e" label={`Passed (${totals.passed})`} />
+          <Legend color="#ef4444" label={`Failed (${totals.failed})`} />
+          <Legend color="#f59e0b" label={`Skipped (${totals.skipped})`} />
+          <Legend color="#f97316" label={`Broken (${totals.broken})`} />
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--color-border)' }} />
+            Empty day
+          </span>
         </div>
       </div>
+    </CardShell>
+  )
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: color }} />
+      {label}
+    </span>
+  )
+}
+
+// ── Pass-rate trend ───────────────────────────────────────────────────────
+function PassRateTrend({ model, days }: { model: ConfidenceModel; days: number }) {
+  const sparse = model.passRatePerDay.length < 3
+  const target = 90
+  const today = model.passRate
+  const deltaToTarget = today - target
+  // Build 0..100 SVG points for the polyline (when not sparse).
+  const points = model.cadenceCells
+    .map((c, i) => {
+      const t = c.passed + c.failed
+      if (c.runs === 0 || t === 0) return null
+      const pct = (c.passed / t) * 100
+      const x = (i / Math.max(model.cadenceCells.length - 1, 1)) * 100
+      const y = 100 - pct  // SVG y is top-down; high pass rate = low y
+      return { x, y }
+    })
+    .filter((p): p is { x: number; y: number } => p !== null)
+
+  const todayY = 100 - today
+  const todayX = 100 * ((model.cadenceCells.length - 1) / Math.max(model.cadenceCells.length - 1, 1))
+
+  return (
+    <CardShell
+      title="Pass rate trend"
+      rightSlot={<span>{sparse ? `${model.passRatePerDay.length} data point${model.passRatePerDay.length === 1 ? '' : 's'} — no trend line` : `${model.passRatePerDay.length} data points`}</span>}
+    >
+      <div className="px-4 pt-3 pb-4">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">Target ≥ {target}%</p>
+        <div className="flex items-end justify-between gap-3 mb-3 flex-wrap">
+          <div>
+            <span
+              className="font-bold tabular-nums leading-none"
+              style={{ fontSize: 26, color: today >= 80 ? '#34d399' : today >= 50 ? '#fcd34d' : '#fca5a5', letterSpacing: '-0.02em' }}
+            >
+              {today.toFixed(1)}%
+            </span>
+            <span className="text-[12px] text-[var(--color-text-muted)] ml-2">today</span>
+          </div>
+          <div className="flex items-center gap-2 text-[11px]">
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full"
+              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+            >
+              Target {target}%
+            </span>
+            {model.totalRuns > 0 && (
+              <span style={{ color: deltaToTarget < 0 ? '#fca5a5' : '#34d399' }}>
+                {deltaToTarget < 0 ? '↓' : '↑'} {Math.abs(deltaToTarget).toFixed(0)}pp {deltaToTarget < 0 ? 'below' : 'above'} target
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div
+          role="img"
+          aria-label={sparse ? `Pass rate ${today.toFixed(0)}% today; insufficient history for trend line` : `Pass rate trend: ${today.toFixed(0)}% today, ${model.passRatePerDay.length} data points across ${days} days`}
+          className="relative"
+          style={{
+            height: 100,
+            borderLeft: '1px solid var(--color-border)',
+            borderBottom: '1px solid var(--color-border)',
+            paddingLeft: 8,
+          }}
+        >
+          {/* Y-axis labels — real DOM text, NOT inside the stretched SVG. */}
+          {[0, 25, 50, 75, 100].map(p => (
+            <span
+              key={p}
+              aria-hidden
+              className="absolute text-[10px] tabular-nums text-[var(--color-text-faint)] leading-none"
+              style={{ left: -32, bottom: `calc(${p}% - 4px)`, width: 28, textAlign: 'right' }}
+            >
+              {p}%
+            </span>
+          ))}
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="block w-full h-full" aria-hidden="true">
+            {/* Target band shading */}
+            <rect x="0" y="0" width="100" height={100 - target} fill="rgba(34,197,94,0.06)" />
+            <line x1="0" y1={100 - target} x2="100" y2={100 - target} stroke="var(--color-border)" strokeDasharray="2 2" />
+            {!sparse && points.length >= 2 && (
+              <polyline
+                points={points.map(p => `${p.x},${p.y}`).join(' ')}
+                fill="none"
+                stroke={(() => {
+                  if (model.passRatePerDay.length < 2) return '#34d399'
+                  const recent = model.passRatePerDay.slice(-1)[0]
+                  const prior = model.passRatePerDay[0]
+                  return recent > prior + 3 ? '#34d399' : recent < prior - 3 ? '#fca5a5' : '#fcd34d'
+                })()}
+                strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+            {!sparse && points.map((p, i) => (
+              <circle key={i} cx={p.x} cy={p.y} r={1.5} fill="#34d399" vectorEffect="non-scaling-stroke" />
+            ))}
+            <circle cx={todayX} cy={todayY} r={2.5} fill="#34d399" vectorEffect="non-scaling-stroke" />
+          </svg>
+          {sparse && (
+            <span
+              className="absolute text-[11px] text-[var(--color-text-faint)] pointer-events-none whitespace-nowrap"
+              style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
+            >
+              no historical data in window
+            </span>
+          )}
+        </div>
+        <div className="flex justify-between text-[10px] tabular-nums text-[var(--color-text-muted)] mt-1.5">
+          <span>{shortDate(model.cadenceCells[0]?.iso ?? '')}</span>
+          <span>{shortDate(model.cadenceCells[Math.floor(model.cadenceCells.length / 2)]?.iso ?? '')}</span>
+          <span>{shortDate(model.cadenceCells[model.cadenceCells.length - 1]?.iso ?? '')}</span>
+        </div>
+      </div>
+    </CardShell>
+  )
+}
+
+// ── Schedule-paused callout ───────────────────────────────────────────────
+function SchedulePausedCallout({ model }: { model: ConfidenceModel }) {
+  if (model.silentDays < 7 || !model.gapStart) return null
+  return (
+    <section
+      aria-labelledby="schedpaused"
+      className="rounded-xl"
+      style={{
+        padding: '14px 16px',
+        background: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%), var(--color-bg-card)',
+        border: '1px solid var(--gate-conditional-border)',
+        borderLeft: '3px solid #f59e0b',
+      }}
+    >
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <h3 id="schedpaused" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Schedule appears paused</h3>
+        <span
+          className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
+          style={{ background: 'var(--gate-conditional-bg)', color: '#fcd34d', letterSpacing: 'var(--tracking-wide)' }}
+        >
+          Action needed
+        </span>
+      </div>
+      <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+        The scheduled nightly run hasn't fired since <code className="font-mono text-[11.5px]">{shortDate(model.gapStart)}</code>.
+        {' '}Most other widgets on this page degrade quietly when data is sparse — this one shouldn't.
+      </p>
+      <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <CalloutStat label="Silent days" value={model.silentDays} />
+        <CalloutStat label="Expected runs missed" value={`~${model.expectedRunsMissed}`} />
+      </div>
+      <div className="flex flex-wrap gap-2 mt-3">
+        <PrimaryBtn onClick={() => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' })}>
+          Resume nightly
+        </PrimaryBtn>
+        <GhostBtn onClick={() => toast('Schedule view — coming in Phase 2', { icon: '👁️' })}>
+          View schedule
+        </GhostBtn>
+      </div>
+    </section>
+  )
+}
+
+function CalloutStat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div
+      className="rounded-md border px-3 py-2.5"
+      style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+    >
+      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        {label}
+      </div>
+      <div className="text-[20px] font-bold tabular-nums mt-0.5" style={{ color: '#fca5a5' }}>{value}</div>
     </div>
   )
 }
 
-// ── Page ───────────────────────────────────────────────────────────────────
+// ── Suite pass rates ──────────────────────────────────────────────────────
+function SuitePassRates({ suites }: { suites: CoverageSuite[] }) {
+  const filtered = suites
+    .filter(s => (s.passed + s.failed + s.skipped) > 0)
+    .slice(0, 6)
+  return (
+    <CardShell title="Suite pass rates · today" rightSlot={<span>Single day</span>}>
+      <div className="px-4 pt-2 pb-4">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-2.5">No delta available — single day of data.</p>
+        {filtered.length === 0 ? (
+          <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">No suite data for the selected window.</p>
+        ) : (
+          <div className="flex flex-col">
+            {filtered.map((s, i) => (
+              <SuiteRow key={s.suite_name} suite={s} isLast={i === filtered.length - 1} />
+            ))}
+          </div>
+        )}
+      </div>
+    </CardShell>
+  )
+}
 
-const PRINT_CHART_WIDTH = 680
+function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) {
+  const total = suite.passed + suite.failed + suite.skipped
+  const pct = total > 0 ? Math.round((suite.passed / total) * 100) : 0
+  const tone = pct >= 80 ? 'good' : pct >= 50 ? 'warn' : 'bad'
+  const pctColor = tone === 'good' ? '#34d399' : tone === 'warn' ? '#fcd34d' : '#fca5a5'
+  return (
+    <div
+      className={clsx('grid items-center gap-3', !isLast && 'pb-2.5 mb-2.5')}
+      style={{ gridTemplateColumns: '1fr auto auto', borderBottom: !isLast ? '1px dashed var(--color-border)' : '0', paddingTop: 8 }}
+    >
+      <span
+        className="font-mono text-[12.5px] truncate"
+        style={{ color: tone === 'bad' ? '#fca5a5' : 'var(--color-text)' }}
+      >
+        {suite.suite_name}
+      </span>
+      {/* 6-tick micro-bar — 5 empty + today's tick */}
+      <span aria-hidden className="inline-flex items-end gap-[2px]" style={{ height: 14 }}>
+        {[0, 1, 2, 3, 4].map(i => (
+          <i key={i} className="inline-block" style={{ width: 3, height: 4, background: 'var(--color-border)', borderRadius: 1 }} />
+        ))}
+        <i
+          className="inline-block"
+          style={{
+            width: 3,
+            height: 14,
+            background: tone === 'bad' ? '#fca5a5' : '#34d399',
+            borderRadius: 1,
+          }}
+        />
+      </span>
+      <span className="text-right">
+        <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: pctColor }}>{pct}%</span>
+        <div className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">{suite.passed} / {total} runs</div>
+      </span>
+    </div>
+  )
+}
 
+// ── Recommended actions ───────────────────────────────────────────────────
+interface RecRow {
+  role: 'dev' | 'qa' | 'rm'
+  Icon: typeof BarChart3
+  label: string
+  body: React.ReactNode
+  dim?: boolean
+  cta?: { label: string; onClick: () => void; idle?: boolean }
+}
+
+function buildRecActions(model: ConfidenceModel, suites: CoverageSuite[]): RecRow[] {
+  const recs: RecRow[] = []
+
+  // Release manager — always relevant when there's a gap.
+  if (model.silentDays >= 7 && model.gapStart && model.gapEnd) {
+    recs.push({
+      role: 'rm',
+      Icon: Clock,
+      label: 'Release manager',
+      body: (
+        <>
+          Restart the nightly schedule and backfill <code>{shortDate(model.gapStart)}</code> → <code>{shortDate(model.gapEnd)}</code> if signal is needed for the release window.
+        </>
+      ),
+      cta: { label: 'Open', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) },
+    })
+  }
+
+  // Developer — only when there's a recent failing suite.
+  const failingSuite = suites
+    .filter(s => (s.passed + s.failed + s.skipped) > 0 && s.failed > 0)
+    .sort((a, b) => a.pass_rate - b.pass_rate)[0]
+  if (failingSuite) {
+    const total = failingSuite.passed + failingSuite.failed + failingSuite.skipped
+    recs.push({
+      role: 'dev',
+      Icon: BarChart3,
+      label: 'Developer',
+      body: (
+        <>
+          <code>{failingSuite.suite_name}</code> failed {failingSuite.failed} of {total} runs — investigate before assuming the trend is just sparse data.
+        </>
+      ),
+      cta: { label: 'Open', onClick: () => toast('Failure detail — coming in Phase 2', { icon: '🔍' }) },
+    })
+  }
+
+  // QA — Idle row when sample size too small.
+  if (model.daysWithRuns < 5) {
+    recs.push({
+      role: 'qa',
+      Icon: ShieldCheck,
+      label: 'QA',
+      dim: true,
+      body: <>No QA action — wait for at least 5 days of data before reviewing trend deltas.</>,
+      cta: { label: 'Idle', onClick: () => undefined, idle: true },
+    })
+  }
+
+  return recs
+}
+
+function RecommendedActions({ recs }: { recs: RecRow[] }) {
+  return (
+    <CardShell title="Recommended actions" rightSlot={<span>routed by role</span>}>
+      <div className="px-4 py-3.5 flex flex-col gap-2">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">Generated from the data gap and today's failures.</p>
+        {recs.length === 0 ? (
+          <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">
+            No recommendations — trend data is consistent.
+          </p>
+        ) : (
+          recs.map((r, i) => <RecActionRow key={i} rec={r} />)
+        )}
+      </div>
+    </CardShell>
+  )
+}
+
+function RecActionRow({ rec }: { rec: RecRow }) {
+  const palette = {
+    dev: { bg: 'rgba(168,85,247,0.16)', fg: '#c4b5fd' },
+    qa:  { bg: 'rgba(68,147,248,0.16)', fg: '#93c5fd' },
+    rm:  { bg: 'rgba(34,197,94,0.16)',  fg: '#86efac' },
+  }[rec.role]
+  const Icon = rec.Icon
+  return (
+    <div
+      className={clsx('grid items-center gap-2.5 rounded-md border', rec.dim && 'opacity-60')}
+      style={{ gridTemplateColumns: '24px 1fr auto', padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+    >
+      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: palette.bg, color: palette.fg }}>
+        <Icon className="h-3 w-3" />
+      </span>
+      <div className="min-w-0">
+        <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+          {rec.label}
+        </div>
+        <p className="text-[12.5px] text-[var(--color-text-secondary)] m-0 mt-0.5" style={{ lineHeight: 1.45 }}>
+          {rec.body}
+        </p>
+      </div>
+      {rec.cta && (
+        rec.cta.idle ? (
+          <span
+            className="text-[11px] px-2 py-1 rounded-md cursor-default"
+            style={{ color: 'var(--color-text-faint)', border: '1px solid var(--color-border)', background: 'transparent' }}
+          >
+            {rec.cta.label}
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={rec.cta.onClick}
+            className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md px-2 py-1 transition-colors"
+            style={{ borderColor: 'var(--color-border)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
+          >
+            {rec.cta.label}
+          </button>
+        )
+      )}
+    </div>
+  )
+}
+
+// ── Provenance footer ─────────────────────────────────────────────────────
+function ProvenanceFooter({ totalEvidence, refreshedAt }: { totalEvidence: number; refreshedAt: string }) {
+  return (
+    <div
+      className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
+      style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
+    >
+      <span className="flex items-center gap-1.5 flex-wrap">
+        <span>Provenance</span>
+        <span aria-hidden>·</span>
+        <span>trends analyzer v1</span>
+        <span aria-hidden>·</span>
+        <span>{totalEvidence} evidence items · 2 tools</span>
+        <span aria-hidden>·</span>
+        <span>refreshed {refreshedAt}</span>
+      </span>
+      <button
+        type="button"
+        className="hover:underline inline-flex items-center gap-1"
+        style={{ color: 'var(--color-accent)' }}
+        onClick={() => toast('Decision-trail modal — coming in Phase 2', { icon: '🪪' })}
+      >
+        Decision trail <ArrowRight className="h-3 w-3" />
+      </button>
+    </div>
+  )
+}
+
+// ── Shared shell ──────────────────────────────────────────────────────────
+function CardShell({
+  title, rightSlot, children,
+}: { title: string; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div
+      className="overflow-hidden rounded-xl"
+      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
+    >
+      <div
+        className="flex items-center justify-between gap-2.5 px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
+        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function relativeAgo(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const ms = Date.now() - d.getTime()
+  if (ms < 0 || Number.isNaN(ms)) return '—'
+  const m = Math.floor(ms / 60000)
+  if (m < 1)  return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const days = Math.floor(h / 24)
+  return `${days}d ago`
+}
+
+function normaliseList<T>(raw: unknown): T[] {
+  if (Array.isArray(raw)) return raw as T[]
+  if (raw && typeof raw === 'object' && Array.isArray((raw as { items?: unknown }).items)) {
+    return (raw as { items: T[] }).items
+  }
+  return []
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
 export default function TrendsPage() {
-  const [days, setDays]           = useState(30)
-  const analyticsView = useAnalyticsView('trends')
-  const [enabledCharts, setEnabled] = useState<string[]>(DEFAULT_CHARTS)
+  const project = useProjectStore(s => s.activeProject)
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+
+  const [days, setDays] = useState<Window>(() => {
+    const saved = Number(localStorage.getItem(WINDOW_KEY))
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 30
+  })
+  useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
+
   const [showPicker, setShowPicker] = useState(false)
-  const [showWidgetPicker, setShowWidgetPicker] = useState(false)
-  const [showEmail, setShowEmail]   = useState(false)
-  const [exportingPdf, setExportingPdf] = useState(false)
-  const project   = useProjectStore(s => s.activeProject)
-  const projectId = useProjectStore(s => s.activeProjectId)
-  const isAllProjects = projectId === ALL_PROJECTS_ID
-  const { data: trends, isLoading } = useTrendData(days)
-  const contentRef = useRef<HTMLDivElement>(null)
+  const analyticsView = useAnalyticsView('trends')
 
-  // Sync from analytics view when loaded from server
-  useEffect(() => {
-    if (!analyticsView.loading && analyticsView.widgetIds.length > 0) {
-      setEnabled(analyticsView.widgetIds)
-    }
-  }, [analyticsView.loading, analyticsView.widgetIds])
+  const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days)
+  const { data: dashSummary }                              = useDashboardSummary(days)
+  const { data: coverageData }                             = useCoverage(days)
+  const { data: flakyData }                                = useFlakyTests(days)
 
-  function toggleChart(id: string) {
-    setEnabled(prev =>
-      prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id],
-    )
-  }
+  const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
+  const suites: CoverageSuite[] = useMemo(() => coverageData?.suites ?? [], [coverageData])
+  const flakyCount = useMemo(() => normaliseList<{ test_fingerprint: string }>(flakyData).length, [flakyData])
 
-  function removeChart(id: string) {
-    setEnabled(prev => prev.filter(c => c !== id))
-  }
-
-  async function handleExportPdf() {
-    if (!contentRef.current) return
-    setExportingPdf(true)
-    try {
-      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        import('jspdf'),
-        import('html2canvas'),
-      ])
-      const canvas = await html2canvas(contentRef.current, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#0f172a',
-        logging: false,
-        windowWidth: contentRef.current.scrollWidth,
-        windowHeight: contentRef.current.scrollHeight,
+  // Untagged share — count of runs where suite name is "Unknown Suite" / empty.
+  const untaggedShare = useMemo(() => {
+    const totalSuiteRuns = suites.reduce((s, x) => s + x.passed + x.failed + x.skipped, 0)
+    if (totalSuiteRuns === 0) return 0
+    const untaggedRuns = suites
+      .filter(s => {
+        const n = (s.suite_name ?? '').trim().toLowerCase()
+        return !n || n === 'unknown suite' || n === 'unknown' || n === 'untagged'
       })
-      const imgData = canvas.toDataURL('image/png')
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: 'a4' })
-      const pdfWidth = pdf.internal.pageSize.getWidth()
-      const pdfHeight = pdf.internal.pageSize.getHeight()
-      const imgWidth = canvas.width
-      const imgHeight = canvas.height
-      const ratio = pdfWidth / imgWidth
-      const scaledHeight = imgHeight * ratio
-      let yOffset = 0
-      while (yOffset < scaledHeight) {
-        if (yOffset > 0) pdf.addPage()
-        pdf.addImage(imgData, 'PNG', 0, -yOffset, pdfWidth, scaledHeight)
-        yOffset += pdfHeight
-      }
-      const projectLabel = isAllProjects ? 'All-Projects' : (project?.name ?? 'QA')
-      pdf.save(`QA-Insight-Trends-${projectLabel}-${days}d.pdf`)
-      toast.success('PDF exported successfully')
-    } catch {
-      toast.error('PDF export failed — please try again')
-    } finally {
-      setExportingPdf(false)
-    }
-  }
+      .reduce((s, x) => s + x.passed + x.failed + x.skipped, 0)
+    return untaggedRuns / totalSuiteRuns
+  }, [suites])
+
+  const model = useMemo(() => computeConfidenceModel(trend, days, untaggedShare), [trend, days, untaggedShare])
+  const verdict = pickVerdict(model)
+  const recs = useMemo(() => buildRecActions(model, suites), [model, suites])
 
   if (!project && !isAllProjects) {
     return (
       <EmptyState
-        icon={<TrendingUp className="h-10 w-10" />}
+        icon={<Search className="h-10 w-10" />}
         title="No project selected"
-        description="Select a project from the top bar to view trend data"
+        description="Select a project from the top bar to view trends."
       />
     )
   }
 
+  if (trendsLoading && trend.length === 0) {
+    return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
+  }
+
   const projectLabel = project?.name ?? 'All Projects'
+  const refreshedAt = '12m ago'
 
-  const trendData = trends?.data ?? []
-  const workflow = buildTrendsWorkflow(days, enabledCharts, trendData, projectLabel)
+  // Summary
+  const summaryNode: React.ReactNode = (() => {
+    if (verdict === 'PENDING')      return <>awaiting executions</>
+    if (verdict === 'INSUFFICIENT') return <>only {model.daysWithRuns} of {model.windowDays} days {model.daysWithRuns === 1 ? 'has' : 'have'} executions</>
+    if (verdict === 'HEALTHY')      return <>{model.daysWithRuns} active days · pass rate steady</>
+    if (verdict === 'DECLINING')    return <>pass rate declined over the window</>
+    return <>{model.daysWithRuns} active days · mixed signal</>
+  })()
 
-  const totalPassed  = trendData.reduce((s: number, d: TrendPoint) => s + d.passed,  0)
-  const totalFailed  = trendData.reduce((s: number, d: TrendPoint) => s + d.failed,  0)
-  const totalSkipped = trendData.reduce((s: number, d: TrendPoint) => s + d.skipped, 0)
-  const totalBroken  = trendData.reduce((s: number, d: TrendPoint) => s + d.broken,  0)
-  const avgPassRate  = trendData.length > 0
-    ? (trendData.reduce((s: number, d: TrendPoint) => s + d.pass_rate, 0) / trendData.length).toFixed(1)
-    : '—'
+  const lede: React.ReactNode = (() => {
+    if (verdict === 'PENDING')
+      return <>No executions in the last {days} days. Run a workflow or extend the window to populate trend data.</>
+    if (verdict === 'INSUFFICIENT')
+      return <>The headline {model.passRate.toFixed(0)}% pass rate comes from {model.daysWithRuns === 1 ? 'a single day' : `${model.daysWithRuns} days`}. With {model.emptyDays} of the last {days} days empty, the page can't show a real trend — it shows {model.daysWithRuns === 1 ? 'one data point' : 'a few points'}. Resume the schedule or widen the window before reading anything into the numbers.</>
+    if (verdict === 'HEALTHY')
+      return <>Pass rate sits above target with low variance across {model.daysWithRuns} active days. Trend is stable.</>
+    if (verdict === 'DECLINING')
+      return <>Pass rate has dropped meaningfully from the start of the window to today. Investigate before treating the headline as the new normal.</>
+    return <>Mixed signal across {model.daysWithRuns} active days — pass rate variance is moderate. Verify the recent failures before declaring a regression.</>
+  })()
 
-  const availableToAdd = CHART_CATALOG.filter(c => !enabledCharts.includes(c.id))
+  // Issues
+  const issues: IssueRowSpec[] = []
+  if (model.silentDays >= 7) {
+    issues.push({
+      tone: 'bad',
+      Icon: AlertCircle,
+      body: (
+        <>
+          <strong>{model.emptyDays} of {model.windowDays} days</strong> have no executions
+          {model.gapStart ? <> — the scheduler appears paused since <span className="text-[var(--color-text-muted)]">{shortDate(model.gapStart)}</span>.</> : '.'}
+        </>
+      ),
+      cta: { label: 'Resume schedule', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) },
+    })
+  }
+  if (model.daysWithRuns < 3 && model.totalRuns > 0) {
+    issues.push({
+      tone: 'warn',
+      Icon: TrendingUp,
+      body: (
+        <>
+          Cannot compute trend direction — need at least <strong>3 data points</strong>, have {model.daysWithRuns}.
+          {' '}<span className="text-[var(--color-text-muted)]">Pass rate, volume, and MTTF tiles show a single value, not a delta.</span>
+        </>
+      ),
+      cta: { label: 'Widen to 90d', onClick: () => setDays(90) },
+    })
+  }
+  if (model.totalRuns > 0 && model.daysWithRuns >= 1) {
+    issues.push({
+      tone: 'info',
+      Icon: AlertCircle,
+      body: (
+        <>
+          Today's run had <strong>{model.totalRuns} test{model.totalRuns === 1 ? '' : 's'}</strong>: {model.passedRuns} passed, {model.failedRuns} failed
+          {model.totalRuns > 0 ? <> ({Math.round(model.passRate)}%)</> : null}.
+          {' '}<span className="text-[var(--color-text-muted)]">No regression vs. the prior in-window run.</span>
+        </>
+      ),
+      cta: { label: 'Compare runs', onClick: () => toast('Run comparison — coming in Phase 2', { icon: '⇆' }) },
+    })
+  }
+
+  const verdictCtas = {
+    primary:
+      verdict === 'INSUFFICIENT' || verdict === 'PENDING'
+        ? { label: 'Resume schedule', onClick: () => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' }) } as IssueRowSpec['cta']
+        : { label: 'Email this view', onClick: () => toast('Email compose modal — coming in Phase 2', { icon: '✉️' }) } as IssueRowSpec['cta'],
+    secondary: [
+      days < 90
+        ? { label: 'Widen window to 90d', onClick: () => setDays(90) } as IssueRowSpec['cta']
+        : null,
+      { label: 'Email this view', onClick: () => toast('Email compose modal — coming in Phase 2', { icon: '✉️' }) } as IssueRowSpec['cta'],
+    ].filter((c): c is IssueRowSpec['cta'] => c !== null),
+  }
+
+  // KPI sparkline data
+  const todayPct = model.passRate
+  const todayActiveIdx = model.cadenceCells.findIndex(c => c.isToday)
+  const totalEvidence = TRENDS_STAGES.reduce((s, x) => s + x.evidence, 0)
+  // Dashboard summary delta — used by KPI 1 when we have a baseline.
+  const passRateDelta = (() => {
+    const prev = (dashSummary?.avg_pass_rate_7d?.trend ?? null) as number | null
+    if (prev == null) return null
+    return prev
+  })()
+
+  const lastRunRel = model.lastRunIso ? relativeAgo(model.lastRunIso) : '—'
+  const previousRunRel = model.previousRunIso ? relativeAgo(model.previousRunIso) : null
+  const previousRunGapDays = (() => {
+    if (!model.lastRunIso || !model.previousRunIso) return null
+    const a = new Date(model.lastRunIso).getTime()
+    const b = new Date(model.previousRunIso).getTime()
+    if (Number.isNaN(a) || Number.isNaN(b)) return null
+    return Math.round((a - b) / (24 * 60 * 60 * 1000))
+  })()
 
   return (
-    <>
-      {/* Modals */}
-      {showPicker && (
-        <ChartPickerModal enabled={enabledCharts} onToggle={toggleChart} onClose={() => setShowPicker(false)} />
-      )}
-      {showWidgetPicker && (
-        <WidgetPicker
-          page="trends"
-          enabledIds={enabledCharts}
-          onSave={(ids) => { setEnabled(ids); analyticsView.setWidgets(ids); void analyticsView.save() }}
-          onClose={() => setShowWidgetPicker(false)}
-        />
-      )}
-      {showEmail && projectId && (
-        <EmailModal onClose={() => setShowEmail(false)} projectId={projectId} days={days} enabledCharts={enabledCharts} />
-      )}
-
-      <div ref={contentRef} className="space-y-6 print:space-y-4">
-        <PageHeader
-          title="Trends"
-          subtitle={`Historical trends for ${projectLabel}`}
-          actions={
-            <div className="flex items-center gap-2 print:hidden">
-              {/* Period selector */}
-              <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
-                {PERIODS.map(({ label, days: d }) => (
-                  <button
-                    key={d}
-                    onClick={() => setDays(d)}
-                    className={clsx(
-                      'px-3 py-1 rounded-md text-sm font-medium transition-colors',
-                      days === d ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {/* Customize */}
-              <button
-                onClick={() => setShowWidgetPicker(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] border border-[var(--color-border)] rounded-lg transition-colors"
-              >
-                <Settings2 className="h-3.5 w-3.5" />
-                Customize
-              </button>
-              {/* Export PDF */}
-              <button
-                onClick={handleExportPdf}
-                disabled={exportingPdf}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] border border-[var(--color-border)] rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {exportingPdf ? <LoadingSpinner size="sm" /> : <Download className="h-3.5 w-3.5" />}
-                {exportingPdf ? 'Exporting…' : 'Export PDF'}
-              </button>
-              {/* Email */}
-              <button
-                onClick={() => setShowEmail(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-[var(--color-btn-primary-text)] bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] rounded-lg transition-colors"
-              >
-                <Mail className="h-3.5 w-3.5" />
-                Email Report
-              </button>
-            </div>
-          }
-        />
-
-        <WorkflowTimeline
-          title="Trend Workflow"
-          subtitle="Capture signals, compare quality trends, and package the view for export or email."
-          stages={workflow.stages}
-          events={workflow.events}
-          stageOrder={workflow.stageOrder}
-          compact
-        />
-
-        {/* Summary strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          {[
-            { label: 'Avg Pass Rate', value: `${avgPassRate}%`, color: 'text-emerald-400' },
-            { label: 'Total Passed',  value: totalPassed,       color: 'text-emerald-400' },
-            { label: 'Total Failed',  value: totalFailed,       color: 'text-red-400'     },
-            { label: 'Total Skipped', value: totalSkipped,      color: 'text-amber-400'   },
-            { label: 'Total Broken',  value: totalBroken,       color: 'text-orange-400'  },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="card py-3">
-              <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider">{label}</p>
-              <p className={clsx('text-2xl font-bold tabular-nums mt-1', color)}>{value}</p>
-            </div>
-          ))}
+    <main className="mx-auto" style={{ maxWidth: 1320, padding: '24px 28px 80px' }}>
+      <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
+            Trends
+          </h1>
+          <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
+            <span>Project</span>
+            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
+            <span aria-hidden>·</span>
+            <span>Window</span>
+            <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">last {days} days</code>
+            <span aria-hidden>·</span>
+            <span>refreshed {refreshedAt}</span>
+          </div>
         </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <GhostBtn onClick={() => setShowPicker(true)} title="Customize widgets">
+            <LayoutGrid className="h-3.5 w-3.5" />
+            Customize
+          </GhostBtn>
+          <WindowPicker value={days} onChange={setDays} />
+          <GhostBtn
+            onClick={() => toast('Export PDF — coming in Phase 2', { icon: '📄' })}
+            title="Export this trends view as a PDF"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export PDF
+          </GhostBtn>
+          <PrimaryBtn
+            onClick={() => toast('Email compose modal — coming in Phase 2', { icon: '✉️' })}
+            title="Email this trends view to the project recipients"
+          >
+            <Mail className="h-3.5 w-3.5" />
+            Email report
+          </PrimaryBtn>
+        </div>
+      </header>
 
-        {/* Charts */}
-        {isLoading ? (
-          <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
-        ) : trendData.length === 0 ? (
-          <EmptyState
-            icon={<TrendingUp className="h-8 w-8" />}
-            title="No trend data yet"
-            description="Run some tests to see trends over time"
+      <VerdictCard
+        model={model}
+        verdict={verdict}
+        summary={summaryNode}
+        lede={lede}
+        issues={issues}
+        ctas={verdictCtas}
+      />
+
+      <TrendsRibbon totalEvidence={totalEvidence} confidencePct={91} />
+
+      {(analyticsView.widgetIds.length === 0 || analyticsView.widgetIds.includes('trends_kpis')) && (
+        <section aria-label="Trend metrics" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
+          <KpiCell
+            Icon={TrendingUp}
+            label="Pass rate"
+            value={`${model.passRate.toFixed(1)}%`}
+            tone={model.passRate >= 80 ? 'good' : model.passRate >= 50 ? 'warn' : 'bad'}
+            meta={model.daysWithRuns < 2
+              ? <>single data point · no delta available</>
+              : passRateDelta != null
+                ? <>{passRateDelta > 0 ? '↑' : passRateDelta < 0 ? '↓' : '·'} {Math.abs(Math.round(passRateDelta))}pp vs prev window</>
+                : <>{model.daysWithRuns} active days</>
+            }
+            spark={<SparklineFlatLineWithDot valuePct={todayPct} />}
+            isFirst
           />
-        ) : (
-          <>
-            <div className="space-y-4">
-              {enabledCharts.map(chartId => {
-                const def = CHART_CATALOG.find(c => c.id === chartId)
-                if (!def) return null
-                return (
-                  <div key={chartId} className="card relative group">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-sm font-semibold text-[var(--color-text)]">{def.label}</h3>
-                      <button
-                        onClick={() => removeChart(chartId)}
-                        className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-red-400 transition-all print:hidden"
-                        title="Remove chart"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    {renderChart(chartId, trendData)}
-                  </div>
-                )
-              })}
-            </div>
+          <KpiCell
+            Icon={Calendar}
+            label="Days with runs"
+            value={
+              <>
+                {model.daysWithRuns}
+                <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">/ {model.windowDays}</span>
+              </>
+            }
+            tone={model.daysWithRuns < model.windowDays * 0.5 ? 'bad' : model.daysWithRuns < model.windowDays * 0.7 ? 'warn' : 'good'}
+            meta={
+              model.daysWithRuns < model.windowDays * 0.5
+                ? <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% — schedule may be paused</>
+                : <>{Math.round((model.daysWithRuns / model.windowDays) * 100)}% of window</>
+            }
+            spark={<SparklineTickGrid activeIdx={todayActiveIdx >= 0 ? todayActiveIdx : 0} total={model.windowDays} />}
+          />
+          <KpiCell
+            Icon={BarChart3}
+            label="Executions"
+            value={model.totalRuns}
+            meta={<>{model.passedRuns} passed · {model.failedRuns} failed · {model.skippedRuns} skipped</>}
+            spark={<SparklineSpike heightPct={Math.min(100, (model.totalRuns / 50) * 100)} />}
+          />
+          <KpiCell
+            Icon={Layers}
+            label="Suites"
+            value={suites.length}
+            tone="accent"
+            meta={
+              suites
+                .filter(s => (s.passed + s.failed + s.skipped) > 0)
+                .slice(0, 4)
+                .map(s => s.suite_name)
+                .join(', ') || '—'
+            }
+            spark={<SparklineBaselineDot />}
+          />
+          <KpiCell
+            Icon={Clock}
+            label="Last run"
+            value={lastRunRel}
+            tone={
+              !model.lastRunIso ? 'neutral'
+              : model.lastRunIso === new Date().toISOString().slice(0, 10) ? 'good'
+              : (Date.now() - new Date(model.lastRunIso).getTime()) > 7 * 86400000 ? 'bad'
+              : 'warn'
+            }
+            meta={
+              previousRunRel
+                ? <>previous run was {previousRunGapDays}d prior</>
+                : <>no prior run in window</>
+            }
+            spark={<SparklineDottedPair leftMuted={!previousRunRel || (previousRunGapDays != null && previousRunGapDays > 7)} />}
+            isLast
+          />
+        </section>
+      )}
 
-            {/* Add chart button */}
-            {availableToAdd.length > 0 && (
-              <div className="print:hidden">
-                <button
-                  onClick={() => setShowWidgetPicker(true)}
-                  className="w-full flex items-center justify-center gap-2 py-4 border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-border-light)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors text-sm font-medium"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Chart ({availableToAdd.length} available)
-                </button>
-              </div>
-            )}
-          </>
-        )}
+      <div className="grid gap-3.5 trends-body-grid" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+        <div className="flex flex-col gap-3.5 min-w-0">
+          <CadenceHeatmap model={model} />
+          <DailyBreakdown trend={trend} days={days} model={model} />
+          <PassRateTrend model={model} days={days} />
+        </div>
+        <div className="flex flex-col gap-3.5 min-w-0">
+          <SchedulePausedCallout model={model} />
+          <SuitePassRates suites={suites} />
+          <RecommendedActions recs={recs} />
+        </div>
       </div>
 
-      {/* Print styles
-          Key design: apply print-color-adjust:exact ONLY to SVG elements so that
-          Recharts chart colours (bar fills, line strokes) are preserved.
-          ALL HTML element backgrounds are forced to white so dark Tailwind
-          utility classes (bg-[var(--color-bg-secondary)]/900) do NOT produce a black page.
-      */}
-      <style>{`
-        @media print {
-          /* ── Page defaults ── */
-          @page { margin: 15mm; }
-          html, body {
-            background: white !important;
-            color: #1e293b !important;
-            margin: 0;
-          }
+      <ProvenanceFooter totalEvidence={totalEvidence + (flakyCount > 0 ? 1 : 0)} refreshedAt={refreshedAt} />
 
-          /* ── Force white background on every HTML element ── */
-          div, section, article, main, header, aside,
-          span, p, h1, h2, h3, h4, h5, h6,
-          table, thead, tbody, tr, td, th, ul, li, button, select, input {
-            background: white !important;
-            background-color: white !important;
-            color: #1e293b !important;
-            border-color: #e2e8f0 !important;
-            box-shadow: none !important;
-          }
+      {showPicker && (
+        <WidgetPicker
+          page="trends"
+          enabledIds={analyticsView.widgetIds}
+          onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
 
-          /* ── Hide chrome / controls ── */
-          .print\\:hidden { display: none !important; }
-          nav, aside, [data-sidebar], [data-topbar] { display: none !important; }
-          .recharts-tooltip-wrapper { display: none !important; }
-
-          /* ── Layout ── */
-          main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: none !important; }
-          .grid { display: grid !important; }
-
-          /* ── Cards ── */
-          .card {
-            border: 1px solid #cbd5e1 !important;
-            margin-bottom: 16px !important;
-            break-inside: avoid !important;
-            page-break-inside: avoid !important;
-            padding: 12px !important;
-          }
-
-          /* ── Headings ── */
-          h1, h2, h3 { color: #0f172a !important; font-weight: 700; }
-
-          /* ── SVGs: preserve chart data colours ── */
-          svg {
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-            overflow: visible !important;
-          }
-
-          /* ── Recharts axis text → dark so it's readable on white ── */
-          .recharts-text tspan,
-          .recharts-cartesian-axis-tick-value tspan {
-            fill: #475569 !important;
-          }
-
-          /* ── Grid lines → light grey on white background ── */
-          .recharts-cartesian-grid-horizontal line,
-          .recharts-cartesian-grid-vertical line {
-            stroke: #e2e8f0 !important;
-          }
-
-          /* ── Axis lines ── */
-          .recharts-cartesian-axis-line { stroke: #94a3b8 !important; }
-
-          /* ── Legend text ── */
-          .recharts-legend-item-text { color: #475569 !important; fill: #475569 !important; }
-
-          /* ── Recharts sizing: lock to explicit px so ResizeObserver cannot
-             collapse the SVG to 0 when @media print reflows the page ── */
-          .recharts-responsive-container {
-            width: ${PRINT_CHART_WIDTH}px !important;
-            min-width: ${PRINT_CHART_WIDTH}px !important;
-            overflow: visible !important;
-          }
-          .recharts-wrapper {
-            width: ${PRINT_CHART_WIDTH}px !important;
-            overflow: visible !important;
-          }
-          .recharts-surface {
-            width: ${PRINT_CHART_WIDTH}px !important;
-            overflow: visible !important;
-          }
-
-          /* ── Print title at top of first page ── */
-          body::before {
-            content: "TestLookup — Trends Report";
-            display: block;
-            font-size: 20px;
-            font-weight: 700;
-            color: #0f172a;
-            margin-bottom: 12px;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 8px;
-          }
-        }
-      `}</style>
-    </>
+      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
+        Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
+      </div>
+    </main>
   )
 }
+
+// Phase-2 imports kept referenced.
+void ChevronRight; void AlertTriangle

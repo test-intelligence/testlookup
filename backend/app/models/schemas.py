@@ -1349,6 +1349,12 @@ class IngestResponse(BaseModel):
 class LiveSessionState(BaseModel):
     """Live state of an active or recently completed session."""
     run_id: str
+    # Canonical TestRun.id this live session resolves to (deterministic when
+    # ``run_id`` is a non-UUID slug). The frontend uses this — not the raw
+    # ``run_id`` — for ``/runs/<id>`` navigation, since the latter 422's
+    # against the UUID-typed path validator on the GET /api/v1/runs/{run_id}
+    # endpoint.
+    test_run_id: Optional[str] = None
     project_id: str
     build_number: str
     status: str

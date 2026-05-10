@@ -21,6 +21,7 @@ coverage.xml
 htmlcov/
 .venv/
 venv/
+homelabsetup/
 
 # Node
 node_modules/

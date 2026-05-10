@@ -35,9 +35,16 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
-from testlookup_reporter import LiveStream
+# Run from the script's own directory so ConfigLoader picks up the
+# testlookup.properties shipped alongside this file. Without this, invoking
+# `python client/examples/python/livestream_script.py` from the repo root
+# would search the repo root for a properties file that isn't there.
+os.chdir(Path(__file__).resolve().parent)
+
+from testlookup_reporter import LiveStream  # noqa: E402 — chdir must run first
 
 
 # ── A toy "test framework" ────────────────────────────────────────────────────
@@ -97,7 +104,12 @@ async def main(args: argparse.Namespace) -> None:
     if args.insecure:
         print("⚠  TLS verification disabled (--insecure). Use only against trusted endpoints.")
 
-    async with LiveStream(
+    # Pass verify_ssl=False ONLY when --insecure is set. When the flag is
+    # omitted the SDK resolves TLS preferences from testlookup.properties
+    # (testlookup.ca_cert_path / testlookup.insecure) or env vars
+    # (TESTLOOKUP_CA_CERT / TESTLOOKUP_INSECURE), so users don't have to
+    # remember the flag every time they run against a homelab.
+    livestream_kwargs: dict = dict(
         base_url=args.base_url,
         api_key=args.api_key,
         run_id=run_id,
@@ -106,8 +118,11 @@ async def main(args: argparse.Namespace) -> None:
         branch=args.branch,
         framework="custom",
         total_tests=len(SUITE),
-        verify_ssl=not args.insecure,
-    ) as stream:
+    )
+    if args.insecure:
+        livestream_kwargs["verify_ssl"] = False
+
+    async with LiveStream(**livestream_kwargs) as stream:
         await run_suite(stream)
         # Context-manager exit posts run_complete automatically — the run
         # finalises server-side and shows up in Runs / Overview / etc.

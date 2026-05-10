@@ -198,11 +198,12 @@ def persist_live_session(
             logger.error("[Task %s] Invalid project_id %s — aborting", self.request.id, project_id)
             return
 
-        # ── Resolve run UUID (use run_id if it looks like a UUID, else generate) ──
-        try:
-            run_uuid = _uuid_mod.UUID(run_id)
-        except ValueError:
-            run_uuid = _uuid_mod.uuid5(_uuid_mod.NAMESPACE_DNS, run_id)
+        # ── Resolve run UUID via the shared helper ────────────────────────────
+        # Keeps slug→UUID derivation in lockstep with stream_service.upsert_test_run
+        # and the LiveSessionState response, so the frontend's /runs/<id> link
+        # always resolves to the same row this task writes.
+        from app.services.stream_service import canonical_test_run_uuid
+        run_uuid = canonical_test_run_uuid(run_id)
 
         now = datetime.now(timezone.utc)
 

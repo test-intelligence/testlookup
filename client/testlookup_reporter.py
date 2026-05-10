@@ -111,17 +111,21 @@ class ConfigLoader:
     # properties-file parser and the env-var overlay route through this
     # mapping so all three surfaces stay aligned.
     CANONICAL_MAP: dict[str, tuple[str, str]] = {
-        "testlookup.endpoint":  ("server", "url"),
-        "testlookup.url":       ("server", "url"),         # legacy alias
-        "testlookup.token":     ("auth", "token"),
-        "testlookup.api.key":   ("auth", "api_key"),
-        "testlookup.api_key":   ("auth", "api_key"),       # underscore form
-        "testlookup.project":   ("project", "id"),
-        "testlookup.launch":    ("reporting", "launch_name"),
-        "testlookup.build":     ("ci", "build_number"),
-        "testlookup.branch":    ("ci", "branch"),
-        "testlookup.commit":    ("ci", "commit_hash"),
-        "testlookup.framework": ("reporting", "framework"),
+        "testlookup.endpoint":     ("server", "url"),
+        "testlookup.url":          ("server", "url"),         # legacy alias
+        "testlookup.token":        ("auth", "token"),
+        "testlookup.api.key":      ("auth", "api_key"),
+        "testlookup.api_key":      ("auth", "api_key"),       # underscore form
+        "testlookup.project":      ("project", "id"),
+        "testlookup.launch":       ("reporting", "launch_name"),
+        "testlookup.build":        ("ci", "build_number"),
+        "testlookup.branch":       ("ci", "branch"),
+        "testlookup.commit":       ("ci", "commit_hash"),
+        "testlookup.framework":    ("reporting", "framework"),
+        # TLS — homelab / dev convenience. Either point at a custom CA bundle
+        # (preferred — preserves verification) or disable verification entirely.
+        "testlookup.ca_cert_path": ("auth", "ca_cert_path"),
+        "testlookup.insecure":     ("auth", "insecure"),
     }
 
     ENV_MAP: dict[str, tuple[str, str]] = {
@@ -137,6 +141,8 @@ class ConfigLoader:
         # Canonical names matching the ReportPortal rp.* convention.
         "TESTLOOKUP_ENDPOINT":    ("server", "url"),
         "TESTLOOKUP_PROJECT":     ("project", "id"),
+        "TESTLOOKUP_CA_CERT":     ("auth", "ca_cert_path"),
+        "TESTLOOKUP_INSECURE":    ("auth", "insecure"),
         "TESTLOOKUP_LAUNCH":      ("reporting", "launch_name"),
         "TESTLOOKUP_FRAMEWORK":   ("reporting", "framework"),
     }
@@ -685,7 +691,7 @@ class LiveStream:
         metadata: Optional[dict] = None,
         batch_size: int = BATCH_SIZE,
         batch_interval_ms: int = BATCH_INTERVAL_MS,
-        verify_ssl: bool = True,
+        verify_ssl: Any = None,
     ) -> None:
         cfg = ConfigLoader.load()
         resolved_url = base_url or ConfigLoader.get(cfg, "server.url")
@@ -697,6 +703,28 @@ class LiveStream:
         resolved_framework = framework if framework != "python" else (
             ConfigLoader.get(cfg, "reporting.framework") or framework
         )
+
+        # TLS resolution. Three states map to httpx's `verify` argument:
+        #   True              → use system trust store (default, prod-correct)
+        #   False             → skip verification (homelab / self-signed)
+        #   "/path/to/ca.pem" → trust this CA bundle (best for homelab)
+        # Precedence: constructor verify_ssl > testlookup.ca_cert_path
+        # > testlookup.insecure > default True. The `auth.insecure` value
+        # comes through as a string from properties files, so a truthy
+        # string ("true", "1", "yes") flips verification off.
+        if verify_ssl is None:
+            ca_path = ConfigLoader.get(cfg, "auth.ca_cert_path")
+            insecure_raw = ConfigLoader.get(cfg, "auth.insecure")
+            insecure = isinstance(insecure_raw, str) and insecure_raw.strip().lower() in ("1", "true", "yes", "on")
+            insecure = insecure or insecure_raw is True
+            if ca_path:
+                resolved_verify: Any = str(ca_path)
+            elif insecure:
+                resolved_verify = False
+            else:
+                resolved_verify = True
+        else:
+            resolved_verify = verify_ssl
         if not resolved_url:
             raise ValueError(
                 "endpoint is required — set testlookup.endpoint in testlookup.properties, "
@@ -730,11 +758,17 @@ class LiveStream:
         if resolved_launch is not None:    self._meta["launch_name"] = resolved_launch
         if metadata is not None:           self._meta["metadata"] = metadata
 
+        if resolved_verify is False:
+            logger.warning(
+                "LiveStream %s: TLS verification disabled (testlookup.insecure / TESTLOOKUP_INSECURE / verify_ssl=False).",
+                self._run_id,
+            )
+
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
             headers={"X-API-Key": self._api_key},
             timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=10.0, pool=5.0),
-            verify=verify_ssl,
+            verify=resolved_verify,
         )
 
         self._queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)

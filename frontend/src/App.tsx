@@ -32,7 +32,7 @@ const AIEvalDashboardPage = lazy(() => import('@/pages/settings/AIEvalDashboardP
 const PerformancePage = lazy(() => import('@/pages/settings/PerformancePage'))
 const SSOSettingsPage = lazy(() => import('@/pages/settings/SSOSettingsPage'))
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
-const AgentStatusPage = lazy(() => import('@/pages/AgentStatusPage'))
+const AgentStatusPage = lazy(() => import('@/pages/AgentWorkflowPage'))
 const DeepInvestigationPage = lazy(() => import('@/pages/DeepInvestigationPage'))
 const ReleaseGatePage = lazy(() => import('@/pages/ReleaseGatePage'))
 const RunIntelligencePage = lazy(() => import('@/pages/RunIntelligencePage'))

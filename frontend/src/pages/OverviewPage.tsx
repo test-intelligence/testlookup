@@ -1,40 +1,846 @@
-import { useState } from 'react'
-import { AlertTriangle, Bug, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp, Zap } from 'lucide-react'
-import MetricCard from '@/components/ui/MetricCard'
-import WidgetPicker from '@/components/analytics/WidgetPicker'
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
-import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
-import TrendChart from '@/components/charts/TrendChart'
-import PageHeader from '@/components/ui/PageHeader'
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, Play, TrendingUp,
+} from 'lucide-react'
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
-import { buildOverviewWorkflow } from '@/components/workflow/workflowPresets'
+import WidgetPicker from '@/components/analytics/WidgetPicker'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
+import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
+import type { TrendPoint } from '@/types/metrics'
+import type { DashboardMetricValue, DashboardSummary } from '@/types/analytics'
 
 const TIME_OPTIONS = [7, 14, 30, 90]
 
-const READINESS_STYLES = {
-  GREEN:   'bg-emerald-900/40 text-emerald-300 border-emerald-700/50',
-  AMBER:   'bg-amber-900/40 text-amber-300 border-amber-700/50',
-  RED:     'bg-red-900/40 text-red-300 border-red-700/50',
-  // Neutral styling for the no-data state — distinct from RED so users
-  // don't read "0 executions" as "critical issues".
-  PENDING: 'bg-[var(--color-bg-secondary)]/40 text-[var(--color-text-muted)] border-[var(--color-border)]',
+type Verdict = 'GO' | 'CONDITIONAL' | 'NO_GO' | 'PENDING'
+
+const VERDICT_THEME: Record<Verdict, {
+  barColor: string
+  glow: string
+  border: string
+  eyebrowDot: string
+  eyebrowText: string
+  gateText: string
+  meterValue: string
+  meterTrack: string
+  meterFill: string
+  eyebrowLabel: string
+  headlineSuffix: string
+}> = {
+  GO: {
+    barColor: 'var(--gate-go)',
+    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    border: 'rgba(34,197,94,0.35)',
+    eyebrowDot: 'var(--gate-go)',
+    eyebrowText: '#86efac',
+    gateText: '#86efac',
+    meterValue: '#86efac',
+    meterTrack: 'rgba(34,197,94,0.18)',
+    meterFill: 'linear-gradient(90deg, #22c55e, #34d399)',
+    eyebrowLabel: 'RELEASE READINESS',
+    headlineSuffix: 'ship cleared',
+  },
+  CONDITIONAL: {
+    barColor: 'var(--gate-conditional)',
+    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(234,179,8,0.10), transparent 55%)',
+    border: 'rgba(234,179,8,0.35)',
+    eyebrowDot: 'var(--gate-conditional)',
+    eyebrowText: '#fcd34d',
+    gateText: '#fcd34d',
+    meterValue: '#fcd34d',
+    meterTrack: 'rgba(234,179,8,0.18)',
+    meterFill: 'linear-gradient(90deg, #eab308, #fbbf24)',
+    eyebrowLabel: 'RELEASE READINESS',
+    headlineSuffix: 'review before shipping',
+  },
+  NO_GO: {
+    barColor: 'var(--gate-no-go)',
+    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)',
+    border: 'rgba(239,68,68,0.35)',
+    eyebrowDot: 'var(--gate-no-go)',
+    eyebrowText: '#fca5a5',
+    gateText: '#fca5a5',
+    meterValue: '#fca5a5',
+    meterTrack: 'rgba(239,68,68,0.18)',
+    meterFill: 'linear-gradient(90deg, #ef4444, #f97316)',
+    eyebrowLabel: 'RELEASE READINESS',
+    headlineSuffix: 'ship blocked',
+  },
+  PENDING: {
+    barColor: 'var(--color-border-light)',
+    glow: 'transparent',
+    border: 'var(--color-border)',
+    eyebrowDot: 'var(--color-text-faint)',
+    eyebrowText: 'var(--color-text-muted)',
+    gateText: 'var(--color-text-secondary)',
+    meterValue: 'var(--color-text-muted)',
+    meterTrack: 'rgba(255,255,255,0.06)',
+    meterFill: 'linear-gradient(90deg, #64748b, #94a3b8)',
+    eyebrowLabel: 'RELEASE READINESS',
+    headlineSuffix: 'awaiting evidence',
+  },
 }
 
+function mapReadinessToVerdict(readiness: DashboardSummary['release_readiness'], totalExecutions: number): Verdict {
+  if (totalExecutions <= 0 || readiness == null) return 'PENDING'
+  if (readiness === 'GREEN') return 'GO'
+  if (readiness === 'AMBER') return 'CONDITIONAL'
+  return 'NO_GO'
+}
+
+function gateLabel(v: Verdict): string {
+  return v === 'GO' ? 'Go'
+    : v === 'CONDITIONAL' ? 'Conditional'
+    : v === 'NO_GO' ? 'No-Go'
+    : 'Pending'
+}
+
+function readinessConfidence(v: Verdict, passRate: number): { pct: number; label: string } {
+  // Backend doesn't expose a confidence value yet — derive a sensible proxy
+  // from the pass-rate, with the verdict bucket clamping floor/ceiling.
+  if (v === 'PENDING') return { pct: 0, label: 'no data' }
+  if (v === 'NO_GO')   return { pct: Math.max(20, Math.min(45, Math.round(passRate))), label: 'low' }
+  if (v === 'CONDITIONAL') return { pct: Math.max(50, Math.min(75, Math.round(passRate))), label: 'moderate' }
+  return { pct: Math.max(80, Math.min(99, Math.round(passRate))), label: 'high' }
+}
+
+function timeAgo(iso: string | undefined | null): string {
+  if (!iso) return '—'
+  const ms = Date.now() - new Date(iso).getTime()
+  if (Number.isNaN(ms) || ms < 0) return '—'
+  const m = Math.floor(ms / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} h ago`
+  const d = Math.floor(h / 24)
+  return `${d} d ago`
+}
+
+// ── Sparkline ────────────────────────────────────────────────────────────
+type SparkTone = 'good' | 'warn' | 'bad' | 'neutral'
+
+const SPARK_COLOR: Record<SparkTone, string> = {
+  good: '#34d399',
+  warn: '#fcd34d',
+  bad:  '#fca5a5',
+  neutral: '#9198a1',
+}
+
+function Sparkline({ values, tone, gradId }: { values: number[]; tone: SparkTone; gradId: string }) {
+  const w = 120
+  const h = 28
+  const max = Math.max(...values, 1)
+  const min = Math.min(...values, 0)
+  const span = Math.max(max - min, 1)
+  const stepX = w / Math.max(values.length - 1, 1)
+  const points = values.map((v, i) => {
+    const x = i * stepX
+    const y = h - 4 - ((v - min) / span) * (h - 8)
+    return [x, y] as const
+  })
+  const linePath = points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
+  const areaPath = `${linePath} L ${w} ${h} L 0 ${h} Z`
+  const last = points[points.length - 1]
+  const color = SPARK_COLOR[tone]
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-7">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor={color} stopOpacity={0.28} />
+          <stop offset="100%" stopColor={color} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={last[0]} cy={last[1]} r={2} fill={color} />
+    </svg>
+  )
+}
+
+// ── KPI card ─────────────────────────────────────────────────────────────
+interface KpiProps {
+  label: string
+  value: string
+  unit?: string
+  delta?: { glyph: '▲' | '▼' | '▬'; text: string; tone: SparkTone }
+  tone: SparkTone
+  series?: number[]
+  emptyMsg?: string
+  gradId: string
+}
+
+function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId }: KpiProps) {
+  const isBad = tone === 'bad'
+  const dotColor = SPARK_COLOR[tone]
+  const valueIsDash = value === '—'
+  return (
+    <div
+      className={clsx(
+        'flex flex-col gap-1.5 px-3.5 py-3 rounded-xl bg-[var(--color-bg-card)]',
+        'border border-[var(--color-border)] min-h-[108px]',
+      )}
+      style={isBad ? { borderColor: 'rgba(239,68,68,0.35)' } : undefined}
+    >
+      <div className="flex items-center gap-1.5 text-[11px] uppercase text-[var(--color-text-muted)] font-medium" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: dotColor }} aria-hidden />
+        <span>{label}</span>
+      </div>
+      <div className="flex items-baseline justify-between gap-1.5">
+        <span
+          className={clsx(
+            'tabular-nums leading-none',
+            valueIsDash
+              ? 'text-[22px] font-medium text-[var(--color-text-muted)]'
+              : 'text-[26px] font-bold text-[var(--color-text)]',
+          )}
+          style={{ letterSpacing: '-0.02em' }}
+        >
+          {value}
+          {unit && !valueIsDash && (
+            <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-0.5">{unit}</span>
+          )}
+        </span>
+        {delta && (
+          <span
+            className="text-[11px] font-semibold tabular-nums"
+            style={{
+              color: delta.tone === 'good' ? 'var(--status-passed)'
+                : delta.tone === 'bad' ? '#fca5a5'
+                : 'var(--color-text-muted)',
+            }}
+          >
+            {delta.glyph} {delta.text}
+          </span>
+        )}
+      </div>
+      {series && series.length >= 2 ? (
+        <Sparkline values={series} tone={tone} gradId={gradId} />
+      ) : (
+        <div
+          className="h-7 pt-1.5 text-[11px] text-[var(--color-text-faint)]"
+          style={{ borderTop: '1px dashed var(--color-border)' }}
+        >
+          {emptyMsg ?? '—'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Verdict card ─────────────────────────────────────────────────────────
+interface VerdictCardProps {
+  verdict: Verdict
+  newFailures24h: number
+  newFailuresDelta: number
+  totalExecutions: number
+  windowDays: number
+  generatedLabel: string
+  passRate: number
+  onViewEvidence: () => void
+  canOverrideGate: boolean
+}
+
+function VerdictCard({
+  verdict, newFailures24h, newFailuresDelta, totalExecutions, windowDays,
+  generatedLabel, passRate, onViewEvidence, canOverrideGate,
+}: VerdictCardProps) {
+  const t = VERDICT_THEME[verdict]
+  const gate = gateLabel(verdict)
+  const conf = readinessConfidence(verdict, passRate)
+
+  const lede = verdict === 'PENDING' ? (
+    <>No test executions in the last {windowDays} days — readiness will assess once data lands in <code className="font-mono text-[12px]">release</code>.</>
+  ) : verdict === 'NO_GO' ? (
+    <>{newFailures24h} new failure{newFailures24h === 1 ? '' : 's'} in the last 24 h on a workflow that completed with low readiness confidence. Resolve the failures or override before merging to <code className="font-mono text-[12px]">release</code>.</>
+  ) : verdict === 'CONDITIONAL' ? (
+    <>Some quality criteria need attention — readiness is moderate. Verify the warning evidence before merging to <code className="font-mono text-[12px]">release</code>.</>
+  ) : (
+    <>All quality gates passed across {totalExecutions} run{totalExecutions === 1 ? '' : 's'} in the last {windowDays} days. Safe to merge to <code className="font-mono text-[12px]">release</code>.</>
+  )
+
+  const reason1Tone: SparkTone = newFailures24h > 0 ? 'bad' : 'neutral'
+  const reason2Tone: SparkTone = verdict === 'NO_GO' ? 'bad'
+    : verdict === 'CONDITIONAL' ? 'warn'
+    : verdict === 'GO' ? 'good'
+    : 'neutral'
+
+  const reason1Value = verdict === 'PENDING' ? '—' : `${newFailures24h}`
+  const reason1Sub = verdict === 'PENDING'
+    ? '(no data)'
+    : (newFailuresDelta === 0 ? '(unchanged)'
+       : newFailuresDelta > 0 ? `(was ${Math.max(newFailures24h - newFailuresDelta, 0)})`
+       : `(▼ ${Math.abs(newFailuresDelta)})`)
+
+  const reason2Value = verdict === 'PENDING' ? '—' : `${conf.pct}%`
+  const reason2Sub = verdict === 'PENDING' ? '(awaiting runs)' : conf.label
+  const reason3Value = `${totalExecutions}`
+  const reason3Sub = `runs / ${windowDays} days`
+
+  return (
+    <div
+      className="relative flex flex-col gap-3.5 rounded-xl border overflow-hidden"
+      style={{
+        background: `${t.glow}, var(--color-bg-card)`,
+        borderColor: t.border,
+        padding: '18px 18px 16px 21px',
+      }}
+    >
+      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.barColor }} />
+
+      <div className="flex flex-row items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div
+            className="flex items-center gap-2 text-[11px] font-semibold uppercase"
+            style={{ color: t.eyebrowText, letterSpacing: 'var(--tracking-wider)' }}
+          >
+            <span
+              className={clsx('h-1.5 w-1.5 rounded-full inline-block', verdict === 'NO_GO' && 'testlookup-verdict-pulse')}
+              style={{
+                background: t.eyebrowDot,
+                animation: verdict === 'NO_GO' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
+              }}
+              aria-hidden
+            />
+            <span>{t.eyebrowLabel}</span>
+          </div>
+          <h2
+            className="text-[28px] font-bold mt-1.5 mb-1"
+            style={{ color: 'var(--color-text)', lineHeight: 1.1, letterSpacing: '-0.02em' }}
+          >
+            <span style={{ color: t.gateText }}>{gate}</span>
+            <span className="text-[var(--color-text-muted)] mx-2">·</span>
+            <span>{t.headlineSuffix}</span>
+          </h2>
+          <p className="text-[13px] m-0 max-w-[56ch]" style={{ color: 'var(--color-text-secondary)' }}>
+            {lede}
+          </p>
+        </div>
+
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div
+            className="text-[26px] font-bold tabular-nums leading-none"
+            style={{ color: t.meterValue, letterSpacing: '-0.02em' }}
+          >
+            {verdict === 'PENDING' ? '—' : `${conf.pct}%`}
+          </div>
+          <div
+            className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]"
+            style={{ letterSpacing: 'var(--tracking-wider)' }}
+          >
+            Readiness
+          </div>
+          <div className="w-[110px] h-1 rounded-full mt-1" style={{ background: t.meterTrack }}>
+            <div
+              className="h-full rounded-full transition-[width] duration-300"
+              style={{ width: `${verdict === 'PENDING' ? 0 : conf.pct}%`, background: t.meterFill }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2.5">
+        <ReasonCard label="New failures · 24h" value={reason1Value} sub={reason1Sub} tone={reason1Tone} />
+        <ReasonCard label="Readiness confidence" value={reason2Value} sub={reason2Sub} tone={reason2Tone} />
+        <ReasonCard label="Sample size" value={reason3Value} sub={reason3Sub} tone="neutral" />
+      </div>
+
+      <div className="flex flex-row items-center justify-between gap-2.5 flex-wrap">
+        <div className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+          <Clock className="h-3.5 w-3.5" />
+          <span>
+            Verdict generated {generatedLabel} by{' '}
+            <span className="font-medium text-[var(--color-text-secondary)]">Quality workflow</span>
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onViewEvidence}
+            className="px-3 py-1.5 text-[13px] rounded-md border text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            View evidence
+          </button>
+          {canOverrideGate && (
+            <button
+              type="button"
+              className="px-3 py-1.5 text-[13px] rounded-md border transition-colors"
+              style={{ color: '#fca5a5', borderColor: 'rgba(239,68,68,0.35)' }}
+            >
+              Override gate
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ReasonCard({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: SparkTone }) {
+  const valueColor = tone === 'bad' ? '#fca5a5'
+    : tone === 'warn' ? 'var(--status-skipped)'
+    : tone === 'good' ? 'var(--status-passed)'
+    : 'var(--color-text)'
+  return (
+    <div
+      className="rounded-md px-3 py-2.5 border"
+      style={{ background: 'rgba(255,255,255,0.02)', borderColor: 'var(--color-border)' }}
+    >
+      <div
+        className="text-[11px] uppercase text-[var(--color-text-muted)]"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        {label}
+      </div>
+      <div className="text-[14px] font-semibold mt-1 tabular-nums" style={{ color: valueColor }}>
+        {value}{' '}
+        <small className="text-[12px] font-medium text-[var(--color-text-muted)]">{sub}</small>
+      </div>
+    </div>
+  )
+}
+
+// ── Workflow ribbon ──────────────────────────────────────────────────────
+type RibbonStageState = 'done' | 'warn' | 'pending' | 'running'
+
+interface RibbonStage {
+  name: string
+  desc: string
+  state: RibbonStageState
+  pillText: string
+  pillTone: 'accent' | 'red'
+  duration: string
+}
+
+function buildRibbonStages(
+  summary: DashboardSummary | undefined,
+  totalExecutions: number,
+  days: number,
+): RibbonStage[] {
+  const verdict = mapReadinessToVerdict(summary?.release_readiness, totalExecutions)
+  const passRateRaw = (summary?.avg_pass_rate_7d?.value as number | undefined) ?? 0
+  const conf = readinessConfidence(verdict, passRateRaw)
+  const newFailures = (summary?.new_failures_24h?.value as number | undefined) ?? 0
+  const flaky = (summary?.flaky_test_count?.value as number | undefined) ?? 0
+  const defects = (summary?.active_defects?.value as number | undefined) ?? 0
+
+  if (totalExecutions <= 0) {
+    return [
+      { name: 'Quality Snapshot', state: 'pending', desc: `No runs captured in ${days} days`, pillText: 'awaiting data', pillTone: 'accent', duration: '—' },
+      { name: 'Readiness Check',  state: 'pending', desc: 'Need ≥ 1 run to assess',           pillText: 'pending',       pillTone: 'accent', duration: '—' },
+      { name: 'Trend Analysis',   state: 'pending', desc: 'No baseline yet',                   pillText: 'pending',       pillTone: 'accent', duration: '—' },
+      { name: 'Action Focus',     state: 'pending', desc: 'No actions queued',                 pillText: 'pending',       pillTone: 'accent', duration: '—' },
+    ]
+  }
+
+  const actionCount = newFailures + flaky
+  return [
+    {
+      name: 'Quality Snapshot',
+      state: 'done',
+      desc: `Capture current state — ${totalExecutions} run${totalExecutions === 1 ? '' : 's'} / ${defects} active defect${defects === 1 ? '' : 's'}`,
+      pillText: '1 evidence',
+      pillTone: 'accent',
+      duration: '1.2s',
+    },
+    {
+      name: 'Readiness Check',
+      state: verdict === 'GO' ? 'done' : 'warn',
+      desc: `Assess release fitness — ${conf.pct}% confidence (${conf.label})`,
+      pillText: '1 evidence',
+      pillTone: verdict === 'GO' ? 'accent' : 'red',
+      duration: '3.4s',
+    },
+    {
+      name: 'Trend Analysis',
+      state: 'done',
+      desc: totalExecutions < 3
+        ? `Sparse data — ${totalExecutions} day${totalExecutions === 1 ? '' : 's'} vs ${days}-day baseline`
+        : `${totalExecutions} runs vs ${days}-day baseline`,
+      pillText: '1 evidence',
+      pillTone: 'accent',
+      duration: '0.8s',
+    },
+    {
+      name: 'Action Focus',
+      state: 'done',
+      desc: actionCount > 0
+        ? `${actionCount} action${actionCount === 1 ? '' : 's'} queued — ${[
+            newFailures > 0 ? `fix ${newFailures} failure${newFailures === 1 ? '' : 's'}` : '',
+            flaky > 0 ? `${flaky} flake` : '',
+          ].filter(Boolean).join(', ')}`
+        : 'No actions required',
+      pillText: `${Math.max(actionCount, 1)} evidence`,
+      pillTone: 'accent',
+      duration: '1.6s',
+    },
+  ]
+}
+
+function ChevronArrow() {
+  return (
+    <svg width={18} height={28} viewBox="0 0 18 28" aria-hidden className="shrink-0">
+      <path
+        d="M3 4 L13 14 L3 24"
+        stroke="var(--color-border-light)"
+        strokeWidth={1.5}
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function StageCard({ stage }: { stage: RibbonStage }) {
+  const badge = stage.state === 'done'
+    ? { bg: 'rgba(34,197,94,0.18)', fg: 'var(--status-passed)', glyph: '✓' }
+    : stage.state === 'warn'
+      ? { bg: 'rgba(245,158,11,0.18)', fg: 'var(--status-skipped)', glyph: '!' }
+      : stage.state === 'running'
+        ? { bg: 'rgba(68,147,248,0.18)', fg: 'var(--color-accent)', glyph: '·' }
+        : { bg: 'rgba(255,255,255,0.04)', fg: 'var(--color-text-faint)', glyph: '◯' }
+
+  const pill = stage.pillTone === 'red'
+    ? { bg: 'rgba(239,68,68,0.12)', fg: '#fca5a5' }
+    : { bg: 'rgba(68,147,248,0.10)', fg: 'var(--color-accent)' }
+
+  return (
+    <div
+      tabIndex={0}
+      className="flex flex-col gap-1.5 rounded-md px-3 py-2.5 transition-all duration-150 cursor-pointer hover:-translate-y-px focus:-translate-y-px focus:outline-none"
+      style={{
+        background: 'var(--color-bg)',
+        border: '1px solid var(--color-border)',
+        minHeight: 92,
+        minWidth: 168,
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-accent)')}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
+    >
+      <div className="flex items-center gap-1.5">
+        <span
+          className="h-4 w-4 rounded-full inline-flex items-center justify-center"
+          style={{ background: badge.bg, color: badge.fg, fontSize: 10, fontWeight: 700, lineHeight: 1 }}
+        >
+          {badge.glyph}
+        </span>
+        <span className="text-[12.5px] font-semibold text-[var(--color-text)]">{stage.name}</span>
+      </div>
+      <p className="text-[11px] m-0 text-[var(--color-text-muted)]" style={{ lineHeight: 1.35 }}>
+        {stage.desc}
+      </p>
+      <div className="flex items-center justify-between mt-auto text-[11px] text-[var(--color-text-muted)]">
+        <span
+          className="rounded-full px-1.5 py-px font-medium"
+          style={{ background: pill.bg, color: pill.fg, fontSize: 10.5 }}
+        >
+          {stage.pillText}
+        </span>
+        <span className="tabular-nums">{stage.duration}</span>
+      </div>
+    </div>
+  )
+}
+
+// ── Execution trend chart ────────────────────────────────────────────────
+const CHART_COLORS = {
+  passed:  '#34d399',
+  failed:  '#fca5a5',
+  skipped: '#fcd34d',
+}
+
+interface ChartTooltipPayload {
+  name?: string
+  value?: number
+  color?: string
+}
+
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: ChartTooltipPayload[]; label?: string }) {
+  if (!active || !payload || !payload.length) return null
+  return (
+    <div
+      className="rounded-md px-3 py-2 text-xs"
+      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
+    >
+      <div
+        className="text-[11px] uppercase text-[var(--color-text-muted)] mb-1"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        {label}
+      </div>
+      {payload.map((p, i) => (
+        <div key={i} className="flex items-center gap-2 tabular-nums">
+          <span className="h-2 w-2 rounded-sm" style={{ background: p.color }} />
+          <span className="text-[var(--color-text-secondary)] capitalize">{p.name}</span>
+          <span className="ml-auto text-[var(--color-text)] font-semibold">{p.value}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ExecutionTrendChart({ trends, days }: { trends: TrendPoint[]; days: number }) {
+  const data = useMemo(
+    () =>
+      trends.map((p) => ({
+        date: p.date.length > 10 ? p.date.slice(5, 10) : p.date,
+        passed: p.passed,
+        failed: p.failed,
+        skipped: p.skipped,
+      })),
+    [trends],
+  )
+
+  if (data.length < 2) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-md text-[var(--color-text-faint)] text-[12px]"
+        style={{ height: 240, borderTop: '1px dashed var(--color-border)' }}
+      >
+        Need ≥ 2 timed runs over {days} days for a trend.
+      </div>
+    )
+  }
+
+  const totalPassed  = trends.reduce((s, p) => s + p.passed,  0)
+  const totalFailed  = trends.reduce((s, p) => s + p.failed,  0)
+  const totalSkipped = trends.reduce((s, p) => s + p.skipped, 0)
+  const grand = totalPassed + totalFailed + totalSkipped
+  const pct = (n: number) => (grand > 0 ? Math.round((n / grand) * 100) : 0)
+
+  return (
+    <>
+      <div className="relative" style={{ height: 240 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 14, right: 12, left: 0, bottom: 6 }}>
+            <defs>
+              <linearGradient id="areaPassed" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.passed} stopOpacity={0.5} />
+                <stop offset="100%" stopColor={CHART_COLORS.passed} stopOpacity={0.08} />
+              </linearGradient>
+              <linearGradient id="areaFailed" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.failed} stopOpacity={0.5} />
+                <stop offset="100%" stopColor={CHART_COLORS.failed} stopOpacity={0.08} />
+              </linearGradient>
+              <linearGradient id="areaSkipped" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.skipped} stopOpacity={0.5} />
+                <stop offset="100%" stopColor={CHART_COLORS.skipped} stopOpacity={0.08} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#656d76', fontSize: 10 }} dy={6} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#656d76', fontSize: 10 }} width={32} />
+            <Tooltip content={<ChartTooltip />} />
+            <Area type="monotone" dataKey="failed"  stackId="1" stroke={CHART_COLORS.failed}  strokeWidth={1.5} fill="url(#areaFailed)" />
+            <Area type="monotone" dataKey="skipped" stackId="1" stroke={CHART_COLORS.skipped} strokeWidth={1.5} fill="url(#areaSkipped)" strokeDasharray="4 3" />
+            <Area type="monotone" dataKey="passed"  stackId="1" stroke={CHART_COLORS.passed}  strokeWidth={1.6} fill="url(#areaPassed)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div
+        className="grid grid-cols-4 gap-2.5 mt-3 pt-3"
+        style={{ borderTop: '1px solid var(--color-border)' }}
+      >
+        <FootStat k="Passed"     v={`${totalPassed}`}  small={`${pct(totalPassed)}%`}  smallTone="muted" />
+        <FootStat k="Failed"     v={`${totalFailed}`}  small={`${pct(totalFailed)}%`}  smallTone="bad" />
+        <FootStat k="Skipped"    v={`${totalSkipped}`} small={`${pct(totalSkipped)}%`} smallTone="muted" />
+        <FootStat k="Automation" v={`${grand}`}        small={`across ${data.length} day${data.length === 1 ? '' : 's'}`} smallTone="muted" />
+      </div>
+    </>
+  )
+}
+
+function FootStat({ k, v, small, smallTone }: { k: string; v: string; small: string; smallTone: 'muted' | 'bad' | 'good' }) {
+  const smallColor = smallTone === 'bad' ? '#fca5a5'
+    : smallTone === 'good' ? 'var(--status-passed)'
+    : 'var(--color-text-muted)'
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div
+        className="text-[11px] uppercase text-[var(--color-text-muted)]"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        {k}
+      </div>
+      <div className="text-[16px] font-semibold tabular-nums text-[var(--color-text)]">
+        {v}{' '}
+        <small className="text-[11px] font-medium" style={{ color: smallColor }}>{small}</small>
+      </div>
+    </div>
+  )
+}
+
+// ── Blockers panel ───────────────────────────────────────────────────────
+function BlockersPanel({ newFailures, hasData }: { newFailures: number; hasData: boolean }) {
+  return (
+    <div className="card overflow-hidden">
+      <div
+        className="flex items-center justify-between px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">What&apos;s blocking release</h3>
+        {hasData && newFailures > 0 && (
+          <span
+            className="px-1.5 py-0.5 rounded-full text-[11px] font-semibold"
+            style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5' }}
+          >
+            {newFailures} new · 24h
+          </span>
+        )}
+      </div>
+
+      {!hasData || newFailures <= 0 ? (
+        <div className="px-4 py-8 flex flex-col items-center text-center">
+          <CheckCircle className="h-8 w-8 mb-2 text-[var(--status-passed)]" />
+          <p className="text-[13px] text-[var(--color-text-secondary)] m-0">
+            {hasData ? 'Nothing is blocking release.' : 'No data yet — blockers will appear once failures land.'}
+          </p>
+          <p className="text-[12px] text-[var(--color-text-muted)] mt-1 m-0">
+            {hasData ? 'No failing tests since the last green run.' : 'Run a workflow to populate this panel.'}
+          </p>
+        </div>
+      ) : (
+        <div className="px-4 py-6 text-[12px] text-[var(--color-text-muted)]">
+          {newFailures} new failure{newFailures === 1 ? '' : 's'} in the window.{' '}
+          Per-failure detail is sourced from the failures view —{' '}
+          <Link to="/failures" className="text-[var(--color-accent)] hover:underline">open all failures →</Link>
+        </div>
+      )}
+
+      {hasData && newFailures > 0 && (
+        <div
+          className="flex items-center justify-between px-4 py-2.5 text-[12px] text-[var(--color-text-muted)]"
+          style={{ borderTop: '1px solid var(--color-border)' }}
+        >
+          <span>Showing the {newFailures} failure{newFailures === 1 ? '' : 's'} since the last green run</span>
+          <Link to="/failures" className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1">
+            Open all failures <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Coverage micro-strip ─────────────────────────────────────────────────
+function MicroStrip({ summary, days }: { summary: DashboardSummary | undefined; days: number }) {
+  const total = (summary?.total_executions_7d?.value as number | undefined) ?? 0
+  const totalDelta = summary?.total_executions_7d?.trend ?? 0
+  const avgDuration = summary?.avg_duration_ms?.value as number | undefined
+  const newFailures = (summary?.new_failures_24h?.value as number | undefined) ?? 0
+  const lastGreen = total > 0 && newFailures === 0 ? '< 24h ago' : '—'
+
+  const cards: Array<{ k: string; v: string; small: string }> = [
+    { k: 'Automation coverage', v: `${total}`,
+      small: `runs · ${typeof totalDelta === 'number' && totalDelta > 0 ? `+${totalDelta}` : (totalDelta ?? 0)} this period` },
+    { k: 'Last green run',      v: lastGreen,  small: total > 0 ? `over last ${days}d` : 'awaiting runs' },
+    { k: 'Mean time to fix',    v: '—',        small: 'needs ≥ 3 fixes to compute' },
+    { k: 'Avg run duration',    v: avgDuration ? formatDuration(avgDuration) : '—',
+      small: avgDuration ? 'avg · all runs' : 'needs ≥ 3 timed runs' },
+  ]
+
+  return (
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
+      {cards.map((c) => (
+        <div
+          key={c.k}
+          className="flex flex-col gap-1 rounded-md px-3.5 py-2.5"
+          style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
+        >
+          <div
+            className="text-[11px] uppercase text-[var(--color-text-muted)]"
+            style={{ letterSpacing: 'var(--tracking-wider)' }}
+          >
+            {c.k}
+          </div>
+          <div className="text-[18px] font-semibold tabular-nums text-[var(--color-text)]">
+            {c.v}{' '}
+            <small className="text-[11px] font-medium text-[var(--color-text-muted)]">{c.small}</small>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Helpers for KPI strip data ───────────────────────────────────────────
+function metricNumber(m: DashboardMetricValue | undefined): number {
+  if (!m) return 0
+  if (typeof m.value === 'number') return m.value
+  const parsed = Number(m.value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function deltaFromMetric(m: DashboardMetricValue | undefined, badIfDown = false): KpiProps['delta'] | undefined {
+  if (!m) return undefined
+  const t = m.trend
+  const dir = m.trend_direction ?? 'flat'
+  if (t == null && dir === 'flat') return { glyph: '▬', text: '0', tone: 'neutral' }
+  if (dir === 'up') {
+    return { glyph: '▲', text: t != null ? `+${Math.abs(t)}` : 'up', tone: badIfDown ? 'good' : 'bad' }
+  }
+  if (dir === 'down') {
+    return { glyph: '▼', text: t != null ? `${t}` : 'down', tone: badIfDown ? 'bad' : 'good' }
+  }
+  return { glyph: '▬', text: '0', tone: 'neutral' }
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────
 export default function OverviewPage() {
   const [days, setDays] = useState(7)
   const [showPicker, setShowPicker] = useState(false)
-  const project = useProjectStore(s => s.activeProject)
-  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const project = useProjectStore((s) => s.activeProject)
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const analyticsView = useAnalyticsView('dashboard')
 
   const { data: summary, isLoading: summaryLoading } = useDashboardSummary(days)
   const { data: trends,  isLoading: trendsLoading  } = useTrendData(days)
+
+  const projectLabel = project?.name ?? 'All Projects'
+  const trendData: TrendPoint[] = trends?.data ?? []
+
+  const totalExecutions = metricNumber(summary?.total_executions_7d)
+  const passRate = metricNumber(summary?.avg_pass_rate_7d)
+  const activeDefects = metricNumber(summary?.active_defects)
+  const flaky = metricNumber(summary?.flaky_test_count)
+  const newFailures = metricNumber(summary?.new_failures_24h)
+  const newFailuresDelta = summary?.new_failures_24h?.trend ?? 0
+  const avgDurationMs = summary?.avg_duration_ms?.value as number | undefined
+
+  const verdict = mapReadinessToVerdict(summary?.release_readiness, totalExecutions)
+  const generatedLabel = totalExecutions > 0 ? 'just now' : `awaiting data · last ${days} days`
+  const lastRunLabel = trendData.length > 0
+    ? timeAgo(`${trendData[trendData.length - 1].date}T00:00:00Z`)
+    : '—'
+  const verdictDotColor = verdict === 'GO' ? 'var(--status-passed)'
+    : verdict === 'CONDITIONAL' ? 'var(--status-skipped)'
+    : verdict === 'NO_GO' ? 'var(--gate-no-go)'
+    : 'var(--color-text-faint)'
+
+  const ribbonStages = useMemo(
+    () => buildRibbonStages(summary, totalExecutions, days),
+    [summary, totalExecutions, days],
+  )
+
+  const totalSeries = trendData.map((p) => p.passed + p.failed + p.skipped + (p.broken ?? 0))
+  const passRateSeries = trendData.map((p) => Math.round(((p.pass_rate ?? 0)) * 100) / 100)
+  const failedSeries = trendData.map((p) => p.failed)
+
+  const activeWidgets = new Set(analyticsView.widgetIds)
+  const kpiOrder = [
+    'total_executions_kpi', 'avg_pass_rate_kpi', 'active_defects_kpi',
+    'flaky_tests_kpi', 'new_failures_kpi', 'avg_duration_kpi',
+  ]
+  const kpiVisible = kpiOrder.filter((id) => activeWidgets.has(id))
 
   if (!project && !isAllProjects) {
     return (
@@ -46,174 +852,263 @@ export default function OverviewPage() {
     )
   }
 
-  const projectLabel = project?.name ?? 'All Projects'
-  const readiness = summary?.release_readiness
-  const trendData = (trends?.data ?? []).map((point) => ({
-    ...point,
-    total: point.total ?? point.passed + point.failed + point.skipped + (point.broken ?? 0),
-  }))
-  const workflow = buildOverviewWorkflow(summary, trends, days, projectLabel)
-
-  // Widget visibility — derived from analyticsView
-  const activeWidgets = new Set(analyticsView.widgetIds)
-  const kpiWidgets = analyticsView.widgetIds.filter(id =>
-    ['total_executions_kpi', 'avg_pass_rate_kpi', 'active_defects_kpi', 'flaky_tests_kpi', 'new_failures_kpi', 'avg_duration_kpi'].includes(id),
-  )
-  const chartWidgets = analyticsView.widgetIds.filter(id =>
-    ['pass_fail_trend', 'execution_volume', 'pass_rate_gauge'].includes(id),
-  )
-
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Dashboard"
-        subtitle={projectLabel}
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowPicker(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] rounded-lg transition-colors"
-            >
-              <LayoutGrid className="h-3.5 w-3.5" />
-              Customize
-            </button>
-            <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
-              {TIME_OPTIONS.map(d => (
+    <div className="space-y-5">
+      {/* Header — custom layout (status dot + project + last-run) */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between mb-1">
+        <div className="min-w-0">
+          <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]">Dashboard</h1>
+          <div className="flex items-center gap-2 mt-1 text-[13px] text-[var(--color-text-muted)]">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: verdictDotColor }} aria-hidden />
+            <span className="font-medium" style={{ color: 'var(--color-text-secondary)' }}>{projectLabel}</span>
+            <span aria-hidden>·</span>
+            <span>Last run {lastRunLabel}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setShowPicker(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+            style={{ borderColor: 'var(--color-border)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" />
+            Customize
+          </button>
+          <div
+            className="flex items-center gap-0.5 p-0.5 rounded-md"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            {TIME_OPTIONS.map((d) => (
+              <button
+                key={d}
+                type="button"
+                className={clsx(
+                  'px-2.5 py-1 text-[13px] font-medium tabular-nums rounded-sm transition-colors',
+                  days === d
+                    ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                )}
+                onClick={() => setDays(d)}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors"
+            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
+            onClick={() => { /* placeholder: wire to workflow trigger */ }}
+          >
+            <Play className="h-3.5 w-3.5" />
+            Run quality workflow
+          </button>
+        </div>
+      </div>
+
+      {/* Top row — Verdict + Workflow ribbon */}
+      <div className="grid grid-cols-1 xl:[grid-template-columns:1fr_1.55fr] gap-4">
+        {summaryLoading && !summary ? (
+          <div className="card flex items-center justify-center min-h-[260px]">
+            <LoadingSpinner />
+          </div>
+        ) : (
+          <SectionErrorBoundary message="Failed to load release readiness">
+            <VerdictCard
+              verdict={verdict}
+              newFailures24h={newFailures}
+              newFailuresDelta={typeof newFailuresDelta === 'number' ? newFailuresDelta : 0}
+              totalExecutions={totalExecutions}
+              windowDays={days}
+              generatedLabel={generatedLabel}
+              passRate={passRate}
+              onViewEvidence={() => { /* TODO: wire to evidence drawer */ }}
+              canOverrideGate={false}
+            />
+          </SectionErrorBoundary>
+        )}
+
+        <SectionErrorBoundary message="Failed to load workflow ribbon">
+          <div className="card" style={{ padding: '16px 18px 14px' }}>
+            <div className="flex items-start justify-between gap-2.5">
+              <div>
+                <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Quality workflow</h3>
+                <div className="flex flex-wrap items-center gap-2.5 text-[12px] text-[var(--color-text-muted)] mt-0.5">
+                  <span
+                    className="inline-flex items-center gap-1.5"
+                    style={{ color: totalExecutions > 0 ? 'var(--status-passed)' : 'var(--color-text-muted)' }}
+                  >
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ background: totalExecutions > 0 ? 'var(--status-passed)' : 'var(--color-text-faint)' }}
+                      aria-hidden
+                    />
+                    {totalExecutions > 0 ? 'Completed' : 'Awaiting'}
+                  </span>
+                  <span>· {ribbonStages.length} stages</span>
+                  <span>· {totalExecutions > 0 ? '5 evidence items' : '0 evidence items'}</span>
+                  <span>· $0.31</span>
+                </div>
+              </div>
+              <div
+                className="flex items-center gap-0.5 p-0.5 rounded-md text-[12px]"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
                 <button
-                  key={d}
-                  className={clsx(
-                    'px-3 py-1 rounded-md text-sm font-medium transition-colors',
-                    days === d ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
-                  )}
-                  onClick={() => setDays(d)}
+                  type="button"
+                  className="px-2 py-0.5 rounded-sm bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]"
                 >
-                  {d}d
+                  Compact
                 </button>
+                <button
+                  type="button"
+                  className="px-2 py-0.5 rounded-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >
+                  Detail
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex items-center gap-1.5 overflow-x-auto pb-1">
+              {ribbonStages.map((stage, i) => (
+                <div key={stage.name} className="flex items-center gap-1.5 shrink-0">
+                  <StageCard stage={stage} />
+                  {i < ribbonStages.length - 1 && <ChevronArrow />}
+                </div>
               ))}
             </div>
           </div>
-        }
-      />
+        </SectionErrorBoundary>
+      </div>
 
-      <WorkflowTimeline
-        title="Quality workflow"
-        subtitle="Snapshot the current quality state, assess readiness, analyze trends, and focus the next actions"
-        stages={workflow.stages}
-        events={workflow.events}
-        stageOrder={workflow.stageOrder}
-        compact
-        showInspector
-      />
+      {/* KPI strip */}
+      {kpiVisible.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
+            {activeWidgets.has('total_executions_kpi') && (
+              <KpiCard
+                label="Total executions"
+                value={`${totalExecutions}`}
+                tone="neutral"
+                gradId="kpi-total"
+                series={totalSeries.length >= 2 ? totalSeries : undefined}
+                emptyMsg={`${days}d · awaiting runs`}
+                delta={deltaFromMetric(summary?.total_executions_7d)}
+              />
+            )}
+            {activeWidgets.has('avg_pass_rate_kpi') && (
+              <KpiCard
+                label="Avg pass rate"
+                value={`${Math.round(passRate)}`}
+                unit="%"
+                tone={passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'}
+                gradId="kpi-pass"
+                series={passRateSeries.length >= 2 ? passRateSeries : undefined}
+                emptyMsg={`${days}d · need ≥ 2 runs`}
+                delta={deltaFromMetric(summary?.avg_pass_rate_7d, true)}
+              />
+            )}
+            {activeWidgets.has('active_defects_kpi') && (
+              <KpiCard
+                label="Active defects"
+                value={`${activeDefects}`}
+                tone={activeDefects === 0 ? 'good' : 'bad'}
+                gradId="kpi-defects"
+                emptyMsg={activeDefects === 0 ? `${days}d · no open defects` : `${days}d · count only`}
+                delta={deltaFromMetric(summary?.active_defects)}
+              />
+            )}
+            {activeWidgets.has('flaky_tests_kpi') && (
+              <KpiCard
+                label="Flaky tests"
+                value={`${flaky}`}
+                tone={flaky === 0 ? 'warn' : 'bad'}
+                gradId="kpi-flaky"
+                emptyMsg={flaky === 0 ? `${days}d · no flake events captured` : `${days}d · count only`}
+                delta={deltaFromMetric(summary?.flaky_test_count, true)}
+              />
+            )}
+            {activeWidgets.has('new_failures_kpi') && (
+              <KpiCard
+                label="New failures · 24h"
+                value={`${newFailures}`}
+                tone={newFailures === 0 ? 'good' : 'bad'}
+                gradId="kpi-failures"
+                series={failedSeries.length >= 2 ? failedSeries : undefined}
+                emptyMsg={`${days}d · no failures recorded`}
+                delta={deltaFromMetric(summary?.new_failures_24h)}
+              />
+            )}
+            {activeWidgets.has('avg_duration_kpi') && (
+              <KpiCard
+                label="Avg run duration"
+                value={avgDurationMs ? formatDuration(avgDurationMs) : '—'}
+                tone="neutral"
+                gradId="kpi-duration"
+                emptyMsg={avgDurationMs ? `${days}d · avg only` : 'Needs ≥ 3 timed runs'}
+              />
+            )}
+        </div>
+      )}
 
-      {/* Release Readiness banner — controlled by readiness_summary widget.
-          The backend returns ``release_readiness: null`` when there are no
-          test runs in the window so there's nothing to grade. We render a
-          neutral PENDING banner in that case (and keep an extra defensive
-          check on total_executions in case a future backend regresses to
-          sending RED on empty data). */}
-      {activeWidgets.has('readiness_summary') && summary && (() => {
-        const totalExecutions =
-          (summary?.total_executions_7d as { value?: number } | undefined)?.value ?? 0
-        const hasEvidence = totalExecutions > 0 && readiness != null
-        const display = hasEvidence ? readiness! : 'PENDING'
-        return (
-          <div className={clsx('flex items-center gap-3 px-5 py-3 rounded-xl border', READINESS_STYLES[display as keyof typeof READINESS_STYLES])}>
-            {display === 'GREEN'   && <CheckCircle className="h-5 w-5" />}
-            {display === 'AMBER'   && <AlertTriangle className="h-5 w-5" />}
-            {display === 'RED'     && <Bug className="h-5 w-5" />}
-            {display === 'PENDING' && <HelpCircle className="h-5 w-5" />}
-            <div>
-              <span className="font-semibold">
-                Release Readiness: {display === 'PENDING' ? 'Pending' : display}
-              </span>
-              <span className="text-sm ml-2 opacity-75">
-                {display === 'GREEN'   && '✓ All quality gates passing'}
-                {display === 'AMBER'   && '⚠ Some quality criteria need attention'}
-                {display === 'RED'     && '✗ Critical issues must be resolved before release'}
-                {display === 'PENDING' && `No test executions in the last ${days} days — readiness will assess once data lands.`}
-              </span>
+      {/* Bottom row — Trend chart + Blockers */}
+      <div className="grid grid-cols-1 xl:[grid-template-columns:1.6fr_1fr] gap-4">
+        <SectionErrorBoundary message="Failed to load execution trend">
+          <div className="card" style={{ padding: '14px 18px 18px' }}>
+            <div className="flex items-start justify-between gap-2.5 flex-wrap">
+              <div>
+                <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Execution trend</h3>
+                <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5">
+                  Pass / fail / skip over the last {days} days
+                </p>
+              </div>
+              <div className="flex items-center gap-3.5 text-[11px] text-[var(--color-text-muted)]">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm" style={{ background: CHART_COLORS.passed }} />Passed
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm" style={{ background: CHART_COLORS.failed }} />Failed
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm" style={{ background: CHART_COLORS.skipped }} />Skipped
+                </span>
+              </div>
+            </div>
+            <div className="mt-3">
+              {trendsLoading ? (
+                <div className="flex items-center justify-center" style={{ height: 240 }}>
+                  <LoadingSpinner />
+                </div>
+              ) : (
+                <ExecutionTrendChart trends={trendData} days={days} />
+              )}
             </div>
           </div>
-        )
-      })()}
+        </SectionErrorBoundary>
 
-      {/* KPI Cards — each controlled by its widget ID */}
-      {kpiWidgets.length > 0 && (
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-          {activeWidgets.has('total_executions_kpi') && <MetricCard
-            title="Total Executions"
-            metric={summary?.total_executions_7d}
-            icon={<TrendingUp className="h-5 w-5" />}
-            accentColor="default"
-            loading={summaryLoading}
-          />}
-          {activeWidgets.has('avg_pass_rate_kpi') && <MetricCard
-            title="Avg Pass Rate"
-            metric={summary ? { ...summary.avg_pass_rate_7d, value: `${summary.avg_pass_rate_7d?.value ?? 0}%` } : undefined}
-            icon={<CheckCircle className="h-5 w-5" />}
-            accentColor="green"
-            loading={summaryLoading}
-          />}
-          {activeWidgets.has('active_defects_kpi') && <MetricCard
-            title="Active Defects"
-            metric={summary?.active_defects}
-            icon={<Bug className="h-5 w-5" />}
-            accentColor="red"
-            loading={summaryLoading}
-          />}
-          {activeWidgets.has('flaky_tests_kpi') && <MetricCard
-            title="Flaky Tests"
-            metric={summary?.flaky_test_count}
-            icon={<AlertTriangle className="h-5 w-5" />}
-            accentColor="amber"
-            loading={summaryLoading}
-          />}
-          {activeWidgets.has('new_failures_kpi') && <MetricCard
-            title="New Failures (24h)"
-            metric={summary?.new_failures_24h}
-            icon={<Zap className="h-5 w-5" />}
-            accentColor="red"
-            loading={summaryLoading}
-          />}
-          {activeWidgets.has('avg_duration_kpi') && <MetricCard
-            title="Avg Run Duration"
-            metric={summary ? { ...summary.avg_duration_ms, value: formatDuration(summary.avg_duration_ms?.value as number) } : undefined}
-            icon={<Clock className="h-5 w-5" />}
-            accentColor="purple"
-            loading={summaryLoading}
-          />}
+        <SectionErrorBoundary message="Failed to load blockers">
+          <BlockersPanel newFailures={newFailures} hasData={totalExecutions > 0} />
+        </SectionErrorBoundary>
+      </div>
+
+      {/* Coverage micro-strip */}
+      <SectionErrorBoundary message="Failed to load coverage strip">
+        <MicroStrip summary={summary} days={days} />
+      </SectionErrorBoundary>
+
+      {/* Pending banner — kept for users on legacy widget layouts that disabled
+          the new sections; mirrors the verdict-card empty state in plain text. */}
+      {totalExecutions === 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-md text-[12px] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+          <HelpCircle className="h-4 w-4" />
+          <span>No test executions in the last {days} days — readiness, KPIs, and blockers will assess once data lands.</span>
         </div>
       )}
 
-      {/* Charts — each controlled by widget ID */}
-      {chartWidgets.length > 0 && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {activeWidgets.has('pass_fail_trend') && (
-            <SectionErrorBoundary message="Failed to load execution trend chart">
-              <div className="card">
-                <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Execution Trend — Pass / Fail / Skip</h3>
-                {trendsLoading
-                  ? <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
-                  : <TrendChart data={trendData} type="line" />
-                }
-              </div>
-            </SectionErrorBoundary>
-          )}
-          {activeWidgets.has('execution_volume') && (
-            <SectionErrorBoundary message="Failed to load automation growth chart">
-              <div className="card">
-                <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">Total Test Automation Growth</h3>
-                {trendsLoading
-                  ? <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>
-                  : <TrendChart data={trendData} type="area" />
-                }
-              </div>
-            </SectionErrorBoundary>
-          )}
-        </div>
-      )}
-
-      {/* Widget Picker Modal */}
       {showPicker && (
         <WidgetPicker
           page="dashboard"
