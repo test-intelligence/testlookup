@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlertTriangle, Bug, CheckCircle, Clock, LayoutGrid, TrendingUp, Zap } from 'lucide-react'
+import { AlertTriangle, Bug, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp, Zap } from 'lucide-react'
 import MetricCard from '@/components/ui/MetricCard'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
@@ -17,9 +17,12 @@ import { clsx } from 'clsx'
 const TIME_OPTIONS = [7, 14, 30, 90]
 
 const READINESS_STYLES = {
-  GREEN: 'bg-emerald-900/40 text-emerald-300 border-emerald-700/50',
-  AMBER: 'bg-amber-900/40 text-amber-300 border-amber-700/50',
-  RED:   'bg-red-900/40 text-red-300 border-red-700/50',
+  GREEN:   'bg-emerald-900/40 text-emerald-300 border-emerald-700/50',
+  AMBER:   'bg-amber-900/40 text-amber-300 border-amber-700/50',
+  RED:     'bg-red-900/40 text-red-300 border-red-700/50',
+  // Neutral styling for the no-data state — distinct from RED so users
+  // don't read "0 executions" as "critical issues".
+  PENDING: 'bg-[var(--color-bg-secondary)]/40 text-[var(--color-text-muted)] border-[var(--color-border)]',
 }
 
 export default function OverviewPage() {
@@ -102,22 +105,37 @@ export default function OverviewPage() {
         showInspector
       />
 
-      {/* Release Readiness banner — controlled by readiness_summary widget */}
-      {activeWidgets.has('readiness_summary') && readiness && (
-        <div className={clsx('flex items-center gap-3 px-5 py-3 rounded-xl border', READINESS_STYLES[readiness as keyof typeof READINESS_STYLES])}>
-          {readiness === 'GREEN' && <CheckCircle className="h-5 w-5" />}
-          {readiness === 'AMBER' && <AlertTriangle className="h-5 w-5" />}
-          {readiness === 'RED'   && <Bug className="h-5 w-5" />}
-          <div>
-            <span className="font-semibold">Release Readiness: {readiness}</span>
-            <span className="text-sm ml-2 opacity-75">
-              {readiness === 'GREEN' && '✓ All quality gates passing'}
-              {readiness === 'AMBER' && '⚠ Some quality criteria need attention'}
-              {readiness === 'RED'   && '✗ Critical issues must be resolved before release'}
-            </span>
+      {/* Release Readiness banner — controlled by readiness_summary widget.
+          The backend returns ``release_readiness: null`` when there are no
+          test runs in the window so there's nothing to grade. We render a
+          neutral PENDING banner in that case (and keep an extra defensive
+          check on total_executions in case a future backend regresses to
+          sending RED on empty data). */}
+      {activeWidgets.has('readiness_summary') && summary && (() => {
+        const totalExecutions =
+          (summary?.total_executions_7d as { value?: number } | undefined)?.value ?? 0
+        const hasEvidence = totalExecutions > 0 && readiness != null
+        const display = hasEvidence ? readiness! : 'PENDING'
+        return (
+          <div className={clsx('flex items-center gap-3 px-5 py-3 rounded-xl border', READINESS_STYLES[display as keyof typeof READINESS_STYLES])}>
+            {display === 'GREEN'   && <CheckCircle className="h-5 w-5" />}
+            {display === 'AMBER'   && <AlertTriangle className="h-5 w-5" />}
+            {display === 'RED'     && <Bug className="h-5 w-5" />}
+            {display === 'PENDING' && <HelpCircle className="h-5 w-5" />}
+            <div>
+              <span className="font-semibold">
+                Release Readiness: {display === 'PENDING' ? 'Pending' : display}
+              </span>
+              <span className="text-sm ml-2 opacity-75">
+                {display === 'GREEN'   && '✓ All quality gates passing'}
+                {display === 'AMBER'   && '⚠ Some quality criteria need attention'}
+                {display === 'RED'     && '✗ Critical issues must be resolved before release'}
+                {display === 'PENDING' && `No test executions in the last ${days} days — readiness will assess once data lands.`}
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* KPI Cards — each controlled by its widget ID */}
       {kpiWidgets.length > 0 && (

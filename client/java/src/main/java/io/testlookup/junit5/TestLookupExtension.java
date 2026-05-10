@@ -80,6 +80,7 @@ public class TestLookupExtension
                                     "junit5-" + System.currentTimeMillis()))
                     .branch(     nullable("testlookup.branch", "TESTLOOKUP_BRANCH"))
                     .commitHash( nullable("testlookup.commit", "TESTLOOKUP_COMMIT"))
+                    .launchName( nullable("testlookup.launch", "TESTLOOKUP_LAUNCH"))
                     .build()
             );
 

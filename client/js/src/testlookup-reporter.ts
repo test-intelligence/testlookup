@@ -69,6 +69,8 @@ export interface SessionOptions {
   commitHash?: string
   totalTests?: number
   machineId?: string
+  /** Human-readable launch label (analogous to ReportPortal's rp.launch). */
+  launchName?: string
   metadata?: Record<string, unknown>
 }
 
@@ -152,6 +154,7 @@ export class TestLookupReporter {
     if (opts.branch       != null) payload.branch       = opts.branch
     if (opts.commitHash   != null) payload.commit_hash  = opts.commitHash
     if (opts.totalTests   != null) payload.total_tests  = opts.totalTests
+    if (opts.launchName   != null) payload.launch_name  = opts.launchName
     if (opts.metadata     != null) payload.metadata     = opts.metadata
 
     const data = await this._fetch<SessionCreateResponse>('POST', '/api/v1/stream/sessions', payload)

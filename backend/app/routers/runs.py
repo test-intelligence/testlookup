@@ -1,5 +1,6 @@
 """Test run and test case list endpoints."""
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_run_access
 from app.db.postgres import get_db
-from app.models.postgres import TestCase, TestRun, User
+from app.models.postgres import LaunchStatus, TestCase, TestRun, User
 from app.models.schemas import TestCaseListResponse
 from app.services.runs_service import get_run_with_release, list_project_runs, list_run_test_cases
 
@@ -38,6 +39,81 @@ async def list_runs(
     else:
         items, total, pages = await list_project_runs(db, project_id, page, size, status, release_id, days=effective_days)
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
+
+
+@router.get("/failed-ids")
+async def list_failed_run_ids(
+    project_id: str | None = None,
+    days: int | None = Query(6, ge=0, le=365, description="Look back window in days (0 = all time)"),
+    limit: int = Query(1000, ge=1, le=5000, description="Hard cap to prevent runaway fan-outs"),
+    only_pending: bool = Query(
+        False,
+        description="When true, exclude runs that already have an active or recent agent pipeline (within the last 2h, matching the Celery dedup TTL)",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return just the IDs of FAILED runs in the project + day window.
+
+    Backs the "Trigger all FAILED across pages" shortcut on /runs. Returning
+    only IDs (not the full row) keeps the payload tiny so the UI can fan out
+    pipeline triggers in parallel without an oversized round-trip.
+
+    With ``only_pending=true``, runs that already have an AgentPipelineRun
+    in 'running' status, or any pipeline created in the last 2h, are
+    excluded — matching the Celery task's dedup window so the user doesn't
+    waste a click re-firing what's already in flight.
+    """
+    from app.models.postgres import AgentPipelineRun  # local import to avoid cycle
+
+    effective_days = days if days and days > 0 else None
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=effective_days)
+        if effective_days else None
+    )
+
+    stmt = select(TestRun.id).where(TestRun.status == LaunchStatus.FAILED)
+    if cutoff is not None:
+        stmt = stmt.where(TestRun.created_at >= cutoff)
+
+    if project_id:
+        try:
+            stmt = stmt.where(TestRun.project_id == uuid.UUID(project_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid project_id") from exc
+    else:
+        # Tenant isolation: non-admin sees only their accessible projects.
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None:
+            if not accessible:
+                return {"ids": [], "count": 0, "truncated": False}
+            stmt = stmt.where(TestRun.project_id.in_(accessible))
+
+    if only_pending:
+        # Dedup window mirrors the Celery task's 7200s dedup TTL — runs with
+        # a pipeline created in the last 2h or currently running are
+        # filtered out.
+        dedup_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        recent_pipelines = (
+            select(AgentPipelineRun.test_run_id)
+            .where(
+                (AgentPipelineRun.status == "running")
+                | (AgentPipelineRun.created_at >= dedup_cutoff)
+            )
+            .scalar_subquery()
+        )
+        stmt = stmt.where(TestRun.id.not_in(recent_pipelines))
+
+    stmt = stmt.order_by(TestRun.created_at.desc()).limit(limit + 1)
+
+    result = await db.execute(stmt)
+    rows = [str(row[0]) for row in result.all()]
+    truncated = len(rows) > limit
+    return {
+        "ids": rows[:limit],
+        "count": len(rows[:limit]),
+        "truncated": truncated,
+    }
 
 
 @router.get("/{run_id}")

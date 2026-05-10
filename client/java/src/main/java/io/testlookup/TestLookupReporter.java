@@ -184,6 +184,7 @@ public class TestLookupReporter {
         if (opts.branch      != null) payload.put("branch",       opts.branch);
         if (opts.commitHash  != null) payload.put("commit_hash",  opts.commitHash);
         if (opts.totalTests  >= 0)    payload.put("total_tests",  opts.totalTests);
+        if (opts.launchName  != null) payload.put("launch_name",  opts.launchName);
 
         String body;
         try { body = MAPPER.writeValueAsString(payload); }
@@ -326,6 +327,7 @@ public class TestLookupReporter {
         public final String commitHash;
         public final String machineId;
         public final int    totalTests;
+        public final String launchName;
 
         private SessionOptions(Builder b) {
             this.buildNumber = b.buildNumber;
@@ -333,6 +335,7 @@ public class TestLookupReporter {
             this.commitHash  = b.commitHash;
             this.machineId   = b.machineId;
             this.totalTests  = b.totalTests;
+            this.launchName  = b.launchName;
         }
 
         public static Builder builder() { return new Builder(); }
@@ -343,12 +346,14 @@ public class TestLookupReporter {
             private String commitHash;
             private String machineId;
             private int    totalTests = -1;
+            private String launchName;
 
             public Builder buildNumber(String v)  { this.buildNumber = v; return this; }
             public Builder branch(String v)       { this.branch      = v; return this; }
             public Builder commitHash(String v)   { this.commitHash  = v; return this; }
             public Builder machineId(String v)    { this.machineId   = v; return this; }
             public Builder totalTests(int v)      { this.totalTests  = v; return this; }
+            public Builder launchName(String v)   { this.launchName  = v; return this; }
             public SessionOptions build()         { return new SessionOptions(this); }
         }
     }

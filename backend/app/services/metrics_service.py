@@ -75,8 +75,10 @@ async def get_dashboard_summary(db: AsyncSession, project_id: str | None, days: 
     )
     new_failures_24h = new_fail_result.scalar() or 0
 
-    # Release readiness
-    readiness = _compute_readiness(pass_rate, active_defects, flaky_count)
+    # Release readiness — None when there's no execution evidence so the UI /
+    # CLI / MCP / report consumers can render a neutral "Pending" state instead
+    # of falling through to RED on an empty dataset.
+    readiness = _compute_readiness(total_exec, pass_rate, active_defects, flaky_count)
 
     result_dict = {
         "total_executions_7d": {
@@ -200,7 +202,20 @@ async def _count_flaky_tests(db: AsyncSession, project_id: str | None) -> int:
     return result.scalar() or 0
 
 
-def _compute_readiness(pass_rate: float, active_defects: int, flaky_count: int) -> str:
+def _compute_readiness(
+    total_runs: int,
+    pass_rate: float,
+    active_defects: int,
+    flaky_count: int,
+) -> str | None:
+    """Return GREEN / AMBER / RED — or None when there's no evidence to grade.
+
+    Without any test runs in the window, every numeric input is zero and the
+    rule chain falls through to RED. That's misleading: there are no failures,
+    just no data. Return None so callers can render a neutral state.
+    """
+    if total_runs <= 0:
+        return None
     if pass_rate >= 95 and active_defects == 0 and flaky_count <= 5:
         return "GREEN"
     if pass_rate >= 85 and active_defects <= 5:

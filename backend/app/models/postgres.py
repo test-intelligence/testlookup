@@ -1220,6 +1220,11 @@ class LiveSession(Base):
     session_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)  # active|completed|stale
     release_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Human-readable launch label (analogous to ReportPortal's rp.launch).
+    # Sourced from `testlookup.launch` in properties / system props / env vars
+    # and surfaced in Live Execution and Runs columns. Nullable: legacy
+    # sessions and clients that don't set it fall back to build_number.
+    launch_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
     events_received: Mapped[int] = mapped_column(Integer, default=0)
     extra_metadata: Mapped[Optional[dict]] = mapped_column(JSON)

@@ -938,7 +938,16 @@ export default function LiveExecutionPage() {
                       </td>
                     )}
                     <td className="px-4 py-3 text-[var(--color-text-secondary)] font-mono">
-                      {session.build_number || '—'}
+                      {session.launch_name ? (
+                        <div className="space-y-0.5">
+                          <div className="text-[var(--color-text)] font-sans">{session.launch_name}</div>
+                          <div className="text-[10px] text-[var(--color-text-muted)]">
+                            {session.build_number || '—'}
+                          </div>
+                        </div>
+                      ) : (
+                        session.build_number || '—'
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right text-[var(--color-text)] tabular-nums">
                       {session.total.toLocaleString()}

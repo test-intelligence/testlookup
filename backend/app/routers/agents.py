@@ -3,11 +3,14 @@ Agent pipeline management endpoints.
 
 Provides visibility into running/completed pipelines and allows manual triggering.
 """
+import asyncio
 import inspect
+import logging
 import uuid
-from typing import Any, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +26,8 @@ from app.models.schemas import (
     TriggerPipelineRequest,
 )
 from app.services.run_summary_service import build_fallback_summary, normalize_summary_doc
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 
@@ -100,6 +105,87 @@ async def trigger_pipeline(
     )
 
     return {"message": "Pipeline queued", "task_id": task.id, "run_id": str(run.id)}
+
+
+# ── Bulk trigger ────────────────────────────────────────────────────────────
+
+class BulkTriggerRequest(BaseModel):
+    run_ids: List[uuid.UUID] = Field(..., min_length=1, max_length=2000)
+    workflow_type: Literal["offline", "deep"] = "offline"
+
+
+class BulkTriggerResponse(BaseModel):
+    queued: int
+    not_found: int
+    workflow_type: str
+    not_found_ids: List[str] = Field(default_factory=list)
+
+
+@router.post("/pipelines/bulk-trigger", response_model=BulkTriggerResponse, status_code=202)
+async def bulk_trigger_pipelines(
+    payload: BulkTriggerRequest,
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
+):
+    """Queue the agent pipeline for many runs in one HTTP call.
+
+    Backs the /runs bulk-action UI ("Trigger all FAILED", multi-row select).
+    Replaces the previous client-side fan-out — for a 500-run trigger this
+    is one round-trip instead of 500. Tasks are queued in batches of 25 with
+    a tiny inter-batch sleep so the Celery broker isn't slammed in a single
+    burst. Celery's existing dedup on (run_id, workflow_type) for 7200s
+    handles re-triggers gracefully, so this endpoint doesn't need to dedup
+    itself — repeats just resolve to ``{duplicate: true}`` per task.
+    """
+    from app.worker.tasks import run_agent_pipeline
+
+    # One DB roundtrip to resolve every run + reject unknown ids.
+    # Returning the not-found list lets the UI tell the user *which* IDs
+    # were skipped vs which actually queued.
+    result = await db.execute(
+        select(TestRun.id, TestRun.project_id, TestRun.build_number)
+        .where(TestRun.id.in_(payload.run_ids))
+    )
+    found = list(result.all())
+    found_ids = {row[0] for row in found}
+    not_found_ids = [str(rid) for rid in payload.run_ids if rid not in found_ids]
+
+    BATCH_SIZE = 25
+    INTER_BATCH_SLEEP_S = 0.05  # 50ms between bursts; barely noticeable, gentle on broker
+    queued = 0
+
+    for i in range(0, len(found), BATCH_SIZE):
+        batch = found[i : i + BATCH_SIZE]
+        for run_id, project_id, build_number in batch:
+            try:
+                run_agent_pipeline.apply_async(
+                    kwargs={
+                        "test_run_id": str(run_id),
+                        "project_id": str(project_id),
+                        "build_number": build_number,
+                        "workflow_type": payload.workflow_type,
+                    },
+                    queue="ai_analysis",
+                )
+                queued += 1
+            except Exception as exc:  # pragma: no cover - broker errors are exceptional
+                logger.warning(
+                    "bulk_trigger: queue failed for run %s: %s", run_id, exc,
+                )
+        if i + BATCH_SIZE < len(found):
+            await asyncio.sleep(INTER_BATCH_SLEEP_S)
+
+    logger.info(
+        "bulk_trigger_pipelines: queued=%d not_found=%d workflow=%s",
+        queued, len(not_found_ids), payload.workflow_type,
+    )
+
+    return BulkTriggerResponse(
+        queued=queued,
+        not_found=len(not_found_ids),
+        workflow_type=payload.workflow_type,
+        not_found_ids=not_found_ids[:25],  # cap echo to keep response small
+    )
 
 
 @router.get("/pipelines/{pipeline_id}/stages", response_model=list[dict])

@@ -73,6 +73,7 @@ async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
         total_tests=payload.total_tests or 0,
         status="active",
         release_name=payload.release_name or None,
+        launch_name=getattr(payload, "launch_name", None) or None,
         started_at=datetime.now(timezone.utc),
         extra_metadata=payload.metadata or {},
     )
@@ -89,6 +90,7 @@ async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
         project_id=str(payload.project_id),
         build_number=payload.build_number or session_id,
         total_tests=payload.total_tests or 0,
+        launch_name=getattr(payload, "launch_name", None) or None,
     )
 
     logger.info(
@@ -327,16 +329,35 @@ async def ingest_via_api_key(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Look up an existing active session keyed by (project_id, run_id).
+    # Look up the most recent session for (project_id, run_id), regardless of
+    # status. We need to distinguish three cases:
+    #   1. No prior session       → create one (the happy path)
+    #   2. Active session exists  → reuse it (subsequent batches in a run)
+    #   3. Completed session      → reject 409 (the run already finalised; the
+    #      client must pick a new run_id, otherwise we'd silently start a new
+    #      run under the same display id and the UI would conflate the two).
     existing = (
         await db.execute(
-            select(LiveSession).where(
+            select(LiveSession)
+            .where(
                 LiveSession.project_id == project_id,
                 LiveSession.run_id == request.run_id,
-                LiveSession.status == "active",
             )
+            .order_by(LiveSession.started_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
+
+    if existing is not None and existing.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"run_id {request.run_id!r} has already finalised "
+                f"(status={existing.status!r}). Pick a new run_id — including "
+                "the CI build number or commit SHA in the run_id keeps it "
+                "unique per run."
+            ),
+        )
 
     meta = request.meta
     created_session = False
@@ -357,6 +378,7 @@ async def ingest_via_api_key(
             total_tests=(meta.total_tests if meta else None) or 0,
             status="active",
             release_name=(meta.release_name.strip() if meta and meta.release_name else None),
+            launch_name=(meta.launch_name.strip() if meta and meta.launch_name else None),
             started_at=datetime.now(timezone.utc),
             extra_metadata=(meta.metadata if meta else None) or {},
         )
@@ -373,6 +395,7 @@ async def ingest_via_api_key(
             project_id=str(project_id),
             build_number=(meta.build_number if meta else None) or request.run_id,
             total_tests=(meta.total_tests if meta else None) or 0,
+            launch_name=(meta.launch_name.strip() if meta and meta.launch_name else None),
         )
 
         # Auto-create the release record so it shows up in release tracking
@@ -440,6 +463,7 @@ def build_live_session_state(payload: dict) -> LiveSessionState:
         client_name=payload.get("client_name"),
         completed_at=payload.get("completed_at"),
         release_name=payload.get("release_name"),
+        launch_name=payload.get("launch_name"),
     )
 
 
@@ -462,6 +486,7 @@ def build_completed_session_state(session) -> LiveSessionState:
         client_name=session.client_name,
         completed_at=session.completed_at.isoformat() if session.completed_at else None,
         release_name=session.release_name or None,
+        launch_name=session.launch_name or None,
     )
 
 

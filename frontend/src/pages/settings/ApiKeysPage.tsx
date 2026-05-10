@@ -155,12 +155,30 @@ function GenerateKeyForm({
 function CreatedKeyModal({
   created,
   baseUrl,
+  projectLabel,
   onClose,
 }: {
   created: ApiKeyCreatedResponse
   baseUrl: string
+  projectLabel: string
   onClose: () => void
 }) {
+  const propertiesSnippet = useMemo(
+    () =>
+      `# testlookup.properties — drop into src/test/resources/ (Java/TestNG/JUnit)
+# or the project root (pytest, jest, mocha, go). All SDKs honour these keys.
+testlookup.endpoint=${baseUrl}
+testlookup.api.key=${created.raw_key}
+testlookup.project=${projectLabel}
+testlookup.launch=Smoke suite
+# Optional CI metadata — usually injected by your CI runner:
+# testlookup.build=\${CI_BUILD_NUMBER}
+# testlookup.branch=\${CI_BRANCH}
+# testlookup.commit=\${CI_COMMIT_SHA}
+`,
+    [created.raw_key, baseUrl, projectLabel],
+  )
+
   const curlSnippet = useMemo(
     () =>
       `# Send test results AND a final run_complete event so the run finalises
@@ -171,6 +189,7 @@ curl -X POST ${baseUrl}/api/v1/stream/ingest \\
   -H "Content-Type: application/json" \\
   -d '{
     "run_id": "ci-build-1",
+    "meta": {"launch_name": "Smoke suite"},
     "events": [
       {"event_type":"test_result","test_name":"smoke","status":"PASSED","duration_ms":15},
       {"event_type":"run_complete"}
@@ -185,10 +204,13 @@ curl -X POST ${baseUrl}/api/v1/stream/ingest \\
 from testlookup_reporter import LiveStream
 
 async def main():
+    # All config below can also live in testlookup.properties — see the
+    # "testlookup.properties" tab on this dialog.
     async with LiveStream(
         base_url="${baseUrl}",
         api_key="${created.raw_key}",
         run_id="ci-build-1",
+        launch_name="Smoke suite",
     ) as s:
         await s.record("test_login", "PASSED", 120)
         await s.record("test_logout", "FAILED", 340, error="AssertionError")
@@ -217,6 +239,16 @@ asyncio.run(main())`,
             <code className="font-mono text-sm text-emerald-300 break-all">{created.raw_key}</code>
             <CopyButton value={created.raw_key} label="Copy key" />
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-wider text-[var(--color-text-muted)]">testlookup.properties</p>
+            <CopyButton value={propertiesSnippet} label="Copy file" />
+          </div>
+          <pre className="overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 text-xs text-[var(--color-text-secondary)]">
+            {propertiesSnippet}
+          </pre>
         </div>
 
         <div className="space-y-2">
@@ -419,6 +451,7 @@ export default function ApiKeysPage() {
         <CreatedKeyModal
           created={created}
           baseUrl={baseUrl}
+          projectLabel={projectLabel}
           onClose={() => setCreated(null)}
         />
       )}

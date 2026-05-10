@@ -67,9 +67,14 @@ def test_metrics_compute_readiness_thresholds():
         clear=False,
     ):
         from app.services import metrics_service
-    assert metrics_service._compute_readiness(96, 0, 1) == "GREEN"
-    assert metrics_service._compute_readiness(86, 5, 10) == "AMBER"
-    assert metrics_service._compute_readiness(70, 10, 10) == "RED"
+    # Signature: (total_runs, pass_rate, active_defects, flaky_count)
+    assert metrics_service._compute_readiness(50, 96, 0, 1) == "GREEN"
+    assert metrics_service._compute_readiness(50, 86, 5, 10) == "AMBER"
+    assert metrics_service._compute_readiness(50, 70, 10, 10) == "RED"
+    # Zero-evidence guard: no runs → no verdict (UI renders a neutral
+    # "Pending" state instead of the misleading RED fall-through).
+    assert metrics_service._compute_readiness(0, 0, 0, 0) is None
+    assert metrics_service._compute_readiness(0, 100, 0, 0) is None
 
 
 @pytest.mark.asyncio

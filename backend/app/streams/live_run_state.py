@@ -36,13 +36,27 @@ class RedisLiveRunState:
     """
 
     @classmethod
-    async def start(cls, run_id: str, project_id: str, build_number: str, total_tests: int = 0) -> None:
-        """Register a new live run. Idempotent — safe to call if run already exists."""
+    async def start(
+        cls,
+        run_id: str,
+        project_id: str,
+        build_number: str,
+        total_tests: int = 0,
+        *,
+        launch_name: Optional[str] = None,
+    ) -> None:
+        """Register a new live run. Idempotent — safe to call if run already exists.
+
+        ``launch_name`` is the human-readable label (analogous to ReportPortal's
+        ``rp.launch``). When provided it lands in the Redis state hash so the
+        Live Execution UI can show it during the run, before the session is
+        finalised and persisted to Postgres.
+        """
         redis = get_redis()
         key = _STATE_KEY(run_id)
 
         now = datetime.now(timezone.utc).isoformat()
-        await redis.hset(key, mapping={  # type: ignore[misc]
+        mapping: dict = {
             "run_id":       run_id,
             "project_id":   project_id,
             "build_number": build_number,
@@ -55,10 +69,13 @@ class RedisLiveRunState:
             "started_at":   now,
             "last_event_at": now,
             "status":       "running",
-        })
+        }
+        if launch_name:
+            mapping["launch_name"] = launch_name
+        await redis.hset(key, mapping=mapping)  # type: ignore[misc]
         await redis.expire(key, _TTL)
         await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
-        logger.info("Live run started: %s build=%s", run_id, build_number)
+        logger.info("Live run started: %s build=%s launch=%s", run_id, build_number, launch_name or "-")
 
     @classmethod
     async def record_test_event(

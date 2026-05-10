@@ -952,6 +952,42 @@ async def test_stream_service_ingest_via_api_key_no_close_without_run_complete()
 
 
 @pytest.mark.asyncio
+async def test_stream_service_ingest_via_api_key_409s_finalised_run_id():
+    """Reusing a run_id whose session has already finalised must 409 — not
+    silently create a new active session that would conflate two runs under
+    the same display id."""
+    project_id = uuid.uuid4()
+    completed_session = SimpleNamespace(
+        id=uuid.UUID("66666666-6666-6666-6666-666666666666"),
+        project_id=project_id,
+        run_id="ci-build-1",
+        status="completed",
+    )
+    request = SimpleNamespace(
+        run_id="ci-build-1",
+        events=[SimpleNamespace(model_dump=lambda: {"event_type": "test_result"})],
+        meta=None,
+    )
+
+    db = FakeAsyncDB([FakeExecuteResult(scalar=completed_session)])
+    db.get = AsyncMock(return_value=object())  # project exists
+
+    from fastapi import HTTPException as _HTTPException
+
+    with pytest.raises(_HTTPException) as exc_info:
+        await stream_service.ingest_via_api_key(
+            db=db,
+            project_id=project_id,
+            api_key_name="ci-runner-key",
+            request=request,
+        )
+    assert exc_info.value.status_code == 409
+    assert "ci-build-1" in str(exc_info.value.detail)
+    # No new session was added to the DB — the request was rejected pre-write.
+    assert db.added == []
+
+
+@pytest.mark.asyncio
 async def test_stream_service_ingest_via_api_key_404s_unknown_project():
     db = FakeAsyncDB([])
     db.get = AsyncMock(return_value=None)  # Project does not exist.

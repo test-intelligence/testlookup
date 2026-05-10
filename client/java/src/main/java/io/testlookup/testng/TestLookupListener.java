@@ -106,6 +106,7 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
                                     "testng-" + System.currentTimeMillis()))
                     .branch(     resolve(suite, "testlookup.branch", "TESTLOOKUP_BRANCH", null))
                     .commitHash( resolve(suite, "testlookup.commit", "TESTLOOKUP_COMMIT", null))
+                    .launchName( resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null))
                     .build()
             );
             LOG.info("TestLookupListener: session started: " + session.getSessionId());

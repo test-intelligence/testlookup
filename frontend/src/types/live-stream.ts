@@ -9,6 +9,7 @@ export interface LiveSessionCreate {
   commit_hash?: string
   total_tests?: number
   release_name?: string
+  launch_name?: string
   metadata?: Record<string, unknown>
 }
 
@@ -38,6 +39,7 @@ export interface LiveSessionState {
   client_name?: string
   completed_at?: string
   release_name?: string
+  launch_name?: string
 }
 
 export interface ActiveSessionsResponse {

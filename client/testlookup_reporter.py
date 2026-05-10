@@ -75,25 +75,57 @@ READ_TIMEOUT       = 30.0
 
 class ConfigLoader:
     """
-    Discovers and merges testlookup.yaml config with environment variables.
+    Discovers and merges declarative TestLookup config from a properties file
+    or YAML file, plus environment variables.
 
     Discovery order (first file found wins):
-      1. ./testlookup.yaml
-      2. ./.testlookup/config.yaml
-      3. ~/.testlookup/config.yaml
+      1. ./testlookup.properties      (preferred, ReportPortal-compatible)
+      2. ./testlookup.yaml
+      3. ./.testlookup/testlookup.properties
+      4. ./.testlookup/config.yaml
+      5. ~/.testlookup/testlookup.properties
+      6. ~/.testlookup/config.yaml
 
     Precedence (highest wins):
       Constructor kwargs > Environment variables > Config file > Built-in defaults
+
+    Canonical key prefix is ``testlookup.*`` (analogous to ReportPortal's
+    ``rp.*``). The legacy nested YAML schema (``server.url``, ``auth.api_key``,
+    ``ci.build_number``) keeps working because the loader maps the canonical
+    keys onto it.
     """
 
     from pathlib import Path as _Path
 
-    SEARCH_PATHS = [
+    PROPERTIES_PATHS = [
+        _Path("testlookup.properties"),
+        _Path(".testlookup") / "testlookup.properties",
+    ]
+    YAML_PATHS = [
         _Path("testlookup.yaml"),
         _Path(".testlookup") / "config.yaml",
     ]
+    SEARCH_PATHS = YAML_PATHS  # legacy alias used by tests
+
+    # Canonical testlookup.* keys → nested YAML/dict path. Both the
+    # properties-file parser and the env-var overlay route through this
+    # mapping so all three surfaces stay aligned.
+    CANONICAL_MAP: dict[str, tuple[str, str]] = {
+        "testlookup.endpoint":  ("server", "url"),
+        "testlookup.url":       ("server", "url"),         # legacy alias
+        "testlookup.token":     ("auth", "token"),
+        "testlookup.api.key":   ("auth", "api_key"),
+        "testlookup.api_key":   ("auth", "api_key"),       # underscore form
+        "testlookup.project":   ("project", "id"),
+        "testlookup.launch":    ("reporting", "launch_name"),
+        "testlookup.build":     ("ci", "build_number"),
+        "testlookup.branch":    ("ci", "branch"),
+        "testlookup.commit":    ("ci", "commit_hash"),
+        "testlookup.framework": ("reporting", "framework"),
+    }
 
     ENV_MAP: dict[str, tuple[str, str]] = {
+        # Legacy names — kept working forever for backwards compatibility.
         "TESTLOOKUP_URL":         ("server", "url"),
         "TESTLOOKUP_TOKEN":       ("auth", "token"),
         "TESTLOOKUP_API_KEY":     ("auth", "api_key"),
@@ -102,6 +134,11 @@ class ConfigLoader:
         "TESTLOOKUP_BRANCH":      ("ci", "branch"),
         "TESTLOOKUP_COMMIT":      ("ci", "commit_hash"),
         "TESTLOOKUP_UPLOAD_MODE": ("upload", "mode"),
+        # Canonical names matching the ReportPortal rp.* convention.
+        "TESTLOOKUP_ENDPOINT":    ("server", "url"),
+        "TESTLOOKUP_PROJECT":     ("project", "id"),
+        "TESTLOOKUP_LAUNCH":      ("reporting", "launch_name"),
+        "TESTLOOKUP_FRAMEWORK":   ("reporting", "framework"),
     }
 
     @classmethod
@@ -109,15 +146,15 @@ class ConfigLoader:
         """Return merged config dict from file + env vars + overrides."""
         config: dict[str, Any] = {}
 
-        # 1. Load from config file
         config_file = cls._find_config_file()
         if config_file:
-            config = cls._parse_yaml(config_file)
+            if str(config_file).endswith(".properties"):
+                config = cls._parse_properties(config_file)
+            else:
+                config = cls._parse_yaml(config_file)
 
-        # 2. Overlay environment variables
         cls._apply_env_overlay(config)
 
-        # 3. Overlay programmatic overrides (highest precedence)
         if overrides:
             cls._deep_merge(config, overrides)
 
@@ -125,18 +162,21 @@ class ConfigLoader:
 
     @classmethod
     def _find_config_file(cls):
-        """Walk SEARCH_PATHS, return first existing file path or None."""
+        """Walk all known locations, return first existing file path or None."""
         from pathlib import Path
 
-        # Project-level paths
-        for p in cls.SEARCH_PATHS:
+        # Project-level paths — properties first, then YAML
+        candidates = list(cls.PROPERTIES_PATHS) + list(cls.YAML_PATHS)
+        for p in candidates:
             if p.exists():
                 return p
 
-        # User home path
-        home_cfg = Path.home() / ".testlookup" / "config.yaml"
-        if home_cfg.exists():
-            return home_cfg
+        # User home paths — properties first, then YAML
+        home = Path.home() / ".testlookup"
+        for name in ("testlookup.properties", "config.yaml"):
+            home_cfg = home / name
+            if home_cfg.exists():
+                return home_cfg
 
         return None
 
@@ -155,6 +195,43 @@ class ConfigLoader:
         except Exception as exc:
             logger.warning("Failed to parse config file %s: %s", path, exc)
             return {}
+
+    @classmethod
+    def _parse_properties(cls, path) -> dict[str, Any]:
+        """Parse a Java-style .properties file with testlookup.* canonical keys.
+
+        Lines starting with ``#`` or ``!`` are comments; blank lines are
+        skipped. Each remaining line is split on the first ``=`` or ``:``.
+        Unknown keys are ignored with a debug log; recognised keys land in
+        the canonical nested config so the rest of the loader behaves as if
+        the values had come from YAML.
+        """
+        config: dict[str, Any] = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith("#") or line.startswith("!"):
+                        continue
+                    sep_idx = -1
+                    for sep in ("=", ":"):
+                        idx = line.find(sep)
+                        if idx >= 0 and (sep_idx < 0 or idx < sep_idx):
+                            sep_idx = idx
+                    if sep_idx < 0:
+                        continue
+                    key = line[:sep_idx].strip()
+                    val = line[sep_idx + 1:].strip()
+                    target = cls.CANONICAL_MAP.get(key)
+                    if not target:
+                        logger.debug("Unknown testlookup.properties key %r — ignored", key)
+                        continue
+                    section, leaf = target
+                    config.setdefault(section, {})[leaf] = val
+        except Exception as exc:
+            logger.warning("Failed to parse properties file %s: %s", path, exc)
+            return {}
+        return config
 
     @classmethod
     def _apply_env_overlay(cls, config: dict[str, Any]) -> None:
@@ -265,6 +342,7 @@ class TestLookupReporter:
         commit_hash: Optional[str] = None,
         total_tests: Optional[int] = None,
         machine_id: Optional[str] = None,
+        launch_name: Optional[str] = None,
     ):
         """
         Async context manager that manages the full session lifecycle:
@@ -278,6 +356,7 @@ class TestLookupReporter:
             commit_hash=commit_hash,
             total_tests=total_tests,
             machine_id=machine_id,
+            launch_name=launch_name,
         )
         try:
             yield live
@@ -595,6 +674,7 @@ class LiveStream:
         run_id: Optional[str] = None,
         *,
         base_url: Optional[str] = None,
+        launch_name: Optional[str] = None,
         build_number: Optional[str] = None,
         branch: Optional[str] = None,
         commit_hash: Optional[str] = None,
@@ -610,13 +690,22 @@ class LiveStream:
         cfg = ConfigLoader.load()
         resolved_url = base_url or ConfigLoader.get(cfg, "server.url")
         resolved_key = api_key or ConfigLoader.get(cfg, "auth.api_key") or os.environ.get("TESTLOOKUP_API_KEY")
+        resolved_launch = launch_name or ConfigLoader.get(cfg, "reporting.launch_name")
+        resolved_build = build_number or ConfigLoader.get(cfg, "ci.build_number")
+        resolved_branch = branch or ConfigLoader.get(cfg, "ci.branch")
+        resolved_commit = commit_hash or ConfigLoader.get(cfg, "ci.commit_hash")
+        resolved_framework = framework if framework != "python" else (
+            ConfigLoader.get(cfg, "reporting.framework") or framework
+        )
         if not resolved_url:
             raise ValueError(
-                "base_url is required (constructor arg, server.url in testlookup.yaml, or TESTLOOKUP_URL env var)"
+                "endpoint is required — set testlookup.endpoint in testlookup.properties, "
+                "TESTLOOKUP_ENDPOINT/TESTLOOKUP_URL env var, or pass base_url=..."
             )
         if not resolved_key:
             raise ValueError(
-                "api_key is required (constructor arg, auth.api_key in testlookup.yaml, or TESTLOOKUP_API_KEY env var)"
+                "api_key is required — set testlookup.api.key in testlookup.properties, "
+                "TESTLOOKUP_API_KEY env var, or pass api_key=..."
             )
         if not run_id:
             raise ValueError("run_id is required — pick any stable identifier for this run")
@@ -631,14 +720,15 @@ class LiveStream:
         # call to populate the auto-created session. Sending it on subsequent
         # calls is a no-op server-side.
         self._meta: dict[str, Any] = {}
-        if build_number is not None: self._meta["build_number"] = build_number
-        if branch is not None:       self._meta["branch"] = branch
-        if commit_hash is not None:  self._meta["commit_hash"] = commit_hash
-        if framework is not None:    self._meta["framework"] = framework
-        if total_tests is not None:  self._meta["total_tests"] = total_tests
-        if machine_id is not None:   self._meta["machine_id"] = machine_id
-        if release_name is not None: self._meta["release_name"] = release_name
-        if metadata is not None:     self._meta["metadata"] = metadata
+        if resolved_build is not None:     self._meta["build_number"] = resolved_build
+        if resolved_branch is not None:    self._meta["branch"] = resolved_branch
+        if resolved_commit is not None:    self._meta["commit_hash"] = resolved_commit
+        if resolved_framework is not None: self._meta["framework"] = resolved_framework
+        if total_tests is not None:        self._meta["total_tests"] = total_tests
+        if machine_id is not None:         self._meta["machine_id"] = machine_id
+        if release_name is not None:       self._meta["release_name"] = release_name
+        if resolved_launch is not None:    self._meta["launch_name"] = resolved_launch
+        if metadata is not None:           self._meta["metadata"] = metadata
 
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
@@ -843,19 +933,22 @@ def pytest_addoption(parser):  # noqa: D401
     group.addoption("--testlookup-project", default=os.environ.get("TESTLOOKUP_PROJECT_ID", ""))
     group.addoption("--testlookup-build",   default=os.environ.get("TESTLOOKUP_BUILD", ""))
     group.addoption("--testlookup-branch",  default=os.environ.get("TESTLOOKUP_BRANCH", ""))
+    group.addoption("--testlookup-launch",  default=os.environ.get("TESTLOOKUP_LAUNCH", ""))
 
 
 def pytest_configure(config):  # noqa: D401
     """Attach the reporter plugin if configuration is present.
 
-    Resolution order: CLI flags → env vars → testlookup.yaml config file.
-    If a testlookup.yaml exists, the plugin activates without any CLI flags.
+    Resolution order: CLI flags → env vars → testlookup.properties / testlookup.yaml.
+    If a config file or env vars are present, the plugin activates without any
+    CLI flags — matches ReportPortal's auto-discovery behaviour.
     """
     url     = config.getoption("--testlookup-url",     default="")
     token   = config.getoption("--testlookup-token",   default="")
     project = config.getoption("--testlookup-project", default="")
     build   = config.getoption("--testlookup-build",   default="")
     branch  = config.getoption("--testlookup-branch",  default="")
+    launch  = config.getoption("--testlookup-launch",  default="")
 
     # If CLI flags are incomplete, try ConfigLoader (file + env vars)
     if not (url and token and project):
@@ -865,6 +958,7 @@ def pytest_configure(config):  # noqa: D401
         project = project or ConfigLoader.get(cfg, "project.id", "")
         build   = build   or ConfigLoader.get(cfg, "ci.build_number", "")
         branch  = branch  or ConfigLoader.get(cfg, "ci.branch", "")
+        launch  = launch  or ConfigLoader.get(cfg, "reporting.launch_name", "")
 
     if url and token and project:
         plugin = _TestLookupPytestPlugin(
@@ -873,6 +967,7 @@ def pytest_configure(config):  # noqa: D401
             project_id=project,
             build_number=build,
             branch=branch,
+            launch_name=launch,
         )
         config.pluginmanager.register(plugin, "testlookup_live")
 
@@ -887,6 +982,7 @@ class _TestLookupPytestPlugin:
         project_id: str,
         build_number: str = "",
         branch: str = "",
+        launch_name: str = "",
     ) -> None:
         self._reporter = TestLookupReporter(
             base_url=base_url,
@@ -896,6 +992,7 @@ class _TestLookupPytestPlugin:
         )
         self._build_number = build_number or f"pytest-{int(time.time())}"
         self._branch = branch
+        self._launch_name = launch_name
         self._live: Optional[LiveSession] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -907,6 +1004,7 @@ class _TestLookupPytestPlugin:
             self._reporter._create_session(
                 build_number=self._build_number,
                 branch=self._branch or None,
+                launch_name=self._launch_name or None,
             )
         )
         logger.info("TestLookup live session started: %s", self._live.session_id)

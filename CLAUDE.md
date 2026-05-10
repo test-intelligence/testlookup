@@ -164,7 +164,7 @@ Stack-specific rules live in `backend/CLAUDE.md` and `frontend/CLAUDE.md`. The c
 - **Analysis dispatch goes through one router.** `services/analysis_router.classify_test()`. Never call `run_triage_agent()` or `RulesEngine` directly — the router handles mode resolution and fallback.
 - **AI config has one resolver.** `services/ai_config_resolver.py` — precedence: DB → secrets → env, cached 60s in Redis.
 - **All-Projects sentinel.** `ALL_PROJECTS_ID = "all"` on the frontend; backend `project_id` params are `Optional[uuid.UUID] = None`. Never send the literal string `"all"` to the backend.
-- **Client SDK config precedence:** constructor args > env vars > `testlookup.yaml` > defaults.
+- **Client SDK config precedence:** constructor args > env vars > `testlookup.properties` (preferred) / `testlookup.yaml` (legacy) > defaults. Canonical key prefix is `testlookup.*` (e.g. `testlookup.endpoint`, `testlookup.api.key`, `testlookup.project`, `testlookup.launch`) — analogous to ReportPortal's `rp.*`. `launch_name` is the human-readable label shown in Live Execution and Runs; falls back to `build_number` when unset. See `docs/integration/` for per-framework guides.
 
 ---
 

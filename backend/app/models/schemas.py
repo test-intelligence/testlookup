@@ -1223,6 +1223,10 @@ class LiveSessionCreate(BaseModel):
     # Optional: name of the release this execution belongs to.
     # Auto-created in "planning" status if it does not exist in the project.
     release_name: Optional[str] = Field(None, max_length=255)
+    # Human-readable launch label (analogous to ReportPortal's rp.launch).
+    # When present this is what gets shown to humans in Live Execution and
+    # Runs columns; when null the UI falls back to build_number.
+    launch_name: Optional[str] = Field(None, max_length=255)
 
 
 class LiveSessionResponse(BaseModel):
@@ -1283,6 +1287,7 @@ class LiveStreamMeta(BaseModel):
     total_tests: Optional[int] = Field(None, ge=0)
     machine_id: Optional[str] = Field(None, max_length=255)
     release_name: Optional[str] = Field(None, max_length=255)
+    launch_name: Optional[str] = Field(None, max_length=255)
     metadata: Optional[dict] = None
 
 
@@ -1359,6 +1364,7 @@ class LiveSessionState(BaseModel):
     client_name: Optional[str] = None
     completed_at: Optional[str] = None
     release_name: Optional[str] = None
+    launch_name: Optional[str] = None
 
 
 class ActiveSessionsResponse(BaseModel):

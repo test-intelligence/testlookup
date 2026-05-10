@@ -1617,3 +1617,96 @@ def dispatch_scheduled_digests(self):
             span.set_attribute("error.category", type(exc).__name__)
             raise
     logger.info("[Task %s] Digest dispatch completed", self.request.id)
+
+
+@celery_app.task(
+    name="app.worker.tasks.close_stale_live_sessions",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
+    """Periodic safety net for live sessions whose clients forget to send a
+    ``run_complete`` event.
+
+    Symptom this fixes: clients (especially raw curl/Postman users) post
+    test results without a closing ``run_complete``. The LiveSession row
+    stays ``status='active'`` forever, ``upsert_test_run`` never runs, and
+    the run only ever appears in Live Execution — Runs / Overview / Coverage
+    / Failures / Trends all read from ``test_runs`` so they show 0.
+
+    Heuristic: any active LiveSession whose Redis state hash either no
+    longer exists (24h Redis TTL has expired = definitely orphaned) or
+    whose ``last_event_at`` is older than ``idle_minutes`` is closed via
+    the normal ``stream_service.close_session`` path. That path is
+    idempotent (it short-circuits if status='completed'), so a session
+    that was closed legitimately between the LIST and the per-row close
+    doesn't double-fire.
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import LiveSession
+    from app.services.stream_service import close_session
+    from app.streams.live_run_state import RedisLiveRunState
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=idle_minutes)
+        closed = 0
+        skipped_recent = 0
+        errors = 0
+
+        async with AsyncSessionLocal() as db:
+            active = (
+                await db.execute(
+                    select(LiveSession).where(LiveSession.status == "active")
+                )
+            ).scalars().all()
+
+            for session in active:
+                try:
+                    state = await RedisLiveRunState.get(session.run_id)
+                    last_event_iso = (state or {}).get("last_event_at")
+                    is_idle = True
+                    if last_event_iso:
+                        try:
+                            last_event = datetime.fromisoformat(last_event_iso)
+                            if last_event.tzinfo is None:
+                                last_event = last_event.replace(tzinfo=timezone.utc)
+                            is_idle = last_event < cutoff
+                        except Exception:
+                            # Malformed timestamp — treat as stale and close.
+                            is_idle = True
+
+                    if not is_idle:
+                        skipped_recent += 1
+                        continue
+
+                    await close_session(db, str(session.id))
+                    await db.commit()
+                    closed += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "close_stale_live_sessions: failed to close %s: %s",
+                        session.id, exc,
+                    )
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+
+        return {
+            "checked": len(active),
+            "closed": closed,
+            "skipped_recent": skipped_recent,
+            "errors": errors,
+            "idle_minutes": idle_minutes,
+        }
+
+    logger.info("[Task %s] close_stale_live_sessions starting (idle>%dm)",
+                self.request.id, idle_minutes)
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info("[Task %s] close_stale_live_sessions done: %s",
+                self.request.id, result)
+    return result

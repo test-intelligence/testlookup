@@ -137,7 +137,10 @@ type SessionOptions struct {
 	CommitHash  string
 	MachineID   string
 	TotalTests  int // 0 = unknown
-	Metadata    map[string]interface{}
+	// LaunchName is the human-readable launch label (analogous to ReportPortal's rp.launch).
+	// When empty the server falls back to BuildNumber for display.
+	LaunchName string
+	Metadata   map[string]interface{}
 }
 
 // ── RecordOptions ─────────────────────────────────────────────────────────────
@@ -181,6 +184,7 @@ func (r *Reporter) StartSession(ctx context.Context, opts SessionOptions) (*Sess
 	if opts.Branch      != "" { payload["branch"]       = opts.Branch }
 	if opts.CommitHash  != "" { payload["commit_hash"]  = opts.CommitHash }
 	if opts.TotalTests   > 0  { payload["total_tests"]  = opts.TotalTests }
+	if opts.LaunchName  != "" { payload["launch_name"]  = opts.LaunchName }
 	if opts.Metadata    != nil { payload["metadata"]    = opts.Metadata }
 
 	var result struct {

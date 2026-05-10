@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Package, PencilLine, TrendingDown, X, Check } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Loader2, Package, PencilLine, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
@@ -11,10 +12,12 @@ import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import { runsService } from '@/services/runsService'
+import agentService from '@/services/agentService'
 import { mutate } from 'swr'
 import useSWR from 'swr'
 import { api } from '@/services/api'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
+import { usePermissions } from '@/hooks/usePermissions'
 
 interface TestCase {
   id: string
@@ -237,10 +240,49 @@ export default function RunDetailPage() {
   const tcItems = (data?.items ?? []) as TestCase[]
   const { sorted: sortedCases, sortKey: tcSortKey, sortDir: tcSortDir, toggleSort: tcToggleSort } = useTableSort(tcItems, 'test_name', 'asc')
 
+  const { isQaEngineer } = usePermissions()
+  const [triggeringPipeline, setTriggeringPipeline] = useState(false)
+  const [triggeringDeep, setTriggeringDeep] = useState(false)
+
   async function handleSetRelease(name: string) {
     if (!runId) return
     await runsService.setRelease(runId, name)
     mutate(['run', runId])
+  }
+
+  async function handleTriggerPipeline() {
+    if (!runId) return
+    setTriggeringPipeline(true)
+    try {
+      await agentService.triggerPipeline(runId)
+      toast.success('Pipeline queued. Track progress on /agents.')
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to trigger pipeline'
+      toast.error(detail)
+    } finally {
+      setTriggeringPipeline(false)
+    }
+  }
+
+  async function handleTriggerDeep() {
+    if (!runId) return
+    setTriggeringDeep(true)
+    try {
+      await agentService.triggerDeepPipeline(runId)
+      toast.success('Deep investigation queued — opening live view…')
+      navigate(`/deep-investigate/${runId}`)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to trigger deep investigation'
+      toast.error(detail)
+    } finally {
+      setTriggeringDeep(false)
+    }
   }
 
   return (
@@ -268,6 +310,30 @@ export default function RunDetailPage() {
               <span className="text-amber-400 font-medium">{run.skipped_tests} skipped</span>
               <span className="text-[var(--color-text-muted)]">/ {run.total_tests} total</span>
               <StatusBadge status={run.status} />
+              {isQaEngineer && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleTriggerPipeline}
+                    disabled={triggeringPipeline || triggeringDeep}
+                    title="Re-run the multi-agent analysis pipeline (ingestion → anomaly → root cause → summary → triage). Useful after changing AI mode or fixing an upstream issue."
+                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+                  >
+                    {triggeringPipeline ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                    {triggeringPipeline ? 'Queuing…' : 'Trigger pipeline'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTriggerDeep}
+                    disabled={triggeringPipeline || triggeringDeep}
+                    title="Run the deep investigation pipeline — adds failure clustering, flaky sentinel, test health, and release risk on top of the standard stages. Requires LLM or Auto mode."
+                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+                  >
+                    {triggeringDeep ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
+                    {triggeringDeep ? 'Queuing…' : 'Deep investigate'}
+                  </button>
+                </>
+              )}
               <Link
                 to={`/runs/${runId}/intelligence`}
                 className="btn-primary text-xs flex items-center gap-1.5 py-1"

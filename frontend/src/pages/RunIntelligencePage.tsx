@@ -77,7 +77,34 @@ function passRateColour(rate: number): string {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function ReleaseGateBanner({ decision }: { decision: ReleaseDecisionIntel }) {
+function ReleaseGateBanner({
+  decision,
+  totalTests,
+}: {
+  decision: ReleaseDecisionIntel
+  totalTests: number
+}) {
+  // When the run has no test evidence, the backend can still hand back a
+  // recommendation (often "GO" because composite risk == 0, or "NO_GO" when
+  // pass_rate < hard_floor). Either is misleading when the truth is "we
+  // don't have data to grade this run". Render a neutral Pending banner.
+  if (totalTests <= 0) {
+    return (
+      <div className="card border flex items-start gap-4 bg-[var(--color-bg-secondary)]/40 border-[var(--color-border)]">
+        <div className="mt-0.5 text-[var(--color-text-muted)]"><AlertCircle className="h-5 w-5" /></div>
+        <div className="flex-1">
+          <div className="flex items-center gap-3 mb-1">
+            <span className="text-lg font-bold text-[var(--color-text-secondary)]">PENDING</span>
+            <span className="text-sm text-[var(--color-text-muted)]">No risk score — run has no test results yet</span>
+          </div>
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            The release decision will be computed once test results land for this run.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const style = RECOMMENDATION_STYLES[decision.recommendation] ?? RECOMMENDATION_STYLES.CONDITIONAL_GO
   return (
     <div className={clsx('card border flex items-start gap-4', style.bg)}>
@@ -907,7 +934,7 @@ export default function RunIntelligencePage() {
       )}
 
       {/* Release gate banner */}
-      {release_decision && <ReleaseGateBanner decision={release_decision} />}
+      {release_decision && <ReleaseGateBanner decision={release_decision} totalTests={run?.total_tests ?? 0} />}
 
       {/* WF-4: Deep analysis status panel */}
       {intelligence.deep_pipeline_status && intelligence.deep_pipeline_status.status !== 'never_run' && (

@@ -302,9 +302,22 @@ if [ "$SKIP_BUILD" = false ]; then
     warn "Registry not reachable — builds will proceed but push may fail."
   fi
 
+  # Stage client/ into backend/__client_sdks_staged/ so the production
+  # Dockerfile can bake it into the image at /app/client_sdks. The SDK
+  # download endpoint at /api/v1/sdk/{lang} reads from there. We use a
+  # trap so the staging dir is cleaned up even on Ctrl+C / build failure.
+  STAGED_SDK="$REPO_ROOT/backend/__client_sdks_staged"
+  log "Staging client SDKs into backend build context..."
+  rm -rf "$STAGED_SDK"
+  cp -r "$REPO_ROOT/client" "$STAGED_SDK"
+  trap 'rm -rf "$STAGED_SDK"' EXIT INT TERM
+
   log "Building backend image..."
   docker build -t "${PUSH_REGISTRY}/testlookup/backend:latest" \
     --target production -f backend/Dockerfile backend/
+
+  rm -rf "$STAGED_SDK"
+  trap - EXIT INT TERM
 
   log "Building frontend image (uses same-origin relative API URLs)..."
   docker build -t "${PUSH_REGISTRY}/testlookup/frontend:latest" \

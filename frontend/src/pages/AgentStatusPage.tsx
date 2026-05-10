@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronRight,
   Clock, FileText, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
@@ -10,6 +10,7 @@ import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } from '@/hooks/useAgentRuns'
 import { useAIConfig } from '@/hooks/useAIConfig'
+import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
@@ -398,14 +399,35 @@ export default function AgentStatusPage() {
     error: summaryError,
   } = useRunSummary(showSummary ? selectedRunId : null)
 
-  const _handleTrigger = async (testRunId: string) => {
+  const { isQaEngineer } = usePermissions()
+  const [triggerInput, setTriggerInput] = useState('')
+  const [triggerSubmitting, setTriggerSubmitting] = useState(false)
+
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  async function handleTriggerByRunId(e: React.FormEvent) {
+    e.preventDefault()
+    const id = triggerInput.trim()
+    if (!UUID_RE.test(id)) {
+      toast.error('Run ID must be a UUID. Find it on /runs or by clicking into a run.')
+      return
+    }
+    setTriggerSubmitting(true)
     try {
-      await agentService.triggerPipeline(testRunId)
-      toast.success('Pipeline triggered successfully')
-    } catch {
-      toast.error('Failed to trigger pipeline')
+      await agentService.triggerPipeline(id)
+      toast.success('Pipeline queued — it will appear in the list shortly.')
+      setTriggerInput('')
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to trigger pipeline'
+      toast.error(detail)
+    } finally {
+      setTriggerSubmitting(false)
     }
   }
+
 
   return (
     <div className="space-y-6">
@@ -439,10 +461,72 @@ export default function AgentStatusPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">
             Pipeline Runs
           </h3>
+
+          {isQaEngineer && (
+            <form onSubmit={handleTriggerByRunId} className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={triggerInput}
+                onChange={e => setTriggerInput(e.target.value)}
+                placeholder="Paste run UUID to trigger…"
+                aria-label="Trigger pipeline for a run UUID"
+                title="Paste a run UUID (e.g. from /runs) to fire its pipeline manually. Useful when the auto-trigger was lost (worker crash, etc.)."
+                className="flex-1 min-w-0 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-mono rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
+                disabled={triggerSubmitting}
+              />
+              <button
+                type="submit"
+                disabled={triggerSubmitting || triggerInput.trim().length === 0}
+                title="Queue the standard pipeline for this run"
+                className="inline-flex items-center justify-center h-7 w-7 rounded text-[var(--color-text-muted)] border border-[var(--color-border-light)] hover:bg-[var(--color-bg-hover)]/40 hover:text-[var(--color-text-secondary)] transition-colors disabled:opacity-50"
+              >
+                {triggerSubmitting
+                  ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  : <Zap className="h-3.5 w-3.5" />}
+              </button>
+            </form>
+          )}
+
           {pipelinesLoading ? (
             <LoadingSpinner size="sm" />
           ) : pipelines.length === 0 ? (
-            <p className="text-sm text-[var(--color-text-muted)]">No pipelines yet. Upload a test report to trigger one.</p>
+            <div className="card border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 p-4 text-sm space-y-3">
+              <div className="flex items-start gap-2">
+                <Bot className="h-4 w-4 mt-0.5 text-[var(--color-text-muted)] flex-shrink-0" />
+                <div>
+                  <p className="font-medium text-[var(--color-text)]">No agent pipelines yet</p>
+                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                    Active analysis mode: <span className="font-mono text-[var(--color-text-secondary)]">{analysisMode}</span>.
+                    Pipelines are recorded once a test run finalises.
+                  </p>
+                </div>
+              </div>
+
+              {liveRuns.length > 0 && (
+                <p className="text-xs text-amber-300 border-t border-[var(--color-border)] pt-2">
+                  {liveRuns.length} live run{liveRuns.length === 1 ? '' : 's'} still streaming.
+                  Pipelines fire after each run sends a <code className="px-1 bg-[var(--color-bg-secondary)] rounded">run_complete</code> event.
+                  Stale runs are auto-closed after 15 min idle.
+                </p>
+              )}
+
+              <div className="text-xs text-[var(--color-text-muted)] space-y-1">
+                <p className="font-medium text-[var(--color-text-secondary)]">To get a pipeline running:</p>
+                <ul className="list-disc list-inside space-y-0.5 marker:text-[var(--color-text-faint)]">
+                  <li>Stream tests via the SDK (<code className="px-1 bg-[var(--color-bg-secondary)] rounded">LiveStream</code>) or <code className="px-1 bg-[var(--color-bg-secondary)] rounded">POST /api/v1/stream/ingest</code> with a closing <code className="px-1 bg-[var(--color-bg-secondary)] rounded">run_complete</code> event.</li>
+                  <li>Or upload a JUnit / Allure / TestNG report at <Link to="/runs" className="text-[var(--color-text-secondary)] underline">/runs</Link>.</li>
+                  <li>The pipeline runs in every mode — <span className="font-mono">llm</span>, <span className="font-mono">ml</span>, <span className="font-mono">rules</span>, <span className="font-mono">auto</span>. The mode only changes which engine each stage uses.</li>
+                </ul>
+              </div>
+
+              {analysisMode === 'llm' && (
+                <p className="text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2">
+                  <span className="text-indigo-300 font-medium">LLM mode tip:</span>{' '}
+                  the analysis stage needs a reachable LLM (Ollama with the configured model pulled, or a hosted provider).
+                  If the LLM is unavailable the pipeline still runs and falls back to the rules engine — the row will appear here either way.
+                </p>
+              )}
+            </div>
           ) : (
             pipelines.map((p: AgentPipelineRun) => (
               <PipelineCard
