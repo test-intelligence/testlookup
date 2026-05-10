@@ -97,6 +97,12 @@ const sections = [
     desc: 'Subscribe external systems to run.completed, defect.promoted, release.decided, flaky.quarantined, quota.exceeded',
     href: '/settings/webhooks',
   },
+  {
+    icon: Key,
+    title: 'API Keys',
+    desc: 'Generate project-scoped streaming keys for CI to ingest test results live without a session token',
+    href: '/settings/api-keys',
+  },
   ...(isDev
     ? [
         {

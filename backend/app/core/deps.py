@@ -199,6 +199,87 @@ async def get_current_user_or_api_key(
     )
 
 
+@dataclass
+class StreamingApiKeyContext:
+    """Context for the API-key-only streaming ingest endpoint.
+
+    Distinct from ``ApiKeyContext`` because streaming has stricter requirements:
+    project-scoped key + ``stream:write`` scope. Carries the api_key id/name so
+    the server can label auto-created live sessions with a recognisable client.
+    """
+    user: User
+    project_id: uuid.UUID
+    api_key_id: uuid.UUID
+    api_key_name: str
+
+
+_STREAM_WRITE_SCOPE = "stream:write"
+
+
+async def get_streaming_api_key_context(
+    db: AsyncSession = Depends(get_db),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+) -> StreamingApiKeyContext:
+    """Authenticate the streaming ingest endpoint using an API key only.
+
+    Enforces three rules beyond the standard ``_validate_api_key`` checks:
+      1. JWT auth is **not** accepted — streaming is API-key only so the same
+         key can be safely embedded in CI configuration.
+      2. The API key must be project-scoped — the server derives ``project_id``
+         from the key, so the client never sends it.
+      3. The API key must declare the ``stream:write`` scope. Legacy keys with
+         an empty/null scopes list are treated as full-access (backwards
+         compatible with keys minted before scope enforcement landed).
+    """
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Streaming requires an X-API-Key header",
+        )
+
+    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+    api_key = (
+        await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
+    ).scalar_one_or_none()
+    if not api_key:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    if not api_key.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key is inactive")
+    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key has expired")
+    if api_key.project_id is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Streaming requires a project-scoped API key. Re-issue the key with a project binding.",
+        )
+
+    scopes = api_key.scopes or []
+    if scopes and _STREAM_WRITE_SCOPE not in scopes:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=f"API key lacks the {_STREAM_WRITE_SCOPE!r} scope",
+        )
+
+    user = (
+        await db.execute(select(User).where(User.id == api_key.user_id))
+    ).scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail="API key owner account is inactive",
+        )
+
+    api_key.last_used_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return StreamingApiKeyContext(
+        user=user,
+        project_id=api_key.project_id,
+        api_key_id=api_key.id,
+        api_key_name=api_key.name,
+    )
+
+
 async def get_api_key_context(
     db: AsyncSession = Depends(get_db),
     bearer_token: Optional[str] = Depends(oauth2_scheme_optional),

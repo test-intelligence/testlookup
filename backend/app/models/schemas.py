@@ -1270,6 +1270,42 @@ class LiveEventBatchResponse(BaseModel):
     session_id: str
 
 
+class LiveStreamMeta(BaseModel):
+    """Optional CI/run metadata that enriches the auto-created session.
+
+    All fields are optional — when omitted the server falls back to the API
+    key's name (for client_name) and the run_id (for build_number).
+    """
+    build_number: Optional[str] = Field(None, max_length=100)
+    branch: Optional[str] = Field(None, max_length=255)
+    commit_hash: Optional[str] = Field(None, max_length=64)
+    framework: Optional[str] = Field(None, max_length=50)
+    total_tests: Optional[int] = Field(None, ge=0)
+    machine_id: Optional[str] = Field(None, max_length=255)
+    release_name: Optional[str] = Field(None, max_length=255)
+    metadata: Optional[dict] = None
+
+
+class LiveStreamIngestRequest(BaseModel):
+    """API-key-authenticated streaming ingest. Server auto-manages the session.
+
+    A client-chosen ``run_id`` (any stable identifier — CI build id, UUID, etc.)
+    keys the live session along with the API key's bound project. The first
+    call for a given ``(project_id, run_id)`` pair auto-creates the session;
+    subsequent calls reuse it. Clients never call ``/sessions`` themselves.
+    """
+    run_id: str = Field(..., min_length=1, max_length=255)
+    events: List[LiveEvent] = Field(..., min_length=1, max_length=1000)
+    meta: Optional[LiveStreamMeta] = None
+
+
+class LiveStreamIngestResponse(BaseModel):
+    accepted: int
+    run_id: str
+    session_id: str
+    created_session: bool
+
+
 # ── Ingest Schemas (unified batch + file upload) ──────────────────────────────
 
 class IngestTestResult(BaseModel):

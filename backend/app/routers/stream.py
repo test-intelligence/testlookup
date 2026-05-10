@@ -18,14 +18,21 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    StreamingApiKeyContext,
     get_accessible_project_ids,
     get_api_key_context,
     get_current_active_user,
+    get_streaming_api_key_context,
     require_live_session_access,
 )
 from app.db.postgres import get_db
 from app.models.postgres import User
-from app.models.schemas import ActiveSessionsResponse, LiveEventBatch, LiveSessionCreate
+from app.models.schemas import (
+    ActiveSessionsResponse,
+    LiveEventBatch,
+    LiveSessionCreate,
+    LiveStreamIngestRequest,
+)
 from app.services import stream_service
 
 router = APIRouter(prefix="/api/v1/stream", tags=["Live Stream"])
@@ -83,6 +90,29 @@ async def ingest_event_batch(
     x_session_token: str = Header(..., alias="X-Session-Token"),
 ):
     return await stream_service.ingest_event_batch(batch, x_session_token)
+
+
+@router.post("/ingest", response_model=stream_service.LiveStreamIngestResponse, status_code=202)
+async def ingest_via_api_key(
+    payload: LiveStreamIngestRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: StreamingApiKeyContext = Depends(get_streaming_api_key_context),
+):
+    """Stream test results using only an API key — no /sessions ceremony.
+
+    Auth: ``X-API-Key`` only. The key must be project-scoped (so the server
+    can derive ``project_id`` itself) and carry the ``stream:write`` scope.
+    The first call for a given ``run_id`` auto-creates a live session;
+    subsequent calls reuse it.
+    """
+    response = await stream_service.ingest_via_api_key(
+        db=db,
+        project_id=auth.project_id,
+        api_key_name=auth.api_key_name,
+        request=payload,
+    )
+    await db.commit()
+    return response
 
 
 @router.get("/active", response_model=ActiveSessionsResponse)

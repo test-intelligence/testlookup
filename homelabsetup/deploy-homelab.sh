@@ -451,6 +451,47 @@ log "Applying Kustomize overlay..."
 kubectl apply -k "$REPO_ROOT/k8s/overlays/homelab"
 log "All resources applied."
 
+# ── Step 5b: Force fresh :latest pull on app deployments ───
+# K3s containerd caches :latest aggressively. Even with imagePullPolicy=Always
+# (set by the homelab overlay), an unchanged Deployment spec means kubectl
+# apply doesn't roll. Trigger rollouts explicitly so the new image content
+# actually lands on the nodes. Skipped when --skip-build is passed because no
+# new image content exists.
+if [ "$SKIP_BUILD" = false ]; then
+  header "Step 5b — Force Fresh Image Pull"
+
+  APP_DEPLOYMENTS=(
+    testlookup-backend
+    testlookup-frontend
+    testlookup-mcp
+    testlookup-worker-critical
+    testlookup-worker-ingestion
+    testlookup-worker-ai
+    testlookup-worker-default
+    testlookup-beat
+  )
+
+  log "Restarting app deployments to pull the latest image..."
+  for dep in "${APP_DEPLOYMENTS[@]}"; do
+    if kubectl -n "$NAMESPACE" get deployment "$dep" >/dev/null 2>&1; then
+      kubectl -n "$NAMESPACE" rollout restart deployment/"$dep" >/dev/null
+    else
+      warn "Deployment $dep not found yet — will start fresh on first reconcile."
+    fi
+  done
+
+  log "Waiting for rollouts to complete (timeout 240s each)..."
+  for dep in "${APP_DEPLOYMENTS[@]}"; do
+    if kubectl -n "$NAMESPACE" get deployment "$dep" >/dev/null 2>&1; then
+      kubectl -n "$NAMESPACE" rollout status deployment/"$dep" --timeout=240s \
+        || warn "$dep did not become ready in time — check 'kubectl -n $NAMESPACE describe deployment $dep'"
+    fi
+  done
+  log "App deployments rolled to fresh :latest content."
+else
+  log "Skipping rollout-restart (--skip-build): keeping current images."
+fi
+
 # ── Step 6: Wait for Infrastructure ────────────────────────
 header "Step 6 — Wait for Infrastructure Pods"
 

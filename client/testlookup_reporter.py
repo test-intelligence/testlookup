@@ -56,7 +56,7 @@ from typing import Any, Optional
 import httpx
 
 __version__ = "1.0.0"
-__all__ = ["TestLookupReporter", "LiveSession"]
+__all__ = ["TestLookupReporter", "LiveSession", "LiveStream"]
 
 logger = logging.getLogger("testlookup_reporter")
 
@@ -557,6 +557,273 @@ class LiveSession:
             "Session %s shutdown: sent=%d failed=%d",
             self.session_id[:8], self._stats["sent"], self._stats["failed"],
         )
+
+
+# ── API-key-only Live Stream ──────────────────────────────────────────────────
+
+class LiveStream:
+    """Stream test results using only an API key — no /sessions ceremony.
+
+    The legacy ``TestLookupReporter`` requires the caller to supply a
+    ``project_id`` plus a bag of CI metadata, then orchestrates an
+    ``open session → batch → close`` round-trip. ``LiveStream`` skips all of
+    that — the server derives ``project_id`` from the project-scoped API key
+    and auto-creates the live session on the first batch.
+
+    Quick start
+    -----------
+        async with LiveStream(api_key="tlk_...", run_id="ci-build-42") as s:
+            await s.record("test_login", "PASSED", 120)
+            await s.record("test_logout", "FAILED", 340, error="...")
+
+    The API key must be **project-scoped** and carry the ``stream:write``
+    scope. Mint one in Settings → API Keys.
+
+    Parameters
+    ----------
+    api_key     : Project-scoped API key (from env TESTLOOKUP_API_KEY by default)
+    run_id      : Stable identifier for this run (CI build id, UUID, …)
+    base_url    : Server URL (env TESTLOOKUP_URL by default)
+    build_number, branch, commit_hash, framework, total_tests, machine_id,
+    release_name, metadata : Optional CI metadata sent with the first batch.
+    batch_size, batch_interval_ms, verify_ssl : Batching/transport tuning.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        run_id: Optional[str] = None,
+        *,
+        base_url: Optional[str] = None,
+        build_number: Optional[str] = None,
+        branch: Optional[str] = None,
+        commit_hash: Optional[str] = None,
+        framework: Optional[str] = "python",
+        total_tests: Optional[int] = None,
+        machine_id: Optional[str] = None,
+        release_name: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        batch_size: int = BATCH_SIZE,
+        batch_interval_ms: int = BATCH_INTERVAL_MS,
+        verify_ssl: bool = True,
+    ) -> None:
+        cfg = ConfigLoader.load()
+        resolved_url = base_url or ConfigLoader.get(cfg, "server.url")
+        resolved_key = api_key or ConfigLoader.get(cfg, "auth.api_key") or os.environ.get("TESTLOOKUP_API_KEY")
+        if not resolved_url:
+            raise ValueError(
+                "base_url is required (constructor arg, server.url in testlookup.yaml, or TESTLOOKUP_URL env var)"
+            )
+        if not resolved_key:
+            raise ValueError(
+                "api_key is required (constructor arg, auth.api_key in testlookup.yaml, or TESTLOOKUP_API_KEY env var)"
+            )
+        if not run_id:
+            raise ValueError("run_id is required — pick any stable identifier for this run")
+
+        self._base_url = resolved_url.rstrip("/")
+        self._api_key = resolved_key
+        self._run_id = run_id
+        self._batch_size = min(batch_size, MAX_BATCH_SIZE)
+        self._batch_interval = batch_interval_ms / 1_000.0
+
+        # Meta is sent on every call but only used by the server on the first
+        # call to populate the auto-created session. Sending it on subsequent
+        # calls is a no-op server-side.
+        self._meta: dict[str, Any] = {}
+        if build_number is not None: self._meta["build_number"] = build_number
+        if branch is not None:       self._meta["branch"] = branch
+        if commit_hash is not None:  self._meta["commit_hash"] = commit_hash
+        if framework is not None:    self._meta["framework"] = framework
+        if total_tests is not None:  self._meta["total_tests"] = total_tests
+        if machine_id is not None:   self._meta["machine_id"] = machine_id
+        if release_name is not None: self._meta["release_name"] = release_name
+        if metadata is not None:     self._meta["metadata"] = metadata
+
+        self._http = httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"X-API-Key": self._api_key},
+            timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=10.0, pool=5.0),
+            verify=verify_ssl,
+        )
+
+        self._queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+        self._flusher_task: Optional[asyncio.Task] = None
+        self._stats = {"sent": 0, "failed": 0}
+        self._session_id: Optional[str] = None  # set by the server on first batch
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────
+
+    async def __aenter__(self) -> "LiveStream":
+        self._flusher_task = asyncio.create_task(
+            self._flusher_loop(), name=f"testlookup-livestream-{self._run_id[:24]}"
+        )
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        """Drain pending events, finalize the run, and close the HTTP client.
+
+        On exit we post a ``run_complete`` event so the server closes the live
+        session, runs ``upsert_test_run``, and queues the ingestion + analysis
+        pipelines. Without this the session stays ``active`` in the DB and the
+        run never shows up in Runs / Overview / Coverage / Failures / Trends.
+        """
+        if self._flusher_task and not self._flusher_task.done():
+            self._flusher_task.cancel()
+            try:
+                await self._flusher_task
+            except asyncio.CancelledError:
+                pass
+        await self._flush_all()
+
+        # Finalize the run server-side. Best-effort: a network error here
+        # shouldn't mask an exception from the test body that prompted close().
+        try:
+            await self._post_batch([{
+                "event_type": "run_complete",
+                "timestamp_ms": int(time.time() * 1_000),
+            }])
+        except Exception as exc:  # pragma: no cover - logged, non-fatal
+            logger.warning("LiveStream %s run_complete post failed: %s", self._run_id, exc)
+
+        await self._http.aclose()
+        logger.info(
+            "LiveStream %s closed: sent=%d failed=%d",
+            self._run_id, self._stats["sent"], self._stats["failed"],
+        )
+
+    # ── Public API (mirrors LiveSession) ──────────────────────────────────
+
+    async def record(
+        self,
+        test_name: str,
+        status: str,
+        duration_ms: int = 0,
+        *,
+        suite_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+        error: Optional[str] = None,
+        stack_trace: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        event: dict[str, Any] = {
+            "event_type": "test_result",
+            "test_name": test_name,
+            "status": status.upper(),
+            "duration_ms": duration_ms,
+            "timestamp_ms": int(time.time() * 1_000),
+        }
+        if suite_name:    event["suite_name"]  = suite_name
+        if class_name:    event["class_name"]  = class_name
+        if error:         event["error_message"] = error
+        if stack_trace:   event["stack_trace"] = stack_trace
+        if tags:          event["tags"] = tags
+        if metadata:      event["metadata"] = metadata
+
+        await self._queue.put(event)
+        if self._queue.qsize() >= self._batch_size:
+            await self._flush_once()
+
+    async def log(self, message: str, level: str = "INFO", metadata: Optional[dict] = None) -> None:
+        await self._queue.put({
+            "event_type": "log",
+            "test_name": None,
+            "status": None,
+            "metadata": {"level": level, "message": message, **(metadata or {})},
+            "timestamp_ms": int(time.time() * 1_000),
+        })
+
+    async def metric(self, name: str, value: float, unit: str = "", metadata: Optional[dict] = None) -> None:
+        await self._queue.put({
+            "event_type": "metric",
+            "test_name": name,
+            "duration_ms": int(value),
+            "metadata": {"value": value, "unit": unit, **(metadata or {})},
+            "timestamp_ms": int(time.time() * 1_000),
+        })
+
+    @property
+    def stats(self) -> dict:
+        return {**self._stats, "session_id": self._session_id, "run_id": self._run_id}
+
+    # ── Internal ──────────────────────────────────────────────────────────
+
+    async def _flusher_loop(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(self._batch_interval)
+                await self._flush_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("LiveStream flusher loop error (non-fatal): %s", exc)
+
+    async def _flush_once(self) -> None:
+        if self._queue.empty():
+            return
+        batch: list[dict] = []
+        try:
+            for _ in range(self._batch_size):
+                batch.append(self._queue.get_nowait())
+        except asyncio.QueueEmpty:
+            pass
+        if batch:
+            await self._post_batch(batch)
+
+    async def _flush_all(self) -> None:
+        while not self._queue.empty():
+            batch: list[dict] = []
+            try:
+                for _ in range(MAX_BATCH_SIZE):
+                    batch.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                pass
+            if batch:
+                await self._post_batch(batch)
+
+    async def _post_batch(self, events: list[dict]) -> None:
+        payload: dict[str, Any] = {"run_id": self._run_id, "events": events}
+        if self._meta:
+            payload["meta"] = self._meta
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                resp = await self._http.post("/api/v1/stream/ingest", json=payload)
+                if resp.status_code in (401, 403):
+                    logger.error(
+                        "LiveStream auth failed (%s) — stopping flush: %s",
+                        resp.status_code, resp.text,
+                    )
+                    self._stats["failed"] += len(events)
+                    return
+                resp.raise_for_status()
+                data = resp.json()
+                self._stats["sent"] += data.get("accepted", len(events))
+                if not self._session_id:
+                    self._session_id = data.get("session_id")
+                return
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                if attempt == MAX_RETRIES:
+                    logger.error(
+                        "LiveStream POST failed after %d attempts (%d events lost): %s",
+                        attempt, len(events), exc,
+                    )
+                    self._stats["failed"] += len(events)
+                    return
+                logger.warning(
+                    "LiveStream POST attempt %d failed, retrying in %.1fs: %s",
+                    attempt, delay, exc,
+                )
+                await asyncio.sleep(delay)
+            except Exception as exc:
+                logger.error("Unexpected LiveStream POST error (%d events): %s", len(events), exc)
+                self._stats["failed"] += len(events)
+                return
 
 
 # ── Pytest Plugin ─────────────────────────────────────────────────────────────

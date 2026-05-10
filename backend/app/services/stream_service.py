@@ -12,7 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import LaunchStatus, LiveSession, Project, TestRun
-from app.models.schemas import ActiveSessionsResponse, LiveEventBatchResponse, LiveSessionResponse, LiveSessionState
+from app.models.schemas import (
+    ActiveSessionsResponse,
+    LiveEventBatchResponse,
+    LiveSessionResponse,
+    LiveSessionState,
+    LiveStreamIngestRequest,
+    LiveStreamIngestResponse,
+)
 from app.services.async_utils import await_if_needed
 
 logger = logging.getLogger(__name__)
@@ -226,35 +233,30 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
         )
 
 
-async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
+async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
+    """Publish events to Redis Streams and update the live-state hash.
+
+    Shared by the session-token path (``ingest_event_batch``) and the
+    API-key path (``ingest_via_api_key``). Buffering test_result events into
+    the Redis list and HINCRBY-ing the counter hash must happen here —
+    synchronously in the HTTP handler — not in the async stream consumer,
+    because close_session() / persist_live_session can be dispatched before
+    the consumer processes the stream (race condition).
+    """
     import json as _json
     from app.streams import LIVE_TESTCASES_KEY, LIVE_STATE_KEY
 
+    accepted = await publish_event_batch(session_id=session_id, run_id=run_id, events=events)
+
     redis = get_redis()
-    stored_session_id = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
-    if not stored_session_id or stored_session_id != batch.session_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session token",
-        )
-
-    accepted = await publish_event_batch(session_id=batch.session_id, run_id=batch.run_id, events=batch.events)
-
-    # Buffer test_result events directly into the Redis List that persist_live_session
-    # reads.  This must happen here — synchronously in the HTTP handler — not in the
-    # async stream consumer, because close_session() / persist_live_session can be
-    # dispatched before the consumer processes the stream (race condition).
-    #
-    # Counter increments (HINCRBY) also happen here so the live state is
-    # immediately accurate.  The async consumer only broadcasts + queues analysis.
-    list_key = LIVE_TESTCASES_KEY.format(run_id=batch.run_id)
-    state_key = LIVE_STATE_KEY.format(run_id=batch.run_id)
+    list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
+    state_key = LIVE_STATE_KEY.format(run_id=run_id)
     counter_map = {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "BROKEN": "broken"}
     now = datetime.now(timezone.utc).isoformat()
     last_test_name = ""
 
     pipe = redis.pipeline()
-    for event in batch.events:
+    for event in events:
         event_dict: dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
         if event_dict.get("event_type") == "test_result":
             entry = _json.dumps({
@@ -269,8 +271,6 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
                 "timestamp_ms":  event_dict.get("timestamp_ms"),
             })
             await await_if_needed(pipe.rpush(list_key, entry))
-
-            # Increment the appropriate counter in the live run state hash
             status_upper = (event_dict.get("status") or "UNKNOWN").upper()
             counter_field = counter_map.get(status_upper)
             if counter_field:
@@ -278,7 +278,6 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
             last_test_name = event_dict.get("test_name") or last_test_name
 
     await await_if_needed(pipe.expire(list_key, 90_000))  # 25 h TTL — same as consumer's buffer
-    # Update metadata on the live state hash
     if last_test_name:
         await await_if_needed(pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name}))
     else:
@@ -286,8 +285,141 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
     await await_if_needed(pipe.expire(state_key, 86_400))
     await pipe.execute()
 
+    return accepted
+
+
+async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
+    redis = get_redis()
+    stored_session_id = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
+    if not stored_session_id or stored_session_id != batch.session_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session token",
+        )
+
+    accepted = await _persist_event_batch(
+        session_id=batch.session_id, run_id=batch.run_id, events=batch.events
+    )
+
     await redis.expire(SESSION_TOKEN_KEY.format(token=x_session_token), SESSION_TTL)
     return LiveEventBatchResponse(accepted=accepted, run_id=batch.run_id, session_id=batch.session_id)
+
+
+async def ingest_via_api_key(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    api_key_name: str,
+    request: LiveStreamIngestRequest,
+) -> LiveStreamIngestResponse:
+    """Ingest a batch of live events authenticated by an API key.
+
+    On the first call for a given (project_id, run_id) pair, auto-creates a
+    LiveSession populated from ``request.meta`` (with sensible fallbacks).
+    Subsequent calls reuse the existing session. The release record is
+    auto-created when ``meta.release_name`` is set so live runs participate
+    in release tracking the same way the legacy /sessions flow does.
+
+    The handler is responsible for committing the DB transaction after this
+    call so the session row, Redis token, and run-state hash all come into
+    being atomically.
+    """
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Look up an existing active session keyed by (project_id, run_id).
+    existing = (
+        await db.execute(
+            select(LiveSession).where(
+                LiveSession.project_id == project_id,
+                LiveSession.run_id == request.run_id,
+                LiveSession.status == "active",
+            )
+        )
+    ).scalar_one_or_none()
+
+    meta = request.meta
+    created_session = False
+    if existing is None:
+        session_uuid = uuid.uuid4()
+        session_token = secrets.token_urlsafe(32)
+        session = LiveSession(
+            id=session_uuid,
+            project_id=project_id,
+            run_id=request.run_id,
+            client_name=api_key_name,
+            machine_id=(meta.machine_id if meta else None),
+            build_number=(meta.build_number if meta else None) or request.run_id,
+            framework=(meta.framework if meta else None),
+            branch=(meta.branch if meta else None),
+            commit_hash=(meta.commit_hash if meta else None),
+            session_token_hash=hash_token(session_token),
+            total_tests=(meta.total_tests if meta else None) or 0,
+            status="active",
+            release_name=(meta.release_name.strip() if meta and meta.release_name else None),
+            started_at=datetime.now(timezone.utc),
+            extra_metadata=(meta.metadata if meta else None) or {},
+        )
+        db.add(session)
+        await db.flush()
+
+        redis = get_redis()
+        await redis.setex(SESSION_TOKEN_KEY.format(token=session_token), SESSION_TTL, str(session_uuid))
+
+        from app.streams.live_run_state import RedisLiveRunState
+
+        await RedisLiveRunState.start(
+            run_id=request.run_id,
+            project_id=str(project_id),
+            build_number=(meta.build_number if meta else None) or request.run_id,
+            total_tests=(meta.total_tests if meta else None) or 0,
+        )
+
+        # Auto-create the release record so it shows up in release tracking
+        # immediately. The actual run→release link is wired up at session close.
+        if session.release_name:
+            try:
+                from app.services.release_linker import resolve_or_create_release
+
+                await resolve_or_create_release(db, project_id, session.release_name)
+            except Exception as exc:  # pragma: no cover - non-fatal, log only
+                logger.warning(
+                    "live_session_release_autocreate_failed run_id=%s release=%s: %s",
+                    request.run_id, session.release_name, exc,
+                )
+
+        created_session = True
+        logger.info(
+            "Live session auto-created via API key: session=%s run=%s project=%s",
+            session_uuid, request.run_id, project_id,
+        )
+    else:
+        session = existing
+
+    accepted = await _persist_event_batch(
+        session_id=str(session.id), run_id=request.run_id, events=request.events
+    )
+
+    # Detect a run_complete event and finalize the session in the same handler.
+    # This is what causes the TestRun row to be created (via upsert_test_run
+    # inside close_session). Without it the session stays "active" forever and
+    # nothing shows up in the Runs / Overview / Coverage / Failures / Trends
+    # pages — those all read from TestRun, not the live Redis state.
+    has_run_complete = any(
+        (
+            event.model_dump() if hasattr(event, "model_dump") else dict(event)
+        ).get("event_type") == "run_complete"
+        for event in request.events
+    )
+    if has_run_complete and session.status == "active":
+        await close_session(db, str(session.id))
+
+    return LiveStreamIngestResponse(
+        accepted=accepted,
+        run_id=request.run_id,
+        session_id=str(session.id),
+        created_session=created_session,
+    )
 
 
 def build_live_session_state(payload: dict) -> LiveSessionState:

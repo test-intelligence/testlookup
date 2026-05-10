@@ -50,7 +50,7 @@ describe('OverviewPage', () => {
     )
 
     expect(await screen.findByText(/Quality workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/Executive Dashboard/i)).toBeInTheDocument()
+    expect(screen.getByText(/^Dashboard$/i)).toBeInTheDocument()
     expect(screen.getByText(/Release Readiness: GREEN/i)).toBeInTheDocument()
   })
 })

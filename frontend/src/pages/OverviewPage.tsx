@@ -63,7 +63,7 @@ export default function OverviewPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Executive Dashboard"
+        title="Dashboard"
         subtitle={projectLabel}
         actions={
           <div className="flex items-center gap-2">
