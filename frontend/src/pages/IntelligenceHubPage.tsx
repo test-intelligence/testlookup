@@ -6,6 +6,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import StatusBadge from '@/components/ui/StatusBadge'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildIntelligenceHubWorkflow } from '@/components/workflow/workflowPresets'
 import { useRuns } from '@/hooks/useRuns'
@@ -78,6 +79,7 @@ export default function IntelligenceHubPage() {
                     {isAll && run.project_name && (
                       <span className="text-xs text-[var(--color-text-faint)]">{run.project_name}</span>
                     )}
+                    <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
                   </div>
                   <div className="flex items-center gap-3 mt-1 text-xs">
                     <span className="text-red-400 font-medium">{run.failed_tests} failures</span>

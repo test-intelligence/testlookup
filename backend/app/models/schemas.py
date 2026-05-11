@@ -145,6 +145,8 @@ class TestRunSummary(BaseModel):
     duration_ms: Optional[int] = None
     ocp_pod_name: Optional[str] = None
     ocp_namespace: Optional[str] = None
+    primary_suite_name: Optional[str] = None
+    suite_names: Optional[List[str]] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     created_at: datetime

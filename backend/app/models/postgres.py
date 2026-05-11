@@ -174,6 +174,12 @@ class TestRun(Base):
     minio_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
     tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)          # TG-1: custom + system tags
 
+    # Suite attribution — populated by ingestion finalize from TestCase.suite_name.
+    # primary_suite_name = dominant suite (most test cases; alphabetical tiebreak),
+    # suite_names = full sorted list of distinct suites in this run.
+    primary_suite_name: Mapped[Optional[str]] = mapped_column(String(500), index=True)
+    suite_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

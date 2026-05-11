@@ -20,6 +20,8 @@ export interface TestRun {
   release_name?: string
   release_id?: string
   trigger_source?: string
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
 }
 
 export type TestRunListResponse = PaginatedResponse<TestRun>

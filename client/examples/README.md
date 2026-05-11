@@ -7,7 +7,9 @@ test framework, replace the placeholder API key, run it.
 |-------------------------------------|------------------|---------------------------------------------------------------|
 | [python/pytest_smoke](./python/pytest_smoke)         | pytest           | Auto-registering plugin via `testlookup.properties` (no imports in tests) |
 | [python/livestream_script.py](./python/livestream_script.py) | none (custom)    | Programmatic `LiveStream` for non-pytest runners (Robot, behave, …) |
+| [python/pytest_realistic](./python/pytest_realistic) | pytest           | Programmatic client examples for parallel suites and 100 rich test cases |
 | [java/testng_smoke](./java/testng_smoke)             | TestNG (Maven)   | TestNG `<listener>` + classpath properties file              |
+| [java/testng_realistic](./java/testng_realistic)     | TestNG (Maven)   | Programmatic client examples for parallel suites and 100 rich test cases |
 
 All samples follow the same shape — drop-in dependency, declarative
 `testlookup.properties`, register the framework hook, run. The full

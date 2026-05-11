@@ -4,6 +4,7 @@ import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Loader
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -301,6 +302,7 @@ export default function RunDetailPage() {
           subtitle={`${run.jenkins_job ?? 'Jenkins'} · ${formatDateTime(run.created_at)}`}
           actions={
             <div className="flex items-center gap-3 text-sm flex-wrap">
+              <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
               <ReleaseTag
                 releaseName={run.release_name}
                 onSet={handleSetRelease}

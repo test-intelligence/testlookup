@@ -15,6 +15,8 @@ export interface RunSummary {
   start_time: string | null
   end_time: string | null
   ocp_namespace: string | null
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
 }
 
 export interface ExecutivePanelMetrics {

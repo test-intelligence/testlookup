@@ -47,6 +47,7 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import { useRuns } from '@/hooks/useRuns'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -1045,6 +1046,7 @@ function RunsTable({
               </th>
               <ThSort label="Run ID" />
               <ThSort label="Build" />
+              <Th label="Suite" />
               <Th label="Signature" />
               <Th label="Status" />
               <Th label="Tests" />
@@ -1056,7 +1058,7 @@ function RunsTable({
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan={9} className="text-center py-10 text-[var(--color-text-muted)]">
+                <td colSpan={10} className="text-center py-10 text-[var(--color-text-muted)]">
                   No runs in the window. Try a longer window or check your reporter.
                 </td>
               </tr>
@@ -1091,6 +1093,9 @@ function RunsTable({
                   </td>
                   <td className="font-mono text-[12.5px] font-semibold" style={{ padding: '8px 12px' }}>
                     #{String(r.build_number)}
+                  </td>
+                  <td style={{ padding: '8px 12px' }}>
+                    <SuiteBadge primary={r.primary_suite_name} all={r.suite_names} />
                   </td>
                   <td style={{ padding: '8px 12px' }}>
                     <span

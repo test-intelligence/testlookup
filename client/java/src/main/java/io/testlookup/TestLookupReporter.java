@@ -472,6 +472,9 @@ public class TestLookupReporter {
                 ArrayNode arr = event.putArray("tags");
                 opts.tags.forEach(arr::add);
             }
+            if (opts.metadata != null && !opts.metadata.isEmpty()) {
+                event.set("metadata", MAPPER.valueToTree(opts.metadata));
+            }
 
             enqueue(event);
         }

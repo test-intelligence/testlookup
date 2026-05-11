@@ -16,6 +16,8 @@ export interface RunCompareSummary {
   duration_ms: number | null
   start_time: string | null
   end_time: string | null
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
 }
 
 export type RunCompareClassification =

@@ -15,6 +15,7 @@ import {
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import { useRunCompare } from '@/hooks/useRunCompare'
 import type {
   RunCompareClassification,
@@ -206,6 +207,9 @@ function SideCard({
       {run.branch && (
         <div className="text-xs text-[var(--color-text-muted)]">branch: {run.branch}</div>
       )}
+      <div className="mt-1">
+        <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
+      </div>
       <div className="mt-2 flex items-center gap-3 text-xs">
         <span className="text-emerald-400">✓ {run.passed_tests}</span>
         <span className="text-rose-400">✗ {run.failed_tests}</span>

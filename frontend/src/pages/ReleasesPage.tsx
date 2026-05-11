@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import CompliancePackPanel from '@/components/compliance/CompliancePackPanel'
 import { buildReleaseWorkflow } from '@/components/workflow/workflowPresets'
@@ -544,6 +545,7 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
               <thead>
                 <tr>
                   <th className="th text-left">Build</th>
+                  <th className="th text-left">Suite</th>
                   <th className="th text-right">Date</th>
                   <th className="th text-right text-emerald-400">Passed</th>
                   <th className="th text-right text-red-400">Failed</th>
@@ -561,6 +563,9 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
                       >
                         {run.build_number ?? run.id.slice(0, 8)}
                       </button>
+                    </td>
+                    <td className="td">
+                      <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
                     </td>
                     <td className="td text-right text-xs text-[var(--color-text-muted)]">{fmtDate(run.created_at)}</td>
                     <td className="td text-right tabular-nums text-emerald-400">{run.passed_tests}</td>

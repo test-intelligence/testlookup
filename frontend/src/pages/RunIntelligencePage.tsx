@@ -49,6 +49,7 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import { useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
@@ -244,6 +245,8 @@ function Header({
           <span>Build <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{run.build_number}</code></span>
           <span aria-hidden>·</span>
           <span>Branch <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{run.branch || 'unknown'}</code></span>
+          <span aria-hidden>·</span>
+          <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
           {completedAt && (
             <>
               <span aria-hidden>·</span>
