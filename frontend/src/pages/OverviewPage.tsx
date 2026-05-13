@@ -9,13 +9,18 @@ import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
+import { useRuns } from '@/hooks/useRuns'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import type { TrendPoint } from '@/types/metrics'
 import type { DashboardMetricValue, DashboardSummary } from '@/types/analytics'
+import type { TestRun } from '@/types/runs'
 
-const TIME_OPTIONS = [7, 14, 30, 90]
+// `1` = last 24 hours. Label is rendered as "24h" (the only sub-day option);
+// all other values render as `${d}d`.
+const TIME_OPTIONS = [1, 7, 14, 30, 90]
 
 type Verdict = 'GO' | 'CONDITIONAL' | 'NO_GO' | 'PENDING'
 
@@ -174,9 +179,13 @@ interface KpiProps {
   series?: number[]
   emptyMsg?: string
   gradId: string
+  /** When set, renders a "View all →" footer linking to this route. */
+  linkTo?: string
+  /** Footer link label override (default: "View all"). */
+  linkLabel?: string
 }
 
-function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId }: KpiProps) {
+function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, linkTo, linkLabel }: KpiProps) {
   const isBad = tone === 'bad'
   const dotColor = SPARK_COLOR[tone]
   const valueIsDash = value === '—'
@@ -229,6 +238,14 @@ function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId }: 
         >
           {emptyMsg ?? '—'}
         </div>
+      )}
+      {linkTo && (
+        <Link
+          to={linkTo}
+          className="text-[11px] text-[var(--color-accent)] hover:underline self-start -mt-0.5"
+        >
+          {linkLabel ?? 'View all'} →
+        </Link>
       )}
     </div>
   )
@@ -793,19 +810,54 @@ function deltaFromMetric(m: DashboardMetricValue | undefined, badIfDown = false)
   return { glyph: '▬', text: '0', tone: 'neutral' }
 }
 
+function collectSuiteOptions(runs: TestRun[]): string[] {
+  const suites = new Map<string, string>()
+  for (const run of runs) {
+    const names = [run.primary_suite_name, ...(run.suite_names ?? [])]
+    for (const raw of names) {
+      const suite = raw?.trim()
+      if (!suite) continue
+      const key = suite.toLowerCase()
+      if (!suites.has(key)) suites.set(key, suite)
+    }
+  }
+  return [...suites.values()].sort((a, b) => a.localeCompare(b))
+}
+
+function runHasSuite(run: TestRun, suiteName: string): boolean {
+  const target = suiteName.trim().toLowerCase()
+  if (!target) return true
+  const names = [run.primary_suite_name, ...(run.suite_names ?? [])]
+  return names.some((suite) => suite?.trim().toLowerCase() === target)
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────
 export default function OverviewPage() {
-  const [days, setDays] = useState(7)
+  // Default window is last 24h (days=1) across Overview/Runs/Live/Trends/
+  // Coverage so users land on the freshest picture by default. They can
+  // widen via the picker; on pages with localStorage persistence (Runs,
+  // Trends, Coverage) any previously-saved choice still wins.
+  const [days, setDays] = useState(1)
   const [showPicker, setShowPicker] = useState(false)
+  const [selectedSuite, setSelectedSuite] = useState('')
   const project = useProjectStore((s) => s.activeProject)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const analyticsView = useAnalyticsView('dashboard')
 
-  const { data: summary, isLoading: summaryLoading } = useDashboardSummary(days)
-  const { data: trends,  isLoading: trendsLoading  } = useTrendData(days)
+  const suiteFilter = selectedSuite || null
+  const { data: summary, isLoading: summaryLoading } = useDashboardSummary(days, suiteFilter)
+  const { data: trends,  isLoading: trendsLoading  } = useTrendData(days, suiteFilter)
+  const { data: recentRuns } = useRuns({ page: 1, size: 100, days })
+  const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
+  const suiteOptions = useMemo(() => collectSuiteOptions(recentRunItems), [recentRunItems])
+  const latestRun = useMemo(
+    () => recentRunItems.find((run) => runHasSuite(run, selectedSuite)),
+    [recentRunItems, selectedSuite],
+  )
 
   const projectLabel = project?.name ?? 'All Projects'
+  const scopeLabel = selectedSuite ? `${projectLabel} · ${selectedSuite}` : projectLabel
   const trendData: TrendPoint[] = trends?.data ?? []
 
   const totalExecutions = metricNumber(summary?.total_executions_7d)
@@ -858,15 +910,40 @@ export default function OverviewPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between mb-1">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]">Dashboard</h1>
-          <div className="flex items-center gap-2 mt-1 text-[13px] text-[var(--color-text-muted)]">
+          <div className="flex items-center gap-2 mt-1 text-[13px] text-[var(--color-text-muted)] flex-wrap">
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: verdictDotColor }} aria-hidden />
-            <span className="font-medium" style={{ color: 'var(--color-text-secondary)' }}>{projectLabel}</span>
+            <span className="font-medium" style={{ color: 'var(--color-text-secondary)' }}>{scopeLabel}</span>
             <span aria-hidden>·</span>
             <span>Last run {lastRunLabel}</span>
+            {latestRun && (latestRun.primary_suite_name || latestRun.suite_names?.length) && (
+              <>
+                <span aria-hidden>·</span>
+                <SuiteBadge
+                  primary={latestRun.primary_suite_name}
+                  all={latestRun.suite_names}
+                  linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+                />
+              </>
+            )}
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+            <span>Suite</span>
+            <select
+              value={selectedSuite}
+              onChange={(event) => setSelectedSuite(event.target.value)}
+              className="h-8 min-w-[220px] rounded-md border bg-[var(--color-bg-secondary)] px-2 text-[13px] text-[var(--color-text)]"
+              style={{ borderColor: 'var(--color-border)' }}
+              title="Filter dashboard metrics by test suite"
+            >
+              <option value="">All suites</option>
+              {suiteOptions.map((suite) => (
+                <option key={suite} value={suite}>{suite}</option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             onClick={() => setShowPicker(true)}
@@ -894,7 +971,7 @@ export default function OverviewPage() {
                 )}
                 onClick={() => setDays(d)}
               >
-                {d}d
+                {d === 1 ? '24h' : `${d}d`}
               </button>
             ))}
           </div>
@@ -998,6 +1075,8 @@ export default function OverviewPage() {
                 series={totalSeries.length >= 2 ? totalSeries : undefined}
                 emptyMsg={`${days}d · awaiting runs`}
                 delta={deltaFromMetric(summary?.total_executions_7d)}
+                linkTo="/runs"
+                linkLabel="View runs"
               />
             )}
             {activeWidgets.has('avg_pass_rate_kpi') && (
@@ -1020,6 +1099,8 @@ export default function OverviewPage() {
                 gradId="kpi-defects"
                 emptyMsg={activeDefects === 0 ? `${days}d · no open defects` : `${days}d · count only`}
                 delta={deltaFromMetric(summary?.active_defects)}
+                linkTo="/defects"
+                linkLabel="View defects"
               />
             )}
             {activeWidgets.has('flaky_tests_kpi') && (
@@ -1030,6 +1111,8 @@ export default function OverviewPage() {
                 gradId="kpi-flaky"
                 emptyMsg={flaky === 0 ? `${days}d · no flake events captured` : `${days}d · count only`}
                 delta={deltaFromMetric(summary?.flaky_test_count, true)}
+                linkTo="/flaky-coach"
+                linkLabel="Open flaky coach"
               />
             )}
             {activeWidgets.has('new_failures_kpi') && (
@@ -1041,6 +1124,8 @@ export default function OverviewPage() {
                 series={failedSeries.length >= 2 ? failedSeries : undefined}
                 emptyMsg={`${days}d · no failures recorded`}
                 delta={deltaFromMetric(summary?.new_failures_24h)}
+                linkTo="/failures"
+                linkLabel="View failures"
               />
             )}
             {activeWidgets.has('avg_duration_kpi') && (
@@ -1105,7 +1190,9 @@ export default function OverviewPage() {
       {totalExecutions === 0 && (
         <div className="flex items-center gap-3 px-4 py-2.5 rounded-md text-[12px] text-[var(--color-text-muted)] border border-[var(--color-border)]">
           <HelpCircle className="h-4 w-4" />
-          <span>No test executions in the last {days} days — readiness, KPIs, and blockers will assess once data lands.</span>
+          <span>
+            No test executions{selectedSuite ? ` for ${selectedSuite}` : ''} in the last {days} days — readiness, KPIs, and blockers will assess once data lands.
+          </span>
         </div>
       )}
 

@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<style data-omelette-injected>html,body{background:transparent}</style><script data-omelette-injected>(()=>{var j=["https://claude.ai","https://preview.claude.ai"];var x=true;var S=30000;var f=3000;document.addEventListener("DOMContentLoaded",()=>{const H=window.Babel;const G="om-src-id";if(H&&H.registerPlugin&&!(H.availablePlugins&&H.availablePlugins[G])){H.registerPlugin(G,({types:Y})=>({visitor:{JSXOpeningElement(U,Q){const J=U.node;if(J.name&&J.name.type==="JSXMemberExpression")return;for(let V=0;V<J.attributes.length;V++){const L=J.attributes[V];if(L.type==="JSXAttribute"&&L.name&&L.name.name==="data-om-id")return}const W=Q.file&&Q.file.opts&&Q.file.opts.filename||"?";const Z=J.loc&&J.loc.start;const z=`jsx:${W}:${J.start??0}:${Z?Z.line:0}:${Z?Z.column+1:0}`;J.attributes.push(Y.jsxAttribute(Y.jsxIdentifier("data-om-id"),Y.stringLiteral(z)))}}}))}const k="om-text-extract";let A=false;if(x&&H&&H.registerPlugin&&!(H.availablePlugins&&H.availablePlugins[k])){const Y=window.React;if(Y&&Y.useSyncExternalStore&&Y.createElement){A=true;const U={};const Q=new Set;let J=0;window.__omTextO=U;window.__omTextSet=(z)=>{for(const V in z){const L=z[V];if(L==null)delete U[V];else U[V]=L}J++;Q.forEach((V)=>V())};const W=(z)=>{Q.add(z);return()=>Q.delete(z)};const Z=()=>J;window.__OmT=function z(V){Y.useSyncExternalStore(W,Z,Z);return Y.createElement("span",{"data-om-text":V.i,className:"__om-t"},V.i in U?U[V.i]:V.children)};H.registerPlugin(k,({types:z})=>{const V={style:1,script:1,noscript:1,textarea:1,title:1,option:1,text:1,tspan:1,textPath:1};const L={placeholder:1,alt:1,title:1,label:1,"aria-label":1,"aria-description":1,"aria-placeholder":1};const _=($,C)=>z.logicalExpression("??",z.memberExpression(z.logicalExpression("||",z.memberExpression(z.identifier("window"),z.identifier("__omTextO")),z.objectExpression([])),z.stringLiteral($),true),C);const E=($)=>$.file&&$.file.opts&&$.file.opts.filename||"?";const B=($)=>$.file&&$.file.code||"";const b=($,C)=>{const X=(F)=>F&&F.start!=null&&F.end!=null&&(F.type==="StringLiteral"||F.type==="TemplateLiteral"&&F.expressions.length===0)?[F.start,F.end]:null;const N=X(C);if(N)return N;if(C&&C.type==="Identifier"){const F=$.scope.getBinding(C.name);if(F&&F.constant&&F.path.node.type==="VariableDeclarator"){return X(F.path.node.init)}}return null};const M=($,C,X)=>{const N=$.node;let F=false;const w=(K,q)=>{F=true;return z.jsxElement(z.jsxOpeningElement(z.jsxIdentifier("__OmT"),[z.jsxAttribute(z.jsxIdentifier("i"),z.stringLiteral(K))],false),z.jsxClosingElement(z.jsxIdentifier("__OmT")),[q],false)};const D=N.children.map((K)=>{if(K.type==="JSXText"){if(K.start==null||K.end==null)return K;const q=X.slice(K.start,K.end);const R=q.length-q.trimStart().length;const m=q.length-q.trimEnd().length;if(R+m>=q.length)return K;return w(`txt:${C}:${K.start+R}:${K.end-m}`,K)}if(K.type==="JSXExpressionContainer"){const q=b($,K.expression);if(q)return w(`str:${C}:${q[0]}:${q[1]}`,K)}return K});if(F)N.children=D};return{visitor:{JSXOpeningElement($,C){const X=$.node;const N=E(C);const F={};for(let w=0;w<X.attributes.length;w++){const D=X.attributes[w];if(D.type!=="JSXAttribute"||!D.name)continue;const K=D.name.name;if(!L[K])continue;if(!D.value||D.value.type!=="StringLiteral")continue;if(D.value.start==null||D.value.end==null)continue;const q=`txt:${N}:${D.value.start}:${D.value.end}`;F[K]=q;D.value=z.jsxExpressionContainer(_(q,z.stringLiteral(D.value.value)))}if(Object.keys(F).length){X.attributes.push(z.jsxAttribute(z.jsxIdentifier("data-om-text-attrs"),z.stringLiteral(JSON.stringify(F))))}},JSXElement($,C){const X=$.node.openingElement;const N=X&&X.name&&X.name.name;if(N==="__OmT")return;if(typeof N==="string"&&V[N])return;M($,E(C),B(C))},JSXFragment($,C){M($,E(C),B(C))}}}})}}const u=A?["transform-react-jsx-source",G,k]:["transform-react-jsx-source",G];document.querySelectorAll('script[type="text/babel"],script[type="text/jsx"]').forEach((Y,U)=>{const Q=Y.getAttribute("data-plugins")||"";const J=u.filter((W)=>Q.indexOf(W)<0);if(J.length){Y.setAttribute("data-plugins",Q?`${Q},${J.join(",")}`:J.join(","))}if(!Y.hasAttribute("data-filename")){Y.setAttribute("data-filename",Y.getAttribute("src")||`inline-${U}`)}})});var y=window.parent;if(y&&y!==window){const H=(Q,J)=>{try{y.postMessage({__omelette_log:true,type:Q,data:J},"*")}catch{}};["log","warn","error"].forEach((Q)=>{const J=console[Q];console[Q]=(...W)=>{const Z=W.map((z)=>{try{return typeof z==="object"?JSON.stringify(z):String(z)}catch{try{return String(z)}catch{return"[unstringifiable]"}}}).join(" ");H(Q,Z);J.apply(console,W)}});window.addEventListener("error",(Q)=>{const J=Q.target;if(J&&J!==window&&J.tagName){const W=J.src||J.href||"";H("resource_error",`${J.tagName} failed to load: ${W}`)}else{H("error",`${Q.message||"Unknown error"} at ${Q.filename||"?"}:${Q.lineno||0}:${Q.colno||0}`)}},true);window.addEventListener("unhandledrejection",(Q)=>{const J=Q.reason;const W=J instanceof Error?`${J.message} ${J.stack}`:String(J);H("error",`Unhandled rejection: ${W}`)});const G=()=>{try{y.postMessage({type:"omelette:height",height:document.documentElement.scrollHeight},"*")}catch{}};if(document.readyState==="complete")G();else window.addEventListener("load",G);if(window.ResizeObserver)new ResizeObserver(G).observe(document.documentElement);const k={};let A=0;window.claude={complete(Q){return new Promise((J,W)=>{if(!j.length){W(new Error("claude.complete: no parent origin"));return}const Z=`c${++A}`;const z=()=>setTimeout(()=>{delete k[Z];W(new Error(`claude.complete: no data for ${S/1000}s`))},S);const V=z();k[Z]={resolve:J,reject:W,text:"",t:V,arm:z};try{for(const L of j){y.postMessage({__om_api:true,id:Z,body:Q},L)}}catch(L){clearTimeout(V);delete k[Z];W(L)}})}};const u={};let Y=0;window.omelette={writeFile:(Q,J)=>new Promise((W,Z)=>{if(!j.length){W();return}const z=`f${++Y}`;const V=setTimeout(()=>{delete u[z];W()},f);u[z]={resolve:W,reject:Z,t:V};try{for(const L of j){y.postMessage({__om_file:true,id:z,op:"write",path:Q,content:J},L)}}catch{clearTimeout(V);delete u[z];W()}})};const U=(Q)=>{try{return JSON.stringify(Q)}catch{return JSON.stringify(String(Q))}};window.addEventListener("message",(Q)=>{if(j.indexOf(Q.origin)<0)return;if(Q.source!==y)return;const J=Q.data;if(!J)return;if(J.type==="omelette-preview-refresh"){if(typeof J.token!=="string"||!/^[0-9a-f.-]+$/.test(J.token))return;const z=Math.max(1,Math.floor((J.expiresAt||0)-Date.now()/1000));document.cookie="__Host-omelette-preview="+J.token+"; Path=/; Secure; SameSite=None; Partitioned; Max-Age="+z;return}if(J.__om_file_r){const z=u[J.id];if(!z)return;clearTimeout(z.t);delete u[J.id];if(J.ok)z.resolve();else z.reject(new Error(J.error||"write failed"));return}if(J.__om_api_r){const z=k[J.id];if(!z)return;if(J.error!=null){clearTimeout(z.t);delete k[J.id];z.reject(new Error(J.error));return}if(J.chunk!=null){clearTimeout(z.t);z.t=z.arm();z.text+=J.chunk;return}if(J.done){clearTimeout(z.t);delete k[J.id];z.resolve(J.text!=null?J.text:z.text);return}return}if(!J.__om_eval)return;const W=J;const Z=(z)=>{Q.source.postMessage({...z,__om_eval_r:1,id:W.id},Q.origin)};try{const z=(0,eval)(W.code);if(z&&typeof z.then==="function"){z.then((V)=>Z({ok:1,v:U(V)}),(V)=>Z({ok:0,e:String(V)}))}else{Z({ok:1,v:U(z)})}}catch(z){Z({ok:0,e:String(z)})}})}})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Releases — Redesign</title>
+<link rel="stylesheet" href="../tokens.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-sans); font-size: var(--text-base); }
+  button { font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; }
+  a { color: inherit; text-decoration: none; cursor: pointer; }
+  code { font-family: var(--font-mono); font-size: 0.92em; color: var(--color-text-secondary); }
+
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 28px 80px; }
+
+  /* ── Header ─────────────────────────────────────────────────── */
+  .head { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; margin-bottom: 18px; }
+  .head h1 { margin:0; font-size: 26px; font-weight:700; letter-spacing:-0.02em; }
+  .head .sub { color: var(--color-text-muted); font-size: var(--text-sm); margin-top: 4px; }
+  .head .sub b { color: var(--color-text-secondary); font-weight:600; }
+  .head .actions { display:flex; gap:8px; }
+
+  .btn { display:inline-flex; align-items:center; gap:6px; padding:7px 13px; border:1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-secondary); font-size:var(--text-sm); font-weight:500; }
+  .btn:hover { color: var(--color-text); border-color: var(--color-border-light); background: var(--color-bg-hover); }
+  .btn-primary { background: var(--color-btn-primary-bg); color:#fff; border-color: transparent; }
+  .btn-primary:hover { background: var(--color-btn-primary-hover); }
+  .btn svg { width:13px; height:13px; }
+
+  /* ── Verdict + KPI strip ────────────────────────────────────── */
+  .top {
+    display:grid; grid-template-columns: 1.35fr 2fr; gap: 14px;
+    margin-bottom: 18px;
+  }
+  .verdict {
+    border:1px solid var(--color-border);
+    background: linear-gradient(180deg, rgba(34,197,94,0.05), transparent 70%), var(--color-bg-card);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+    position:relative; overflow:hidden;
+  }
+  .verdict::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--gate-conditional); }
+  .verdict.attn::before { background: var(--gate-conditional); }
+  .verdict .lab { font-size:11px; font-weight:600; letter-spacing:var(--tracking-wider); text-transform:uppercase; color: var(--color-text-muted); }
+  .verdict .title { display:flex; align-items:baseline; gap:10px; margin-top:4px; flex-wrap:wrap; }
+  .verdict .title h2 { margin:0; font-size:20px; font-weight:700; letter-spacing:-0.015em; }
+  .verdict .title .pill { font-size:11px; font-weight:600; padding:3px 8px; border-radius:999px; background: rgba(234,179,8,0.14); color:#fcd34d; border:1px solid rgba(234,179,8,0.32); text-transform:uppercase; letter-spacing:0.05em; }
+  .verdict .lede { color: var(--color-text-secondary); font-size:13px; margin-top:8px; line-height:1.5; max-width: 50ch; }
+  .verdict .lede em { color: #fcd34d; font-style:normal; font-weight:600; }
+  .verdict ul { margin: 10px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:6px; }
+  .verdict ul li { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--color-text-secondary); }
+  .verdict ul li svg { width:12px; height:12px; flex:none; }
+  .verdict ul .dot-warn { color: var(--gate-conditional); }
+  .verdict ul .dot-go { color: var(--gate-go); }
+  .verdict ul .dot-red { color: var(--gate-no-go); }
+
+  .kpis { display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .kpi { border:1px solid var(--color-border); background: var(--color-bg-card); border-radius: var(--radius-lg); padding: 12px 14px 10px; position:relative; display:flex; flex-direction:column; min-height: 0; }
+  .kpi .row { display:flex; align-items:flex-start; justify-content:space-between; gap: 8px; }
+  .kpi .row .left { min-width: 0; flex: 1; }
+  .kpi .lab { font-size:10.5px; font-weight:600; letter-spacing:var(--tracking-wider); text-transform:uppercase; color: var(--color-text-muted); }
+  .kpi .v { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing:-0.02em; margin-top:4px; line-height:1.05; }
+  .kpi .d { font-size: 11.5px; color: var(--color-text-muted); margin-top:6px; display:flex; align-items:center; gap:6px; }
+  .kpi .d .delta-up   { color:#86efac; }
+  .kpi .d .delta-down { color:#fca5a5; }
+  .kpi .spark { display:block; opacity:0.85; flex:none; align-self:flex-end; margin-top: 2px; }
+
+  /* ── Filter bar ─────────────────────────────────────────────── */
+  .filterbar {
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    margin-bottom: 14px;
+  }
+  .seg { display:flex; gap:2px; padding:3px; background: var(--color-bg-secondary); border:1px solid var(--color-border); border-radius: var(--radius-md); }
+  .seg button { padding: 4px 10px; font-size:12px; color: var(--color-text-muted); border-radius: 6px; font-weight:500; display:inline-flex; align-items:center; gap:6px; }
+  .seg button .ct { font-size:10.5px; color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+  .seg button.on { background: var(--color-bg-card); color: var(--color-text); border:1px solid var(--color-border-light); padding: 3px 9px; }
+  .seg button.on .ct { color: var(--color-text-muted); }
+
+  .search { flex:1; min-width: 220px; max-width: 320px; position:relative; }
+  .search input { width:100%; padding: 7px 10px 7px 32px; background: var(--color-bg-input); border:1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text); font-size:13px; }
+  .search input::placeholder { color: var(--color-text-faint); }
+  .search svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); width:13px; height:13px; color: var(--color-text-muted); }
+  .search kbd { position:absolute; right:8px; top:50%; transform:translateY(-50%); font-size:10px; color:var(--color-text-faint); border:1px solid var(--color-border); padding:1px 5px; border-radius:4px; background: var(--color-bg-secondary); font-family: var(--font-mono); }
+
+  .chip { display:inline-flex; align-items:center; gap:5px; padding: 6px 10px; border:1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-muted); font-size: 12px; }
+  .chip:hover { color:var(--color-text); border-color: var(--color-border-light); }
+  .chip svg { width:11px; height:11px; }
+  .chip b { color: var(--color-text-secondary); font-weight:500; }
+
+  .view-toggle { margin-left:auto; display:flex; gap:2px; padding:2px; background: var(--color-bg-secondary); border:1px solid var(--color-border); border-radius:6px; }
+  .view-toggle button { padding: 4px 8px; font-size:11px; color: var(--color-text-muted); border-radius:4px; display:inline-flex; align-items:center; gap:4px; }
+  .view-toggle button.on { background: var(--color-bg-card); color: var(--color-text); }
+  .view-toggle button svg { width:12px; height:12px; }
+
+  /* ── Body grid ──────────────────────────────────────────────── */
+  .body { display:grid; grid-template-columns: 1fr 340px; gap: 18px; align-items:flex-start; }
+
+  .releases { display:flex; flex-direction:column; gap: 10px; }
+
+  /* ── Release card ───────────────────────────────────────────── */
+  .rel {
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+    border-radius: var(--radius-lg);
+    overflow:hidden;
+    transition: border-color 120ms;
+  }
+  .rel:hover { border-color: var(--color-border-light); }
+
+  .rel-head { display:grid; grid-template-columns: minmax(0,1fr) auto; gap: 14px; padding: 14px 18px 12px; align-items:center; }
+  .rel-id { display:flex; align-items:center; gap:10px; min-width:0; }
+  .rel-id .icon { width:32px; height:32px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center; }
+  .rel-id .icon svg { width:15px; height:15px; }
+  .rel-id .icon.go { background: rgba(34,197,94,0.12); color:#86efac; border:1px solid rgba(34,197,94,0.3); }
+  .rel-id .icon.cond { background: rgba(234,179,8,0.12); color:#fcd34d; border:1px solid rgba(234,179,8,0.3); }
+  .rel-id .icon.nogo { background: rgba(239,68,68,0.12); color:#fca5a5; border:1px solid rgba(239,68,68,0.3); }
+  .rel-id .icon.planning { background: rgba(68,147,248,0.1); color:#7dd3fc; border:1px solid rgba(68,147,248,0.28); }
+  .rel-id .icon.released { background: var(--color-bg-secondary); color:var(--color-text-muted); border:1px solid var(--color-border); }
+
+  .rel-name { min-width:0; }
+  .rel-name .titleline { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .rel-name .titleline h3 { margin:0; font-size: 15.5px; font-weight:600; color: var(--color-text); }
+  .rel-name .titleline .ver { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-muted); padding: 1px 7px; border-radius:4px; background: var(--color-bg-secondary); border:1px solid var(--color-border); }
+  .rel-name .titleline .stage { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; padding: 2px 7px; border-radius:4px; }
+  .stage-planning { background: rgba(68,147,248,0.12); color:#7dd3fc; }
+  .stage-progress { background: rgba(168,85,247,0.12); color:#d8b4fe; }
+  .stage-released { background: var(--color-bg-secondary); color:var(--color-text-muted); border:1px solid var(--color-border); }
+  .stage-cancelled { background: var(--color-bg-secondary); color: var(--color-text-faint); }
+
+  .rel-name .meta { display:flex; gap:14px; margin-top:5px; font-size:11.5px; color: var(--color-text-muted); flex-wrap:wrap; }
+  .rel-name .meta span { display:inline-flex; align-items:center; gap:5px; }
+  .rel-name .meta svg { width:11px; height:11px; }
+  .rel-name .meta .due-near { color: #fcd34d; }
+  .rel-name .meta .due-late { color: #fca5a5; }
+  .rel-name .meta .avatar { width:14px; height:14px; border-radius:50%; background: linear-gradient(135deg,#0d9488,#34d399); color:#04221f; font-size:8.5px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; }
+  .rel-name .meta .avatar.b { background: linear-gradient(135deg,#7c3aed,#a78bfa); color:#fff; }
+  .rel-name .meta .avatar.c { background: linear-gradient(135deg,#dc2626,#fb923c); color:#fff; }
+  .rel-name .meta .avatar.d { background: linear-gradient(135deg,#2563eb,#60a5fa); color:#fff; }
+  .rel-name .meta .avatar.e { background: linear-gradient(135deg,#475569,#94a3b8); color:#fff; }
+
+  /* Gate decision */
+  .gate { display:flex; align-items:center; gap:14px; padding: 6px 12px 6px 6px; border-radius: 10px; }
+  .gate .badge { font-size: 11px; font-weight:600; padding: 4px 10px 4px 8px; border-radius: 999px; display:inline-flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing: 0.04em; }
+  .gate .badge .gd { width:6px; height:6px; border-radius:50%; }
+  .gate.go     .badge { background: rgba(34,197,94,0.14); color:#86efac; border:1px solid rgba(34,197,94,0.32); }
+  .gate.go     .badge .gd { background: var(--gate-go); }
+  .gate.cond   .badge { background: rgba(234,179,8,0.14); color:#fcd34d; border:1px solid rgba(234,179,8,0.32); }
+  .gate.cond   .badge .gd { background: var(--gate-conditional); }
+  .gate.nogo   .badge { background: rgba(239,68,68,0.14); color:#fca5a5; border:1px solid rgba(239,68,68,0.32); }
+  .gate.nogo   .badge .gd { background: var(--gate-no-go); }
+  .gate.idle   .badge { background: var(--color-bg-secondary); color: var(--color-text-muted); border:1px solid var(--color-border); }
+  .gate.idle   .badge .gd { background: var(--color-text-faint); }
+
+  .gate-stats { display:flex; gap:18px; }
+  .gs { display:flex; flex-direction:column; align-items:flex-end; }
+  .gs .lab { font-size:9.5px; font-weight:600; letter-spacing: var(--tracking-wider); text-transform:uppercase; color: var(--color-text-faint); }
+  .gs .v { font-size: 16px; font-weight:700; font-variant-numeric: tabular-nums; line-height:1; margin-top: 3px; }
+  .gs .v.go { color:#86efac; }
+  .gs .v.warn { color:#fcd34d; }
+  .gs .v.red { color:#fca5a5; }
+  .gs .v.mute { color: var(--color-text-muted); }
+  .gs .sub { font-size:10.5px; color: var(--color-text-muted); margin-top:3px; font-variant-numeric: tabular-nums; }
+
+  /* Progress bar (composite) */
+  .rel-progress {
+    padding: 0 18px 12px;
+    display:flex; align-items:center; gap: 16px;
+  }
+  .pbar {
+    flex:1; height: 6px; border-radius: 999px; background: var(--color-bg-secondary); overflow:hidden;
+    display:flex;
+  }
+  .pbar .seg-p { background: linear-gradient(90deg, #0d9488, #34d399); }
+  .pbar .seg-f { background: linear-gradient(90deg, #ef4444, #fca5a5); }
+  .pbar .seg-r { background: linear-gradient(90deg, #f59e0b, #fcd34d); }
+  .pbar .seg-s { background: linear-gradient(90deg, #475569, #94a3b8); }
+  .ptotals { display:flex; gap:12px; font-size: 11.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+  .ptotals .dot { width:7px; height:7px; border-radius:50%; display:inline-block; margin-right: 5px; vertical-align: 1px; }
+  .ptotals .p { color: #86efac; } .ptotals .p .dot { background:#34d399; }
+  .ptotals .f { color: #fca5a5; } .ptotals .f .dot { background:#ef4444; }
+  .ptotals .r { color: #fcd34d; } .ptotals .r .dot { background:#f59e0b; }
+  .ptotals .s { color: var(--color-text-muted); } .ptotals .s .dot { background:#64748b; }
+
+  /* Phase chips row */
+  .phases {
+    display:flex; gap: 0; padding: 0 18px 14px;
+  }
+  .phase {
+    flex:1; min-width:0; display:flex; align-items:center; gap:8px;
+    padding: 7px 11px; background: var(--color-bg-secondary);
+    border:1px solid var(--color-border);
+    font-size:11.5px; color: var(--color-text-muted);
+    border-right: 0;
+  }
+  .phase:first-child { border-radius: 6px 0 0 6px; }
+  .phase:last-child  { border-radius: 0 6px 6px 0; border-right: 1px solid var(--color-border); }
+  .phase .dot { width:8px; height:8px; border-radius:50%; flex:none; background: var(--color-text-faint); }
+  .phase .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .phase.done { background: rgba(34,197,94,0.06); color:#86efac; border-color: rgba(34,197,94,0.22); }
+  .phase.done .dot { background: var(--gate-go); }
+  .phase.active { background: linear-gradient(180deg, rgba(20,184,166,0.08), transparent), var(--color-bg-card); color:#5eead4; border-color: rgba(20,184,166,0.36); }
+  .phase.active .dot { background: var(--brand-500); box-shadow: 0 0 0 3px rgba(20,184,166,0.18); }
+  .phase.fail { background: rgba(239,68,68,0.06); color:#fca5a5; border-color: rgba(239,68,68,0.22); }
+  .phase.fail .dot { background: var(--gate-no-go); }
+  .phase.skip { color: var(--color-text-faint); }
+
+  /* Blocker row */
+  .blockers { padding: 0 18px 14px; }
+  .bk {
+    display:flex; align-items:center; gap:10px; padding: 8px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(234,179,8,0.22);
+    background: linear-gradient(180deg, rgba(234,179,8,0.06), transparent);
+    font-size: 12.5px;
+  }
+  .bk.red { border-color: rgba(239,68,68,0.28); background: linear-gradient(180deg, rgba(239,68,68,0.06), transparent); }
+  .bk .ic { width:22px; height:22px; border-radius:6px; flex:none; display:flex; align-items:center; justify-content:center; background: rgba(234,179,8,0.16); color:#fcd34d; }
+  .bk.red .ic { background: rgba(239,68,68,0.16); color:#fca5a5; }
+  .bk .ic svg { width:11px; height:11px; }
+  .bk .msg { flex:1; min-width:0; color: var(--color-text-secondary); }
+  .bk .msg b { color: var(--color-text); font-weight:600; }
+  .bk .act { font-size: 12px; color: var(--color-accent); }
+  .bk .act:hover { text-decoration: underline; }
+
+  /* Released variant */
+  .rel.released { opacity: 0.92; }
+  .rel.released .rel-id .icon { color: #86efac; background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.25); }
+
+  /* Planning / empty card */
+  .rel.empty .rel-head { padding-bottom: 14px; }
+  .rel.empty .emptybar {
+    margin: 0 18px 14px; padding: 12px 14px;
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--color-border);
+    background: rgba(255,255,255,0.015);
+    display:flex; align-items:center; gap: 12px;
+  }
+  .rel.empty .emptybar .ic { width:30px; height:30px; border-radius:8px; background: rgba(68,147,248,0.10); color:#7dd3fc; border:1px solid rgba(68,147,248,0.28); display:flex; align-items:center; justify-content:center; flex:none; }
+  .rel.empty .emptybar .ic svg { width:14px; height:14px; }
+  .rel.empty .emptybar .t { font-size: 13px; color: var(--color-text); font-weight:600; }
+  .rel.empty .emptybar .d { font-size: 12px; color: var(--color-text-muted); margin-top: 1px; }
+  .rel.empty .emptybar .actions { display:flex; gap:6px; }
+
+  /* ── Right rail ─────────────────────────────────────────────── */
+  aside { display:flex; flex-direction:column; gap:14px; }
+  .panel { border:1px solid var(--color-border); background: var(--color-bg-card); border-radius: var(--radius-lg); padding: 14px 16px; }
+  .panel h4 { margin:0 0 12px; font-size: 13px; font-weight:600; display:flex; align-items:center; gap:8px; justify-content:space-between; }
+  .panel h4 .ct { font-size: 11px; color: var(--color-text-muted); font-weight:500; }
+  .panel h4 .ic { width: 18px; height: 18px; display:inline-flex; align-items:center; justify-content:center; color: var(--color-text-muted); }
+  .panel h4 .ic svg { width:13px; height:13px; }
+
+  .upcoming { display:flex; flex-direction:column; gap: 8px; }
+  .up { display:flex; align-items:center; gap:10px; padding: 8px 10px; border-radius: var(--radius-md); border:1px solid transparent; min-width: 0; }
+  .up:hover { background: var(--color-bg-hover); border-color: var(--color-border); }
+  .up .when {
+    width: 42px; flex:none; display:flex; flex-direction:column; align-items:center; text-align:center;
+    padding: 4px 0; border-radius: 6px; background: var(--color-bg-secondary); border:1px solid var(--color-border);
+  }
+  .up .when .day { font-size: 14px; font-weight:700; line-height:1; color: var(--color-text); font-variant-numeric: tabular-nums; }
+  .up .when .mo { font-size: 9.5px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color: var(--color-text-muted); margin-top:2px; }
+  .up .body { flex:1; min-width:0; overflow:hidden; }
+  .up .body .t { font-size: 12.5px; font-weight: 500; color: var(--color-text); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .up .body .t .ver { font-size:10.5px; color: var(--color-text-muted); font-family: var(--font-mono); }
+  .up .body .d { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; line-height: 1.35; }
+  .up .body .d .due-warn { color: #fcd34d; }
+  .up .body .d .due-bad { color: #fca5a5; }
+
+  /* Aging panel */
+  .aging { display:flex; flex-direction:column; gap: 8px; }
+  .ag { display:flex; align-items:center; gap:10px; padding: 8px 10px; border-radius: var(--radius-md); background: var(--color-bg-secondary); border:1px solid var(--color-border); min-width: 0; }
+  .ag .dot { width:6px; height:6px; border-radius:50%; flex:none; }
+  .ag.warn .dot { background: var(--gate-conditional); }
+  .ag.red .dot { background: var(--gate-no-go); }
+  .ag .body { flex:1; min-width:0; overflow:hidden; }
+  .ag .body .t { font-size:12.5px; color: var(--color-text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ag .body .d { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; line-height: 1.35; }
+  .ag .age { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--color-text-muted); flex:none; }
+  .ag.warn .age { color: #fcd34d; }
+  .ag.red .age { color: #fca5a5; }
+
+  /* Compliance */
+  .cpacks { display:flex; flex-direction:column; gap:8px; }
+  .cp { display:flex; align-items:center; gap: 10px; padding: 9px 10px; border-radius: var(--radius-md); border:1px solid var(--color-border); min-width: 0; }
+  .cp .ic { width: 28px; height: 28px; border-radius: 7px; flex:none; display:flex; align-items:center; justify-content:center; background: rgba(34,197,94,0.10); color:#86efac; border:1px solid rgba(34,197,94,0.28); }
+  .cp .ic svg { width:13px; height:13px; }
+  .cp .body { flex:1; min-width:0; overflow:hidden; }
+  .cp .body .t { font-size: 12.5px; color: var(--color-text); font-weight:500; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .cp .body .t .ver { font-family: var(--font-mono); font-size: 10.5px; color: var(--color-text-muted); }
+  .cp .body .d { font-size: 10.5px; color: var(--color-text-muted); margin-top:1px; font-family: var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cp .dl { color: var(--color-accent); font-size: 11px; flex:none; }
+  .cp .dl:hover { text-decoration: underline; }
+
+  /* Activity */
+  .act-list { display:flex; flex-direction:column; gap: 8px; position:relative; padding-left: 14px; }
+  .act-list::before { content:""; position:absolute; left: 5px; top: 6px; bottom: 6px; width: 1px; background: var(--color-border); }
+  .act { position:relative; font-size: 12px; color: var(--color-text-secondary); padding-left: 14px; }
+  .act::before { content:""; position:absolute; left: -10px; top: 6px; width: 7px; height:7px; border-radius:50%; background: var(--color-text-faint); border: 2px solid var(--color-bg-card); }
+  .act.go::before  { background: var(--gate-go); }
+  .act.warn::before { background: var(--gate-conditional); }
+  .act.red::before { background: var(--gate-no-go); }
+  .act.blue::before { background: var(--color-accent); }
+  .act { line-height: 1.4; word-wrap: break-word; overflow-wrap: anywhere; }
+  .act b { color: var(--color-text); font-weight:600; }
+  .act .when { font-size: 11px; color: var(--color-text-faint); margin-top: 2px; display:block; }
+
+  @media (max-width: 1100px) {
+    .top, .body { grid-template-columns: 1fr; }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body data-theme="midnight">
+
+<main data-screen-label="Releases">
+
+  <!-- Header -->
+  <header class="head">
+    <div>
+      <h1>Releases</h1>
+      <p class="sub"><b>14 active</b> across GoogleSearch · 2 ship this week · 1 blocked on QA</p>
+    </div>
+    <div class="actions">
+      <button class="btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export schedule
+      </button>
+      <button class="btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Calendar view
+      </button>
+      <button class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        New release
+      </button>
+    </div>
+  </header>
+
+  <!-- Verdict + KPIs -->
+  <section class="top">
+    <div class="verdict attn">
+      <div class="lab">Release health · this week</div>
+      <div class="title">
+        <h2>1.55-rc.2 is on track — 2 items to clear before Friday</h2>
+        <span class="pill">Conditional Go</span>
+      </div>
+      <p class="lede">Composite pass rate <em>96.4%</em> meets the 95% gate. The two open items are <em>recoverable</em> — Search Suggestions team has owner-assigned action.</p>
+      <ul>
+        <li><svg class="dot-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> <span><b style="color:var(--color-text)">3 flaky tests</b> in <code>checkout-payments</code> — must drop below 1.5% flake rate</span></li>
+        <li><svg class="dot-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> <span><b style="color:var(--color-text)">Perf regression –6%</b> on search-suggest p95 — owner Maya R., due tomorrow</span></li>
+        <li><svg class="dot-go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg> <span>Compliance pack signed — SHA-256 manifest verified 2h ago</span></li>
+      </ul>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi">
+        <div class="row">
+          <div class="left">
+            <div class="lab">In progress</div>
+            <div class="v">6</div>
+          </div>
+          <svg class="spark" width="56" height="22" viewBox="0 0 64 22" preserveAspectRatio="none"><polyline points="0,16 8,14 16,11 24,12 32,8 40,9 48,5 56,7 64,4" fill="none" stroke="#4493f8" stroke-width="1.5"/></svg>
+        </div>
+        <div class="d"><span class="delta-up">↑ 1</span> from last week</div>
+      </div>
+      <div class="kpi">
+        <div class="row">
+          <div class="left">
+            <div class="lab">Ready to ship</div>
+            <div class="v" style="color:#86efac">2</div>
+          </div>
+          <svg class="spark" width="56" height="22" viewBox="0 0 64 22" preserveAspectRatio="none"><polyline points="0,18 8,16 16,15 24,12 32,11 40,9 48,8 56,6 64,4" fill="none" stroke="#34d399" stroke-width="1.5"/></svg>
+        </div>
+        <div class="d">avg gate <b style="color:var(--color-text-secondary)">97.1%</b></div>
+      </div>
+      <div class="kpi">
+        <div class="row">
+          <div class="left">
+            <div class="lab">Blocked</div>
+            <div class="v" style="color:#fca5a5">1</div>
+          </div>
+          <svg class="spark" width="56" height="22" viewBox="0 0 64 22" preserveAspectRatio="none"><polyline points="0,12 8,12 16,11 24,11 32,10 40,9 48,8 56,7 64,5" fill="none" stroke="#ef4444" stroke-width="1.5"/></svg>
+        </div>
+        <div class="d">aging <b style="color:var(--color-text-secondary)">5d</b> · <a style="color:var(--color-accent)">view</a></div>
+      </div>
+      <div class="kpi">
+        <div class="row">
+          <div class="left">
+            <div class="lab">Released · 30d</div>
+            <div class="v">11</div>
+          </div>
+          <svg class="spark" width="56" height="22" viewBox="0 0 64 22" preserveAspectRatio="none"><polyline points="0,12 8,11 16,14 24,9 32,11 40,7 48,9 56,6 64,5" fill="none" stroke="#94a3b8" stroke-width="1.5"/></svg>
+        </div>
+        <div class="d"><span class="delta-up">↑ 2</span> · 100% audit-packed</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filter bar -->
+  <div class="filterbar">
+    <div class="seg" role="tablist">
+      <button class="on">All <span class="ct">14</span></button>
+      <button>Planning <span class="ct">5</span></button>
+      <button>In progress <span class="ct">6</span></button>
+      <button>Released <span class="ct">11</span></button>
+      <button>Cancelled <span class="ct">2</span></button>
+    </div>
+
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input placeholder="Search releases, version, or tag…" />
+      <kbd>/</kbd>
+    </div>
+
+    <button class="chip">Gate: <b>Any</b> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="chip">Owner: <b>Any</b> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="chip">Due: <b>Any</b> <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+
+    <div class="view-toggle">
+      <button class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg> List</button>
+      <button><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Calendar</button>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <!-- Releases list -->
+    <section class="releases">
+
+      <!-- 1.55-rc.2 — In progress, conditional -->
+      <article class="rel">
+        <div class="rel-head">
+          <div class="rel-id">
+            <div class="icon cond">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <div class="rel-name">
+              <div class="titleline">
+                <h3>Search Suggestions Q4 rollup</h3>
+                <span class="ver">v1.55-rc.2</span>
+                <span class="stage stage-progress">In progress</span>
+              </div>
+              <div class="meta">
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> <span class="due-near">Ships Fri · in 3d</span></span>
+                <span><span class="avatar">MR</span> Maya R.</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> 248 tests · 6 suites</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 14 runs · last 8m ago</span>
+              </div>
+            </div>
+          </div>
+          <div class="gate cond">
+            <div class="gate-stats">
+              <div class="gs">
+                <div class="lab">Composite</div>
+                <div class="v warn">96.4%</div>
+                <div class="sub">need ≥ 95%</div>
+              </div>
+              <div class="gs">
+                <div class="lab">Coverage</div>
+                <div class="v go">82%</div>
+                <div class="sub">+3% wk</div>
+              </div>
+              <div class="gs">
+                <div class="lab">Flake</div>
+                <div class="v red">2.1%</div>
+                <div class="sub">cap 1.5%</div>
+              </div>
+            </div>
+            <span class="badge"><span class="gd"></span>Conditional</span>
+          </div>
+        </div>
+
+        <div class="rel-progress">
+          <div class="pbar">
+            <div class="seg-p" style="width: 76%"></div>
+            <div class="seg-f" style="width: 4%"></div>
+            <div class="seg-r" style="width: 6%"></div>
+            <div class="seg-s" style="width: 14%"></div>
+          </div>
+          <div class="ptotals">
+            <span class="p"><span class="dot"></span>189 passed</span>
+            <span class="f"><span class="dot"></span>10 failed</span>
+            <span class="r"><span class="dot"></span>15 flaky</span>
+            <span class="s"><span class="dot"></span>34 not run</span>
+          </div>
+        </div>
+
+        <div class="phases">
+          <div class="phase done"><span class="dot"></span><span class="name">Smoke</span></div>
+          <div class="phase done"><span class="dot"></span><span class="name">Regression</span></div>
+          <div class="phase active"><span class="dot"></span><span class="name">E2E suites</span></div>
+          <div class="phase fail"><span class="dot"></span><span class="name">Perf · –6%</span></div>
+          <div class="phase"><span class="dot"></span><span class="name">UAT sign-off</span></div>
+          <div class="phase skip"><span class="dot"></span><span class="name">Sign &amp; ship</span></div>
+        </div>
+
+        <div class="blockers">
+          <div class="bk" style="margin-bottom: 6px">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></svg></div>
+            <div class="msg"><b>Perf regression –6%</b> on <code>search-suggest p95</code> · linked to <code>SS-2841</code> · owner Maya R. · ETA tomorrow EOD</div>
+            <a class="act">Open ticket →</a>
+          </div>
+          <div class="bk">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+            <div class="msg"><b>3 flaky tests above cap</b> in <code>checkout-payments</code> · quarantine drops flake to 1.2%</div>
+            <a class="act">Auto-quarantine →</a>
+          </div>
+        </div>
+      </article>
+
+      <!-- 1.54.1 — Ready to ship -->
+      <article class="rel">
+        <div class="rel-head">
+          <div class="rel-id">
+            <div class="icon go">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="rel-name">
+              <div class="titleline">
+                <h3>Index pipeline · hotfix</h3>
+                <span class="ver">v1.54.1</span>
+                <span class="stage stage-progress">In progress</span>
+              </div>
+              <div class="meta">
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/></svg> Ships today · <span style="color:#86efac">awaiting sign-off</span></span>
+                <span><span class="avatar b">DK</span> Devon K.</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/></svg> 62 tests · 2 suites</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> last run 24m ago</span>
+              </div>
+            </div>
+          </div>
+          <div class="gate go">
+            <div class="gate-stats">
+              <div class="gs"><div class="lab">Composite</div><div class="v go">99.2%</div><div class="sub">need ≥ 95%</div></div>
+              <div class="gs"><div class="lab">Coverage</div><div class="v go">94%</div><div class="sub">+0% wk</div></div>
+              <div class="gs"><div class="lab">Flake</div><div class="v go">0.3%</div><div class="sub">cap 1.5%</div></div>
+            </div>
+            <span class="badge"><span class="gd"></span>Go</span>
+          </div>
+        </div>
+
+        <div class="rel-progress">
+          <div class="pbar">
+            <div class="seg-p" style="width: 95%"></div>
+            <div class="seg-f" style="width: 0%"></div>
+            <div class="seg-r" style="width: 1%"></div>
+            <div class="seg-s" style="width: 4%"></div>
+          </div>
+          <div class="ptotals">
+            <span class="p"><span class="dot"></span>59 passed</span>
+            <span class="f"><span class="dot"></span>0 failed</span>
+            <span class="r"><span class="dot"></span>1 flaky</span>
+            <span class="s"><span class="dot"></span>2 skipped</span>
+          </div>
+        </div>
+
+        <div class="phases">
+          <div class="phase done"><span class="dot"></span><span class="name">Smoke</span></div>
+          <div class="phase done"><span class="dot"></span><span class="name">Regression</span></div>
+          <div class="phase done"><span class="dot"></span><span class="name">E2E suites</span></div>
+          <div class="phase done"><span class="dot"></span><span class="name">Perf</span></div>
+          <div class="phase active"><span class="dot"></span><span class="name">UAT sign-off</span></div>
+          <div class="phase"><span class="dot"></span><span class="name">Sign &amp; ship</span></div>
+        </div>
+
+        <div class="blockers">
+          <div class="bk" style="border-color: rgba(34,197,94,0.22); background: linear-gradient(180deg, rgba(34,197,94,0.05), transparent);">
+            <div class="ic" style="background: rgba(34,197,94,0.16); color:#86efac;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="msg">Gate clear · awaiting <b>1 UAT sign-off from Priya S.</b> · compliance pack pre-generated</div>
+            <a class="act">Ping reviewer →</a>
+          </div>
+        </div>
+      </article>
+
+      <!-- 2.0.0-alpha — Planning (the original "goog" card, redesigned) -->
+      <article class="rel empty">
+        <div class="rel-head">
+          <div class="rel-id">
+            <div class="icon planning">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </div>
+            <div class="rel-name">
+              <div class="titleline">
+                <h3>Search 2.0 — semantic ranking</h3>
+                <span class="ver">v2.0.0-alpha</span>
+                <span class="stage stage-planning">Planning</span>
+              </div>
+              <div class="meta">
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/></svg> Target Dec 19 · 41 days</span>
+                <span><span class="avatar c">JN</span> Jordan N. · 4 owners</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/></svg> 0 of est. 320 tests</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Audit pack — pending</span>
+              </div>
+            </div>
+          </div>
+          <div class="gate idle">
+            <span class="badge"><span class="gd"></span>Not yet evaluated</span>
+          </div>
+        </div>
+
+        <div class="phases">
+          <div class="phase active"><span class="dot"></span><span class="name">Scope &amp; phases</span></div>
+          <div class="phase"><span class="dot"></span><span class="name">Test plan draft</span></div>
+          <div class="phase"><span class="dot"></span><span class="name">Wire CI runs</span></div>
+          <div class="phase"><span class="dot"></span><span class="name">Regression</span></div>
+          <div class="phase"><span class="dot"></span><span class="name">UAT</span></div>
+          <div class="phase"><span class="dot"></span><span class="name">Sign &amp; ship</span></div>
+        </div>
+
+        <div class="emptybar">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+          <div style="flex:1;min-width:0;">
+            <div class="t">No phases or test plan yet</div>
+            <div class="d">Generate a phased plan from your PRD, or clone from <code>v1.54.1</code> — adapts gates and suites automatically.</div>
+          </div>
+          <div class="actions">
+            <button class="btn">Clone from 1.54.1</button>
+            <button class="btn btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/></svg>
+              Generate from PRD
+            </button>
+          </div>
+        </div>
+      </article>
+
+      <!-- 1.53.4 — Blocked / No-go -->
+      <article class="rel">
+        <div class="rel-head">
+          <div class="rel-id">
+            <div class="icon nogo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            </div>
+            <div class="rel-name">
+              <div class="titleline">
+                <h3>Mobile snippets · iOS</h3>
+                <span class="ver">v1.53.4</span>
+                <span class="stage stage-progress">In progress</span>
+              </div>
+              <div class="meta">
+                <span class="due-late"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/></svg> 5d overdue · was Nov 4</span>
+                <span><span class="avatar d">SR</span> Sam R.</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/></svg> 184 tests · 3 suites</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg> last run 19h ago</span>
+              </div>
+            </div>
+          </div>
+          <div class="gate nogo">
+            <div class="gate-stats">
+              <div class="gs"><div class="lab">Composite</div><div class="v red">87.0%</div><div class="sub">need ≥ 95%</div></div>
+              <div class="gs"><div class="lab">Coverage</div><div class="v warn">71%</div><div class="sub">–4% wk</div></div>
+              <div class="gs"><div class="lab">Flake</div><div class="v red">4.8%</div><div class="sub">cap 1.5%</div></div>
+            </div>
+            <span class="badge"><span class="gd"></span>No-Go</span>
+          </div>
+        </div>
+
+        <div class="rel-progress">
+          <div class="pbar">
+            <div class="seg-p" style="width: 70%"></div>
+            <div class="seg-f" style="width: 10%"></div>
+            <div class="seg-r" style="width: 9%"></div>
+            <div class="seg-s" style="width: 11%"></div>
+          </div>
+          <div class="ptotals">
+            <span class="p"><span class="dot"></span>129 passed</span>
+            <span class="f"><span class="dot"></span>19 failed</span>
+            <span class="r"><span class="dot"></span>16 flaky</span>
+            <span class="s"><span class="dot"></span>20 not run</span>
+          </div>
+        </div>
+
+        <div class="blockers">
+          <div class="bk red">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/></svg></div>
+            <div class="msg"><b>iOS 17.2 simulator outage</b> stalled 4 perf runs · 5 days no green build · <code>INFRA-1129</code> open</div>
+            <a class="act">Escalate →</a>
+          </div>
+        </div>
+      </article>
+
+      <!-- 1.54.0 — Released -->
+      <article class="rel released">
+        <div class="rel-head">
+          <div class="rel-id">
+            <div class="icon released">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </div>
+            <div class="rel-name">
+              <div class="titleline">
+                <h3>Autocomplete latency fixes</h3>
+                <span class="ver">v1.54.0</span>
+                <span class="stage stage-released">Released</span>
+              </div>
+              <div class="meta">
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/></svg> Shipped Nov 6 · 4d ago</span>
+                <span><span class="avatar e">PS</span> Priya S.</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/></svg> 312 tests · 8 suites</span>
+                <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg> Audit pack · signed</span>
+              </div>
+            </div>
+          </div>
+          <div class="gate go">
+            <div class="gate-stats">
+              <div class="gs"><div class="lab">Composite</div><div class="v go">98.7%</div><div class="sub">at release</div></div>
+              <div class="gs"><div class="lab">Field defects</div><div class="v go">0</div><div class="sub">in 96h</div></div>
+              <div class="gs"><div class="lab">SLO</div><div class="v go">100%</div><div class="sub">post-deploy</div></div>
+            </div>
+            <span class="badge"><span class="gd"></span>Healthy</span>
+          </div>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- Right rail -->
+    <aside>
+
+      <section class="panel">
+        <h4>
+          <span><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Shipping this week</span>
+          <span class="ct">3</span>
+        </h4>
+        <div class="upcoming">
+          <div class="up">
+            <div class="when"><div class="day">11</div><div class="mo">Today</div></div>
+            <div class="body">
+              <div class="t">Index pipeline hotfix <span class="ver">v1.54.1</span></div>
+              <div class="d"><span style="color:#86efac">●</span> Awaiting UAT sign-off · Devon K.</div>
+            </div>
+          </div>
+          <div class="up">
+            <div class="when"><div class="day">14</div><div class="mo">Fri</div></div>
+            <div class="body">
+              <div class="t">Search suggestions <span class="ver">v1.55-rc.2</span></div>
+              <div class="d"><span class="due-warn">●</span> Conditional · 2 blockers, owners assigned</div>
+            </div>
+          </div>
+          <div class="up">
+            <div class="when"><div class="day">15</div><div class="mo">Sat</div></div>
+            <div class="body">
+              <div class="t">Mobile snippets iOS <span class="ver">v1.53.4</span></div>
+              <div class="d"><span class="due-bad">●</span> Will slip — 5d overdue, infra blocked</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h4>
+          <span><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> Aging signals</span>
+          <span class="ct">4</span>
+        </h4>
+        <div class="aging">
+          <div class="ag red">
+            <span class="dot"></span>
+            <div class="body">
+              <div class="t">Mobile snippets · v1.53.4</div>
+              <div class="d">Stuck in Perf phase — no green build in 5 days</div>
+            </div>
+            <div class="age">5d</div>
+          </div>
+          <div class="ag warn">
+            <span class="dot"></span>
+            <div class="body">
+              <div class="t">Search 2.0 alpha</div>
+              <div class="d">Planning stage with no test plan · ~41d to ship</div>
+            </div>
+            <div class="age">12d</div>
+          </div>
+          <div class="ag warn">
+            <span class="dot"></span>
+            <div class="body">
+              <div class="t">Ads ranking · v0.9.3</div>
+              <div class="d">UAT sign-off pending from 2 reviewers</div>
+            </div>
+            <div class="age">3d</div>
+          </div>
+          <div class="ag warn">
+            <span class="dot"></span>
+            <div class="body">
+              <div class="t">Knowledge graph · v3.1</div>
+              <div class="d">11 stale phases, owner unassigned</div>
+            </div>
+            <div class="age">8d</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h4>
+          <span><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span> Compliance packs</span>
+          <a class="ct" style="color:var(--color-accent)">view all →</a>
+        </h4>
+        <div class="cpacks">
+          <div class="cp">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="body">
+              <div class="t">v1.54.0 <span class="ver">· 14.2 MB</span></div>
+              <div class="d">sha256: a1f3…9c · signed Nov 6</div>
+            </div>
+            <a class="dl">Download</a>
+          </div>
+          <div class="cp">
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="body">
+              <div class="t">v1.53.3 <span class="ver">· 11.8 MB</span></div>
+              <div class="d">sha256: 7d8c…42 · signed Oct 28</div>
+            </div>
+            <a class="dl">Download</a>
+          </div>
+          <div class="cp">
+            <div class="ic" style="background:rgba(234,179,8,0.12);border-color:rgba(234,179,8,0.32);color:#fcd34d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="6" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+            <div class="body">
+              <div class="t">v1.55-rc.2 <span class="ver">· pending</span></div>
+              <div class="d">awaits gate clearance · est. ~13 MB</div>
+            </div>
+            <a class="dl">Generate</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h4>
+          <span><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Recent activity</span>
+        </h4>
+        <div class="act-list">
+          <div class="act go"><b>v1.54.0</b> released — audit pack signed by Priya S.<span class="when">4 days ago</span></div>
+          <div class="act warn"><b>v1.55-rc.2</b> gate flipped to Conditional — flake spike in checkout-payments<span class="when">today · 8m ago</span></div>
+          <div class="act blue"><b>Maya R.</b> claimed perf regression in search-suggest<span class="when">today · 2h ago</span></div>
+          <div class="act red"><b>v1.53.4</b> blocked — iOS 17.2 simulator outage (INFRA-1129)<span class="when">yesterday</span></div>
+          <div class="act blue">Test plan generated for <b>Search 2.0 alpha</b> from PRD<span class="when">2d ago</span></div>
+        </div>
+      </section>
+
+    </aside>
+
+  </div>
+
+</main>
+
+</body>
+</html>

@@ -41,6 +41,8 @@ celery_app.conf.update(
         "app.worker.tasks.ingest_test_run":                 {"queue": "ingestion"},
         "app.worker.tasks.run_ai_analysis":                 {"queue": "ai_analysis"},
         "app.worker.tasks.run_agent_pipeline":              {"queue": "ai_analysis"},
+        "app.worker.tasks.generate_run_compare_report":     {"queue": "ai_analysis"},
+        "app.worker.tasks.precompute_suite_comparisons_for_run": {"queue": "ai_analysis"},
         "app.worker.tasks.generate_ai_test_cases_task":     {"queue": "ai_analysis"},
         "app.worker.tasks.create_ai_test_plan_task":         {"queue": "ai_analysis"},
         "app.worker.tasks.generate_ai_strategy_task":        {"queue": "ai_analysis"},

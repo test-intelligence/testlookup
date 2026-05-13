@@ -1310,7 +1310,7 @@ export default function RunIntelligencePage() {
     <main
       className="mx-auto"
       style={{
-        maxWidth: 1320,
+        maxWidth: 1600,
         padding: '24px 28px 80px',
       }}
     >
@@ -1496,15 +1496,20 @@ function VerdictCardWithDimensions({
           )}
 
           <div className="flex flex-wrap gap-2 mt-3.5">
-            <button
-              type="button"
-              onClick={onHold}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
-              style={{ color: '#fcd34d', borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}
-            >
-              <TriangleAlert className="h-3.5 w-3.5" />
-              Hold release
-            </button>
+            {/* "Hold release" only makes sense when the gate isn't already a clean GO.
+                A 100% pass (GO) is auto-approved and ready to ship — there's nothing
+                for the user to hold. */}
+            {gate !== 'GO' && (
+              <button
+                type="button"
+                onClick={onHold}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
+                style={{ color: '#fcd34d', borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}
+              >
+                <TriangleAlert className="h-3.5 w-3.5" />
+                Hold release
+              </button>
+            )}
             <GhostBtn onClick={onOverride} title="Override the gate decision (requires sign-off)">
               Override gate
             </GhostBtn>

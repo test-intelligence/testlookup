@@ -1,49 +1,22 @@
-# Two ingresses:
-#   testlookup-traefik-redirect — HTTP listener, 308-redirects every request to
-#     HTTPS via the redirect-https Middleware (see middleware-redirect-https.yaml).
-#   testlookup-traefik-ingress  — HTTPS listener that serves the app. TLS is
-#     terminated with the testlookup-tls-cert Secret, which deploy-homelab.sh
-#     provisions out-of-band as a self-signed cert (idempotent).
-# Splitting them ensures the browser settles on a single canonical
-# https://testlookup.local origin, so the SPA's JWT in localStorage is always
-# accessible to subsequent requests (an http→https mid-session causes a silent
-# origin swap and 401s on every API call).
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: testlookup-traefik-redirect
-  namespace: testlookup
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
-    traefik.ingress.kubernetes.io/router.middlewares: testlookup-redirect-https@kubernetescrd
-spec:
-  ingressClassName: traefik
-  rules:
-    - host: testlookup.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: testlookup-frontend
-                port:
-                  number: 80
----
+# HTTP-only ingress for the homelab.
+#
+# TLS was intentionally removed: this cluster is on the local LAN, the
+# `testlookup.local` hostname only resolves via /etc/hosts on trusted
+# machines, and we kept hitting self-signed-cert friction on every client
+# (browsers, Java SDK, curl). Splitting the listeners is no longer needed
+# once the redirect is gone — there's only one origin, http://testlookup.local.
+#
+# If you ever want HTTPS back, restore middleware-redirect-https.yaml +
+# the split ingresses from git history.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: testlookup-traefik-ingress
   namespace: testlookup
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   ingressClassName: traefik
-  tls:
-    - hosts:
-        - testlookup.local
-      secretName: testlookup-tls-cert
   rules:
     - host: testlookup.local
       http:

@@ -9,16 +9,30 @@ import {
  * either side is missing so the caller can render an empty state
  * without firing an invalid request.
  */
-export function useRunCompare(leftId: string | null, rightId: string | null) {
+export function useRunCompare(
+  leftId: string | null,
+  rightId: string | null,
+  suiteName?: string | null,
+) {
   const enabled = Boolean(leftId && rightId && leftId !== rightId)
   const { data, error, isLoading } = useSWR<RunCompareResponse>(
-    enabled ? ['run-compare', leftId, rightId] : null,
+    enabled ? ['run-compare', leftId, rightId, suiteName || ''] : null,
     () => {
       if (!leftId || !rightId) {
         throw new Error('Left and right run IDs are required')
       }
-      return runCompareService.compare(leftId, rightId)
+      return runCompareService.compare(leftId, rightId, suiteName)
     },
+    { revalidateOnFocus: false },
+  )
+  return { compare: data, isLoading, isError: !!error }
+}
+
+export function useLatestSuiteCompare(suiteName: string | null, projectId?: string | null) {
+  const enabled = Boolean(suiteName?.trim())
+  const { data, error, isLoading } = useSWR<RunCompareResponse>(
+    enabled ? ['run-compare-latest-suite', suiteName, projectId || ''] : null,
+    () => runCompareService.compareLatestSuite(suiteName!.trim(), projectId),
     { revalidateOnFocus: false },
   )
   return { compare: data, isLoading, isError: !!error }

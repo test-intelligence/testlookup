@@ -1208,7 +1208,7 @@ export default function SearchPage() {
   const projectLabel = project?.name ?? 'All Projects'
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1320, padding: '24px 28px 80px' }}>
+    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>

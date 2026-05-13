@@ -1,19 +1,26 @@
-import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronRight,
   Clock, FileText, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } from '@/hooks/useAgentRuns'
 import { useAIConfig } from '@/hooks/useAIConfig'
+import { useRuns } from '@/hooks/useRuns'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
+import ComputeCanvas from '@/components/agents/computeGraph/ComputeCanvas'
+import RightRail from '@/components/agents/computeGraph/RightRail'
+import ModeTabs, { type WorkflowMode } from '@/components/agents/computeGraph/ModeTabs'
+import { mapPipelineToComputeGraph } from '@/components/agents/computeGraph/mapping'
+import type { SelectedId } from '@/components/agents/computeGraph/types'
 import { useProjectChangeRedirect, useProjectChangeReset } from '@/hooks/useProjectChange'
 
 // ── Stage metadata ─────────────────────────────────────────────
@@ -330,9 +337,10 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
 
   return (
     <div className="card border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/30">
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <Activity className="w-4 h-4 text-[var(--color-text)] animate-pulse" />
         <span className="text-sm font-semibold text-[var(--color-text)]">Build {run.build_number}</span>
+        <SuiteBadge primary={run.suite_name} all={run.suite_name ? [run.suite_name] : null} />
         <span className="ml-auto text-xs bg-[var(--color-bg-secondary)]/60 text-[var(--color-text)] px-2 py-0.5 rounded-full">
           LIVE
         </span>
@@ -370,10 +378,16 @@ const MODE_BADGE: Record<string, { label: string; colour: string }> = {
 
 export default function AgentStatusPage() {
   const { runId } = useParams<{ runId?: string }>()
+  const navigate = useNavigate()
   const [selectedPipeline, setSelectedPipeline] = useState<string | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [showSummary, setShowSummary] = useState(false)
   const { data: aiConfig } = useAIConfig()
+  // Recent runs feed the suite+build dropdown so users can browse pipelines
+  // across runs instead of only the one in the URL. Size matches the
+  // pagination convention applied elsewhere.
+  const { data: recentRunsList } = useRuns({ page: 1, size: 25 })
+  const recentRuns = recentRunsList?.items ?? []
   const analysisMode = aiConfig?.analysis_mode ?? 'auto'
   const showLLMMetrics = analysisMode !== 'rules' && analysisMode !== 'ml'
 
@@ -392,6 +406,25 @@ export default function AgentStatusPage() {
   const { data: stages = [], isLoading: stagesLoading } = usePipelineStages(selectedPipeline)
   const { data: timeline } = usePipelineTimeline(selectedPipeline)
   const summaryStage = stages.find((stage) => stage.stage_name === 'summary')
+  // Direction-C compute graph: map the backend's flat stage list into the
+  // node/edge/decision shape the canvas expects. Derived purely from the
+  // current pipeline's stages so it stays in lockstep with the rest of the
+  // page (no extra fetch).
+  const computeGraph = useMemo(
+    () => mapPipelineToComputeGraph(stages as AgentStageResult[]),
+    [stages],
+  )
+  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>('debug')
+  // Default canvas selection: the first running stage (or first failed) so
+  // the rail isn't empty on first paint.
+  const [canvasSelection, setCanvasSelection] = useState<SelectedId>(null)
+  useEffect(() => {
+    if (canvasSelection !== null) return
+    const running = computeGraph.stages.find(s => s.status === 'running')
+    const failed  = computeGraph.stages.find(s => s.status === 'failed')
+    const initial = running ?? failed ?? computeGraph.stages[0] ?? null
+    if (initial) setCanvasSelection(initial.id)
+  }, [computeGraph.stages, canvasSelection])
   const { data: liveRuns = [] } = useActiveLiveRuns()
   const {
     data: summary,
@@ -403,13 +436,11 @@ export default function AgentStatusPage() {
   const [triggerInput, setTriggerInput] = useState('')
   const [triggerSubmitting, setTriggerSubmitting] = useState(false)
 
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
   async function handleTriggerByRunId(e: React.FormEvent) {
     e.preventDefault()
     const id = triggerInput.trim()
-    if (!UUID_RE.test(id)) {
-      toast.error('Run ID must be a UUID. Find it on /runs or by clicking into a run.')
+    if (!id) {
+      toast.error('Pick a test suite + build to trigger.')
       return
     }
     setTriggerSubmitting(true)
@@ -435,9 +466,38 @@ export default function AgentStatusPage() {
         title="Agent Pipeline"
         subtitle="Multi-agent test analysis: ingestion → anomaly detection → root-cause → summary → triage"
         actions={
-          <span className={`text-xs px-2 py-1 rounded font-medium ${MODE_BADGE[analysisMode]?.colour ?? MODE_BADGE.auto.colour}`}>
-            {MODE_BADGE[analysisMode]?.label ?? 'Auto Mode'}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Pipeline picker: lets the user jump between recent runs by
+                test suite + build number. Each option is labelled
+                ``<suite> · #<build>`` so the user picks by attributes they
+                recognise, not the opaque run UUID. Selecting routes to
+                /agents/<id> so the page state and URL stay in sync. */}
+            <label className="text-xs text-[var(--color-text-muted)]">Test Suite &amp; Build:</label>
+            <select
+              value={runId ?? ''}
+              onChange={(e) => {
+                const id = e.target.value
+                // App.tsx mounts this page at both ``/agents`` and
+                // ``/agents/run/:runId`` — match the param form when
+                // navigating so the route resolves and useParams reads the id.
+                if (id) navigate(`/agents/run/${id}`)
+                else navigate('/agents')
+              }}
+              className="text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded px-2 py-1 max-w-[320px] truncate"
+            >
+              <option value="">— All recent pipelines —</option>
+              {recentRuns.map((r) => {
+                const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
+                const label = `${suite} · #${r.build_number}`
+                return (
+                  <option key={r.id} value={r.id}>{label}</option>
+                )
+              })}
+            </select>
+            <span className={`text-xs px-2 py-1 rounded font-medium ${MODE_BADGE[analysisMode]?.colour ?? MODE_BADGE.auto.colour}`}>
+              {MODE_BADGE[analysisMode]?.label ?? 'Auto Mode'}
+            </span>
+          </div>
         }
       />
 
@@ -463,21 +523,34 @@ export default function AgentStatusPage() {
           </h3>
 
           {isQaEngineer && (
+            // Manual trigger — pick a recent run by test suite + build and
+            // fire its pipeline. Replaces the prior "paste a run UUID" input
+            // so users never have to handle the opaque UUID directly. The
+            // value carried in state is still the UUID under the hood —
+            // it's just selected by suite/build attributes.
             <form onSubmit={handleTriggerByRunId} className="flex items-center gap-1.5">
-              <input
-                type="text"
+              <select
                 value={triggerInput}
                 onChange={e => setTriggerInput(e.target.value)}
-                placeholder="Paste run UUID to trigger…"
-                aria-label="Trigger pipeline for a run UUID"
-                title="Paste a run UUID (e.g. from /runs) to fire its pipeline manually. Useful when the auto-trigger was lost (worker crash, etc.)."
-                className="flex-1 min-w-0 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-mono rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
+                aria-label="Pick a run by test suite and build to trigger"
+                title="Choose a recent run by its test suite and build number, then fire its agent pipeline manually. Useful when the auto-trigger was lost (worker crash, etc.)."
+                className="flex-1 min-w-0 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)] truncate"
                 disabled={triggerSubmitting}
-              />
+              >
+                <option value="">— Pick a test suite &amp; build —</option>
+                {recentRuns.map((r) => {
+                  const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
+                  return (
+                    <option key={r.id} value={r.id}>
+                      {`${suite} · #${r.build_number}`}
+                    </option>
+                  )
+                })}
+              </select>
               <button
                 type="submit"
                 disabled={triggerSubmitting || triggerInput.trim().length === 0}
-                title="Queue the standard pipeline for this run"
+                title="Queue the standard pipeline for the selected run"
                 className="inline-flex items-center justify-center h-7 w-7 rounded text-[var(--color-text-muted)] border border-[var(--color-border-light)] hover:bg-[var(--color-bg-hover)]/40 hover:text-[var(--color-text-secondary)] transition-colors disabled:opacity-50"
               >
                 {triggerSubmitting
@@ -565,14 +638,54 @@ export default function AgentStatusPage() {
                 </button>
               </div>
 
-              <WorkflowTimeline
-                title="Workflow Progress"
-                subtitle="The agent pipeline path for this run, including skip reasons and event history."
-                stages={(timeline?.stages ?? stages) as AgentStageResult[]}
-                events={timeline?.events}
-                showInspector
-                showEventFeed
-              />
+              {/* Direction-C compute graph: 1750×560 canvas with absolute-
+                  positioned nodes, SVG bezier edges, a decision diamond, and a
+                  360px right rail. Debug mode (the default) renders the canvas;
+                  the other ModeTabs swap in their own bodies. */}
+              <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
+                <ModeTabs mode={workflowMode} onChange={setWorkflowMode} liveActive={liveRuns.length > 0} />
+                {workflowMode === 'debug' ? (
+                  <div className="flex" style={{ height: 600 }}>
+                    <ComputeCanvas
+                      stages={computeGraph.stages}
+                      decision={computeGraph.decision}
+                      edges={computeGraph.edges}
+                      selectedId={canvasSelection}
+                      onSelect={setCanvasSelection}
+                    />
+                    <RightRail
+                      selectedId={canvasSelection}
+                      stages={computeGraph.stages}
+                      decision={computeGraph.decision}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-[300px] text-sm text-[var(--color-text-muted)] px-6 text-center">
+                    {workflowMode === 'live' && 'Live mode: see the Live Executions strip above.'}
+                    {workflowMode === 'audit' && 'Audit view — coming in the next iteration.'}
+                    {workflowMode === 'compare' && 'Compare view — coming in the next iteration.'}
+                  </div>
+                )}
+              </div>
+
+              {/* Original chevron-flow timeline kept below as a fallback /
+                  power-user surface. Lives in a details disclosure so the
+                  compute graph is the default. */}
+              <details className="mt-4">
+                <summary className="cursor-pointer text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                  Classic workflow timeline
+                </summary>
+                <div className="mt-2">
+                  <WorkflowTimeline
+                    title="Workflow Progress"
+                    subtitle="The agent pipeline path for this run, including skip reasons and event history."
+                    stages={(timeline?.stages ?? stages) as AgentStageResult[]}
+                    events={timeline?.events}
+                    showInspector
+                    showEventFeed
+                  />
+                </div>
+              </details>
 
               <details className="card mt-4">
                 <summary className="cursor-pointer text-sm font-semibold text-[var(--color-text-secondary)] flex items-center gap-2">

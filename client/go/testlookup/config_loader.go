@@ -16,6 +16,15 @@ type ResolvedConfig struct {
 	Token       string
 	ProjectID   string
 	LaunchName  string
+	// SuiteName is the run-level suite identifier, sourced from
+	// testlookup.suite (preferred) with testlookup.launch as the
+	// documented fallback. Stamped on every record() that doesn't
+	// supply its own suite so dashboards group runs cleanly.
+	SuiteName   string
+	// ReleaseName is the release this test run belongs to. Sourced from
+	// testlookup.release / TESTLOOKUP_RELEASE. When blank the server
+	// falls back to the project's default release on session create.
+	ReleaseName string
 	BuildNumber string
 	Branch      string
 	CommitHash  string
@@ -54,6 +63,8 @@ func LoadConfig() ResolvedConfig {
 	overlay("TESTLOOKUP_PROJECT_ID", &cfg.ProjectID)
 	overlay("TESTLOOKUP_PROJECT", &cfg.ProjectID)
 	overlay("TESTLOOKUP_LAUNCH", &cfg.LaunchName)
+	overlay("TESTLOOKUP_SUITE", &cfg.SuiteName)
+	overlay("TESTLOOKUP_RELEASE", &cfg.ReleaseName)
 	overlay("TESTLOOKUP_BUILD", &cfg.BuildNumber)
 	overlay("TESTLOOKUP_BRANCH", &cfg.Branch)
 	overlay("TESTLOOKUP_COMMIT", &cfg.CommitHash)
@@ -119,6 +130,10 @@ func applyPropertiesFile(path string, cfg *ResolvedConfig) {
 			cfg.ProjectID = val
 		case "testlookup.launch":
 			cfg.LaunchName = val
+		case "testlookup.suite":
+			cfg.SuiteName = val
+		case "testlookup.release":
+			cfg.ReleaseName = val
 		case "testlookup.build":
 			cfg.BuildNumber = val
 		case "testlookup.branch":

@@ -57,6 +57,7 @@ from app.routers import (
     shared_reports,
     sso,
     stream,
+    suites,
     test_health,
     test_management,
     users,
@@ -133,6 +134,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     github_integration.router,         # Tier 1 item 5: GitHub Checks integration
     webhooks_outbound.router,          # Tier 2 item 6: outbound webhook subscriptions
     run_compare.router,                # Tier 2 item 8: two-run compare
+    suites.router,                     # Phase 3: TestSuite + CanonicalTestCase CRUD
 )
 
 

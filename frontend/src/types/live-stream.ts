@@ -10,6 +10,7 @@ export interface LiveSessionCreate {
   total_tests?: number
   release_name?: string
   launch_name?: string
+  suite_name?: string
   metadata?: Record<string, unknown>
 }
 
@@ -46,6 +47,7 @@ export interface LiveSessionState {
   completed_at?: string
   release_name?: string
   launch_name?: string
+  suite_name?: string | null
 }
 
 export interface ActiveSessionsResponse {

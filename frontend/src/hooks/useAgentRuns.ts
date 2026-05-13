@@ -4,18 +4,18 @@ import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimelin
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId } from './useProjectScopedSWR'
 
-export function usePipelines(runId?: string) {
+export function usePipelines(runId?: string, limit = 100) {
   const projectId = useActiveProjectId()
   // Map "all" sentinel to undefined so backend receives no project_id filter
   const fetchProjectId = projectId === ALL_PROJECTS_ID ? undefined : (projectId ?? undefined)
   const key = runId
     ? `/pipelines?run=${runId}`
     : fetchProjectId
-      ? `/pipelines?project=${fetchProjectId}`
-      : '/pipelines'
+      ? `/pipelines?project=${fetchProjectId}&limit=${limit}`
+      : `/pipelines?limit=${limit}`
   return useSWR<AgentPipelineRun[]>(
     key,
-    () => agentService.listPipelines(runId, fetchProjectId),
+    () => agentService.listPipelines(runId, fetchProjectId, undefined, limit),
     { refreshInterval: 5000, revalidateOnFocus: false },
   )
 }

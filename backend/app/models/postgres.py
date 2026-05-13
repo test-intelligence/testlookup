@@ -127,12 +127,24 @@ class Project(Base):
     end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))     # added migration 0022
     tags: Mapped[Optional[list]] = mapped_column(JSON)                                # added migration 0022
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    manager_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(                     # added migration 0076
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
     # Relationships
     test_runs: Mapped[list["TestRun"]] = relationship("TestRun", back_populates="project", lazy="dynamic")
     quality_gates: Mapped[list["QualityGate"]] = relationship("QualityGate", back_populates="project")
+    test_suites: Mapped[list["TestSuite"]] = relationship(
+        "TestSuite", back_populates="project", cascade="all, delete-orphan"
+    )
+    canonical_test_cases: Mapped[list["CanonicalTestCase"]] = relationship(
+        "CanonicalTestCase", back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class TestRun(Base):
@@ -197,11 +209,17 @@ class TestCase(Base):
         Index("ix_test_cases_run_status", "test_run_id", "status"),
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
         Index("ix_test_cases_search", "search_vector", postgresql_using="gin"),
+        Index("ix_test_cases_canonical", "canonical_test_case_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
     test_fingerprint: Mapped[str] = mapped_column(String(64), index=True)  # hash(test_name + class_name)
+    # Junction to the project-scoped catalog. Populated by ingestion (migration 0075).
+    # SET NULL on canonical deletion so existing run rows survive a suite cleanup.
+    canonical_test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("canonical_test_cases.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Core fields from Allure/TestNG
     test_name: Mapped[str] = mapped_column(String(1000), nullable=False)
@@ -239,6 +257,173 @@ class TestCase(Base):
     history: Mapped[list["TestCaseHistory"]] = relationship("TestCaseHistory", back_populates="test_case")
     ai_analysis: Mapped[Optional["AIAnalysis"]] = relationship("AIAnalysis", back_populates="test_case", uselist=False)
     defects: Mapped[list["Defect"]] = relationship("Defect", back_populates="test_case")
+    canonical_test_case: Mapped[Optional["CanonicalTestCase"]] = relationship(
+        "CanonicalTestCase", back_populates="test_cases"
+    )
+
+
+class TestSuite(Base):
+    """Project-scoped grouping of test cases.
+
+    Replaces the prior string-based ``suite_name`` model with a first-class
+    entity. Every project gets a row with ``is_default=True`` named
+    ``Default Suite ({project.name})`` — new test cases ingested without an
+    explicit suite are auto-assigned to it.
+    """
+    __tablename__ = "test_suites"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_test_suites_project_name"),
+        Index("ix_test_suites_project_id", "project_id"),
+        Index(
+            "ix_test_suites_project_default",
+            "project_id",
+            unique=True,
+            postgresql_where=text("is_default IS TRUE"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    project: Mapped["Project"] = relationship("Project", back_populates="test_suites")
+    canonical_test_cases: Mapped[list["CanonicalTestCase"]] = relationship(
+        "CanonicalTestCase", back_populates="test_suite", cascade="all, delete-orphan"
+    )
+
+
+class TestSuiteOwner(Base):
+    """Explicit owner for a (project, suite_name) pair (migration 0076).
+
+    Keyed by suite_name (string) to match the legacy aggregated Test Suites
+    view served from ``/api/v1/test-management/suites``. Falls back to
+    ``Project.manager_user_id`` when no row exists for a given suite.
+    """
+    __tablename__ = "test_suite_owners"
+    __table_args__ = (
+        UniqueConstraint("project_id", "suite_name", name="uq_test_suite_owners_proj_suite"),
+        Index("ix_test_suite_owners_project_id", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
+
+
+class SuiteRunReview(Base):
+    """Human-in-the-loop overlay on AI analysis for a (run, suite) (migration 0076).
+
+    Non-gating: the AI pipeline still completes runs without waiting for a
+    review. State machine: pending → confirmed | acknowledged | review_later.
+    Unique on ``(test_run_id, suite_name)`` so each run+suite has at most one
+    review (later updates mutate the row instead of inserting).
+    """
+    __tablename__ = "suite_run_reviews"
+    __table_args__ = (
+        UniqueConstraint("test_run_id", "suite_name", name="uq_suite_run_reviews_run_suite"),
+        Index("ix_suite_run_reviews_project_suite", "project_id", "suite_name"),
+        Index("ix_suite_run_reviews_state", "state"),
+        Index("ix_suite_run_reviews_test_run_id", "test_run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    reviewer_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default=text("'pending'"))
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
+
+
+SUITE_REVIEW_STATES = ("pending", "confirmed", "acknowledged", "review_later")
+
+
+class CanonicalTestCase(Base):
+    """Project-scoped test case identity.
+
+    Merges the prior ``SuiteMembership`` lifecycle model with a relational
+    anchor that the per-run ``test_cases`` table FKs to. Identified by
+    ``(project_id, test_fingerprint)`` — one row per logical test per project.
+    Every CanonicalTestCase belongs to exactly one TestSuite; manual re-linking
+    moves the row between suites without losing run history.
+    """
+    __tablename__ = "canonical_test_cases"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "test_fingerprint", name="uq_canonical_test_cases_project_fp"
+        ),
+        Index("ix_ctc_project_id", "project_id"),
+        Index("ix_ctc_test_suite_id", "test_suite_id"),
+        Index("ix_ctc_project_status", "project_id", "status"),
+        Index("ix_ctc_fingerprint", "test_fingerprint"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # RESTRICT so a suite with cases can't be silently dropped — UI must reassign or move cases first.
+    test_suite_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="RESTRICT"), nullable=False
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[str] = mapped_column(String(1000), nullable=False)
+    class_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Lifecycle (merged from suite_memberships). Values:
+    #   status: active | deleted | needs_review
+    #   source: execution | managed | linked
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", server_default="active")
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="execution", server_default="execution")
+
+    # Run lifecycle pointers (SET NULL — a run deletion shouldn't orphan the catalog row).
+    first_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    last_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    deleted_at_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Optional cross-link to the authored / AI-generated catalog.
+    managed_test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="SET NULL"), nullable=True
+    )
+
+    review_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    project: Mapped["Project"] = relationship("Project", back_populates="canonical_test_cases")
+    test_suite: Mapped["TestSuite"] = relationship("TestSuite", back_populates="canonical_test_cases")
+    test_cases: Mapped[list["TestCase"]] = relationship("TestCase", back_populates="canonical_test_case")
+    managed_test_case: Mapped[Optional["ManagedTestCase"]] = relationship("ManagedTestCase")
 
 
 class TestCaseHistory(Base):
@@ -1231,6 +1416,11 @@ class LiveSession(Base):
     # and surfaced in Live Execution and Runs columns. Nullable: legacy
     # sessions and clients that don't set it fall back to build_number.
     launch_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Run-level suite identifier supplied by the SDK (testlookup.suite, with
+    # testlookup.launch as the fallback). Persisted so `upsert_test_run` can
+    # stamp TestRun.primary_suite_name immediately at session close — no need
+    # to wait for per-event aggregation.
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
     events_received: Mapped[int] = mapped_column(Integer, default=0)
     extra_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
@@ -1330,6 +1520,13 @@ class Release(Base):
     __tablename__ = "releases"
     __table_args__ = (
         Index("ix_releases_project_status", "project_id", "status"),
+        # Migration 0077: at most one default release per project.
+        Index(
+            "ix_releases_project_default",
+            "project_id",
+            unique=True,
+            postgresql_where=text("is_default IS TRUE"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1341,6 +1538,13 @@ class Release(Base):
 
     # Status: planning|in_progress|released|cancelled
     status: Mapped[str] = mapped_column(String(30), default="planning")
+
+    # Migration 0077: project-level default — used when ingestion / live
+    # session create receives no explicit release_name. At most one row per
+    # project (partial unique index above).
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     # Target/actual dates
     planned_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -1603,6 +1807,40 @@ class RunDiff(Base):
     baseline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
     diff_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RunComparisonReport(Base):
+    """Cached AI report for a run or suite comparison."""
+    __tablename__ = "run_comparison_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "left_run_id",
+            "right_run_id",
+            "suite_name_normalized",
+            "prompt_version",
+            name="uq_run_comparison_report_scope",
+        ),
+        Index("ix_run_comparison_reports_project", "project_id", "created_at"),
+        Index("ix_run_comparison_reports_runs", "left_run_id", "right_run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    left_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    right_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    suite_name_normalized: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    compare_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    ai_report: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False, default="run_compare_v1")
+    model_name: Mapped[Optional[str]] = mapped_column(String(200))
+    created_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
 class IntegrationHealthCheck(Base):

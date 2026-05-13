@@ -117,4 +117,7 @@ export interface ActiveLiveRun {
   pass_rate: number
   current_test: string | null
   started_at: string
+  // Run-level suite (testlookup.suite > testlookup.launch). Present once the
+  // backend's live-session row carries suite_name; older runs may omit it.
+  suite_name?: string | null
 }

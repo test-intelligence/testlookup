@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList,
-  Gauge, GitBranch, HeartPulse, Layers, LayoutDashboard, MessageSquare,
+  FolderTree, Gauge, GitBranch, HeartPulse, Layers, LayoutDashboard, MessageSquare,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
 } from 'lucide-react'
@@ -50,10 +50,11 @@ const GROUPS: NavGroup[] = [
     label: 'Testing',
     icon: GitBranch,
     to: '/runs',
-    activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/defects', '/search', '/test-management', '/suite/'],
+    activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/defects', '/search', '/test-management', '/suite/', '/suites'],
     children: [
       { to: '/live',            icon: Radio,       label: 'Live'       },
       { to: '/coverage',        icon: ShieldCheck, label: 'Coverage'   },
+      { to: '/suites',          icon: FolderTree,  label: 'Suites'     },
       { to: '/failures',        icon: Bug,         label: 'Failures'   },
       { to: '/trends',          icon: TrendingUp,  label: 'Trends'     },
       { to: '/defects',         icon: Gauge,       label: 'Defects'    },

@@ -97,6 +97,13 @@ type Config struct {
 	ClientName string
 	// Framework is the test framework name (default: "go").
 	Framework string
+	// SuiteName is the run-level suite identifier applied as a default to every
+	// Record call. Resolves from testlookup.suite (preferred) with
+	// testlookup.launch as the documented fallback when loaded via LoadConfig.
+	SuiteName string
+	// ReleaseName is the release this test run belongs to. Sent on session
+	// create. Blank → server falls back to the project's default release.
+	ReleaseName string
 	// BatchSize is the number of events per flush (default: 50, max: 1000).
 	BatchSize int
 	// BatchInterval is the time between periodic flushes (default: 100ms).
@@ -112,6 +119,11 @@ func (c *Config) withDefaults() Config {
 	if out.ProjectID == ""  { out.ProjectID  = env("TESTLOOKUP_PROJECT_ID", "") }
 	if out.ClientName == "" { out.ClientName, _ = os.Hostname() }
 	if out.Framework == ""  { out.Framework  = "go" }
+	if out.SuiteName == ""  {
+		// testlookup.suite wins; testlookup.launch is the documented fallback.
+		out.SuiteName = env("TESTLOOKUP_SUITE", env("TESTLOOKUP_LAUNCH", ""))
+	}
+	if out.ReleaseName == "" { out.ReleaseName = env("TESTLOOKUP_RELEASE", "") }
 	if out.BatchSize <= 0   { out.BatchSize  = defaultBatchSize }
 	if out.BatchSize > maxBatchSize { out.BatchSize = maxBatchSize }
 	if out.BatchInterval <= 0 { out.BatchInterval = defaultBatchInterval }
@@ -140,7 +152,14 @@ type SessionOptions struct {
 	// LaunchName is the human-readable launch label (analogous to ReportPortal's rp.launch).
 	// When empty the server falls back to BuildNumber for display.
 	LaunchName string
-	Metadata   map[string]interface{}
+	// SuiteName overrides the reporter-level Config.SuiteName for this session.
+	// Sent to the server on session create so LiveSession.suite_name and the
+	// resulting TestRun.primary_suite_name carry it.
+	SuiteName string
+	// ReleaseName overrides Config.ReleaseName for this session. Blank →
+	// server falls back to the project's default release.
+	ReleaseName string
+	Metadata    map[string]interface{}
 }
 
 // ── RecordOptions ─────────────────────────────────────────────────────────────
@@ -185,6 +204,14 @@ func (r *Reporter) StartSession(ctx context.Context, opts SessionOptions) (*Sess
 	if opts.CommitHash  != "" { payload["commit_hash"]  = opts.CommitHash }
 	if opts.TotalTests   > 0  { payload["total_tests"]  = opts.TotalTests }
 	if opts.LaunchName  != "" { payload["launch_name"]  = opts.LaunchName }
+	// Per-session override beats the reporter-level Config.SuiteName.
+	sessionSuite := opts.SuiteName
+	if sessionSuite == "" { sessionSuite = r.cfg.SuiteName }
+	if sessionSuite != "" { payload["suite_name"] = sessionSuite }
+	// Same precedence for release_name: opts > Config > server default.
+	sessionRelease := opts.ReleaseName
+	if sessionRelease == "" { sessionRelease = r.cfg.ReleaseName }
+	if sessionRelease != "" { payload["release_name"] = sessionRelease }
 	if opts.Metadata    != nil { payload["metadata"]    = opts.Metadata }
 
 	var result struct {
@@ -200,6 +227,7 @@ func (r *Reporter) StartSession(ctx context.Context, opts SessionOptions) (*Sess
 		SessionID:    result.SessionID,
 		RunID:        result.RunID,
 		sessionToken: result.SessionToken,
+		suiteName:    sessionSuite,
 		reporter:     r,
 		buffer:       make([]liveEvent, 0, r.cfg.BatchSize),
 		stopCh:       make(chan struct{}),
@@ -279,6 +307,9 @@ type Session struct {
 	RunID string
 
 	sessionToken string
+	// suiteName is the resolved run-level suite identifier, applied as the
+	// default on every Record call that doesn't supply its own SuiteName.
+	suiteName    string
 	reporter     *Reporter
 
 	mu     sync.Mutex
@@ -306,7 +337,11 @@ func (s *Session) Record(ctx context.Context, testName string, status TestStatus
 		DurationMs:  durationMs,
 		TimestampMs: time.Now().UnixMilli(),
 	}
-	if opts.SuiteName  != "" { event.SuiteName    = opts.SuiteName }
+	// Per-call SuiteName wins; otherwise inherit the session-level suite
+	// resolved from Config.SuiteName / testlookup.suite / testlookup.launch.
+	effectiveSuite := opts.SuiteName
+	if effectiveSuite == "" { effectiveSuite = s.suiteName }
+	if effectiveSuite   != "" { event.SuiteName    = effectiveSuite }
 	if opts.ClassName  != "" { event.ClassName    = opts.ClassName }
 	if opts.Error      != "" { event.ErrorMessage = opts.Error }
 	if opts.StackTrace != "" { event.StackTrace   = opts.StackTrace }

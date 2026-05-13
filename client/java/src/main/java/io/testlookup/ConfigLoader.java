@@ -69,6 +69,8 @@ public final class ConfigLoader {
         {"TESTLOOKUP_ENDPOINT",    "server.url"},
         {"TESTLOOKUP_PROJECT",     "project.id"},
         {"TESTLOOKUP_LAUNCH",      "reporting.launch_name"},
+        {"TESTLOOKUP_SUITE",       "reporting.suite_name"},
+        {"TESTLOOKUP_RELEASE",     "reporting.release_name"},
         {"TESTLOOKUP_FRAMEWORK",   "reporting.framework"},
     };
 
@@ -83,6 +85,8 @@ public final class ConfigLoader {
         {"testlookup.projectId",  "project.id"},
         {"testlookup.project",    "project.id"},
         {"testlookup.launch",     "reporting.launch_name"},
+        {"testlookup.suite",      "reporting.suite_name"},
+        {"testlookup.release",    "reporting.release_name"},
         {"testlookup.build",      "ci.build_number"},
         {"testlookup.branch",     "ci.branch"},
         {"testlookup.commit",     "ci.commit_hash"},
@@ -102,6 +106,8 @@ public final class ConfigLoader {
         {"testlookup.apiKey",     "auth.api_key"},
         {"testlookup.project",    "project.id"},
         {"testlookup.launch",     "reporting.launch_name"},
+        {"testlookup.suite",      "reporting.suite_name"},
+        {"testlookup.release",    "reporting.release_name"},
         {"testlookup.build",      "ci.build_number"},
         {"testlookup.branch",     "ci.branch"},
         {"testlookup.commit",     "ci.commit_hash"},

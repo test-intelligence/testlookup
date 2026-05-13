@@ -21,11 +21,16 @@
       form-action 'self': block form exfiltration to 3rd-party origins.
       base-uri 'self': prevent <base> tag relative-url hijacking.
       object-src 'none': block Flash / legacy plugin XSS vectors.
-      upgrade-insecure-requests: auto-upgrade any http:// subresource to
-        https:// so a mis-configured integration URL cannot downgrade the
-        page (harmless in dev where the page is already http://localhost).
+
+      NOTE: ``upgrade-insecure-requests`` was intentionally removed from the
+      meta CSP. When the page is served over plain HTTP (homelab without
+      TLS, kubectl port-forward, etc.) that directive forces the browser to
+      retry every request as HTTPS, which then has nothing listening and
+      the page goes blank. For HTTPS production deployments that want the
+      upgrade behavior, set CSP as a real response header in nginx,
+      conditional on ``$scheme = https``, so HTTP origins are unaffected.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), payment=(), usb=()" />

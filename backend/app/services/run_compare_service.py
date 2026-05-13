@@ -30,10 +30,10 @@ from difflib import SequenceMatcher
 from typing import Any, Optional
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import TestCase, TestRun
+from app.models.postgres import LaunchStatus, TestCase, TestRun
 
 logger = structlog.get_logger("services.run_compare")
 
@@ -59,6 +59,11 @@ _FUZZY_PAIR_THRESHOLD = 0.82
 # seconds in the matcher. Diff users looking at 500+ removed/added
 # tests already have a bigger problem than rename tracking.
 _FUZZY_PAIR_MAX_CANDIDATES = 500
+
+
+def normalize_suite_name(suite_name: Optional[str]) -> str:
+    """Canonical form for case-insensitive suite matching."""
+    return (suite_name or "").strip().lower()
 
 
 def _status_bucket(status: Optional[str]) -> str:
@@ -155,7 +160,7 @@ def _similarity(
     right_n = right_name or ""
     if not left_n or not right_n:
         return 0.0
-    if (left_suite or "") != (right_suite or ""):
+    if normalize_suite_name(left_suite) != normalize_suite_name(right_suite):
         return 0.0
 
     matcher = SequenceMatcher(None, left_n, right_n)
@@ -226,7 +231,9 @@ async def _load_summary(db: AsyncSession, run_id: uuid.UUID) -> Optional[TestRun
 
 
 async def _load_test_rows(
-    db: AsyncSession, run_id: uuid.UUID,
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    suite_name: Optional[str] = None,
 ) -> dict[str, TestCase]:
     """Return a map keyed by ``test_fingerprint``.
 
@@ -234,9 +241,11 @@ async def _load_test_rows(
     resolved by keeping the last-observed row — matches how the release
     dashboards render the run.
     """
-    result = await db.execute(
-        select(TestCase).where(TestCase.test_run_id == run_id)
-    )
+    stmt = select(TestCase).where(TestCase.test_run_id == run_id)
+    suite_key = normalize_suite_name(suite_name)
+    if suite_key:
+        stmt = stmt.where(func.lower(func.trim(TestCase.suite_name)) == suite_key)
+    result = await db.execute(stmt)
     rows: dict[str, TestCase] = {}
     for tc in result.scalars().all():
         fp = tc.test_fingerprint
@@ -246,7 +255,40 @@ async def _load_test_rows(
     return rows
 
 
-def _summary_dict(run: TestRun) -> dict[str, Any]:
+def _summary_dict(
+    run: TestRun,
+    scoped_tests: Optional[list[TestCase]] = None,
+    suite_name: Optional[str] = None,
+) -> dict[str, Any]:
+    if scoped_tests is not None:
+        total = len(scoped_tests)
+        passed = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "passed")
+        failed = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "failed")
+        broken = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "broken")
+        skipped = sum(1 for tc in scoped_tests if _status_bucket(tc.status) == "skipped")
+        duration_ms = sum(int(tc.duration_ms or 0) for tc in scoped_tests)
+        pass_rate = round((passed / total) * 100, 3) if total else 0.0
+        display_suite = suite_name or (scoped_tests[0].suite_name if scoped_tests else None)
+        return {
+            "id": run.id,
+            "project_id": run.project_id,
+            "build_number": run.build_number,
+            "branch": run.branch,
+            "commit_hash": run.commit_hash,
+            "status": run.status,
+            "total_tests": total,
+            "passed_tests": passed,
+            "failed_tests": failed,
+            "broken_tests": broken,
+            "skipped_tests": skipped,
+            "pass_rate": pass_rate,
+            "duration_ms": duration_ms,
+            "start_time": run.start_time,
+            "end_time": run.end_time,
+            "primary_suite_name": display_suite,
+            "suite_names": [display_suite] if display_suite else [],
+        }
+
     return {
         "id": run.id,
         "project_id": run.project_id,
@@ -263,13 +305,102 @@ def _summary_dict(run: TestRun) -> dict[str, Any]:
         "duration_ms": int(run.duration_ms) if run.duration_ms is not None else None,
         "start_time": run.start_time,
         "end_time": run.end_time,
+        "primary_suite_name": run.primary_suite_name,
+        "suite_names": run.suite_names or [],
     }
+
+
+async def ensure_run_has_suite(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    suite_name: str,
+) -> bool:
+    suite_key = normalize_suite_name(suite_name)
+    if not suite_key:
+        return False
+    result = await db.execute(
+        select(TestCase.id)
+        .where(
+            TestCase.test_run_id == run_id,
+            func.lower(func.trim(TestCase.suite_name)) == suite_key,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def resolve_latest_suite_pair(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    suite_name: str,
+) -> tuple[TestRun, TestRun]:
+    """Return ``(previous, latest)`` completed runs for a suite on the latest branch.
+
+    The latest run establishes the branch. The previous side is selected from
+    the same branch by default so nightly branch comparisons do not silently
+    cross streams.
+    """
+    suite_key = normalize_suite_name(suite_name)
+    if not suite_key:
+        raise ValueError("suite_name is required")
+
+    suite_exists = (
+        select(TestCase.id)
+        .where(
+            TestCase.test_run_id == TestRun.id,
+            func.lower(func.trim(TestCase.suite_name)) == suite_key,
+        )
+        .exists()
+    )
+    latest_result = await db.execute(
+        select(TestRun)
+        .where(
+            TestRun.project_id == project_id,
+            TestRun.status != LaunchStatus.IN_PROGRESS,
+            suite_exists,
+        )
+        .order_by(func.coalesce(TestRun.end_time, TestRun.created_at).desc())
+        .limit(1)
+    )
+    latest = latest_result.scalar_one_or_none()
+    if latest is None:
+        raise LookupError(f"No completed runs found for suite {suite_name}")
+
+    branch_filter = (
+        TestRun.branch.is_(None)
+        if latest.branch is None
+        else TestRun.branch == latest.branch
+    )
+    previous_result = await db.execute(
+        select(TestRun)
+        .where(
+            TestRun.project_id == project_id,
+            TestRun.id != latest.id,
+            TestRun.status != LaunchStatus.IN_PROGRESS,
+            branch_filter,
+            suite_exists,
+        )
+        .order_by(func.coalesce(TestRun.end_time, TestRun.created_at).desc())
+        .limit(1)
+    )
+    previous = previous_result.scalar_one_or_none()
+    if previous is None:
+        branch_label = latest.branch or "no branch"
+        raise LookupError(
+            f"At least two completed runs are required to compare suite {suite_name} on branch {branch_label}"
+        )
+    return previous, latest
 
 
 async def compare_runs(
     db: AsyncSession,
     left_id: uuid.UUID,
     right_id: uuid.UUID,
+    *,
+    suite_name: Optional[str] = None,
+    selection: Optional[dict[str, Any]] = None,
+    ai_report: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Build the compare document. Returns a plain dict suitable for
     passing straight into ``RunCompareResponse``.
@@ -286,8 +417,18 @@ async def compare_runs(
     if right_run is None:
         raise LookupError(f"Right run {right_id} not found")
 
-    left_tests = await _load_test_rows(db, left_id)
-    right_tests = await _load_test_rows(db, right_id)
+    left_tests = await _load_test_rows(db, left_id, suite_name=suite_name)
+    right_tests = await _load_test_rows(db, right_id, suite_name=suite_name)
+
+    if suite_name and (not left_tests or not right_tests):
+        missing = []
+        if not left_tests:
+            missing.append("left")
+        if not right_tests:
+            missing.append("right")
+        raise LookupError(
+            f"Suite {suite_name} was not found in the {' and '.join(missing)} run"
+        )
 
     all_fingerprints = set(left_tests.keys()) | set(right_tests.keys())
 
@@ -437,20 +578,32 @@ async def compare_runs(
     if truncated:
         deltas = deltas[:_MAX_DELTA_ROWS]
 
-    left_summary = _summary_dict(left_run)
-    right_summary = _summary_dict(right_run)
+    left_summary = _summary_dict(
+        left_run,
+        scoped_tests=list(left_tests.values()) if suite_name else None,
+        suite_name=suite_name,
+    )
+    right_summary = _summary_dict(
+        right_run,
+        scoped_tests=list(right_tests.values()) if suite_name else None,
+        suite_name=suite_name,
+    )
 
     delta_pass_rate: Optional[float] = None
-    if left_run.pass_rate is not None and right_run.pass_rate is not None:
-        delta_pass_rate = round(float(right_run.pass_rate) - float(left_run.pass_rate), 3)
+    if left_summary["pass_rate"] is not None and right_summary["pass_rate"] is not None:
+        delta_pass_rate = round(float(right_summary["pass_rate"]) - float(left_summary["pass_rate"]), 3)
 
     delta_duration_ms: Optional[int] = None
-    if left_run.duration_ms is not None and right_run.duration_ms is not None:
-        delta_duration_ms = int(right_run.duration_ms) - int(left_run.duration_ms)
+    if left_summary["duration_ms"] is not None and right_summary["duration_ms"] is not None:
+        delta_duration_ms = int(right_summary["duration_ms"]) - int(left_summary["duration_ms"])
 
     return {
         "left": left_summary,
         "right": right_summary,
+        "scope": "suite" if suite_name else "run",
+        "suite_name": suite_name,
+        "selection": selection,
+        "ai_report": ai_report,
         "delta_total": right_summary["total_tests"] - left_summary["total_tests"],
         "delta_passed": right_summary["passed_tests"] - left_summary["passed_tests"],
         "delta_failed": right_summary["failed_tests"] - left_summary["failed_tests"],

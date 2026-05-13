@@ -157,23 +157,23 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             except Exception as tag_err:
                 logger.warning("Auto-tagging failed (non-blocking): %s", tag_err)
 
-            # ── Link to release (auto-create if new) ───────
-            if sentinel.release_name and sentinel.release_name.strip():
-                try:
-                    from app.services.release_linker import auto_link_release
-                    _release, _created = await auto_link_release(
-                        db=db,
-                        project_id=run.project_id,
-                        release_name=sentinel.release_name.strip(),
-                        test_run_id=run.id,
+            # ── Link to release (explicit name wins; falls back to the
+            # project's default release — migration 0077) ────────────────
+            try:
+                from app.services.release_linker import link_run_or_default
+                result = await link_run_or_default(
+                    db=db,
+                    project_id=run.project_id,
+                    release_name=sentinel.release_name,
+                    test_run_id=run.id,
+                )
+                if result and result[1]:
+                    logger.info(
+                        "Auto-created release '%s' for run %s",
+                        result[0].name, run.id,
                     )
-                    if _created:
-                        logger.info(
-                            "Auto-created release '%s' for run %s",
-                            sentinel.release_name, run.id,
-                        )
-                except Exception as rel_err:
-                    logger.warning("Release linking failed for run %s: %s", run.id, rel_err)
+            except Exception as rel_err:
+                logger.warning("Release linking failed for run %s: %s", run.id, rel_err)
 
             await db.commit()
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")

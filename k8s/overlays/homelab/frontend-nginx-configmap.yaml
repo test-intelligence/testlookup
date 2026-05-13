@@ -10,6 +10,17 @@ data:
         root /usr/share/nginx/html;
         index index.html;
 
+        # index.html must NEVER be cached — Vite hashes asset filenames, so a new
+        # build emits new index-<hash>.js URLs and a fresh index.html referencing
+        # them. If a browser or intermediate caches the old index.html it will keep
+        # loading the old (and possibly 404'ing) asset hashes after a redeploy.
+        # The hashed assets below are immutable and stay aggressively cached.
+        location = /index.html {
+            add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+            add_header Pragma "no-cache" always;
+            expires -1;
+        }
+
         location / {
             try_files $uri $uri/ /index.html;
         }

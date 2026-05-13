@@ -27,6 +27,7 @@ export const runsService = {
     projectId: string | null,
     days: number,
     onlyPending = false,
+    suiteName?: string | null,
   ) =>
     getData<{ ids: string[]; count: number; truncated: boolean }>(
       '/api/v1/runs/failed-ids',
@@ -35,6 +36,7 @@ export const runsService = {
           ...(projectId ? { project_id: projectId } : {}),
           days,
           ...(onlyPending ? { only_pending: true } : {}),
+          ...(suiteName ? { suite_name: suiteName } : {}),
         },
       },
     ),

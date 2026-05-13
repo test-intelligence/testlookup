@@ -21,10 +21,11 @@ import {
   useTestCaseHistory, useTestCaseReviews, useTestCaseComments,
   usePlanItems, useUsers,
 } from '@/hooks/useTestManagement'
+import { usePermissions } from '@/hooks/usePermissions'
 import {
   testManagementService,
 } from '@/services/testManagementService'
-import type { UserSummary } from '@/services/testManagementService'
+import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import type {
   AIReviewResult,
@@ -2817,7 +2818,12 @@ interface SuiteItem {
   passed_count: number
   failed_count: number
   last_run_at: string | null
+  last_run_id: string | null
   pass_rate: number | null
+  owner_user_id?: string | null
+  owner_email?: string | null
+  owner_full_name?: string | null
+  owner_is_fallback?: boolean
 }
 
 interface SuiteCase {
@@ -2829,18 +2835,36 @@ interface SuiteCase {
   class_name: string | null
   package_name: string | null
   created_at: string | null
+  execution_count?: number
+  last_execution_at?: string | null
 }
 
 interface TestSuitesTabProps { projectId: string | null }
 
+const REVIEW_STATE_STYLES: Record<SuiteReviewState, { label: string; cls: string }> = {
+  pending:       { label: 'Pending review',  cls: 'bg-amber-900/30 text-amber-300' },
+  confirmed:     { label: 'Confirmed',        cls: 'bg-emerald-900/30 text-emerald-300' },
+  acknowledged:  { label: 'Acknowledged',     cls: 'bg-blue-900/30 text-blue-300' },
+  review_later:  { label: 'Review later',     cls: 'bg-violet-900/30 text-violet-300' },
+}
+
 function TestSuitesTab({ projectId }: TestSuitesTabProps) {
+  const { isQaLead } = usePermissions()
+  const { data: users } = useUsers()
+  const userList = (users ?? []) as UserSummary[]
+  const [searchParams] = useSearchParams()
+  const deepLinkSuite = searchParams.get('suite')
   const [suites, setSuites] = useState<SuiteItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [expandedSuite, setExpandedSuite] = useState<string | null>(null)
+  const [expandedSuite, setExpandedSuite] = useState<string | null>(deepLinkSuite)
   const [suiteCases, setSuiteCases] = useState<Record<string, SuiteCase[]>>({})
   const [loadingCases, setLoadingCases] = useState<string | null>(null)
   const [suiteDeleted, setSuiteDeleted] = useState<Record<string, Array<{ id: string; test_name: string; class_name: string | null; review_tag: string | null; deleted_at_run_id: string | null }>>>({})
   const [suiteChanges, setSuiteChanges] = useState<Record<string, Array<{ event_type: string; test_name: string; details: string | null }>>>({})
+  const [reviewsByRun, setReviewsByRun] = useState<Record<string, SuiteReviewItem[]>>({})
+  const [editingOwnerFor, setEditingOwnerFor] = useState<string | null>(null)
+  const [savingReview, setSavingReview] = useState<string | null>(null)
+  const deepLinkAppliedRef = useRef(false)
 
   useEffect(() => {
     setLoading(true)
@@ -2850,12 +2874,91 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
       .finally(() => setLoading(false))
   }, [projectId])
 
-  async function handleExpandSuite(suiteName: string) {
-    if (expandedSuite === suiteName) {
-      setExpandedSuite(null)
+  // When arriving via /test-management?tab=Test+Suites&suite=<name>, auto-load
+  // the deep-linked suite's cases and scroll its card into view once. Subsequent
+  // suite changes from the URL also re-apply; user-initiated collapses don't
+  // re-trigger because we gate on the ref + suiteCases cache.
+  useEffect(() => {
+    if (!deepLinkSuite || deepLinkAppliedRef.current) return
+    if (suites.length === 0) return
+    deepLinkAppliedRef.current = true
+    setExpandedSuite(deepLinkSuite)
+    void loadSuiteData(deepLinkSuite)
+    const el = document.getElementById(`suite-card-${deepLinkSuite}`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkSuite, suites])
+
+  // Bulk-fetch reviews for every suite's latest run, keyed by run id so a
+  // single test_run that hosts multiple suites only triggers one request.
+  useEffect(() => {
+    const runIds = Array.from(new Set(suites.map(s => s.last_run_id).filter((x): x is string => !!x)))
+    if (runIds.length === 0) return
+    let cancelled = false
+    Promise.all(
+      runIds.map(rid =>
+        testManagementService.listReviewsForRun(rid)
+          .then(items => [rid, items] as const)
+          .catch(() => [rid, [] as SuiteReviewItem[]] as const),
+      ),
+    ).then(entries => {
+      if (cancelled) return
+      const map: Record<string, SuiteReviewItem[]> = {}
+      for (const [rid, items] of entries) map[rid] = items
+      setReviewsByRun(map)
+    })
+    return () => { cancelled = true }
+  }, [suites])
+
+  function reviewForSuite(suite: SuiteItem): SuiteReviewItem | undefined {
+    if (!suite.last_run_id) return undefined
+    return reviewsByRun[suite.last_run_id]?.find(r => r.suite_name === suite.suite_name)
+  }
+
+  async function handleAssignOwner(suite: SuiteItem, ownerUserId: string | null) {
+    if (!projectId) {
+      toast.error('Select a project to assign suite owners')
       return
     }
-    setExpandedSuite(suiteName)
+    try {
+      const updated = await testManagementService.setSuiteOwner(suite.suite_name, projectId, ownerUserId)
+      setSuites(prev => prev.map(s => s.suite_name === suite.suite_name ? {
+        ...s,
+        owner_user_id: updated.owner_user_id,
+        owner_email: updated.owner_email,
+        owner_full_name: updated.owner_full_name,
+        owner_is_fallback: updated.is_fallback,
+      } : s))
+      setEditingOwnerFor(null)
+      toast.success(ownerUserId ? 'Suite owner assigned' : 'Suite owner cleared')
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Failed to assign owner')
+    }
+  }
+
+  async function handleReview(suite: SuiteItem, state: SuiteReviewState) {
+    const runId = suite.last_run_id
+    if (!runId) {
+      toast.error('No automation runs to review yet')
+      return
+    }
+    setSavingReview(suite.suite_name)
+    try {
+      const updated = await testManagementService.upsertSuiteReview(runId, suite.suite_name, state)
+      setReviewsByRun(prev => {
+        const list = prev[runId] ?? []
+        const filtered = list.filter(r => r.suite_name !== suite.suite_name)
+        return { ...prev, [runId]: [...filtered, updated] }
+      })
+      toast.success(`Marked ${REVIEW_STATE_STYLES[state].label.toLowerCase()}`)
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Failed to save review')
+    } finally {
+      setSavingReview(null)
+    }
+  }
+
+  async function loadSuiteData(suiteName: string) {
     if (suiteCases[suiteName]) return
     setLoadingCases(suiteName)
     try {
@@ -2872,6 +2975,15 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     } finally {
       setLoadingCases(null)
     }
+  }
+
+  async function handleExpandSuite(suiteName: string) {
+    if (expandedSuite === suiteName) {
+      setExpandedSuite(null)
+      return
+    }
+    setExpandedSuite(suiteName)
+    await loadSuiteData(suiteName)
   }
 
   const CASE_STATUS_COLORS: Record<string, string> = {
@@ -2896,8 +3008,20 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
 
   return (
     <div className="space-y-3">
-      {suites.map(suite => (
-        <div key={suite.suite_name} className="card p-0">
+      {suites.map(suite => {
+        const review = reviewForSuite(suite)
+        const reviewState: SuiteReviewState = review?.state ?? 'pending'
+        const reviewStyle = REVIEW_STATE_STYLES[reviewState]
+        const isEditingOwner = editingOwnerFor === suite.suite_name
+        return (
+        <div
+          key={suite.suite_name}
+          id={`suite-card-${suite.suite_name}`}
+          className={clsx(
+            'card p-0',
+            deepLinkSuite === suite.suite_name && 'ring-2 ring-[var(--color-accent)] ring-offset-1 ring-offset-[var(--color-bg)]',
+          )}
+        >
           <div
             className="p-4 cursor-pointer hover:bg-[var(--color-bg-hover)]/50 transition-colors rounded-xl"
             onClick={() => handleExpandSuite(suite.suite_name)}
@@ -2907,8 +3031,11 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                 <div className="flex items-center gap-3 mb-1">
                   <Layers className="h-4 w-4 text-[var(--color-text)] flex-shrink-0" />
                   <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">{suite.suite_name}</h3>
+                  <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', reviewStyle.cls)}>
+                    {reviewStyle.label}
+                  </span>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)]">
+                <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)] flex-wrap">
                   <span>{suite.test_count} tests</span>
                   <span className="text-green-400">{suite.passed_count} passed</span>
                   <span className="text-red-400">{suite.failed_count} failed</span>
@@ -2917,8 +3044,67 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       {suite.pass_rate.toFixed(1)}% pass rate
                     </span>
                   )}
+                  <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <User className="h-3 w-3" />
+                    {isEditingOwner ? (
+                      <select
+                        autoFocus
+                        className="input h-6 py-0 text-[11px]"
+                        defaultValue={suite.owner_user_id ?? ''}
+                        onChange={e => handleAssignOwner(suite, e.target.value || null)}
+                        onBlur={() => setEditingOwnerFor(null)}
+                      >
+                        <option value="">— Unassigned —</option>
+                        {userList.map(u => (
+                          <option key={u.id} value={u.id}>{u.full_name || u.username} ({u.email})</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <>
+                        <span className={suite.owner_is_fallback ? 'italic text-[var(--color-text-faint)]' : ''}>
+                          {suite.owner_full_name || suite.owner_email || 'Unassigned'}
+                          {suite.owner_is_fallback && ' (project manager)'}
+                        </span>
+                        {isQaLead && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingOwnerFor(suite.suite_name)}
+                            className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] underline text-[11px]"
+                          >
+                            change
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </span>
                   {suite.last_run_at && <span className="ml-auto">Last run: {fmtDate(suite.last_run_at)}</span>}
                 </div>
+                {suite.last_run_id && (
+                  <div className="mt-2 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                    <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mr-1">AI verdict:</span>
+                    {(['confirmed', 'acknowledged', 'review_later'] as SuiteReviewState[]).map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        disabled={savingReview === suite.suite_name}
+                        onClick={() => handleReview(suite, s)}
+                        className={clsx(
+                          'text-[11px] px-2 py-0.5 rounded font-medium transition-colors disabled:opacity-50',
+                          reviewState === s
+                            ? REVIEW_STATE_STYLES[s].cls
+                            : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                        )}
+                      >
+                        {REVIEW_STATE_STYLES[s].label}
+                      </button>
+                    ))}
+                    {review?.reviewer_email && (
+                      <span className="text-[10px] text-[var(--color-text-faint)] ml-1">
+                        by {review.reviewer_email}{review.reviewed_at ? ` · ${fmtDate(review.reviewed_at)}` : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               {expandedSuite === suite.suite_name
                 ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)] flex-shrink-0" />
@@ -2937,9 +3123,10 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       <tr>
                         <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test Name</th>
                         <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Class / Package</th>
-                        <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Latest Status</th>
                         <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Duration</th>
-                        <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Date</th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Executions</th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Last Run</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--color-border)]/60">
@@ -2959,14 +3146,17 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                           <td className="px-4 py-2.5 text-right text-xs text-[var(--color-text-muted)] tabular-nums">
                             {tc.duration_ms != null ? `${(tc.duration_ms / 1000).toFixed(2)}s` : '—'}
                           </td>
+                          <td className="px-4 py-2.5 text-right text-xs text-[var(--color-text)] tabular-nums">
+                            {tc.execution_count ?? '—'}
+                          </td>
                           <td className="px-4 py-2.5 text-right text-xs text-[var(--color-text-muted)]">
-                            {tc.created_at ? fmtDate(tc.created_at) : '—'}
+                            {tc.last_execution_at ? fmtDate(tc.last_execution_at) : tc.created_at ? fmtDate(tc.created_at) : '—'}
                           </td>
                         </tr>
                       ))}
                       {(suiteCases[suite.suite_name] ?? []).length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">No test cases in this suite</td>
+                          <td colSpan={6} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">No test cases in this suite</td>
                         </tr>
                       )}
                     </tbody>
@@ -3016,7 +3206,8 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
             </div>
           )}
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

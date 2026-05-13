@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AlertCircle, Calendar, CheckCircle2, ChevronDown, ChevronRight,
@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import CompliancePackPanel from '@/components/compliance/CompliancePackPanel'
@@ -18,6 +19,11 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { releasesService } from '@/services/releasesService'
 import { useRuns } from '@/hooks/useRuns'
 import type { LinkedRun, Release, ReleasePhase } from '@/types/releases'
+import { deriveRelease, computeStageCounts } from '@/components/releases/mapping'
+import VerdictBand from '@/components/releases/VerdictBand'
+import KpiStrip from '@/components/releases/KpiStrip'
+import ReleaseCard from '@/components/releases/ReleaseCard'
+import { ShippingThisWeek, AgingSignals, CompliancePacks, RecentActivity } from '@/components/releases/RightRail'
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -361,6 +367,11 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   const { data: detail, isLoading, mutate: refetch } = useRelease(releaseId)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [markingReleased, setMarkingReleased] = useState(false)
+  // Pagination for the linked-runs table — 25 rows per page, client-side
+  // slice. The release summary above still aggregates across every linked
+  // run because it reads ``detail.metrics`` from the API, not this slice.
+  const LINKED_PAGE_SIZE = 25
+  const [linkedPage, setLinkedPage] = useState(1)
 
   async function updatePhaseStatus(phaseId: string, status: string) {
     try {
@@ -539,7 +550,15 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
         </div>
         {(detail.linked_runs?.length ?? 0) === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)] py-4 text-center">No test runs linked yet</p>
-        ) : (
+        ) : (() => {
+          const allLinked = detail.linked_runs ?? []
+          const linkedTotalPages = Math.max(1, Math.ceil(allLinked.length / LINKED_PAGE_SIZE))
+          // Clamp the current page if data shrinks (e.g. unlink) so we never
+          // ask for a page that doesn't exist.
+          const safePage = Math.min(linkedPage, linkedTotalPages)
+          const start = (safePage - 1) * LINKED_PAGE_SIZE
+          const pageRows = allLinked.slice(start, start + LINKED_PAGE_SIZE)
+          return (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -554,7 +573,7 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
                 </tr>
               </thead>
               <tbody>
-                {detail.linked_runs.map((run: LinkedRun) => (
+                {pageRows.map((run: LinkedRun) => (
                   <tr key={run.id} className="table-row">
                     <td className="td font-mono text-[var(--color-text-secondary)] text-xs">
                       <button
@@ -582,8 +601,15 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
                 ))}
               </tbody>
             </table>
+            <Pagination
+              page={safePage}
+              pages={linkedTotalPages}
+              total={allLinked.length}
+              onChange={setLinkedPage}
+            />
           </div>
-        )}
+          )
+        })()}
       </div>
     </div>
   )
@@ -602,6 +628,43 @@ export default function ReleasesPage() {
   const [editRelease, setEditRelease] = useState<Release | undefined>()
   const [expandedId, setExpandedId]   = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [search, setSearch] = useState('')
+
+  // Derive the renderer-ready shape once and reuse across the verdict band,
+  // KPIs, list, and right-rail panels. Pure — no side effects, no extra
+  // network calls — so it's cheap to recompute on every render.
+  const derived = useMemo(() => releases.map(deriveRelease), [releases])
+  const stageCounts = useMemo(() => computeStageCounts(derived), [derived])
+  const filteredDerived = useMemo(() => {
+    let xs = derived
+    if (statusFilter !== 'all') xs = xs.filter(r => r.stage === statusFilter)
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      xs = xs.filter(r =>
+        r.name.toLowerCase().includes(q)
+        || r.version.toLowerCase().includes(q)
+        || r.ownerName.toLowerCase().includes(q),
+      )
+    }
+    return xs
+  }, [derived, statusFilter, search])
+  // The verdict band highlights the in-progress release with the nearest
+  // upcoming due date — that's the "what ships next" answer the QA lead
+  // wants the page to surface first.
+  const highlightedRelease = useMemo(() => {
+    const candidates = derived
+      .filter(r => r.stage === 'in_progress')
+      .sort((a, b) => {
+        const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY
+        const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY
+        return aDue - bDue
+      })
+    return candidates[0] ?? null
+  }, [derived])
+  const inProgressReleases = useMemo(
+    () => derived.filter(r => r.stage === 'in_progress'),
+    [derived],
+  )
 
   async function deleteRelease(id: string) {
     if (!confirm('Delete this release and all its phases? This cannot be undone.')) return
@@ -626,10 +689,6 @@ export default function ReleasesPage() {
     )
   }
 
-  const filtered = statusFilter === 'all'
-    ? releases
-    : releases.filter(r => r.status === statusFilter)
-
   return (
     <>
       {showModal && projectId && !isAllProjects && (
@@ -641,155 +700,178 @@ export default function ReleasesPage() {
         />
       )}
 
-      <div className="space-y-6">
+      <div className="mx-auto" style={{ maxWidth: 1320, padding: '4px 0 80px' }}>
         <PageHeader
           title="Releases"
-          subtitle={isAllProjects ? 'All releases across all projects' : `Manage releases and track QA progress for ${project?.name}`}
+          subtitle={
+            isAllProjects
+              ? `${stageCounts.all} active across all projects`
+              : `${stageCounts.all} active across ${project?.name ?? 'this project'}`
+            + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
+          }
           actions={
-            <div className="flex items-center gap-2">
-              {/* Status filter */}
-              <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
-                {['all', 'planning', 'in_progress', 'released', 'cancelled'].map(s => (
-                  <button
-                    key={s}
-                    onClick={() => setStatusFilter(s)}
-                    className={clsx(
-                      'px-3 py-1 rounded-md text-xs font-medium transition-colors capitalize',
-                      statusFilter === s ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
-                    )}
-                  >
-                    {s === 'all' ? 'All' : s.replace('_', ' ')}
-                  </button>
-                ))}
-              </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => toast('Export schedule — coming in next iteration', { icon: '📅' })}
+                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)]"
+              >
+                <Calendar className="h-3.5 w-3.5" /> Export schedule
+              </button>
+              <button
+                type="button"
+                onClick={() => toast('Calendar view — coming in next iteration', { icon: '🗓' })}
+                className="inline-flex items-center gap-1.5 text-[12.5px] px-2.5 py-1.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)]"
+              >
+                <Calendar className="h-3.5 w-3.5" /> Calendar view
+              </button>
               {!isAllProjects && (
                 <button
                   onClick={() => { setEditRelease(undefined); setShowModal(true) }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-lg font-medium"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
                 >
-                  <Plus className="h-4 w-4" /> New Release
+                  <Plus className="h-4 w-4" /> New release
                 </button>
               )}
             </div>
           }
         />
 
+        {/* Top strip — verdict band + KPIs */}
+        {!isLoading && (
+          <div className="grid gap-3.5 mb-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 2fr)' }}>
+            <VerdictBand highlighted={highlightedRelease} inProgressReleases={inProgressReleases} />
+            <KpiStrip releases={derived} />
+          </div>
+        )}
+
+        {/* Counted segmented filter bar */}
+        {!isLoading && (
+          <div
+            className="flex items-center gap-2 mb-3.5 px-3 py-2 rounded-md border flex-wrap"
+            style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+          >
+            <div className="flex items-center gap-1">
+              {(['all', 'planning', 'in_progress', 'released', 'cancelled'] as const).map(s => {
+                const count = s === 'all' ? stageCounts.all : stageCounts[s]
+                return (
+                  <button
+                    key={s}
+                    onClick={() => setStatusFilter(s)}
+                    className={clsx(
+                      'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors capitalize',
+                      statusFilter === s
+                        ? 'bg-[var(--color-accent-muted)] text-[var(--color-text)] border border-[rgba(68,147,248,0.40)]'
+                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent',
+                    )}
+                  >
+                    <span>{s === 'all' ? 'All' : s.replace('_', ' ')}</span>
+                    <span className="text-[10.5px] text-[var(--color-text-faint)] tabular-nums">{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] focus-within:border-[var(--color-ring)]">
+                <span className="text-[var(--color-text-muted)]">⌕</span>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search releases, owners, versions…"
+                  className="bg-transparent outline-none text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] w-[260px]"
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Body grid — release list + right rail */}
         {isLoading ? (
           <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
         ) : releases.length === 0 ? (
           <EmptyState
             icon={<Package className="h-8 w-8" />}
             title="No releases yet"
-            description={isAllProjects ? 'No releases exist across any project yet' : 'Create your first release to start tracking QA progress'}
+            description={isAllProjects ? 'No releases exist across any project yet' : 'Create your first release or clone from an org template'}
             action={!isAllProjects ? (
               <button
                 onClick={() => setShowModal(true)}
-                className="mt-4 flex items-center gap-2 px-4 py-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-lg text-sm font-medium mx-auto"
+                className="mt-4 flex items-center gap-2 px-4 py-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md text-sm font-medium mx-auto"
               >
-                <Plus className="h-4 w-4" /> Create Release
+                <Plus className="h-4 w-4" /> Create release
               </button>
             ) : undefined}
           />
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={<AlertCircle className="h-8 w-8" />}
-            title="No releases match filter"
-            description={`No ${statusFilter.replace('_', ' ')} releases found`}
-          />
         ) : (
-          <div className="space-y-3">
-            {filtered.map(release => {
-              const isExpanded = expandedId === release.id
-              const cfg = STATUS_CONFIG[release.status] ?? STATUS_CONFIG.planning
-              const StatusIcon = cfg.icon
-              const donePhases = release.phases.filter(p => p.status === 'completed').length
-              const totalPhases = release.phases.length
-
-              return (
-                <div key={release.id} className="card overflow-hidden">
-                  {/* Header row */}
-                  <div
-                    className="flex items-center gap-3 cursor-pointer select-none"
-                    onClick={() => setExpandedId(isExpanded ? null : release.id)}
+          <div className="grid gap-[18px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px' }}>
+            {/* Left — release cards */}
+            <div className="flex flex-col gap-2.5 min-w-0">
+              {filteredDerived.length === 0 ? (
+                <div
+                  className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
+                  style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+                >
+                  <span>No releases match these filters.</span>
+                  <button
+                    type="button"
+                    onClick={() => { setStatusFilter('all'); setSearch('') }}
+                    className="text-[var(--color-accent)] hover:underline"
                   >
-                    <div className={clsx('h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0', cfg.bg)}>
-                      <StatusIcon className={clsx('h-4 w-4', cfg.color)} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-semibold text-[var(--color-text)]">{release.name}</h3>
-                        {release.version && (
-                          <span className="flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
-                            <Tag className="h-3 w-3" />{release.version}
-                          </span>
+                    Clear filters
+                  </button>
+                </div>
+              ) : (
+                filteredDerived.map(r => (
+                  <div key={r.id}>
+                    <ReleaseCard
+                      release={r}
+                      onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
+                    />
+                    {/* Inline detail panel — preserves the existing
+                        expand-to-view-runs flow without forcing a per-release
+                        route this redesign explicitly defers. */}
+                    {expandedId === r.id && (
+                      <div
+                        className="mt-2 rounded-xl border p-4"
+                        style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+                      >
+                        {r.source.description && (
+                          <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
                         )}
-                        <StatusBadge status={release.status} />
-                        {isAllProjects && release.project_name && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] ring-1 ring-inset ring-[var(--color-border-light)]">
-                            {release.project_name}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-4 mt-0.5 text-xs text-[var(--color-text-muted)]">
-                        {release.planned_date && (
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />Target: {fmtDate(release.planned_date)}
-                          </span>
-                        )}
-                        {totalPhases > 0 && (
-                          <span className="flex items-center gap-1">
-                            <GitBranch className="h-3 w-3" />
-                            {donePhases}/{totalPhases} phases complete
-                          </span>
-                        )}
-                        {release.test_run_count != null && release.test_run_count > 0 && (
-                          <span>{release.test_run_count} run{release.test_run_count !== 1 ? 's' : ''} linked</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Phase progress bar */}
-                    {totalPhases > 0 && (
-                      <div className="hidden sm:flex flex-col items-end gap-1 w-24">
-                        <span className="text-[10px] text-[var(--color-text-muted)]">{Math.round(donePhases / totalPhases * 100)}% done</span>
-                        <div className="w-full h-1.5 bg-[var(--color-bg-hover)] rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-emerald-500 rounded-full transition-all"
-                            style={{ width: `${(donePhases / totalPhases) * 100}%` }}
-                          />
+                        <div className="flex justify-end gap-2 mb-3">
+                          <button
+                            onClick={() => { setEditRelease(r.source); setShowModal(true) }}
+                            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteRelease(r.id)}
+                            className="text-xs text-red-500/70 hover:text-red-400 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                          >
+                            Delete
+                          </button>
                         </div>
+                        <ReleaseDetailPanel
+                          releaseId={r.id}
+                          projectId={projectId ?? ''}
+                          onEdit={src => { setEditRelease(src); setShowModal(true) }}
+                        />
                       </div>
                     )}
-
-                    <div className="flex items-center gap-1.5 ml-2">
-                      <button
-                        onClick={e => { e.stopPropagation(); setEditRelease(release); setShowModal(true) }}
-                        className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={e => { e.stopPropagation(); deleteRelease(release.id) }}
-                        className="text-xs text-red-500/70 hover:text-red-400 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
-                      >
-                        Delete
-                      </button>
-                      {isExpanded ? <ChevronDown className="h-4 w-4 text-[var(--color-text-muted)]" /> : <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />}
-                    </div>
                   </div>
+                ))
+              )}
+            </div>
 
-                  {/* Expanded detail */}
-                  {isExpanded && (
-                    <div className="mt-5 pt-5 border-t border-[var(--color-border)]">
-                      {release.description && (
-                        <p className="text-sm text-[var(--color-text-muted)] mb-4">{release.description}</p>
-                      )}
-                      <ReleaseDetailPanel releaseId={release.id} projectId={projectId ?? ''} onEdit={r => { setEditRelease(r); setShowModal(true) }} />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+            {/* Right — derived panels */}
+            <div className="flex flex-col gap-3.5 min-w-0">
+              <ShippingThisWeek releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
+              <AgingSignals releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
+              <CompliancePacks releases={derived} />
+              <RecentActivity releases={derived} />
+            </div>
           </div>
         )}
       </div>

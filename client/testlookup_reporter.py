@@ -118,6 +118,8 @@ class ConfigLoader:
         "testlookup.api_key":      ("auth", "api_key"),       # underscore form
         "testlookup.project":      ("project", "id"),
         "testlookup.launch":       ("reporting", "launch_name"),
+        "testlookup.suite":        ("reporting", "suite_name"),
+        "testlookup.release":      ("reporting", "release_name"),
         "testlookup.build":        ("ci", "build_number"),
         "testlookup.branch":       ("ci", "branch"),
         "testlookup.commit":       ("ci", "commit_hash"),
@@ -144,6 +146,8 @@ class ConfigLoader:
         "TESTLOOKUP_CA_CERT":     ("auth", "ca_cert_path"),
         "TESTLOOKUP_INSECURE":    ("auth", "insecure"),
         "TESTLOOKUP_LAUNCH":      ("reporting", "launch_name"),
+        "TESTLOOKUP_SUITE":       ("reporting", "suite_name"),
+        "TESTLOOKUP_RELEASE":     ("reporting", "release_name"),
         "TESTLOOKUP_FRAMEWORK":   ("reporting", "framework"),
     }
 
@@ -318,6 +322,19 @@ class TestLookupReporter:
         self._project_id = resolved_project
         self._client_name = client_name or ConfigLoader.get(cfg, "reporting.client_name") or socket.gethostname()
         self._framework = framework
+        # Resolved suite name applied as the default on every record() that
+        # doesn't pass one explicitly. testlookup.suite wins, with
+        # testlookup.launch as the documented fallback so users who only set
+        # the launch label still get a meaningful run-level suite.
+        self._suite_name = (
+            ConfigLoader.get(cfg, "reporting.suite_name")
+            or ConfigLoader.get(cfg, "reporting.launch_name")
+        )
+        # testlookup.release / TESTLOOKUP_RELEASE — applied as the default
+        # release_name on every session() that doesn't pass one explicitly.
+        # The server falls back to the project's default release when this
+        # is left blank.
+        self._release_name = ConfigLoader.get(cfg, "reporting.release_name")
         self._batch_size = min(
             batch_size if batch_size != BATCH_SIZE else int(ConfigLoader.get(cfg, "reporting.batch_size", BATCH_SIZE)),
             MAX_BATCH_SIZE,
@@ -349,6 +366,8 @@ class TestLookupReporter:
         total_tests: Optional[int] = None,
         machine_id: Optional[str] = None,
         launch_name: Optional[str] = None,
+        suite_name: Optional[str] = None,
+        release_name: Optional[str] = None,
     ):
         """
         Async context manager that manages the full session lifecycle:
@@ -356,6 +375,13 @@ class TestLookupReporter:
           yield      → LiveSession object for recording events
           __aexit__  → flush remaining events + mark session complete
         """
+        # Per-session suite overrides the reporter-level default; otherwise
+        # inherit testlookup.suite > testlookup.launch resolved in __init__.
+        resolved_suite = suite_name if suite_name is not None else self._suite_name
+        # Same inheritance rule for release_name — explicit arg wins, otherwise
+        # testlookup.release config / TESTLOOKUP_RELEASE env. Server falls
+        # back to the project's default release when blank.
+        resolved_release = release_name if release_name is not None else self._release_name
         live = await self._create_session(
             build_number=build_number,
             branch=branch,
@@ -363,6 +389,8 @@ class TestLookupReporter:
             total_tests=total_tests,
             machine_id=machine_id,
             launch_name=launch_name,
+            suite_name=resolved_suite,
+            release_name=resolved_release,
         )
         try:
             yield live
@@ -372,6 +400,11 @@ class TestLookupReporter:
 
     async def _create_session(self, **kwargs) -> "LiveSession":
         """Register a new session with the server and return a LiveSession."""
+        # The session's resolved suite is consumed both as a payload field
+        # (server stamps LiveSession.suite_name / TestRun.primary_suite_name)
+        # and as the LiveSession default for record() calls. Pop early so we
+        # can pass it down to LiveSession without leaving it in payload twice.
+        suite_for_session = kwargs.pop("suite_name", None)
         payload: dict[str, Any] = {
             "project_id": self._project_id,
             "client_name": self._client_name,
@@ -379,6 +412,8 @@ class TestLookupReporter:
             "machine_id": kwargs.pop("machine_id") or socket.gethostname(),
         }
         payload.update({k: v for k, v in kwargs.items() if v is not None})
+        if suite_for_session is not None:
+            payload["suite_name"] = suite_for_session
 
         resp = await self._http.post("/api/v1/stream/sessions", json=payload)
         resp.raise_for_status()
@@ -396,6 +431,7 @@ class TestLookupReporter:
             base_url=self._base_url,
             batch_size=self._batch_size,
             batch_interval=self._batch_interval,
+            suite_name=suite_for_session,
         )
 
     async def _close_session(self, session_id: str) -> None:
@@ -430,10 +466,15 @@ class LiveSession:
         base_url: str,
         batch_size: int,
         batch_interval: float,
+        suite_name: Optional[str] = None,
     ) -> None:
         self.session_id = session_id
         self.session_token = session_token
         self.run_id = run_id
+        # Default suite applied to every record() event without an explicit
+        # suite_name kw — keeps test runs linked to a single user-configured
+        # suite identifier without per-test plumbing.
+        self._default_suite_name = suite_name
         self._http = http
         self._base_url = base_url
         self._batch_size = batch_size
@@ -485,7 +526,10 @@ class LiveSession:
             "duration_ms": duration_ms,
             "timestamp_ms": int(time.time() * 1_000),
         }
-        if suite_name:    event["suite_name"]  = suite_name
+        # Inherit the session-level default (resolved from testlookup.suite >
+        # testlookup.launch in _create_session) when caller didn't pass one.
+        effective_suite = suite_name if suite_name is not None else self._default_suite_name
+        if effective_suite: event["suite_name"]  = effective_suite
         if class_name:    event["class_name"]  = class_name
         if error:         event["error_message"] = error
         if stack_trace:   event["stack_trace"] = stack_trace
@@ -697,6 +741,14 @@ class LiveStream:
         resolved_url = base_url or ConfigLoader.get(cfg, "server.url")
         resolved_key = api_key or ConfigLoader.get(cfg, "auth.api_key") or os.environ.get("TESTLOOKUP_API_KEY")
         resolved_launch = launch_name or ConfigLoader.get(cfg, "reporting.launch_name")
+        # Run-level suite identifier: testlookup.suite wins, testlookup.launch
+        # is the documented fallback. Stamped on every record() that doesn't
+        # supply its own suite_name and sent on the first batch so the server
+        # populates LiveSession.suite_name / TestRun.primary_suite_name.
+        resolved_suite = (
+            ConfigLoader.get(cfg, "reporting.suite_name")
+            or resolved_launch
+        )
         resolved_build = build_number or ConfigLoader.get(cfg, "ci.build_number")
         resolved_branch = branch or ConfigLoader.get(cfg, "ci.branch")
         resolved_commit = commit_hash or ConfigLoader.get(cfg, "ci.commit_hash")
@@ -756,7 +808,10 @@ class LiveStream:
         if machine_id is not None:         self._meta["machine_id"] = machine_id
         if release_name is not None:       self._meta["release_name"] = release_name
         if resolved_launch is not None:    self._meta["launch_name"] = resolved_launch
+        if resolved_suite is not None:     self._meta["suite_name"] = resolved_suite
         if metadata is not None:           self._meta["metadata"] = metadata
+        # Cached for record() default — see LiveStream.record below.
+        self._default_suite_name = resolved_suite
 
         if resolved_verify is False:
             logger.warning(
@@ -841,7 +896,10 @@ class LiveStream:
             "duration_ms": duration_ms,
             "timestamp_ms": int(time.time() * 1_000),
         }
-        if suite_name:    event["suite_name"]  = suite_name
+        # Inherit the run-level suite default (testlookup.suite > testlookup.launch)
+        # when caller didn't pass an explicit suite_name.
+        effective_suite = suite_name if suite_name is not None else self._default_suite_name
+        if effective_suite: event["suite_name"]  = effective_suite
         if class_name:    event["class_name"]  = class_name
         if error:         event["error_message"] = error
         if stack_trace:   event["stack_trace"] = stack_trace

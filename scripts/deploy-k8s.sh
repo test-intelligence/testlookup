@@ -168,6 +168,58 @@ kubectl -n "$NAMESPACE" rollout status deployment/testlookup-backend --timeout=3
 echo "==> Waiting for frontend rollout..."
 kubectl -n "$NAMESPACE" rollout status deployment/testlookup-frontend --timeout=180s
 
+# ── Create initial admin user ────────────────────────────────────────────────
+# Internal/private deployment: bake in a known default admin so operators can
+# log in immediately after a fresh deploy without a separate manual step. The
+# password is rotatable from the UI (Settings → Users) or via getUser.py.
+# Override with env vars: ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAIL.
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin@2026!}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@testlookup.local}"
+ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
+
+echo "==> Creating initial admin user (idempotent)..."
+BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+ADMIN_RAN=0
+if [[ -n "$BACKEND_POD" ]]; then
+  ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
+    env \
+      ADMIN_USERNAME="$ADMIN_USERNAME" \
+      ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+      ADMIN_EMAIL="$ADMIN_EMAIL" \
+      ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
+      python < scripts/createAdmin.py 2>&1) && ADMIN_RAN=1 || true
+  echo "$ADMIN_OUTPUT"
+  if [[ $ADMIN_RAN -ne 1 ]]; then
+    echo "WARN: createAdmin.py failed. Run manually once the backend is ready:" >&2
+    echo "      kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\" >&2
+    echo "        env ADMIN_PASSWORD='$ADMIN_PASSWORD' python < scripts/createAdmin.py" >&2
+  fi
+else
+  echo "WARN: backend pod not found — skipping admin user creation." >&2
+fi
+
+if [[ $ADMIN_RAN -eq 1 ]]; then
+  cat <<BANNER
+
+╔══════════════════════════════════════════════════════╗
+║  ADMIN LOGIN — TestLookup ($CLOUD)
+╠══════════════════════════════════════════════════════╣
+  Username: $ADMIN_USERNAME
+  Password: $ADMIN_PASSWORD
+  Email:    $ADMIN_EMAIL
+╚══════════════════════════════════════════════════════╝
+
+  Rotate the password after first login:
+    Settings → Users → admin → Reset password
+  Or from the CLI:
+    kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\
+      env ADMIN_PASSWORD='<new>' python < scripts/getUser.py
+
+BANNER
+fi
+
 echo ""
 echo "==> Deploy complete."
 echo "    Pods:      kubectl -n $NAMESPACE get pods"

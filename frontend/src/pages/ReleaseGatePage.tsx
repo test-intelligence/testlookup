@@ -7,6 +7,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import CriticalityMatrix from '@/components/ai/CriticalityMatrix'
@@ -262,7 +263,11 @@ export default function ReleaseGatePage() {
         title="Release Gate"
         subtitle={`Build ${decision.build_number ?? runId} — AI-powered go/no-go assessment`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <SuiteBadge
+              primary={(decision as unknown as { primary_suite_name?: string | null; suite_names?: string[] | null }).primary_suite_name}
+              all={(decision as unknown as { suite_names?: string[] | null }).suite_names}
+            />
             <button
               onClick={async () => {
                 const { downloadPdf } = await import('@/services/reportExportService')

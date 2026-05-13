@@ -47,19 +47,24 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useRuns } from '@/hooks/useRuns'
+import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
 
 // ── Window picker ──────────────────────────────────────────────────────────
-const WINDOWS = [6, 14, 30, 90, 0] as const  // 0 = "All time"
+// 1 = last 24 hours, 0 = all time.
+const WINDOWS = [1, 6, 14, 30, 90, 0] as const
 type Window = (typeof WINDOWS)[number]
 const WINDOW_KEY = 'tl.runs.window'
 
 const WINDOW_LABELS: Record<Window, string> = {
+  1:  'Last 24 hours',
   6:  'Last 6 days',
   14: 'Last 14 days',
   30: 'Last 30 days',
@@ -984,6 +989,8 @@ function ClusterRow({
 function RunsTable({
   runs, primarySignature, selectedIds, setSelectedIds, onTrigger, onDeep,
   isQaEngineer,
+  page, pages, total, onPageChange,
+  datetimeSortDir, onToggleDatetimeSort,
 }: {
   runs: TestRun[]
   primarySignature: string | null
@@ -992,6 +999,13 @@ function RunsTable({
   onTrigger: (id: string) => void
   onDeep: (id: string) => void
   isQaEngineer: boolean
+  /** Pagination props — parent computes pages from full ``runs.length``. */
+  page: number
+  pages: number
+  total: number
+  onPageChange: (p: number) => void
+  datetimeSortDir: 'asc' | 'desc'
+  onToggleDatetimeSort: () => void
 }) {
   const allSelected = runs.length > 0 && runs.every(r => selectedIds.has(r.id))
   const someSelected = runs.some(r => selectedIds.has(r.id))
@@ -1010,7 +1024,7 @@ function RunsTable({
 
   return (
     <CardShell
-      title={<>Runs <span className="text-[11.5px] text-[var(--color-text-muted)] font-normal ml-2"><strong>{runs.length}</strong> in window · sorted by Started ↓</span></>}
+      title={<>Runs <span className="text-[11.5px] text-[var(--color-text-muted)] font-normal ml-2"><strong>{total}</strong> in window · sorted by Started {datetimeSortDir === 'desc' ? '↓' : '↑'} · showing {runs.length} on this page</span></>}
       rightSlot={
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11.5px]">{selectedCount} selected</span>
@@ -1031,8 +1045,11 @@ function RunsTable({
         </div>
       }
     >
+      {/* Wide table (10 cols) — force natural width with min-w so horizontal
+          scroll kicks in cleanly on narrow viewports instead of columns
+          getting squeezed and clipped to the right of the visible area. */}
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px]">
+        <table className="text-[12.5px]" style={{ minWidth: 1180, width: '100%' }}>
           <thead>
             <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
               <th style={{ width: 32, padding: '8px 12px' }}>
@@ -1044,14 +1061,19 @@ function RunsTable({
                   aria-label="Select all visible runs"
                 />
               </th>
-              <ThSort label="Run ID" />
               <ThSort label="Build" />
-              <Th label="Suite" />
+              <Th label="Test Suite" />
               <Th label="Signature" />
               <Th label="Status" />
               <Th label="Tests" />
               <ThSort label="Pass rate" />
-              <ThSort label="Started" sortDir="↓" active />
+              <ThSort
+                label="Started"
+                sortDir={datetimeSortDir === 'desc' ? '↓' : '↑'}
+                active
+                onClick={onToggleDatetimeSort}
+              />
+              <Th label="End" />
               <Th label="Actions" align="right" />
             </tr>
           </thead>
@@ -1088,14 +1110,19 @@ function RunsTable({
                       aria-label={`Select #${r.build_number}`}
                     />
                   </td>
-                  <td className="font-mono text-[11.5px] text-[var(--color-text-secondary)]" style={{ padding: '8px 12px' }}>
-                    {r.id.slice(0, 8)}
-                  </td>
+                  {/* Build column links to the run detail page — the
+                      previous short run-id cell was redundant and removed. */}
                   <td className="font-mono text-[12.5px] font-semibold" style={{ padding: '8px 12px' }}>
-                    #{String(r.build_number)}
+                    <Link to={`/runs/${r.id}`} className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline">
+                      #{String(r.build_number)}
+                    </Link>
                   </td>
                   <td style={{ padding: '8px 12px' }}>
-                    <SuiteBadge primary={r.primary_suite_name} all={r.suite_names} />
+                    <SuiteBadge
+                      primary={r.primary_suite_name}
+                      all={r.suite_names}
+                      linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+                    />
                   </td>
                   <td style={{ padding: '8px 12px' }}>
                     <span
@@ -1144,8 +1171,19 @@ function RunsTable({
                       {Number(r.pass_rate ?? 0).toFixed(1)}%
                     </span>
                   </td>
-                  <td className="text-[var(--color-text-muted)]" style={{ padding: '8px 12px' }} title={new Date(r.created_at).toLocaleString()}>
-                    {relativeTime(r.created_at)}
+                  <td
+                    className="text-[var(--color-text-muted)] whitespace-nowrap tabular-nums"
+                    style={{ padding: '8px 12px' }}
+                    title={relativeTime(r.start_time ?? r.created_at)}
+                  >
+                    {new Date(r.start_time ?? r.created_at).toLocaleString()}
+                  </td>
+                  <td
+                    className="text-[var(--color-text-muted)] whitespace-nowrap tabular-nums"
+                    style={{ padding: '8px 12px' }}
+                    title={r.end_time ? relativeTime(r.end_time) : 'Run has not finished yet'}
+                  >
+                    {r.end_time ? new Date(r.end_time).toLocaleString() : '—'}
                   </td>
                   <td style={{ padding: '8px 12px', textAlign: 'right' }}>
                     <div className="inline-flex items-center gap-1.5">
@@ -1188,6 +1226,7 @@ function RunsTable({
           </tbody>
         </table>
       </div>
+      <Pagination page={page} pages={pages} total={total} onChange={onPageChange} />
     </CardShell>
   )
 }
@@ -1210,10 +1249,13 @@ function Th({ label, align }: { label: string; align?: 'right' }) {
   )
 }
 
-function ThSort({ label, sortDir, active }: { label: string; sortDir?: '↑' | '↓'; active?: boolean }) {
+function ThSort({
+  label, sortDir, active, onClick,
+}: { label: string; sortDir?: '↑' | '↓'; active?: boolean; onClick?: () => void }) {
   return (
     <th
-      aria-sort={active ? 'descending' : undefined}
+      aria-sort={active ? (sortDir === '↑' ? 'ascending' : 'descending') : undefined}
+      onClick={onClick}
       style={{
         padding: '8px 12px',
         textAlign: 'left',
@@ -1222,7 +1264,8 @@ function ThSort({ label, sortDir, active }: { label: string; sortDir?: '↑' | '
         fontSize: 10.5,
         textTransform: 'uppercase',
         letterSpacing: 'var(--tracking-wider)',
-        cursor: 'pointer',
+        cursor: onClick ? 'pointer' : 'default',
+        userSelect: 'none',
       }}
     >
       {label} <span aria-hidden className="ml-1">{sortDir ?? '↕'}</span>
@@ -1531,21 +1574,54 @@ export default function RunsPage() {
 
   const [days, setDays] = useState<Window>(() => {
     const saved = Number(localStorage.getItem(WINDOW_KEY))
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 6
+    // Default: last 24h. Previously-saved choices still take precedence so
+    // existing users don't have their window reset.
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
   })
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
+  const [selectedSuite, setSelectedSuite] = useState('')
   const [allPages, setAllPages] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  // Client-side table pagination. Analytics widgets (signature clustering,
+  // build velocity, KPIs) continue to consume the full fetched window so
+  // their derived metrics stay accurate; only the table view is sliced.
+  const TABLE_PAGE_SIZE = 25
+  const [tablePage, setTablePage] = useState(1)
+  // Reset to page 1 whenever the filters change so users aren't stuck on
+  // an empty page after narrowing the window.
+  useEffect(() => { setTablePage(1) }, [days, statusFilter, allPages, selectedSuite])
+  useEffect(() => { setSelectedIds(new Set()) }, [days, statusFilter, selectedSuite])
+
+  const { options: suiteOptions } = useSuiteOptions(days || 0)
 
   const { data, isLoading } = useRuns({
     page: 1,
-    size: 50,
+    // ``allPages`` (existing checkbox) widens the fetch when the user wants
+    // to see further back; default keeps the 50-run window for analytics.
+    size: allPages ? 500 : 50,
     days: days || undefined,
     ...(statusFilter && { status: statusFilter }),
+    ...(selectedSuite && { suite_name: selectedSuite }),
   })
   const runs = useMemo<TestRun[]>(() => (data?.items ?? []) as TestRun[], [data?.items])
+  // Client-side sort by run datetime (created_at). The backend already returns
+  // desc order, so 'desc' here is a no-op until the user clicks. Sorting is
+  // applied to the full fetched page set *before* table-pagination, so
+  // toggling the direction reorders every row currently in scope.
+  const [datetimeSortDir, setDatetimeSortDir] = useState<'asc' | 'desc'>('desc')
+  const sortedRuns = useMemo<TestRun[]>(() => {
+    const mul = datetimeSortDir === 'desc' ? -1 : 1
+    return [...runs].sort((a, b) =>
+      mul * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+    )
+  }, [runs, datetimeSortDir])
+  const tableTotalPages = Math.max(1, Math.ceil(sortedRuns.length / TABLE_PAGE_SIZE))
+  const tableRuns = useMemo<TestRun[]>(() => {
+    const start = (tablePage - 1) * TABLE_PAGE_SIZE
+    return sortedRuns.slice(start, start + TABLE_PAGE_SIZE)
+  }, [sortedRuns, tablePage])
   const model = useMemo(() => buildPipelineModel(runs), [runs])
   const verdict = pickVerdict(model)
   const ribbonStages = useMemo(() => buildRibbon(model), [model])
@@ -1741,7 +1817,7 @@ export default function RunsPage() {
   }
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1320, padding: '24px 28px 80px' }}>
+    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
@@ -1750,6 +1826,13 @@ export default function RunsPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Jenkins builds for</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
+            {selectedSuite && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Suite</span>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>{model.totalRuns} build{model.totalRuns === 1 ? '' : 's'} in window</span>
             <span aria-hidden>·</span>
@@ -1792,6 +1875,12 @@ export default function RunsPage() {
             value={statusFilter}
             onChange={(v) => setStatusFilter(v as StatusFilter)}
             options={STATUS_FILTERS.map(s => ({ value: s, label: STATUS_LABELS[s] }))}
+          />
+          <SuiteFilterSelect
+            value={selectedSuite}
+            onChange={setSelectedSuite}
+            options={suiteOptions}
+            allLabel="All suites"
           />
         </div>
       </header>
@@ -1877,6 +1966,28 @@ export default function RunsPage() {
 
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
+          {/* Runs table sits above the failure-signature card so users land on
+              the raw list of builds first and the signature clustering is the
+              secondary, narrative summary below it. Table is paginated to
+              TABLE_PAGE_SIZE rows; analytics still derive from the full set. */}
+          <RunsTable
+            runs={tableRuns}
+            primarySignature={model.primaryCluster?.signature ?? null}
+            selectedIds={selectedIds}
+            setSelectedIds={setSelectedIds}
+            onTrigger={handleTrigger}
+            onDeep={handleDeep}
+            isQaEngineer={isQaEngineer}
+            page={tablePage}
+            pages={tableTotalPages}
+            total={runs.length}
+            onPageChange={setTablePage}
+            datetimeSortDir={datetimeSortDir}
+            onToggleDatetimeSort={() => {
+              setDatetimeSortDir(d => d === 'desc' ? 'asc' : 'desc')
+              setTablePage(1)
+            }}
+          />
           {model.primaryCluster && (
             <SignatureClusterCard
               primaryCluster={model.primaryCluster}
@@ -1885,15 +1996,6 @@ export default function RunsPage() {
               onJumpToRow={onJumpToRow}
             />
           )}
-          <RunsTable
-            runs={runs}
-            primarySignature={model.primaryCluster?.signature ?? null}
-            selectedIds={selectedIds}
-            setSelectedIds={setSelectedIds}
-            onTrigger={handleTrigger}
-            onDeep={handleDeep}
-            isQaEngineer={isQaEngineer}
-          />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <LastGreenCallout model={model} onBisect={() => toast('Bisect modal — coming in Phase 2', { icon: '🪓' })} />

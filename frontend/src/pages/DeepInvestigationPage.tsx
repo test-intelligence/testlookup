@@ -50,13 +50,16 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useFailureClusters, useDeepFindings } from '@/hooks/useDeepInvestigation'
 import { useRuns } from '@/hooks/useRuns'
+import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { deepInvestigationService } from '@/services/deepInvestigationService'
 import type { FailureCluster, DeepFinding } from '@/types/deep-investigation'
 import type { TestRun } from '@/types/runs'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 
 // ── Verdict ──────────────────────────────────────────────────────────────
 type Verdict = 'READY' | 'NO_FAILURES' | 'NO_SOURCES' | 'RUNNING' | 'FAILED' | 'PENDING'
@@ -261,6 +264,10 @@ function PrimaryBtn({
 
 // ── Page model ──────────────────────────────────────────────────────────
 interface DeepModel {
+  // Pass-through of the focused TestRun so the header can render its
+  // suite badge alongside the project label without re-threading the
+  // whole run through every consumer.
+  focusedRun: TestRun | null
   eligibleFailures: number
   windowLabel: string
   windowSinceCommit: string | null
@@ -300,6 +307,8 @@ interface ProposedCluster {
 interface PastRun {
   runId: string
   runIdLabel: string
+  suiteLabel: string | null
+  suiteNames: string[] | null
   whenRel: string
   whenAbs: string
   failures: number
@@ -390,6 +399,8 @@ function buildModel({
     return {
       runId: r.id,
       runIdLabel: r.id.slice(0, 8),
+      suiteLabel: r.primary_suite_name ?? r.suite_names?.[0] ?? null,
+      suiteNames: r.suite_names ?? null,
       whenRel: ageRel,
       whenAbs: new Date(r.created_at).toLocaleDateString(),
       failures: r.failed_tests ?? 0,
@@ -440,6 +451,7 @@ function buildModel({
   const spendBudgetDollars = 40
 
   return {
+    focusedRun,
     eligibleFailures,
     windowLabel: settings.window,
     // Backend's TestRun model doesn't carry commit_hash directly today;
@@ -1049,7 +1061,7 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
         <table className="w-full text-[12.5px]">
           <thead>
             <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-              <Th label="Run" />
+              <Th label="Test Suite" />
               <Th label="Failures" align="right" />
               <Th label="Clusters" align="right" />
               <Th label="Defects" align="right" />
@@ -1088,10 +1100,10 @@ function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
       onClick={onOpen}
     >
       <td style={{ padding: '10px 12px' }}>
-        <div className="flex flex-col">
-          <span className="text-[12.5px] text-[var(--color-text)]">{row.whenRel}</span>
-          <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">
-            {row.whenAbs} · <code className="font-mono text-[10.5px]">{row.runIdLabel}</code>
+        <div className="flex flex-col min-w-0">
+          <SuiteBadge primary={row.suiteLabel} all={row.suiteNames} className="self-start max-w-full" />
+          <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums mt-1">
+            {row.whenRel} · {row.whenAbs}
           </span>
         </div>
       </td>
@@ -1383,10 +1395,12 @@ export default function DeepInvestigationPage() {
   const { isQaEngineer } = usePermissions()
 
   const [settings, setSettings] = useState<RunSettings>(loadSettings)
+  const [selectedSuite, setSelectedSuite] = useState('')
+  const { options: suiteOptions } = useSuiteOptions(0)
   useEffect(() => { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)) }, [settings])
 
   // Recent runs to populate the past-investigations table + auto-pick a focus.
-  const { data: recentRuns, isLoading: runsLoading } = useRuns({ page: 1, size: 6 })
+  const { data: recentRuns, isLoading: runsLoading } = useRuns({ page: 1, size: 6, days: 0, ...(selectedSuite && { suite_name: selectedSuite }) })
   const recentItems = useMemo<TestRun[]>(() => (recentRuns?.items ?? []) as TestRun[], [recentRuns])
 
   // Auto-route to the most recent run if no runId is in the URL — preserved
@@ -1398,6 +1412,12 @@ export default function DeepInvestigationPage() {
   }, [runId, recentItems, runsLoading, project, navigate])
 
   const focusedRun = recentItems.find(r => r.id === runId) ?? null
+
+  useEffect(() => {
+    if (selectedSuite && runId && recentItems.length > 0 && !focusedRun && !runsLoading) {
+      navigate(`/deep-investigate/${recentItems[0].id}`, { replace: true })
+    }
+  }, [selectedSuite, runId, recentItems, focusedRun, runsLoading, navigate])
 
   const { data: clusters = [] } = useFailureClusters(runId ?? null)
   const { data: findings = [] } = useDeepFindings(runId ?? null)
@@ -1493,7 +1513,7 @@ export default function DeepInvestigationPage() {
   const onOpenPastRun = (rid: string) => navigate(`/deep-investigate/${rid}`)
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1320, padding: '24px 28px 80px' }}>
+    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
@@ -1502,6 +1522,19 @@ export default function DeepInvestigationPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Semantic clustering &amp; multi-source root cause for</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
+            {selectedSuite && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Suite</span>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+              </>
+            )}
+            {model.focusedRun && (
+              <>
+                <span aria-hidden>·</span>
+                <SuiteBadge primary={model.focusedRun.primary_suite_name} all={model.focusedRun.suite_names} />
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>{model.eligibleFailures} failures ready</span>
             <span aria-hidden>·</span>
@@ -1529,6 +1562,12 @@ export default function DeepInvestigationPage() {
             <Settings className="h-3.5 w-3.5" />
             Configure
           </GhostBtn>
+          <SuiteFilterSelect
+            value={selectedSuite}
+            onChange={setSelectedSuite}
+            options={suiteOptions}
+            allLabel="All suites"
+          />
           <PrimaryBtn
             large
             onClick={onRunAll}

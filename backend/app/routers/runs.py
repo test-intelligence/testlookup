@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_run_access
@@ -20,10 +20,11 @@ router = APIRouter(prefix="/api/v1/runs", tags=["Test Runs"])
 async def list_runs(
     project_id: str | None = None,
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    size: int = Query(20, ge=1, le=500),
     status: str | None = None,
     release_id: str | None = None,
     days: int | None = Query(6, ge=0, le=365, description="Show runs from last N days (0 = all time)"),
+    suite_name: str | None = Query(None, min_length=1, description="Filter runs by suite name, case-insensitive"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -35,9 +36,28 @@ async def list_runs(
         if accessible is not None and not accessible:
             return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
         # Pass accessible set to service for filtering (None = admin, no filter)
-        items, total, pages = await list_project_runs(db, project_id, page, size, status, release_id, accessible_project_ids=accessible, days=effective_days)
+        items, total, pages = await list_project_runs(
+            db,
+            project_id,
+            page,
+            size,
+            status,
+            release_id,
+            accessible_project_ids=accessible,
+            days=effective_days,
+            suite_name=suite_name,
+        )
     else:
-        items, total, pages = await list_project_runs(db, project_id, page, size, status, release_id, days=effective_days)
+        items, total, pages = await list_project_runs(
+            db,
+            project_id,
+            page,
+            size,
+            status,
+            release_id,
+            days=effective_days,
+            suite_name=suite_name,
+        )
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
 
 
@@ -50,6 +70,7 @@ async def list_failed_run_ids(
         False,
         description="When true, exclude runs that already have an active or recent agent pipeline (within the last 2h, matching the Celery dedup TTL)",
     ),
+    suite_name: str | None = Query(None, min_length=1, description="Filter failed runs by suite name, case-insensitive"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -103,6 +124,20 @@ async def list_failed_run_ids(
             .scalar_subquery()
         )
         stmt = stmt.where(TestRun.id.not_in(recent_pipelines))
+
+    suite_key = (suite_name or "").strip().lower()
+    if suite_key:
+        stmt = stmt.where(
+            or_(
+                func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "Unknown Suite"))) == suite_key,
+                select(TestCase.id)
+                    .where(
+                        TestCase.test_run_id == TestRun.id,
+                        func.lower(func.trim(func.coalesce(TestCase.suite_name, "Unknown Suite"))) == suite_key,
+                    )
+                    .exists(),
+            )
+        )
 
     stmt = stmt.order_by(TestRun.created_at.desc()).limit(limit + 1)
 

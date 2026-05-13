@@ -234,7 +234,7 @@ export default function RunDetailPage() {
 
   const { data: run } = useRun(runId)
   const { data, isLoading, error } = useTestCases(runId, {
-    page, size: 50,
+    page, size: 25,
     ...(statusFilter && { status: statusFilter }),
     ...(suiteFilter && { suite: suiteFilter }),
   })
@@ -386,20 +386,71 @@ export default function RunDetailPage() {
             <span>Failed to load test cases — {(error as Error)?.message ?? 'server error'}</span>
           </div>
         ) : !data?.items?.length ? (
-          <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3">
-            {run?.trigger_source === 'live_stream' ? (
-              <>
-                <p>Live test results are being processed. This may take a few moments.</p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
-                >
-                  Refresh page
-                </button>
-              </>
-            ) : (
-              <p>No test cases found for this run.</p>
-            )}
+          <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3 px-6 text-center max-w-2xl mx-auto">
+            {(() => {
+              const isLive = run?.trigger_source === 'live_stream'
+              const totalReported = run?.total_tests ?? 0
+              const hasAggregates = totalReported > 0
+              const hasActiveFilter = Boolean(statusFilter || suiteFilter)
+
+              if (hasActiveFilter) {
+                return (
+                  <>
+                    <p>No test cases match the current filters{statusFilter && ` (status: ${statusFilter})`}{suiteFilter && ` (suite: ${suiteFilter})`}.</p>
+                    <button
+                      onClick={() => { setStatusFilter(''); setSuiteFilter(''); setPage(1) }}
+                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
+                    >
+                      Clear filters
+                    </button>
+                  </>
+                )
+              }
+
+              if (isLive && hasAggregates) {
+                // The run record carries aggregate counts from the live state
+                // hash (HINCRBY) but persist_live_session didn't materialise
+                // per-test rows — usually the Redis event buffer was empty
+                // by the time it ran, or the task hit an error after a retry.
+                // Tell the user honestly so they don't keep hitting refresh.
+                return (
+                  <>
+                    <p className="text-[var(--color-text)]">
+                      This live run reported <strong>{totalReported}</strong> test{totalReported === 1 ? '' : 's'}
+                      {' '}({run?.passed_tests ?? 0} passed, {run?.failed_tests ?? 0} failed
+                      {(run?.skipped_tests ?? 0) > 0 && `, ${run?.skipped_tests} skipped`}
+                      {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}),
+                      but per-test details weren't persisted.
+                    </p>
+                    <p className="text-xs">
+                      The SDK's event buffer was cleared before the persistence task ran
+                      (or the task didn't complete). Aggregate counts above are accurate;
+                      individual test names and statuses are not recoverable for this run.
+                    </p>
+                    <p className="text-xs">
+                      Re-run the suite, or re-ingest the results as a file upload to get
+                      per-test data.
+                    </p>
+                  </>
+                )
+              }
+
+              if (isLive) {
+                return (
+                  <>
+                    <p>Live test results are still being processed. This usually takes a few seconds after the session closes.</p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
+                    >
+                      Refresh page
+                    </button>
+                  </>
+                )
+              }
+
+              return <p>No test cases found for this run.</p>
+            })()}
           </div>
         ) : (
           <>

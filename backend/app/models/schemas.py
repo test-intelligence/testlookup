@@ -1,7 +1,7 @@
 """Pydantic v2 request/response schemas for all API endpoints."""
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -10,7 +10,6 @@ from app.models.postgres import (
     IdentityEventType,
     LaunchStatus,
     NotificationChannel,
-    Severity,
     SSOEnforcementMode,
     SSOProviderType,
     TestStatus,
@@ -106,6 +105,7 @@ class ProjectUpdate(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     tags: Optional[List[str]] = None
+    manager_user_id: Optional[uuid.UUID] = None  # migration 0076 — default suite owner
 
 
 class ProjectResponse(TimestampMixin):
@@ -122,6 +122,7 @@ class ProjectResponse(TimestampMixin):
     end_date: Optional[datetime] = None
     tags: Optional[List[Any]] = None
     is_active: bool
+    manager_user_id: Optional[uuid.UUID] = None  # migration 0076
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -172,9 +173,18 @@ class TestCaseSummary(BaseModel):
     class_name: Optional[str] = None
     status: TestStatus
     duration_ms: Optional[int] = None
-    severity: Optional[Severity] = None
+    # severity / failure_category are stored as String(20) in Postgres, not as
+    # real enums. Historical rows (seeded mock data, raw Allure labels) can
+    # contain lowercase strings like "blocker"/"normal"/"minor" that don't
+    # match the strict Severity/FailureCategory enum values. With the old
+    # Optional[Severity] / Optional[FailureCategory] types, Pydantic v2 would
+    # 422 the entire list response and the run detail page would show an
+    # empty test case table. Falling back to plain strings lets the response
+    # surface what's actually in the database; the frontend already treats
+    # these columns as strings.
+    severity: Optional[str] = None
     feature: Optional[str] = None
-    failure_category: Optional[FailureCategory] = None
+    failure_category: Optional[str] = None
     has_attachments: bool = False
     created_at: datetime
 
@@ -1132,6 +1142,74 @@ class SuiteSyncSummary(BaseModel):
     unchanged_count: int = 0
 
 
+# ── Test Suite & Canonical Test Case Schemas (Phase 1, migration 0075) ──────
+
+
+class TestSuiteCreate(BaseModel):
+    project_id: uuid.UUID
+    name: str = Field(..., min_length=1, max_length=500)
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class TestSuiteUpdate(BaseModel):
+    """None = keep existing value."""
+    name: Optional[str] = Field(None, min_length=1, max_length=500)
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class TestSuiteResponse(TimestampMixin):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    is_default: bool
+    tags: Optional[List[str]] = None
+    test_case_count: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestSuiteListResponse(BaseModel):
+    items: List[TestSuiteResponse]
+    total: int
+
+
+class CanonicalTestCaseResponse(TimestampMixin):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    test_suite_id: uuid.UUID
+    test_suite_name: Optional[str] = None
+    test_fingerprint: str
+    test_name: str
+    class_name: Optional[str] = None
+    status: str
+    source: str
+    first_seen_run_id: Optional[uuid.UUID] = None
+    last_seen_run_id: Optional[uuid.UUID] = None
+    # Per-run TestCase.id matching this canonical's fingerprint in the
+    # last_seen_run. Surfaced so the suite-detail UI can deep-link to
+    # ``/runs/<run>/tests/<case>``. ``None`` when unresolved (e.g. the run was
+    # GC'd) — UI then falls back to the run detail page.
+    last_seen_test_case_id: Optional[uuid.UUID] = None
+    deleted_at_run_id: Optional[uuid.UUID] = None
+    managed_test_case_id: Optional[uuid.UUID] = None
+    review_tag: Optional[str] = None
+    tags: Optional[List[str]] = None
+    run_count: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CanonicalTestCaseListResponse(BaseModel):
+    items: List[CanonicalTestCaseResponse]
+    total: int
+
+
+class CanonicalTestCaseLinkRequest(BaseModel):
+    """Move a canonical test case to a different suite within the same project."""
+    test_suite_id: uuid.UUID
+
+
 class AIGenerateTestCasesRequest(BaseModel):
     project_id: uuid.UUID
     requirements: str = Field(..., min_length=3)
@@ -1212,8 +1290,16 @@ class AITaskStatusResponse(BaseModel):
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
 class LiveSessionCreate(BaseModel):
-    """Request body to register a new live execution session."""
-    project_id: uuid.UUID
+    """Request body to register a new live execution session.
+
+    ``project_id`` accepts either a project UUID *or* a human-readable project
+    name (case-insensitive exact match). The server resolves it to a real UUID
+    in ``stream_service.create_session``. Keeping the field name ``project_id``
+    preserves wire compatibility with SDK callers that already map their
+    ``testlookup.project`` config (conventionally a name, à la
+    ``rp.project``) onto this field.
+    """
+    project_id: str = Field(..., min_length=1, max_length=255)
     client_name: str = Field(..., min_length=1, max_length=255)
     machine_id: Optional[str] = Field(None, max_length=255)
     build_number: Optional[str] = Field(None, max_length=100)
@@ -1229,6 +1315,11 @@ class LiveSessionCreate(BaseModel):
     # When present this is what gets shown to humans in Live Execution and
     # Runs columns; when null the UI falls back to build_number.
     launch_name: Optional[str] = Field(None, max_length=255)
+    # Run-level suite identifier (testlookup.suite, falling back to
+    # testlookup.launch on the SDK side). Propagated to LiveSession.suite_name
+    # and TestRun.primary_suite_name so every page that links to the run
+    # shows a single, user-configured suite label.
+    suite_name: Optional[str] = Field(None, max_length=500)
 
 
 class LiveSessionResponse(BaseModel):
@@ -1373,6 +1464,9 @@ class LiveSessionState(BaseModel):
     completed_at: Optional[str] = None
     release_name: Optional[str] = None
     launch_name: Optional[str] = None
+    # Run-level suite identifier (testlookup.suite > testlookup.launch).
+    # Surfaced by /live's UI as a dedicated Suite column.
+    suite_name: Optional[str] = None
 
 
 class ActiveSessionsResponse(BaseModel):
@@ -3021,6 +3115,35 @@ class RunCompareSummary(BaseModel):
     duration_ms: Optional[int] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    primary_suite_name: Optional[str] = None
+    suite_names: Optional[List[str]] = None
+
+
+class RunCompareSelection(BaseModel):
+    mode: Literal["latest_vs_previous", "explicit"] = "explicit"
+    scope: Literal["run", "suite"] = "run"
+    suite_name: Optional[str] = None
+    selection_reason: str = ""
+    project_id: uuid.UUID
+    branch: Optional[str] = None
+    branch_mismatch: bool = False
+    release_name: Optional[str] = None
+
+
+class RunCompareAIReport(BaseModel):
+    status: Literal["ready", "queued", "failed"] = "ready"
+    executive_summary: str = ""
+    markdown_report: str = ""
+    risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "LOW"
+    key_differences: List[str] = Field(default_factory=list)
+    new_risks: List[str] = Field(default_factory=list)
+    resolved_risks: List[str] = Field(default_factory=list)
+    duration_concerns: List[str] = Field(default_factory=list)
+    recommended_actions: List[str] = Field(default_factory=list)
+    confidence: int = 0
+    confidence_reason: str = ""
+    fallback_used: bool = False
+    message: Optional[str] = None
 
 
 class RunCompareTestDelta(BaseModel):
@@ -3051,6 +3174,10 @@ class RunCompareTestDelta(BaseModel):
 class RunCompareResponse(BaseModel):
     left: RunCompareSummary
     right: RunCompareSummary
+    scope: Literal["run", "suite"] = "run"
+    suite_name: Optional[str] = None
+    selection: Optional[RunCompareSelection] = None
+    ai_report: Optional[RunCompareAIReport] = None
     # Aggregate deltas (right - left).
     delta_total: int = 0
     delta_passed: int = 0
@@ -3076,3 +3203,63 @@ class RunCompareResponse(BaseModel):
     # Detailed per-test diff — capped at 500 entries.
     test_deltas: List[RunCompareTestDelta] = Field(default_factory=list)
     truncated: bool = False
+
+
+# ── Suite Owners & Reviews (migration 0076) ─────────────────────────────────
+
+SuiteReviewStateLiteral = Literal["pending", "confirmed", "acknowledged", "review_later"]
+
+
+class SuiteOwnerUpdate(BaseModel):
+    """PUT body for setting/clearing a suite's explicit owner."""
+    owner_user_id: Optional[uuid.UUID] = None  # None clears the explicit owner
+
+
+class SuiteOwnerResponse(BaseModel):
+    project_id: uuid.UUID
+    suite_name: str
+    owner_user_id: Optional[uuid.UUID] = None
+    owner_email: Optional[str] = None
+    owner_full_name: Optional[str] = None
+    is_fallback: bool = False  # True when resolved owner is project.manager_user_id
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuiteReviewUpdate(BaseModel):
+    state: SuiteReviewStateLiteral
+    note: Optional[str] = Field(None, max_length=4000)
+
+
+class SuiteReviewResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    suite_name: str
+    test_run_id: uuid.UUID
+    state: str
+    note: Optional[str] = None
+    reviewer_user_id: Optional[uuid.UUID] = None
+    reviewer_email: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotifyTestOwnerRequest(BaseModel):
+    """POST body for /api/v1/analytics/notify-owner — fires an email at the
+    suite owner of the test that's been failing repeatedly."""
+    project_id: uuid.UUID
+    test_name: str = Field(..., min_length=1, max_length=1000)
+    days: int = Field(30, ge=1, le=365)
+    fail_count: Optional[int] = Field(None, ge=0, le=10_000)
+
+
+class NotifyTestOwnerResponse(BaseModel):
+    queued: bool
+    sent_to: Optional[str] = None
+    owner_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    is_fallback_owner: bool = False
+    # When ``queued=False`` this carries a user-readable reason
+    # ("Test not found in window", "Suite has no owner", etc.).
+    reason: Optional[str] = None

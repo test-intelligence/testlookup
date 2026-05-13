@@ -184,6 +184,27 @@
     --text-display-md: 28px;  /* run-intelligence verdict headline */
     --text-display-lg: 44px;  /* hero numeric — risk / health      */
     --text-stat-lg:    24px;  /* KPI strip values                   */
+
+    /* Compute-graph tokens for the /agents Direction-C redesign.
+       Names follow the design handoff (--bg-3, --border-strong, soft fills,
+       cyan + purple accents) so the components can keep the prototype's CSS
+       variable names with one indirection here. Surfaces / borders / fg map
+       to the existing --color-* / --status-* tokens above; only the missing
+       hues land below. */
+    --bg-3:           #232a35;
+    --border-strong:  #4a5564;
+    --fg-faint:       #4a525c;
+    --status-passed-bg-soft: rgba(63,185,80,0.14);
+    --status-failed-bg-soft: rgba(248,81,73,0.14);
+    --status-broken-bg-soft: rgba(210,153,34,0.14);
+    --color-purple:        #a371f7;
+    --color-purple-soft:   rgba(163,113,247,0.14);
+    --color-purple-strong: rgba(163,113,247,0.50);
+    --color-cyan:          #39c5cf;
+    --color-cyan-soft:     rgba(57,197,207,0.14);
+    /* Dotted background for the compute canvas — 24px-on-center grid. */
+    --pattern-compute-grid:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 1px) 0 0 / 24px 24px;
   }
 
   /* Typography scale — UI dense, optimised for data tables.

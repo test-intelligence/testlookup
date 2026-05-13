@@ -17,7 +17,7 @@
  * - SWR polling GET /api/v1/stream/active (5 s interval, 30 s when WS open)
  * - WebSocket   /ws/live/{projectId} (push updates, merges into local state)
  */
-import { Fragment, useState, useMemo, useCallback } from 'react'
+import { Fragment, useEffect, useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity,
@@ -47,8 +47,13 @@ import {
 import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useLiveExecution, LiveEvent } from '@/hooks/useLiveExecution'
+import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import Pagination from '@/components/ui/Pagination'
+import SuiteBadge from '@/components/ui/SuiteBadge'
+import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { suiteMatchesValue } from '@/utils/suiteFilters'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -97,6 +102,45 @@ function WsStatusBadge({ status }: { status: string }) {
       <Icon className="h-3.5 w-3.5" />
       {cfg.label}
     </span>
+  )
+}
+
+// ── Window picker ──────────────────────────────────────────────────────────
+// 1 = last 24h; the rest are day counts. Default 7 preserves the prior
+// hardcoded backend cutoff. Matches the picker shape used on /runs,
+// /overview, /trends, and /coverage so users have one mental model.
+const LIVE_WINDOWS = [1, 7, 14, 30] as const
+type LiveWindow = (typeof LIVE_WINDOWS)[number]
+
+function LiveWindowPicker({ value, onChange }: { value: LiveWindow; onChange: (w: LiveWindow) => void }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Completed sessions window"
+      className="flex items-center gap-0 p-0.5 rounded-md"
+      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+    >
+      {LIVE_WINDOWS.map(w => {
+        const active = value === w
+        return (
+          <button
+            key={w}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            onClick={() => onChange(w)}
+            className={clsx(
+              'px-2.5 py-0.5 text-[11px] font-medium tabular-nums rounded-sm transition-colors',
+              active
+                ? 'bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
+                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+            )}
+          >
+            {w === 1 ? '24h' : `${w}d`}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -590,14 +634,18 @@ export default function LiveExecutionPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   // In All Projects mode, pass undefined so polling returns all sessions
   const projectId = isAllProjects ? undefined : selectedProject?.id?.toString()
+  const [selectedSuite, setSelectedSuite] = useState('')
+  // Cutoff (in days) for completed sessions shown alongside the always-current
+  // active set. 1 = last 24 hours; 0 = no cutoff. Default 1 (last 24h) for
+  // parity with Overview/Runs/Trends/Coverage — widen via the picker.
+  const [days, setDays] = useState<LiveWindow>(1)
 
   const {
     sessions,
-    runningSessions,
-    recentEvents,
+    recentEvents: rawRecentEvents,
     wsStatus,
     isLoading,
-  } = useLiveExecution(projectId)
+  } = useLiveExecution(projectId, selectedSuite || null, days)
 
   const [sortField, setSortField] = useState<SortField>('started_at')
   const [sortDir,   setSortDir]   = useState<SortDir>('desc')
@@ -606,6 +654,29 @@ export default function LiveExecutionPage() {
   const [selectedStageId, setSelectedStageId] = useState<string>('stream_connection')
   const [feedFilter, setFeedFilter] = useState<'all' | 'errors' | 'stage'>('all')
   const [showRawSessions, setShowRawSessions] = useState(false)
+  const { options: suiteOptions } = useSuiteOptions(7)
+
+  const recentEvents = useMemo(() => {
+    if (!selectedSuite) return rawRecentEvents
+    const visibleRunIds = new Set(
+      sessions
+        .filter(s => suiteMatchesValue(s.suite_name, selectedSuite))
+        .map(s => s.run_id),
+    )
+    return rawRecentEvents.filter(event =>
+      suiteMatchesValue(event.suite_name, selectedSuite)
+      || (event.run_id ? visibleRunIds.has(event.run_id) : false),
+    )
+  }, [rawRecentEvents, selectedSuite, sessions])
+
+  const suiteScopedSessions = useMemo(() => {
+    if (!selectedSuite) return sessions
+    return sessions.filter(s => suiteMatchesValue(s.suite_name, selectedSuite))
+  }, [sessions, selectedSuite])
+  const suiteScopedRunningSessions = useMemo(
+    () => suiteScopedSessions.filter(s => s.status === 'running'),
+    [suiteScopedSessions],
+  )
 
   const handleSort = (field: SortField) => {
     if (field === sortField) {
@@ -624,7 +695,7 @@ export default function LiveExecutionPage() {
   }
 
   const visibleSessions = useMemo(() => {
-    let list = sessions
+    let list = suiteScopedSessions
     if (filter === 'running')  list = list.filter(s => s.status === 'running')
     if (filter === 'failures') list = list.filter(s => (s.failed ?? 0) > 0)
     if (search.trim()) {
@@ -637,7 +708,7 @@ export default function LiveExecutionPage() {
       )
     }
     return sortSessions(list, sortField, sortDir)
-  }, [sessions, filter, search, sortField, sortDir])
+  }, [suiteScopedSessions, filter, search, sortField, sortDir])
 
   // KPIs derived from the currently visible (filtered) sessions
   const visibleStats = useMemo(() => {
@@ -675,11 +746,11 @@ export default function LiveExecutionPage() {
       },
       {
         stage_name: 'run_monitoring',
-        status: runningSessions.length > 0 ? 'running' : 'pending',
+        status: suiteScopedRunningSessions.length > 0 ? 'running' : 'pending',
         label: 'Run Monitoring',
         description: 'Track active runs and current tests',
-        evidence_count: omitIfZero(runningSessions.length),
-        result_data: { running_sessions: runningSessions.length, visible_sessions: visibleSessions.length },
+        evidence_count: omitIfZero(suiteScopedRunningSessions.length),
+        result_data: { running_sessions: suiteScopedRunningSessions.length, visible_sessions: visibleSessions.length },
       },
       {
         stage_name: 'event_rollup',
@@ -691,11 +762,11 @@ export default function LiveExecutionPage() {
       },
       {
         stage_name: 'release_readout',
-        status: sessions.length > 0 ? 'completed' : 'pending',
+        status: suiteScopedSessions.length > 0 ? 'completed' : 'pending',
         label: 'Release Readout',
         description: 'Summarize the current execution state for release and QA',
-        evidence_count: omitIfZero(sessions.length),
-        result_data: { total_sessions: sessions.length, visible_pass_rate: visibleStats.overallPassRate },
+        evidence_count: omitIfZero(suiteScopedSessions.length),
+        result_data: { total_sessions: suiteScopedSessions.length, visible_pass_rate: visibleStats.overallPassRate },
       },
     ]
 
@@ -727,7 +798,7 @@ export default function LiveExecutionPage() {
       events: workflowEvents,
       stageOrder: workflowStages.map(stage => stage.stage_name),
     }
-  }, [wsStatus, runningSessions.length, recentEvents, sessions.length, visibleSessions.length, visibleStats.overallPassRate])
+  }, [wsStatus, suiteScopedRunningSessions.length, recentEvents, suiteScopedSessions.length, visibleSessions.length, visibleStats.overallPassRate])
 
   // Group sessions by build_number, keep most recent per build. The legacy
   // ingestion path reported each run twice (slug + UUID) so we dedupe to
@@ -743,6 +814,21 @@ export default function LiveExecutionPage() {
     }
     return [...byBuild.values()]
   }, [visibleSessions])
+
+  // Client-side pagination of the sessions table. KPIs and the workflow
+  // strip continue to consume visibleSessions in full so their aggregates
+  // stay correct; only the on-screen table slices to 25 rows per page.
+  const TABLE_PAGE_SIZE = 25
+  const [tablePage, setTablePage] = useState(1)
+  const sessionsForTable = showRawSessions ? visibleSessions : dedupedSessions
+  // Reset to page 1 if the source set (or the raw/deduped toggle) changes,
+  // otherwise the user can land on a now-empty page after a filter shift.
+  useEffect(() => { setTablePage(1) }, [showRawSessions, sessionsForTable.length])
+  const tableTotalPages = Math.max(1, Math.ceil(sessionsForTable.length / TABLE_PAGE_SIZE))
+  const pagedSessions = useMemo(() => {
+    const start = (tablePage - 1) * TABLE_PAGE_SIZE
+    return sessionsForTable.slice(start, start + TABLE_PAGE_SIZE)
+  }, [sessionsForTable, tablePage])
 
   // Currently-selected workflow stage (for the detail strip below the subway).
   const selectedStage = workflow.stages.find(stage => stage.stage_name === selectedStageId) ?? workflow.stages[0]
@@ -805,12 +891,12 @@ export default function LiveExecutionPage() {
   // Anchor everything on whether anything is happening RIGHT NOW. Drives the
   // hero-state copy in the status strip and the LIVE badge animation.
   const liveSummary = (() => {
-    if (runningSessions.length > 0) {
-      const totalActive = runningSessions.reduce((a, s) => a + (s.total || 0), 0)
-      return { hero: `${runningSessions.length} active run${runningSessions.length > 1 ? 's' : ''}`, sub: `${totalActive.toLocaleString()} tests in flight`, isLive: true }
+    if (suiteScopedRunningSessions.length > 0) {
+      const totalActive = suiteScopedRunningSessions.reduce((a, s) => a + (s.total || 0), 0)
+      return { hero: `${suiteScopedRunningSessions.length} active run${suiteScopedRunningSessions.length > 1 ? 's' : ''}`, sub: `${totalActive.toLocaleString()} tests in flight`, isLive: true }
     }
-    if (sessions.length > 0) {
-      const last = sessions.find(s => s.completed_at) ?? sessions[0]
+    if (suiteScopedSessions.length > 0) {
+      const last = suiteScopedSessions.find(s => s.completed_at) ?? suiteScopedSessions[0]
       const lastTs = last?.completed_at || last?.last_event_at
       const ago = lastTs ? relativeTime(new Date(lastTs).getTime()) : '—'
       return { hero: 'No active runs', sub: `Last completed ${ago}`, isLive: false }
@@ -842,12 +928,24 @@ export default function LiveExecutionPage() {
                 {selectedProject.name}
               </span>
             )}
+            {selectedSuite && (
+              <span className="font-mono text-[10px] px-2 py-0.5 rounded-full border bg-[var(--color-bg-card)] border-[var(--color-border)] text-[var(--color-text-muted)]">
+                {selectedSuite}
+              </span>
+            )}
           </div>
           <p className="text-sm text-[var(--color-text-muted)] mt-1">
             Real-time test execution stream{selectedProject ? ` — ${selectedProject.name}` : ' — all projects'}
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
+          <LiveWindowPicker value={days} onChange={setDays} />
+          <SuiteFilterSelect
+            value={selectedSuite}
+            onChange={setSelectedSuite}
+            options={suiteOptions}
+            allLabel="All suites"
+          />
           <span className="flex items-center gap-1.5">
             <RefreshCw className="w-3 h-3" />
             Auto-refresh on
@@ -1175,9 +1273,9 @@ export default function LiveExecutionPage() {
           <div className="flex items-center gap-1 bg-[var(--color-bg-card)] rounded-md p-0.5">
             {(['all', 'running', 'failures'] as const).map(f => {
               const count =
-                f === 'all' ? sessions.length :
-                f === 'running' ? sessions.filter(s => s.status === 'running').length :
-                sessions.filter(s => (s.failed ?? 0) > 0).length
+                f === 'all' ? suiteScopedSessions.length :
+                f === 'running' ? suiteScopedSessions.filter(s => s.status === 'running').length :
+                suiteScopedSessions.filter(s => (s.failed ?? 0) > 0).length
               return (
                 <button
                   key={f}
@@ -1212,6 +1310,7 @@ export default function LiveExecutionPage() {
             <thead className="text-[var(--color-text-muted)] text-[10px] uppercase tracking-wider">
               <tr className="border-b border-[var(--color-border)]">
                 <th className="px-5 py-2.5 text-left font-medium">Build</th>
+                <th className="px-3 py-2.5 text-left font-medium">Suite</th>
                 <th className="px-3 py-2.5 text-left font-medium">Status</th>
                 <th
                   className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
@@ -1232,21 +1331,22 @@ export default function LiveExecutionPage() {
                   className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
                   onClick={() => handleSort('started_at')}
                 >
-                  <span className="flex items-center justify-end gap-1">Completed <SortIcon field="started_at" /></span>
+                  <span className="flex items-center justify-end gap-1">Started <SortIcon field="started_at" /></span>
                 </th>
+                <th className="px-5 py-2.5 text-right font-medium">End</th>
               </tr>
             </thead>
             <tbody>
               {(showRawSessions ? visibleSessions : dedupedSessions).length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
-                    {sessions.length === 0
+                  <td colSpan={10} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
+                    {suiteScopedSessions.length === 0
                       ? 'No active execution sessions. Start a test run with the client SDK.'
                       : 'No sessions match the current filter.'}
                   </td>
                 </tr>
               )}
-              {(showRawSessions ? visibleSessions : dedupedSessions).map(s => {
+              {pagedSessions.map(s => {
                 const passW = s.total > 0 ? (s.passed / s.total) * 100 : 0
                 const failW = s.total > 0 ? (s.failed / s.total) * 100 : 0
                 return (
@@ -1271,6 +1371,13 @@ export default function LiveExecutionPage() {
                           </div>
                         </div>
                       </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <SuiteBadge
+                        primary={(s as unknown as { suite_name?: string | null }).suite_name}
+                        all={null}
+                        linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+                      />
                     </td>
                     <td className="px-3 py-3">
                       <span className={clsx(
@@ -1308,11 +1415,21 @@ export default function LiveExecutionPage() {
                         <span className="text-[var(--color-text-faint)]">—</span>
                       )}
                     </td>
-                    <td className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px]">
+                    {/* Started — kept sortable via the same column that previously
+                        held the (now misleadingly labelled) "Completed" cell. */}
+                    <td className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums">
+                      {s.started_at ? new Date(s.started_at).toLocaleString() : '—'}
+                    </td>
+                    {/* End — completed_at when the session has closed; otherwise
+                        last_event_at gives the "still running, last seen" hint. */}
+                    <td
+                      className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums"
+                      title={!s.completed_at && s.last_event_at ? `Still running · last event ${new Date(s.last_event_at).toLocaleString()}` : undefined}
+                    >
                       {s.completed_at
-                        ? new Date(s.completed_at).toLocaleTimeString()
+                        ? new Date(s.completed_at).toLocaleString()
                         : s.last_event_at
-                          ? new Date(s.last_event_at).toLocaleTimeString()
+                          ? `${new Date(s.last_event_at).toLocaleString()} (live)`
                           : '—'}
                     </td>
                   </tr>
@@ -1321,6 +1438,12 @@ export default function LiveExecutionPage() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={tablePage}
+          pages={tableTotalPages}
+          total={sessionsForTable.length}
+          onChange={setTablePage}
+        />
         <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
           <span>
             {dedupedSessions.length} build{dedupedSessions.length === 1 ? '' : 's'}

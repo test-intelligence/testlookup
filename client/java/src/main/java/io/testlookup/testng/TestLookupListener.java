@@ -68,6 +68,8 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
     private TestLookupReporter reporter;
     private LiveSession       session;
+    /** Resolved run-level suite (testlookup.suite > testlookup.launch). */
+    private String            configuredSuite;
 
     // ── ISuiteListener ────────────────────────────────────────────────────────
 
@@ -100,6 +102,15 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
             reporter = builder.build();
 
+            // testlookup.suite preferred, testlookup.launch as the fallback —
+            // both flow into SessionOptions.suiteName so every event in the run
+            // is stamped with the same suite identifier.
+            String configuredSuiteLocal = resolve(suite, "testlookup.suite",  "TESTLOOKUP_SUITE",  null);
+            if (configuredSuiteLocal == null) {
+                configuredSuiteLocal = resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null);
+            }
+            this.configuredSuite = configuredSuiteLocal;
+
             session = reporter.startSession(
                 SessionOptions.builder()
                     .buildNumber(resolve(suite, "testlookup.build",  "TESTLOOKUP_BUILD",
@@ -107,6 +118,7 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
                     .branch(     resolve(suite, "testlookup.branch", "TESTLOOKUP_BRANCH", null))
                     .commitHash( resolve(suite, "testlookup.commit", "TESTLOOKUP_COMMIT", null))
                     .launchName( resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null))
+                    .suiteName(  configuredSuiteLocal)
                     .build()
             );
             LOG.info("TestLookupListener: session started: " + session.getSessionId());
@@ -163,7 +175,10 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
         long durationMs = result.getEndMillis() - result.getStartMillis();
         String testName  = result.getMethod().getMethodName();
-        String suiteName = result.getTestClass().getName();
+        // User-configured suite wins; otherwise fall back to the test class name.
+        String suiteName = configuredSuite != null
+            ? configuredSuite
+            : result.getTestClass().getName();
 
         String error = null;
         String stack = null;

@@ -8,6 +8,19 @@ vi.mock('@/hooks/useMetrics', () => ({
   useFlakyTests: vi.fn(),
   useFailureCategories: vi.fn(),
   useTopFailing: vi.fn(),
+  useTrendData: vi.fn(),
+}))
+
+vi.mock('@/hooks/useRuns', () => ({
+  useRuns: vi.fn(),
+}))
+
+vi.mock('@/hooks/useAnalyticsView', () => ({
+  useAnalyticsView: () => ({
+    widgetIds: [],
+    setWidgets: vi.fn(),
+    save: vi.fn(),
+  }),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -18,7 +31,8 @@ vi.mock('@/store/projectStore', () => ({
 
 describe('FailureAnalysisPage', () => {
   it('renders the failure analysis workflow strip above the charts', async () => {
-    const { useFlakyTests, useFailureCategories, useTopFailing } = await import('@/hooks/useMetrics')
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
 
     ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [{ test_name: 'test A', failure_rate_pct: 42 }] },
@@ -32,6 +46,11 @@ describe('FailureAnalysisPage', () => {
       data: { items: [{ test_name: 'test A', fail_count: 4 }] },
       isLoading: false,
     })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-04-01', passed: 10, failed: 2, skipped: 0, broken: 0, pass_rate: 83 }] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
     render(
       <MemoryRouter initialEntries={['/failure-analysis']}>

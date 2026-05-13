@@ -74,6 +74,10 @@ public class TestLookupExtension
                 .framework("junit5")
                 .build();
 
+            // testlookup.suite preferred, testlookup.launch as fallback.
+            String suiteId = nullable("testlookup.suite", "TESTLOOKUP_SUITE");
+            if (suiteId == null) suiteId = nullable("testlookup.launch", "TESTLOOKUP_LAUNCH");
+
             LiveSession session = reporter.startSession(
                 SessionOptions.builder()
                     .buildNumber(prop("testlookup.build",  "TESTLOOKUP_BUILD",
@@ -81,6 +85,7 @@ public class TestLookupExtension
                     .branch(     nullable("testlookup.branch", "TESTLOOKUP_BRANCH"))
                     .commitHash( nullable("testlookup.commit", "TESTLOOKUP_COMMIT"))
                     .launchName( nullable("testlookup.launch", "TESTLOOKUP_LAUNCH"))
+                    .suiteName(  suiteId)
                     .build()
             );
 

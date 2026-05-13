@@ -27,6 +27,19 @@ export interface ResolvedConfig {
   token?: string
   projectId?: string
   launchName?: string
+  /**
+   * Run-level suite identifier. Sourced from testlookup.suite (preferred) with
+   * testlookup.launch as the documented fallback. Stamped on every record() the
+   * SDK ships and sent on session create so the server populates
+   * LiveSession.suite_name and TestRun.primary_suite_name.
+   */
+  suiteName?: string
+  /**
+   * Release this test run belongs to. Sourced from testlookup.release /
+   * TESTLOOKUP_RELEASE. Sent on session create; when blank the server falls
+   * back to the project's default release.
+   */
+  releaseName?: string
   buildNumber?: string
   branch?: string
   commitHash?: string
@@ -42,6 +55,8 @@ const PROPERTIES_KEYS: Record<string, keyof ResolvedConfig> = {
   'testlookup.token':     'token',
   'testlookup.project':   'projectId',
   'testlookup.launch':    'launchName',
+  'testlookup.suite':     'suiteName',
+  'testlookup.release':   'releaseName',
   'testlookup.build':     'buildNumber',
   'testlookup.branch':    'branch',
   'testlookup.commit':    'commitHash',
@@ -56,6 +71,8 @@ const ENV_KEYS: Record<string, keyof ResolvedConfig> = {
   TESTLOOKUP_PROJECT_ID: 'projectId',
   TESTLOOKUP_PROJECT:    'projectId',
   TESTLOOKUP_LAUNCH:     'launchName',
+  TESTLOOKUP_SUITE:      'suiteName',
+  TESTLOOKUP_RELEASE:    'releaseName',
   TESTLOOKUP_BUILD:      'buildNumber',
   TESTLOOKUP_BRANCH:     'branch',
   TESTLOOKUP_COMMIT:     'commitHash',
@@ -68,6 +85,8 @@ const YAML_PATHS: Array<{ section: string[]; key: string; field: keyof ResolvedC
   { section: ['auth'],      key: 'token',        field: 'token' },
   { section: ['project'],   key: 'id',           field: 'projectId' },
   { section: ['reporting'], key: 'launch_name',  field: 'launchName' },
+  { section: ['reporting'], key: 'suite_name',   field: 'suiteName' },
+  { section: ['reporting'], key: 'release_name', field: 'releaseName' },
   { section: ['ci'],        key: 'build_number', field: 'buildNumber' },
   { section: ['ci'],        key: 'branch',       field: 'branch' },
   { section: ['ci'],        key: 'commit_hash',  field: 'commitHash' },

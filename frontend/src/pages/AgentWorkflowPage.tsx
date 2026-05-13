@@ -9,11 +9,13 @@
  * Layout: TopBar / ModeTabs / Body { left: [SubwayTrack, RunMeta,
  * VerdictPanel?, EventStrip] | right: RightRail }.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, ArrowRight, Bot, Bug, ChevronDown, ChevronRight,
-  Database, FileText, Layers, Loader2, RefreshCw, Shield, Stethoscope, Zap,
+  Database, FileText, GripHorizontal, GripVertical, Layers, Loader2,
+  Maximize2, Minimize2, PanelRightClose, PanelRightOpen, RefreshCw, Shield,
+  Stethoscope, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -23,10 +25,11 @@ import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines
 import { useAIConfig } from '@/hooks/useAIConfig'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useProjectChangeRedirect, useProjectChangeReset } from '@/hooks/useProjectChange'
-import { useRun } from '@/hooks/useRuns'
+import { useRun, useRuns } from '@/hooks/useRuns'
 import { useRunIntelligence } from '@/hooks/useRunIntelligence'
 import agentService from '@/services/agentService'
 import type { AgentPipelineRun, AgentStageResult } from '@/types/agent'
+import type { TestRun } from '@/types/runs'
 
 // ── Canonical deep-pipeline stage layout ────────────────────────────────────
 
@@ -51,10 +54,10 @@ const STAGE_LAYOUT: Record<string, StageLayout> = {
   cluster:             { name: 'Failure Clustering',  desc: 'Group related failures into defect-shaped clusters', glyph: 'layers',     col: 3, row: 1, branch: 'parallel' },
   defect_triage:       { name: 'Defect Triage',       desc: 'Prepare Jira-ready defects and owner guidance',     glyph: 'bug',         col: 4, row: 1, branch: 'heuristic' },
   triage:              { name: 'Defect Triage',       desc: 'Prepare Jira-ready defects and owner guidance',     glyph: 'bug',         col: 4, row: 1, branch: 'heuristic' },
-  flaky_sentinel:      { name: 'Flaky Sentinel',      desc: 'Detect recurring flaky or unstable tests',          glyph: 'warn',        col: 4, row: 1, branch: 'parallel' },
-  flaky:               { name: 'Flaky Sentinel',      desc: 'Detect recurring flaky or unstable tests',          glyph: 'warn',        col: 4, row: 1, branch: 'parallel' },
-  test_health:         { name: 'Test Health',         desc: 'Inspect test-code anti-patterns and health risks',  glyph: 'stethoscope', col: 5, row: 1, branch: 'parallel' },
-  health:              { name: 'Test Health',         desc: 'Inspect test-code anti-patterns and health risks',  glyph: 'stethoscope', col: 5, row: 1, branch: 'parallel' },
+  flaky_sentinel:      { name: 'Flaky Sentinel',      desc: 'Detect recurring flaky or unstable tests',          glyph: 'warn',        col: 5, row: 1, branch: 'parallel' },
+  flaky:               { name: 'Flaky Sentinel',      desc: 'Detect recurring flaky or unstable tests',          glyph: 'warn',        col: 5, row: 1, branch: 'parallel' },
+  test_health:         { name: 'Test Health',         desc: 'Inspect test-code anti-patterns and health risks',  glyph: 'stethoscope', col: 6, row: 1, branch: 'parallel' },
+  health:              { name: 'Test Health',         desc: 'Inspect test-code anti-patterns and health risks',  glyph: 'stethoscope', col: 6, row: 1, branch: 'parallel' },
   summary:             { name: 'Summary',             desc: 'Compose the executive and role-specific narrative', glyph: 'file',        col: 6, row: 0, branch: 'main' },
   release_risk:        { name: 'Release Risk',        desc: 'Turn the run into a go / conditional-go / no-go',   glyph: 'shield',      col: 7, row: 0, branch: 'main' },
   release:             { name: 'Release Risk',        desc: 'Turn the run into a go / conditional-go / no-go',   glyph: 'shield',      col: 7, row: 0, branch: 'main' },
@@ -180,43 +183,72 @@ function ModeTabs({ mode, setMode, isLive }: { mode: ModeTab; setMode: (m: ModeT
   )
 }
 
-// ── RunPicker — horizontal strip for switching pipelines ───────────────────
+// ── RunPicker — horizontal strip for switching test runs ───────────────────
+
+const RUN_PICKER_PAGE_SIZE = 100
+
+function pipelineDot(status?: string | null): string {
+  const normalized = (status ?? '').toLowerCase()
+  if (normalized === 'running') return 'var(--color-accent)'
+  if (normalized === 'failed') return 'rgb(248 81 73)'
+  if (normalized === 'partial') return 'rgb(210 153 34)'
+  if (normalized === 'completed' || normalized === 'success') return 'rgb(63 185 80)'
+  return 'var(--color-text-faint)'
+}
+
+function runStatusTone(status?: string | null): { bg: string; fg: string } {
+  const normalized = (status ?? '').toLowerCase()
+  if (normalized === 'passed' || normalized === 'success' || normalized === 'completed') {
+    return { bg: 'rgba(63,185,80,.14)', fg: 'rgb(63 185 80)' }
+  }
+  if (normalized === 'failed' || normalized === 'broken') {
+    return { bg: 'rgba(248,81,73,.14)', fg: 'rgb(248 81 73)' }
+  }
+  if (normalized === 'running') {
+    return { bg: 'var(--color-accent-muted)', fg: 'var(--color-accent)' }
+  }
+  return { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
+}
 
 function RunPicker({
-  pipelines, activePipelineId, onSelect,
+  runs, total, page, pages, pipelinesByRunId, activeRunId, onSelectRun, onPageChange,
 }: {
-  pipelines: AgentPipelineRun[]
-  activePipelineId: string | null
-  onSelect: (p: AgentPipelineRun) => void
+  runs: TestRun[]
+  total: number
+  page: number
+  pages: number
+  pipelinesByRunId: Map<string, AgentPipelineRun>
+  activeRunId: string | null
+  onSelectRun: (run: TestRun, pipeline: AgentPipelineRun | null) => void
+  onPageChange: (page: number) => void
 }) {
+  const start = runs.length === 0 ? 0 : (page - 1) * RUN_PICKER_PAGE_SIZE + 1
+  const end = Math.min(total, (page - 1) * RUN_PICKER_PAGE_SIZE + runs.length)
+
   return (
     <div
       className="flex items-center gap-3 px-6 py-2 border-b overflow-x-auto"
       style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
     >
       <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] flex-shrink-0">
-        Recent runs
+        Test runs
       </span>
       <span className="text-[10.5px] text-[var(--color-text-muted)] flex-shrink-0">
-        {pipelines.length}
+        {total === 0 ? '0' : `${start}-${end} of ${total}`}
       </span>
       <div className="flex gap-1.5 flex-shrink-0">
-        {pipelines.slice(0, 12).map(p => {
-          const active = p.id === activePipelineId
-          const status = (p.status ?? '').toLowerCase()
-          const dot =
-            status === 'running' ? 'var(--color-accent)' :
-            status === 'failed' ? 'rgb(248 81 73)' :
-            status === 'partial' ? 'rgb(210 153 34)' :
-            status === 'completed' || status === 'success' ? 'rgb(63 185 80)' :
-            'var(--color-text-faint)'
+        {runs.map(run => {
+          const pipeline = pipelinesByRunId.get(run.id) ?? null
+          const active = run.id === activeRunId
+          const pipelineStatus = pipeline?.status ?? null
+          const tone = runStatusTone(run.status)
           return (
             <button
-              key={p.id}
+              key={run.id}
               type="button"
-              onClick={() => onSelect(p)}
-              title={`${p.test_run_id} · ${status} · ${new Date(p.created_at).toLocaleString()}`}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] font-mono whitespace-nowrap transition-colors"
+              onClick={() => onSelectRun(run, pipeline)}
+              title={`Run ${run.id} · build ${run.build_number} · ${run.status} · ${pipelineStatus ? `pipeline ${pipelineStatus}` : 'no agent pipeline'} · ${new Date(run.created_at).toLocaleString()}`}
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] whitespace-nowrap transition-colors"
               style={{
                 background: active ? 'var(--color-accent-muted)' : 'var(--color-bg-secondary)',
                 borderColor: active ? 'rgba(68,147,248,.40)' : 'var(--color-border)',
@@ -228,25 +260,56 @@ function RunPicker({
                 style={{
                   width: 6,
                   height: 6,
-                  background: dot,
-                  boxShadow: status === 'running' ? '0 0 0 2px var(--color-accent-muted)' : 'none',
-                  animation: status === 'running' ? 'pulse 1.6s infinite' : 'none',
+                  border: pipeline ? 'none' : '1px dashed var(--color-text-faint)',
+                  background: pipeline ? pipelineDot(pipelineStatus) : 'transparent',
+                  boxShadow: pipelineStatus === 'running' ? '0 0 0 2px var(--color-accent-muted)' : 'none',
+                  animation: pipelineStatus === 'running' ? 'pulse 1.6s infinite' : 'none',
                 }}
               />
-              {p.test_run_id.slice(0, 8)}
+              <span className="font-mono">{String(run.build_number || run.id.slice(0, 8))}</span>
               <span style={{ color: active ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>·</span>
+              <span
+                className="rounded px-1 font-semibold uppercase"
+                style={{
+                  background: active ? 'rgba(255,255,255,.18)' : tone.bg,
+                  color: active ? 'var(--color-accent)' : tone.fg,
+                  fontSize: 9.5,
+                }}
+              >
+                {run.status}
+              </span>
               <span style={{ color: active ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
-                {new Date(p.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {new Date(run.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
               </span>
             </button>
           )
         })}
-        {pipelines.length > 12 && (
-          <span className="inline-flex items-center px-2 py-1 text-[11px] text-[var(--color-text-muted)]">
-            +{pipelines.length - 12} more
-          </span>
-        )}
       </div>
+      {pages > 1 && (
+        <div className="flex items-center gap-1 flex-shrink-0 ml-auto">
+          <button
+            type="button"
+            onClick={() => onPageChange(Math.max(1, page - 1))}
+            disabled={page <= 1}
+            className="inline-flex h-7 items-center px-2 rounded border text-[11px] disabled:opacity-40"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
+          >
+            Prev
+          </button>
+          <span className="font-mono text-[10.5px] text-[var(--color-text-muted)] px-1">
+            {page}/{pages}
+          </span>
+          <button
+            type="button"
+            onClick={() => onPageChange(Math.min(pages, page + 1))}
+            disabled={page >= pages}
+            className="inline-flex h-7 items-center px-2 rounded border text-[11px] disabled:opacity-40"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -259,10 +322,19 @@ const CARD_W = 172
 const ROW_H = 132
 const TOP_PAD = 28
 const TRACK_W = COLS * COL_W
+const TRACK_CANVAS_H = TOP_PAD + 2 * ROW_H + 118
+const FLOW_PANEL_MIN_H = 320
+const FLOW_PANEL_MAX_H = 760
+const RIGHT_RAIL_MIN_W = 280
+const RIGHT_RAIL_MAX_W = 620
 
 const cardX = (col: number) => col * COL_W + (COL_W - CARD_W) / 2
 const cardCenterX = (col: number) => col * COL_W + COL_W / 2
 const rowCenterY = (row: number) => TOP_PAD + row * ROW_H + 56
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
 
 interface EdgeProps {
   from: [number, number]
@@ -430,128 +502,107 @@ function SubwayCard({ stage, x, y, selected, small, snapshot, onClick }: SubwayC
   )
 }
 
-/**
- * Wraps SubwayTrack in a horizontally scale-to-fit container. The track has a
- * fixed natural width (TRACK_W + 48 padding ≈ 1552 px) that can't comfortably
- * shrink without a major coord rewrite, so on narrower windows we scale it
- * down via CSS transform and shrink the outer element's height to match. At
- * full width we render at 1.0 — no scale, no fuzziness. ResizeObserver keeps
- * us in sync with window resizes and split-pane drags.
- */
-function ScaleToFit({ naturalW, naturalH, children }: { naturalW: number; naturalH: number; children: React.ReactNode }) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const [scale, setScale] = useState(1)
-
-  useLayoutEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const compute = () => {
-      const w = el.clientWidth
-      if (!w) return
-      // Don't scale up — the natural design is the maximum. Scale down only
-      // when the available width is narrower than naturalW.
-      const next = Math.min(1, w / naturalW)
-      setScale(prev => (Math.abs(prev - next) > 0.005 ? next : prev))
-    }
-    compute()
-    const obs = new ResizeObserver(compute)
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [naturalW])
-
-  return (
-    <div ref={containerRef} className="w-full" style={{ overflow: 'hidden' }}>
-      <div
-        style={{
-          width: naturalW,
-          height: naturalH * scale,
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  )
-}
-
 function SubwayTrack({
-  stages, selectedId, onSelect, snapshot, pipelineLabel,
+  stages, selectedId, onSelect, snapshot, pipelineLabel, height, collapsed,
+  onToggleCollapsed, onToggleExpanded, onStartResize,
 }: {
   stages: DisplayStage[]
   selectedId: string | null
   onSelect: (id: string) => void
   snapshot: boolean
   pipelineLabel: string
+  height: number
+  collapsed: boolean
+  onToggleCollapsed: () => void
+  onToggleExpanded: () => void
+  onStartResize: (event: React.PointerEvent<HTMLButtonElement>) => void
 }) {
   const decisionCenter = useMemo(
     () => ({ x: cardCenterX(DECISION_COL), y: rowCenterY(DECISION_ROW) }),
     [],
   )
 
-  // Stage positions: pull canonical positions but let the col/row from
-  // STAGE_LAYOUT drive the layout. Hand-tune triage and flaky's x because
-  // they share col=4 in the canonical map.
-  const cardLayoutFor = (stage: DisplayStage): { x: number; y: number; small: boolean; xShift: number } => {
+  const cardLayoutFor = (stage: DisplayStage): { x: number; y: number; small: boolean } => {
     const small = stage.row === 1
-    const xShift = stage.id.startsWith('triage') || stage.id.startsWith('defect_triage') ? -24
-      : stage.id.startsWith('flaky') ? 18
-      : 0
     return {
-      x: cardX(stage.col) + 24 + xShift,
-      y: TOP_PAD + stage.row * ROW_H + 70,
+      x: cardX(stage.col) + 24,
+      y: TOP_PAD + stage.row * ROW_H,
       small,
-      xShift,
     }
   }
 
   const get = (key: string) => stages.find(s => s.id === key || s.id.startsWith(key + '_') || (key === 'cluster' && s.id === 'failure_clustering') || (key === 'flaky' && s.id === 'flaky_sentinel') || (key === 'health' && s.id === 'test_health') || (key === 'release' && s.id === 'release_risk') || (key === 'triage' && s.id === 'defect_triage'))
 
-  // Reserve vertical space for the absolutely-positioned cards + SVG. Without
-  // this, the parent collapses to the title strip's height and the next
-  // sibling (RunMeta, VerdictPanel when snapshot is open, EventStrip) paints
-  // on top of the bottom-row stage cards. Math:
-  //   - SVG: top 70, height TOP_PAD + 2*ROW_H + 8 = 300   → bottom 370
-  //   - Row 1 cards: top TOP_PAD + ROW_H + 70 = 230, ~88 px tall → bottom ~318
-  //   - Decision diamond label: 32 px below diamond's bottom (≈218)
-  //   - Outer padding-bottom: 48
-  // Take the worst case + a small buffer.
-  const TRACK_MIN_H = TOP_PAD + 2 * ROW_H + 8 + 70 + 48 + 12 // = 430
-
   return (
-    <ScaleToFit naturalW={TRACK_W + 48} naturalH={TRACK_MIN_H}>
-    <div
-      className="relative"
+    <section
+      className="border-b flex flex-col min-h-0"
       style={{
-        width: TRACK_W + 48,
-        minHeight: TRACK_MIN_H,
-        padding: '24px 24px 48px',
+        height: collapsed ? 54 : height,
+        minHeight: collapsed ? 54 : FLOW_PANEL_MIN_H,
         background: 'var(--color-bg)',
+        borderColor: 'var(--color-border)',
       }}
     >
-      {/* Title strip */}
-      <div className="flex items-baseline justify-between mb-4">
+      <div
+        className="flex items-center justify-between gap-3 px-6 py-2.5 border-b"
+        style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
+      >
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
             Pipeline · {pipelineLabel}
           </div>
           <div className="text-[17px] font-semibold text-[var(--color-text)] mt-0.5">Stage flow</div>
         </div>
-        <div className="flex gap-3.5 items-center text-[11.5px] text-[var(--color-text-muted)]">
-          <Legend dot="green" label="Done" />
-          <Legend dot="blue" label="Running" />
-          <Legend dot="red" label="Failed" />
-          <Legend dot="muted" label="Queued" />
-          <Legend dot="dash" label="Skipped" />
+        <div className="flex items-center gap-3 flex-wrap justify-end">
+          {!collapsed && (
+            <div className="flex gap-3 items-center text-[11.5px] text-[var(--color-text-muted)]">
+              <Legend dot="green" label="Done" />
+              <Legend dot="blue" label="Running" />
+              <Legend dot="red" label="Failed" />
+              <Legend dot="muted" label="Queued" />
+              <Legend dot="dash" label="Skipped" />
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onToggleExpanded}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            style={{ borderColor: 'var(--color-border)' }}
+            title="Toggle taller stage flow"
+          >
+            {height > 560 ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            style={{ borderColor: 'var(--color-border)' }}
+            aria-expanded={!collapsed}
+            title={collapsed ? 'Expand stage flow' : 'Collapse stage flow'}
+          >
+            {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
         </div>
       </div>
 
+      {!collapsed && (
+        <>
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div
+          className="relative"
+          style={{
+            width: TRACK_W + 48,
+            minHeight: TRACK_CANVAS_H,
+            padding: '24px 24px 48px',
+            background: 'var(--color-bg)',
+          }}
+        >
       {/* SVG track lines under cards */}
       <svg
         width={TRACK_W}
         height={TOP_PAD + 2 * ROW_H + 8}
         className="absolute pointer-events-none"
-        style={{ left: 24, top: 70 }}
+        style={{ left: 24, top: 24 }}
       >
         <defs>
           <marker id="a-arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
@@ -572,7 +623,8 @@ function SubwayTrack({
         {/* Parallel lane */}
         <Edge from={[cardCenterX(3), rowCenterY(1)]} to={[cardCenterX(4), rowCenterY(1)]} active />
         <Edge from={[cardCenterX(4), rowCenterY(1)]} to={[cardCenterX(5), rowCenterY(1)]} dashed />
-        <Edge from={[cardCenterX(5), rowCenterY(1)]} to={[cardCenterX(6), rowCenterY(0)]} dashed curveUp />
+        <Edge from={[cardCenterX(5), rowCenterY(1)]} to={[cardCenterX(6), rowCenterY(1)]} dashed />
+        <Edge from={[cardCenterX(6), rowCenterY(1)]} to={[cardCenterX(6), rowCenterY(0)]} dashed curveUp />
         {/* Triage skipped — ghost branch off cluster */}
         <Edge from={[cardCenterX(3), rowCenterY(1) + 24]} to={[cardCenterX(4), rowCenterY(1) + 36]} ghost />
       </svg>
@@ -622,7 +674,7 @@ function SubwayTrack({
         className="absolute"
         style={{
           left: decisionCenter.x + 24 - 32,
-          top: 70 + decisionCenter.y - 32,
+          top: 24 + decisionCenter.y - 32,
           cursor: 'pointer',
         }}
       >
@@ -653,8 +705,21 @@ function SubwayTrack({
           {DECISION_LABEL}
         </div>
       </button>
-    </div>
-    </ScaleToFit>
+        </div>
+      </div>
+      <button
+        type="button"
+        onPointerDown={onStartResize}
+        className="group flex h-3 w-full cursor-row-resize items-center justify-center border-t"
+        style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)', touchAction: 'none' }}
+        aria-label="Resize stage flow height"
+        title="Drag to resize stage flow"
+      >
+        <GripHorizontal className="h-3.5 w-3.5 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
+      </button>
+        </>
+      )}
+    </section>
   )
 }
 
@@ -1258,18 +1323,82 @@ function KV({ k, v, tone }: { k: string; v: string; tone?: 'green' | 'red' }) {
   )
 }
 
+function NoPipelinePanel({
+  run, analysisMode, liveRuns, isQaEngineer, submitting, onTrigger,
+}: {
+  run: TestRun | undefined
+  analysisMode: string
+  liveRuns: unknown[]
+  isQaEngineer: boolean
+  submitting: boolean
+  onTrigger: () => void
+}) {
+  return (
+    <div className="flex-1 grid place-items-center p-12">
+      <div className="text-center max-w-lg">
+        <Bot className="h-10 w-10 mx-auto text-[var(--color-text-muted)] mb-3" />
+        <p className="text-[var(--color-text)] font-semibold">
+          {run ? 'No agent pipeline for this test run yet' : 'No test runs available'}
+        </p>
+        <p className="text-[12px] text-[var(--color-text-muted)] mt-1">
+          Active analysis mode: <span className="font-mono">{analysisMode}</span>.
+          {liveRuns.length > 0 && <> {liveRuns.length} live run{liveRuns.length === 1 ? '' : 's'} streaming.</>}
+          {run
+            ? <> This run is still selectable here, and a pipeline can be queued when analysis is needed.</>
+            : <> Stream test results via the SDK or upload a report at <Link to="/runs" className="text-[var(--color-accent)] underline">/runs</Link>.</>}
+        </p>
+        {run && (
+          <div
+            className="mt-4 rounded border px-4 py-3 text-left"
+            style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  Build {run.build_number}
+                </div>
+                <div className="mt-1 text-[12px] text-[var(--color-text-secondary)]">
+                  {run.total_tests.toLocaleString()} tests · {run.failed_tests.toLocaleString()} failed · {new Date(run.created_at).toLocaleString()}
+                </div>
+              </div>
+              {isQaEngineer && (
+                <button
+                  type="button"
+                  onClick={onTrigger}
+                  disabled={submitting}
+                  className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-[11.5px] disabled:opacity-50"
+                  style={{ borderColor: 'var(--color-border)', color: 'var(--color-accent)', background: 'var(--color-accent-muted)' }}
+                >
+                  {submitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                  Queue pipeline
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AgentWorkflowPage() {
   const { runId } = useParams<{ runId?: string }>()
   const navigate = useNavigate()
   const [mode, setMode] = useState<ModeTab>('live')
+  const [runPage, setRunPage] = useState(1)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(runId ?? null)
   const [selectedPipeline, setSelectedPipeline] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [triggerInput, setTriggerInput] = useState('')
   const [triggerSubmitting, setTriggerSubmitting] = useState(false)
+  const [flowHeight, setFlowHeight] = useState(430)
+  const [flowCollapsed, setFlowCollapsed] = useState(false)
+  const [rightRailWidth, setRightRailWidth] = useState(380)
+  const [rightRailCollapsed, setRightRailCollapsed] = useState(false)
 
   const { isQaEngineer } = usePermissions()
   const { data: aiConfig } = useAIConfig()
@@ -1277,29 +1406,60 @@ export default function AgentWorkflowPage() {
 
   useProjectChangeRedirect('/agents', Boolean(runId))
   useProjectChangeReset(() => {
+    setSelectedRunId(null)
     setSelectedPipeline(null)
     setSelectedId(null)
     setSnapshot(false)
+    setRunPage(1)
   })
 
-  // Always fetch ALL recent pipelines for the active project (no runId
-  // filter) so the RunPicker can switch between unrelated runs even from
-  // a deep link like /agents/run/{specific-uuid}. The focused pipeline is
-  // resolved client-side by matching the URL's runId against this list.
-  const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines()
+  useEffect(() => {
+    setSelectedRunId(runId ?? null)
+    setSelectedPipeline(null)
+    setSelectedId(null)
+    setSummaryOpen(false)
+  }, [runId])
+
+  const runQueryParams = useMemo(
+    () => ({ page: runPage, size: RUN_PICKER_PAGE_SIZE, days: 0 }),
+    [runPage],
+  )
+  const { data: runsData, isLoading: runsLoading } = useRuns(runQueryParams)
+  const runs = useMemo<TestRun[]>(() => runsData?.items ?? [], [runsData?.items])
+
+  // Fetch a wider recent pipeline window so the run picker can mark which
+  // test runs already have agent output without limiting the picker itself
+  // to pipeline rows.
+  const { data: rawPipelines = [], isLoading: pipelinesLoading, mutate: mutatePipelines } = usePipelines(undefined, 100)
   const pipelines = useMemo(() => [...rawPipelines].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   ), [rawPipelines])
 
-  const activePipelineId = useMemo(() => {
-    if (selectedPipeline) return selectedPipeline
-    if (runId) {
-      const match = pipelines.find(p => p.test_run_id === runId)
-      if (match) return match.id
+  const activeRunId = selectedRunId ?? runs[0]?.id ?? pipelines[0]?.test_run_id ?? null
+  const { data: focusedRawPipelines = [], isLoading: focusedPipelinesLoading } = usePipelines(activeRunId ?? undefined, 20)
+  const focusedPipelines = useMemo(() => {
+    const byId = new Map<string, AgentPipelineRun>()
+    for (const pipeline of [...pipelines, ...focusedRawPipelines]) byId.set(pipeline.id, pipeline)
+    return [...byId.values()].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )
+  }, [focusedRawPipelines, pipelines])
+  const pipelinesByRunId = useMemo(() => {
+    const byRun = new Map<string, AgentPipelineRun>()
+    for (const pipeline of focusedPipelines) {
+      if (!byRun.has(pipeline.test_run_id)) byRun.set(pipeline.test_run_id, pipeline)
     }
-    return pipelines[0]?.id ?? null
-  }, [selectedPipeline, runId, pipelines])
-  const activePipeline = pipelines.find(p => p.id === activePipelineId) ?? null
+    return byRun
+  }, [focusedPipelines])
+  const activePipelineId = useMemo(() => {
+    if (selectedPipeline && focusedPipelines.some(p => p.id === selectedPipeline && p.test_run_id === activeRunId)) {
+      return selectedPipeline
+    }
+    return activeRunId
+      ? (focusedPipelines.find(p => p.test_run_id === activeRunId)?.id ?? null)
+      : null
+  }, [activeRunId, focusedPipelines, selectedPipeline])
+  const activePipeline = focusedPipelines.find(p => p.id === activePipelineId) ?? null
 
   const { data: stages = [], isLoading: stagesLoading } = usePipelineStages(activePipelineId)
   const { data: timeline } = usePipelineTimeline(activePipelineId)
@@ -1337,29 +1497,29 @@ export default function AgentWorkflowPage() {
   const selectedStage = displayStages.find(s => s.id === selectedId) ?? null
   const decisionSelected = selectedId === DECISION_LABEL
   const isLive = activePipeline?.status === 'running'
-  const runShortId = activePipeline?.test_run_id?.slice(0, 8) ?? '—'
+  const runShortId = activeRunId?.slice(0, 8) ?? '—'
 
   // Test counts (RunMeta + VerdictPanel) live on TestRun, not on the
   // pipeline timeline. Same hook the runs/run-detail pages use; SWR
   // dedupes the request when other tabs already loaded the run.
-  const { data: testRun } = useRun(activePipeline?.test_run_id)
+  const { data: fetchedRun } = useRun(activeRunId ?? undefined)
+  const testRun = runs.find(r => r.id === activeRunId) ?? fetchedRun
   const totalTests = testRun?.total_tests ?? null
   const failedCount = testRun?.failed_tests ?? null
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-  async function handleTriggerByRunId(e: React.FormEvent) {
-    e.preventDefault()
-    const id = triggerInput.trim()
-    if (!UUID_RE.test(id)) {
+  async function queuePipelineForRun(id: string, clearInput = false) {
+    if (!UUID_RE.test(id.trim())) {
       toast.error('Run ID must be a UUID. Find it on /runs.')
       return
     }
     setTriggerSubmitting(true)
     try {
-      await agentService.triggerPipeline(id)
+      await agentService.triggerPipeline(id.trim())
       toast.success('Pipeline queued.')
-      setTriggerInput('')
+      if (clearInput) setTriggerInput('')
+      await mutatePipelines()
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
         ?? (err as Error)?.message
@@ -1368,6 +1528,42 @@ export default function AgentWorkflowPage() {
     } finally {
       setTriggerSubmitting(false)
     }
+  }
+
+  async function handleTriggerByRunId(e: React.FormEvent) {
+    e.preventDefault()
+    await queuePipelineForRun(triggerInput, true)
+  }
+
+  function beginFlowResize(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = flowHeight
+    const maxHeight = clamp(window.innerHeight - 180, FLOW_PANEL_MIN_H, FLOW_PANEL_MAX_H)
+    const onMove = (moveEvent: PointerEvent) => {
+      setFlowHeight(clamp(startHeight + moveEvent.clientY - startY, FLOW_PANEL_MIN_H, maxHeight))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  function beginRailResize(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = rightRailWidth
+    const onMove = (moveEvent: PointerEvent) => {
+      setRightRailWidth(clamp(startWidth - (moveEvent.clientX - startX), RIGHT_RAIL_MIN_W, RIGHT_RAIL_MAX_W))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
   }
 
   return (
@@ -1430,14 +1626,21 @@ export default function AgentWorkflowPage() {
 
       <ModeTabs mode={mode} setMode={setMode} isLive={isLive} />
 
-      {pipelines.length > 0 && (
+      {(runs.length > 0 || runsLoading) && (
         <RunPicker
-          pipelines={pipelines}
-          activePipelineId={activePipelineId}
-          onSelect={(p) => {
-            setSelectedPipeline(p.id)
+          runs={runs}
+          total={runsData?.total ?? runs.length}
+          page={runsData?.page ?? runPage}
+          pages={runsData?.pages ?? 1}
+          pipelinesByRunId={pipelinesByRunId}
+          activeRunId={activeRunId}
+          onPageChange={setRunPage}
+          onSelectRun={(run, pipeline) => {
+            setSelectedRunId(run.id)
+            setSelectedPipeline(pipeline?.id ?? null)
             setSelectedId(null)
-            navigate(`/agents/run/${p.test_run_id}`)
+            setSummaryOpen(false)
+            navigate(`/agents/run/${run.id}`)
           }}
         />
       )}
@@ -1453,22 +1656,19 @@ export default function AgentWorkflowPage() {
             </p>
           </div>
         </div>
-      ) : pipelinesLoading || stagesLoading ? (
+      ) : runsLoading || pipelinesLoading || focusedPipelinesLoading || (activePipelineId && stagesLoading) ? (
         <div className="flex-1 grid place-items-center"><LoadingSpinner size="lg" /></div>
-      ) : pipelines.length === 0 ? (
-        <div className="flex-1 grid place-items-center p-12">
-          <div className="text-center max-w-md">
-            <Bot className="h-10 w-10 mx-auto text-[var(--color-text-muted)] mb-3" />
-            <p className="text-[var(--color-text)] font-semibold">No agent pipelines yet</p>
-            <p className="text-[12px] text-[var(--color-text-muted)] mt-1">
-              Active analysis mode: <span className="font-mono">{analysisMode}</span>.
-              {liveRuns.length > 0 && <> {liveRuns.length} live run{liveRuns.length === 1 ? '' : 's'} streaming.</>}
-              {' '}Stream test results via the SDK or upload a report at <Link to="/runs" className="text-[var(--color-accent)] underline">/runs</Link>.
-            </p>
-          </div>
-        </div>
+      ) : !activeRunId || !activePipeline ? (
+        <NoPipelinePanel
+          run={testRun}
+          analysisMode={analysisMode}
+          liveRuns={liveRuns}
+          isQaEngineer={isQaEngineer}
+          submitting={triggerSubmitting}
+          onTrigger={() => activeRunId && queuePipelineForRun(activeRunId)}
+        />
       ) : (
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 flex flex-col overflow-auto min-w-0">
             <SubwayTrack
               stages={displayStages}
@@ -1476,6 +1676,14 @@ export default function AgentWorkflowPage() {
               onSelect={setSelectedId}
               snapshot={snapshot}
               pipelineLabel={activePipeline?.workflow_type ?? 'offline'}
+              height={flowHeight}
+              collapsed={flowCollapsed}
+              onToggleCollapsed={() => setFlowCollapsed(v => !v)}
+              onToggleExpanded={() => {
+                setFlowCollapsed(false)
+                setFlowHeight(h => h > 560 ? 430 : 680)
+              }}
+              onStartResize={beginFlowResize}
             />
             <RunMeta
               pipeline={activePipeline}
@@ -1502,12 +1710,57 @@ export default function AgentWorkflowPage() {
             />
             <EventStrip events={events} onSelect={setSelectedId} />
           </div>
-          <aside
-            className="flex-shrink-0 border-l"
-            style={{ width: 360, background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
-          >
-            <RightRail stage={selectedStage} decisionSelected={decisionSelected} events={events} />
-          </aside>
+          {rightRailCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setRightRailCollapsed(false)}
+              className="flex-shrink-0 border-l px-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+              title="Expand stage details"
+              aria-label="Expand stage details"
+            >
+              <PanelRightOpen className="h-4 w-4" />
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onPointerDown={beginRailResize}
+                className="group flex-shrink-0 w-3 cursor-col-resize border-l border-r flex items-center justify-center"
+                style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)', touchAction: 'none' }}
+                aria-label="Resize stage details width"
+                title="Drag to resize stage details"
+              >
+                <GripVertical className="h-4 w-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]" />
+              </button>
+              <aside
+                className="flex-shrink-0 flex flex-col min-h-0"
+                style={{ width: rightRailWidth, background: 'var(--color-bg-card)' }}
+              >
+                <div
+                  className="h-10 flex items-center justify-between gap-2 px-3 border-b"
+                  style={{ borderColor: 'var(--color-border)' }}
+                >
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    Stage details
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRightRailCollapsed(true)}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded border text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    style={{ borderColor: 'var(--color-border)' }}
+                    title="Collapse stage details"
+                    aria-label="Collapse stage details"
+                  >
+                    <PanelRightClose className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0">
+                  <RightRail stage={selectedStage} decisionSelected={decisionSelected} events={events} />
+                </div>
+              </aside>
+            </>
+          )}
         </div>
       )}
     </div>

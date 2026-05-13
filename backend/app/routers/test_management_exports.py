@@ -646,8 +646,11 @@ async def list_test_suites(
             return []
     from sqlalchemy import text as sa_text
 
-    # Automation test cases
+    # Automation test cases. ``last_run_id`` resolves to the test_run row
+    # whose ``created_at`` matched MAX(tr.created_at) — used by the
+    # human-in-the-loop review action to target the latest run.
     auto_where = "AND tr.project_id = :project_id" if project_id else ""
+    sub_where = "AND tr2.project_id = :project_id" if project_id else ""
     auto_params: dict = {"project_id": project_id} if project_id else {}
     auto_query = sa_text(f"""
         SELECT
@@ -655,7 +658,16 @@ async def list_test_suites(
             COUNT(*) AS test_count,
             COUNT(*) FILTER (WHERE tc.status = 'PASSED') AS passed_count,
             COUNT(*) FILTER (WHERE tc.status = 'FAILED') AS failed_count,
-            MAX(tr.created_at) AS last_run_at
+            MAX(tr.created_at) AS last_run_at,
+            (
+                SELECT tr2.id
+                FROM test_cases tc2
+                JOIN test_runs tr2 ON tc2.test_run_id = tr2.id
+                WHERE tc2.suite_name = tc.suite_name
+                  {sub_where}
+                ORDER BY tr2.created_at DESC
+                LIMIT 1
+            ) AS last_run_id
         FROM test_cases tc
         JOIN test_runs tr ON tc.test_run_id = tr.id
         WHERE tc.suite_name IS NOT NULL AND tc.suite_name != ''
@@ -695,6 +707,7 @@ async def list_test_suites(
             "passed_count": row.passed_count,
             "failed_count": row.failed_count,
             "last_run_at": row.last_run_at,
+            "last_run_id": row.last_run_id,
         }
     for row in manual_rows:
         if row.suite_name in merged:
@@ -711,7 +724,18 @@ async def list_test_suites(
                 "passed_count": row.passed_count,
                 "failed_count": row.failed_count,
                 "last_run_at": row.last_run_at,
+                "last_run_id": None,  # manual-only suite, no automation run yet
             }
+
+    # Bulk-resolve owners (migration 0076) so each row carries its resolved
+    # owner alongside aggregate counts. Falls back to project.manager_user_id.
+    owner_map: dict[str, dict] = {}
+    if project_id:
+        from app.services.suite_review_service import list_suite_owners
+
+        owner_map = await list_suite_owners(
+            db, project_id, [s["suite_name"] for s in merged.values()]
+        )
 
     result = sorted(merged.values(), key=lambda x: x["test_count"], reverse=True)
     logger.info("listing_test_suites", count=len(result), project_id=str(project_id) if project_id else None)
@@ -723,7 +747,12 @@ async def list_test_suites(
             "passed_count": s["passed_count"],
             "failed_count": s["failed_count"],
             "last_run_at": s["last_run_at"].isoformat() if s["last_run_at"] else None,
+            "last_run_id": str(s["last_run_id"]) if s["last_run_id"] else None,
             "pass_rate": round(s["passed_count"] / s["test_count"] * 100, 1) if s["test_count"] > 0 else None,
+            "owner_user_id": owner_map.get(s["suite_name"], {}).get("owner_user_id"),
+            "owner_email": owner_map.get(s["suite_name"], {}).get("owner_email"),
+            "owner_full_name": owner_map.get(s["suite_name"], {}).get("owner_full_name"),
+            "owner_is_fallback": owner_map.get(s["suite_name"], {}).get("is_fallback", False),
         }
         for s in result
     ]
@@ -743,20 +772,64 @@ async def get_suite_test_cases(
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
             return []
+    from sqlalchemy import func
+
     from app.models.postgres import TestCase, TestRun
 
-    # Automation test cases
-    auto_stmt = (
-        select(TestCase)
+    # Automation test cases — aggregate by fingerprint so each unique test
+    # collapses to one row carrying its execution count and most-recent run
+    # date. Latest-run row wins for status/duration/class via DISTINCT ON.
+    base = (
+        select(
+            TestCase.id,
+            TestCase.test_fingerprint,
+            TestCase.test_name,
+            TestCase.suite_name,
+            TestCase.status,
+            TestCase.duration_ms,
+            TestCase.class_name,
+            TestCase.package_name,
+            TestRun.created_at.label("run_created_at"),
+        )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
         .where(TestCase.suite_name == suite_name)
-        .order_by(TestCase.created_at.desc())
-        .limit(limit)
     )
     if project_id:
-        auto_stmt = auto_stmt.where(TestRun.project_id == project_id)
+        base = base.where(TestRun.project_id == project_id)
+    base_sq = base.subquery()
 
-    auto_cases = (await db.execute(auto_stmt)).scalars().all()
+    latest_sq = (
+        select(base_sq)
+        .distinct(base_sq.c.test_fingerprint)
+        .order_by(base_sq.c.test_fingerprint, base_sq.c.run_created_at.desc())
+        .subquery()
+    )
+    counts_sq = (
+        select(
+            base_sq.c.test_fingerprint.label("fp"),
+            func.count().label("execution_count"),
+            func.max(base_sq.c.run_created_at).label("last_execution_at"),
+        )
+        .group_by(base_sq.c.test_fingerprint)
+        .subquery()
+    )
+    aggregated = (
+        select(
+            latest_sq.c.id,
+            latest_sq.c.test_name,
+            latest_sq.c.suite_name,
+            latest_sq.c.status,
+            latest_sq.c.duration_ms,
+            latest_sq.c.class_name,
+            latest_sq.c.package_name,
+            counts_sq.c.execution_count,
+            counts_sq.c.last_execution_at,
+        )
+        .join(counts_sq, latest_sq.c.test_fingerprint == counts_sq.c.fp)
+        .order_by(counts_sq.c.last_execution_at.desc().nulls_last())
+        .limit(limit)
+    )
+    auto_rows = (await db.execute(aggregated)).all()
 
     # Manual managed test cases
     manual_stmt = (
@@ -771,19 +844,23 @@ async def get_suite_test_cases(
     manual_cases = (await db.execute(manual_stmt)).scalars().all()
 
     result: list[dict[str, Any]] = []
-    for auto_tc in auto_cases:
+    for row in auto_rows:
+        last_exec = row.last_execution_at
         result.append({
-            "id": str(auto_tc.id),
-            "test_name": auto_tc.test_name,
-            "suite_name": auto_tc.suite_name,
-            "status": auto_tc.status,
-            "duration_ms": auto_tc.duration_ms,
-            "class_name": auto_tc.class_name,
-            "package_name": auto_tc.package_name,
-            "created_at": auto_tc.created_at.isoformat() if auto_tc.created_at else None,
+            "id": str(row.id),
+            "test_name": row.test_name,
+            "suite_name": row.suite_name,
+            "status": row.status,
+            "duration_ms": row.duration_ms,
+            "class_name": row.class_name,
+            "package_name": row.package_name,
+            "created_at": last_exec.isoformat() if last_exec else None,
+            "execution_count": int(row.execution_count or 0),
+            "last_execution_at": last_exec.isoformat() if last_exec else None,
             "source": "automation",
         })
     for manual_tc in manual_cases:
+        executed = bool(manual_tc.last_execution_status)
         result.append({
             "id": str(manual_tc.id),
             "test_name": manual_tc.title,
@@ -793,11 +870,13 @@ async def get_suite_test_cases(
             "class_name": manual_tc.feature_area,
             "package_name": None,
             "created_at": manual_tc.created_at.isoformat() if manual_tc.created_at else None,
+            "execution_count": 1 if executed else 0,
+            "last_execution_at": None,
             "source": "manual",
         })
 
-    # Sort combined by created_at descending
-    result.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    # Sort combined by last_execution_at desc (falls back to created_at)
+    result.sort(key=lambda x: x["last_execution_at"] or x["created_at"] or "", reverse=True)
     return result[:limit]
 
 

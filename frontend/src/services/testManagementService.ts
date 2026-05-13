@@ -185,10 +185,22 @@ export const testManagementService = {
     ),
 
   // Test Suites
-  listSuites: (projectId: string | null): Promise<Array<{suite_name: string; test_count: number; passed_count: number; failed_count: number; last_run_at: string | null; pass_rate: number | null}>> =>
+  listSuites: (projectId: string | null): Promise<Array<{
+    suite_name: string
+    test_count: number
+    passed_count: number
+    failed_count: number
+    last_run_at: string | null
+    last_run_id: string | null
+    pass_rate: number | null
+    owner_user_id?: string | null
+    owner_email?: string | null
+    owner_full_name?: string | null
+    owner_is_fallback?: boolean
+  }>> =>
     getData('/api/v1/test-management/suites', { params: projectId ? { project_id: projectId } : {} }),
 
-  getSuiteCases: (suiteName: string, projectId: string | null): Promise<Array<{id: string; test_name: string; suite_name: string; status: string; duration_ms: number | null; class_name: string | null; package_name: string | null; created_at: string | null}>> =>
+  getSuiteCases: (suiteName: string, projectId: string | null): Promise<Array<{id: string; test_name: string; suite_name: string; status: string; duration_ms: number | null; class_name: string | null; package_name: string | null; created_at: string | null; execution_count?: number; last_execution_at?: string | null}>> =>
     getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/cases`, { params: projectId ? { project_id: projectId } : {} }),
 
   // Suite Traceability (TS-5)
@@ -200,6 +212,58 @@ export const testManagementService = {
 
   getSuiteDeleted: (suiteName: string, projectId: string | null): Promise<SuiteDeletedItem[]> =>
     getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/deleted`, { params: projectId ? { project_id: projectId } : {} }),
+
+  // Suite owners (HITL) — migration 0076
+  listSuiteOwners: (projectId: string): Promise<SuiteOwnerItem[]> =>
+    getData('/api/v1/test-management/suite-owners', { params: { project_id: projectId } }),
+
+  resolveSuiteOwner: (suiteName: string, projectId: string): Promise<SuiteOwnerItem[]> =>
+    getData('/api/v1/test-management/suite-owners', { params: { project_id: projectId, suite_name: suiteName } }),
+
+  setSuiteOwner: (suiteName: string, projectId: string, ownerUserId: string | null): Promise<SuiteOwnerItem> =>
+    putData(
+      `/api/v1/test-management/suite-owners/${encodeURIComponent(suiteName)}`,
+      { owner_user_id: ownerUserId },
+      { params: { project_id: projectId } },
+    ),
+
+  // Suite reviews (HITL on AI analysis) — migration 0076
+  listReviewsForRun: (testRunId: string): Promise<SuiteReviewItem[]> =>
+    getData(`/api/v1/test-management/suite-reviews/by-run/${testRunId}`),
+
+  listSuiteReviews: (projectId: string, params?: { suite_name?: string; state?: SuiteReviewState }): Promise<SuiteReviewItem[]> =>
+    getData('/api/v1/test-management/suite-reviews', { params: { project_id: projectId, ...params } }),
+
+  upsertSuiteReview: (testRunId: string, suiteName: string, state: SuiteReviewState, note?: string): Promise<SuiteReviewItem> =>
+    putData(
+      `/api/v1/test-management/suite-reviews/by-run/${testRunId}/${encodeURIComponent(suiteName)}`,
+      { state, note },
+    ),
+}
+
+export type SuiteReviewState = 'pending' | 'confirmed' | 'acknowledged' | 'review_later'
+
+export interface SuiteOwnerItem {
+  project_id: string
+  suite_name: string
+  owner_user_id: string | null
+  owner_email: string | null
+  owner_full_name: string | null
+  is_fallback: boolean
+}
+
+export interface SuiteReviewItem {
+  id: string
+  project_id: string
+  suite_name: string
+  test_run_id: string
+  state: SuiteReviewState
+  note: string | null
+  reviewer_user_id: string | null
+  reviewer_email: string | null
+  reviewed_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface SuiteMembershipItem {

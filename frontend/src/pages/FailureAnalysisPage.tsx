@@ -50,8 +50,13 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import SuiteBadge from '@/components/ui/SuiteBadge'
+import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
+import { useRuns } from '@/hooks/useRuns'
+import { useSuiteOptions } from '@/hooks/useSuiteOptions'
+import { postData } from '@/services/http'
 import {
   useFailureCategories, useFlakyTests, useTopFailing, useTrendData,
 } from '@/hooks/useMetrics'
@@ -1314,12 +1319,20 @@ export default function FailureAnalysisPage() {
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 
   const [showPicker, setShowPicker] = useState(false)
+  const [selectedSuite, setSelectedSuite] = useState('')
   const analyticsView = useAnalyticsView('failures')
+  const suiteFilter = selectedSuite || null
+  const { options: suiteOptions } = useSuiteOptions(days)
 
-  const { data: flakyData,    isLoading: flakyLoading    } = useFlakyTests(days)
-  const { data: categoryData, isLoading: categoryLoading } = useFailureCategories(days)
-  const { data: topData,      isLoading: topLoading      } = useTopFailing(days)
-  const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days)
+  const { data: flakyData,    isLoading: flakyLoading    } = useFlakyTests(days, suiteFilter)
+  const { data: categoryData, isLoading: categoryLoading } = useFailureCategories(days, suiteFilter)
+  const { data: topData,      isLoading: topLoading      } = useTopFailing(days, suiteFilter)
+  const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days, suiteFilter)
+  // Surface the suite of the most-recent failing run in the header so a user
+  // landing on this page can immediately see which test suite owns the
+  // failures they're about to triage.
+  const { data: latestFailedRuns } = useRuns({ page: 1, size: 1, days, status: 'FAILED', ...(selectedSuite && { suite_name: selectedSuite }) })
+  const latestFailedRun = latestFailedRuns?.items?.[0]
 
   const flaky      = useMemo<FlakyTestItem[]>(() => normaliseList<FlakyTestItem>(flakyData), [flakyData])
   const categories = useMemo<FailureCategoryItem[]>(() => normaliseList<FailureCategoryItem>(categoryData), [categoryData])
@@ -1335,6 +1348,70 @@ export default function FailureAnalysisPage() {
   const recs = useMemo(() => buildRecActions(model), [model])
 
   const isLoading = flakyLoading || categoryLoading || topLoading || trendsLoading
+
+  // ── CTA handlers ─────────────────────────────────────────────────────────
+  const [notifyingOwner, setNotifyingOwner] = useState(false)
+
+  async function handleNotifyOwner() {
+    const top = model.topFailingTest
+    if (!top) return
+    if (!project?.id) {
+      toast.error('Pick a specific project to notify the owner.')
+      return
+    }
+    if (notifyingOwner) return
+    setNotifyingOwner(true)
+    const loadingId = toast.loading(`Notifying suite owner for "${top.test_name}"…`)
+    try {
+      type Resp = {
+        queued: boolean
+        sent_to: string | null
+        owner_name: string | null
+        suite_name: string | null
+        is_fallback_owner: boolean
+        reason: string | null
+      }
+      const resp = await postData<Resp>('/api/v1/analytics/notify-owner', {
+        project_id: project.id,
+        test_name: top.test_name,
+        days,
+        fail_count: top.fail_count,
+      })
+      toast.dismiss(loadingId)
+      if (resp.queued) {
+        toast.success(
+          `Notified ${resp.owner_name ?? resp.sent_to}${resp.is_fallback_owner ? ' (project manager — no explicit suite owner)' : ''}`,
+          { icon: '✉️', duration: 6000 },
+        )
+      } else {
+        toast(resp.reason ?? 'Could not notify the owner.', { icon: '⚠️', duration: 8000 })
+      }
+    } catch (err: unknown) {
+      toast.dismiss(loadingId)
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to notify owner'
+      toast.error(detail)
+    } finally {
+      setNotifyingOwner(false)
+    }
+  }
+
+  // Why-not-a-flake explanation — surfaces the heuristics so users understand
+  // what the verdict means rather than having to read the rules engine code.
+  function showFlakeWhyDetails() {
+    toast(
+      [
+        'Why this isn\'t flagged as flaky:',
+        '',
+        '• A test is "flaky" when it both passed and failed on the same fingerprint within the window.',
+        '• Every failing test in this window has only failing executions — no recent pass that would indicate intermittency.',
+        '• Retrying won\'t fix it; treat the failures as a hard regression and bisect against the last green run.',
+      ].join('\n'),
+      { icon: '🪛', duration: 12000, style: { whiteSpace: 'pre-line', maxWidth: 480 } },
+    )
+  }
 
   if (!project && !isAllProjects) {
     return (
@@ -1403,7 +1480,16 @@ export default function FailureAnalysisPage() {
           {model.repeatFailures.length > 1 && <> <span className="dim">+{model.repeatFailures.length - 1} other repeat{model.repeatFailures.length - 1 === 1 ? '' : 's'}.</span></>}
         </>
       ),
-      cta: { label: 'Open test', onClick: () => toast('Test detail — coming in Phase 2', { icon: '🔍' }) },
+      cta: {
+        label: 'Open test',
+        // The top-failing-test record only carries (test_name, fail_count) —
+        // there's no canonical run/test-case id to deep-link into. Route the
+        // user to /search scoped to test cases with the test name pre-filled
+        // so they can click into the most recent failing occurrence (or any
+        // historical run) from there. Keyword mode matches an exact substring
+        // on the test_name column.
+        onClick: () => navigate(`/search?q=${encodeURIComponent(t.test_name)}&scope=tests&mode=keyword`),
+      },
     })
   }
   if (model.uncategorizedPct >= 50) {
@@ -1416,7 +1502,17 @@ export default function FailureAnalysisPage() {
           {' '}<span className="dim">No owner auto-routed; no playbook attached.</span>
         </>
       ),
-      cta: { label: 'Classify', onClick: () => toast('Classifier hint editor — coming in Phase 2', { icon: '🏷️' }) },
+      cta: {
+        label: 'Classify',
+        // High uncategorized share means the classifier — whichever mode is
+        // active — didn't match the failure pattern. The actionable surface
+        // is the Analysis Engine config on /settings/ai, where the user can
+        // switch modes (rules → ml/llm/auto), tune the confidence threshold,
+        // or train ML against existing labeled data. Non-admins land there
+        // read-only (the form disables inputs), which is still strictly more
+        // useful than the prior placeholder toast.
+        onClick: () => navigate('/settings/ai'),
+      },
     })
   }
   if (verdict === 'REPEAT_FAILURE' && model.flakyCount === 0) {
@@ -1429,7 +1525,7 @@ export default function FailureAnalysisPage() {
           {' '}<span className="dim">Treat as a hard regression, not a re-run candidate.</span>
         </>
       ),
-      cta: { label: 'Why', onClick: () => toast('Flake-detection rules — coming in Phase 2', { icon: '🪛' }) },
+      cta: { label: 'Why', onClick: () => showFlakeWhyDetails() },
     })
   }
 
@@ -1437,14 +1533,18 @@ export default function FailureAnalysisPage() {
     primary: { label: 'Open triage queue', onClick: () => navigate(`/runs?days=${days}`) } as IssueRowSpec['cta'],
     secondary: [
       model.topFailingTest
-        ? { label: 'Notify owner', onClick: () => toast('Mention picker — coming in Phase 2', { icon: '👋' }) } as IssueRowSpec['cta']
+        ? { label: 'Notify owner', onClick: () => handleNotifyOwner() } as IssueRowSpec['cta']
         : null,
-      { label: 'Compare to previous window', onClick: () => toast('Window comparison — coming in Phase 2', { icon: '⇆' }) } as IssueRowSpec['cta'],
+      // Trends already renders the full window's failure trend; using the
+      // same `days` value lets the user eyeball the current vs prior segment
+      // without a bespoke comparison endpoint. Cleaner than a numeric diff
+      // toast and gets the user closer to drilling into the regression.
+      { label: 'Compare to previous window', onClick: () => navigate(`/trends?days=${days}`) } as IssueRowSpec['cta'],
     ].filter((c): c is IssueRowSpec['cta'] => c !== null),
   }
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1320, padding: '24px 28px 80px' }}>
+    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
@@ -1453,9 +1553,23 @@ export default function FailureAnalysisPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Project</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
+            {selectedSuite && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Suite</span>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>Window</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">last {days} days</code>
+            {latestFailedRun && (latestFailedRun.primary_suite_name || latestFailedRun.suite_names?.length) && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Latest failing suite</span>
+                <SuiteBadge primary={latestFailedRun.primary_suite_name} all={latestFailedRun.suite_names} />
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>Updated {refreshedAt}</span>
           </div>
@@ -1466,6 +1580,12 @@ export default function FailureAnalysisPage() {
             Customize
           </GhostBtn>
           <WindowPicker value={days} onChange={setDays} />
+          <SuiteFilterSelect
+            value={selectedSuite}
+            onChange={setSelectedSuite}
+            options={suiteOptions}
+            allLabel="All suites"
+          />
           <GhostBtn
             onClick={() => toast('Export failure CSV — coming in Phase 2', { icon: '📦' })}
             title="Export failure data"

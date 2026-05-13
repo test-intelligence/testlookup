@@ -56,6 +56,10 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import SuiteBadge from '@/components/ui/SuiteBadge'
+import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { useRuns } from '@/hooks/useRuns'
+import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import {
@@ -66,7 +70,8 @@ import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
 // ── Window picker ──────────────────────────────────────────────────────────
-const WINDOWS = [7, 14, 30, 90] as const
+// 1 = last 24 hours (rendered as "24h"); the rest are day counts.
+const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
 const WINDOW_KEY = 'tl.trends.window'
 
@@ -423,7 +428,7 @@ function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window
                 : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
             )}
           >
-            {w}d
+            {w === 1 ? '24h' : `${w}d`}
           </button>
         )
       })}
@@ -1504,17 +1509,22 @@ export default function TrendsPage() {
 
   const [days, setDays] = useState<Window>(() => {
     const saved = Number(localStorage.getItem(WINDOW_KEY))
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 30
+    // Default: last 24h. Saved choice wins so existing users keep theirs.
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
   })
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 
   const [showPicker, setShowPicker] = useState(false)
+  const [selectedSuite, setSelectedSuite] = useState('')
   const analyticsView = useAnalyticsView('trends')
+  const suiteFilter = selectedSuite || null
+  const { options: suiteOptions } = useSuiteOptions(days)
 
-  const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days)
-  const { data: dashSummary }                              = useDashboardSummary(days)
-  const { data: coverageData }                             = useCoverage(days)
-  const { data: flakyData }                                = useFlakyTests(days)
+  const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days, suiteFilter)
+  const { data: dashSummary }                              = useDashboardSummary(days, suiteFilter)
+  const { data: coverageData }                             = useCoverage(days, suiteFilter)
+  const { data: flakyData }                                = useFlakyTests(days, suiteFilter)
+  const { data: latestRuns }                               = useRuns({ page: 1, size: 1, days, ...(selectedSuite && { suite_name: selectedSuite }) })
 
   const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
   const suites: CoverageSuite[] = useMemo(() => coverageData?.suites ?? [], [coverageData])
@@ -1553,6 +1563,9 @@ export default function TrendsPage() {
 
   const projectLabel = project?.name ?? 'All Projects'
   const refreshedAt = '12m ago'
+  // Surface the most-recent run's suite in the header so users see which
+  // suite the trend bars belong to without having to drill into a run.
+  const latestRun = latestRuns?.items?.[0]
 
   // Summary
   const summaryNode: React.ReactNode = (() => {
@@ -1653,7 +1666,7 @@ export default function TrendsPage() {
   })()
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1320, padding: '24px 28px 80px' }}>
+    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
@@ -1662,9 +1675,23 @@ export default function TrendsPage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Project</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
+            {selectedSuite && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Suite</span>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>Window</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">last {days} days</code>
+            {latestRun && (latestRun.primary_suite_name || latestRun.suite_names?.length) && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Latest run suite</span>
+                <SuiteBadge primary={latestRun.primary_suite_name} all={latestRun.suite_names} />
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>refreshed {refreshedAt}</span>
           </div>
@@ -1675,6 +1702,12 @@ export default function TrendsPage() {
             Customize
           </GhostBtn>
           <WindowPicker value={days} onChange={setDays} />
+          <SuiteFilterSelect
+            value={selectedSuite}
+            onChange={setSelectedSuite}
+            options={suiteOptions}
+            allLabel="All suites"
+          />
           <GhostBtn
             onClick={() => toast('Export PDF — coming in Phase 2', { icon: '📄' })}
             title="Export this trends view as a PDF"

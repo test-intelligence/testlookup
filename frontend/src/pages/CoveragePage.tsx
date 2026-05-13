@@ -47,6 +47,10 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import SuiteBadge from '@/components/ui/SuiteBadge'
+import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { useRuns } from '@/hooks/useRuns'
+import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useCoverage, useTrendData } from '@/hooks/useMetrics'
@@ -55,7 +59,8 @@ import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
 // ── Window picker ──────────────────────────────────────────────────────────
-const WINDOWS = [7, 14, 30, 90] as const
+// 1 = last 24 hours (rendered as "24h"); the rest are day counts.
+const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
 const WINDOW_KEY = 'tl.coverage.window'
 
@@ -337,7 +342,7 @@ function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window
                 : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
             )}
           >
-            {w}d
+            {w === 1 ? '24h' : `${w}d`}
           </button>
         )
       })}
@@ -1211,15 +1216,19 @@ export default function CoveragePage() {
 
   const [days, setDays] = useState<Window>(() => {
     const saved = Number(localStorage.getItem(WINDOW_KEY))
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 30
+    // Default: last 24h. Saved choice wins so existing users keep theirs.
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
   })
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 
   const [showPicker, setShowPicker] = useState(false)
+  const [selectedSuite, setSelectedSuite] = useState('')
   const analyticsView = useAnalyticsView('coverage')
+  const suiteFilter = selectedSuite || null
+  const { options: suiteOptions } = useSuiteOptions(days)
 
-  const { data: coverageData, isLoading } = useCoverage(days)
-  const { data: trendData } = useTrendData(days)
+  const { data: coverageData, isLoading } = useCoverage(days, suiteFilter)
+  const { data: trendData } = useTrendData(days, suiteFilter)
 
   const summary: Partial<CoverageSummary> = useMemo(() => coverageData?.summary ?? {}, [coverageData])
   const suites: CoverageSuite[] = useMemo(() => coverageData?.suites ?? [], [coverageData])
@@ -1243,6 +1252,10 @@ export default function CoveragePage() {
 
   const projectLabel = project?.name ?? 'All Projects'
   const refreshedAt = trend.length > 0 ? '4h ago' : 'just now'   // backend doesn't expose snapshot age yet
+  // Surface the most-recent run's suite in the header so a user landing here
+  // can see which suite the coverage snapshot represents at a glance.
+  const { data: latestRuns } = useRuns({ page: 1, size: 1, days, ...(selectedSuite && { suite_name: selectedSuite }) })
+  const latestRun = latestRuns?.items?.[0]
   const totalEvidence = (summary.suite_count ?? 0) + suites.length + (model.untaggedRuns > 0 ? 1 : 0)
   const confidencePct = clamp(model.composite, 0, 100)
 
@@ -1277,7 +1290,7 @@ export default function CoveragePage() {
   return (
     <main
       className="mx-auto"
-      style={{ maxWidth: 1320, padding: '24px 28px 80px' }}
+      style={{ maxWidth: 1600, padding: '24px 28px 80px' }}
     >
       {/* Header */}
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
@@ -1288,9 +1301,23 @@ export default function CoveragePage() {
           <div className="flex items-center gap-2 mt-1 flex-wrap text-[13px] text-[var(--color-text-muted)]">
             <span>Project</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{projectLabel}</code>
+            {selectedSuite && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Suite</span>
+                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{selectedSuite}</code>
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>Window</span>
             <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">last {days} days</code>
+            {latestRun && (latestRun.primary_suite_name || latestRun.suite_names?.length) && (
+              <>
+                <span aria-hidden>·</span>
+                <span>Latest run suite</span>
+                <SuiteBadge primary={latestRun.primary_suite_name} all={latestRun.suite_names} />
+              </>
+            )}
             <span aria-hidden>·</span>
             <span>Updated {refreshedAt}</span>
           </div>
@@ -1301,6 +1328,12 @@ export default function CoveragePage() {
             Customize
           </GhostBtn>
           <WindowPicker value={days} onChange={setDays} />
+          <SuiteFilterSelect
+            value={selectedSuite}
+            onChange={setSelectedSuite}
+            options={suiteOptions}
+            allLabel="All suites"
+          />
           <GhostBtn
             onClick={() => toast('Export coverage CSV — coming in Phase 2', { icon: '📦' })}
             title="Export coverage data"

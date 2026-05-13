@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import LaunchStatus, LiveSession, Project, TestRun
@@ -64,24 +64,71 @@ async def publish_event_batch(session_id: str, run_id: str, events):
     return await _publish_event_batch(session_id=session_id, run_id=run_id, events=events)
 
 
-async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
+async def resolve_project(db: AsyncSession, identifier: str) -> Project:
+    """Resolve a project identifier (UUID *or* name) to a Project row.
+
+    Used by the streaming-session endpoint so SDK users can configure either
+    ``testlookup.project=<uuid>`` or ``testlookup.project=<name>`` without
+    knowing which one the server expects. UUID is tried first because it's
+    the unambiguous case; the name fallback is a case-insensitive exact
+    match (no fuzzy search — surprising matches would be worse than 404).
+    """
+    try:
+        as_uuid = uuid.UUID(str(identifier))
+    except (ValueError, AttributeError, TypeError):
+        as_uuid = None
+
+    if as_uuid is not None:
+        project = await db.get(Project, as_uuid)
+        if project:
+            return project
+
+    # Fall through to case-insensitive name lookup.
+    result = await db.execute(
+        select(Project).where(func.lower(Project.name) == str(identifier).lower())
+    )
+    project = result.scalar_one_or_none()
+    if project:
+        return project
+
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+async def create_session(
+    db: AsyncSession,
+    payload,
+    bound_project_id: Optional[uuid.UUID] = None,
+) -> LiveSessionResponse:
     """Stage a new LiveSession and return the response shape. Handler commits.
 
     Redis session-token registration and in-memory run state happen *after*
     the handler's commit so an aborted transaction never leaves a dangling
     session token that authenticates a run which doesn't exist in Postgres.
+
+    ``bound_project_id`` is the UUID a project-scoped API key restricts this
+    call to (or ``None`` for JWT / user-scoped keys). It's checked against the
+    *resolved* project, not the raw identifier, so passing a project name with
+    a UUID-bound key still validates correctly.
     """
-    project = await db.get(Project, payload.project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await resolve_project(db, payload.project_id)
+    if bound_project_id is not None and project.id != bound_project_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This API key is restricted to a different project",
+        )
 
     session_id = str(uuid.uuid4())
     run_id = session_id
     session_token = secrets.token_urlsafe(32)
 
+    # Use the *resolved* project's real UUID for every downstream write. The
+    # original payload.project_id may have been a name; project.id is always a
+    # UUID so the LiveSession FK and the Redis state stay consistent.
+    project_uuid = project.id
+
     session = LiveSession(
         id=uuid.UUID(session_id),
-        project_id=payload.project_id,
+        project_id=project_uuid,
         run_id=run_id,
         client_name=payload.client_name,
         machine_id=payload.machine_id,
@@ -94,6 +141,7 @@ async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
         status="active",
         release_name=payload.release_name or None,
         launch_name=getattr(payload, "launch_name", None) or None,
+        suite_name=getattr(payload, "suite_name", None) or None,
         started_at=datetime.now(timezone.utc),
         extra_metadata=payload.metadata or {},
     )
@@ -107,30 +155,35 @@ async def create_session(db: AsyncSession, payload) -> LiveSessionResponse:
 
     await RedisLiveRunState.start(
         run_id=run_id,
-        project_id=str(payload.project_id),
+        project_id=str(project_uuid),
         build_number=payload.build_number or session_id,
         total_tests=payload.total_tests or 0,
         launch_name=getattr(payload, "launch_name", None) or None,
+        suite_name=getattr(payload, "suite_name", None) or None,
     )
 
     logger.info(
         "Live session created: session=%s run=%s project=%s framework=%s",
         session_id,
         run_id,
-        payload.project_id,
+        project_uuid,
         payload.framework,
     )
     return LiveSessionResponse(
         session_id=session_id,
         session_token=session_token,
         run_id=run_id,
-        project_id=str(payload.project_id),
+        project_id=str(project_uuid),
         expires_in=SESSION_TTL,
         created_at=session.started_at,
     )
 
 
-async def get_session(db: AsyncSession, session_id: str) -> dict:
+async def get_session(
+    db: AsyncSession,
+    session_id: str,
+    bound_project_id: Optional[uuid.UUID] = None,
+) -> dict:
     try:
         uid = uuid.UUID(session_id)
     except ValueError as exc:
@@ -139,6 +192,12 @@ async def get_session(db: AsyncSession, session_id: str) -> dict:
     session = await db.get(LiveSession, uid)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    if bound_project_id is not None and session.project_id != bound_project_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This API key is restricted to a different project",
+        )
 
     from app.streams.live_run_state import RedisLiveRunState
 
@@ -161,7 +220,11 @@ async def get_session(db: AsyncSession, session_id: str) -> dict:
     }
 
 
-async def close_session(db: AsyncSession, session_id: str) -> None:
+async def close_session(
+    db: AsyncSession,
+    session_id: str,
+    bound_project_id: Optional[uuid.UUID] = None,
+) -> None:
     try:
         uid = uuid.UUID(session_id)
     except ValueError as exc:
@@ -170,6 +233,17 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
     session = await db.get(LiveSession, uid)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Project-scoped API key: the session must belong to the bound project.
+    # JWT and user-scoped API keys pass ``bound_project_id=None`` and skip
+    # this check (membership at the route level was previously enforced by
+    # ``require_live_session_access``; the route now relies on this service
+    # check so X-API-Key callers don't get a spurious 401).
+    if bound_project_id is not None and session.project_id != bound_project_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This API key is restricted to a different project",
+        )
 
     # Idempotency guard: a previous close_session for this session has already
     # cleared Redis state and queued the persistence task. Returning early here
@@ -191,20 +265,22 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
 
     await upsert_test_run(db, session, state or {})
 
-    if session.release_name and session.release_name.strip():
-        try:
-            from app.services.release_linker import auto_link_release
+    # Release linking — explicit session.release_name wins; otherwise fall
+    # back to the project's default release (migration 0077). Wrapped in a
+    # broad try/except so a release-linking error never blocks session close.
+    try:
+        from app.services.release_linker import link_run_or_default
 
-            await auto_link_release(
-                db=db,
-                project_id=session.project_id,
-                release_name=session.release_name.strip(),
-                test_run_id=uuid.UUID(session.run_id),
-            )
-        except Exception as rel_err:
-            logger.warning(
-                f"live_session_release_link_failed session_id={session_id}: {rel_err}"
-            )
+        await link_run_or_default(
+            db=db,
+            project_id=session.project_id,
+            release_name=session.release_name,
+            test_run_id=uuid.UUID(session.run_id),
+        )
+    except Exception as rel_err:
+        logger.warning(
+            f"live_session_release_link_failed session_id={session_id}: {rel_err}"
+        )
 
     # stage-only: handler commits the LiveSession close, the upserted
     # TestRun, and any release link together.
@@ -235,9 +311,20 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
     try:
         from app.worker.tasks import run_agent_pipeline
 
+        # ``session.run_id`` is the SDK-supplied slug (e.g. ``local-abc12345``),
+        # not necessarily a UUID. The pipeline task writes to
+        # ``agent_pipeline_runs.test_run_id`` which is ``UUID(as_uuid=True)``
+        # with an FK to ``test_runs.id``. Passing the raw slug here caused
+        # the task to silently fail on insert and no AgentPipelineRun row
+        # was ever created — so the /agents page showed "No agent pipelines
+        # yet" for every live_stream run whose SDK didn't use UUID slugs.
+        # Convert to the canonical UUID the same way upsert_test_run and
+        # persist_live_session do.
+        canonical_run_uuid = canonical_test_run_uuid(session.run_id)
+
         run_agent_pipeline.apply_async(
             kwargs={
-                "test_run_id": session.run_id,
+                "test_run_id": str(canonical_run_uuid),
                 "project_id": str(session.project_id),
                 "build_number": session.build_number or session_id,
                 "workflow_type": "offline",
@@ -247,7 +334,8 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
             countdown=45,
         )
         logger.info(
-            f"ai_pipeline_queued_from_live session_id={session_id} run_id={session.run_id}"
+            f"ai_pipeline_queued_from_live session_id={session_id} "
+            f"session_run_id={session.run_id} canonical_run_id={canonical_run_uuid}"
         )
     except Exception as exc:
         logger.warning(
@@ -486,6 +574,7 @@ def build_live_session_state(payload: dict) -> LiveSessionState:
         completed_at=payload.get("completed_at"),
         release_name=payload.get("release_name"),
         launch_name=payload.get("launch_name"),
+        suite_name=payload.get("suite_name"),
     )
 
 
@@ -510,6 +599,7 @@ def build_completed_session_state(session) -> LiveSessionState:
         completed_at=session.completed_at.isoformat() if session.completed_at else None,
         release_name=session.release_name or None,
         launch_name=session.launch_name or None,
+        suite_name=getattr(session, "suite_name", None) or None,
     )
 
 
@@ -531,6 +621,7 @@ def build_test_run_fallback_state(run) -> LiveSessionState:
         last_event_at=run.end_time.isoformat() if run.end_time else None,
         client_name=None,
         completed_at=run.end_time.isoformat() if run.end_time else None,
+        suite_name=getattr(run, "primary_suite_name", None) or None,
     )
 
 
@@ -538,6 +629,8 @@ async def list_active_sessions(
     db: AsyncSession,
     project_id: Optional[str] = None,
     allowed_project_ids: Optional[set[uuid.UUID]] = None,
+    suite_name: Optional[str] = None,
+    days: int = 7,
 ) -> ActiveSessionsResponse:
     """
     List active + recent live sessions, enforcing tenant isolation.
@@ -547,8 +640,12 @@ async def list_active_sessions(
       accessible project set — used for non-admin callers without a pinned
       project. A value of ``None`` means no constraint (ADMIN or a project_id
       that has already been verified).
+    - ``days`` controls the cutoff for *completed* sessions/runs joined onto
+      the always-current active set. 1 = last 24 hours; 0 = no cutoff.
     """
     from app.streams.live_run_state import RedisLiveRunState
+
+    suite_key = (suite_name or "").strip().lower()
 
     all_active = await RedisLiveRunState.get_all_active()
     if project_id:
@@ -556,17 +653,29 @@ async def list_active_sessions(
     elif allowed_project_ids is not None:
         allowed_str = {str(pid) for pid in allowed_project_ids}
         all_active = [s for s in all_active if s.get("project_id") in allowed_str]
+    if suite_key:
+        all_active = [
+            session
+            for session in all_active
+            if (session.get("suite_name") or "").strip().lower() == suite_key
+        ]
 
     active_run_ids = {session.get("run_id") for session in all_active}
     active_sessions = [build_live_session_state(session) for session in all_active]
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    # ``days=0`` disables the cutoff so the caller sees every completed session
+    # the limit allows (still capped to 50 below).
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days) if days > 0 else None
+    )
     stmt = (
         select(LiveSession)
-        .where(LiveSession.status == "completed", LiveSession.completed_at >= cutoff)
+        .where(LiveSession.status == "completed")
         .order_by(LiveSession.completed_at.desc())
         .limit(50)
     )
+    if cutoff is not None:
+        stmt = stmt.where(LiveSession.completed_at >= cutoff)
     if project_id:
         try:
             stmt = stmt.where(LiveSession.project_id == uuid.UUID(project_id))
@@ -576,6 +685,8 @@ async def list_active_sessions(
         if not allowed_project_ids:
             return ActiveSessionsResponse(sessions=[], count=0)
         stmt = stmt.where(LiveSession.project_id.in_(allowed_project_ids))
+    if suite_key:
+        stmt = stmt.where(func.lower(func.trim(LiveSession.suite_name)) == suite_key)
 
     db_sessions = (await db.execute(stmt)).scalars().all()
     seen_run_ids = set(active_run_ids)
@@ -588,10 +699,12 @@ async def list_active_sessions(
 
     tr_stmt = (
         select(TestRun)
-        .where(TestRun.trigger_source == "live_stream", TestRun.start_time >= cutoff)
+        .where(TestRun.trigger_source == "live_stream")
         .order_by(TestRun.start_time.desc())
         .limit(50)
     )
+    if cutoff is not None:
+        tr_stmt = tr_stmt.where(TestRun.start_time >= cutoff)
     if project_id:
         try:
             tr_stmt = tr_stmt.where(TestRun.project_id == uuid.UUID(project_id))
@@ -599,6 +712,8 @@ async def list_active_sessions(
             pass
     elif allowed_project_ids is not None:
         tr_stmt = tr_stmt.where(TestRun.project_id.in_(allowed_project_ids))
+    if suite_key:
+        tr_stmt = tr_stmt.where(func.lower(func.trim(TestRun.primary_suite_name)) == suite_key)
 
     tr_runs = (await db.execute(tr_stmt)).scalars().all()
     for run in tr_runs:
@@ -625,6 +740,12 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     run_status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
     now = datetime.now(timezone.utc)
 
+    # Run-level suite identifier supplied by the SDK on session create. We
+    # stamp it on the TestRun immediately so every UI page that joins the run
+    # shows a single suite label without waiting for per-event aggregation
+    # in _update_run_aggregates.
+    suite_label = getattr(session, "suite_name", None) or None
+
     run = (await db.execute(select(TestRun).where(TestRun.id == run_uuid))).scalar_one_or_none()
     if run is None:
         run = TestRun(
@@ -641,6 +762,8 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
             skipped_tests=skipped,
             broken_tests=broken,
             pass_rate=pass_rate,
+            primary_suite_name=suite_label,
+            suite_names=[suite_label] if suite_label else None,
             start_time=session.started_at or now,
             end_time=now,
         )
@@ -657,6 +780,11 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         run.broken_tests = broken
         run.pass_rate = pass_rate
         run.end_time = now
+        # Only overwrite suite when SDK provided one — preserve any value
+        # already populated by per-event aggregation.
+        if suite_label and not run.primary_suite_name:
+            run.primary_suite_name = suite_label
+            run.suite_names = [suite_label]
         logger.info(
             f"test_run_updated_for_live_session run_id={run_uuid} session_id={session.id}"
         )
