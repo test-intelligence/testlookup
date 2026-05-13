@@ -58,6 +58,7 @@ async def list_managed_test_cases(
     feature_area: Optional[str] = None,
     ai_generated: Optional[bool] = None,
     search: Optional[str] = None,
+    suite_name: Optional[str] = None,
 ):
     query = select(ManagedTestCase)
     if project_id:
@@ -74,10 +75,117 @@ async def list_managed_test_cases(
         query = query.where(ManagedTestCase.feature_area == feature_area)
     if ai_generated is not None:
         query = query.where(ManagedTestCase.ai_generated == ai_generated)
+    if suite_name:
+        query = query.where(ManagedTestCase.suite_name == suite_name)
     if search:
         from app.services.sql_utils import like_contains
         query = query.where(ManagedTestCase.title.ilike(like_contains(search), escape="\\"))
     return await paginate_scalars(db, query.order_by(ManagedTestCase.created_at.desc()), page, size)
+
+
+async def list_automation_test_cases(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    search: Optional[str] = None,
+    suite_name: Optional[str] = None,
+    exclude_fingerprints: Optional[set[str]] = None,
+) -> list[dict]:
+    """Return synthesized ``ManagedTestCase``-shaped rows derived from per-run
+    ``TestCase`` rows for a project.
+
+    Backs the "include automation-ingested tests" toggle on
+    /test-management. Dedupes by ``test_fingerprint`` (one row per logical
+    test) and joins via the latest TestRun so ``last_executed_at`` /
+    ``last_execution_status`` reflect the most recent run.
+
+    The result rows are NOT inserted into ``managed_test_cases`` — they're
+    serialised through ``ManagedTestCaseResponse`` for frontend display
+    only. The router tags each row with ``source='automation'`` so the UI
+    can render them differently from authored test cases.
+    """
+    from app.models.postgres import TestCase, TestRun
+    from app.services.sql_utils import like_contains
+
+    base = (
+        select(
+            TestCase.id,
+            TestCase.test_fingerprint,
+            TestCase.test_name,
+            TestCase.class_name,
+            TestCase.suite_name,
+            TestCase.status,
+            TestCase.failure_category,
+            TestCase.tags,
+            TestRun.created_at.label("run_created_at"),
+            TestRun.id.label("run_id"),
+        )
+        .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .where(TestRun.project_id == project_id)
+        .where(TestCase.test_fingerprint.isnot(None))
+    )
+    if suite_name:
+        base = base.where(TestCase.suite_name == suite_name)
+    if search:
+        pattern = like_contains(search)
+        base = base.where(
+            TestCase.test_name.ilike(pattern, escape="\\")
+            | TestCase.class_name.ilike(pattern, escape="\\")
+        )
+    base_sq = base.subquery()
+
+    latest = (
+        select(base_sq)
+        .distinct(base_sq.c.test_fingerprint)
+        .order_by(base_sq.c.test_fingerprint, base_sq.c.run_created_at.desc())
+        .subquery()
+    )
+    stmt = select(latest).order_by(latest.c.run_created_at.desc())
+    rows = (await db.execute(stmt)).all()
+
+    exclude = exclude_fingerprints or set()
+    result: list[dict] = []
+    for r in rows:
+        if r.test_fingerprint in exclude:
+            continue
+        result.append({
+            "id": r.id,  # per-run TestCase id; safe as a list-row key
+            "project_id": project_id,
+            "title": r.test_name,
+            "description": None,
+            "objective": None,
+            "preconditions": None,
+            "steps": None,
+            "expected_result": None,
+            "test_data": None,
+            "test_type": "automation",
+            "priority": "medium",
+            "severity": "major",
+            "feature_area": r.class_name,
+            "suite_name": r.suite_name,
+            "tags": r.tags,
+            "status": "active",
+            "version": 1,
+            "author_id": None,
+            "assignee_id": None,
+            "reviewer_id": None,
+            "is_automated": True,
+            "automation_status": "automated",
+            "test_fingerprint": r.test_fingerprint,
+            "ai_generated": False,
+            "ai_quality_score": None,
+            "ai_review_notes": None,
+            "estimated_duration_minutes": None,
+            "last_executed_at": r.run_created_at,
+            "last_execution_status": r.status,
+            "created_at": r.run_created_at,
+            "updated_at": r.run_created_at,
+            # Source tag — frontend distinguishes automation rows from
+            # authored ManagedTestCase rows (these synthesised rows aren't
+            # in the managed_test_cases table).
+            "source": "automation",
+        })
+    return result
 
 
 async def create_managed_test_case(

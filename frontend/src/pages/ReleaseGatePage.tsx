@@ -20,6 +20,7 @@ import { useRuns } from '@/hooks/useRuns'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildReleaseGateWorkflow } from '@/components/workflow/workflowPresets'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO' | 'PENDING'
 
@@ -284,8 +285,9 @@ export default function ReleaseGatePage() {
                 try {
                   if (!runId) return
                   const link = await createShareLink(runId, 'executive')
-                  await navigator.clipboard.writeText(link.share_url)
-                  toast.success('Share link copied to clipboard')
+                  const ok = await copyTextToClipboard(link.share_url)
+                  if (ok) toast.success('Share link copied to clipboard')
+                  else toast.error('Clipboard access denied — copy manually')
                 } catch { toast.error('Share failed') }
               }}
               className="btn-secondary text-xs flex items-center gap-1.5"

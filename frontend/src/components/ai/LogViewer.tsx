@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 interface Props { content?: string; title?: string }
 
@@ -9,7 +10,11 @@ export default function LogViewer({ content, title = 'Stack Trace' }: Props) {
 
   const handleCopy = async () => {
     if (!content) return
-    await navigator.clipboard.writeText(content)
+    const ok = await copyTextToClipboard(content)
+    if (!ok) {
+      toast.error('Clipboard access denied — copy manually')
+      return
+    }
     setCopied(true)
     toast.success('Copied to clipboard')
     setTimeout(() => setCopied(false), 2000)

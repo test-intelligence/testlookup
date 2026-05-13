@@ -240,6 +240,20 @@ class SummaryAgent(BaseAgent):
 
     # ── Context builder ───────────────────────────────────────────────────────
 
+    @staticmethod
+    def _sorted_analyses(analyses: dict[str, dict]) -> list[tuple[str, dict]]:
+        """Return analyses in a stable, high-signal order for prompts/reports."""
+        def sort_key(item: tuple[str, dict]) -> tuple[int, str, str]:
+            test_id, analysis = item
+            try:
+                confidence = int(analysis.get("confidence_score") or 0)
+            except (TypeError, ValueError):
+                confidence = 0
+            category = str(analysis.get("failure_category") or "UNKNOWN")
+            return (-confidence, category, str(test_id))
+
+        return sorted(analyses.items(), key=sort_key)
+
     def _build_context(
         self,
         run_data: dict,
@@ -257,7 +271,8 @@ class SummaryAgent(BaseAgent):
         branch = run_data.get("branch", "?")
 
         analysis_bullets = []
-        for tc_id, analysis in list(analyses.items())[:15]:
+        sorted_analyses = self._sorted_analyses(analyses)
+        for _tc_id, analysis in sorted_analyses[:15]:
             if analysis.get("confidence_score", 0) >= 50:
                 cat = analysis.get("failure_category", "UNKNOWN")
                 conf = analysis.get("confidence_score", 0)
@@ -266,7 +281,7 @@ class SummaryAgent(BaseAgent):
                 analysis_bullets.append(f"- [{cat}]{is_flaky} conf={conf}%: {summary}")
 
         evidence_excerpts = []
-        for tc_id, analysis in list(analyses.items())[:5]:
+        for _tc_id, analysis in sorted_analyses[:5]:
             for ev in analysis.get("evidence_references", [])[:2]:
                 evidence_excerpts.append(
                     f"  [{ev.get('source', '?')}] {ev.get('excerpt', '')[:150]}"
@@ -367,7 +382,7 @@ class SummaryAgent(BaseAgent):
             # Extract citations from evidence snippets
             from app.services.summary_assembler import extract_citations  # noqa: PLC0415
             evidence_snippets: list[dict] = []
-            for tc_id, analysis in list(analyses.items())[:10]:
+            for tc_id, analysis in self._sorted_analyses(analyses)[:10]:
                 for ev in (analysis.get("evidence_references") or [])[:2]:
                     evidence_snippets.append({
                         "source": str(ev.get("source") or ""),
@@ -383,7 +398,7 @@ class SummaryAgent(BaseAgent):
         category_counts: dict[str, int] = {}
         flaky_count = 0
         ep_actions: list[str] = []
-        for _tc_id, analysis in analyses.items():
+        for _tc_id, analysis in self._sorted_analyses(analyses):
             cat = self._stringify_value(analysis.get("failure_category")) or "UNKNOWN"
             category_counts[cat] = category_counts.get(cat, 0) + 1
             if analysis.get("is_flaky"):
@@ -468,7 +483,7 @@ class SummaryAgent(BaseAgent):
     ) -> list[dict]:
         """Retrieve similar historical failures via semantic search (blocks before LLM)."""
         top_error = ""
-        for tc_id, analysis in list(analyses.items())[:5]:
+        for _tc_id, analysis in self._sorted_analyses(analyses)[:5]:
             root_cause = str(analysis.get("root_cause_summary") or "").strip()
             if root_cause and len(root_cause) > 20:
                 top_error = root_cause[:200]
@@ -519,7 +534,7 @@ class SummaryAgent(BaseAgent):
         flaky_test_ids: list[str] = []
         data_sources: set[str] = set()
 
-        for test_id, analysis in analyses.items():
+        for test_id, analysis in self._sorted_analyses(analyses):
             category = self._stringify_value(analysis.get("failure_category")) or "UNKNOWN"
             category_counts[category] = category_counts.get(category, 0) + 1
 

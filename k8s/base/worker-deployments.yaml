@@ -36,6 +36,26 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 60   # allow in-flight tasks to finish
+      # Block worker startup until the Celery broker (Redis) is reachable.
+      # Without this, the worker container can start before Redis is ready,
+      # the initial broker connect fails, and although Celery retries the
+      # connection, the consumer loop is not always re-established cleanly —
+      # leaving a "1/1 Running" pod that is silently NOT consuming from its
+      # queue. See: persist_live_session was never running on the homelab
+      # despite live sessions completing, because worker-ingestion came up
+      # before testlookup-redis.
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
           image: testlookup/backend:0.0.1
@@ -133,6 +153,18 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 120   # parsing can take time
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
           image: testlookup/backend:0.0.1
@@ -230,6 +262,18 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 1860  # match Celery hard time limit (31 min)
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
           image: testlookup/backend:0.0.1
@@ -327,6 +371,18 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
           image: testlookup/backend:0.0.1
@@ -414,6 +470,18 @@ spec:
         app.kubernetes.io/component: scheduler
     spec:
       serviceAccountName: testlookup-sa
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting beat"
       containers:
         - name: beat
           image: testlookup/backend:0.0.1

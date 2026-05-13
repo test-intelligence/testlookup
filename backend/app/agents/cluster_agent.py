@@ -47,7 +47,7 @@ class ClusterAgent(BaseAgent):
                 error = row.error_message or f"Test '{row.test_name}' failed with no error message"
                 test_id_to_error[tc_id] = error
 
-        test_ids = list(test_id_to_error.keys())
+        test_ids = sorted(test_id_to_error.keys())
         errors = [test_id_to_error[tid] for tid in test_ids]
         valid_ids = set(test_ids)
 

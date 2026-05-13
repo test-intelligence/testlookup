@@ -53,6 +53,35 @@ _test_health   = TestHealthAgent()
 _release_risk  = ReleaseRiskAgent()
 
 
+async def _resolve_analysis_mode_snapshot() -> dict[str, Any]:
+    """Resolve analysis mode once so a pipeline is reproducible end-to-end."""
+    from app.services.analysis_router import get_analysis_mode, refresh_analysis_mode_from_cache
+
+    requested = settings.ANALYSIS_MODE.lower()
+    try:
+        from app.db.redis_client import get_redis  # noqa: PLC0415
+
+        redis = get_redis()
+        cached = await redis.get("config:analysis_mode")
+        if isinstance(cached, bytes):
+            cached = cached.decode("utf-8", errors="ignore")
+        if cached in ("llm", "ml", "rules", "auto"):
+            requested = cached
+    except Exception:
+        pass
+
+    await refresh_analysis_mode_from_cache()
+    resolved = get_analysis_mode()
+    return {
+        "requested": requested,
+        "resolved": resolved,
+        "provider": settings.LLM_PROVIDER,
+        "model": settings.LLM_MODEL,
+        "analysis_mode_env": settings.ANALYSIS_MODE,
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── LangGraph node functions ──────────────────────────────────────────────────
 
 async def ingestion_node(state: WorkflowState) -> dict:
@@ -561,7 +590,9 @@ def _make_checkpointed_node(original_node, stage_name: str):
             await emit_event(
                 pipeline_run_id, "checkpoint_restored",
                 stage_name=stage_name,
+                detail={"restored_stage": stage_name},
             )
+            await _mark_stage_restored(pipeline_run_id, stage_name)
             return {"completed_stages": [stage_name], "current_stage": stage_name}
 
         try:
@@ -617,6 +648,7 @@ async def run_offline_pipeline(
 
     # Attempt to load checkpoint from a previous failed run
     checkpoint = await _load_checkpoint(test_run_id, workflow_type)
+    mode_snapshot = await _resolve_analysis_mode_snapshot()
 
     initial_state: WorkflowState = {
         "pipeline_run_id":    pipeline_run_id,
@@ -658,6 +690,9 @@ async def run_offline_pipeline(
         "execution_path":     ExecutionPath.EXECUTED,
         "fallback_used":      False,
         "tools_used":         [],
+        "analysis_mode_requested": mode_snapshot["requested"],
+        "analysis_mode_resolved": mode_snapshot["resolved"],
+        "analysis_mode_resolution": mode_snapshot,
         "schema_version":     2,
         "stage_metrics":      {},
     }
@@ -690,6 +725,8 @@ async def run_offline_pipeline(
             "workflow_type": workflow_type,
             "stages_completed": final_state.get("completed_stages", []),
             "stages_skipped": final_state.get("skipped_stages", []),
+            "analysis_mode_requested": final_state.get("analysis_mode_requested"),
+            "analysis_mode_resolved": final_state.get("analysis_mode_resolved"),
             "error_count": len(final_state.get("errors", [])),
         })
         logger.info(
@@ -726,6 +763,7 @@ async def run_deep_pipeline(
     await _create_pipeline_run(pipeline_run_id, test_run_id, "deep")
 
     checkpoint = await _load_checkpoint(test_run_id, "deep")
+    mode_snapshot = await _resolve_analysis_mode_snapshot()
 
     initial_state: WorkflowState = {
         "pipeline_run_id":    pipeline_run_id,
@@ -765,6 +803,9 @@ async def run_deep_pipeline(
         "execution_path":     ExecutionPath.EXECUTED,
         "fallback_used":      False,
         "tools_used":         [],
+        "analysis_mode_requested": mode_snapshot["requested"],
+        "analysis_mode_resolved": mode_snapshot["resolved"],
+        "analysis_mode_resolution": mode_snapshot,
         "schema_version":     2,
         "stage_metrics":      {},
     }
@@ -789,6 +830,8 @@ async def run_deep_pipeline(
             "workflow_type": "deep",
             "stages_completed": final_state.get("completed_stages", []),
             "stages_skipped": final_state.get("skipped_stages", []),
+            "analysis_mode_requested": final_state.get("analysis_mode_requested"),
+            "analysis_mode_resolved": final_state.get("analysis_mode_resolved"),
             "error_count": len(final_state.get("errors", [])),
         })
         logger.info(
@@ -883,6 +926,41 @@ async def _mark_stage_failed(
     except Exception as exc:
         logger.warning(
             "mark_stage_failed_error",
+            pipeline_run_id=pipeline_run_id,
+            stage_name=stage_name,
+            error=str(exc),
+        )
+
+
+async def _mark_stage_restored(pipeline_run_id: str, stage_name: str) -> None:
+    """Mark a stage row as completed from checkpoint for audit visibility."""
+    if not pipeline_run_id:
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+            result = await db.execute(
+                sa_select(AgentStageResult).where(
+                    AgentStageResult.pipeline_run_id == pipeline_run_id,
+                    AgentStageResult.stage_name == stage_name,
+                )
+            )
+            stage = result.scalar_one_or_none()
+            if stage:
+                now = datetime.now(timezone.utc)
+                stage.status = "completed"
+                stage.started_at = stage.started_at or now
+                stage.completed_at = now
+                stage.result_data = {
+                    **(stage.result_data or {}),
+                    "restored_from_checkpoint": True,
+                }
+                stage.route_rationale = "Restored from previous pipeline checkpoint"
+                await db.commit()
+    except Exception as exc:
+        logger.warning(
+            "mark_stage_restored_error",
             pipeline_run_id=pipeline_run_id,
             stage_name=stage_name,
             error=str(exc),
@@ -995,6 +1073,10 @@ async def _mark_pipeline_done(
                     "fallback_used": final_state.get("fallback_used", False),
                     "skipped_stages": final_state.get("skipped_stages", []),
                     "execution_path": str(final_state.get("execution_path", ExecutionPath.EXECUTED)),
+                    "analysis_mode_requested": final_state.get("analysis_mode_requested"),
+                    "analysis_mode_resolved": final_state.get("analysis_mode_resolved"),
+                    "analysis_mode_resolution": final_state.get("analysis_mode_resolution", {}),
+                    "checkpoint_stages": final_state.get("_checkpoint_stages", []),
                 }
 
         # Mark stages that were never reached (still "pending") as "skipped".

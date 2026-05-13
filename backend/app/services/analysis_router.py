@@ -318,6 +318,7 @@ async def _classify_llm(
             service_name=test_case.get("suite_name"),
             error_message=test_case.get("error_message"),
             stack_trace=test_case.get("stack_trace"),
+            pipeline_run_id=test_case.get("pipeline_run_id"),
         )
     except Exception as exc:  # noqa: BLE001
         reason = f"llm_error: {type(exc).__name__}: {exc}"

@@ -127,6 +127,22 @@ class ProjectResponse(TimestampMixin):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProjectResetRequest(BaseModel):
+    """Destructive reset payload. ``mode`` selects the wipe scope; the
+    backend rejects any request whose ``confirmation_name`` doesn't
+    exactly equal the project's ``name`` — a typed-confirmation guard
+    against autopilot clicks. See services/project_reset_service.py for
+    the table list per mode."""
+
+    mode: Literal["runs", "full"]
+    confirmation_name: str = Field(..., min_length=1, max_length=255)
+
+
+class ProjectResetResponse(BaseModel):
+    mode: Literal["runs", "full"]
+    deleted: dict[str, int]
+
+
 # ── Test Run Schemas ──────────────────────────────────────────
 
 class TestRunSummary(BaseModel):
@@ -826,6 +842,12 @@ class ManagedTestCaseUpdate(BaseModel):
 
 
 class ManagedTestCaseResponse(BaseModel):
+    # Defaults to "managed" for rows backed by the ``managed_test_cases``
+    # table; ``"automation"`` for synthesised rows derived from per-run
+    # ``test_cases`` (returned by /cases when ``include_automation=true``).
+    # The frontend uses this to render an "Automation-ingested" badge and
+    # disable edit affordances on automation rows.
+    source: str = "managed"
     id: uuid.UUID
     project_id: uuid.UUID
     title: str

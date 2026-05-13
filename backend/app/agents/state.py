@@ -123,6 +123,9 @@ class WorkflowState(TypedDict):
     execution_path: Annotated[str, _last_str]    # ExecutionPath enum value for the overall run
     fallback_used: Annotated[bool, _last_bool]   # any stage used deterministic fallback instead of LLM
     tools_used: Annotated[list[str], _concat_lists]      # LangChain tools invoked (parallel-safe)
+    analysis_mode_requested: str  # configured value at pipeline start (env/UI)
+    analysis_mode_resolved: str   # effective engine frozen for this pipeline
+    analysis_mode_resolution: dict  # probe/config snapshot for audit replay
     schema_version: int            # pipeline state schema version (increment on breaking changes)
 
     # ── Phase 6: Per-Stage Observability ─────────────────────────

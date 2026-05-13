@@ -38,11 +38,12 @@ patches:
       kind: Secret
       name: testlookup-secrets
 
-  # ── Always re-pull :latest on pod start ───────────────────────────────────
-  # K3s containerd otherwise keeps the cached :latest image even after a fresh
-  # registry push, masking new builds. Combined with `kubectl rollout restart`
-  # at the end of deploy-homelab.sh, this guarantees the new image content is
-  # picked up. Targets app.kubernetes.io/name=testlookup so infra deployments
+  # ── Force re-pull on pod start ────────────────────────────────────────────
+  # Now that BUILD_TAG is immutable per deploy, kubectl apply -k normally
+  # forces a rollout on its own. This patch is retained for the corner case
+  # of re-running deploy-homelab.sh against the same BUILD_TAG (e.g. local
+  # iteration without --skip-build that happens to land within the same
+  # second). Targets app.kubernetes.io/name=testlookup so infra deployments
   # (postgres/mongo/redis/minio/chromadb/ollama) keep IfNotPresent.
   - patch: |-
       - op: replace
@@ -224,12 +225,17 @@ patches:
       name: testlookup-config
 
 images:
+  # newTag is overwritten in-place by homelabsetup/deploy-homelab.sh to an
+  # immutable build tag (build-YYYYMMDD-HHMMSS) so we never deploy a floating
+  # :latest. The placeholder below intentionally won't resolve in any registry —
+  # running ``kubectl apply -k`` directly (bypassing the deploy script) is
+  # expected to fail at ImagePull, which prevents accidental :latest deploys.
   - name: testlookup/backend
     newName: registry.local:5000/testlookup/backend
-    newTag: latest
+    newTag: BUILD_TAG_PLACEHOLDER
   - name: testlookup/frontend
     newName: registry.local:5000/testlookup/frontend
-    newTag: latest
+    newTag: BUILD_TAG_PLACEHOLDER
   - name: testlookup/mcp
     newName: registry.local:5000/testlookup/mcp
-    newTag: latest
+    newTag: BUILD_TAG_PLACEHOLDER

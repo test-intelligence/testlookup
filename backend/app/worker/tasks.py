@@ -92,16 +92,42 @@ def _beat_span(task_name: str):
 
 # ── Deduplication helper ──────────────────────────────────────────────────────
 
-async def _is_duplicate(key: str, ttl: int = 3600) -> bool:
+async def _is_duplicate(key: str, ttl: int = 3600, owner: str | None = None) -> bool:
     """
     Return True if `key` already exists in Redis (task already running/done).
     Otherwise, set the key with TTL and return False.
+
+    When owner is provided, the same owner can reacquire the lock. Celery
+    retries keep the task id stable, so a real retry should not be treated as
+    a duplicate of its own failed attempt.
     """
     from app.db.redis_client import get_redis
     redis = get_redis()
     # SET NX — only sets if key does not exist; returns True on first write
-    was_set = await redis.set(key, "1", ex=ttl, nx=True)
-    return not bool(was_set)
+    lock_value = owner or "1"
+    was_set = await redis.set(key, lock_value, ex=ttl, nx=True)
+    if was_set:
+        return False
+    if not owner:
+        return True
+    existing = await redis.get(key)
+    if isinstance(existing, bytes):
+        existing = existing.decode("utf-8", errors="ignore")
+    if existing == owner:
+        await redis.expire(key, ttl)
+        return False
+    return True
+
+
+async def _release_duplicate_lock(key: str, owner: str) -> None:
+    """Release a dedup lock only if it is still owned by this task."""
+    from app.db.redis_client import get_redis
+    redis = get_redis()
+    existing = await redis.get(key)
+    if isinstance(existing, bytes):
+        existing = existing.decode("utf-8", errors="ignore")
+    if existing == owner:
+        await redis.delete(key)
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -138,20 +164,26 @@ def persist_live_session(
     import uuid as _uuid_mod
     from datetime import datetime, timezone
 
-    dedup_key = f"testlookup:dedup:live_persist:{run_id}"
     final_state = final_state or {}
 
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=3600):
-            logger.info("[Task %s] Skipping duplicate live persist for %s", self.request.id, run_id)
-            return
+        # Idempotency rule: skip only when persistence has actually completed
+        # — i.e., TestCase rows already exist for this run's canonical UUID.
+        # Determined by a single COUNT(*) query, **on the same session as
+        # the writes below**. A previous version opened a separate
+        # AsyncSessionLocal() for the count, which under asyncpg's
+        # connection pool raced with the main session's writes and raised
+        # "asyncpg.InterfaceError: cannot perform operation: another
+        # operation is in progress" — silently dropping retries.
+        from sqlalchemy import select as _sel, func as _func
 
+        from app.db.postgres import AsyncSessionLocal
         from app.db.redis_client import get_redis
         from app.streams import LIVE_TESTCASES_KEY
-        from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import (
             LaunchStatus, TestCase, TestRun, TestStatus,
         )
+        from app.services.stream_service import canonical_test_run_uuid
 
         redis = get_redis()
         list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
@@ -215,13 +247,28 @@ def persist_live_session(
         # Keeps slug→UUID derivation in lockstep with stream_service.upsert_test_run
         # and the LiveSessionState response, so the frontend's /runs/<id> link
         # always resolves to the same row this task writes.
-        from app.services.stream_service import canonical_test_run_uuid
         run_uuid = canonical_test_run_uuid(run_id)
 
         now = datetime.now(timezone.utc)
 
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
+
+            # Idempotency check — see comment at top of _run. Must be on the
+            # same session as the writes below; opening a separate session
+            # for this query was the source of the asyncpg "another
+            # operation in progress" error that silently dropped retries.
+            existing_tc_count = (
+                await db.execute(
+                    _sel(_func.count(TestCase.id)).where(TestCase.test_run_id == run_uuid)
+                )
+            ).scalar() or 0
+            if existing_tc_count > 0:
+                logger.info(
+                    "[Task %s] Skipping persist for run=%s — %d TestCase rows already present",
+                    self.request.id, run_id, existing_tc_count,
+                )
+                return
 
             # Upsert TestRun — skip if already exists (idempotent)
             existing = await db.execute(select(TestRun).where(TestRun.id == run_uuid))
@@ -291,6 +338,31 @@ def persist_live_session(
             logger.info(
                 "[Task %s] Persisted run=%s tests=%d passed=%d failed=%d",
                 self.request.id, run_id, total, passed, failed,
+            )
+
+        # ── Post-ingestion pipeline ──────────────────────────────────────────
+        # Live-stream ingestion has historically stopped here, after the
+        # TestCase rows committed. The API-ingest paths (ingest_uploaded_*)
+        # call finalize_run at this point to materialise test_suites,
+        # canonical_test_cases, suite_memberships, auto-tags, release link,
+        # and notifications. Skipping finalize_run for live-stream runs is
+        # why /suites was empty even with test_cases populated. Mirror the
+        # API path here so live runs participate in the full pipeline.
+        try:
+            from app.services.ingestion_pipeline import finalize_run
+            await finalize_run(
+                run_id=str(run_uuid),
+                project_id=str(proj_uuid),
+                build_number=build_number,
+            )
+        except Exception as exc:
+            # finalize_run runs each step inside an isolated session and
+            # logs its own failures; an outer failure here is unexpected.
+            # Don't fail the task — TestCase rows are already committed and
+            # the next persist retry will short-circuit on the dedup check.
+            logger.warning(
+                "[Task %s] finalize_run failed after live persist run=%s: %s",
+                self.request.id, run_id, exc,
             )
 
         # ── Clean up Redis buffer ─────────────────────────────────────────────
@@ -399,6 +471,10 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
     logger.info("[Task %s] Processing uploaded batch: run=%s", self.request.id, run_id)
     try:
         _run_async(_run())
+        try:
+            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+        except Exception:
+            pass
     except Exception as exc:
         logger.error("[Task %s] Batch ingest failed: %s", self.request.id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
@@ -470,6 +546,10 @@ def ingest_uploaded_file(
     logger.info("[Task %s] Processing uploaded file: %s (%s)", self.request.id, file_name, file_format)
     try:
         _run_async(_run())
+        try:
+            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+        except Exception:
+            pass
     except Exception as exc:
         logger.error("[Task %s] File ingest failed: %s", self.request.id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
@@ -692,9 +772,10 @@ def run_agent_pipeline(
 
     # Include workflow_type in dedup key so a deep run isn't blocked by a prior offline run
     dedup_key = f"testlookup:dedup:pipeline:{test_run_id}:{workflow_type}"
+    dedup_owner = str(self.request.id)
 
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=7200):
+        if await _is_duplicate(dedup_key, ttl=7200, owner=dedup_owner):
             logger.info(
                 "[Task %s] Skipping duplicate pipeline for run=%s type=%s",
                 self.request.id, test_run_id, workflow_type,
@@ -755,6 +836,14 @@ def run_agent_pipeline(
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
         logger.error("[Task %s] Pipeline failed: %s", self.request.id, exc, exc_info=True)
+        try:
+            _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
+        except Exception as release_exc:
+            logger.warning(
+                "[Task %s] Failed to release pipeline dedup lock after error: %s",
+                self.request.id,
+                release_exc,
+            )
         if self.request.retries >= self.max_retries:
             # Move to DLQ before the final exception propagates
             _run_async(_send_to_dlq(
@@ -1900,6 +1989,117 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
     result = cast(dict[str, Any], _run_async(_sweep()))
     logger.info("[Task %s] close_stale_live_sessions done: %s",
                 self.request.id, result)
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.reap_stuck_agent_pipelines",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
+    """Periodic cleanup for agent_pipeline_runs that got stuck in
+    ``status='running'`` because a stage crashed before the outer
+    ``_mark_pipeline_done`` could record the failure.
+
+    The /agents read-time derivation already shows the right status to
+    end users; this task updates the DB rows so historical filters
+    (``?status=failed``) and metrics queries don't have to special-case
+    the running-but-actually-failed state.
+
+    A pipeline is reaped if EITHER:
+      * Any of its stage rows is ``status='failed'`` (downstream stages
+        couldn't continue, so the run is definitionally done).
+      * It has been ``running`` for longer than ``stale_minutes`` with
+        no ``completed_at`` (matches the Celery task time_limit on
+        ``run_agent_pipeline``).
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select, exists
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import AgentPipelineRun, AgentStageResult
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+        failed_due_to_stage = 0
+        failed_due_to_age = 0
+        errors = 0
+
+        async with AsyncSessionLocal() as db:
+            running = (
+                await db.execute(
+                    select(AgentPipelineRun).where(
+                        AgentPipelineRun.status == "running"
+                    )
+                )
+            ).scalars().all()
+
+            for pipeline in running:
+                try:
+                    has_failed_stage = (
+                        await db.execute(
+                            select(
+                                exists().where(
+                                    AgentStageResult.pipeline_run_id == pipeline.id,
+                                    AgentStageResult.status == "failed",
+                                )
+                            )
+                        )
+                    ).scalar()
+
+                    is_age_stale = (
+                        pipeline.started_at is not None
+                        and pipeline.completed_at is None
+                        and pipeline.started_at < cutoff
+                    )
+
+                    if not has_failed_stage and not is_age_stale:
+                        continue
+
+                    pipeline.status = "failed"
+                    pipeline.completed_at = datetime.now(timezone.utc)
+                    if not pipeline.error:
+                        pipeline.error = (
+                            "Stage failure detected by reaper" if has_failed_stage
+                            else f"Pipeline exceeded {stale_minutes}m without completion"
+                        )
+
+                    if has_failed_stage:
+                        failed_due_to_stage += 1
+                    else:
+                        failed_due_to_age += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "reap_stuck_agent_pipelines: failed for %s: %s",
+                        pipeline.id, exc,
+                    )
+
+            try:
+                await db.commit()
+            except Exception as exc:
+                logger.error("reap_stuck_agent_pipelines: commit failed: %s", exc)
+                await db.rollback()
+                errors += 1
+
+        return {
+            "checked": len(running),
+            "failed_due_to_stage": failed_due_to_stage,
+            "failed_due_to_age": failed_due_to_age,
+            "errors": errors,
+            "stale_minutes": stale_minutes,
+        }
+
+    logger.info(
+        "[Task %s] reap_stuck_agent_pipelines starting (stale>%dm)",
+        self.request.id, stale_minutes,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] reap_stuck_agent_pipelines done: %s",
+        self.request.id, result,
+    )
     return result
 
 

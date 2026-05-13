@@ -60,6 +60,7 @@ const QuarantinePage = lazy(() => import('@/pages/QuarantinePage'))
 const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrationPage'))
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
 const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
+const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
 
 type AppRoute = {
@@ -122,6 +123,7 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/github', component: GitHubIntegrationPage },
   { path: 'settings/webhooks', component: OutboundWebhooksPage },
   { path: 'settings/api-keys', component: ApiKeysPage },
+  { path: 'settings/project-data', component: ProjectDataPage },
   { path: 'policies', component: PolicyEditorPage },
   { path: 'policies/new', component: PolicyEditorPage },
   { path: 'policies/:policyId', component: PolicyEditorPage },

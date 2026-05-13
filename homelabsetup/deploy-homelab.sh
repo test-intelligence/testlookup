@@ -286,8 +286,15 @@ else
 fi
 
 # ── Step 2: Build and Push Images ──────────────────────────
+# One immutable build tag covers all three testlookup images so a single
+# deploy is auditable as a single unit. The tag is later substituted into
+# kustomization.yaml in place of the BUILD_TAG_PLACEHOLDER literal so
+# nothing in the cluster ever runs a :latest tag.
+BUILD_TAG="build-$(date -u +%Y%m%d-%H%M%S)"
+
 if [ "$SKIP_BUILD" = false ]; then
   header "Step 2 — Build and Push Container Images"
+  log "Build tag for this run: ${BUILD_TAG}"
 
   cd "$REPO_ROOT"
 
@@ -334,45 +341,34 @@ if [ "$SKIP_BUILD" = false ]; then
       | ( cd "$STAGED_SDK" && tar -xf - )
   fi
 
-  log "Building backend image..."
-  docker build -t "${PUSH_REGISTRY}/testlookup/backend:latest" \
+  log "Building backend image (${BUILD_TAG})..."
+  docker build -t "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}" \
     --target production -f backend/Dockerfile backend/
 
   rm -rf "$STAGED_SDK"
   trap - EXIT INT TERM
 
-  log "Building frontend image (uses same-origin relative API URLs)..."
+  log "Building frontend image (${BUILD_TAG}, same-origin relative API URLs)..."
   # --pull guarantees the base node:20-alpine and nginx:alpine layers are
   # refreshed. We intentionally do NOT pass --no-cache so the npm install
   # layer (slow) stays cached when only frontend/src changes — Docker
   # invalidates downstream layers automatically when source files change.
-  docker build --pull -t "${PUSH_REGISTRY}/testlookup/frontend:latest" \
+  docker build --pull -t "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}" \
     --target production -f frontend/Dockerfile frontend/
 
-  # Tag and push a content-addressable build tag in addition to :latest so
-  # the cluster has a way to verify the image it pulled really matches what
-  # we just built. Useful when triaging "I don't see my UI changes".
-  FRONTEND_BUILD_TAG="build-$(date -u +%Y%m%d-%H%M%S)"
-  docker tag  "${PUSH_REGISTRY}/testlookup/frontend:latest" \
-              "${PUSH_REGISTRY}/testlookup/frontend:${FRONTEND_BUILD_TAG}"
-  log "Frontend build tagged ${FRONTEND_BUILD_TAG}"
-
-  log "Building MCP server image..."
-  docker build -t "${PUSH_REGISTRY}/testlookup/mcp:latest" \
+  log "Building MCP server image (${BUILD_TAG})..."
+  docker build -t "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}" \
     -f mcp/Dockerfile mcp/
 
   log "Pushing images to registry..."
-  docker push "${PUSH_REGISTRY}/testlookup/backend:latest"
-  docker push "${PUSH_REGISTRY}/testlookup/frontend:latest"
-  docker push "${PUSH_REGISTRY}/testlookup/mcp:latest"
+  docker push "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}"
+  docker push "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}"
+  docker push "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}"
 
-  # Push the dated frontend tag too so we can verify in-cluster which build is live.
-  docker push "${PUSH_REGISTRY}/testlookup/frontend:${FRONTEND_BUILD_TAG}"
-
-  # Capture the digest of the freshly pushed :latest so we can compare it
+  # Capture the digest of the freshly pushed image so we can compare it
   # against the digest the pod actually runs after the rollout finishes.
   FRONTEND_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' \
-    "${PUSH_REGISTRY}/testlookup/frontend:latest" 2>/dev/null \
+    "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}" 2>/dev/null \
     | sed 's/.*@//' || echo "")
   if [ -n "$FRONTEND_DIGEST" ]; then
     log "Frontend image digest just pushed: ${FRONTEND_DIGEST}"
@@ -469,9 +465,40 @@ log "Skipping TLS cert generation (ingress is HTTP-only)."
 # ── Step 5: Deploy with Kustomize ──────────────────────────
 header "Step 5 — Deploy with Kustomize"
 
+# Substitute the BUILD_TAG_PLACEHOLDER literal in kustomization.yaml with
+# this run's immutable build tag, so the cluster pulls an exact image and
+# never a floating :latest. The trap restores the committed placeholder on
+# success or failure so the working tree stays clean and CI's anti-:latest
+# guard keeps passing.
+OVERLAY_KUSTOMIZATION="$REPO_ROOT/k8s/overlays/homelab/kustomization.yaml"
+cp "$OVERLAY_KUSTOMIZATION" "${OVERLAY_KUSTOMIZATION}.deploy-bak"
+restore_kustomization() {
+  if [ -f "${OVERLAY_KUSTOMIZATION}.deploy-bak" ]; then
+    mv -f "${OVERLAY_KUSTOMIZATION}.deploy-bak" "$OVERLAY_KUSTOMIZATION"
+  fi
+}
+trap restore_kustomization EXIT INT TERM
+
+log "Pinning image tags to ${BUILD_TAG} for this deploy..."
+sed -i.tmp "s/BUILD_TAG_PLACEHOLDER/${BUILD_TAG}/g" "$OVERLAY_KUSTOMIZATION"
+rm -f "${OVERLAY_KUSTOMIZATION}.tmp"
+
+# Hard-fail if any unsubstituted placeholder remains — better than silently
+# deploying an image tag that won't pull.
+if grep -q "BUILD_TAG_PLACEHOLDER" "$OVERLAY_KUSTOMIZATION"; then
+  warn "BUILD_TAG_PLACEHOLDER still present in kustomization.yaml after substitution. Aborting."
+  exit 1
+fi
+
 log "Applying Kustomize overlay..."
 kubectl apply -k "$REPO_ROOT/k8s/overlays/homelab"
 log "All resources applied."
+
+# Restore the placeholder immediately after a successful apply too — the
+# trap covers the failure paths; this one keeps `git status` clean on the
+# happy path so subsequent commands see the canonical file.
+restore_kustomization
+trap - EXIT INT TERM
 
 # ``kubectl apply -k`` only creates/updates resources — it does not delete
 # resources that were removed from the manifest. Explicitly remove orphans
@@ -487,12 +514,11 @@ kubectl -n "$NAMESPACE" delete secret testlookup-tls-cert \
   --ignore-not-found=true >/dev/null
 log "Orphan prune complete."
 
-# ── Step 5b: Force fresh :latest pull on app deployments ───
-# K3s containerd caches :latest aggressively. Even with imagePullPolicy=Always
-# (set by the homelab overlay), an unchanged Deployment spec means kubectl
-# apply doesn't roll. Trigger rollouts explicitly so the new image content
-# actually lands on the nodes. Skipped when --skip-build is passed because no
-# new image content exists.
+# ── Step 5b: Force rollout for app deployments ─────────────
+# Each deploy now uses an immutable BUILD_TAG, so kubectl apply -k will
+# create a new ReplicaSet automatically when the tag changes. The explicit
+# rollout-restart below is kept as a belt-and-suspenders for cases where
+# the tag didn't change (e.g., re-running the script without rebuilding).
 if [ "$SKIP_BUILD" = false ]; then
   header "Step 5b — Force Fresh Image Pull"
 
@@ -523,11 +549,9 @@ if [ "$SKIP_BUILD" = false ]; then
         || warn "$dep did not become ready in time — check 'kubectl -n $NAMESPACE describe deployment $dep'"
     fi
   done
-  log "App deployments rolled to fresh :latest content."
+  log "App deployments rolled to image ${BUILD_TAG}."
 
   # ── Sanity check: digest of the frontend pod matches the one we just pushed.
-  # Catches the "K3s containerd kept the cached :latest" failure mode early —
-  # without this, a silent cache hit looks like a successful deploy.
   if [ -n "${FRONTEND_DIGEST:-}" ]; then
     POD_DIGEST=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-frontend \
       -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null \
@@ -540,11 +564,8 @@ if [ "$SKIP_BUILD" = false ]; then
       warn "Frontend pod digest does NOT match the pushed image!"
       warn "  Pushed: $FRONTEND_DIGEST"
       warn "  Pod:    $POD_DIGEST"
-      warn "K3s likely served a cached :latest. Force re-pull with:"
+      warn "K3s may have served a cached layer. Force re-pull with:"
       warn "  kubectl -n $NAMESPACE delete pod -l app=testlookup-frontend"
-      warn "Or use the dated tag instead of :latest:"
-      warn "  kubectl -n $NAMESPACE set image deployment/testlookup-frontend \\"
-      warn "    frontend=registry.local:5000/testlookup/frontend:${FRONTEND_BUILD_TAG}"
     fi
   fi
 else

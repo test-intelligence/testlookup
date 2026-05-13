@@ -77,9 +77,20 @@ async def get_existing_analysis(
     if row is None:
         raise HTTPException(status_code=404, detail="No analysis found for this test case")
 
+    # ``failure_category`` is declared as ``Mapped[Optional[FailureCategory]]``
+    # but the underlying column is ``String(30)`` — SQLAlchemy hands back a
+    # plain ``str``, so ``.value`` raises ``AttributeError: 'str' object has
+    # no attribute 'value'`` and FastAPI 500s. Treat the field as already a
+    # string (or None), then coerce legacy/lowercase values to UNKNOWN so
+    # the strict ``AnalysisResponse.failure_category: FailureCategory``
+    # Pydantic check doesn't 500 a second time on validation.
+    raw_category = row.failure_category
+    cat_value = getattr(raw_category, "value", None) or (raw_category or "UNKNOWN")
+    if isinstance(cat_value, str) and cat_value not in {c.value for c in FailureCategory}:
+        cat_value = FailureCategory.UNKNOWN.value
     analysis = {
         "root_cause_summary":  row.root_cause_summary or "",
-        "failure_category":    row.failure_category.value if row.failure_category else "UNKNOWN",
+        "failure_category":    cat_value,
         "backend_error_found": row.backend_error_found or False,
         "pod_issue_found":     row.pod_issue_found or False,
         "is_flaky":            row.is_flaky or False,

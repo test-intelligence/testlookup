@@ -109,6 +109,7 @@ async def run_triage_agent(
     ocp_namespace: Optional[str] = None,
     error_message: Optional[str] = None,
     stack_trace: Optional[str] = None,
+    pipeline_run_id: Optional[str] = None,
 ) -> dict:
     """
     Execute the LangChain ReAct triage agent for a failed test case.
@@ -137,7 +138,12 @@ async def run_triage_agent(
         logger.info("Cache hit for test '%s' — returning cached analysis", test_name)
         cached["cache_hit"] = True
         await _store_audit_trail(test_case_id, f"cache_hit:{test_name}", cached, [])
-        await _emit_event("", "cache_hit", test_case_id=test_case_id, detail={"type": "redis_exact", "test_name": test_name[:100]})
+        await _emit_event(
+            pipeline_run_id or "",
+            "cache_hit",
+            test_case_id=test_case_id,
+            detail={"type": "redis_exact", "test_name": test_name[:100]},
+        )
         return cached
 
     # ── Semantic cache: skip LLM for similar failures ────────────────────
@@ -146,11 +152,16 @@ async def run_triage_agent(
         sem_cached = await semantic_cache_lookup(test_name, error_message or "", stack_trace or "")
         if sem_cached is not None:
             await _store_audit_trail(test_case_id, f"semantic_cache_hit:{test_name}", sem_cached, [])
-            await _emit_event("", "cache_hit", test_case_id=test_case_id, detail={
-                "type": "semantic_chromadb",
-                "test_name": test_name[:100],
-                "similarity": sem_cached.get("semantic_similarity", 0),
-            })
+            await _emit_event(
+                pipeline_run_id or "",
+                "cache_hit",
+                test_case_id=test_case_id,
+                detail={
+                    "type": "semantic_chromadb",
+                    "test_name": test_name[:100],
+                    "similarity": sem_cached.get("semantic_similarity", 0),
+                },
+            )
             return sem_cached
     except Exception as sem_exc:
         logger.debug("Semantic cache skipped: %s", sem_exc)
@@ -237,14 +248,19 @@ async def run_triage_agent(
 
             # Record tool call details as OTEL span events and pipeline events
             _record_tool_spans(triage_span, intermediate_steps)
-            await _emit_event("", "llm_called", test_case_id=test_case_id, detail={
-                "provider": settings.LLM_PROVIDER,
-                "model": settings.LLM_MODEL,
-                "tools_used": tools_used,
-                "iterations": len(intermediate_steps),
-                "confidence": analysis.get("confidence_score", 0),
-                "category": analysis.get("failure_category", "UNKNOWN"),
-            })
+            await _emit_event(
+                pipeline_run_id or "",
+                "llm_called",
+                test_case_id=test_case_id,
+                detail={
+                    "provider": settings.LLM_PROVIDER,
+                    "model": settings.LLM_MODEL,
+                    "tools_used": tools_used,
+                    "iterations": len(intermediate_steps),
+                    "confidence": analysis.get("confidence_score", 0),
+                    "category": analysis.get("failure_category", "UNKNOWN"),
+                },
+            )
 
             triage_span.set_attribute("agent.tools_used", ",".join(tools_used))
             triage_span.set_attribute("agent.confidence_score", analysis.get("confidence_score", 0))
@@ -365,24 +381,40 @@ def _record_tool_spans(parent_span: Any, intermediate_steps: list) -> None:
 
 def _parse_agent_output(raw: str) -> dict:
     """Extract and parse JSON from agent final answer."""
-    # Try to extract JSON block from output
-    raw = raw.strip()
-    if raw.startswith("{"):
-        try:
-            return cast(dict[Any, Any], json.loads(raw))
-        except json.JSONDecodeError:
-            pass
+    from app.models.llm_schemas import RootCauseAnalysis, validate_llm_output
+    from app.services.llm_json_parser import parse_llm_json
 
-    # Try to find JSON within the output
-    import re
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        try:
-            return cast(dict[Any, Any], json.loads(match.group()))
-        except json.JSONDecodeError:
-            pass
+    expected_keys = [
+        "root_cause_summary",
+        "failure_category",
+        "backend_error_found",
+        "pod_issue_found",
+        "is_flaky",
+        "confidence_score",
+        "recommended_actions",
+        "role_actions",
+        "evidence_references",
+    ]
+    parsed, error = parse_llm_json(
+        raw,
+        expected_keys=expected_keys,
+        context="react_triage_root_cause",
+    )
+    if error:
+        fallback = _fallback_analysis(
+            f"Could not parse structured output from agent ({error})"
+        )
+        fallback["schema_validation_error"] = error
+        fallback["schema_validated"] = False
+        return fallback
 
-    return _fallback_analysis("Could not parse structured output from agent")
+    validated = validate_llm_output(
+        RootCauseAnalysis,
+        parsed,
+        context="react_triage_root_cause",
+    )
+    validated["schema_validated"] = True
+    return validated
 
 
 def _fallback_analysis(error_msg: str) -> dict:

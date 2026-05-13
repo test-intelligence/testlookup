@@ -16,6 +16,35 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────────
+  # JOB 0: Guard against floating image tags in k8s manifests
+  # ─────────────────────────────────────────────────────────────
+  k8s-image-pin-check:
+    name: K8s — Forbid :latest image tags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on :latest image tags in k8s/**
+        run: |
+          set -euo pipefail
+          # Match two patterns:
+          #   image: foo/bar:latest             (any image: line ending in :latest)
+          #   newTag: latest                    (any kustomize override pinning :latest)
+          # The BUILD_TAG_PLACEHOLDER literal in homelab/kustomization.yaml is
+          # intentional: it's substituted in-place by deploy-homelab.sh and is
+          # designed to fail at ImagePull if anyone bypasses the deploy script.
+          violations=$(grep -rnE '(image:[[:space:]]*[^[:space:]]+:latest$|^[[:space:]]*newTag:[[:space:]]*latest$)' \
+            k8s/ || true)
+          if [ -n "$violations" ]; then
+            echo "::error::Floating :latest tags found in k8s manifests:"
+            echo "$violations"
+            echo
+            echo "Pin to an exact version, or use the BUILD_TAG mechanism in"
+            echo "homelabsetup/deploy-homelab.sh."
+            exit 1
+          fi
+          echo "All k8s image tags pinned. ✓"
+
+  # ─────────────────────────────────────────────────────────────
   # JOB 1: Backend tests and linting
   # ─────────────────────────────────────────────────────────────
   backend-test:

@@ -148,3 +148,67 @@ def compute_analysis_cache_key(
         sort_keys=True,
     )
     return f"testlookup:ai_cache:{hashlib.sha256(normalized.encode()).hexdigest()}"
+
+
+# ── Degradation primitive ────────────────────────────────────────────────────
+# The user-visible failure we are guarding against: a third-party service
+# (ChromaDB, MongoDB, MinIO, …) becomes unreachable or returns unexpected
+# data, and the page that depends on it goes blank — even though the
+# source-of-truth data is still in PostgreSQL. ``with_fallback`` makes the
+# "show data from Postgres when X is down" pattern a one-liner instead of
+# an inline try/except that every contributor copy-pastes inconsistently.
+
+from typing import Awaitable, TypeVar
+
+T = TypeVar("T")
+
+
+async def with_fallback(
+    primary: Callable[[], Awaitable[T]],
+    fallback: Callable[[], Awaitable[T]],
+    *,
+    name: str,
+    is_empty: Optional[Callable[[T], bool]] = None,
+) -> T:
+    """Run ``primary``; on failure or empty result, run ``fallback``.
+
+    Parameters
+    ----------
+    primary:
+        Zero-arg async callable returning the desired result. Typically a
+        call into a third-party service.
+    fallback:
+        Zero-arg async callable that returns the same shape as ``primary``
+        but reads from a more durable source (almost always PostgreSQL).
+    name:
+        Short identifier used in structured logs so we can graph
+        degradation rates per call site.
+    is_empty:
+        Optional predicate that treats a successful-but-empty primary
+        result as a failure — e.g. ChromaDB returning ``[]`` because the
+        collection is unreachable. When omitted, only exceptions trigger
+        the fallback.
+
+    Notes
+    -----
+    Intentionally minimal: no retry, timeout, or circuit-breaker state —
+    those concerns live in the caller (use ``async_retry`` above if a
+    retry is wanted).
+    """
+    try:
+        result = await primary()
+    except Exception as exc:
+        logger.warning(
+            "resilience.fallback site=%s reason=primary_raised error=%s (%s)",
+            name, str(exc), type(exc).__name__,
+        )
+        return await fallback()
+
+    if is_empty is not None and is_empty(result):
+        logger.info(
+            "resilience.fallback site=%s reason=primary_empty", name,
+        )
+        return await fallback()
+
+    logger.debug("resilience.primary_ok site=%s", name)
+    return result

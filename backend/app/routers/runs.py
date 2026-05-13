@@ -247,3 +247,92 @@ async def set_run_release(
         "release_status": release.status,
         "auto_created": created,
     }
+
+
+@router.post("/{run_id}/recover-live", status_code=202)
+async def recover_live_run_from_buffer(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Re-enqueue ``persist_live_session`` for a live-stream run whose
+    per-test rows never landed in PostgreSQL.
+
+    Looks up the run, checks that it's a ``live_stream`` run with zero
+    ``test_cases`` rows, then fires the persistence task with the buffered
+    events still sitting in Redis (TTL 25h). Idempotent — the task itself
+    re-checks whether work is already done before inserting.
+
+    Returns 422 when the run isn't recoverable (already populated / not a
+    live run / no buffer left in Redis).
+    """
+    from sqlalchemy import func
+    from app.streams import LIVE_TESTCASES_KEY
+    from app.db.redis_client import get_redis
+    from app.models.postgres import TestCase
+    from app.worker.tasks import persist_live_session
+
+    run = (await db.execute(select(TestRun).where(TestRun.id == run_id))).scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    if run.trigger_source != "live_stream":
+        raise HTTPException(
+            status_code=422,
+            detail="Recovery is only available for live-stream runs.",
+        )
+
+    tc_count = (
+        await db.execute(
+            select(func.count(TestCase.id)).where(TestCase.test_run_id == run_id)
+        )
+    ).scalar() or 0
+    if tc_count > 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Run already has {tc_count} test case rows — nothing to recover.",
+        )
+
+    # The Redis buffer key uses whatever the SDK supplied as run_id (could
+    # be a slug or this UUID). Try the UUID form first; that's what live
+    # runs created in the post-2026-05 deploys use. If the buffer key for
+    # the bare UUID is empty, we have nothing to recover.
+    redis = get_redis()
+    list_key = LIVE_TESTCASES_KEY.format(run_id=str(run_id))
+    buffer_len = await redis.llen(list_key)
+    if not buffer_len:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The SDK event buffer for this run is empty or has expired "
+                "(25-hour TTL). Re-run the suite, or re-ingest the results "
+                "as a file upload."
+            ),
+        )
+
+    persist_live_session.apply_async(
+        kwargs={
+            "run_id": str(run_id),
+            "project_id": str(run.project_id),
+            "build_number": run.build_number or str(run_id),
+            "branch": run.branch or "",
+            "commit_hash": run.commit_hash or "",
+            "final_state": {
+                "passed": run.passed_tests or 0,
+                "failed": run.failed_tests or 0,
+                "skipped": run.skipped_tests or 0,
+                "broken": run.broken_tests or 0,
+                "total": run.total_tests or 0,
+            },
+        },
+        queue="ingestion",
+        priority=7,
+    )
+    return {
+        "queued": True,
+        "run_id": str(run_id),
+        "buffered_events": buffer_len,
+        "message": (
+            f"Persistence task queued. {buffer_len} buffered events will be "
+            "materialised into TestCase rows."
+        ),
+    }

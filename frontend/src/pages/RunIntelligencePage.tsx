@@ -61,6 +61,7 @@ import type {
   ReleaseDecisionIntel,
   RunIntelligence,
 } from '@/services/runIntelligenceService'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type Persona = 'executive' | 'developer' | 'manager'
@@ -928,10 +929,10 @@ function RecommendedActionsCard({
   }
 
   const copyText = (text: string) => {
-    void navigator.clipboard.writeText(text).then(
-      () => toast.success('Action copied'),
-      () => toast.error('Copy failed'),
-    )
+    void copyTextToClipboard(text).then((ok) => {
+      if (ok) toast.success('Action copied')
+      else toast.error('Copy failed')
+    })
   }
 
   return (

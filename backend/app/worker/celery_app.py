@@ -93,6 +93,18 @@ celery_app.conf.update(
             "task": "app.worker.tasks.close_stale_live_sessions",
             "schedule": crontab(minute="*/5"),
         },
+        # Safety net for agent_pipeline_runs that got stuck in
+        # status='running' — typically because a stage crashed mid-task
+        # (OOM-kill, SIGKILL, asyncpg connection drop) before the outer
+        # ``_mark_pipeline_done`` had a chance to record the failure.
+        # The reaper marks any pipeline that has a failed stage OR has
+        # been running past the task time_limit as ``failed``. The
+        # /agents read-time derivation already shows the correct badge,
+        # but this updates the DB so historical filters work cleanly.
+        "reap-stuck-agent-pipelines": {
+            "task": "app.worker.tasks.reap_stuck_agent_pipelines",
+            "schedule": crontab(minute="*/10"),
+        },
         # Tier 1 item 3: flaky-test quarantine maintenance (nightly at 04:00 UTC).
         # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.
         "nightly-flaky-quarantine-maintenance": {

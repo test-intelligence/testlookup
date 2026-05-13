@@ -377,3 +377,90 @@ class TestBackoffDelay:
 
         delay = _backoff_delay(100, 1.0, 5.0)  # 2^100 >> 5.0
         assert delay <= 6.0  # 5.0 + 20% jitter max
+
+
+# ── with_fallback tests ──────────────────────────────────────────────────────
+
+
+class TestWithFallback:
+    """Verify the primary/fallback degradation primitive."""
+
+    @pytest.mark.asyncio
+    async def test_primary_succeeds_fallback_not_called(self):
+        from app.services.resilience import with_fallback
+
+        primary = AsyncMock(return_value="primary-result")
+        fallback = AsyncMock(return_value="fallback-result")
+
+        result = await with_fallback(primary, fallback, name="t1")
+
+        assert result == "primary-result"
+        primary.assert_awaited_once()
+        fallback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_primary_raises_triggers_fallback(self):
+        from app.services.resilience import with_fallback
+
+        primary = AsyncMock(side_effect=RuntimeError("chromadb down"))
+        fallback = AsyncMock(return_value="fallback-result")
+
+        result = await with_fallback(primary, fallback, name="t2")
+
+        assert result == "fallback-result"
+        primary.assert_awaited_once()
+        fallback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_primary_empty_predicate_triggers_fallback(self):
+        from app.services.resilience import with_fallback
+
+        # Mirrors search.py usage: (items, total, pages); fall back on total == 0.
+        primary = AsyncMock(return_value=([], 0, 0))
+        fallback = AsyncMock(return_value=(["a", "b"], 2, 1))
+
+        result = await with_fallback(
+            primary, fallback, name="t3", is_empty=lambda r: r[1] == 0,
+        )
+
+        assert result == (["a", "b"], 2, 1)
+        primary.assert_awaited_once()
+        fallback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_primary_nonempty_with_is_empty_predicate(self):
+        from app.services.resilience import with_fallback
+
+        primary = AsyncMock(return_value=(["x"], 1, 1))
+        fallback = AsyncMock(return_value=(["should-not-see"], 99, 1))
+
+        result = await with_fallback(
+            primary, fallback, name="t4", is_empty=lambda r: r[1] == 0,
+        )
+
+        assert result == (["x"], 1, 1)
+        fallback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_is_empty_predicate_returns_zero_result_as_is(self):
+        """Without ``is_empty``, only exceptions trigger fallback — a
+        successful empty result is returned as-is."""
+        from app.services.resilience import with_fallback
+
+        primary = AsyncMock(return_value=([], 0, 0))
+        fallback = AsyncMock(return_value=(["never"], 1, 1))
+
+        result = await with_fallback(primary, fallback, name="t5")
+
+        assert result == ([], 0, 0)
+        fallback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_fallback_exception_propagates(self):
+        from app.services.resilience import with_fallback
+
+        primary = AsyncMock(side_effect=RuntimeError("primary boom"))
+        fallback = AsyncMock(side_effect=ValueError("fallback also boom"))
+
+        with pytest.raises(ValueError, match="fallback also boom"):
+            await with_fallback(primary, fallback, name="t6")

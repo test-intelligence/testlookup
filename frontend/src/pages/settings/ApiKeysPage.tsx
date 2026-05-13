@@ -8,6 +8,7 @@ import { apiKeyService } from '@/services/apiKeyService'
 import { refreshApiKeys, useApiKeys } from '@/hooks/useApiKeys'
 import { usePermissions } from '@/hooks/usePermissions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import type { ApiKey, ApiKeyCreatedResponse } from '@/types/apiKey'
 
 const STREAM_WRITE_SCOPE = 'stream:write'
@@ -24,11 +25,11 @@ function formatDateTime(value: string | null): string {
 function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
+    const ok = await copyTextToClipboard(value)
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    } catch {
+    } else {
       toast.error('Clipboard access denied — copy manually')
     }
   }

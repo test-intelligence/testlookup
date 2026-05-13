@@ -877,6 +877,18 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [showAiGen, setShowAiGen] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
+  // Default ON so users land on a populated list — the managed_test_cases
+  // table is often empty in fresh deployments, and the "Test Cases tab
+  // shows nothing while runs are full of tests" surprise was the top
+  // complaint pre-rollout. Persist the toggle so power users who only
+  // care about authored cases can keep it off.
+  const [includeAutomation, setIncludeAutomation] = useState<boolean>(() => {
+    const saved = localStorage.getItem('tl.tm.includeAutomation')
+    return saved === null ? true : saved === '1'
+  })
+  useEffect(() => {
+    localStorage.setItem('tl.tm.includeAutomation', includeAutomation ? '1' : '0')
+  }, [includeAutomation])
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // `/` shortcut focuses search per README §6.
@@ -902,8 +914,9 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
     if (search) p.search = search
     if (ownerFilter) p.assignee_id = ownerFilter
     if (suiteFilter) p.suite_name = suiteFilter
+    if (includeAutomation) p.include_automation = true
     return p
-  }, [page, status, testType, priority, search, ownerFilter, suiteFilter])
+  }, [page, status, testType, priority, search, ownerFilter, suiteFilter, includeAutomation])
 
   const { data, isLoading, mutate: mutateCases } = useTestCases(params)
   // Wider read used to power Library Verdict + right-rail synthesis (review
@@ -1075,6 +1088,8 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         savedViews={SAVED_VIEWS}
         onSavedView={(v) => applySavedView(v.id)}
         onSaveCurrent={() => toast('Save view — coming in Phase 2', { icon: '⭐' })}
+        includeAutomation={includeAutomation}
+        onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
       />
 
       {/* Body grid */}
@@ -1384,6 +1399,10 @@ interface CasesFilterBarProps {
   savedViews: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }[]
   onSavedView: (v: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }) => void
   onSaveCurrent: () => void
+  // "Show automation-ingested tests too" toggle — merges per-run TestCase
+  // rows (dedup'd by fingerprint) into the listing alongside ManagedTestCase.
+  includeAutomation: boolean
+  onToggleAutomation: (v: boolean) => void
 }
 
 function CasesFilterBar(p: CasesFilterBarProps) {
@@ -1417,6 +1436,22 @@ function CasesFilterBar(p: CasesFilterBarProps) {
           /
         </kbd>
       </div>
+
+      {/* Include automation-ingested tests — merges synthesised rows from
+          per-run test_cases into the listing alongside ManagedTestCase. */}
+      <label
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-[var(--color-text-secondary)] cursor-pointer select-none"
+        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', height: 32 }}
+        title="Include test cases discovered via automation runs (dedup'd by fingerprint)"
+      >
+        <input
+          type="checkbox"
+          checked={p.includeAutomation}
+          onChange={(e) => p.onToggleAutomation(e.target.checked)}
+          className="accent-[var(--color-accent)]"
+        />
+        Automation tests
+      </label>
 
       <SelectChip label="Status" value={p.status} options={[
         { value: '', label: 'All' },
@@ -1611,6 +1646,15 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate">{tc.title}</span>
           {tc.ai_generated && <Sparkles className="h-3 w-3 text-[#c4b5fd] flex-shrink-0" aria-label="AI generated" />}
+          {tc.source === 'automation' && (
+            <span
+              title="Discovered via an automation run — not authored in the test catalog"
+              className="inline-flex items-center px-1.5 py-0 rounded-full text-[9.5px] font-semibold uppercase tracking-wider flex-shrink-0"
+              style={{ background: 'rgba(68,147,248,0.10)', border: '1px solid rgba(68,147,248,0.30)', color: '#93c5fd', letterSpacing: '0.06em' }}
+            >
+              Auto
+            </span>
+          )}
         </div>
         <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
           {(tc.test_type ?? '').replace(/_/g, ' ')}

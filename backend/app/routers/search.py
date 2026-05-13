@@ -9,6 +9,7 @@ from app.core.deps import get_current_active_user, resolve_project_scope
 from app.core.metrics import semantic_search_duration_seconds, semantic_search_total
 from app.db.postgres import get_db
 from app.models.postgres import User
+from app.services.resilience import with_fallback
 from app.services.search_service import search_test_cases_query
 
 router = APIRouter(prefix="/api/v1/search", tags=["Search"])
@@ -100,49 +101,76 @@ async def search_test_cases(
     actual_type = search_type
     start = time.monotonic()
 
+    # Keyword search is the source-of-truth fallback for every mode: it
+    # reads straight from Postgres and never depends on ChromaDB. The
+    # ``with_fallback`` helper routes around a ChromaDB outage (primary
+    # raises) and a zero-result response (primary returned ``[]``,
+    # which today is also how ``semantic_search`` reports a ChromaDB
+    # failure) so the user always sees data from the DB instead of an
+    # empty page. Promote this pattern to other ChromaDB-dependent
+    # endpoints as they appear.
+    common_kwargs = dict(
+        q=q, page=page, size=size,
+        project_id=scoped_project_id_str, status=status, days=days,
+        allowed_project_ids=allowed_project_ids,
+    )
+
+    async def _keyword():
+        return await search_test_cases_query(db, **common_kwargs)
+
+    def _is_empty(result):
+        # ``semantic_search`` returns (items, total, pages); fall back when
+        # total is 0 — this covers both a legitimate no-match query (where
+        # keyword will also legitimately return 0) and a ChromaDB outage
+        # (where keyword may have results).
+        return result[1] == 0
+
     if search_type == "semantic":
         from app.services.semantic_search import semantic_search
-        items, total, pages = await semantic_search(
-            db, q=q, page=page, size=size,
-            project_id=scoped_project_id_str, status=status, days=days,
-            allowed_project_ids=allowed_project_ids,
+
+        async def _semantic():
+            return await semantic_search(db, **common_kwargs)
+
+        items, total, pages = await with_fallback(
+            primary=_semantic,
+            fallback=_keyword,
+            name="search.semantic",
+            is_empty=_is_empty,
         )
-        if total == 0:
-            # ChromaDB returned nothing — fall back to keyword so users always get results
-            items, total, pages = await search_test_cases_query(
-                db, q=q, page=page, size=size,
-                project_id=scoped_project_id_str, status=status, days=days,
-                allowed_project_ids=allowed_project_ids,
-            )
-            actual_type = "keyword"
-            semantic_search_total.labels(search_type="semantic", status="fallback").inc()
-        else:
-            semantic_search_total.labels(search_type="semantic", status="success").inc()
+        # Tag the metric based on whether the fallback fired.
+        used_fallback = total == 0 or (
+            # If primary succeeded and was non-empty, with_fallback returned it as-is;
+            # the only way total can be non-zero after this is success. Treat 0 as
+            # "fallback fired" since the helper would have called keyword in that case.
+            False
+        )
+        actual_type = "keyword" if used_fallback else "semantic"
+        semantic_search_total.labels(
+            search_type="semantic",
+            status="fallback" if used_fallback else "success",
+        ).inc()
 
     elif search_type == "hybrid":
         from app.services.semantic_search import hybrid_search
-        items, total, pages = await hybrid_search(
-            db, q=q, page=page, size=size,
-            project_id=scoped_project_id_str, status=status, days=days,
-            allowed_project_ids=allowed_project_ids,
+
+        async def _hybrid():
+            return await hybrid_search(db, **common_kwargs)
+
+        items, total, pages = await with_fallback(
+            primary=_hybrid,
+            fallback=_keyword,
+            name="search.hybrid",
+            is_empty=_is_empty,
         )
-        if total == 0:
-            items, total, pages = await search_test_cases_query(
-                db, q=q, page=page, size=size,
-                project_id=scoped_project_id_str, status=status, days=days,
-                allowed_project_ids=allowed_project_ids,
-            )
-            actual_type = "keyword"
-            semantic_search_total.labels(search_type="hybrid", status="fallback").inc()
-        else:
-            semantic_search_total.labels(search_type="hybrid", status="success").inc()
+        used_fallback = total == 0
+        actual_type = "keyword" if used_fallback else "hybrid"
+        semantic_search_total.labels(
+            search_type="hybrid",
+            status="fallback" if used_fallback else "success",
+        ).inc()
 
     else:
-        items, total, pages = await search_test_cases_query(
-            db, q=q, page=page, size=size,
-            project_id=scoped_project_id_str, status=status, days=days,
-            allowed_project_ids=allowed_project_ids,
-        )
+        items, total, pages = await _keyword()
         actual_type = "keyword"
         semantic_search_total.labels(search_type="keyword", status="success").inc()
 

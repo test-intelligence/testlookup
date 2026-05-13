@@ -8,7 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_project_access, require_role
 from app.db.postgres import get_db
 from app.models.postgres import Project, ProjectMember, User, UserRole
-from app.models.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
+from app.models.schemas import (
+    ProjectCreate,
+    ProjectResetRequest,
+    ProjectResetResponse,
+    ProjectResponse,
+    ProjectUpdate,
+)
+from app.services.project_reset_service import (
+    ConfirmationMismatch,
+    ProjectNotFound,
+    reset_project,
+)
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Projects"])
 
@@ -122,3 +133,49 @@ async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="Project not found")
     project.is_active = False
     await db.commit()
+
+
+@router.post(
+    "/{project_id}/reset",
+    response_model=ProjectResetResponse,
+    dependencies=[Depends(require_role(UserRole.ADMIN))],
+)
+async def reset_project_data(
+    project_id: uuid.UUID,
+    payload: ProjectResetRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Wipe project-scoped data. ADMIN-only.
+
+    ``mode="runs"`` deletes every TestRun in the project (cascades to
+    test_cases, ai_analyses, failure_clusters, agent_pipeline_runs,
+    release_decisions, etc.) but keeps the test_suites and canonical
+    catalog so the project's authored structure survives.
+
+    ``mode="full"`` runs the ``runs`` deletes and then also wipes
+    test_suites, canonical_test_cases, releases, release_gate_policies,
+    perf_baselines, flaky_quarantine_requests, managed_test_cases,
+    test_plans, test_strategies, and knowledge_sources. The Project
+    row, its members, API keys, and AI/SSO config survive.
+
+    Two-step confirmation: ``payload.confirmation_name`` must equal
+    the project's ``name`` exactly (case-sensitive). A mismatch
+    returns 422 and nothing is deleted.
+    """
+    try:
+        result = await reset_project(
+            db,
+            project_id=project_id,
+            mode=payload.mode,
+            confirmation_name=payload.confirmation_name,
+            actor_id=current_user.id,
+            actor_name=current_user.full_name or current_user.email,
+        )
+    except ProjectNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConfirmationMismatch as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return result

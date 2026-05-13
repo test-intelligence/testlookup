@@ -7,6 +7,7 @@ import { projectsService } from '@/services/projectsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { ProjectMembersTab } from './ProjectMembersTab'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import type { Project } from '@/types/projects'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
@@ -560,9 +561,10 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
 
             <div className="flex justify-end gap-2">
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(result.temp_password)
-                  toast.success('Copied!')
+                onClick={async () => {
+                  const ok = await copyTextToClipboard(result.temp_password)
+                  if (ok) toast.success('Copied!')
+                  else toast.error('Clipboard access denied — copy manually')
                 }}
                 className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] px-3 py-1.5"
               >
@@ -657,10 +659,11 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
               <div className="flex justify-end">
                 <button
                   disabled={!inviteUrl}
-                  onClick={() => {
+                  onClick={async () => {
                     if (!inviteUrl) return
-                    navigator.clipboard.writeText(inviteUrl)
-                    toast.success('Copied!')
+                    const ok = await copyTextToClipboard(inviteUrl)
+                    if (ok) toast.success('Copied!')
+                    else toast.error('Clipboard access denied — copy manually')
                   }}
                   className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] mr-3 disabled:opacity-40"
                 >Copy link</button>
@@ -813,7 +816,11 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
               <code className="text-xs text-emerald-400 break-all">{createdKey}</code>
             </div>
             <div className="flex justify-end gap-2">
-              <button onClick={() => { navigator.clipboard.writeText(createdKey); toast.success('Copied!') }}
+              <button onClick={async () => {
+                  const ok = await copyTextToClipboard(createdKey)
+                  if (ok) toast.success('Copied!')
+                  else toast.error('Clipboard access denied — copy manually')
+                }}
                 className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] px-3 py-1.5">Copy</button>
               <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] text-sm px-4 py-2 rounded">Done</button>
             </div>

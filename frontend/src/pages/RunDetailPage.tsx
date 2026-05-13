@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Loader2, Package, PencilLine, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
@@ -244,6 +244,33 @@ export default function RunDetailPage() {
   const { isQaEngineer } = usePermissions()
   const [triggeringPipeline, setTriggeringPipeline] = useState(false)
   const [triggeringDeep, setTriggeringDeep] = useState(false)
+  const [recoveringLive, setRecoveringLive] = useState(false)
+
+  async function handleRecoverLive() {
+    if (!runId || recoveringLive) return
+    setRecoveringLive(true)
+    try {
+      const resp = await api.post<{ queued: boolean; buffered_events: number }>(
+        `/api/v1/runs/${runId}/recover-live`,
+      )
+      toast.success(
+        `Replaying ${resp.data.buffered_events} buffered events. Refreshing shortly…`,
+        { icon: '↻', duration: 5000 },
+      )
+      // Persist task runs async on the ingestion worker. Give it a moment
+      // then revalidate the SWR test-cases cache so the table populates
+      // without a full page reload.
+      setTimeout(() => { mutate(['test-cases', runId, { page, size: 25 }]) }, 2500)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to queue recovery'
+      toast.error(detail)
+    } finally {
+      setRecoveringLive(false)
+    }
+  }
 
   async function handleSetRelease(name: string) {
     if (!runId) return
@@ -410,9 +437,12 @@ export default function RunDetailPage() {
               if (isLive && hasAggregates) {
                 // The run record carries aggregate counts from the live state
                 // hash (HINCRBY) but persist_live_session didn't materialise
-                // per-test rows — usually the Redis event buffer was empty
-                // by the time it ran, or the task hit an error after a retry.
-                // Tell the user honestly so they don't keep hitting refresh.
+                // per-test rows — usually the persistence task crashed after
+                // setting its dedup key (so retries silently skipped) while
+                // the Redis event buffer (25h TTL) still has the data. The
+                // ``Recover from buffer`` button below triggers a fresh
+                // persist task that idempotency-checks based on actual
+                // TestCase row count rather than a stuck dedup flag.
                 return (
                   <>
                     <p className="text-[var(--color-text)]">
@@ -420,17 +450,35 @@ export default function RunDetailPage() {
                       {' '}({run?.passed_tests ?? 0} passed, {run?.failed_tests ?? 0} failed
                       {(run?.skipped_tests ?? 0) > 0 && `, ${run?.skipped_tests} skipped`}
                       {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}),
-                      but per-test details weren't persisted.
+                      but per-test details aren't loaded yet.
                     </p>
                     <p className="text-xs">
-                      The SDK's event buffer was cleared before the persistence task ran
-                      (or the task didn't complete). Aggregate counts above are accurate;
-                      individual test names and statuses are not recoverable for this run.
+                      The SDK's event buffer is held in Redis for 25 hours after
+                      a run closes. If persistence didn't finish first time
+                      (worker crash, transient error), try replaying the
+                      buffer below. After that window, re-run the suite or
+                      re-ingest the results as a file upload.
                     </p>
-                    <p className="text-xs">
-                      Re-run the suite, or re-ingest the results as a file upload to get
-                      per-test data.
-                    </p>
+                    <div className="flex items-center gap-3 mt-1">
+                      <button
+                        type="button"
+                        disabled={recoveringLive || !runId}
+                        onClick={() => handleRecoverLive()}
+                        className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {recoveringLive
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <RotateCcw className="h-3.5 w-3.5" />}
+                        {recoveringLive ? 'Replaying…' : 'Recover from buffer'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs underline"
+                      >
+                        Refresh
+                      </button>
+                    </div>
                   </>
                 )
               }

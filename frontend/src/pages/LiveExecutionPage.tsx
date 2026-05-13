@@ -54,6 +54,7 @@ import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -384,9 +385,10 @@ session.Record(ctx, "test_cart", testlookup.Failed, 340,
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    void copyTextToClipboard(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
   }, [text])
   return (
     <button

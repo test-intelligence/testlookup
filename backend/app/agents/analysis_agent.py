@@ -21,6 +21,8 @@ Improvements over baseline:
   - Structured audit logging with timing and decision rationale
 """
 import asyncio
+import hashlib
+import json
 import time
 from datetime import datetime, timezone
 from sqlalchemy import func, select
@@ -52,6 +54,21 @@ _RETRY_CONFIDENCE_THRESHOLD = 40
 
 # Maximum retries for low-confidence analyses
 _MAX_ANALYSIS_RETRIES = 1
+
+
+def _hash_text(value: object) -> str | None:
+    """Return a stable SHA-256 hash for audit fingerprints without raw text."""
+    if value is None:
+        return None
+    text = str(value)
+    if not text:
+        return None
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _hash_json(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
 
 
 class AnalysisAgent(BaseAgent):
@@ -323,12 +340,12 @@ class AnalysisAgent(BaseAgent):
             # If the LLM cost budget (checked once at the top of run()) forced
             # a downgrade, it wins over the configured mode — every test in
             # this stage runs under the downgraded engine.
-            from app.services.analysis_router import AnalysisMode, get_analysis_mode
+            from app.services.analysis_router import AnalysisMode
             budget_override = state.get("_cost_budget_mode_override")
             if budget_override in ("ml", "rules"):
                 mode = budget_override
             else:
-                mode = get_analysis_mode()
+                mode = state.get("analysis_mode_resolved") or "auto"
 
             # Record the routing decision so downstream consumers (UI, reports)
             # can see *which* engine ran and why, without scraping logs.
@@ -337,12 +354,17 @@ class AnalysisAgent(BaseAgent):
                 decision_point="route_analysis_mode",
                 chosen=mode,
                 rationale=(
-                    "configured ANALYSIS_MODE resolved via get_analysis_mode()"
-                    if mode != AnalysisMode.AUTO
-                    else "auto resolution: ML→LLM→Rules availability chain"
+                    "LLM cost budget override forced this engine"
+                    if budget_override in ("ml", "rules")
+                    else "pipeline-start analysis mode snapshot"
                 ),
                 test_case_id=tc_id,
-                context={"severity": meta.get("severity")},
+                context={
+                    "severity": meta.get("severity"),
+                    "mode_requested": state.get("analysis_mode_requested"),
+                    "mode_resolved": state.get("analysis_mode_resolved"),
+                    "mode_resolution": state.get("analysis_mode_resolution"),
+                },
             )
 
             if mode in (AnalysisMode.ML, AnalysisMode.RULES):
@@ -352,6 +374,7 @@ class AnalysisAgent(BaseAgent):
                 analysis = await classify_test(
                     test_case={
                         "test_case_id": tc_id,
+                        "pipeline_run_id": pipeline_run_id,
                         "test_name": meta.get("test_name", tc_id),
                         "suite_name": meta.get("suite_name"),
                         "error_message": meta.get("error_message"),
@@ -379,6 +402,7 @@ class AnalysisAgent(BaseAgent):
                             ocp_namespace=state.get("test_run_data", {}).get("ocp_namespace"),
                             error_message=meta.get("error_message"),
                             stack_trace=meta.get("stack_trace"),
+                            pipeline_run_id=pipeline_run_id,
                         ),
                         timeout=settings.AI_TIMEOUT_SECONDS,
                     )
@@ -411,6 +435,16 @@ class AnalysisAgent(BaseAgent):
             # fallback, which engine was requested and why it was swapped).
             elapsed = time.perf_counter() - start_time
             routing = analysis.get("_routing") or {}
+            fingerprint_context = {
+                "test_case_id": tc_id,
+                "test_name": meta.get("test_name", tc_id),
+                "suite_name": meta.get("suite_name"),
+                "error_message_hash": _hash_text(meta.get("error_message")),
+                "stack_trace_hash": _hash_text(meta.get("stack_trace")),
+                "severity": meta.get("severity"),
+                "mode_requested": state.get("analysis_mode_requested"),
+                "mode_resolved": state.get("analysis_mode_resolved") or mode,
+            }
             analysis["_audit"] = {
                 "analysis_duration_seconds": round(elapsed, 3),
                 "test_severity": meta.get("severity"),
@@ -418,9 +452,28 @@ class AnalysisAgent(BaseAgent):
                 "had_stack_trace": bool(meta.get("stack_trace")),
                 "historical_failure_count": meta.get("historical_failure_count", 0),
                 "analysis_mode": routing.get("mode_used") or mode,
-                "mode_requested": routing.get("mode_requested") or mode,
+                "mode_requested": state.get("analysis_mode_requested") or routing.get("mode_requested") or mode,
+                "mode_resolved_at_pipeline_start": state.get("analysis_mode_resolved"),
+                "mode_resolution": state.get("analysis_mode_resolution"),
                 "fallback_from": routing.get("fallback_from"),
                 "fallback_reason": routing.get("fallback_reason"),
+                "input_fingerprints": {
+                    "test_name_sha256": _hash_text(meta.get("test_name", tc_id)),
+                    "suite_name_sha256": _hash_text(meta.get("suite_name")),
+                    "error_message_sha256": _hash_text(meta.get("error_message")),
+                    "stack_trace_sha256": _hash_text(meta.get("stack_trace")),
+                    "classification_context_sha256": _hash_json(fingerprint_context),
+                },
+                "prompt_versions": {
+                    "react_triage": "services.agent.SYSTEM_PROMPT:v1",
+                    "analysis_agent": "agents.analysis_agent:v2",
+                },
+                "model_config_snapshot": {
+                    "provider": settings.LLM_PROVIDER,
+                    "model": settings.LLM_MODEL,
+                    "temperature": settings.LLM_TEMPERATURE,
+                    "max_tokens": settings.LLM_MAX_TOKENS,
+                },
                 "confidence_adjustments": analysis.pop("_confidence_adjustments", []),
             }
 
