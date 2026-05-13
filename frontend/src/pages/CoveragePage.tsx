@@ -1240,6 +1240,12 @@ export default function CoveragePage() {
   const gaps = useMemo(() => buildGaps(model, suites, days), [model, suites, days])
   const recs = useMemo(() => buildRecActions(model, suites), [model, suites])
 
+  // Surface the most-recent run's suite in the header so a user landing here
+  // can see which suite the coverage snapshot represents at a glance. Must
+  // sit before the early-return below so React's hook order stays stable
+  // across renders (react-hooks/rules-of-hooks).
+  const { data: latestRuns } = useRuns({ page: 1, size: 1, days, ...(selectedSuite && { suite_name: selectedSuite }) })
+
   if (!project && !isAllProjects) {
     return (
       <EmptyState
@@ -1252,9 +1258,6 @@ export default function CoveragePage() {
 
   const projectLabel = project?.name ?? 'All Projects'
   const refreshedAt = trend.length > 0 ? '4h ago' : 'just now'   // backend doesn't expose snapshot age yet
-  // Surface the most-recent run's suite in the header so a user landing here
-  // can see which suite the coverage snapshot represents at a glance.
-  const { data: latestRuns } = useRuns({ page: 1, size: 1, days, ...(selectedSuite && { suite_name: selectedSuite }) })
   const latestRun = latestRuns?.items?.[0]
   const totalEvidence = (summary.suite_count ?? 0) + suites.length + (model.untaggedRuns > 0 ? 1 : 0)
   const confidencePct = clamp(model.composite, 0, 100)

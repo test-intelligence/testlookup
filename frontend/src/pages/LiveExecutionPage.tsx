@@ -46,7 +46,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { useLiveExecution, LiveEvent } from '@/hooks/useLiveExecution'
+import { useLiveExecution } from '@/hooks/useLiveExecution'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -67,16 +67,6 @@ function statusDot(status: string) {
   if (status === 'running') return 'bg-neutral-300 animate-pulse'
   if (status === 'completed') return 'bg-emerald-500'
   return 'bg-neutral-600'
-}
-
-function eventStatusColor(status?: string): string {
-  switch (status?.toUpperCase()) {
-    case 'PASSED':  return 'text-emerald-400'
-    case 'FAILED':  return 'text-red-400'
-    case 'BROKEN':  return 'text-orange-400'
-    case 'SKIPPED': return 'text-[var(--color-text-muted)]'
-    default: return 'text-[var(--color-text-secondary)]'
-  }
 }
 
 function relativeTime(ts: number): string {
@@ -144,55 +134,6 @@ function LiveWindowPicker({ value, onChange }: { value: LiveWindow; onChange: (w
   )
 }
 
-// ── Metric card ────────────────────────────────────────────────────────────
-
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  colorClass = 'text-[var(--color-text)]',
-}: {
-  icon: React.ElementType
-  label: string
-  value: string | number
-  sub?: string
-  colorClass?: string
-}) {
-  return (
-    <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-5 py-4 flex items-start gap-4">
-      <div className="h-9 w-9 rounded-md bg-[var(--color-bg-hover)] flex items-center justify-center flex-shrink-0">
-        <Icon className="h-4.5 w-4.5 text-[var(--color-text-secondary)]" />
-      </div>
-      <div>
-        <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider">{label}</p>
-        <p className={clsx('text-2xl font-bold leading-tight mt-0.5', colorClass)}>{value}</p>
-        {sub && <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{sub}</p>}
-      </div>
-    </div>
-  )
-}
-
-// ── Progress bar ───────────────────────────────────────────────────────────
-
-function MiniProgress({ passed, failed, broken, skipped, total }: {
-  passed: number; failed: number; broken: number; skipped: number; total: number
-}) {
-  const completed = passed + failed + broken + skipped
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0
-  return (
-    <div className="w-full">
-      <div className="flex h-1.5 rounded-full overflow-hidden bg-[var(--color-bg-hover)] w-28">
-        <div style={{ width: `${(passed / (total || 1)) * 100}%` }} className="bg-emerald-500" />
-        <div style={{ width: `${(failed / (total || 1)) * 100}%` }} className="bg-red-500" />
-        <div style={{ width: `${(broken / (total || 1)) * 100}%` }} className="bg-orange-400" />
-        <div style={{ width: `${(skipped / (total || 1)) * 100}%` }} className="bg-neutral-600" />
-      </div>
-      <span className="text-[10px] text-[var(--color-text-muted)] mt-0.5 block">{pct}% done</span>
-    </div>
-  )
-}
-
 // ── Sort helpers ───────────────────────────────────────────────────────────
 
 type SortField = 'pass_rate' | 'total' | 'failed' | 'started_at'
@@ -211,52 +152,6 @@ function sortSessions(sessions: LiveSessionState[], field: SortField, dir: SortD
     }
     return dir === 'asc' ? va - vb : vb - va
   })
-}
-
-// ── Event feed item ────────────────────────────────────────────────────────
-
-function EventRow({ event }: { event: LiveEvent }) {
-  const isResult = event.type === 'live_test_result'
-  const isWarning = event.type === 'live_warning'
-  const isComplete = event.type === 'live_run_complete'
-  const isStarted = event.type === 'live_run_started'
-
-  const icon = isResult
-    ? event.last_status?.toUpperCase() === 'PASSED'
-      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
-      : event.last_status?.toUpperCase() === 'FAILED' || event.last_status?.toUpperCase() === 'BROKEN'
-        ? <XCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-        : <Clock className="h-3.5 w-3.5 text-[var(--color-text-muted)] flex-shrink-0 mt-0.5" />
-    : isWarning
-      ? <Activity className="h-3.5 w-3.5 text-yellow-400 flex-shrink-0 mt-0.5" />
-      : isComplete
-        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
-        : <Radio className="h-3.5 w-3.5 text-[var(--color-text)] flex-shrink-0 mt-0.5" />
-
-  const text = isResult
-    ? event.last_test ?? 'test event'
-    : isWarning
-      ? (event.message ?? 'Warning')
-      : isComplete
-        ? `Run ${event.run_id?.slice(0, 8)} completed (${event.pass_rate?.toFixed(1)}% pass)`
-        : isStarted
-          ? `Run ${event.run_id?.slice(0, 8)} started`
-          : event.type
-
-  return (
-    <div className="flex items-start gap-2 py-1.5 border-b border-[var(--color-border)]/60 text-xs">
-      {icon}
-      <div className="flex-1 min-w-0">
-        <span className={clsx('font-medium truncate block', isResult && eventStatusColor(event.last_status))}>
-          {text}
-        </span>
-        {event.run_id && (
-          <span className="text-[var(--color-text-faint)] font-mono">{event.run_id.slice(0, 8)}</span>
-        )}
-      </div>
-      <span className="text-[var(--color-text-faint)] flex-shrink-0">{relativeTime(event.timestamp)}</span>
-    </div>
-  )
 }
 
 // ── SDK language tabs & snippets ───────────────────────────────────────────

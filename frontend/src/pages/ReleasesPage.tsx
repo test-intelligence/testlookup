@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AlertCircle, Calendar, CheckCircle2, ChevronDown, ChevronRight,
-  Clock, GitBranch, Package, Plus, Rocket, Tag, Trash2, X,
+  Calendar, CheckCircle2, Package, Plus, Trash2, X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -27,13 +26,6 @@ import { ShippingThisWeek, AgingSignals, CompliancePacks, RecentActivity } from 
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ElementType }> = {
-  planning:    { label: 'Planning',    color: 'text-[var(--color-text)]',   bg: 'bg-neutral-300/10 ring-neutral-500/20',   icon: Clock        },
-  in_progress: { label: 'In Progress', color: 'text-amber-400',  bg: 'bg-amber-500/10 ring-amber-500/20', icon: Rocket       },
-  released:    { label: 'Released',    color: 'text-emerald-400',bg: 'bg-emerald-500/10 ring-emerald-500/20', icon: CheckCircle2 },
-  cancelled:   { label: 'Cancelled',   color: 'text-[var(--color-text-muted)]',  bg: 'bg-neutral-700/10 ring-neutral-600/20', icon: X            },
-}
-
 const PHASE_TYPES = [
   { value: 'planning',    label: 'Planning'    },
   { value: 'development', label: 'Development' },
@@ -56,17 +48,6 @@ const PHASE_STATUS_COLOR: Record<string, string> = {
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.planning
-  const Icon = cfg.icon
-  return (
-    <span className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ring-1 ring-inset', cfg.bg, cfg.color)}>
-      <Icon className="h-3 w-3" />
-      {cfg.label}
-    </span>
-  )
 }
 
 // ── Create / Edit Release Modal ─────────────────────────────────────────────

@@ -8,7 +8,6 @@
  * (the one that's actually about to ship), with the highlighted gate
  * decision driving the left accent + badge.
  */
-import { clsx } from 'clsx'
 import { AlertTriangle, AlertCircle, CheckCircle2 } from 'lucide-react'
 import type { DerivedBlocker, DerivedRelease, GateDecision } from './types'
 import GateBadge from './GateBadge'
