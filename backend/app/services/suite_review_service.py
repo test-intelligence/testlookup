@@ -152,10 +152,14 @@ async def set_suite_owner(
         )
     ).scalar_one_or_none()
 
+    # Stage-only: ``get_db`` commits at request-scope exit, so the service
+    # only ``add`` / ``delete`` / mutate. A ``flush`` is needed so the PK +
+    # defaults are populated on the returned row (the caller may serialize
+    # it before commit happens).
     if owner_user_id is None:
         if existing:
             await db.delete(existing)
-            await db.commit()
+            await db.flush()
             logger.info(
                 "suite_owner_cleared",
                 project_id=str(project_id),
@@ -165,8 +169,7 @@ async def set_suite_owner(
 
     if existing:
         existing.owner_user_id = owner_user_id
-        await db.commit()
-        await db.refresh(existing)
+        await db.flush()
         return existing
 
     row = TestSuiteOwner(
@@ -175,8 +178,7 @@ async def set_suite_owner(
         owner_user_id=owner_user_id,
     )
     db.add(row)
-    await db.commit()
-    await db.refresh(row)
+    await db.flush()
     logger.info(
         "suite_owner_assigned",
         project_id=str(project_id),
@@ -214,8 +216,7 @@ async def get_or_create_review(
         state="pending",
     )
     db.add(row)
-    await db.commit()
-    await db.refresh(row)
+    await db.flush()
     return row
 
 
@@ -241,8 +242,7 @@ async def update_review(
     review.reviewed_at = (
         datetime.now(timezone.utc) if state != "pending" else None
     )
-    await db.commit()
-    await db.refresh(review)
+    await db.flush()
     logger.info(
         "suite_review_updated",
         review_id=str(review.id),

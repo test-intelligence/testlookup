@@ -817,7 +817,7 @@ def generate_run_compare_report(
                 selection=selection,
             )
             try:
-                return await run_compare_ai_service.generate_and_save_report(
+                report = await run_compare_ai_service.generate_and_save_report(
                     db,
                     project_id=pid,
                     left_run_id=left,
@@ -825,16 +825,24 @@ def generate_run_compare_report(
                     suite_name=suite_name,
                     compare_payload=compare_payload,
                 )
+                # Worker owns the transaction boundary here — the service was
+                # converted to stage-only (flush, not commit) to satisfy the
+                # architectural test, so the worker has to commit explicitly.
+                await db.commit()
+                return report
             except Exception as exc:
-                await run_compare_ai_service.mark_failed(
-                    db,
-                    project_id=pid,
-                    left_run_id=left,
-                    right_run_id=right,
-                    suite_name=suite_name,
-                    compare_payload=compare_payload,
-                    error_message=str(exc),
-                )
+                await db.rollback()
+                async with AsyncSessionLocal() as failure_db:
+                    await run_compare_ai_service.mark_failed(
+                        failure_db,
+                        project_id=pid,
+                        left_run_id=left,
+                        right_run_id=right,
+                        suite_name=suite_name,
+                        compare_payload=compare_payload,
+                        error_message=str(exc),
+                    )
+                    await failure_db.commit()
                 raise
 
     try:

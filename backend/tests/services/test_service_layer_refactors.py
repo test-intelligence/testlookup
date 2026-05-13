@@ -122,6 +122,11 @@ def _fake_live_session(session_id: uuid.UUID, project_id: uuid.UUID, run_id: str
         "commit_hash": "abc123",
         "status": "active",
         "release_name": None,
+        # launch_name / suite_name became real columns on LiveSession and are
+        # read directly by build_completed_session_state. Stub them so test
+        # SimpleNamespaces match the real ORM row shape.
+        "launch_name": None,
+        "suite_name": None,
         "total_tests": 12,
         "events_received": 4,
         "extra_metadata": {},
@@ -695,7 +700,10 @@ async def test_stream_service_create_session_stores_token_and_initializes_live_s
         metadata={"env": "staging"},
     )
     db = FakeAsyncDB([])
-    db.get = AsyncMock(return_value=object())
+    # ``resolve_project`` returns a Project row whose ``.id`` is used as the
+    # canonical project UUID for every downstream write — must be a real
+    # UUID, not a bare ``object()``.
+    db.get = AsyncMock(return_value=SimpleNamespace(id=project_id))
     redis = SimpleNamespace(setex=AsyncMock())
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(start=AsyncMock()))
 
@@ -754,6 +762,10 @@ async def test_stream_service_ingest_via_api_key_creates_session_on_first_call()
             total_tests=10,
             machine_id="runner-1",
             release_name="Release 5",
+            # ``ingest_via_api_key`` reads these directly off meta; the real
+            # Pydantic model defines them as Optional with None default, so
+            # the SimpleNamespace mock has to mirror that.
+            launch_name=None,
             metadata={"env": "ci"},
         ),
     )
@@ -1068,7 +1080,10 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     db.get = AsyncMock(return_value=session)
     persist_task = SimpleNamespace(apply_async=Mock())
     pipeline_task = SimpleNamespace(apply_async=Mock())
-    release_linker = SimpleNamespace(auto_link_release=AsyncMock())
+    # ``_close_session`` now goes through ``link_run_or_default`` so it can
+    # fall back to the project's default release when session.release_name
+    # is blank. The mock exposes that entry point.
+    release_linker = SimpleNamespace(link_run_or_default=AsyncMock())
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(complete=AsyncMock(return_value={"passed": 4, "failed": 1, "total": 5})))
 
     with (
@@ -1091,7 +1106,7 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     assert session.completed_at is not None
     assert session.extra_metadata["final_state"]["total"] == 5
     upsert_mock.assert_awaited_once()
-    release_linker.auto_link_release.assert_awaited_once()
+    release_linker.link_run_or_default.assert_awaited_once()
     # Item #2: service stages; router handler commits.
     db.commit.assert_not_awaited()
     persist_task.apply_async.assert_called_once()

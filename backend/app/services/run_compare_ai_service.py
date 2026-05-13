@@ -97,7 +97,7 @@ async def mark_queued(
             prompt_version=PROMPT_VERSION,
             created_by_user_id=created_by_user_id,
         ))
-    await db.commit()
+    await db.flush()
 
 
 async def generate_and_save_report(
@@ -135,7 +135,7 @@ async def generate_and_save_report(
         row.compare_payload = _jsonable(compare_payload)
         row.error_message = None
         row.updated_at = datetime.now(timezone.utc)
-        await db.commit()
+        await db.flush()
     return report
 
 
@@ -168,7 +168,7 @@ async def mark_failed(
         row.status = "failed"
         row.error_message = error_message[:1000]
         row.updated_at = datetime.now(timezone.utc)
-        await db.commit()
+        await db.flush()
 
 
 async def _get_row(
