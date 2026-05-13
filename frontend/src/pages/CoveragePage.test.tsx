@@ -4,8 +4,38 @@ import { describe, expect, it, vi } from 'vitest'
 
 import CoveragePage from './CoveragePage'
 
-vi.mock('@/hooks/useMetrics', () => ({
-  useCoverage: vi.fn(),
+// Mock every export from useMetrics — the page (and any child it renders)
+// may pull in more hooks than the test exercises, and vitest errors out if
+// an imported export isn't defined on the mock module. Defaults to an
+// empty SWR shape; individual tests can ``mockReturnValue`` to override.
+vi.mock('@/hooks/useMetrics', () => {
+  const d = () => ({ data: undefined, isLoading: false })
+  return {
+    useDashboardSummary:  vi.fn(d),
+    useTrendData:         vi.fn(d),
+    useFlakyTests:        vi.fn(d),
+    useFailureCategories: vi.fn(d),
+    useTopFailing:        vi.fn(d),
+    useCoverage:          vi.fn(d),
+    useDefects:           vi.fn(d),
+    useSuiteDetail:       vi.fn(d),
+    useAiSummary:         vi.fn(d),
+  }
+})
+// Other hooks the page transitively imports — stubbed so SWR doesn't fire.
+vi.mock('@/hooks/useSuiteOptions', () => ({
+  useSuiteOptions: () => ({ options: [], isLoading: false }),
+}))
+vi.mock('@/hooks/useRuns', () => ({
+  useRuns: () => ({ data: { items: [] }, isLoading: false }),
+}))
+vi.mock('@/hooks/useAnalyticsView', () => ({
+  useAnalyticsView: () => ({
+    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(),
+    save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
+    activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
+    updateInstance: vi.fn(), moveInstance: vi.fn(),
+  }),
 }))
 
 vi.mock('@/store/projectStore', () => ({

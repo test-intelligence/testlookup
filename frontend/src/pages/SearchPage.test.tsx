@@ -6,7 +6,13 @@ import SearchPage from './SearchPage'
 
 vi.mock('@/services/searchService', () => ({
   searchService: {
-    search: vi.fn(),
+    search:         vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    globalSearch:   vi.fn().mockResolvedValue({ groups: {}, total: 0 }),
+    // SearchPage calls ``getIndexStatus`` on mount to render the index health
+    // pill; the mock has to expose it or the page throws "is not a function".
+    getIndexStatus: vi.fn().mockResolvedValue({ status: 'ok', documents: 0 }),
+    reindex:        vi.fn().mockResolvedValue({ task_id: 't', status: 'queued' }),
+    similar:        vi.fn().mockResolvedValue({ items: [], total: 0, query: '' }),
   },
 }))
 
@@ -26,8 +32,15 @@ describe('SearchPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Search workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/Global/i)).toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/Search test names/i)).toBeInTheDocument()
+    // The workflow ribbon is identified by aria-label ("Search workflow"),
+    // but its visible heading reads "Retrieval workflow" — match either.
+    expect(
+      (await screen.findAllByText(/(Search|Retrieval) workflow/i)).length,
+    ).toBeGreaterThan(0)
+    // Hero search input is the stable signal that controls rendered.
+    // (The "Global" scope label was removed in the hero-first redesign.)
+    // Hero placeholder text was rewritten in the redesign; match its leading
+    // substring rather than the prior phrasing.
+    expect(screen.getByPlaceholderText(/Search tests, runs, suites/i)).toBeInTheDocument()
   })
 })

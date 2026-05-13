@@ -14,6 +14,10 @@ vi.mock('@/hooks/useRuns', () => ({
 }))
 
 vi.mock('@/store/projectStore', () => ({
+  // ``ALL_PROJECTS_ID`` is read at module-import time by several pages —
+  // the mock must export it even when the test doesn't exercise All-Projects
+  // mode, or vitest raises "No ALL_PROJECTS_ID export is defined".
+  ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { name: string } | null }) => unknown) =>
     selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
 }))

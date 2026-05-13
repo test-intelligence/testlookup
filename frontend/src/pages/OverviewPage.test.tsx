@@ -4,9 +4,30 @@ import { describe, expect, it, vi } from 'vitest'
 
 import OverviewPage from './OverviewPage'
 
-vi.mock('@/hooks/useMetrics', () => ({
-  useDashboardSummary: vi.fn(),
-  useTrendData: vi.fn(),
+vi.mock('@/hooks/useMetrics', () => {
+  const d = () => ({ data: undefined, isLoading: false })
+  return {
+    useDashboardSummary:  vi.fn(d),
+    useTrendData:         vi.fn(d),
+    useFlakyTests:        vi.fn(d),
+    useFailureCategories: vi.fn(d),
+    useTopFailing:        vi.fn(d),
+    useCoverage:          vi.fn(d),
+    useDefects:           vi.fn(d),
+    useSuiteDetail:       vi.fn(d),
+    useAiSummary:         vi.fn(d),
+  }
+})
+vi.mock('@/hooks/useSuiteOptions', () => ({
+  useSuiteOptions: () => ({ options: [], isLoading: false }),
+}))
+vi.mock('@/hooks/useAnalyticsView', () => ({
+  useAnalyticsView: () => ({
+    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(),
+    save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
+    activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
+    updateInstance: vi.fn(), moveInstance: vi.fn(),
+  }),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -49,9 +70,14 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Quality workflow/i)).toBeInTheDocument()
+    // ``Quality workflow`` appears in both the workflow strip and the
+    // dashboard widget header, so use getAllByText for the presence check.
+    expect((await screen.findAllByText(/Quality workflow/i)).length).toBeGreaterThan(0)
     expect(screen.getByText(/^Dashboard$/i)).toBeInTheDocument()
-    expect(screen.getByText(/Release Readiness: GREEN/i)).toBeInTheDocument()
+    // The page renders the verdict via ``gateLabel`` — ``GREEN`` readiness
+    // maps to "Go". Match the rendered label rather than the raw backend
+    // colour to stay aligned with the verdict-led redesign.
+    expect(screen.getAllByText(/\bGo\b/).length).toBeGreaterThan(0)
   })
 
   it('shows Pending readiness instead of RED when there are zero executions', async () => {
@@ -86,8 +112,10 @@ describe('OverviewPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Release Readiness: Pending/i)).toBeInTheDocument()
-    // The misleading "Critical issues" copy must NOT be on the page.
+    // Zero-executions case must surface as the Pending verdict (via
+    // ``mapReadinessToVerdict`` → ``gateLabel`` = "Pending"), not the
+    // misleading "Critical issues must be resolved" copy.
+    expect(await screen.findByText(/\bPending\b/)).toBeInTheDocument()
     expect(screen.queryByText(/Critical issues must be resolved/i)).toBeNull()
   })
 })

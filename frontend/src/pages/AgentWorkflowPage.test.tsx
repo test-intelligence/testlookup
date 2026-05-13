@@ -129,6 +129,10 @@ describe('AgentWorkflowPage', () => {
       <MemoryRouter initialEntries={['/agents']}>
         <Routes>
           <Route path="/agents" element={<AgentWorkflowPage />} />
+          {/* Clicking a run navigates to /agents/run/:runId — the test
+              setup needs the parametrised route too or the page renders
+              to an empty body after the click. */}
+          <Route path="/agents/run/:runId" element={<AgentWorkflowPage />} />
         </Routes>
       </MemoryRouter>,
     )
