@@ -107,9 +107,12 @@ def get_analysis_mode() -> str:
         # Only degrade to rules when we have a *definitive* False result — unknown (None)
         # means we haven't probed yet; attempt LLM and let _classify_llm fall back on error.
         if settings.LLM_PROVIDER == "ollama" and _ollama_model_available is False:
+            # structlog's BoundLogger doesn't accept printf-style positional
+            # interpolation args — pass the model name as a kwarg instead.
             logger.warning(
-                "Auto mode: Ollama model '%s' not installed (cached probe) — using rules",
-                settings.LLM_MODEL,
+                "auto_mode_ollama_model_unavailable",
+                model=settings.LLM_MODEL,
+                detail="cached probe definitively False — falling back to rules",
             )
             return AnalysisMode.RULES
 

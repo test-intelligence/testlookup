@@ -7,7 +7,9 @@ export interface DashboardMetricValue {
 }
 
 export interface DashboardSummary {
-  release_readiness?: 'GREEN' | 'AMBER' | 'RED'
+  // null when the backend has no test executions to grade in the selected
+  // window. UI renders a neutral "Pending" banner in that case.
+  release_readiness?: 'GREEN' | 'AMBER' | 'RED' | null
   total_executions_7d?: DashboardMetricValue
   avg_pass_rate_7d?: DashboardMetricValue
   active_defects?: DashboardMetricValue

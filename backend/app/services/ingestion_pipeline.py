@@ -97,8 +97,28 @@ async def ingest_test_results(
 
     Returns the count of processed cases.
     """
+    # Phase 2: pre-fill ``suite_name`` with the project's default suite when the
+    # payload omits one. Keeps the per-run TestCase.suite_name field populated for
+    # downstream consumers (analytics, suite_sync_service, primary_suite_name
+    # attribution) while CanonicalTestCase rows are reconciled in finalize_run.
+    # Lookup is hoisted out of the loop so it costs one query per ingest, not N.
+    default_suite_name: Optional[str] = None
+    needs_default = any(
+        not (case.get("suite_name") or "").strip() for case in results
+    )
+    if needs_default:
+        project_result = await db.execute(
+            select(Project).where(Project.id == run.project_id)
+        )
+        project = project_result.scalar_one_or_none()
+        if project is not None:
+            from app.services.test_suite_service import default_suite_name_for
+            default_suite_name = default_suite_name_for(project.name)
+
     count = 0
     for case_data in results:
+        if default_suite_name and not (case_data.get("suite_name") or "").strip():
+            case_data["suite_name"] = default_suite_name
         try:
             await _upsert_test_case(db, case_data, run)
             count += 1
@@ -153,11 +173,22 @@ async def finalize_run(
                 )
 
     from app.services.suite_sync_service import sync_suite_membership
+    from app.services.test_suite_service import sync_canonical_test_cases
     from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
 
     await _run_isolated(
         "suite_sync",
         lambda d: sync_suite_membership(d, pid, rid),
+    )
+
+    # Phase 2 dual-write: reconcile canonical_test_cases against this run. Runs
+    # in its own session so a failure can't poison the suite_sync transaction
+    # above (or the auto_tagging step below). suite_memberships is still the
+    # source of truth during the dual-write window; canonical_test_cases is
+    # written in parallel so the API/UI on top of it has up-to-date data.
+    await _run_isolated(
+        "canonical_sync",
+        lambda d: sync_canonical_test_cases(d, pid, rid),
     )
 
     async def _tag(d: AsyncSession) -> None:
@@ -204,16 +235,17 @@ async def finalize_run(
 
     await _run_isolated("quarantine_tagging", _apply_quarantine_tags)
 
-    if release_name and release_name.strip():
-        from app.services.release_linker import auto_link_release
-        await _run_isolated(
-            "release_linking",
-            lambda d: auto_link_release(
-                db=d, project_id=pid,
-                release_name=release_name.strip(),
-                test_run_id=rid,
-            ),
-        )
+    # Release linking — explicit name wins; otherwise fall back to the
+    # project's default release (auto-created on first use; migration 0077).
+    from app.services.release_linker import link_run_or_default
+    await _run_isolated(
+        "release_linking",
+        lambda d: link_run_or_default(
+            db=d, project_id=pid,
+            release_name=release_name,
+            test_run_id=rid,
+        ),
+    )
 
     # Tier 1 item 5 — post a GitHub check run for this commit SHA. The
     # service is the hard kill switch: it returns a ``skipped`` dict
@@ -306,3 +338,13 @@ async def finalize_run(
         logger.info("agent_pipeline_queued", run_id=run_id)
     except Exception as e:
         logger.warning("agent_pipeline_queue_failed", error=str(e))
+
+    # Precompute latest-vs-previous suite comparison reports so the default
+    # nightly view is ready before users arrive in the morning. This is
+    # best-effort and never blocks ingestion finalization.
+    try:
+        from app.worker.tasks import precompute_suite_comparisons_for_run as _suite_compare
+        _suite_compare.delay(test_run_id=str(rid), project_id=str(pid))
+        logger.info("suite_comparison_precompute_queued", run_id=run_id)
+    except Exception as e:
+        logger.warning("suite_comparison_precompute_queue_failed", error=str(e))

@@ -55,6 +55,18 @@ export interface ReporterConfig {
   clientName?: string
   /** Test framework name, e.g. "jest", "mocha", "vitest" (default: "javascript") */
   framework?: string
+  /**
+   * Default run-level suite identifier. Applied to every record() call that
+   * doesn't supply its own suiteName. Pair with the matching config keys —
+   * testlookup.suite (preferred) or testlookup.launch (fallback).
+   */
+  suiteName?: string
+  /**
+   * Default release this test run belongs to. Pair with testlookup.release /
+   * TESTLOOKUP_RELEASE. When blank the server falls back to the project's
+   * default release on session create.
+   */
+  releaseName?: string
   batchSize?: number
   batchIntervalMs?: number
   timeoutMs?: number
@@ -69,6 +81,12 @@ export interface SessionOptions {
   commitHash?: string
   totalTests?: number
   machineId?: string
+  /** Human-readable launch label (analogous to ReportPortal's rp.launch). */
+  launchName?: string
+  /** Per-session suite override (beats ReporterConfig.suiteName). */
+  suiteName?: string
+  /** Per-session release override (beats ReporterConfig.releaseName). */
+  releaseName?: string
   metadata?: Record<string, unknown>
 }
 
@@ -124,6 +142,8 @@ export class TestLookupReporter {
   private readonly projectId: string
   private readonly clientName: string
   private readonly framework: string
+  private readonly suiteName?: string
+  private readonly releaseName?: string
   private readonly batchSize: number
   private readonly batchIntervalMs: number
   private readonly timeoutMs: number
@@ -134,6 +154,8 @@ export class TestLookupReporter {
     this.projectId      = config.projectId
     this.clientName     = config.clientName ?? os.hostname()
     this.framework      = config.framework  ?? 'javascript'
+    this.suiteName      = config.suiteName
+    this.releaseName    = config.releaseName
     this.batchSize      = Math.min(config.batchSize ?? BATCH_SIZE, MAX_BATCH_SIZE)
     this.batchIntervalMs = config.batchIntervalMs ?? BATCH_INTERVAL_MS
     this.timeoutMs      = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -141,6 +163,14 @@ export class TestLookupReporter {
 
   /** Register a new live session with the server and return a LiveSession object. */
   async startSession(opts: SessionOptions = {}): Promise<LiveSession> {
+    // Per-session suite overrides the reporter-level default; either flows
+    // both into the server payload (LiveSession.suite_name + TestRun) and
+    // into the returned LiveSession as the record() default.
+    const sessionSuite = opts.suiteName ?? this.suiteName
+    // Per-session release wins; otherwise inherit testlookup.release /
+    // TESTLOOKUP_RELEASE. Blank → server uses the project's default release.
+    const sessionRelease = opts.releaseName ?? this.releaseName
+
     const payload: Record<string, unknown> = {
       project_id:  this.projectId,
       client_name: this.clientName,
@@ -152,6 +182,9 @@ export class TestLookupReporter {
     if (opts.branch       != null) payload.branch       = opts.branch
     if (opts.commitHash   != null) payload.commit_hash  = opts.commitHash
     if (opts.totalTests   != null) payload.total_tests  = opts.totalTests
+    if (opts.launchName   != null) payload.launch_name  = opts.launchName
+    if (sessionSuite      != null) payload.suite_name   = sessionSuite
+    if (sessionRelease    != null) payload.release_name = sessionRelease
     if (opts.metadata     != null) payload.metadata     = opts.metadata
 
     const data = await this._fetch<SessionCreateResponse>('POST', '/api/v1/stream/sessions', payload)
@@ -164,6 +197,7 @@ export class TestLookupReporter {
       batchSize:     this.batchSize,
       batchIntervalMs: this.batchIntervalMs,
       timeoutMs:     this.timeoutMs,
+      suiteName:     sessionSuite,
     })
   }
 
@@ -237,6 +271,12 @@ interface LiveSessionConfig {
   batchSize: number
   batchIntervalMs: number
   timeoutMs: number
+  /**
+   * Default suite applied to record() events that don't carry their own
+   * suiteName — keeps every test on a run tagged with the run-level suite
+   * resolved from testlookup.suite / testlookup.launch.
+   */
+  suiteName?: string
 }
 
 /**
@@ -254,6 +294,7 @@ export class LiveSession {
   private readonly baseUrl: string
   private readonly batchSize: number
   private readonly timeoutMs: number
+  private readonly defaultSuiteName?: string
   private readonly buffer: LiveEvent[] = []
   private flushTimer: ReturnType<typeof setInterval> | null = null
   private _stats = { sent: 0, failed: 0 }
@@ -265,6 +306,7 @@ export class LiveSession {
     this.baseUrl      = config.baseUrl
     this.batchSize    = config.batchSize
     this.timeoutMs    = config.timeoutMs
+    this.defaultSuiteName = config.suiteName
 
     // Background time-based flusher
     this.flushTimer = setInterval(() => {
@@ -296,7 +338,10 @@ export class LiveSession {
       duration_ms: durationMs,
       timestamp_ms: Date.now(),
     }
-    if (opts.suiteName)  event.suite_name    = opts.suiteName
+    // Per-record suiteName wins; otherwise inherit the session-level default
+    // resolved from testlookup.suite / testlookup.launch via ReporterConfig.
+    const effectiveSuite = opts.suiteName ?? this.defaultSuiteName
+    if (effectiveSuite)  event.suite_name    = effectiveSuite
     if (opts.className)  event.class_name    = opts.className
     if (opts.error)      event.error_message = opts.error
     if (opts.stackTrace) event.stack_trace   = opts.stackTrace

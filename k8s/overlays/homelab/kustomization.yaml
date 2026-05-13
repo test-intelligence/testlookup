@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress-traefik.yaml
+  # middleware-redirect-https.yaml removed — homelab ingress is HTTP-only.
   - infra-postgres.yaml
   - infra-mongo.yaml
   - infra-redis.yaml
@@ -36,6 +37,20 @@ patches:
     target:
       kind: Secret
       name: testlookup-secrets
+
+  # ── Always re-pull :latest on pod start ───────────────────────────────────
+  # K3s containerd otherwise keeps the cached :latest image even after a fresh
+  # registry push, masking new builds. Combined with `kubectl rollout restart`
+  # at the end of deploy-homelab.sh, this guarantees the new image content is
+  # picked up. Targets app.kubernetes.io/name=testlookup so infra deployments
+  # (postgres/mongo/redis/minio/chromadb/ollama) keep IfNotPresent.
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=testlookup
 
   # ── Single-replica deployments for homelab ────────────────────────────────
   - patch: |-
@@ -198,7 +213,7 @@ patches:
         APP_ENV: "production"
         LOG_LEVEL: "INFO"
         AI_OFFLINE_MODE: "true"
-        CORS_ORIGINS: "http://testlookup.local,http://192.168.0.200"
+        CORS_ORIGINS: "http://testlookup.local"
         PUBLIC_BASE_URL: "http://testlookup.local"
         STORAGE_BACKEND: "minio"
         ANALYSIS_MODE: "auto"

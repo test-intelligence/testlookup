@@ -157,23 +157,23 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             except Exception as tag_err:
                 logger.warning("Auto-tagging failed (non-blocking): %s", tag_err)
 
-            # ── Link to release (auto-create if new) ───────
-            if sentinel.release_name and sentinel.release_name.strip():
-                try:
-                    from app.services.release_linker import auto_link_release
-                    _release, _created = await auto_link_release(
-                        db=db,
-                        project_id=run.project_id,
-                        release_name=sentinel.release_name.strip(),
-                        test_run_id=run.id,
+            # ── Link to release (explicit name wins; falls back to the
+            # project's default release — migration 0077) ────────────────
+            try:
+                from app.services.release_linker import link_run_or_default
+                result = await link_run_or_default(
+                    db=db,
+                    project_id=run.project_id,
+                    release_name=sentinel.release_name,
+                    test_run_id=run.id,
+                )
+                if result and result[1]:
+                    logger.info(
+                        "Auto-created release '%s' for run %s",
+                        result[0].name, run.id,
                     )
-                    if _created:
-                        logger.info(
-                            "Auto-created release '%s' for run %s",
-                            sentinel.release_name, run.id,
-                        )
-                except Exception as rel_err:
-                    logger.warning("Release linking failed for run %s: %s", run.id, rel_err)
+            except Exception as rel_err:
+                logger.warning("Release linking failed for run %s: %s", run.id, rel_err)
 
             await db.commit()
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")
@@ -394,6 +394,23 @@ async def _store_raw_allure_batch(docs: list[tuple[dict, dict]]) -> None:
             await _store_raw_allure(case_data, raw_json)
 
 
+def compute_suite_attribution(
+    suite_counts: list[tuple[str | None, int]],
+) -> tuple[str | None, list[str] | None]:
+    """Given (suite_name, count) rows, return (primary_suite, sorted_distinct_suites).
+
+    - NULL/empty suite names are dropped.
+    - primary = highest count; alphabetical tiebreak.
+    - Returns (None, None) when nothing usable remains.
+    """
+    rows = [(name, int(n)) for name, n in suite_counts if name]
+    if not rows:
+        return None, None
+    sorted_names = sorted({name for name, _ in rows})
+    primary = sorted(rows, key=lambda x: (-x[1], x[0]))[0][0]
+    return primary, sorted_names
+
+
 async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     """Recalculate and update aggregated counts on the test run."""
     result = await db.execute(
@@ -411,6 +428,20 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     passed = counts.passed or 0
     pass_rate = round((passed / total * 100), 2) if total > 0 else 0.0
 
+    # Suite attribution — distinct suite_name values + dominant suite.
+    suite_q = await db.execute(
+        select(TestCase.suite_name, func.count(TestCase.id).label("n"))
+        .where(
+            TestCase.test_run_id == run_id,
+            TestCase.suite_name.is_not(None),
+            TestCase.suite_name != "",
+        )
+        .group_by(TestCase.suite_name)
+    )
+    primary_suite, suite_names_sorted = compute_suite_attribution(
+        [(row.suite_name, int(row.n)) for row in suite_q.all()],
+    )
+
     await db.execute(
         update(TestRun)
         .where(TestRun.id == run_id)
@@ -423,5 +454,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
             pass_rate=pass_rate,
             status=LaunchStatus.PASSED if pass_rate == 100 else LaunchStatus.FAILED,
             end_time=datetime.now(timezone.utc),
+            primary_suite_name=primary_suite,
+            suite_names=suite_names_sorted,
         )
     )

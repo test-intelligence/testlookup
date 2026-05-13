@@ -325,7 +325,7 @@ class ConversationAgent:
                 parts.append(f"### Latest Run Summary\n{summary_str}")
 
         # Semantic search supplements any intent (optional, non-blocking)
-        semantic_ctx = await self._semantic_search(query)
+        semantic_ctx = await self._semantic_search(query, project_id)
         if semantic_ctx:
             parts.append(f"### Semantically Similar Historical Failures\n{semantic_ctx}")
 
@@ -481,6 +481,10 @@ class ConversationAgent:
         """Fetch tests with duration spikes compared to their 30-day average."""
         try:
             async with AsyncSessionLocal() as db:
+                from sqlalchemy.orm import aliased
+
+                current_run = aliased(TestRun)
+                history_run = aliased(TestRun)
                 q = (
                     select(
                         TestCase.test_name,
@@ -489,6 +493,8 @@ class ConversationAgent:
                         func.avg(TestCaseHistory.duration_ms).label("avg_duration_ms"),
                     )
                     .join(TestCaseHistory, TestCaseHistory.test_fingerprint == TestCase.test_fingerprint)
+                    .join(current_run, current_run.id == TestCase.test_run_id)
+                    .join(history_run, history_run.id == TestCaseHistory.test_run_id)
                     .where(TestCase.duration_ms.isnot(None))
                     .group_by(
                         TestCase.id, TestCase.test_name,
@@ -501,8 +507,9 @@ class ConversationAgent:
                     .limit(10)
                 )
                 if project_id:
-                    q = q.join(TestRun, TestRun.id == TestCase.test_run_id).where(
-                        TestRun.project_id == project_id
+                    q = q.where(
+                        current_run.project_id == project_id,
+                        history_run.project_id == project_id,
                     )
 
                 rows = (await db.execute(q)).all()
@@ -578,7 +585,7 @@ class ConversationAgent:
             logger.debug("Run summary fetch error: %s", exc)
         return ""
 
-    async def _semantic_search(self, query: str) -> str:
+    async def _semantic_search(self, query: str, project_id: Optional[str]) -> str:
         """ChromaDB semantic similarity search — wrapped in asyncio.to_thread to avoid blocking."""
         def _sync_search() -> str:
             try:
@@ -591,7 +598,10 @@ class ConversationAgent:
                     return ""
                 embedder = get_embedding_model()
                 vector = embedder.embed_query(query)
-                results = collection.query(query_embeddings=[vector], n_results=3)
+                query_kwargs = {"query_embeddings": [vector], "n_results": 3}
+                if project_id:
+                    query_kwargs["where"] = {"project_id": project_id}
+                results = collection.query(**query_kwargs)
                 docs = (results.get("documents") or [[]])[0]
                 return "\n".join(f"- {d[:300]}" for d in docs) if docs else ""
             except Exception:

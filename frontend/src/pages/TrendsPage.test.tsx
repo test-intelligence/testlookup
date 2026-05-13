@@ -6,6 +6,21 @@ import TrendsPage from './TrendsPage'
 
 vi.mock('@/hooks/useMetrics', () => ({
   useTrendData: vi.fn(),
+  useDashboardSummary: vi.fn(),
+  useCoverage: vi.fn(),
+  useFlakyTests: vi.fn(),
+}))
+
+vi.mock('@/hooks/useRuns', () => ({
+  useRuns: vi.fn(),
+}))
+
+vi.mock('@/hooks/useAnalyticsView', () => ({
+  useAnalyticsView: () => ({
+    widgetIds: [],
+    setWidgets: vi.fn(),
+    save: vi.fn(),
+  }),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -16,7 +31,8 @@ vi.mock('@/store/projectStore', () => ({
 
 describe('TrendsPage', () => {
   it('renders the trend workflow strip above the charts', async () => {
-    const { useTrendData } = await import('@/hooks/useMetrics')
+    const { useTrendData, useDashboardSummary, useCoverage, useFlakyTests } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
 
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
@@ -27,6 +43,17 @@ describe('TrendsPage', () => {
       },
       isLoading: false,
     })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { avg_pass_rate_7d: { value: 91, trend: 2 } },
+    })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        summary: { unique_tests: 2, suite_count: 1, total_executions: 38, avg_pass_rate: 91, days_with_runs: 2 },
+        suites: [{ suite_name: 'Checkout', unique_tests: 2, passed: 34, failed: 3, skipped: 1, pass_rate: 91 }],
+      },
+    })
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
 
     render(
       <MemoryRouter initialEntries={['/trends']}>
@@ -36,8 +63,8 @@ describe('TrendsPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Trend Workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/Trend Capture/i)).toBeInTheDocument()
+    expect(await screen.findByText(/Trends workflow/i)).toBeInTheDocument()
+    expect(screen.getByText(/Trend capture/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Trends/i).length).toBeGreaterThan(0)
   })
 })

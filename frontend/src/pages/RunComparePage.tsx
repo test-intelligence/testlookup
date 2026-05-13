@@ -5,9 +5,12 @@ import {
   ArrowLeftRight,
   CheckCircle2,
   Clock,
+  GitBranch,
   GitCompare,
+  Info,
   MinusCircle,
   PlusCircle,
+  Sparkles,
   TrendingDown,
   TrendingUp,
   XCircle,
@@ -15,11 +18,16 @@ import {
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
-import { useRunCompare } from '@/hooks/useRunCompare'
+import SuiteBadge from '@/components/ui/SuiteBadge'
+import { useLatestSuiteCompare, useRunCompare } from '@/hooks/useRunCompare'
+import { useRuns } from '@/hooks/useRuns'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import type {
+  RunCompareAIReport,
   RunCompareClassification,
   RunCompareTestDelta,
 } from '@/services/runCompareService'
+import type { TestRun } from '@/types/runs'
 
 /**
  * Two-run compare page — Tier 2 item 8.
@@ -32,18 +40,51 @@ import type {
  */
 export default function RunComparePage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const activeProjectId = useProjectStore((state) => state.activeProjectId)
+  const activeProject = useProjectStore((state) => state.activeProject)
   const [leftInput, setLeftInput] = useState(searchParams.get('left') ?? '')
   const [rightInput, setRightInput] = useState(searchParams.get('right') ?? '')
+  const [manualSuiteInput, setManualSuiteInput] = useState(searchParams.get('suite') ?? '')
+  const [suiteInput, setSuiteInput] = useState(searchParams.get('suite') ?? '')
   const [filter, setFilter] = useState<RunCompareClassification | 'all'>('all')
 
+  const mode = searchParams.get('mode') ?? 'manual'
   const leftId = searchParams.get('left')
   const rightId = searchParams.get('right')
-  const { compare, isLoading, isError } = useRunCompare(leftId, rightId)
+  const suiteName = searchParams.get('suite')
+  const latestSuiteName = mode === 'latest' ? suiteName : null
+  const selectedProjectId = activeProjectId && activeProjectId !== ALL_PROJECTS_ID ? activeProjectId : null
+  const runsQuery = useMemo(() => ({ page: 1, size: 100, days: 0 }), [])
+  const { data: runsData, isLoading: runsLoading } = useRuns(runsQuery)
+  const runs = useMemo<TestRun[]>(() => runsData?.items ?? [], [runsData?.items])
+  const suiteOptions = useMemo(() => collectSuiteOptions(runs), [runs])
+  const manualRunOptions = useMemo(
+    () => filterRunsBySuite(runs, manualSuiteInput || suiteInput),
+    [manualSuiteInput, runs, suiteInput],
+  )
+  const latestRunOptions = useMemo(
+    () => filterRunsBySuite(runs, suiteInput),
+    [runs, suiteInput],
+  )
+  const manual = useRunCompare(leftId, rightId, mode === 'manual' ? suiteName : null)
+  const latest = useLatestSuiteCompare(latestSuiteName, selectedProjectId)
+  const compare = mode === 'latest' ? latest.compare : manual.compare
+  const isLoading = mode === 'latest' ? latest.isLoading : manual.isLoading
+  const isError = mode === 'latest' ? latest.isError : manual.isError
 
   function apply() {
     const next = new URLSearchParams()
+    next.set('mode', 'manual')
     if (leftInput.trim()) next.set('left', leftInput.trim())
     if (rightInput.trim()) next.set('right', rightInput.trim())
+    if (manualSuiteInput.trim()) next.set('suite', manualSuiteInput.trim())
+    setSearchParams(next)
+  }
+
+  function applyLatestSuite() {
+    const next = new URLSearchParams()
+    next.set('mode', 'latest')
+    if (suiteInput.trim()) next.set('suite', suiteInput.trim())
     setSearchParams(next)
   }
 
@@ -51,8 +92,10 @@ export default function RunComparePage() {
     setLeftInput(rightInput)
     setRightInput(leftInput)
     const next = new URLSearchParams()
+    next.set('mode', 'manual')
     if (rightInput.trim()) next.set('left', rightInput.trim())
     if (leftInput.trim()) next.set('right', leftInput.trim())
+    if (manualSuiteInput.trim()) next.set('suite', manualSuiteInput.trim())
     setSearchParams(next)
   }
 
@@ -66,20 +109,87 @@ export default function RunComparePage() {
     <div className="space-y-4">
       <PageHeader
         title="Run Compare"
-        subtitle="Side-by-side diff of two test runs"
+        subtitle="Side-by-side diff of suite or run results"
       />
 
       <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3 space-y-2">
-        <div className="flex items-end gap-2">
+        <div className="flex items-center gap-2">
+          <GitBranch className="h-4 w-4 text-[var(--color-accent)]" />
+          <div>
+            <div className="text-sm font-semibold text-[var(--color-text)]">Latest suite comparison</div>
+            <p className="text-xs text-[var(--color-text-muted)] m-0">
+              Compares the latest completed run with the previous completed run for the same suite and branch.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)_auto] gap-2 items-end">
+          <label className="text-xs block">
+            <span className="text-[var(--color-text-muted)]">Suite name</span>
+            <select
+              value={suiteInput}
+              onChange={(e) => setSuiteInput(e.target.value)}
+              className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+            >
+              <option value="">Select suite</option>
+              {suiteOptions.map((suite) => (
+                <option key={suite} value={suite}>{suite}</option>
+              ))}
+            </select>
+          </label>
+          <RunSelectPreview
+            label="Runs in suite"
+            runs={latestRunOptions}
+            isLoading={runsLoading}
+            emptyLabel={suiteInput ? 'No runs found for this suite' : 'Select a suite to view runs'}
+          />
+          <button type="button" onClick={applyLatestSuite} disabled={!suiteInput.trim() || !selectedProjectId} className="btn-primary text-xs disabled:opacity-50">
+            <GitCompare className="h-3 w-3 inline mr-1" /> Compare latest
+          </button>
+        </div>
+        {!selectedProjectId && (
+          <p className="text-[11px] text-amber-400 m-0">
+            Select a single project in the top project selector to compare latest suite runs.
+          </p>
+        )}
+        {activeProject && (
+          <p className="text-[11px] text-[var(--color-text-faint)] m-0">
+            Project scope: {activeProject.name}
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3 space-y-2">
+        <div className="text-sm font-semibold text-[var(--color-text)]">Manual historical comparison</div>
+        <div className="flex flex-col lg:flex-row lg:items-end gap-2">
+          <label className="text-xs block flex-1">
+            <span className="text-[var(--color-text-muted)]">Suite scope</span>
+            <select
+              value={manualSuiteInput}
+              onChange={(e) => {
+                setManualSuiteInput(e.target.value)
+                setLeftInput('')
+                setRightInput('')
+              }}
+              className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+            >
+              <option value="">All suites</option>
+              {suiteOptions.map((suite) => (
+                <option key={suite} value={suite}>{suite}</option>
+              ))}
+            </select>
+          </label>
           <label className="text-xs block flex-1">
             <span className="text-[var(--color-text-muted)]">Left run (baseline)</span>
-            <input
-              type="text"
+            <select
               value={leftInput}
               onChange={(e) => setLeftInput(e.target.value)}
-              placeholder="Run UUID — e.g. a1b2c3d4-..."
               className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded font-mono"
-            />
+            >
+              <option value="">Select baseline run</option>
+              {manualRunOptions.map((run) => (
+                <option key={run.id} value={run.id}>{formatRunOption(run)}</option>
+              ))}
+            </select>
           </label>
           <button
             type="button"
@@ -91,26 +201,34 @@ export default function RunComparePage() {
           </button>
           <label className="text-xs block flex-1">
             <span className="text-[var(--color-text-muted)]">Right run (target)</span>
-            <input
-              type="text"
+            <select
               value={rightInput}
               onChange={(e) => setRightInput(e.target.value)}
-              placeholder="Run UUID — e.g. f5e6d7c8-..."
               className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded font-mono"
-            />
+            >
+              <option value="">Select target run</option>
+              {manualRunOptions.map((run) => (
+                <option key={run.id} value={run.id}>{formatRunOption(run)}</option>
+              ))}
+            </select>
           </label>
           <button type="button" onClick={apply} className="btn-primary text-xs">
             <GitCompare className="h-3 w-3 inline mr-1" /> Compare
           </button>
         </div>
+        {runsLoading && (
+          <p className="text-[11px] text-[var(--color-text-muted)] m-0">Loading available suites and runs…</p>
+        )}
       </section>
 
-      {!leftId || !rightId ? (
+      {mode === 'latest' && !latestSuiteName ? (
+        <EmptyState title="Choose a suite" description="Enter a suite name to compare its latest run against the previous run on the same branch." />
+      ) : mode !== 'latest' && (!leftId || !rightId) ? (
         <EmptyState
           title="Pick two runs to compare"
-          description="Paste the UUID of a baseline run on the left and a target run on the right to see per-test deltas, regressions, and duration spikes."
+          description="Use the suite-first default above, or paste the UUID of a baseline run and target run for an explicit historical comparison."
         />
-      ) : leftId === rightId ? (
+      ) : mode !== 'latest' && leftId === rightId ? (
         <EmptyState title="Pick two different runs" />
       ) : isLoading ? (
         <LoadingSpinner size="lg" />
@@ -119,6 +237,8 @@ export default function RunComparePage() {
       ) : !compare ? null : (
         <div className="space-y-4">
           <SummaryTiles compare={compare} />
+          {compare.selection && <SelectionNotice compare={compare} />}
+          {compare.ai_report && <AIReportPanel report={compare.ai_report} />}
           <DeltaFilterBar
             compare={compare}
             filter={filter}
@@ -128,6 +248,78 @@ export default function RunComparePage() {
         </div>
       )}
     </div>
+  )
+}
+
+function collectSuiteOptions(runs: TestRun[]): string[] {
+  const suites = new Map<string, string>()
+  for (const run of runs) {
+    const values = [
+      run.primary_suite_name,
+      ...(run.suite_names ?? []),
+    ]
+    for (const value of values) {
+      const name = value?.trim()
+      if (!name) continue
+      const key = name.toLowerCase()
+      if (!suites.has(key)) suites.set(key, name)
+    }
+  }
+  return [...suites.values()].sort((a, b) => a.localeCompare(b))
+}
+
+function runHasSuite(run: TestRun, suiteName: string): boolean {
+  const target = suiteName.trim().toLowerCase()
+  if (!target) return true
+  const names = [
+    run.primary_suite_name,
+    ...(run.suite_names ?? []),
+  ]
+  return names.some((name) => name?.trim().toLowerCase() === target)
+}
+
+function filterRunsBySuite(runs: TestRun[], suiteName: string): TestRun[] {
+  return runs
+    .filter((run) => runHasSuite(run, suiteName))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+}
+
+function formatRunOption(run: TestRun): string {
+  const build = run.build_number || run.id.slice(0, 8)
+  const branch = run.branch ? ` · ${run.branch}` : ''
+  const release = run.release_name ? ` · ${run.release_name}` : ''
+  const created = new Date(run.created_at).toLocaleString()
+  return `Build ${build} · ${run.status}${branch}${release} · ${created}`
+}
+
+function RunSelectPreview({
+  label,
+  runs,
+  isLoading,
+  emptyLabel,
+}: {
+  label: string
+  runs: TestRun[]
+  isLoading: boolean
+  emptyLabel: string
+}) {
+  return (
+    <label className="text-xs block">
+      <span className="text-[var(--color-text-muted)]">{label}</span>
+      <select
+        value=""
+        disabled
+        className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded font-mono disabled:opacity-100"
+      >
+        <option>
+          {isLoading
+            ? 'Loading runs…'
+            : runs.length === 0
+              ? emptyLabel
+              : `${runs.length} available · latest ${formatRunOption(runs[0])}`}
+        </option>
+      </select>
+    </label>
   )
 }
 
@@ -145,12 +337,12 @@ function SummaryTiles({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <SideCard label="Left (baseline)" buildLabel={leftBuild} run={compare.left} />
         <SideCard label="Right (target)" buildLabel={rightBuild} run={compare.right} />
       </div>
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <DeltaTile
           label="Pass rate"
           value={
@@ -188,6 +380,96 @@ function SummaryTiles({
   )
 }
 
+function SelectionNotice({
+  compare,
+}: {
+  compare: import('@/services/runCompareService').RunCompareResponse
+}) {
+  const selection = compare.selection
+  if (!selection) return null
+  const leftBranch = compare.left.branch || '—'
+  const rightBranch = compare.right.branch || '—'
+  const sameBranch = leftBranch === rightBranch
+  return (
+    <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3">
+      <div className="flex items-start gap-2">
+        <Info className="h-4 w-4 text-[var(--color-accent)] mt-0.5" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-[var(--color-text)]">
+            {selection.mode === 'latest_vs_previous' ? 'Latest vs previous suite run' : 'Manual comparison'}
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)] m-0">
+            {selection.selection_reason}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--color-text-muted)]">
+            {compare.suite_name && <span>suite: <code>{compare.suite_name}</code></span>}
+            <span>left branch: <code>{leftBranch}</code></span>
+            <span>right branch: <code>{rightBranch}</code></span>
+            <span className={sameBranch ? 'text-emerald-400' : 'text-amber-400'}>
+              {sameBranch ? 'same branch' : 'branch differs'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function AIReportPanel({ report }: { report: RunCompareAIReport }) {
+  const tone =
+    report.status === 'queued'
+      ? 'border-amber-500/40'
+      : report.risk_level === 'CRITICAL' || report.risk_level === 'HIGH'
+      ? 'border-rose-500/40'
+      : report.risk_level === 'MEDIUM'
+      ? 'border-amber-500/40'
+      : 'border-emerald-500/40'
+  return (
+    <section className={`rounded-md border ${tone} bg-[var(--color-bg-card)] p-3 space-y-3`}>
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-[var(--color-accent)]" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-[var(--color-text)]">AI Comparison Report</div>
+          <p className="text-xs text-[var(--color-text-muted)] m-0">
+            {report.status === 'queued'
+              ? report.message || 'Report generation is queued.'
+              : `${report.risk_level} risk · confidence ${report.confidence}/100${report.fallback_used ? ' · deterministic fallback' : ''}`}
+          </p>
+        </div>
+      </div>
+      {report.status === 'queued' ? null : (
+        <>
+          <p className="text-sm text-[var(--color-text-secondary)] m-0">{report.executive_summary}</p>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <MiniList title="Key differences" items={report.key_differences} />
+            <MiniList title="New risks" items={report.new_risks} />
+            <MiniList title="Actions" items={report.recommended_actions} />
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+function MiniList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2">
+      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">{title}</div>
+      {items.length === 0 ? (
+        <p className="text-xs text-[var(--color-text-faint)] m-0">None</p>
+      ) : (
+        <ul className="space-y-1 m-0 p-0 list-none">
+          {items.slice(0, 4).map((item, idx) => (
+            <li key={`${title}-${idx}`} className="text-xs text-[var(--color-text-secondary)] truncate" title={item}>
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function SideCard({
   label,
   buildLabel,
@@ -206,6 +488,9 @@ function SideCard({
       {run.branch && (
         <div className="text-xs text-[var(--color-text-muted)]">branch: {run.branch}</div>
       )}
+      <div className="mt-1">
+        <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
+      </div>
       <div className="mt-2 flex items-center gap-3 text-xs">
         <span className="text-emerald-400">✓ {run.passed_tests}</span>
         <span className="text-rose-400">✗ {run.failed_tests}</span>

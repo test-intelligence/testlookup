@@ -56,7 +56,7 @@ export default function ResetPasswordPage() {
     <div className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 theme-bg">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center mb-6">
-          <AppLogo className="h-16 w-auto" fallbackClassName="text-4xl font-extrabold bg-gradient-to-r from-teal-400 to-teal-200 bg-clip-text text-transparent" />
+          <AppLogo className="text-[42px]" />
         </div>
         <h2 className="text-center text-3xl font-extrabold text-[var(--color-text)]">Set your password</h2>
         <p className="mt-2 text-center text-sm text-[var(--color-text-muted)]">

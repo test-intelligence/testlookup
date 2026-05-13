@@ -160,6 +160,7 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
                 tr.total_tests, tr.passed_tests, tr.failed_tests,
                 tr.broken_tests, tr.skipped_tests, tr.pass_rate,
                 tr.created_at,
+                tr.primary_suite_name, tr.suite_names,
                 rtr.phase_id::text AS phase_id
             FROM test_runs tr
             JOIN release_test_run_links rtr ON rtr.test_run_id = tr.id

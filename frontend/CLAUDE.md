@@ -280,8 +280,6 @@ const { sortKey, sortDir, handleSort, sortedData } = useTableSort(data, 'name')
 
 ## SWR Refresh Intervals
 
-| Data Type | Interval |
-|-----------|----------|
 | Data Type | Interval | Constant |
 |-----------|----------|----------|
 | Live execution | 5s | `REFRESH_INTERVALS.REALTIME` |

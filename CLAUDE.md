@@ -15,7 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Work tracking:**
 - `docs/PROGRESS.md` — What's been shipped, migration ledger, current build state
 - `docs/BACKLOG.md` — Ordered next-task list, tech debt, risks, cursor for where to pick up
-- Start any resumed session by reading both.
+- `docs/features/FEATURE_FLAG_INVENTORY.md` — Live feature-flag inventory (defaults, owners, graduation criteria)
+- Start any resumed session by reading PROGRESS + BACKLOG.
 
 ---
 
@@ -46,12 +47,19 @@ MCP Server (mcp:8002)
 ```bash
 make dev                  # Start core stack (no LLM). Auto-creates .env, runs migrations + seed
 make dev-llm              # Full stack WITH Ollama + ChromaDB
+make dev-lite             # Minimal stack for low-resource machines (no Ollama/ChromaDB)
+make dev-setup            # First-time full setup: start stack + pull recommended LLM models
 make demo                 # Core stack + pre-loaded sample data
 make seed-data            # Re-run seed (idempotent)
+make seed-data-reset      # Wipe seed data and regenerate from scratch
+make simulate-upload      # Simulate a single Jenkins test run upload to MinIO
+make create-admin         # Create initial admin user (Docker Compose)
 make stop                 # Stop all services
 make clean                # Stop + remove volumes (destructive)
 make migrate              # Run pending migrations (manual fallback)
 make migrate-create MSG="name"  # Auto-generate new migration
+make migrate-down         # Rollback last migration
+make migrate-status       # Show migration status
 make test-backend         # pytest tests/ -v
 make test-frontend        # vitest
 make test-e2e             # playwright
@@ -61,6 +69,7 @@ make format               # ruff format + prettier
 make type-check           # mypy + tsc
 make shell-backend        # bash in backend container
 make build-java-sdk       # Build Java SDK fat JAR
+# Kubernetes deploys: make k8s-deploy-{dev,staging,prod,openshift,homelab} — see k8s/ overlays
 
 # Single backend test:
 docker compose exec backend pytest tests/test_agent.py::test_name -v
@@ -101,6 +110,7 @@ docker compose exec backend pytest tests/test_agent.py::test_name -v
     - `ai_config_resolver.py` — single source of truth for AI config
   - `agents/` — LangGraph multi-agent pipelines
   - `tools/` — 11 LangChain agent tools
+  - `middleware/` — request middleware (PII redaction, request ID, rate limiting)
   - `streams/` — Redis Streams producer/consumer
   - `worker/` — Celery app + tasks
 - `backend/migrations/` — Alembic versions (use `git log` for full history)
@@ -154,7 +164,7 @@ Stack-specific rules live in `backend/CLAUDE.md` and `frontend/CLAUDE.md`. The c
 - **Analysis dispatch goes through one router.** `services/analysis_router.classify_test()`. Never call `run_triage_agent()` or `RulesEngine` directly — the router handles mode resolution and fallback.
 - **AI config has one resolver.** `services/ai_config_resolver.py` — precedence: DB → secrets → env, cached 60s in Redis.
 - **All-Projects sentinel.** `ALL_PROJECTS_ID = "all"` on the frontend; backend `project_id` params are `Optional[uuid.UUID] = None`. Never send the literal string `"all"` to the backend.
-- **Client SDK config precedence:** constructor args > env vars > `testlookup.yaml` > defaults.
+- **Client SDK config precedence:** constructor args > env vars > `testlookup.properties` (preferred) / `testlookup.yaml` (legacy) > defaults. Canonical key prefix is `testlookup.*` (e.g. `testlookup.endpoint`, `testlookup.api.key`, `testlookup.project`, `testlookup.launch`) — analogous to ReportPortal's `rp.*`. `launch_name` is the human-readable label shown in Live Execution and Runs; falls back to `build_number` when unset. See `docs/integration/` for per-framework guides.
 
 ---
 

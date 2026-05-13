@@ -302,13 +302,60 @@ if [ "$SKIP_BUILD" = false ]; then
     warn "Registry not reachable — builds will proceed but push may fail."
   fi
 
+  # Stage client/ into backend/__client_sdks_staged/ so the production
+  # Dockerfile can bake it into the image at /app/client_sdks. The SDK
+  # download endpoint at /api/v1/sdk/{lang} reads from there. We use a
+  # trap so the staging dir is cleaned up even on Ctrl+C / build failure.
+  #
+  # Plain `cp -r` chokes when pytest/venv cache dirs in client/examples/* have
+  # restricted permissions (often left behind by a prior test run inside a
+  # container). Use rsync when available, tar-pipe otherwise — both honour
+  # the exclude list and never try to read the excluded files. Caches and
+  # venvs don't belong in the SDK build context regardless.
+  STAGED_SDK="$REPO_ROOT/backend/__client_sdks_staged"
+  log "Staging client SDKs into backend build context..."
+  rm -rf "$STAGED_SDK"
+  mkdir -p "$STAGED_SDK"
+  trap 'rm -rf "$STAGED_SDK"' EXIT INT TERM
+
+  SDK_EXCLUDES=(
+    '.pytest_cache' '__pycache__' '*.pyc' '.venv' 'venv'
+    'node_modules' '.tox' '.mypy_cache' '.ruff_cache' 'target' 'build'
+    '*.egg-info' '.coverage' 'htmlcov' '.DS_Store'
+  )
+  if command -v rsync >/dev/null 2>&1; then
+    RSYNC_EXCLUDES=()
+    for e in "${SDK_EXCLUDES[@]}"; do RSYNC_EXCLUDES+=("--exclude=$e"); done
+    rsync -a "${RSYNC_EXCLUDES[@]}" "$REPO_ROOT/client/" "$STAGED_SDK/"
+  else
+    TAR_EXCLUDES=()
+    for e in "${SDK_EXCLUDES[@]}"; do TAR_EXCLUDES+=("--exclude=$e"); done
+    ( cd "$REPO_ROOT/client" && tar "${TAR_EXCLUDES[@]}" -cf - . ) \
+      | ( cd "$STAGED_SDK" && tar -xf - )
+  fi
+
   log "Building backend image..."
   docker build -t "${PUSH_REGISTRY}/testlookup/backend:latest" \
     --target production -f backend/Dockerfile backend/
 
+  rm -rf "$STAGED_SDK"
+  trap - EXIT INT TERM
+
   log "Building frontend image (uses same-origin relative API URLs)..."
-  docker build -t "${PUSH_REGISTRY}/testlookup/frontend:latest" \
+  # --pull guarantees the base node:20-alpine and nginx:alpine layers are
+  # refreshed. We intentionally do NOT pass --no-cache so the npm install
+  # layer (slow) stays cached when only frontend/src changes — Docker
+  # invalidates downstream layers automatically when source files change.
+  docker build --pull -t "${PUSH_REGISTRY}/testlookup/frontend:latest" \
     --target production -f frontend/Dockerfile frontend/
+
+  # Tag and push a content-addressable build tag in addition to :latest so
+  # the cluster has a way to verify the image it pulled really matches what
+  # we just built. Useful when triaging "I don't see my UI changes".
+  FRONTEND_BUILD_TAG="build-$(date -u +%Y%m%d-%H%M%S)"
+  docker tag  "${PUSH_REGISTRY}/testlookup/frontend:latest" \
+              "${PUSH_REGISTRY}/testlookup/frontend:${FRONTEND_BUILD_TAG}"
+  log "Frontend build tagged ${FRONTEND_BUILD_TAG}"
 
   log "Building MCP server image..."
   docker build -t "${PUSH_REGISTRY}/testlookup/mcp:latest" \
@@ -318,6 +365,18 @@ if [ "$SKIP_BUILD" = false ]; then
   docker push "${PUSH_REGISTRY}/testlookup/backend:latest"
   docker push "${PUSH_REGISTRY}/testlookup/frontend:latest"
   docker push "${PUSH_REGISTRY}/testlookup/mcp:latest"
+
+  # Push the dated frontend tag too so we can verify in-cluster which build is live.
+  docker push "${PUSH_REGISTRY}/testlookup/frontend:${FRONTEND_BUILD_TAG}"
+
+  # Capture the digest of the freshly pushed :latest so we can compare it
+  # against the digest the pod actually runs after the rollout finishes.
+  FRONTEND_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' \
+    "${PUSH_REGISTRY}/testlookup/frontend:latest" 2>/dev/null \
+    | sed 's/.*@//' || echo "")
+  if [ -n "$FRONTEND_DIGEST" ]; then
+    log "Frontend image digest just pushed: ${FRONTEND_DIGEST}"
+  fi
 
   log "Images pushed. Registry catalog:"
   curl -s "http://${PUSH_REGISTRY}/v2/_catalog" 2>/dev/null || warn "Could not query registry catalog"
@@ -394,12 +453,103 @@ CREDS
   log "Credentials saved to homelabsetup/.homelab-credentials (do NOT commit this file)"
 fi
 
+# ── Step 4b: TLS Certificate (skipped — homelab ingress is HTTP-only) ───
+header "Step 4b — TLS Certificate (skipped)"
+
+# The homelab ingress was switched to HTTP-only on 2026-05-10 to remove the
+# self-signed-cert friction every client (browsers, Java SDK, curl) was hitting.
+# The kustomize overlay no longer references testlookup-tls-cert.
+#
+# If the Secret already exists from a prior HTTPS deploy, Step 5 below
+# prunes it along with the other orphaned redirect/middleware resources.
+# To re-enable HTTPS later, restore middleware-redirect-https.yaml + the
+# split ingresses from git history and reinstate the openssl block.
+log "Skipping TLS cert generation (ingress is HTTP-only)."
+
 # ── Step 5: Deploy with Kustomize ──────────────────────────
 header "Step 5 — Deploy with Kustomize"
 
 log "Applying Kustomize overlay..."
 kubectl apply -k "$REPO_ROOT/k8s/overlays/homelab"
 log "All resources applied."
+
+# ``kubectl apply -k`` only creates/updates resources — it does not delete
+# resources that were removed from the manifest. Explicitly remove orphans
+# left over from previous HTTPS-enabled deploys, otherwise the old redirect
+# Ingress keeps 308'ing http://testlookup.local/ → https://. Idempotent.
+log "Pruning HTTPS-era orphans (if present)..."
+kubectl -n "$NAMESPACE" delete ingress testlookup-traefik-redirect \
+  --ignore-not-found=true >/dev/null
+kubectl -n "$NAMESPACE" delete middleware redirect-https \
+  --ignore-not-found=true >/dev/null
+# The TLS Secret is harmless to leave but cleaner to drop too.
+kubectl -n "$NAMESPACE" delete secret testlookup-tls-cert \
+  --ignore-not-found=true >/dev/null
+log "Orphan prune complete."
+
+# ── Step 5b: Force fresh :latest pull on app deployments ───
+# K3s containerd caches :latest aggressively. Even with imagePullPolicy=Always
+# (set by the homelab overlay), an unchanged Deployment spec means kubectl
+# apply doesn't roll. Trigger rollouts explicitly so the new image content
+# actually lands on the nodes. Skipped when --skip-build is passed because no
+# new image content exists.
+if [ "$SKIP_BUILD" = false ]; then
+  header "Step 5b — Force Fresh Image Pull"
+
+  APP_DEPLOYMENTS=(
+    testlookup-backend
+    testlookup-frontend
+    testlookup-mcp
+    testlookup-worker-critical
+    testlookup-worker-ingestion
+    testlookup-worker-ai
+    testlookup-worker-default
+    testlookup-beat
+  )
+
+  log "Restarting app deployments to pull the latest image..."
+  for dep in "${APP_DEPLOYMENTS[@]}"; do
+    if kubectl -n "$NAMESPACE" get deployment "$dep" >/dev/null 2>&1; then
+      kubectl -n "$NAMESPACE" rollout restart deployment/"$dep" >/dev/null
+    else
+      warn "Deployment $dep not found yet — will start fresh on first reconcile."
+    fi
+  done
+
+  log "Waiting for rollouts to complete (timeout 240s each)..."
+  for dep in "${APP_DEPLOYMENTS[@]}"; do
+    if kubectl -n "$NAMESPACE" get deployment "$dep" >/dev/null 2>&1; then
+      kubectl -n "$NAMESPACE" rollout status deployment/"$dep" --timeout=240s \
+        || warn "$dep did not become ready in time — check 'kubectl -n $NAMESPACE describe deployment $dep'"
+    fi
+  done
+  log "App deployments rolled to fresh :latest content."
+
+  # ── Sanity check: digest of the frontend pod matches the one we just pushed.
+  # Catches the "K3s containerd kept the cached :latest" failure mode early —
+  # without this, a silent cache hit looks like a successful deploy.
+  if [ -n "${FRONTEND_DIGEST:-}" ]; then
+    POD_DIGEST=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-frontend \
+      -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null \
+      | sed 's/.*@//' || echo "")
+    if [ -z "$POD_DIGEST" ]; then
+      warn "Could not read frontend pod imageID — skipping digest verification."
+    elif [ "$POD_DIGEST" = "$FRONTEND_DIGEST" ]; then
+      log "Frontend pod is running the just-pushed image (digest match)."
+    else
+      warn "Frontend pod digest does NOT match the pushed image!"
+      warn "  Pushed: $FRONTEND_DIGEST"
+      warn "  Pod:    $POD_DIGEST"
+      warn "K3s likely served a cached :latest. Force re-pull with:"
+      warn "  kubectl -n $NAMESPACE delete pod -l app=testlookup-frontend"
+      warn "Or use the dated tag instead of :latest:"
+      warn "  kubectl -n $NAMESPACE set image deployment/testlookup-frontend \\"
+      warn "    frontend=registry.local:5000/testlookup/frontend:${FRONTEND_BUILD_TAG}"
+    fi
+  fi
+else
+  log "Skipping rollout-restart (--skip-build): keeping current images."
+fi
 
 # ── Step 6: Wait for Infrastructure ────────────────────────
 header "Step 6 — Wait for Infrastructure Pods"
@@ -546,34 +696,92 @@ fi
 # ── Step 10: Create Initial Admin User ─────────────────────
 header "Step 10 — Create Initial Admin User"
 
+# Defaults — override by exporting ADMIN_USERNAME/ADMIN_PASSWORD/ADMIN_EMAIL
+# before invoking this script. On first deploy these are written to the
+# .homelab-credentials file; subsequent deploys read from that file so the
+# banner stays accurate even after re-runs.
+CREDS_FILE="$REPO_ROOT/homelabsetup/.homelab-credentials"
+
+if [ -f "$CREDS_FILE" ] && grep -q "^ADMIN_PASSWORD=" "$CREDS_FILE"; then
+  : "${ADMIN_USERNAME:=$(grep -E '^ADMIN_USERNAME=' "$CREDS_FILE" | cut -d= -f2- | head -n1)}"
+  : "${ADMIN_PASSWORD:=$(grep -E '^ADMIN_PASSWORD=' "$CREDS_FILE" | cut -d= -f2- | head -n1)}"
+  : "${ADMIN_EMAIL:=$(grep -E '^ADMIN_EMAIL=' "$CREDS_FILE" | cut -d= -f2- | head -n1)}"
+fi
+
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin@2026!}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@testlookup.local}"
+ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
+
 log "Waiting for backend to be ready..."
+ADMIN_OUTPUT=""
+ADMIN_RAN=false
 if wait_for_pods "app=testlookup-backend" 120; then
   BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
   if [ -n "$BACKEND_POD" ]; then
-    # Check if admin user already exists
-    ADMIN_CHECK=$(kubectl -n "$NAMESPACE" exec "$BACKEND_POD" -- python /app/scripts/create_admin.py 2>&1 || echo "SCRIPT_FAILED")
-
-    if echo "$ADMIN_CHECK" | grep -q "already exists"; then
-      log "Admin user already exists."
-    elif echo "$ADMIN_CHECK" | grep -q "created successfully"; then
-      log "Admin user created."
-      echo ""
-      echo -e "${YELLOW}$ADMIN_CHECK${NC}"
-      echo ""
-      warn "SAVE THE PASSWORD ABOVE — it cannot be retrieved later."
-    elif echo "$ADMIN_CHECK" | grep -q "SCRIPT_FAILED"; then
-      warn "Could not create admin user. The backend may still be initializing."
-      warn "Run manually later: kubectl -n testlookup exec -it deployment/testlookup-backend -- python /app/scripts/create_admin.py"
+    log "Running scripts/createAdmin.py inside backend pod (idempotent)..."
+    # Pipe the script over stdin (matches the docstring usage). `env ...` sets
+    # the per-invocation overrides so the script picks up our values without
+    # mutating the pod's environment.
+    if ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
+        env \
+          ADMIN_USERNAME="$ADMIN_USERNAME" \
+          ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+          ADMIN_EMAIL="$ADMIN_EMAIL" \
+          ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
+          python < "$REPO_ROOT/scripts/createAdmin.py" 2>&1); then
+      ADMIN_RAN=true
+      echo "$ADMIN_OUTPUT"
     else
-      echo "$ADMIN_CHECK"
+      warn "createAdmin.py failed inside the backend pod. Output:"
+      echo "$ADMIN_OUTPUT"
+      warn "Run manually once the backend is healthy:"
+      warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
+      warn "    env ADMIN_PASSWORD='$ADMIN_PASSWORD' python < scripts/createAdmin.py"
     fi
   else
     warn "Could not find backend pod. Create admin user manually later."
   fi
 else
   warn "Backend not ready. Create admin user manually after backend starts:"
-  echo "  kubectl -n testlookup exec -it deployment/testlookup-backend -- python /app/scripts/create_admin.py"
+  echo "  kubectl -n testlookup exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py"
+fi
+
+if [ "$ADMIN_RAN" = true ]; then
+  # Persist creds so future re-runs can read them back. We only write the
+  # admin block once — never overwrite a password the operator may have
+  # rotated via getUser.py.
+  if [ -f "$CREDS_FILE" ] && ! grep -q "^ADMIN_USERNAME=" "$CREDS_FILE"; then
+    cat >> "$CREDS_FILE" <<CREDS
+
+# Initial admin user — printed on every deploy banner.
+# Rotate the password via scripts/getUser.py and update this file by hand.
+ADMIN_USERNAME=${ADMIN_USERNAME}
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
+ADMIN_EMAIL=${ADMIN_EMAIL}
+CREDS
+    log "Admin credentials appended to homelabsetup/.homelab-credentials"
+  fi
+
+  echo ""
+  echo -e "${YELLOW}╔══════════════════════════════════════════════════════╗${NC}"
+  echo -e "${YELLOW}║  ADMIN LOGIN — TestLookup Dashboard                ║${NC}"
+  echo -e "${YELLOW}╠══════════════════════════════════════════════════════╣${NC}"
+  echo -e "${YELLOW}║${NC}  URL:      http://testlookup.local"
+  echo -e "${YELLOW}║${NC}  Username: ${ADMIN_USERNAME}"
+  echo -e "${YELLOW}║${NC}  Password: ${ADMIN_PASSWORD}"
+  echo -e "${YELLOW}║${NC}  Email:    ${ADMIN_EMAIL}"
+  echo -e "${YELLOW}╚══════════════════════════════════════════════════════╝${NC}"
+  echo ""
+
+  if echo "$ADMIN_OUTPUT" | grep -q "already exists"; then
+    warn "Admin user already existed — the password above is what the deploy"
+    warn "script believes is current (from .homelab-credentials or env). If it"
+    warn "was rotated out-of-band, reset it with:"
+    warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
+    warn "    env ADMIN_PASSWORD='$ADMIN_PASSWORD' python < scripts/getUser.py"
+  fi
 fi
 
 # ── Step 11: Final Verification ────────────────────────────
@@ -602,7 +810,7 @@ echo ""
 # Health check
 TRAEFIK_IP=$(kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
 if [ -n "$TRAEFIK_IP" ]; then
-  log "Testing health endpoint via Traefik IP..."
+  log "Testing health endpoint via Traefik IP (HTTP, ingress is plain-text)..."
   HEALTH=$(curl -sf --max-time 5 -H "Host: testlookup.local" "http://${TRAEFIK_IP}/health/live" 2>/dev/null || echo "")
   if [ -n "$HEALTH" ]; then
     log "Health check passed: $HEALTH"
@@ -620,6 +828,9 @@ echo ""
 echo "  Dashboard:      http://testlookup.local"
 echo "  API Docs:       http://testlookup.local/docs"
 echo "  Health Check:   http://testlookup.local/health/live"
+echo ""
+echo "  Note: ingress is HTTP-only on the homelab. If a browser keeps redirecting"
+echo "        to https://, clear the site's HSTS cache (chrome://net-internals/#hsts)."
 echo ""
 echo "Useful commands:"
 echo "  kubectl -n testlookup get pods           # Check pod status"

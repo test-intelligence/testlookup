@@ -155,10 +155,6 @@ class SummaryAgent(BaseAgent):
             stage_errors = state.get("stage_errors") or {}
             stage_quality = state.get("stage_quality") or "normal"
 
-            # Stash stage quality info for context builder
-            self._current_stage_quality = stage_quality
-            self._current_stage_errors = stage_errors
-
             # Fetch similar historical failures BEFORE LLM call to enrich context
             similar_failures = await self._fetch_similar_failures(
                 run_data=run_data,
@@ -174,6 +170,8 @@ class SummaryAgent(BaseAgent):
                     anomalies=anomalies,
                     analyses=analyses,
                     similar_failures=similar_failures,
+                    stage_quality=stage_quality,
+                    stage_errors=stage_errors,
                 )
             except Exception as exc:
                 fallback_reason = str(exc)
@@ -249,6 +247,8 @@ class SummaryAgent(BaseAgent):
         anomalies: list[dict],
         analyses: dict[str, dict],
         similar_failures: list[dict] | None = None,
+        stage_quality: str = "normal",
+        stage_errors: dict[str, list[str]] | None = None,
     ) -> str:
         pass_rate = run_data.get("pass_rate", 0)
         total = run_data.get("total_tests", 0)
@@ -284,8 +284,7 @@ class SummaryAgent(BaseAgent):
 
         # Surface analysis quality indicator from upstream stages
         quality_note = ""
-        stage_quality = self._current_stage_quality or "normal"
-        stage_errors = self._current_stage_errors or {}
+        stage_errors = stage_errors or {}
         if stage_quality == "degraded":
             error_stages = ", ".join(stage_errors.keys()) if stage_errors else "unknown"
             quality_note = (
@@ -314,10 +313,14 @@ class SummaryAgent(BaseAgent):
         anomalies: list[dict],
         analyses: dict[str, dict],
         similar_failures: list[dict] | None = None,
+        stage_quality: str = "normal",
+        stage_errors: dict[str, list[str]] | None = None,
     ) -> dict:
         context = self._build_context(
             run_data, anomaly_summary, anomalies, analyses,
             similar_failures=similar_failures or [],
+            stage_quality=stage_quality,
+            stage_errors=stage_errors or {},
         )
         llm = await get_llm()
 

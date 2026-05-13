@@ -74,8 +74,13 @@ describe('WorkflowTimeline', () => {
       />,
     )
 
-    const buttons = screen.getAllByRole('button')
-    expect(buttons[0]).toHaveTextContent(/Signal Collection/i)
-    expect(buttons[1]).toHaveTextContent(/Delivery/i)
+    // ``getAllByRole('button')`` now includes a Collapse toggle in the
+    // component chrome; filter to the stage buttons specifically so the
+    // test asserts the stage order regardless of surrounding controls.
+    const stageButtons = screen
+      .getAllByRole('button')
+      .filter(b => /Signal Collection|Delivery/i.test(b.textContent ?? ''))
+    expect(stageButtons[0]).toHaveTextContent(/Signal Collection/i)
+    expect(stageButtons[1]).toHaveTextContent(/Delivery/i)
   })
 })

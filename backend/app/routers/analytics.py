@@ -1,11 +1,13 @@
 """Analytics endpoints: flaky tests, failure clusters, coverage, defects."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import User
+from app.models.schemas import NotifyTestOwnerRequest, NotifyTestOwnerResponse
 from app.services import analytics_service
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
@@ -20,6 +22,7 @@ async def flaky_tests(
     project_id: str | None = None,
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(20, ge=1, le=100),
+    suite_name: str | None = Query(None, min_length=1),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -28,7 +31,7 @@ async def flaky_tests(
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
             return _EMPTY_LIST
-    return await analytics_service.flaky_tests(db, project_id, days, limit)
+    return await analytics_service.flaky_tests(db, project_id, days, limit, suite_name=suite_name)
 
 
 # ── Failure Category Distribution ─────────────────────────────────────────
@@ -37,6 +40,7 @@ async def flaky_tests(
 async def failure_categories(
     project_id: str | None = None,
     days: int = Query(30, ge=1, le=365),
+    suite_name: str | None = Query(None, min_length=1),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -45,7 +49,7 @@ async def failure_categories(
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
             return {"categories": [], "period_days": days}
-    return await analytics_service.failure_categories(db, project_id, days)
+    return await analytics_service.failure_categories(db, project_id, days, suite_name=suite_name)
 
 
 # ── Top Failing Tests ──────────────────────────────────────────────────────
@@ -55,6 +59,7 @@ async def top_failing_tests(
     project_id: str | None = None,
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(15, ge=1, le=50),
+    suite_name: str | None = Query(None, min_length=1),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -63,7 +68,7 @@ async def top_failing_tests(
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
             return _EMPTY_LIST
-    return await analytics_service.top_failing_tests(db, project_id, days, limit)
+    return await analytics_service.top_failing_tests(db, project_id, days, limit, suite_name=suite_name)
 
 
 # ── Coverage Snapshot ──────────────────────────────────────────────────────
@@ -72,6 +77,7 @@ async def top_failing_tests(
 async def coverage_stats(
     project_id: str | None = None,
     days: int = Query(30, ge=1, le=365),
+    suite_name: str | None = Query(None, min_length=1),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -80,7 +86,7 @@ async def coverage_stats(
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
             return {"suites": [], "period_days": days, "total_suites": 0}
-    return await analytics_service.coverage_stats(db, project_id, days)
+    return await analytics_service.coverage_stats(db, project_id, days, suite_name=suite_name)
 
 
 # ── Suite Detail ───────────────────────────────────────────────────────────
@@ -140,3 +146,88 @@ async def ai_analysis_summary(
         if accessible is not None:
             return {"summary": {}, "period_days": days}
     return await analytics_service.ai_analysis_summary(db, project_id, days)
+
+
+# ── Notify suite owner about a recurring failure ───────────────────────────
+
+
+@router.post("/notify-owner", response_model=NotifyTestOwnerResponse)
+async def notify_suite_owner(
+    payload: NotifyTestOwnerRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fire an email at the suite owner of ``payload.test_name`` so they can
+    triage the recurring failure. Resolution chain mirrors the suite-owner
+    review feature: explicit ``test_suite_owners`` row → ``Project.manager_user_id``.
+    Returns ``{queued: false, reason}`` when no owner can be resolved instead
+    of erroring, so the UI can show a clear actionable message.
+    """
+    # Tenant isolation: non-admin callers must be members of the project.
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None and payload.project_id not in accessible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this project",
+        )
+
+    from app.models.postgres import Project
+    from app.services.suite_review_service import resolve_test_to_suite_owner
+
+    resolution = await resolve_test_to_suite_owner(
+        db,
+        payload.project_id,
+        payload.test_name,
+        payload.days,
+    )
+    if resolution["latest_run_id"] is None:
+        return NotifyTestOwnerResponse(
+            queued=False,
+            reason=(
+                f"\"{payload.test_name}\" has no failing runs in the last "
+                f"{payload.days} days — nothing to notify on."
+            ),
+        )
+
+    owner: User | None = resolution["owner"]
+    if owner is None or not owner.email:
+        return NotifyTestOwnerResponse(
+            queued=False,
+            suite_name=resolution["suite_name"],
+            reason=(
+                "No suite owner is configured for this test, and the project "
+                "doesn't have a fallback project manager set. Assign an owner "
+                "from /test-management → Test Suites or set a project manager."
+            ),
+        )
+
+    project = (
+        await db.execute(select(Project).where(Project.id == payload.project_id))
+    ).scalar_one_or_none()
+
+    from app.worker.tasks import notify_test_suite_owner as _task
+
+    _task.delay(
+        to_email=owner.email,
+        owner_name=owner.full_name or owner.username,
+        test_name=payload.test_name,
+        suite_name=resolution["suite_name"],
+        fail_count=payload.fail_count,
+        days=payload.days,
+        project_id=str(payload.project_id),
+        project_name=project.name if project else None,
+        latest_run_id=(
+            str(resolution["latest_run_id"]) if resolution["latest_run_id"] else None
+        ),
+        latest_run_build=resolution["latest_run_build"],
+        is_fallback_owner=resolution["is_fallback"],
+        triggered_by=current_user.full_name or current_user.username or current_user.email,
+    )
+
+    return NotifyTestOwnerResponse(
+        queued=True,
+        sent_to=owner.email,
+        owner_name=owner.full_name or owner.username,
+        suite_name=resolution["suite_name"],
+        is_fallback_owner=resolution["is_fallback"],
+    )

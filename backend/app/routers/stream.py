@@ -13,19 +13,25 @@ import json
 import uuid
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    StreamingApiKeyContext,
     get_accessible_project_ids,
     get_api_key_context,
     get_current_active_user,
-    require_live_session_access,
+    get_streaming_api_key_context,
 )
 from app.db.postgres import get_db
 from app.models.postgres import User
-from app.models.schemas import ActiveSessionsResponse, LiveEventBatch, LiveSessionCreate
+from app.models.schemas import (
+    ActiveSessionsResponse,
+    LiveEventBatch,
+    LiveSessionCreate,
+    LiveStreamIngestRequest,
+)
 from app.services import stream_service
 
 router = APIRouter(prefix="/api/v1/stream", tags=["Live Stream"])
@@ -44,14 +50,12 @@ async def create_session(
     if not current_user.is_active:
         raise HTTPException(status_code=403, detail="Inactive user account")
 
-    # Project-scoped API key: enforce that the session targets the bound project
-    if bound_project_id is not None and payload.project_id != bound_project_id:
-        raise HTTPException(
-            status_code=403,
-            detail="This API key is restricted to a different project",
-        )
-
-    response = await stream_service.create_session(db, payload)
+    # Project-scoped API key enforcement moved into stream_service.create_session
+    # so it can compare against the *resolved* project — payload.project_id may
+    # be a name or a UUID.
+    response = await stream_service.create_session(
+        db, payload, bound_project_id=bound_project_id,
+    )
     await db.commit()
     return response
 
@@ -60,20 +64,28 @@ async def create_session(
 async def get_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: tuple[User, None] = Depends(get_api_key_context),
-    _: User = Depends(require_live_session_access()),
+    auth: tuple[User, uuid.UUID | None] = Depends(get_api_key_context),
 ):
-    return await stream_service.get_session(db, session_id)
+    # ``require_live_session_access`` was removed from this route because it
+    # depends on get_current_active_user (JWT-only) and breaks SDK callers
+    # using X-API-Key. The membership check now lives in the service and
+    # honours either auth path via ``bound_project_id``.
+    _, bound_project_id = auth
+    return await stream_service.get_session(
+        db, session_id, bound_project_id=bound_project_id,
+    )
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
 async def close_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: tuple[User, None] = Depends(get_api_key_context),
-    _: User = Depends(require_live_session_access()),
+    auth: tuple[User, uuid.UUID | None] = Depends(get_api_key_context),
 ):
-    await stream_service.close_session(db, session_id)
+    _, bound_project_id = auth
+    await stream_service.close_session(
+        db, session_id, bound_project_id=bound_project_id,
+    )
     await db.commit()
 
 
@@ -85,9 +97,43 @@ async def ingest_event_batch(
     return await stream_service.ingest_event_batch(batch, x_session_token)
 
 
+@router.post("/ingest", response_model=stream_service.LiveStreamIngestResponse, status_code=202)
+async def ingest_via_api_key(
+    payload: LiveStreamIngestRequest,
+    db: AsyncSession = Depends(get_db),
+    auth: StreamingApiKeyContext = Depends(get_streaming_api_key_context),
+):
+    """Stream test results using only an API key — no /sessions ceremony.
+
+    Auth: ``X-API-Key`` only. The key must be project-scoped (so the server
+    can derive ``project_id`` itself) and carry the ``stream:write`` scope.
+    The first call for a given ``run_id`` auto-creates a live session;
+    subsequent calls reuse it.
+    """
+    response = await stream_service.ingest_via_api_key(
+        db=db,
+        project_id=auth.project_id,
+        api_key_name=auth.api_key_name,
+        request=payload,
+    )
+    await db.commit()
+    return response
+
+
 @router.get("/active", response_model=ActiveSessionsResponse)
 async def list_active_sessions(
     project_id: Optional[str] = None,
+    suite_name: Optional[str] = Query(None, min_length=1),
+    days: int = Query(
+        7,
+        ge=0,
+        le=365,
+        description=(
+            "Cutoff for *completed* sessions/runs to include alongside the always-"
+            "current active set. 1 = last 24 hours; 0 = no cutoff. Default 7 "
+            "preserves the prior hardcoded window."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
@@ -111,12 +157,16 @@ async def list_active_sessions(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid project_id",
                 )
-        return await stream_service.list_active_sessions(db, project_id)
+        return await stream_service.list_active_sessions(
+            db, project_id, suite_name=suite_name, days=days,
+        )
 
     return await stream_service.list_active_sessions(
         db,
         project_id=None,
         allowed_project_ids=accessible,
+        suite_name=suite_name,
+        days=days,
     )
 
 

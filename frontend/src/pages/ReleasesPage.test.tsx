@@ -93,7 +93,9 @@ describe('ReleasesPage', () => {
     )
 
     expect(await screen.findByRole('heading', { name: /Releases/i })).toBeInTheDocument()
-    expect(screen.getByText(/v2\.4\.0/i)).toBeInTheDocument()
+    // v2.4.0 now appears in multiple places (release card + summary row) —
+    // assert presence without binding to a specific surface.
+    expect(screen.getAllByText(/v2\.4\.0/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/In Progress/i).length).toBeGreaterThan(0)
   })
 })

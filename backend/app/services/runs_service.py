@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Project, Release, ReleaseTestRunLink, TestCase, TestRun
@@ -79,6 +79,28 @@ async def fetch_release_map(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[
     }
 
 
+def _normalise_suite_name(suite_name: str | None) -> str:
+    return (suite_name or "").strip().lower()
+
+
+def _run_suite_filter(suite_name: str | None):
+    suite_key = _normalise_suite_name(suite_name)
+    if not suite_key:
+        return None
+    case_exists = (
+        select(TestCase.id)
+        .where(
+            TestCase.test_run_id == TestRun.id,
+            func.lower(func.trim(func.coalesce(TestCase.suite_name, "Unknown Suite"))) == suite_key,
+        )
+        .exists()
+    )
+    return or_(
+        func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "Unknown Suite"))) == suite_key,
+        case_exists,
+    )
+
+
 async def list_project_runs(
     db: AsyncSession,
     project_id: str | None,
@@ -88,6 +110,7 @@ async def list_project_runs(
     release_id: str | None = None,
     accessible_project_ids: set | None = None,
     days: int | None = 6,
+    suite_name: str | None = None,
 ):
     """Paginated test run listing, enriched with release + project_name.
 
@@ -120,6 +143,9 @@ async def list_project_runs(
             ReleaseTestRunLink.release_id == uuid.UUID(release_id)
         )
         filters.append(TestRun.id.in_(linked_ids_q))
+    suite_filter = _run_suite_filter(suite_name)
+    if suite_filter is not None:
+        filters.append(suite_filter)
 
     # Count query: strips ORDER BY, counts by PK, no subquery wrap.
     count_stmt = select(func.count(TestRun.id)).where(*filters)

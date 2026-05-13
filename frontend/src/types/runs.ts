@@ -15,11 +15,17 @@ export interface TestRun {
   total_tests: number
   pass_rate: number
   duration_ms?: number
+  /** Run start timestamp (TestRun.start_time). Set by ingestion / live close. */
+  start_time?: string | null
+  /** Run completion timestamp (TestRun.end_time). May be null while a live run is still in flight. */
+  end_time?: string | null
   created_at: string
   ocp_pod_name?: string
   release_name?: string
   release_id?: string
   trigger_source?: string
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
 }
 
 export type TestRunListResponse = PaginatedResponse<TestRun>

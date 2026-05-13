@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import {
-  AlertTriangle, CheckCircle, Shield, XCircle, Zap,
+  AlertTriangle, CheckCircle, HelpCircle, Shield, XCircle, Zap,
   History, ExternalLink, ChevronDown, ChevronUp, FileDown, Share2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import CriticalityMatrix from '@/components/ai/CriticalityMatrix'
@@ -20,12 +21,16 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildReleaseGateWorkflow } from '@/components/workflow/workflowPresets'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 
-type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO'
+type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO' | 'PENDING'
 
 const REC_CONFIG: Record<Recommendation, { label: string; colour: string; bg: string; icon: React.ElementType }> = {
   GO:              { label: 'GO',              colour: 'text-emerald-400', bg: 'bg-emerald-900/20 border-emerald-700/30', icon: CheckCircle },
   NO_GO:           { label: 'NO GO',           colour: 'text-red-400',     bg: 'bg-red-900/20 border-red-700/30',         icon: XCircle     },
   CONDITIONAL_GO:  { label: 'CONDITIONAL GO',  colour: 'text-amber-400',   bg: 'bg-amber-900/20 border-amber-700/30',     icon: AlertTriangle },
+  // Used when the decision has no test evidence to grade — backend can still
+  // return GO/NO_GO from policy defaults, but the UI shouldn't surface a
+  // verdict against zero data.
+  PENDING:         { label: 'PENDING',         colour: 'text-[var(--color-text-secondary)]', bg: 'bg-[var(--color-bg-secondary)]/40 border-[var(--color-border)]', icon: HelpCircle },
 }
 
 function RiskGauge({ score }: { score: number }) {
@@ -219,7 +224,18 @@ export default function ReleaseGatePage() {
     )
   }
 
-  const cfg = REC_CONFIG[decision.recommendation as Recommendation] ?? REC_CONFIG.CONDITIONAL_GO
+  // A decision computed against an empty dataset (no pass_rate and no
+  // dimension scores) typically falls through to GO/NO_GO from policy
+  // defaults — both misleading without evidence. Render a neutral Pending
+  // banner instead so the user sees "we can't grade this yet" rather than
+  // a verdict that came from defaults applied to zero data.
+  const hasEvidence =
+    decision.pass_rate != null ||
+    (decision.dimension_scores?.length ?? 0) > 0 ||
+    (decision.rule_evaluations?.length ?? 0) > 0
+  const cfg = hasEvidence
+    ? (REC_CONFIG[decision.recommendation as Recommendation] ?? REC_CONFIG.CONDITIONAL_GO)
+    : REC_CONFIG.PENDING
   const Icon = cfg.icon
 
   const handleOverride = async () => {
@@ -247,7 +263,11 @@ export default function ReleaseGatePage() {
         title="Release Gate"
         subtitle={`Build ${decision.build_number ?? runId} — AI-powered go/no-go assessment`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <SuiteBadge
+              primary={(decision as unknown as { primary_suite_name?: string | null; suite_names?: string[] | null }).primary_suite_name}
+              all={(decision as unknown as { suite_names?: string[] | null }).suite_names}
+            />
             <button
               onClick={async () => {
                 const { downloadPdf } = await import('@/services/reportExportService')
@@ -300,17 +320,22 @@ export default function ReleaseGatePage() {
         <div className="flex-1 min-w-0">
           <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Recommendation</p>
           <p className={clsx('text-4xl font-black tracking-tight', cfg.colour)}>{cfg.label}</p>
-          {decision.pass_rate != null && (
+          {!hasEvidence && (
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">
+              No test evidence yet — verdict will compute once results land for this run.
+            </p>
+          )}
+          {hasEvidence && decision.pass_rate != null && (
             <p className="text-sm text-[var(--color-text-muted)] mt-1">Pass rate: {decision.pass_rate.toFixed(1)}%</p>
           )}
-          {decision.original_recommendation && decision.original_recommendation !== decision.recommendation && (
+          {hasEvidence && decision.original_recommendation && decision.original_recommendation !== decision.recommendation && (
             <p className="text-xs text-amber-500 mt-1">
               Original AI recommendation: {decision.original_recommendation}
               {decision.original_risk_score != null && ` (score: ${decision.original_risk_score})`}
             </p>
           )}
         </div>
-        <RiskGauge score={decision.risk_score} />
+        {hasEvidence && <RiskGauge score={decision.risk_score} />}
       </div>
 
       {/* Policy badge (ENT-02) */}

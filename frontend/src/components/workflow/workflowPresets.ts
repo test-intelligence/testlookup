@@ -586,10 +586,10 @@ export function buildRunsWorkflow(
   ]
 
   const events = buildEventsFromLabels([
-    { event_type: 'stage_completed', stage_name: 'run_ingestion', detail: { runs: runs.length } },
+    { event_type: runs.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'run_ingestion', detail: { runs: runs.length } },
     { event_type: failedRuns.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'failure_detection', detail: { failed_runs: failedRuns.length } },
-    { event_type: 'stage_completed', stage_name: 'intelligence_handoff', detail: { failed_runs: failedRuns.length } },
-    { event_type: 'stage_completed', stage_name: 'release_context', detail: { passed_runs: passedRuns.length } },
+    { event_type: failedRuns.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'intelligence_handoff', detail: { failed_runs: failedRuns.length } },
+    { event_type: passedRuns.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'release_context', detail: { passed_runs: passedRuns.length } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }
@@ -692,10 +692,10 @@ export function buildFailureAnalysisWorkflow(
   ]
 
   const events = buildEventsFromLabels([
-    { event_type: flakyCount > 0 ? 'stage_completed' : 'stage_started', stage_name: 'flaky_detection', detail: { flaky_count: flakyCount } },
-    { event_type: categoryCount > 0 ? 'stage_completed' : 'stage_started', stage_name: 'category_clustering', detail: { category_count: categoryCount } },
-    { event_type: topCount > 0 ? 'stage_completed' : 'stage_started', stage_name: 'hotspot_ranking', detail: { hotspot_count: topCount } },
-    { event_type: 'stage_completed', stage_name: 'remediation_focus', detail: { actionable_items: flakyCount + topCount } },
+    { event_type: flakyCount > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'flaky_detection', detail: { flaky_count: flakyCount } },
+    { event_type: categoryCount > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'category_clustering', detail: { category_count: categoryCount } },
+    { event_type: topCount > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'hotspot_ranking', detail: { hotspot_count: topCount } },
+    { event_type: (flakyCount + topCount) > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'remediation_focus', detail: { actionable_items: flakyCount + topCount } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }
@@ -800,7 +800,7 @@ export function buildDefectsWorkflow(
     }),
     toStage({
       stage_name: 'jira_linkage',
-      status: linked.length > 0 ? 'completed' : 'pending',
+      status: linked.length > 0 ? 'completed' : items.length > 0 ? 'skipped' : 'pending',
       label: 'Jira Linkage',
       description: 'Track which defects are already routed to Jira',
       result_data: {
@@ -808,10 +808,15 @@ export function buildDefectsWorkflow(
         unresolved: items.length - linked.length,
       },
       evidence_count: linked.length,
+      skipped_reason: items.length > 0 && linked.length === 0 ? 'None of the loaded defects are linked to Jira yet' : null,
     }),
     toStage({
       stage_name: 'resolution_flow',
-      status: resolvedItems.length > 0 ? 'completed' : 'pending',
+      status: resolvedItems.length > 0
+        ? 'completed'
+        : items.length > 0
+          ? 'skipped'
+          : 'pending',
       label: 'Resolution Flow',
       description: 'Show how open, in-progress, and resolved defects move through the system',
       result_data: {
@@ -821,6 +826,10 @@ export function buildDefectsWorkflow(
       },
       evidence_count: openItems.length + resolvedItems.length,
       route_rationale: openItems.length > 0 ? 'Open defects still need owner follow-up' : 'No active defects in the current slice',
+      skipped_reason:
+        items.length > 0 && resolvedItems.length === 0
+          ? 'No resolved defects in this slice yet'
+          : null,
     }),
     toStage({
       stage_name: 'triage_focus',
@@ -838,8 +847,16 @@ export function buildDefectsWorkflow(
 
   const events = buildEventsFromLabels([
     { event_type: 'stage_completed', stage_name: 'defect_intake', detail: { defects: items.length, project: projectLabel } },
-    { event_type: linked.length > 0 ? 'stage_completed' : 'stage_started', stage_name: 'jira_linkage', detail: { linked: linked.length } },
-    { event_type: openItems.length > 0 ? 'stage_started' : 'stage_completed', stage_name: 'resolution_flow', detail: { open: openItems.length, resolved: resolvedItems.length } },
+    {
+      event_type: linked.length > 0 ? 'stage_completed' : items.length > 0 ? 'stage_skipped' : 'stage_started',
+      stage_name: 'jira_linkage',
+      detail: { linked: linked.length },
+    },
+    {
+      event_type: resolvedItems.length > 0 ? 'stage_completed' : items.length > 0 ? 'stage_skipped' : 'stage_started',
+      stage_name: 'resolution_flow',
+      detail: { open: openItems.length, resolved: resolvedItems.length },
+    },
     { event_type: 'stage_completed', stage_name: 'triage_focus', detail: { page, items: items.length } },
   ])
 
@@ -902,34 +919,53 @@ export function buildValueMetricsWorkflow(
   days: number,
   projectLabel: string,
 ): { stages: WorkflowStageNode[]; events: WorkflowEventNode[]; stageOrder: string[] } {
+  // Confidence is only meaningful when there's at least one positive value signal.
+  // An all-zero metrics payload was previously surfacing as 70% confident because
+  // the formula used 70 as an unconditional floor.
+  const hasValueSignal = !!metrics && (
+    metrics.triage_time_saved_minutes > 0 ||
+    metrics.defects_auto_grouped > 0 ||
+    metrics.duplicate_tickets_avoided > 0 ||
+    metrics.defects_promoted > 0 ||
+    metrics.risky_releases_blocked > 0 ||
+    metrics.releases_conditional > 0 ||
+    metrics.intelligence_reports_generated > 0
+  )
+  const roiEvidenceCount =
+    (metrics?.defects_auto_grouped ? 1 : 0) +
+    (metrics?.duplicate_tickets_avoided ? 1 : 0) +
+    (metrics?.risky_releases_blocked ? 1 : 0)
+
   const stages = [
     toStage({
       stage_name: 'value_capture',
-      status: metrics ? 'completed' : 'pending',
+      status: hasValueSignal ? 'completed' : 'pending',
       label: 'Value Capture',
       description: `Summarize the operational value generated for ${projectLabel}`,
       result_data: {
         triage_minutes: metrics?.triage_time_saved_minutes ?? 0,
         days,
       },
-      evidence_count: metrics ? 1 : 0,
+      evidence_count: (metrics?.triage_time_saved_minutes ?? 0) > 0 ? 1 : 0,
     }),
     toStage({
       stage_name: 'roi_calculation',
-      status: metrics ? 'completed' : 'pending',
+      status: hasValueSignal ? 'completed' : 'pending',
       label: 'ROI Calculation',
       description: 'Quantify defects grouped, duplicates avoided, and releases blocked',
-      result_data: metrics ? {
-        defects_auto_grouped: metrics.defects_auto_grouped,
-        duplicate_tickets_avoided: metrics.duplicate_tickets_avoided,
-        risky_releases_blocked: metrics.risky_releases_blocked,
+      result_data: hasValueSignal ? {
+        defects_auto_grouped: metrics!.defects_auto_grouped,
+        duplicate_tickets_avoided: metrics!.duplicate_tickets_avoided,
+        risky_releases_blocked: metrics!.risky_releases_blocked,
       } : null,
-      confidence_score: metrics ? Math.min(100, 70 + Math.round(metrics.triage_time_saved_hours)) : null,
-      evidence_count: metrics ? 3 : 0,
+      confidence_score: hasValueSignal
+        ? Math.min(100, 70 + Math.round(metrics!.triage_time_saved_hours))
+        : null,
+      evidence_count: roiEvidenceCount,
     }),
     toStage({
       stage_name: 'value_delivery',
-      status: metrics ? 'completed' : 'pending',
+      status: hasValueSignal ? 'completed' : 'pending',
       label: 'Value Delivery',
       description: 'Prepare the exportable result for leadership and customer success',
       result_data: {
@@ -937,14 +973,16 @@ export function buildValueMetricsWorkflow(
         quarantine_recommended: metrics?.quarantine_recommended ?? 0,
       },
       evidence_count: metrics?.intelligence_reports_generated ?? 0,
-      route_rationale: metrics ? 'Metrics are ready to share across the team' : 'No metrics data loaded yet',
+      route_rationale: hasValueSignal
+        ? 'Metrics are ready to share across the team'
+        : 'No measurable value captured in the selected window',
     }),
   ]
 
   const events = buildEventsFromLabels([
-    { event_type: metrics ? 'stage_completed' : 'stage_started', stage_name: 'value_capture', detail: { days } },
-    { event_type: metrics ? 'stage_completed' : 'stage_started', stage_name: 'roi_calculation', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
-    { event_type: metrics ? 'stage_completed' : 'stage_started', stage_name: 'value_delivery', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
+    { event_type: hasValueSignal ? 'stage_completed' : 'stage_started', stage_name: 'value_capture', detail: { days } },
+    { event_type: hasValueSignal ? 'stage_completed' : 'stage_started', stage_name: 'roi_calculation', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
+    { event_type: hasValueSignal ? 'stage_completed' : 'stage_started', stage_name: 'value_delivery', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }
@@ -1021,14 +1059,25 @@ export function buildSearchWorkflow(
   results: SearchResponse | null,
 ): { stages: WorkflowStageNode[]; events: WorkflowEventNode[]; stageOrder: string[] } {
   const total = results?.total ?? 0
+  const hasQuery = query.trim().length > 0
+  // Once a search has actually run, downstream stages with zero hits are
+  // "skipped" (work was attempted, nothing to rank/drill into) rather than
+  // "pending" (waiting for input). Pending implies activity; skipped does not.
+  const searchAttempted = hasQuery && results !== null
+  const downstreamStatus: WorkflowStageNode['status'] = total > 0
+    ? 'completed'
+    : searchAttempted
+      ? 'skipped'
+      : 'pending'
+
   const stages = [
     toStage({
       stage_name: 'query_capture',
-      status: query.trim() ? 'completed' : 'pending',
+      status: hasQuery ? 'completed' : 'pending',
       label: 'Query Capture',
       description: 'Capture the search intent and scope',
       result_data: { query },
-      evidence_count: query.trim().length > 0 ? 1 : 0,
+      evidence_count: hasQuery ? 1 : 0,
     }),
     toStage({
       stage_name: 'retrieval_mode',
@@ -1040,27 +1089,35 @@ export function buildSearchWorkflow(
     }),
     toStage({
       stage_name: 'ranking',
-      status: total > 0 ? 'completed' : 'pending',
+      status: downstreamStatus,
       label: 'Ranking',
       description: 'Rank the best matches by relevance and evidence',
       result_data: { total_results: total, pages: results?.pages ?? 0 },
       evidence_count: total,
+      skipped_reason: searchAttempted && total === 0 ? 'No results matched this query' : null,
     }),
     toStage({
       stage_name: 'drilldown',
-      status: total > 0 ? 'completed' : 'pending',
+      status: downstreamStatus,
       label: 'Drilldown',
       description: 'Open the right run or test from the matched result',
       result_data: { match_reasons: results?.items?.[0]?.match_reasons?.length ?? 0 },
       evidence_count: results?.items?.[0] ? 1 : 0,
+      skipped_reason: searchAttempted && total === 0 ? 'Nothing to drill into without matches' : null,
     }),
   ]
 
+  const downstreamEvent = total > 0
+    ? 'stage_completed'
+    : searchAttempted
+      ? 'stage_skipped'
+      : 'stage_started'
+
   const events = buildEventsFromLabels([
-    { event_type: query.trim() ? 'stage_completed' : 'stage_started', stage_name: 'query_capture', detail: { query } },
+    { event_type: hasQuery ? 'stage_completed' : 'stage_started', stage_name: 'query_capture', detail: { query } },
     { event_type: 'stage_completed', stage_name: 'retrieval_mode', detail: { search_type: searchType } },
-    { event_type: total > 0 ? 'stage_completed' : 'stage_started', stage_name: 'ranking', detail: { total } },
-    { event_type: total > 0 ? 'stage_completed' : 'stage_started', stage_name: 'drilldown', detail: { total } },
+    { event_type: downstreamEvent, stage_name: 'ranking', detail: { total } },
+    { event_type: downstreamEvent, stage_name: 'drilldown', detail: { total } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }

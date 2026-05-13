@@ -481,7 +481,7 @@ async def _load_checkpoint(test_run_id: str, workflow_type: str) -> Optional[dic
                 .where(
                     AgentPipelineRun.test_run_id == test_run_id,
                     AgentPipelineRun.workflow_type == workflow_type,
-                    AgentPipelineRun.status == "failed",
+                    AgentPipelineRun.status.in_(["failed", "partial"]),
                 )
                 .order_by(AgentPipelineRun.started_at.desc())
                 .limit(1)
@@ -626,6 +626,7 @@ async def run_offline_pipeline(
         "workflow_type":      workflow_type,
         # Stage outputs (initialised empty — agents populate these)
         "test_run_data":      None,
+        "branch":             None,
         "failed_test_ids":    [],
         "total_tests":        0,
         "pass_rate":          0.0,
@@ -649,12 +650,16 @@ async def run_offline_pipeline(
         "errors":             [],
         "completed_stages":   [],
         "current_stage":      "ingestion",
+        "stage_errors":       {},
+        "stage_quality":      "normal",
+        "low_confidence_count": 0,
         # Provenance / execution tracking
         "skipped_stages":     [],
         "execution_path":     ExecutionPath.EXECUTED,
         "fallback_used":      False,
         "tools_used":         [],
         "schema_version":     2,
+        "stage_metrics":      {},
     }
 
     # Merge checkpoint data into initial state (restored stage outputs)
@@ -720,6 +725,8 @@ async def run_deep_pipeline(
     pipeline_run_id = str(uuid.uuid4())
     await _create_pipeline_run(pipeline_run_id, test_run_id, "deep")
 
+    checkpoint = await _load_checkpoint(test_run_id, "deep")
+
     initial_state: WorkflowState = {
         "pipeline_run_id":    pipeline_run_id,
         "test_run_id":        test_run_id,
@@ -727,6 +734,7 @@ async def run_deep_pipeline(
         "build_number":       build_number,
         "workflow_type":      "deep",
         "test_run_data":      None,
+        "branch":             None,
         "failed_test_ids":    [],
         "total_tests":        0,
         "pass_rate":          0.0,
@@ -749,13 +757,26 @@ async def run_deep_pipeline(
         "errors":             [],
         "completed_stages":   [],
         "current_stage":      "ingestion",
+        "stage_errors":       {},
+        "stage_quality":      "normal",
+        "low_confidence_count": 0,
         # Provenance / execution tracking
         "skipped_stages":     [],
         "execution_path":     ExecutionPath.EXECUTED,
         "fallback_used":      False,
         "tools_used":         [],
         "schema_version":     2,
+        "stage_metrics":      {},
     }
+
+    if checkpoint:
+        checkpoint_stages = checkpoint.pop("_checkpoint_stages", [])
+        initial_state.update(checkpoint)  # type: ignore[typeddict-item]
+        initial_state["_checkpoint_stages"] = checkpoint_stages  # type: ignore[typeddict-unknown-key]
+        logger.info(
+            "Deep pipeline %s resuming with checkpoint: stages=%s",
+            pipeline_run_id, checkpoint_stages,
+        )
 
     try:
         logger.info(

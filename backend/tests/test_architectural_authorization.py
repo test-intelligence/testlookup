@@ -68,6 +68,16 @@ KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
     # inline check, so this entry stays until the SSE auth flow is
     # refactored onto a proper dependency.
     ("GET",    "/api/v1/stream/sse/{project_id}"),
+    # ── stream session GET/DELETE — dual-auth (JWT or X-API-Key) ────────
+    # The standard ``require_live_session_access`` depends on
+    # ``get_current_active_user`` which is JWT-only and breaks SDK
+    # callers that authenticate with ``X-API-Key``. The membership check
+    # was moved inline into ``stream_service.get_session`` /
+    # ``close_session`` and honours either auth path via the
+    # ``bound_project_id`` derived from ``get_api_key_context``. Stays
+    # exempt until the guard is refactored onto ``get_current_user_or_api_key``.
+    ("GET",    "/api/v1/stream/sessions/{session_id}"),
+    ("DELETE", "/api/v1/stream/sessions/{session_id}"),
 })
 
 

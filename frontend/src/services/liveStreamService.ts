@@ -18,8 +18,14 @@ const liveStreamService = {
   createSession: (payload: LiveSessionCreate) =>
     postData<LiveSessionResponse, LiveSessionCreate>('/api/v1/stream/sessions', payload),
 
-  getActiveSessions: (projectId?: string) => {
-    const params = projectId ? { project_id: projectId } : {}
+  getActiveSessions: (projectId?: string, suiteName?: string | null, days?: number) => {
+    const params = {
+      ...(projectId ? { project_id: projectId } : {}),
+      ...(suiteName ? { suite_name: suiteName } : {}),
+      // Backend default is 7. Only forward the param when the caller set it
+      // explicitly so the request stays clean in the dev tools network panel.
+      ...(typeof days === 'number' ? { days } : {}),
+    }
     return getData<ActiveSessionsResponse>('/api/v1/stream/active', { params, timeout: 15000 })
   },
 

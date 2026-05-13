@@ -67,6 +67,7 @@ class WorkflowState(TypedDict):
 
     # ── Stage 1: Ingestion Agent ──────────────────────────────────
     test_run_data: Optional[dict]        # Serialized TestRun summary
+    branch: Optional[str]                # Current run branch, duplicated for branch-aware agents
     failed_test_ids: list[str]           # IDs of FAILED / BROKEN tests
     total_tests: int
     pass_rate: float

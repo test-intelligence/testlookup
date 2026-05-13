@@ -13,6 +13,9 @@ Behaviour
   status so QA leads can promote it later without data loss.
 - The link is idempotent — calling twice with the same (release_id, run_id)
   does nothing on the second call.
+- When the caller has no release name at all, ``link_run_or_default`` falls
+  back to the project's ``is_default=True`` release (auto-creating one named
+  ``Default Release ({project.name})`` on first use — migration 0077).
 """
 import logging
 import uuid
@@ -22,7 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Release, ReleaseTestRunLink
+from app.models.postgres import Project, Release, ReleaseTestRunLink
 
 logger = logging.getLogger(__name__)
 
@@ -160,3 +163,97 @@ async def auto_link_release(
     release, created = await resolve_or_create_release(db, project_id, release_name)
     await link_run_to_release(db, release.id, test_run_id, phase_id)
     return release, created
+
+
+def default_release_name_for(project_name: str) -> str:
+    """Canonical name for a project's auto-created default release."""
+    return f"Default Release ({project_name})"
+
+
+async def get_or_create_default_release(
+    db: AsyncSession,
+    project: Project,
+) -> Release:
+    """Return the project's ``is_default=True`` release, creating one on
+    first use. Mirrors ``test_suite_service.get_or_create_default_suite`` —
+    the partial unique index ``ix_releases_project_default`` makes
+    concurrent first-use callers race-safe (the loser catches IntegrityError
+    and re-reads the winner's row).
+
+    Migration 0077.
+    """
+    existing = (
+        await db.execute(
+            select(Release).where(
+                Release.project_id == project.id,
+                Release.is_default.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    release = Release(
+        project_id=project.id,
+        name=default_release_name_for(project.name),
+        status="planning",
+        is_default=True,
+        description=(
+            "Auto-created. Test runs ingested without an explicit release "
+            "land here so they still participate in release tracking."
+        ),
+    )
+    try:
+        async with db.begin_nested():
+            db.add(release)
+            await db.flush()
+    except IntegrityError:
+        winner = (
+            await db.execute(
+                select(Release).where(
+                    Release.project_id == project.id,
+                    Release.is_default.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if winner is None:
+            raise
+        return winner
+    logger.info(
+        "Auto-created default release for project %s (release_id=%s)",
+        project.id, release.id,
+    )
+    return release
+
+
+async def link_run_or_default(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    release_name: Optional[str],
+    test_run_id: uuid.UUID,
+    phase_id: Optional[uuid.UUID] = None,
+) -> Optional[Tuple[Release, bool]]:
+    """Link a run to the named release; if ``release_name`` is blank/None,
+    fall back to the project's default release (migration 0077).
+
+    Returns ``(release, created)`` on success, or ``None`` when the project
+    can't be loaded (caller decides whether that's a hard error or skip).
+    """
+    cleaned = (release_name or "").strip()
+    if cleaned:
+        return await auto_link_release(
+            db,
+            project_id=project_id,
+            release_name=cleaned,
+            test_run_id=test_run_id,
+            phase_id=phase_id,
+        )
+
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None:
+        return None
+    default = await get_or_create_default_release(db, project)
+    created = await link_run_to_release(db, default.id, test_run_id, phase_id)
+    return default, created

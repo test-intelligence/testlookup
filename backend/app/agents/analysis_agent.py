@@ -141,16 +141,19 @@ class AnalysisAgent(BaseAgent):
         prioritized_ids = self._prioritize_tests(failed_ids, test_meta)
 
         semaphore = asyncio.Semaphore(settings.LLM_MAX_CONCURRENT_ANALYSES)
-        tasks = [
-            self._analyse_with_retry(semaphore, tc_id, test_meta.get(tc_id, {}), state)
-            for tc_id in prioritized_ids
-        ]
-
-        try:
-            results_list = await asyncio.gather(*tasks, return_exceptions=True)
-        except Exception as gather_exc:
-            logger.error("asyncio_gather_failed", error=str(gather_exc))
-            results_list = [gather_exc] * len(prioritized_ids)
+        concurrency = max(1, int(settings.LLM_MAX_CONCURRENT_ANALYSES or 1))
+        results_list = []
+        for start in range(0, len(prioritized_ids), concurrency):
+            batch_ids = prioritized_ids[start:start + concurrency]
+            batch_tasks = [
+                self._analyse_with_retry(semaphore, tc_id, test_meta.get(tc_id, {}), state)
+                for tc_id in batch_ids
+            ]
+            try:
+                results_list.extend(await asyncio.gather(*batch_tasks, return_exceptions=True))
+            except Exception as gather_exc:
+                logger.error("asyncio_gather_failed", error=str(gather_exc))
+                results_list.extend([gather_exc] * len(batch_ids))
 
         analyses: dict[str, dict] = {}
         errors: list[str] = []

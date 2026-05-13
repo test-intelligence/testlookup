@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Package, PencilLine, TrendingDown, X, Check } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Loader2, Package, PencilLine, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
+import SuiteBadge from '@/components/ui/SuiteBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -11,10 +13,12 @@ import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import { runsService } from '@/services/runsService'
+import agentService from '@/services/agentService'
 import { mutate } from 'swr'
 import useSWR from 'swr'
 import { api } from '@/services/api'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
+import { usePermissions } from '@/hooks/usePermissions'
 
 interface TestCase {
   id: string
@@ -230,17 +234,56 @@ export default function RunDetailPage() {
 
   const { data: run } = useRun(runId)
   const { data, isLoading, error } = useTestCases(runId, {
-    page, size: 50,
+    page, size: 25,
     ...(statusFilter && { status: statusFilter }),
     ...(suiteFilter && { suite: suiteFilter }),
   })
   const tcItems = (data?.items ?? []) as TestCase[]
   const { sorted: sortedCases, sortKey: tcSortKey, sortDir: tcSortDir, toggleSort: tcToggleSort } = useTableSort(tcItems, 'test_name', 'asc')
 
+  const { isQaEngineer } = usePermissions()
+  const [triggeringPipeline, setTriggeringPipeline] = useState(false)
+  const [triggeringDeep, setTriggeringDeep] = useState(false)
+
   async function handleSetRelease(name: string) {
     if (!runId) return
     await runsService.setRelease(runId, name)
     mutate(['run', runId])
+  }
+
+  async function handleTriggerPipeline() {
+    if (!runId) return
+    setTriggeringPipeline(true)
+    try {
+      await agentService.triggerPipeline(runId)
+      toast.success('Pipeline queued. Track progress on /agents.')
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to trigger pipeline'
+      toast.error(detail)
+    } finally {
+      setTriggeringPipeline(false)
+    }
+  }
+
+  async function handleTriggerDeep() {
+    if (!runId) return
+    setTriggeringDeep(true)
+    try {
+      await agentService.triggerDeepPipeline(runId)
+      toast.success('Deep investigation queued — opening live view…')
+      navigate(`/deep-investigate/${runId}`)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to trigger deep investigation'
+      toast.error(detail)
+    } finally {
+      setTriggeringDeep(false)
+    }
   }
 
   return (
@@ -259,6 +302,7 @@ export default function RunDetailPage() {
           subtitle={`${run.jenkins_job ?? 'Jenkins'} · ${formatDateTime(run.created_at)}`}
           actions={
             <div className="flex items-center gap-3 text-sm flex-wrap">
+              <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
               <ReleaseTag
                 releaseName={run.release_name}
                 onSet={handleSetRelease}
@@ -268,6 +312,30 @@ export default function RunDetailPage() {
               <span className="text-amber-400 font-medium">{run.skipped_tests} skipped</span>
               <span className="text-[var(--color-text-muted)]">/ {run.total_tests} total</span>
               <StatusBadge status={run.status} />
+              {isQaEngineer && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleTriggerPipeline}
+                    disabled={triggeringPipeline || triggeringDeep}
+                    title="Re-run the multi-agent analysis pipeline (ingestion → anomaly → root cause → summary → triage). Useful after changing AI mode or fixing an upstream issue."
+                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+                  >
+                    {triggeringPipeline ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                    {triggeringPipeline ? 'Queuing…' : 'Trigger pipeline'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTriggerDeep}
+                    disabled={triggeringPipeline || triggeringDeep}
+                    title="Run the deep investigation pipeline — adds failure clustering, flaky sentinel, test health, and release risk on top of the standard stages. Requires LLM or Auto mode."
+                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+                  >
+                    {triggeringDeep ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
+                    {triggeringDeep ? 'Queuing…' : 'Deep investigate'}
+                  </button>
+                </>
+              )}
               <Link
                 to={`/runs/${runId}/intelligence`}
                 className="btn-primary text-xs flex items-center gap-1.5 py-1"
@@ -318,20 +386,71 @@ export default function RunDetailPage() {
             <span>Failed to load test cases — {(error as Error)?.message ?? 'server error'}</span>
           </div>
         ) : !data?.items?.length ? (
-          <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3">
-            {run?.trigger_source === 'live_stream' ? (
-              <>
-                <p>Live test results are being processed. This may take a few moments.</p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
-                >
-                  Refresh page
-                </button>
-              </>
-            ) : (
-              <p>No test cases found for this run.</p>
-            )}
+          <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3 px-6 text-center max-w-2xl mx-auto">
+            {(() => {
+              const isLive = run?.trigger_source === 'live_stream'
+              const totalReported = run?.total_tests ?? 0
+              const hasAggregates = totalReported > 0
+              const hasActiveFilter = Boolean(statusFilter || suiteFilter)
+
+              if (hasActiveFilter) {
+                return (
+                  <>
+                    <p>No test cases match the current filters{statusFilter && ` (status: ${statusFilter})`}{suiteFilter && ` (suite: ${suiteFilter})`}.</p>
+                    <button
+                      onClick={() => { setStatusFilter(''); setSuiteFilter(''); setPage(1) }}
+                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
+                    >
+                      Clear filters
+                    </button>
+                  </>
+                )
+              }
+
+              if (isLive && hasAggregates) {
+                // The run record carries aggregate counts from the live state
+                // hash (HINCRBY) but persist_live_session didn't materialise
+                // per-test rows — usually the Redis event buffer was empty
+                // by the time it ran, or the task hit an error after a retry.
+                // Tell the user honestly so they don't keep hitting refresh.
+                return (
+                  <>
+                    <p className="text-[var(--color-text)]">
+                      This live run reported <strong>{totalReported}</strong> test{totalReported === 1 ? '' : 's'}
+                      {' '}({run?.passed_tests ?? 0} passed, {run?.failed_tests ?? 0} failed
+                      {(run?.skipped_tests ?? 0) > 0 && `, ${run?.skipped_tests} skipped`}
+                      {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}),
+                      but per-test details weren't persisted.
+                    </p>
+                    <p className="text-xs">
+                      The SDK's event buffer was cleared before the persistence task ran
+                      (or the task didn't complete). Aggregate counts above are accurate;
+                      individual test names and statuses are not recoverable for this run.
+                    </p>
+                    <p className="text-xs">
+                      Re-run the suite, or re-ingest the results as a file upload to get
+                      per-test data.
+                    </p>
+                  </>
+                )
+              }
+
+              if (isLive) {
+                return (
+                  <>
+                    <p>Live test results are still being processed. This usually takes a few seconds after the session closes.</p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
+                    >
+                      Refresh page
+                    </button>
+                  </>
+                )
+              }
+
+              return <p>No test cases found for this run.</p>
+            })()}
           </div>
         ) : (
           <>

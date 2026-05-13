@@ -4,8 +4,33 @@ import { describe, expect, it, vi } from 'vitest'
 
 import DefectsPage from './DefectsPage'
 
-vi.mock('@/hooks/useMetrics', () => ({
-  useDefects: vi.fn(),
+// Mock every useMetrics export — the page (or its widgets) may import any
+// of them and vitest errors on an undefined export. Tests override the
+// specific hook(s) they care about via ``mockReturnValue`` further down.
+vi.mock('@/hooks/useMetrics', () => {
+  const d = () => ({ data: undefined, isLoading: false })
+  return {
+    useDashboardSummary:  vi.fn(d),
+    useTrendData:         vi.fn(d),
+    useFlakyTests:        vi.fn(d),
+    useFailureCategories: vi.fn(d),
+    useTopFailing:        vi.fn(d),
+    useCoverage:          vi.fn(d),
+    useDefects:           vi.fn(d),
+    useSuiteDetail:       vi.fn(d),
+    useAiSummary:         vi.fn(d),
+  }
+})
+vi.mock('@/hooks/useSuiteOptions', () => ({
+  useSuiteOptions: () => ({ options: [], isLoading: false }),
+}))
+vi.mock('@/hooks/useAnalyticsView', () => ({
+  useAnalyticsView: () => ({
+    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(),
+    save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
+    activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
+    updateInstance: vi.fn(), moveInstance: vi.fn(),
+  }),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -46,6 +71,9 @@ describe('DefectsPage', () => {
 
     expect(await screen.findByText(/Defect Workflow/i)).toBeInTheDocument()
     expect(screen.getByText(/Defect Intake/i)).toBeInTheDocument()
-    expect(screen.getByText(/Defects/i)).toBeInTheDocument()
+    // ``Defects`` appears in multiple places (page header, table caption,
+    // KPI labels) — use ``getAllByText`` to assert presence without
+    // tying to a specific surface.
+    expect(screen.getAllByText(/Defects/i).length).toBeGreaterThan(0)
   })
 })

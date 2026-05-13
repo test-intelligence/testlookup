@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="#0d1117"/>
+  <text x="6"  y="50" font-family="JetBrains Mono, monospace" font-size="56" font-weight="500" fill="#4493f8">[</text>
+  <text x="22" y="48" font-family="Inter, sans-serif" font-size="44" font-weight="700" fill="#f0f6fc" letter-spacing="-0.02em">t</text>
+  <text x="42" y="50" font-family="JetBrains Mono, monospace" font-size="56" font-weight="500" fill="#4493f8">]</text>
+</svg>

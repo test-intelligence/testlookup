@@ -1,12 +1,20 @@
-# Traefik IngressRoute for K3s (replaces nginx Ingress from base)
-# K3s ships with Traefik — no extra install needed.
+# HTTP-only ingress for the homelab.
+#
+# TLS was intentionally removed: this cluster is on the local LAN, the
+# `testlookup.local` hostname only resolves via /etc/hosts on trusted
+# machines, and we kept hitting self-signed-cert friction on every client
+# (browsers, Java SDK, curl). Splitting the listeners is no longer needed
+# once the redirect is gone — there's only one origin, http://testlookup.local.
+#
+# If you ever want HTTPS back, restore middleware-redirect-https.yaml +
+# the split ingresses from git history.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: testlookup-traefik-ingress
   namespace: testlookup
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   ingressClassName: traefik
   rules:

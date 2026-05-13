@@ -41,6 +41,8 @@ celery_app.conf.update(
         "app.worker.tasks.ingest_test_run":                 {"queue": "ingestion"},
         "app.worker.tasks.run_ai_analysis":                 {"queue": "ai_analysis"},
         "app.worker.tasks.run_agent_pipeline":              {"queue": "ai_analysis"},
+        "app.worker.tasks.generate_run_compare_report":     {"queue": "ai_analysis"},
+        "app.worker.tasks.precompute_suite_comparisons_for_run": {"queue": "ai_analysis"},
         "app.worker.tasks.generate_ai_test_cases_task":     {"queue": "ai_analysis"},
         "app.worker.tasks.create_ai_test_plan_task":         {"queue": "ai_analysis"},
         "app.worker.tasks.generate_ai_strategy_task":        {"queue": "ai_analysis"},
@@ -82,6 +84,14 @@ celery_app.conf.update(
         "knowledge-source-resync": {
             "task": "app.worker.tasks.resync_stale_knowledge_sources",
             "schedule": crontab(minute=0, hour="*/4"),
+        },
+        # Safety net for live sessions whose clients forgot to send
+        # run_complete — without this the runs only show in Live Execution
+        # and never propagate to Runs / Overview / Coverage / Failures /
+        # Trends. Idle threshold is 15 minutes; the task is idempotent.
+        "close-stale-live-sessions": {
+            "task": "app.worker.tasks.close_stale_live_sessions",
+            "schedule": crontab(minute="*/5"),
         },
         # Tier 1 item 3: flaky-test quarantine maintenance (nightly at 04:00 UTC).
         # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.

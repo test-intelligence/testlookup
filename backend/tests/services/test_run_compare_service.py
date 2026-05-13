@@ -149,6 +149,10 @@ def test_similarity_identical_strings_is_one():
     assert svc._similarity("test_login", "auth", "test_login", "auth") == 1.0
 
 
+def test_similarity_suite_match_is_case_insensitive():
+    assert svc._similarity("test_login", "AuthSuite", "test_login", "authsuite") == 1.0
+
+
 def test_similarity_completely_different_is_low():
     score = svc._similarity("foo_bar_baz", "alpha", "qux_wibble_zap", "omega")
     assert score < svc._FUZZY_PAIR_THRESHOLD
@@ -180,6 +184,43 @@ def _tc(fp: str, name: str, suite: str = "auth", status: str = "PASSED", duratio
         status=status,
         duration_ms=duration,
     )
+
+
+def test_summary_dict_scopes_counts_to_suite_cases():
+    run = SimpleNamespace(
+        id="run-1",
+        project_id="project-1",
+        build_number="42",
+        branch="main",
+        commit_hash="abc",
+        status="FAILED",
+        start_time=None,
+        end_time=None,
+        primary_suite_name="all",
+        suite_names=["auth", "payments"],
+        total_tests=999,
+        passed_tests=999,
+        failed_tests=0,
+        broken_tests=0,
+        skipped_tests=0,
+        pass_rate=100,
+        duration_ms=9999,
+    )
+    scoped = [
+        _tc("a", "passes", suite="Auth", status="PASSED", duration=10),
+        _tc("b", "fails", suite="Auth", status="FAILED", duration=15),
+        _tc("c", "skips", suite="Auth", status="SKIPPED", duration=5),
+    ]
+
+    summary = svc._summary_dict(run, scoped_tests=scoped, suite_name="Auth")
+
+    assert summary["total_tests"] == 3
+    assert summary["passed_tests"] == 1
+    assert summary["failed_tests"] == 1
+    assert summary["skipped_tests"] == 1
+    assert summary["pass_rate"] == pytest.approx(33.333, abs=0.001)
+    assert summary["primary_suite_name"] == "Auth"
+    assert summary["suite_names"] == ["Auth"]
 
 
 def test_greedy_fuzzy_pair_empty_inputs():

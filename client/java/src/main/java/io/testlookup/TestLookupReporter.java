@@ -96,6 +96,8 @@ public class TestLookupReporter {
     private final String     projectId;
     private final String     clientName;
     private final String     framework;
+    private final String     suiteName;  // resolved from testlookup.suite or testlookup.launch
+    private final String     releaseName; // resolved from testlookup.release; null → server uses project default
     private final int        batchSize;
     private final int        batchIntervalMs;
     private final HttpClient http;
@@ -109,6 +111,9 @@ public class TestLookupReporter {
         this.projectId      = b.projectId;
         this.clientName     = b.clientName != null ? b.clientName : getHostname();
         this.framework      = b.framework  != null ? b.framework  : "java";
+        // Resolved run-level suite: testlookup.suite preferred, testlookup.launch fallback.
+        this.suiteName      = b.suiteName;
+        this.releaseName    = b.releaseName;
         this.batchSize      = Math.min(b.batchSize > 0 ? b.batchSize : BATCH_SIZE, MAX_BATCH_SIZE);
         this.batchIntervalMs = b.batchIntervalMs > 0 ? b.batchIntervalMs : BATCH_INTERVAL_MS;
         this.http = HttpClient.newBuilder()
@@ -124,6 +129,8 @@ public class TestLookupReporter {
         private String projectId;
         private String clientName;
         private String framework;
+        private String suiteName;
+        private String releaseName;
         private int    batchSize;
         private int    batchIntervalMs;
 
@@ -135,6 +142,10 @@ public class TestLookupReporter {
         public Builder projectId(String v)       { this.projectId      = v; return this; }
         public Builder clientName(String v)      { this.clientName     = v; return this; }
         public Builder framework(String v)       { this.framework      = v; return this; }
+        /** Default run-level suite applied to every record() that doesn't override it. */
+        public Builder suiteName(String v)       { this.suiteName      = v; return this; }
+        /** Default release name. Null → server falls back to the project's default release. */
+        public Builder releaseName(String v)     { this.releaseName    = v; return this; }
         public Builder batchSize(int v)          { this.batchSize      = v; return this; }
         public Builder batchIntervalMs(int v)    { this.batchIntervalMs = v; return this; }
 
@@ -150,6 +161,11 @@ public class TestLookupReporter {
             if (this.projectId == null)  this.projectId  = ConfigLoader.getString(cfg, "project.id", null);
             if (this.clientName == null) this.clientName  = ConfigLoader.getString(cfg, "reporting.client_name", null);
             if (this.framework == null)  this.framework   = ConfigLoader.getString(cfg, "reporting.framework", null);
+            if (this.suiteName == null)  this.suiteName   = ConfigLoader.getString(cfg, "reporting.suite_name", null);
+            // Fallback: testlookup.launch (reporting.launch_name) doubles as the
+            // run-level suite when testlookup.suite isn't explicitly configured.
+            if (this.suiteName == null)  this.suiteName   = ConfigLoader.getString(cfg, "reporting.launch_name", null);
+            if (this.releaseName == null) this.releaseName = ConfigLoader.getString(cfg, "reporting.release_name", null);
             if (this.batchSize <= 0)     this.batchSize   = ConfigLoader.getInt(cfg, "reporting.batch_size", 0);
             if (this.batchIntervalMs<=0) this.batchIntervalMs = ConfigLoader.getInt(cfg, "reporting.batch_interval_ms", 0);
 
@@ -184,6 +200,16 @@ public class TestLookupReporter {
         if (opts.branch      != null) payload.put("branch",       opts.branch);
         if (opts.commitHash  != null) payload.put("commit_hash",  opts.commitHash);
         if (opts.totalTests  >= 0)    payload.put("total_tests",  opts.totalTests);
+        // Per-session suite beats the reporter-level default (resolved from
+        // testlookup.suite > testlookup.launch in Builder.build).
+        String sessionSuite = opts.suiteName != null ? opts.suiteName : suiteName;
+        // Same precedence for release_name: per-session override > reporter
+        // default (testlookup.release). Blank/null → server falls back to the
+        // project's default release.
+        String sessionRelease = opts.releaseName != null ? opts.releaseName : releaseName;
+        if (opts.launchName  != null) payload.put("launch_name",  opts.launchName);
+        if (sessionSuite     != null) payload.put("suite_name",   sessionSuite);
+        if (sessionRelease   != null) payload.put("release_name", sessionRelease);
 
         String body;
         try { body = MAPPER.writeValueAsString(payload); }
@@ -197,6 +223,7 @@ public class TestLookupReporter {
                 node.get("session_id").asText(),
                 node.get("session_token").asText(),
                 node.get("run_id").asText(),
+                sessionSuite,
                 this
             );
         } catch (Exception e) {
@@ -220,10 +247,26 @@ public class TestLookupReporter {
             .DELETE();
         applyAuth(rb);
         try {
-            http.send(rb.build(), HttpResponse.BodyHandlers.discarding());
-            LOG.info("TestLookup: session closed: " + sessionId);
+            // Capture the body so a non-2xx response surfaces a useful diagnostic.
+            // Without this, a 401 from the server returns to the SDK as "success"
+            // and the live-session row stays status=active forever — no TestRun
+            // is ever persisted and the dashboard never sees the run.
+            HttpResponse<String> resp = http.send(rb.build(),
+                HttpResponse.BodyHandlers.ofString());
+            int status = resp.statusCode();
+            if (status >= 200 && status < 300) {
+                LOG.info("TestLookup: session closed: " + sessionId);
+            } else {
+                String body = resp.body();
+                if (body != null && body.length() > 500) {
+                    body = body.substring(0, 500) + "…";
+                }
+                LOG.warning("TestLookup: server rejected close for session "
+                    + sessionId + " — HTTP " + status + " body=" + body);
+            }
         } catch (Exception e) {
-            LOG.warning("TestLookup: failed to close session " + sessionId + ": " + e.getMessage());
+            LOG.warning("TestLookup: failed to close session " + sessionId
+                + ": " + e.getMessage());
         }
     }
 
@@ -326,6 +369,9 @@ public class TestLookupReporter {
         public final String commitHash;
         public final String machineId;
         public final int    totalTests;
+        public final String launchName;
+        public final String suiteName;
+        public final String releaseName;
 
         private SessionOptions(Builder b) {
             this.buildNumber = b.buildNumber;
@@ -333,6 +379,9 @@ public class TestLookupReporter {
             this.commitHash  = b.commitHash;
             this.machineId   = b.machineId;
             this.totalTests  = b.totalTests;
+            this.launchName  = b.launchName;
+            this.suiteName   = b.suiteName;
+            this.releaseName = b.releaseName;
         }
 
         public static Builder builder() { return new Builder(); }
@@ -343,12 +392,20 @@ public class TestLookupReporter {
             private String commitHash;
             private String machineId;
             private int    totalTests = -1;
+            private String launchName;
+            private String suiteName;
+            private String releaseName;
 
             public Builder buildNumber(String v)  { this.buildNumber = v; return this; }
             public Builder branch(String v)       { this.branch      = v; return this; }
             public Builder commitHash(String v)   { this.commitHash  = v; return this; }
             public Builder machineId(String v)    { this.machineId   = v; return this; }
             public Builder totalTests(int v)      { this.totalTests  = v; return this; }
+            public Builder launchName(String v)   { this.launchName  = v; return this; }
+            /** Per-session suite override (beats the reporter-level default). */
+            public Builder suiteName(String v)    { this.suiteName   = v; return this; }
+            /** Per-session release override (beats the reporter-level default). */
+            public Builder releaseName(String v)  { this.releaseName = v; return this; }
             public SessionOptions build()         { return new SessionOptions(this); }
         }
     }
@@ -407,6 +464,7 @@ public class TestLookupReporter {
         private final String            sessionId;
         private final String            sessionToken;
         private final String            runId;
+        private final String            suiteName;  // record() default
         private final TestLookupReporter reporter;
 
         private final BlockingQueue<ObjectNode>   queue;
@@ -415,10 +473,12 @@ public class TestLookupReporter {
         private final AtomicLong                  statFailed  = new AtomicLong();
         private volatile boolean                  closed      = false;
 
-        LiveSession(String sessionId, String sessionToken, String runId, TestLookupReporter reporter) {
+        LiveSession(String sessionId, String sessionToken, String runId,
+                    String suiteName, TestLookupReporter reporter) {
             this.sessionId    = sessionId;
             this.sessionToken = sessionToken;
             this.runId        = runId;
+            this.suiteName    = suiteName;
             this.reporter     = reporter;
             this.queue        = new LinkedBlockingQueue<>(50_000);
 
@@ -459,13 +519,19 @@ public class TestLookupReporter {
             event.put("duration_ms",  durationMs);
             event.put("timestamp_ms", Instant.now().toEpochMilli());
 
-            if (opts.suiteName  != null) event.put("suite_name",     opts.suiteName);
+            // Per-record suite wins; otherwise inherit the session-level suite
+            // resolved from testlookup.suite > testlookup.launch.
+            String effectiveSuite = opts.suiteName != null ? opts.suiteName : this.suiteName;
+            if (effectiveSuite  != null) event.put("suite_name",     effectiveSuite);
             if (opts.className  != null) event.put("class_name",     opts.className);
             if (opts.error      != null) event.put("error_message",  opts.error);
             if (opts.stackTrace != null) event.put("stack_trace",    opts.stackTrace);
             if (opts.tags != null && !opts.tags.isEmpty()) {
                 ArrayNode arr = event.putArray("tags");
                 opts.tags.forEach(arr::add);
+            }
+            if (opts.metadata != null && !opts.metadata.isEmpty()) {
+                event.set("metadata", MAPPER.valueToTree(opts.metadata));
             }
 
             enqueue(event);

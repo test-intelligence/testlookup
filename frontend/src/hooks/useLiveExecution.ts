@@ -31,6 +31,7 @@ export interface LiveEvent {
   total?: number
   pass_rate?: number
   status?: string
+  suite_name?: string | null
   message?: string
   timestamp: number
 }
@@ -39,17 +40,17 @@ export type WsStatus = 'connecting' | 'open' | 'closed' | 'error'
 
 // ── Active sessions SWR hook ───────────────────────────────────────────────
 
-export function useActiveSessions(projectId?: string) {
+export function useActiveSessions(projectId?: string, suiteName?: string | null, days?: number) {
   return useSWR(
-    ['live-active', projectId],
-    () => liveStreamService.getActiveSessions(projectId),
+    ['live-active', projectId, suiteName, days],
+    () => liveStreamService.getActiveSessions(projectId, suiteName, days),
     { refreshInterval: 5_000, revalidateOnFocus: false },
   )
 }
 
 // ── Full live execution hook (sessions + WebSocket) ────────────────────────
 
-export function useLiveExecution(projectId?: string) {
+export function useLiveExecution(projectId?: string, suiteName?: string | null, days?: number) {
   const [sessions, setSessions] = useState<LiveSessionState[]>([])
   const [recentEvents, setRecentEvents] = useState<LiveEvent[]>([])
   const [wsStatus, setWsStatus] = useState<WsStatus>('closed')
@@ -65,8 +66,8 @@ export function useLiveExecution(projectId?: string) {
 
   // ── SWR polling (initial load + fallback when WS is down) ──────────────
   const { data, mutate } = useSWR(
-    ['live-active', projectId],
-    () => liveStreamService.getActiveSessions(projectId),
+    ['live-active', projectId, suiteName, days],
+    () => liveStreamService.getActiveSessions(projectId, suiteName, days),
     {
       refreshInterval: wsStatus === 'open' ? 10_000 : 5_000,
       revalidateOnFocus: false,
@@ -91,6 +92,7 @@ export function useLiveExecution(projectId?: string) {
             run_id: s.run_id,
             build_number: s.build_number,
             project_id: s.project_id,
+            suite_name: s.suite_name,
             passed: s.passed,
             failed: s.failed,
             skipped: s.skipped,

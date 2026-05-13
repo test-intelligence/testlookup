@@ -11,7 +11,7 @@ duplicate defect creation from parallel pipeline executions.
 """
 import structlog
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.agents.base import BaseAgent
@@ -130,24 +130,48 @@ class DefectTriageAgent(BaseAgent):
                 resolution_status="OPEN",
             ).on_conflict_do_nothing(
                 index_elements=["test_case_id"],
-                where=Defect.resolution_status == "OPEN",
+                index_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
             ).returning(Defect.id)
             result = await db.execute(stmt)
             new_row = result.first()
             await db.commit()
 
-            # If insert was a no-op, an open defect already exists — skip Jira
-            if new_row is None:
-                return {
-                    "test_case_id": tc_id,
-                    "action": "existing",
-                    "reason": "Open defect already tracked",
-                }
-            defect_id = new_row[0]
+            action = "created"
 
-        # Step 2: Create Jira ticket AFTER successful DB insert
-        # This ensures no orphan Jira tickets if DB race is lost
+            # If insert was a no-op, an open defect already exists. Retry Jira
+            # creation only when the existing defect still has no ticket.
+            if new_row is None:
+                existing_result = await db.execute(
+                    select(Defect.id, Defect.jira_ticket_id, Defect.jira_ticket_url).where(
+                        Defect.test_case_id == tc_id,
+                        Defect.resolution_status == "OPEN",
+                    )
+                )
+                existing = existing_result.first()
+                if not existing:
+                    return {
+                        "test_case_id": tc_id,
+                        "action": "existing",
+                        "reason": "Open defect already tracked",
+                    }
+                defect_id = existing.id
+                if existing.jira_ticket_id:
+                    return {
+                        "test_case_id": tc_id,
+                        "action": "existing",
+                        "ticket_key": existing.jira_ticket_id,
+                        "ticket_url": existing.jira_ticket_url,
+                        "reason": "Open defect already tracked",
+                    }
+                action = "jira_retry"
+            else:
+                defect_id = new_row[0]
+
+        # Step 2: Create Jira ticket AFTER successful DB insert, or retry it
+        # for an existing open defect that was left ticketless by a prior
+        # transient Jira failure.
         ticket_key = ticket_url = ticket_id = None
+        jira_error = None
         idempotency_key = f"{_JIRA_IDEMPOTENCY_PREFIX}:{tc_id}:{state['test_run_id']}"
         if settings.JIRA_ENABLED:
             try:
@@ -166,10 +190,11 @@ class DefectTriageAgent(BaseAgent):
                 ticket_key = ticket.get("ticket_key")
                 ticket_url = ticket.get("ticket_url")
             except Exception as jira_exc:
+                jira_error = str(jira_exc)
                 logger.warning(
                     "Jira ticket creation skipped",
                     test_case_id=tc_id,
-                    error=str(jira_exc),
+                    error=jira_error,
                 )
 
         # Step 3: Update defect row with Jira info (if ticket was created)
@@ -187,9 +212,17 @@ class DefectTriageAgent(BaseAgent):
                 )
                 await db.commit()
 
+        if jira_error:
+            return {
+                "test_case_id": tc_id,
+                "action": f"{action}_jira_failed",
+                "error": jira_error,
+                "reason": "Defect remains open without Jira ticket; future runs will retry",
+            }
+
         return {
             "test_case_id": tc_id,
-            "action": "created",
+            "action": action,
             "ticket_key": ticket_key,
             "ticket_url": ticket_url,
         }

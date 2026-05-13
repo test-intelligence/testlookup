@@ -2,6 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Slide animation for the running-stage progress bar in the AgentWorkflowPage
+   subway cards. A 35%-wide gradient sweeps the 2px-tall track at the bottom
+   of the card. Tailwind doesn't ship this keyframe out of the box. */
+@keyframes testlookup-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(420%); }
+}
+
+/* Pulse halo for the dashboard verdict-card eyebrow dot. Scales an outer
+   box-shadow ring out from the dot. Honors prefers-reduced-motion. */
+@keyframes testlookup-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.6); }
+  70%  { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .testlookup-verdict-pulse { animation: none !important; }
+}
+
 /* ═══════════════════════════════════════════════════
    Theme definitions — two professional dark themes
    Toggle via data-theme attribute on <html>
@@ -59,6 +78,183 @@
     --color-ring: #58a6ff;
     --color-scrollbar-track: #0b1222;
     --color-scrollbar-thumb: #3b4a60;
+  }
+
+  /* ───────────────────────────────────────────────────────────────
+     Foundation tokens — theme-independent design system
+     Mirrors the canonical names in the TestLookup design system.
+     ─────────────────────────────────────────────────────────────── */
+
+  /* Brand teal — used in marketing accents + AppLogo gradient fallback.
+     Brand teal is NOT used for primary CTAs in product UI. */
+  :root {
+    --brand-50:  #f0fdfa;
+    --brand-100: #ccfbf1;
+    --brand-400: #2dd4bf;
+    --brand-500: #14b8a6;
+    --brand-600: #0d9488;
+    --brand-700: #0f766e;
+    --brand-900: #134e4a;
+  }
+
+  /* Semantic status colors (badges, charts, trend chips).
+     -bg / -bd suffixes mirror the badge palette for charts and inline tints. */
+  :root {
+    --status-passed:    #34d399;            /* emerald-400 */
+    --status-passed-bg: rgba(16,185,129,0.18);
+    --status-passed-bd: rgba(4,120,87,0.6);
+    --status-failed:    #fca5a5;            /* red-300 */
+    --status-failed-bg: rgba(127,29,29,0.5);
+    --status-failed-bd: rgba(185,28,28,0.6);
+    --status-broken:    #fdba74;            /* orange-300 */
+    --status-broken-bg: rgba(124,45,18,0.5);
+    --status-broken-bd: rgba(194,65,12,0.6);
+    --status-skipped:   #fcd34d;            /* amber-300 */
+    --status-skipped-bg: rgba(120,53,15,0.5);
+    --status-skipped-bd: rgba(180,83,9,0.6);
+    --status-flaky:     #d8b4fe;            /* purple-300 */
+    --status-flaky-bg:  rgba(88,28,135,0.5);
+    --status-flaky-bd:  rgba(126,34,206,0.6);
+  }
+
+  /* Release-gate semantic colors. */
+  :root {
+    --gate-go:          #22c55e;
+    --gate-conditional: #eab308;
+    --gate-no-go:       #ef4444;
+
+    /* Run Intelligence redesign tokens — soft fills for verdict / blocker
+       backgrounds and the green→amber→red risk-meter gradient. Defined
+       once so the page never reaches for raw rgba() literals. */
+    --gate-conditional-glow: rgba(245,158,11,0.10);
+    --alert-bg-soft:         rgba(239,68,68,0.10);
+    --alert-border-soft:     rgba(239,68,68,0.30);
+    --status-passed-soft:    rgba(34,197,94,0.18);
+    --gradient-risk:         linear-gradient(90deg, #22c55e, #fcd34d 50%, #ef4444);
+    /* Test-coverage health bar — mirror of --gradient-risk: red on the LOW
+       end and green on the HIGH end, since coverage scores are "more is
+       better" while risk scores are "more is worse". */
+    --gradient-health:       linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    /* Failure-analysis stability bar — same direction/colors as
+       --gradient-health (higher = better). Aliased so the failure page
+       reads semantically without leaking "health" into the variable name. */
+    --gradient-stability:    linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+
+    /* Verdict-card glow tints. Used by the radial-gradient backdrop on
+       the failure-analysis verdict variants. */
+    --gate-no-go-glow:       rgba(239,68,68,0.10);
+    --gate-go-glow:          rgba(34,197,94,0.10);
+
+    /* Soft fills for stage / pill icon backgrounds. The "passed-soft"
+       was added with run-intelligence; "failed-soft" lands here for the
+       failure-analysis stage and pill chrome. */
+    --status-failed-soft:    rgba(239,68,68,0.18);
+
+    /* Failure-category palette — promoted out of inline values for the
+       category distribution rows (Assertion / Timeout / Network / Infra
+       / Unknown). */
+    --cat-assertion: #ef4444;
+    --cat-timeout:   #f59e0b;
+    --cat-network:   #6366f1;
+    --cat-infra:     #06b6d4;
+    --cat-unknown:   #94a3b8;
+
+    /* Trends redesign tokens. The confidence-bar gradient is the same
+       red→amber→green direction as --gradient-health / --gradient-stability;
+       aliased here so the trends page reads semantically without leaking
+       "health" or "stability" into a name that's about historical signal
+       confidence. */
+    --gradient-confidence:        linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    /* Mixed-result heatmap cell — pass green at the bottom, red stripe on
+       top per the design. */
+    --pattern-mixed-day:          linear-gradient(180deg, var(--status-passed) 0% 80%, #fca5a5 80% 100%);
+    /* Three intensities for the conditional-amber backdrop / pill / border
+       used on warn-tinted issue rows, the trends Schedule-Paused callout,
+       and the cadence gap annotation strip. */
+    --gate-conditional-bg-soft:   rgba(245,158,11,0.06);
+    --gate-conditional-bg:        rgba(245,158,11,0.16);
+    --gate-conditional-border:    rgba(245,158,11,0.28);
+    /* Soft accent fill for info-issue rows + Open-link chips. */
+    --color-accent-bg-soft:       rgba(68,147,248,0.06);
+
+    /* Display sizes used by the verdict headlines / hero numbers across
+       the dashboard, run-intelligence, and test-coverage redesigns. Kept
+       as tokens so a future scale tweak hits all three pages at once. */
+    --text-display-sm: 26px;  /* verdict headline (h2)             */
+    --text-display-md: 28px;  /* run-intelligence verdict headline */
+    --text-display-lg: 44px;  /* hero numeric — risk / health      */
+    --text-stat-lg:    24px;  /* KPI strip values                   */
+
+    /* Compute-graph tokens for the /agents Direction-C redesign.
+       Names follow the design handoff (--bg-3, --border-strong, soft fills,
+       cyan + purple accents) so the components can keep the prototype's CSS
+       variable names with one indirection here. Surfaces / borders / fg map
+       to the existing --color-* / --status-* tokens above; only the missing
+       hues land below. */
+    --bg-3:           #232a35;
+    --border-strong:  #4a5564;
+    --fg-faint:       #4a525c;
+    --status-passed-bg-soft: rgba(63,185,80,0.14);
+    --status-failed-bg-soft: rgba(248,81,73,0.14);
+    --status-broken-bg-soft: rgba(210,153,34,0.14);
+    --color-purple:        #a371f7;
+    --color-purple-soft:   rgba(163,113,247,0.14);
+    --color-purple-strong: rgba(163,113,247,0.50);
+    --color-cyan:          #39c5cf;
+    --color-cyan-soft:     rgba(57,197,207,0.14);
+    /* Dotted background for the compute canvas — 24px-on-center grid. */
+    --pattern-compute-grid:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 1px) 0 0 / 24px 24px;
+  }
+
+  /* Typography scale — UI dense, optimised for data tables.
+     Reach via var(--text-*) when you need a one-off non-Tailwind size. */
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+
+    --text-xs:   12px;
+    --text-sm:   13px;
+    --text-base: 14px;
+    --text-md:   16px;
+    --text-lg:   18px;
+    --text-xl:   20px;
+    --text-2xl:  24px;
+    --text-3xl:  30px;
+    --text-4xl:  36px;
+
+    --leading-tight:   1.2;
+    --leading-snug:    1.35;
+    --leading-normal:  1.5;
+    --leading-relaxed: 1.65;
+
+    --tracking-tight: -0.01em;
+    --tracking-wide:   0.04em;
+    --tracking-wider:  0.08em;
+  }
+
+  /* Spacing, radii, shadows. */
+  :root {
+    --space-1:  4px;
+    --space-2:  8px;
+    --space-3:  12px;
+    --space-4:  16px;
+    --space-5:  20px;
+    --space-6:  24px;
+    --space-8:  32px;
+    --space-10: 40px;
+    --space-12: 48px;
+
+    --radius-sm:   6px;
+    --radius-md:   8px;
+    --radius-lg:   12px;
+    --radius-xl:   16px;
+    --radius-pill: 9999px;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.25);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
+    --shadow-lg: 0 12px 32px rgba(0,0,0,0.45);
+    --shadow-xl: 0 24px 60px rgba(0,0,0,0.55);
   }
 
   * { box-sizing: border-box; }
@@ -170,4 +366,26 @@
   .theme-text       { color: var(--color-text); }
   .theme-text-secondary { color: var(--color-text-secondary); }
   .theme-text-muted { color: var(--color-text-muted); }
+
+  /* ── Semantic typography (opt-in, class-only) ──
+     Element selectors are deliberately omitted so Tailwind utilities
+     and existing PageHeader / MetricCard styling continue to win. */
+  .eyebrow {
+    font-size: var(--text-xs);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
+    color: var(--color-text-muted);
+  }
+  .metric {
+    font-size: var(--text-3xl);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text);
+    line-height: 1;
+  }
+  .muted    { color: var(--color-text-muted); }
+  .body-sm,
+  .small    { font-size: var(--text-sm); color: var(--color-text-secondary); }
+  .code     { font-family: var(--font-mono); font-size: 0.92em; color: var(--color-text-secondary); }
 }

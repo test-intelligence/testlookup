@@ -70,6 +70,12 @@ COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/alembic.ini .
 COPY --from=builder /app/scripts ./scripts
 
+# Client SDK files served at /api/v1/sdk/{lang}. Staged into the build
+# context as backend/__client_sdks_staged/ by the deploy script (see
+# homelabsetup/deploy-homelab.sh). docker-compose dev path is unaffected —
+# it targets the `development` stage and uses a host volume mount instead.
+COPY --from=builder /app/__client_sdks_staged ./client_sdks
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_ENV=production

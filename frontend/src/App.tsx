@@ -15,6 +15,8 @@ const RunDetailPage = lazy(() => import('@/pages/RunDetailPage'))
 const TestCasePage = lazy(() => import('@/pages/TestCasePage'))
 const CoveragePage = lazy(() => import('@/pages/CoveragePage'))
 const SuiteDetailPage = lazy(() => import('@/pages/SuiteDetailPage'))
+const SuitesPage = lazy(() => import('@/pages/SuitesPage'))
+const SuiteCasesPage = lazy(() => import('@/pages/SuiteCasesPage'))
 const FailureAnalysisPage = lazy(() => import('@/pages/FailureAnalysisPage'))
 const TrendsPage = lazy(() => import('@/pages/TrendsPage'))
 const DefectsPage = lazy(() => import('@/pages/DefectsPage'))
@@ -32,6 +34,10 @@ const AIEvalDashboardPage = lazy(() => import('@/pages/settings/AIEvalDashboardP
 const PerformancePage = lazy(() => import('@/pages/settings/PerformancePage'))
 const SSOSettingsPage = lazy(() => import('@/pages/settings/SSOSettingsPage'))
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
+// /agents loads the Direction-C compute graph (see AgentStatusPage.tsx +
+// components/agents/computeGraph/*). The Subway-style AgentWorkflowPage.tsx
+// stays on disk as reference for Direction A; flipping this import is the
+// only switch needed to swap between the two designs.
 const AgentStatusPage = lazy(() => import('@/pages/AgentStatusPage'))
 const DeepInvestigationPage = lazy(() => import('@/pages/DeepInvestigationPage'))
 const ReleaseGatePage = lazy(() => import('@/pages/ReleaseGatePage'))
@@ -53,6 +59,7 @@ const BillingPage = lazy(() => import('@/pages/settings/BillingPage'))
 const QuarantinePage = lazy(() => import('@/pages/QuarantinePage'))
 const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrationPage'))
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
+const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
 
 type AppRoute = {
@@ -72,6 +79,8 @@ const appRoutes: AppRoute[] = [
   { path: 'runs/:runId/tests/:testId', component: TestCasePage },
   { path: 'coverage', component: CoveragePage },
   { path: 'coverage/suite', component: SuiteDetailPage },
+  { path: 'suites', component: SuitesPage },
+  { path: 'suites/:suiteId', component: SuiteCasesPage },
   { path: 'failures', component: FailureAnalysisPage },
   { path: 'trends', component: TrendsPage },
   { path: 'defects', component: DefectsPage },
@@ -112,6 +121,7 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/billing', component: BillingPage },
   { path: 'settings/github', component: GitHubIntegrationPage },
   { path: 'settings/webhooks', component: OutboundWebhooksPage },
+  { path: 'settings/api-keys', component: ApiKeysPage },
   { path: 'policies', component: PolicyEditorPage },
   { path: 'policies/new', component: PolicyEditorPage },
   { path: 'policies/:policyId', component: PolicyEditorPage },

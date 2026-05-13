@@ -16,6 +16,35 @@ export interface RunCompareSummary {
   duration_ms: number | null
   start_time: string | null
   end_time: string | null
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
+}
+
+export interface RunCompareSelection {
+  mode: 'latest_vs_previous' | 'explicit'
+  scope: 'run' | 'suite'
+  suite_name: string | null
+  selection_reason: string
+  project_id: string
+  branch: string | null
+  branch_mismatch: boolean
+  release_name: string | null
+}
+
+export interface RunCompareAIReport {
+  status: 'ready' | 'queued' | 'failed'
+  executive_summary: string
+  markdown_report: string
+  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  key_differences: string[]
+  new_risks: string[]
+  resolved_risks: string[]
+  duration_concerns: string[]
+  recommended_actions: string[]
+  confidence: number
+  confidence_reason: string
+  fallback_used: boolean
+  message?: string | null
 }
 
 export type RunCompareClassification =
@@ -52,6 +81,10 @@ export interface RunCompareTestDelta {
 export interface RunCompareResponse {
   left: RunCompareSummary
   right: RunCompareSummary
+  scope: 'run' | 'suite'
+  suite_name?: string | null
+  selection?: RunCompareSelection | null
+  ai_report?: RunCompareAIReport | null
   delta_total: number
   delta_passed: number
   delta_failed: number
@@ -73,8 +106,12 @@ export interface RunCompareResponse {
 }
 
 export const runCompareService = {
-  compare: (left: string, right: string) =>
+  compare: (left: string, right: string, suiteName?: string | null) =>
     getData<RunCompareResponse>('/api/v1/runs/compare', {
-      params: { left, right },
+      params: { left, right, ...(suiteName ? { suite_name: suiteName } : {}) },
+    }),
+  compareLatestSuite: (suiteName: string, projectId?: string | null) =>
+    getData<RunCompareResponse>('/api/v1/runs/compare/latest', {
+      params: { suite_name: suiteName, ...(projectId ? { project_id: projectId } : {}) },
     }),
 }

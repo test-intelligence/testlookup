@@ -353,7 +353,7 @@ export default function ChatPage() {
             {/* Hero */}
             <div className="flex items-center gap-3">
               <div className="shrink-0">
-                <AppLogo className="w-10 h-10 rounded-xl object-contain" fallbackClassName="text-sm font-bold bg-gradient-to-r from-teal-400 to-teal-200 bg-clip-text text-transparent" />
+                <AppLogo glyph className="text-[28px]" />
               </div>
               <div>
                 <h3 className="font-semibold text-[var(--color-text)] leading-tight">TestLookup Chat</h3>

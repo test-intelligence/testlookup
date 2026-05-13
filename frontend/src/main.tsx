@@ -1,3 +1,4 @@
+import './polyfills' // Must run before any other import that may call crypto.randomUUID
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'

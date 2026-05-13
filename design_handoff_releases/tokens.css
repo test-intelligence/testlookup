@@ -1,0 +1,266 @@
+/* ═══════════════════════════════════════════════════════════════
+   TestLookup Design System — Foundation Tokens
+   Two professional dark themes (midnight, classic) + typography.
+   ═══════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ── Midnight (default) — GitHub-inspired dark, blue tints ── */
+:root,
+[data-theme="midnight"] {
+  /* Surfaces */
+  --color-bg:           #0d1117;
+  --color-bg-secondary: #161b22;
+  --color-bg-card:      #151b23;
+  --color-bg-input:     #0d1117;
+  --color-bg-hover:     #1c2128;
+
+  /* Borders */
+  --color-border:       #3d444d;
+  --color-border-light: #4a525c;
+
+  /* Text */
+  --color-text:           #f0f6fc;
+  --color-text-secondary: #c9d1d9;
+  --color-text-muted:     #9198a1;
+  --color-text-faint:     #656d76;
+
+  /* Accent (interactive blue) */
+  --color-accent:       #4493f8;
+  --color-accent-muted: rgba(68,147,248,0.12);
+  --color-accent-hover: rgba(68,147,248,0.20);
+
+  /* Primary action (success-green CTA, GitHub-style) */
+  --color-btn-primary-bg:    #238636;
+  --color-btn-primary-text:  #ffffff;
+  --color-btn-primary-hover: #2ea043;
+
+  /* Sidebar */
+  --color-sidebar-active-bg:   rgba(68,147,248,0.12);
+  --color-sidebar-active-text: #4493f8;
+
+  /* Focus ring + scrollbar */
+  --color-ring:            #4493f8;
+  --color-scrollbar-track: #0d1117;
+  --color-scrollbar-thumb: #3d444d;
+}
+
+/* ── Classic — deep navy + vivid blue accent ── */
+[data-theme="classic"] {
+  --color-bg:           #0b1222;
+  --color-bg-secondary: #141d2e;
+  --color-bg-card:      #131c2b;
+  --color-bg-input:     #0b1222;
+  --color-bg-hover:     #1a2538;
+  --color-border:       #2d3a4d;
+  --color-border-light: #3b4a60;
+  --color-text:           #edf2f7;
+  --color-text-secondary: #c3cddb;
+  --color-text-muted:     #8b99ad;
+  --color-text-faint:     #5f6f85;
+  --color-accent:         #58a6ff;
+  --color-accent-muted:   rgba(88,166,255,0.14);
+  --color-accent-hover:   rgba(88,166,255,0.22);
+  --color-btn-primary-bg:    #2563eb;
+  --color-btn-primary-text:  #ffffff;
+  --color-btn-primary-hover: #3b82f6;
+  --color-sidebar-active-bg:   rgba(88,166,255,0.14);
+  --color-sidebar-active-text: #58a6ff;
+  --color-ring:            #58a6ff;
+  --color-scrollbar-track: #0b1222;
+  --color-scrollbar-thumb: #3b4a60;
+}
+
+/* ── Brand teal (used in marketing accents + AppLogo fallback) ── */
+:root {
+  --brand-50:  #f0fdfa;
+  --brand-100: #ccfbf1;
+  --brand-400: #2dd4bf;
+  --brand-500: #14b8a6;
+  --brand-600: #0d9488;
+  --brand-700: #0f766e;
+  --brand-900: #134e4a;
+}
+
+/* ── Semantic status colors (badges, charts) ─────────────────── */
+:root {
+  --status-passed:  #34d399;   /* emerald-400 */
+  --status-passed-bg: rgba(16,185,129,0.18);
+  --status-passed-bd: rgba(4,120,87,0.6);
+
+  --status-failed:  #fca5a5;   /* red-300 */
+  --status-failed-bg: rgba(127,29,29,0.5);
+  --status-failed-bd: rgba(185,28,28,0.6);
+
+  --status-broken:  #fdba74;   /* orange-300 */
+  --status-broken-bg: rgba(124,45,18,0.5);
+  --status-broken-bd: rgba(194,65,12,0.6);
+
+  --status-skipped: #fcd34d;   /* amber-300 */
+  --status-skipped-bg: rgba(120,53,15,0.5);
+  --status-skipped-bd: rgba(180,83,9,0.6);
+
+  --status-flaky:   #d8b4fe;   /* purple-300 */
+  --status-flaky-bg: rgba(88,28,135,0.5);
+  --status-flaky-bd: rgba(126,34,206,0.6);
+}
+
+/* ── Release-gate semantic colors ────────────────────────────── */
+:root {
+  --gate-go:           #22c55e;
+  --gate-conditional:  #eab308;
+  --gate-no-go:        #ef4444;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Typography
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+
+  /* Type scale (px) — UI dense, optimized for data tables */
+  --text-xs:   12px;   /* table th, badges, helper labels */
+  --text-sm:   13px;   /* body small, sidebar nav, table td */
+  --text-base: 14px;   /* default body */
+  --text-md:   16px;   /* paragraphs in long-form */
+  --text-lg:   18px;   /* section heading 3 */
+  --text-xl:   20px;   /* section heading 2 */
+  --text-2xl:  24px;   /* page title */
+  --text-3xl:  30px;   /* metric values */
+  --text-4xl:  36px;   /* hero / empty-state */
+
+  --leading-tight:  1.2;
+  --leading-snug:   1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight: -0.01em;
+  --tracking-wide:   0.04em;
+  --tracking-wider:  0.08em;   /* uppercase eyebrow text */
+}
+
+/* Semantic typography roles */
+.h1, h1 {
+  font-family: var(--font-sans);
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-text);
+}
+.h2, h2 {
+  font-family: var(--font-sans);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: var(--leading-snug);
+  color: var(--color-text);
+}
+.h3, h3 {
+  font-family: var(--font-sans);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.body, p {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-text-secondary);
+}
+.body-sm, .small {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+.muted {
+  color: var(--color-text-muted);
+}
+.eyebrow {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wider);
+  color: var(--color-text-muted);
+}
+.metric {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  line-height: 1;
+}
+code, .code, kbd {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--color-text-secondary);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Spacing, radii, shadows
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-sm: 6px;    /* small chips, kbd */
+  --radius-md: 8px;    /* buttons, inputs */
+  --radius-lg: 12px;   /* cards, panels */
+  --radius-xl: 16px;   /* modals, dialogs */
+  --radius-pill: 9999px;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.25);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.45);
+  --shadow-xl: 0 24px 60px rgba(0,0,0,0.55);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Short alias tokens (used by ui_kits/dashboard + preview cards)
+   These mirror the canonical --color-* tokens above; both names are
+   supported so older kit CSS keeps working.
+   ═══════════════════════════════════════════════════════════════ */
+:root,
+[data-theme="midnight"],
+[data-theme="classic"] {
+  --bg-page:    var(--color-bg);
+  --bg-1:       var(--color-bg-input);
+  --bg-2:       var(--color-bg-secondary);
+  --bg-hover:   var(--color-bg-hover);
+  --bg-active:  var(--color-sidebar-active-bg);
+
+  --fg-1:       var(--color-text);
+  --fg-2:       var(--color-text-secondary);
+  --fg-3:       var(--color-text-muted);
+  --fg-4:       var(--color-text-faint);
+
+  --border-1:   var(--color-border);
+  --border-2:   var(--color-border-light);
+
+  --accent:     var(--color-accent);
+  --cta:        var(--color-btn-primary-bg);
+  --cta-hover:  var(--color-btn-primary-hover);
+
+  --status-green:  #22c55e;
+  --status-red:    #ef4444;
+  --status-amber:  #f59e0b;
+  --status-purple: #a855f7;
+  --status-gray:   #94a3b8;
+}
+
+/* Base body */
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}

@@ -184,6 +184,19 @@ def persist_live_session(
             skipped = final_state.get("skipped", 0)
             broken  = final_state.get("broken",  0)
             total   = final_state.get("total",   0)
+            # Aggregate counters say tests ran but per-test buffer is empty
+            # — TestRun will be created but the run-detail page won't have
+            # per-test rows. Surface this loudly so the empty Run Detail
+            # table on the UI is traceable to a real root cause (buffer TTL,
+            # dedup-skipped retry, or rpush failure in publish_event_batch).
+            if (passed + failed + skipped + broken) > 0:
+                logger.warning(
+                    "[Task %s] Live persist: event buffer empty for run=%s but "
+                    "final_state reports passed=%d failed=%d skipped=%d broken=%d. "
+                    "TestRun aggregates will be written; per-test TestCase rows "
+                    "cannot be reconstructed without the buffered events.",
+                    self.request.id, run_id, passed, failed, skipped, broken,
+                )
 
         # If total wasn't tracked explicitly, derive it from component counts
         total = total or (passed + failed + skipped + broken)
@@ -198,11 +211,12 @@ def persist_live_session(
             logger.error("[Task %s] Invalid project_id %s — aborting", self.request.id, project_id)
             return
 
-        # ── Resolve run UUID (use run_id if it looks like a UUID, else generate) ──
-        try:
-            run_uuid = _uuid_mod.UUID(run_id)
-        except ValueError:
-            run_uuid = _uuid_mod.uuid5(_uuid_mod.NAMESPACE_DNS, run_id)
+        # ── Resolve run UUID via the shared helper ────────────────────────────
+        # Keeps slug→UUID derivation in lockstep with stream_service.upsert_test_run
+        # and the LiveSessionState response, so the frontend's /runs/<id> link
+        # always resolves to the same row this task writes.
+        from app.services.stream_service import canonical_test_run_uuid
+        run_uuid = canonical_test_run_uuid(run_id)
 
         now = datetime.now(timezone.utc)
 
@@ -751,6 +765,183 @@ def run_agent_pipeline(
             ))
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
+
+
+@celery_app.task(
+    name="app.worker.tasks.generate_run_compare_report",
+    bind=True,
+    max_retries=1,
+    queue="ai_analysis",
+    time_limit=900,
+)
+def generate_run_compare_report(
+    self,
+    project_id: str,
+    left_run_id: str,
+    right_run_id: str,
+    suite_name: str | None = None,
+):
+    """Generate and cache the AI report for a deterministic run comparison."""
+    _bind_task_context(
+        self,
+        project_id=project_id,
+        left_run_id=left_run_id,
+        right_run_id=right_run_id,
+        suite_name=suite_name,
+    )
+
+    async def _run():
+        import uuid as _uuid
+        from app.db.postgres import AsyncSessionLocal
+        from app.services import run_compare_ai_service, run_compare_service
+
+        pid = _uuid.UUID(project_id)
+        left = _uuid.UUID(left_run_id)
+        right = _uuid.UUID(right_run_id)
+        async with AsyncSessionLocal() as db:
+            selection = {
+                "mode": "explicit",
+                "scope": "suite" if suite_name else "run",
+                "suite_name": suite_name,
+                "selection_reason": "AI report generated asynchronously for a saved comparison.",
+                "project_id": pid,
+                "branch": None,
+                "branch_mismatch": False,
+                "release_name": None,
+            } if suite_name else None
+            compare_payload = await run_compare_service.compare_runs(
+                db,
+                left,
+                right,
+                suite_name=suite_name,
+                selection=selection,
+            )
+            try:
+                report = await run_compare_ai_service.generate_and_save_report(
+                    db,
+                    project_id=pid,
+                    left_run_id=left,
+                    right_run_id=right,
+                    suite_name=suite_name,
+                    compare_payload=compare_payload,
+                )
+                # Worker owns the transaction boundary here — the service was
+                # converted to stage-only (flush, not commit) to satisfy the
+                # architectural test, so the worker has to commit explicitly.
+                await db.commit()
+                return report
+            except Exception as exc:
+                await db.rollback()
+                async with AsyncSessionLocal() as failure_db:
+                    await run_compare_ai_service.mark_failed(
+                        failure_db,
+                        project_id=pid,
+                        left_run_id=left,
+                        right_run_id=right,
+                        suite_name=suite_name,
+                        compare_payload=compare_payload,
+                        error_message=str(exc),
+                    )
+                    await failure_db.commit()
+                raise
+
+    try:
+        return _run_async(_run())
+    except Exception as exc:
+        logger.error("[Task %s] Run compare report failed: %s", self.request.id, exc, exc_info=True)
+        if self.request.retries >= self.max_retries:
+            _run_async(_send_to_dlq(
+                task_name=self.name,
+                task_id=self.request.id,
+                kwargs={
+                    "project_id": project_id,
+                    "left_run_id": left_run_id,
+                    "right_run_id": right_run_id,
+                    "suite_name": suite_name,
+                },
+                error=str(exc),
+            ))
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.precompute_suite_comparisons_for_run",
+    bind=True,
+    max_retries=1,
+    queue="ai_analysis",
+    time_limit=1800,
+)
+def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str):
+    """Precompute default latest-vs-previous suite comparison reports after nightly runs."""
+    _bind_task_context(self, run_id=test_run_id, project_id=project_id)
+
+    async def _run():
+        import uuid as _uuid
+        from sqlalchemy import func, select
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import TestCase
+        from app.services import run_compare_ai_service, run_compare_service
+
+        rid = _uuid.UUID(test_run_id)
+        pid = _uuid.UUID(project_id)
+        generated = 0
+        async with AsyncSessionLocal() as db:
+            suites_result = await db.execute(
+                select(TestCase.suite_name)
+                .where(
+                    TestCase.test_run_id == rid,
+                    TestCase.suite_name.is_not(None),
+                    func.trim(TestCase.suite_name) != "",
+                )
+                .distinct()
+            )
+            suites = [row.suite_name for row in suites_result.all() if row.suite_name]
+            for suite in suites:
+                try:
+                    previous, latest = await run_compare_service.resolve_latest_suite_pair(
+                        db,
+                        project_id=pid,
+                        suite_name=suite,
+                    )
+                    if latest.id != rid:
+                        continue
+                    selection = {
+                        "mode": "latest_vs_previous",
+                        "scope": "suite",
+                        "suite_name": suite,
+                        "selection_reason": "Precomputed after run completion for the latest suite run on this branch.",
+                        "project_id": pid,
+                        "branch": latest.branch,
+                        "branch_mismatch": previous.branch != latest.branch,
+                        "release_name": None,
+                    }
+                    compare_payload = await run_compare_service.compare_runs(
+                        db,
+                        previous.id,
+                        latest.id,
+                        suite_name=suite,
+                        selection=selection,
+                    )
+                    await run_compare_ai_service.generate_and_save_report(
+                        db,
+                        project_id=pid,
+                        left_run_id=previous.id,
+                        right_run_id=latest.id,
+                        suite_name=suite,
+                        compare_payload=compare_payload,
+                    )
+                    generated += 1
+                except LookupError:
+                    continue
+                except Exception as exc:
+                    logger.warning("[Task %s] Suite comparison precompute failed for %s: %s", self.request.id, suite, exc)
+        return {"generated": generated}
+
+    try:
+        return _run_async(_run())
+    except Exception as exc:
+        logger.error("[Task %s] Suite comparison precompute failed: %s", self.request.id, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
 
 
 @celery_app.task(
@@ -1617,3 +1808,192 @@ def dispatch_scheduled_digests(self):
             span.set_attribute("error.category", type(exc).__name__)
             raise
     logger.info("[Task %s] Digest dispatch completed", self.request.id)
+
+
+@celery_app.task(
+    name="app.worker.tasks.close_stale_live_sessions",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
+    """Periodic safety net for live sessions whose clients forget to send a
+    ``run_complete`` event.
+
+    Symptom this fixes: clients (especially raw curl/Postman users) post
+    test results without a closing ``run_complete``. The LiveSession row
+    stays ``status='active'`` forever, ``upsert_test_run`` never runs, and
+    the run only ever appears in Live Execution — Runs / Overview / Coverage
+    / Failures / Trends all read from ``test_runs`` so they show 0.
+
+    Heuristic: any active LiveSession whose Redis state hash either no
+    longer exists (24h Redis TTL has expired = definitely orphaned) or
+    whose ``last_event_at`` is older than ``idle_minutes`` is closed via
+    the normal ``stream_service.close_session`` path. That path is
+    idempotent (it short-circuits if status='completed'), so a session
+    that was closed legitimately between the LIST and the per-row close
+    doesn't double-fire.
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import LiveSession
+    from app.services.stream_service import close_session
+    from app.streams.live_run_state import RedisLiveRunState
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=idle_minutes)
+        closed = 0
+        skipped_recent = 0
+        errors = 0
+
+        async with AsyncSessionLocal() as db:
+            active = (
+                await db.execute(
+                    select(LiveSession).where(LiveSession.status == "active")
+                )
+            ).scalars().all()
+
+            for session in active:
+                try:
+                    state = await RedisLiveRunState.get(session.run_id)
+                    last_event_iso = (state or {}).get("last_event_at")
+                    is_idle = True
+                    if last_event_iso:
+                        try:
+                            last_event = datetime.fromisoformat(last_event_iso)
+                            if last_event.tzinfo is None:
+                                last_event = last_event.replace(tzinfo=timezone.utc)
+                            is_idle = last_event < cutoff
+                        except Exception:
+                            # Malformed timestamp — treat as stale and close.
+                            is_idle = True
+
+                    if not is_idle:
+                        skipped_recent += 1
+                        continue
+
+                    await close_session(db, str(session.id))
+                    await db.commit()
+                    closed += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "close_stale_live_sessions: failed to close %s: %s",
+                        session.id, exc,
+                    )
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+
+        return {
+            "checked": len(active),
+            "closed": closed,
+            "skipped_recent": skipped_recent,
+            "errors": errors,
+            "idle_minutes": idle_minutes,
+        }
+
+    logger.info("[Task %s] close_stale_live_sessions starting (idle>%dm)",
+                self.request.id, idle_minutes)
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info("[Task %s] close_stale_live_sessions done: %s",
+                self.request.id, result)
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.notify_test_suite_owner",
+    bind=True,
+    max_retries=3,
+    queue="default",
+)
+def notify_test_suite_owner(
+    self,
+    *,
+    to_email: str,
+    owner_name: str,
+    test_name: str,
+    suite_name: str | None,
+    fail_count: int | None,
+    days: int,
+    project_id: str,
+    project_name: str | None,
+    latest_run_id: str | None,
+    latest_run_build: str | None,
+    is_fallback_owner: bool,
+    triggered_by: str | None = None,
+):
+    """Dispatch the "test is failing repeatedly" notification email.
+
+    Called from ``POST /api/v1/analytics/notify-owner`` after the caller has
+    already resolved the recipient. Kept idempotent-ish via a short dedup
+    window so a double-click doesn't fan out two emails.
+    """
+    import hashlib
+
+    dedup_key = (
+        f"testlookup:dedup:notify_owner:{project_id}:{to_email}:"
+        f"{hashlib.sha256(test_name.encode()).hexdigest()[:16]}"
+    )
+
+    async def _run():
+        if await _is_duplicate(dedup_key, ttl=300):
+            logger.info(
+                "[Task %s] notify_test_suite_owner: dedup hit for %s / %s",
+                self.request.id, to_email, test_name,
+            )
+            return {"queued": False, "reason": "deduplicated"}
+
+        from app.core.config import settings
+        from app.services.notification import email_service
+
+        fallback_note = " (assigned as the project default — no explicit suite owner)" if is_fallback_owner else ""
+        suite_clause = f" in suite \"{suite_name}\"" if suite_name else ""
+        run_clause = (
+            f"\nMost recent failing build: #{latest_run_build}" if latest_run_build else ""
+        )
+        triggered_clause = (
+            f"\nFlagged by: {triggered_by}" if triggered_by else ""
+        )
+        body = (
+            f"Hi {owner_name or 'there'},\n\n"
+            f"The test \"{test_name}\"{suite_clause} has been failing repeatedly "
+            f"over the last {days} day{'s' if days != 1 else ''}"
+            + (f" (failed {fail_count} time{'s' if fail_count != 1 else ''})" if fail_count else "")
+            + f".\n\nYou're receiving this because you're the test suite owner{fallback_note}.\n"
+            + run_clause + triggered_clause + "\n\n"
+            + "Open the Failures view in TestLookup to triage:\n"
+        )
+
+        dashboard_url = f"{settings.public_base_url}/failures?days={days}"
+        try:
+            await email_service.send_notification(
+                to=to_email,
+                title=f"⚠️ Recurring failure — {test_name}",
+                body=body,
+                event_type="test_owner_notification",
+                metadata={
+                    "project_name": project_name,
+                    "build_number": latest_run_build,
+                    "test_name": test_name,
+                    "suite_name": suite_name,
+                    "fail_count": fail_count,
+                    "window_days": days,
+                    "dashboard_url": dashboard_url,
+                },
+            )
+            return {"queued": True, "sent_to": to_email}
+        except Exception as exc:
+            logger.warning(
+                "[Task %s] notify_test_suite_owner email send failed for %s: %s",
+                self.request.id, to_email, exc,
+            )
+            raise
+
+    try:
+        return _run_async(_run())
+    except Exception as exc:
+        # Let Celery retry with backoff; max_retries=3 caps it.
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
