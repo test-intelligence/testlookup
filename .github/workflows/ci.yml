@@ -278,6 +278,38 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
 
+      # Stage client SDKs into the backend build context so the production
+      # Dockerfile can bake them into the image at /app/client_sdks (the
+      # ``/api/v1/sdk/{lang}`` download endpoint reads from there). Mirrors
+      # the staging step in homelabsetup/deploy-homelab.sh — without it the
+      # `COPY --from=builder /app/__client_sdks_staged ./client_sdks` line
+      # in backend/Dockerfile fails with "/app/__client_sdks_staged: not
+      # found" during the production build.
+      - name: Stage client SDKs into backend context
+        run: |
+          set -euo pipefail
+          STAGED_SDK="./backend/__client_sdks_staged"
+          rm -rf "$STAGED_SDK"
+          mkdir -p "$STAGED_SDK"
+          rsync -a \
+            --exclude='.pytest_cache' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            --exclude='node_modules' \
+            --exclude='.tox' \
+            --exclude='.mypy_cache' \
+            --exclude='.ruff_cache' \
+            --exclude='target' \
+            --exclude='build' \
+            --exclude='*.egg-info' \
+            --exclude='.coverage' \
+            --exclude='htmlcov' \
+            --exclude='.DS_Store' \
+            ./client/ "$STAGED_SDK/"
+          ls -la "$STAGED_SDK" | head -20
+
       - name: Build & push backend
         uses: docker/build-push-action@v7
         with:

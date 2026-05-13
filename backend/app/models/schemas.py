@@ -3263,3 +3263,23 @@ class NotifyTestOwnerResponse(BaseModel):
     # When ``queued=False`` this carries a user-readable reason
     # ("Test not found in window", "Suite has no owner", etc.).
     reason: Optional[str] = None
+
+
+class ClassifyUncategorizedRequest(BaseModel):
+    """POST body for /api/v1/analytics/classify-uncategorized — bulk-assign a
+    failure category to every test case currently labelled UNKNOWN (or
+    NULL) in the requested project + window."""
+    project_id: uuid.UUID
+    category: FailureCategory
+    days: int = Field(30, ge=1, le=365)
+    # Optional: restrict to a single suite (e.g. when the user is on the
+    # failures page filtered by a specific suite).
+    suite_name: Optional[str] = Field(None, max_length=500)
+
+
+class ClassifyUncategorizedResponse(BaseModel):
+    updated: int
+    category: str
+    project_id: uuid.UUID
+    days: int
+    suite_name: Optional[str] = None

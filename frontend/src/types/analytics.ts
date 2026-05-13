@@ -35,6 +35,14 @@ export interface FailureCategoryItem {
 export interface TopFailingItem {
   test_name: string
   fail_count: number
+  /** Suite the failing test belongs to (NULL for tests with no suite tag). */
+  suite_name?: string | null
+  /** Class / module qualifier from the test runner output. */
+  class_name?: string | null
+  /** AI-resolved failure category (PRODUCT_BUG / INFRASTRUCTURE / FLAKY / …). */
+  failure_category?: string | null
+  /** ISO timestamp of the most recent failure in the window. */
+  last_failed?: string | null
 }
 
 export interface CoverageSummary {

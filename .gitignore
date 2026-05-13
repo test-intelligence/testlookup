@@ -67,6 +67,11 @@ BuildFailures/
 CSS_Samples/
 backend/celerybeat-schedule
 
+# Build-time SDK staging dir (created by deploy-homelab.sh and the CI
+# "Stage client SDKs" workflow step before ``docker build``; cleaned up
+# afterwards). Should never be committed.
+backend/__client_sdks_staged/
+
 # Local virtual environments (any variant beyond the already-ignored .venv/)
 .venv_local/
 .venv-*/

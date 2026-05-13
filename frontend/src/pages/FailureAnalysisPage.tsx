@@ -67,9 +67,14 @@ import type {
 import type { TrendPoint } from '@/types/metrics'
 
 // ── Window picker ──────────────────────────────────────────────────────────
-const WINDOWS = [7, 14, 30, 90] as const
+// 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
+// Overview/Runs/Live/Trends/Coverage so users get a single mental model.
+const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
-const WINDOW_KEY = 'tl.failures.window'
+// ``.v2`` invalidates the legacy ``tl.failures.window`` value so users who
+// had saved 30d before the 24h-default change get reset to the new default
+// on next visit. Picking another window still persists going forward.
+const WINDOW_KEY = 'tl.failures.window.v2'
 
 // ── Verdict ────────────────────────────────────────────────────────────────
 type Verdict = 'REPEAT_FAILURE' | 'FLAKY' | 'FIRST_TIME' | 'RECOVERING' | 'STABLE' | 'PENDING'
@@ -363,7 +368,7 @@ function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window
                 : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
             )}
           >
-            {w}d
+            {w === 1 ? '24h' : `${w}d`}
           </button>
         )
       })}
@@ -380,7 +385,7 @@ interface IssueRowSpec {
 }
 
 function VerdictCard({
-  model, verdict, summary, lede, issues, ctas,
+  model, verdict, summary, lede, issues, ctas, topFailing,
 }: {
   model: StabilityModel
   verdict: Verdict
@@ -388,6 +393,7 @@ function VerdictCard({
   lede: React.ReactNode
   issues: IssueRowSpec[]
   ctas: { primary?: IssueRowSpec['cta']; secondary: IssueRowSpec['cta'][] }
+  topFailing: TopFailingItem[]
 }) {
   const t = VERDICT_THEME[verdict]
   return (
@@ -445,6 +451,7 @@ function VerdictCard({
       <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
         <StabilityMeter model={model} verdict={verdict} />
         <DimensionGrid dimensions={model.dimensions} />
+        <SuiteFailureBreakdown topFailing={topFailing} />
       </div>
     </section>
   )
@@ -563,6 +570,82 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
           <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Suite-level failure breakdown ─────────────────────────────────────────
+// Surfaces which test suites are accumulating failures in the current
+// window so the verdict isn't just "X tests broken" without context. Bins
+// the topFailing list by ``suite_name`` (server returns it per row),
+// sorts by total failures, and shows the top 4 suites + an "Other" row.
+function SuiteFailureBreakdown({ topFailing }: { topFailing: TopFailingItem[] }) {
+  const rows = useMemo(() => {
+    const byBin = new Map<string, { suite: string; failures: number; tests: number }>()
+    for (const t of topFailing) {
+      const suite = (t.suite_name && t.suite_name.trim()) || 'Unknown Suite'
+      const cur = byBin.get(suite) ?? { suite, failures: 0, tests: 0 }
+      cur.failures += t.fail_count
+      cur.tests += 1
+      byBin.set(suite, cur)
+    }
+    return [...byBin.values()].sort((a, b) => b.failures - a.failures)
+  }, [topFailing])
+
+  if (rows.length === 0) return null
+
+  const totalFailures = rows.reduce((s, r) => s + r.failures, 0)
+  const head = rows.slice(0, 4)
+  const tail = rows.slice(4)
+  const tailRow = tail.length > 0
+    ? {
+        suite: `+${tail.length} more`,
+        failures: tail.reduce((s, r) => s + r.failures, 0),
+        tests: tail.reduce((s, r) => s + r.tests, 0),
+      }
+    : null
+
+  return (
+    <div
+      className="rounded-sm px-2.5 py-2 border"
+      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+    >
+      <div
+        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between mb-1.5"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        <span>Suites with failures</span>
+        <span className="text-[var(--color-text-faint)] font-medium">{rows.length}</span>
+      </div>
+      <ul className="m-0 p-0 list-none space-y-1">
+        {head.map(r => {
+          const pct = totalFailures > 0 ? Math.round((r.failures / totalFailures) * 100) : 0
+          return (
+            <li key={r.suite} className="flex items-center gap-2 text-[11.5px]">
+              <span className="truncate flex-1 text-[var(--color-text-secondary)]" title={r.suite}>
+                {r.suite}
+              </span>
+              <span className="tabular-nums text-[var(--color-text-muted)]">
+                {r.tests} test{r.tests === 1 ? '' : 's'}
+              </span>
+              <div className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
+                <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: '#ef4444' }} />
+              </div>
+              <span className="tabular-nums font-semibold text-[var(--color-text)] min-w-[28px] text-right">
+                {r.failures}
+              </span>
+            </li>
+          )
+        })}
+        {tailRow && (
+          <li className="flex items-center gap-2 text-[11.5px] text-[var(--color-text-faint)]">
+            <span className="flex-1 truncate italic">{tailRow.suite}</span>
+            <span className="tabular-nums">{tailRow.tests} tests</span>
+            <span className="w-12" aria-hidden />
+            <span className="tabular-nums min-w-[28px] text-right">{tailRow.failures}</span>
+          </li>
+        )}
+      </ul>
     </div>
   )
 }
@@ -1314,7 +1397,9 @@ export default function FailureAnalysisPage() {
 
   const [days, setDays] = useState<Window>(() => {
     const saved = Number(localStorage.getItem(WINDOW_KEY))
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 30
+    // Default: last 24h. Previously-saved choice wins so existing users
+    // keep theirs.
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
   })
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 
@@ -1395,6 +1480,46 @@ export default function FailureAnalysisPage() {
       toast.error(detail)
     } finally {
       setNotifyingOwner(false)
+    }
+  }
+
+  // Classify modal — opened by the "Category unknown" issue row CTA. Lets
+  // the user bulk-assign a category (Flaky / Product Bug / Infrastructure /
+  // Test Data / Automation Defect) to every uncategorised failure in the
+  // current project + window. The selection persists via the
+  // ``/analytics/classify-uncategorized`` endpoint.
+  const [classifyOpen, setClassifyOpen] = useState(false)
+  const [classifying, setClassifying] = useState(false)
+
+  async function handleClassify(category: 'FLAKY' | 'PRODUCT_BUG' | 'INFRASTRUCTURE' | 'TEST_DATA' | 'AUTOMATION_DEFECT') {
+    if (!project?.id) {
+      toast.error('Pick a specific project to classify failures.')
+      return
+    }
+    if (classifying) return
+    setClassifying(true)
+    try {
+      type Resp = { updated: number; category: string }
+      const resp = await postData<Resp>('/api/v1/analytics/classify-uncategorized', {
+        project_id: project.id,
+        category,
+        days,
+        ...(selectedSuite ? { suite_name: selectedSuite } : {}),
+      })
+      toast.success(
+        resp.updated > 0
+          ? `Tagged ${resp.updated} failure${resp.updated === 1 ? '' : 's'} as ${category.replace('_', ' ').toLowerCase()}.`
+          : 'No uncategorised failures in this window.',
+      )
+      setClassifyOpen(false)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to classify failures'
+      toast.error(detail)
+    } finally {
+      setClassifying(false)
     }
   }
 
@@ -1504,14 +1629,11 @@ export default function FailureAnalysisPage() {
       ),
       cta: {
         label: 'Classify',
-        // High uncategorized share means the classifier — whichever mode is
-        // active — didn't match the failure pattern. The actionable surface
-        // is the Analysis Engine config on /settings/ai, where the user can
-        // switch modes (rules → ml/llm/auto), tune the confidence threshold,
-        // or train ML against existing labeled data. Non-admins land there
-        // read-only (the form disables inputs), which is still strictly more
-        // useful than the prior placeholder toast.
-        onClick: () => navigate('/settings/ai'),
+        // Opens the inline category picker (FLAKY / PRODUCT_BUG /
+        // INFRASTRUCTURE / TEST_DATA / AUTOMATION_DEFECT) — the user can
+        // bulk-label every uncategorised failure in the current project +
+        // window. Persists via /api/v1/analytics/classify-uncategorized.
+        onClick: () => setClassifyOpen(true),
       },
     })
   }
@@ -1606,6 +1728,7 @@ export default function FailureAnalysisPage() {
         lede={lede}
         issues={issues}
         ctas={verdictCtas}
+        topFailing={topFailing}
       />
 
       <CoverageRibbon stages={ribbonStages} />
@@ -1699,6 +1822,62 @@ export default function FailureAnalysisPage() {
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
+
+      {classifyOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Classify uncategorised failures"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !classifying && setClassifyOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
+              Classify uncategorised failures
+            </h2>
+            <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+              Every failing test in the last <strong>{days}</strong> day{days === 1 ? '' : 's'}
+              {selectedSuite && <> in <code className="font-mono">{selectedSuite}</code></>} that
+              has no category yet will be tagged with the selected category.
+            </p>
+
+            <div className="mt-4 space-y-2">
+              {([
+                { id: 'FLAKY',             label: 'Flaky',              desc: 'Intermittent — passes on retry; race or fixture issue.' },
+                { id: 'PRODUCT_BUG',       label: 'Product Bug',        desc: 'Regression in the product under test.' },
+                { id: 'INFRASTRUCTURE',    label: 'Infrastructure',     desc: 'Environment / network / platform failure.' },
+                { id: 'TEST_DATA',         label: 'Test Data',          desc: 'Bad fixture, missing seed, stale snapshot.' },
+                { id: 'AUTOMATION_DEFECT', label: 'Automation Defect',  desc: 'Test code is broken, not the product.' },
+              ] as const).map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  disabled={classifying}
+                  onClick={() => handleClassify(c.id)}
+                  className="w-full text-left px-3 py-2.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]/40 transition-colors disabled:opacity-50"
+                >
+                  <div className="text-[13px] font-medium text-[var(--color-text)]">{c.label}</div>
+                  <div className="text-[11.5px] text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setClassifyOpen(false)}
+                disabled={classifying}
+                className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
