@@ -30,7 +30,7 @@ from difflib import SequenceMatcher
 from typing import Any, Optional
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import LaunchStatus, TestCase, TestRun
@@ -345,6 +345,14 @@ async def resolve_latest_suite_pair(
     if not suite_key:
         raise ValueError("suite_name is required")
 
+    # Match a run by either the run-level suite label (``TestRun.primary_suite_name``,
+    # stamped by upsert_test_run on session-close for live runs) or by any
+    # per-run TestCase row carrying the suite name. The TestCase-only path
+    # used to miss live_stream runs whose per-test rows hadn't been
+    # persisted (persist_live_session edge cases), even though the run's
+    # primary_suite_name was set — producing a "No completed runs found
+    # for suite …" 404 even when the user picked that suite from the runs
+    # list.
     suite_exists = (
         select(TestCase.id)
         .where(
@@ -353,12 +361,16 @@ async def resolve_latest_suite_pair(
         )
         .exists()
     )
+    suite_match = or_(
+        func.lower(func.trim(TestRun.primary_suite_name)) == suite_key,
+        suite_exists,
+    )
     latest_result = await db.execute(
         select(TestRun)
         .where(
             TestRun.project_id == project_id,
             TestRun.status != LaunchStatus.IN_PROGRESS,
-            suite_exists,
+            suite_match,
         )
         .order_by(func.coalesce(TestRun.end_time, TestRun.created_at).desc())
         .limit(1)
@@ -379,7 +391,7 @@ async def resolve_latest_suite_pair(
             TestRun.id != latest.id,
             TestRun.status != LaunchStatus.IN_PROGRESS,
             branch_filter,
-            suite_exists,
+            suite_match,
         )
         .order_by(func.coalesce(TestRun.end_time, TestRun.created_at).desc())
         .limit(1)
