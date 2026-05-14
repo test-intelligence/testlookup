@@ -135,6 +135,79 @@ class TestWorkflowState:
         assert "stage_metrics" in hints
 
 
+# ── Agent Observability Summary ──────────────────────────────────────────────
+
+
+class TestAgentObservabilitySummary:
+    """Decision-centric observability rollups are deterministic."""
+
+    def test_summary_rolls_up_cost_latency_fallback_errors_and_quality(self):
+        from datetime import datetime, timedelta, timezone
+
+        from app.services.agent_cost_service import build_agent_observability_summary
+
+        now = datetime.now(timezone.utc)
+        stages = [
+            types.SimpleNamespace(
+                stage_name="analysis",
+                status="completed",
+                started_at=now,
+                completed_at=now + timedelta(seconds=2),
+                input_tokens=100,
+                output_tokens=50,
+                total_tokens=150,
+                llm_calls_count=1,
+                cost_usd=0.0123,
+                fallback_used=False,
+                fallback_reason=None,
+                error_category=None,
+                confidence_score=90,
+                evidence_count=3,
+                route_rationale="failed tests found",
+            ),
+            types.SimpleNamespace(
+                stage_name="summary",
+                status="failed",
+                started_at=now + timedelta(seconds=3),
+                completed_at=now + timedelta(seconds=6),
+                input_tokens=200,
+                output_tokens=75,
+                total_tokens=275,
+                llm_calls_count=1,
+                cost_usd=0.045,
+                fallback_used=True,
+                fallback_reason="llm_timeout",
+                error_category="timeout",
+                confidence_score=60,
+                evidence_count=5,
+                route_rationale="summary required",
+            ),
+        ]
+
+        summary = build_agent_observability_summary(
+            stages,
+            cost_summary={
+                "total_input_tokens": 300,
+                "total_output_tokens": 125,
+                "total_tokens": 425,
+                "total_llm_calls": 2,
+                "total_cost_usd": 0.0573,
+            },
+            alerts=[{"type": "repeated_failure"}],
+        )
+
+        assert summary["stage_count"] == 2
+        assert summary["latency"]["total_stage_duration_seconds"] == 5
+        assert summary["tokens"]["total"] == 425
+        assert summary["cost"]["total_usd"] == 0.0573
+        assert summary["fallback"]["count"] == 1
+        assert summary["errors"]["by_category"] == {"timeout": 1}
+        assert summary["quality"]["avg_confidence_score"] == 75
+        assert summary["quality"]["total_evidence_count"] == 8
+        assert summary["alerts"]["by_type"] == {"repeated_failure": 1}
+        assert summary["per_agent"][0]["route_rationale"] == "failed tests found"
+
+
 # ── Alert Thresholds ─────────────────────────────────────────────────────────
 
 

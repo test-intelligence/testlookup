@@ -45,7 +45,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useProjectStore } from '@/store/projectStore'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { searchService } from '@/services/searchService'
 import type { SearchType } from '@/services/searchService'
 import type {
@@ -1025,6 +1025,11 @@ export default function SearchPage() {
   const [isSearching, setIsSearching] = useState(false)
   const [response, setResponse] = useState<GlobalSearchResponse | null>(null)
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
+  // Project-scoped totals from /api/v1/search/entity-counts — the
+  // fallback for the chip + Index Health counts when no query is
+  // active. Without this the chips and rows showed 0 forever even
+  // though the data was sitting in Postgres.
+  const [totalCounts, setTotalCounts] = useState<Record<SearchEntityType, number> | null>(null)
   const [recents, setRecents] = useState<RecentSearch[]>(() => readRecents())
   const [saved, setSaved] = useState<SavedSearch[]>(() => readSaved())
 
@@ -1038,6 +1043,21 @@ export default function SearchPage() {
       .catch(() => { if (alive) setIndexStatus({ status: 'unknown', document_count: 0, last_indexed_at: null }) })
     return () => { alive = false }
   }, [])
+
+  // ── Fetch project-scoped entity totals on mount + on project change ──
+  // ALL_PROJECTS_ID is a frontend sentinel — convert to undefined so the
+  // request omits the param and the backend scopes by accessible projects.
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  useEffect(() => {
+    let alive = true
+    const scoped = activeProjectId && activeProjectId !== ALL_PROJECTS_ID
+      ? activeProjectId
+      : undefined
+    searchService.getEntityCounts(scoped)
+      .then(c => { if (alive) setTotalCounts(c) })
+      .catch(() => { if (alive) setTotalCounts(null) })
+    return () => { alive = false }
+  }, [activeProjectId])
 
   // ── Run a search (or no-op when the query is empty) ──────────────────
   const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope) => {
@@ -1157,27 +1177,34 @@ export default function SearchPage() {
   }
 
   // ── Scope counts ────────────────────────────────────────────────────
+  // When a search response is active, the chip counts reflect the
+  // response's per-entity hits (what matched the query). When no
+  // response is active, the chips fall back to the project-scoped
+  // totals fetched from /api/v1/search/entity-counts — so a freshly
+  // loaded page shows real numbers, not 0s. Empty record while the
+  // initial fetch is in flight is treated as zeros (no flash of stale
+  // numbers from a different project).
   const entityCounts: Record<SearchEntityType, number> = useMemo(() => {
-    const ec = response?.entity_counts ?? {}
+    const source = (response?.entity_counts
+      ?? totalCounts
+      ?? {}) as Partial<Record<SearchEntityType, number>>
     return {
-      test_case: Number(ec.test_case ?? 0),
-      test_run:  Number(ec.test_run ?? 0),
-      suite:     Number(ec.suite ?? 0),
-      defect:    Number(ec.defect ?? 0),
-      flaky_test:Number(ec.flaky_test ?? 0),
-      release:   Number(ec.release ?? 0),
+      test_case: Number(source.test_case ?? 0),
+      test_run:  Number(source.test_run ?? 0),
+      suite:     Number(source.suite ?? 0),
+      defect:    Number(source.defect ?? 0),
+      flaky_test:Number(source.flaky_test ?? 0),
+      release:   Number(source.release ?? 0),
     }
-  }, [response])
+  }, [response, totalCounts])
 
-  // Scope chip counts — show entity counts when we have a response, otherwise
-  // show the per-entity index counts from `getIndexStatus` (aggregate split
-  // evenly is a no-op since the backend only returns one count today, so we
-  // fall back to "—" when no per-entity number exists).
   const totalIndexed = indexStatus?.document_count ?? 0
   const scopeCounts: Record<EntityScope, number> = useMemo(() => {
     const summed = Object.values(entityCounts).reduce((s, n) => s + n, 0)
     return {
-      all:      response ? summed : totalIndexed,
+      // "All" chip: sum of the entity counts. Same source as the
+      // individual chips so the numbers tally.
+      all:      summed || totalIndexed,
       tests:    entityCounts.test_case,
       runs:     entityCounts.test_run,
       suites:   entityCounts.suite,
@@ -1185,7 +1212,7 @@ export default function SearchPage() {
       flaky:    entityCounts.flaky_test,
       releases: entityCounts.release,
     }
-  }, [entityCounts, response, totalIndexed])
+  }, [entityCounts, totalIndexed])
 
   const indexHealthRows = useMemo(
     () => buildEntityHealth(indexStatus, entityCounts),

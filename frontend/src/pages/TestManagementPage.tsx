@@ -404,6 +404,14 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
   }
 
   const handleRequestReview = async () => {
+    // Defensive guard mirroring the render-time gate: automation rows
+    // carry a per-run test_cases.id, which is not a managed_test_cases
+    // row and would 404. Surface a clear toast instead of the generic
+    // "Failed to request review" if this path is ever reached.
+    if (caseItem.source === 'automation') {
+      toast.error('Automation rows must be promoted to a managed test case before a review can be requested.')
+      return
+    }
     setRequestingReview(true)
     try {
       await testManagementService.requestReview(caseItem.id)
@@ -536,7 +544,21 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                   </div>
                 </div>
               )}
-              {caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
+              {/*
+                Automation-source rows are synthesised from per-run
+                test_cases — they don't yet exist in managed_test_cases,
+                so the review endpoint would 404 on caseItem.id. Hide
+                the button rather than show a broken control; an
+                explanatory note makes the gap visible to QA leads
+                evaluating whether to author a managed test case from
+                this automation result.
+              */}
+              {caseItem.source === 'automation' ? (
+                <div className="pt-2 text-xs text-[var(--color-text-muted)]">
+                  Review requests are only available on managed test cases.
+                  Automation rows must be promoted to managed before they can be reviewed.
+                </div>
+              ) : caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' ? (
                 <div className="pt-2">
                   <button
                     onClick={handleRequestReview}
@@ -547,7 +569,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                     Request Review
                   </button>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
 

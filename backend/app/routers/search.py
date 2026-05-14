@@ -1,14 +1,25 @@
 """Search endpoint — keyword, semantic (ChromaDB), hybrid, and global modes."""
+import asyncio
 import time
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, resolve_project_scope
 from app.core.metrics import semantic_search_duration_seconds, semantic_search_total
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import (
+    Defect,
+    FlakyQuarantineRequest,
+    Release,
+    TestCase,
+    TestRun,
+    TestSuite,
+    User,
+)
 from app.services.resilience import with_fallback
 from app.services.search_service import search_test_cases_query
 
@@ -29,6 +40,99 @@ async def trigger_reindex(project_id: str | None = None, full: bool = False):
     from app.worker.tasks import reindex_search
     task = reindex_search.apply_async(kwargs={"project_id": project_id, "full": full})
     return {"task_id": task.id, "status": "queued", "mode": "full" if full else "incremental"}
+
+
+@router.get("/entity-counts")
+async def get_entity_counts(
+    project_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Project-scoped totals for the /search page's chip + Index Health panels.
+
+    The page previously sourced these counts from ``response.entity_counts`` —
+    the per-query result counts — so the user saw 0 everywhere before they
+    typed anything. The chip count for ``Tests`` was meant to read "how many
+    test cases exist in this project", not "how many match the empty query".
+    This endpoint fills that gap with one round trip of cheap COUNT queries.
+
+    Filtering:
+      * If ``project_id`` is provided, scope to that single project (after
+        tenant-access validation by ``resolve_project_scope``).
+      * If ``project_id`` is omitted (or the All-Projects sentinel resolved
+        to ``None``), scope to the union of projects the caller can see;
+        ADMIN gets the full instance.
+
+    Notes:
+      * ``test_case`` joins against ``test_runs`` because test_cases hold a
+        ``test_run_id`` FK, not a direct ``project_id`` column.
+      * ``flaky_test`` counts ``flaky_quarantine_requests`` rows in *any*
+        state — proposed/approved/quarantined/re_quarantined — because the
+        /search page's ``Flaky`` chip is "everything the system has seen
+        flagged as flaky", not just live quarantines. Released rows are
+        excluded since those are no longer flagged-as-flaky.
+    """
+    scoped_project_id, allowed_project_ids = await resolve_project_scope(
+        db, current_user, project_id,
+    )
+
+    # When a specific project is requested, scope every count to that single
+    # project. Otherwise scope by accessible-project set (None = ADMIN-all).
+    def _apply_project_filter(stmt, column):
+        if scoped_project_id is not None:
+            return stmt.where(column == uuid.UUID(str(scoped_project_id)))
+        if allowed_project_ids is not None:
+            if not allowed_project_ids:
+                # Caller has no project memberships — return 0 instead of all rows.
+                return stmt.where(False)
+            return stmt.where(column.in_(allowed_project_ids))
+        return stmt
+
+    async def _count(stmt) -> int:
+        result = await db.execute(stmt)
+        return int(result.scalar_one() or 0)
+
+    test_runs_q = _apply_project_filter(
+        select(func.count(TestRun.id)), TestRun.project_id,
+    )
+    # ``test_cases`` has no project_id column; join via TestRun.
+    test_cases_q = _apply_project_filter(
+        select(func.count(TestCase.id)).join(TestRun, TestCase.test_run_id == TestRun.id),
+        TestRun.project_id,
+    )
+    suites_q = _apply_project_filter(
+        select(func.count(TestSuite.id)), TestSuite.project_id,
+    )
+    defects_q = _apply_project_filter(
+        select(func.count(Defect.id)), Defect.project_id,
+    )
+    flaky_q = _apply_project_filter(
+        select(func.count(FlakyQuarantineRequest.id)).where(
+            FlakyQuarantineRequest.status != "RELEASED",
+        ),
+        FlakyQuarantineRequest.project_id,
+    )
+    releases_q = _apply_project_filter(
+        select(func.count(Release.id)), Release.project_id,
+    )
+
+    test_run, test_case, suite, defect, flaky_test, release = await asyncio.gather(
+        _count(test_runs_q),
+        _count(test_cases_q),
+        _count(suites_q),
+        _count(defects_q),
+        _count(flaky_q),
+        _count(releases_q),
+    )
+
+    return {
+        "test_case":  test_case,
+        "test_run":   test_run,
+        "suite":      suite,
+        "defect":     defect,
+        "flaky_test": flaky_test,
+        "release":    release,
+    }
 
 
 @router.get("/similar/{test_case_id}")

@@ -1064,6 +1064,98 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct }: {
   )
 }
 
+// ── Comparison strip ──────────────────────────────────────────────────────
+// Renders the current-window vs prior-window deltas after the user clicks
+// "Compare to previous window" in verdictCtas. Designed to be cheap: three
+// metric rows (failures, total runs, pass rate), no charts. The label on
+// each delta is colourised the way a triager would expect — fewer failures
+// = green, more failures = red; pass rate inverted.
+type ComparisonStats = { failed: number; total: number; passRate: number; days: number }
+
+function ComparisonStrip({
+  current, prior, windowDays,
+}: { current: ComparisonStats; prior: ComparisonStats; windowDays: number }) {
+  const failedDelta = current.failed - prior.failed
+  const totalDelta  = current.total  - prior.total
+  const rateDelta   = current.passRate - prior.passRate
+
+  // ``deltaColour`` returns CSS values rather than Tailwind classes so the
+  // direction-vs-good logic stays explicit at each call site — a higher
+  // failure count is bad, a higher pass rate is good.
+  const RED   = '#fca5a5'
+  const GREEN = '#86efac'
+  const NEUTRAL = 'var(--color-text-muted)'
+  const colourForFailureDelta = (delta: number): string =>
+    delta === 0 ? NEUTRAL : (delta > 0 ? RED : GREEN)
+  const colourForRateDelta = (delta: number): string =>
+    Math.abs(delta) < 0.01 ? NEUTRAL : (delta > 0 ? GREEN : RED)
+
+  return (
+    <CardShell
+      title="Compare to previous window"
+      rightSlot={<span>last {windowDays}d vs prior {windowDays}d</span>}
+    >
+      <div className="px-4 py-3.5">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+          Aggregated from daily trends. Prior window = the {prior.days} days immediately before this window.
+        </p>
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          <ComparisonCell
+            label="Failures"
+            current={current.failed}
+            prior={prior.failed}
+            delta={failedDelta}
+            deltaColor={colourForFailureDelta(failedDelta)}
+            formatter={(n) => Intl.NumberFormat().format(n)}
+          />
+          <ComparisonCell
+            label="Total runs"
+            current={current.total}
+            prior={prior.total}
+            delta={totalDelta}
+            deltaColor={NEUTRAL}
+            formatter={(n) => Intl.NumberFormat().format(n)}
+          />
+          <ComparisonCell
+            label="Pass rate"
+            current={current.passRate}
+            prior={prior.passRate}
+            delta={rateDelta}
+            deltaColor={colourForRateDelta(rateDelta)}
+            formatter={(n) => `${n.toFixed(1)}%`}
+          />
+        </div>
+      </div>
+    </CardShell>
+  )
+}
+
+function ComparisonCell({
+  label, current, prior, delta, deltaColor, formatter,
+}: {
+  label: string
+  current: number
+  prior: number
+  delta: number
+  deltaColor: string
+  formatter: (n: number) => string
+}) {
+  const arrow = delta === 0 ? '—' : (delta > 0 ? '↑' : '↓')
+  return (
+    <div
+      className="rounded-md border"
+      style={{ padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+    >
+      <div className="text-[11px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</div>
+      <div className="mt-1 text-[18px] font-semibold text-[var(--color-text)]">{formatter(current)}</div>
+      <div className="mt-0.5 text-[11.5px]" style={{ color: deltaColor }}>
+        {arrow} {formatter(Math.abs(delta))} <span className="text-[var(--color-text-muted)]">vs prior {formatter(prior)}</span>
+      </div>
+    </div>
+  )
+}
+
+
 // ── Failure timeline ──────────────────────────────────────────────────────
 function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number }) {
   const byDate = new Map<string, { passed: number; failed: number; skipped: number }>()
@@ -1409,10 +1501,28 @@ export default function FailureAnalysisPage() {
   const suiteFilter = selectedSuite || null
   const { options: suiteOptions } = useSuiteOptions(days)
 
+  // ── Compare-to-previous-window toggle ────────────────────────────────
+  // The "Compare to previous window" CTA flips this on, which triggers a
+  // second trend fetch covering twice the window. We split that into
+  // current + prior halves to compute deltas without a bespoke backend
+  // endpoint. The toggle stays page-local so a stale comparison can't
+  // leak across navigations.
+  const [comparing, setComparing] = useState(false)
+
   const { data: flakyData,    isLoading: flakyLoading    } = useFlakyTests(days, suiteFilter)
   const { data: categoryData, isLoading: categoryLoading } = useFailureCategories(days, suiteFilter)
   const { data: topData,      isLoading: topLoading      } = useTopFailing(days, suiteFilter)
   const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days, suiteFilter)
+  // Double-window trend used for prior-vs-current delta computation.
+  // When the user hasn't enabled comparison, this keys on ``days`` (the
+  // same key as the primary fetch above), so SWR dedupes and no second
+  // request is issued. When ``comparing`` is on, the hook re-keys on
+  // ``days * 2`` and fetches the extended window, which we split into
+  // halves to derive the prior-window stats.
+  const compareDays = comparing ? days * 2 : days
+  const { data: compareTrendsData, isLoading: compareLoading } = useTrendData(
+    compareDays, suiteFilter,
+  )
   // Surface the suite of the most-recent failing run in the header so a user
   // landing on this page can immediately see which test suite owns the
   // failures they're about to triage.
@@ -1423,6 +1533,35 @@ export default function FailureAnalysisPage() {
   const categories = useMemo<FailureCategoryItem[]>(() => normaliseList<FailureCategoryItem>(categoryData), [categoryData])
   const topFailing = useMemo<TopFailingItem[]>(() => normaliseList<TopFailingItem>(topData), [topData])
   const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
+
+  // Comparison stats — only computed when ``comparing`` is true. We
+  // split the double-window trend into "prior" (older half) and
+  // "current" (newer half) and aggregate each. Trend points are
+  // already date-sorted ascending by the backend; if the upstream
+  // ordering ever changes, the sort below makes this resilient.
+  const comparison = useMemo(() => {
+    if (!comparing) return null
+    const points = (compareTrendsData?.data ?? []).slice().sort(
+      (a, b) => a.date.localeCompare(b.date),
+    )
+    if (points.length < 2) return null
+    // Cut at the midpoint so prior == older half, current == newer half.
+    // Odd counts give the extra day to the current window — feels more
+    // honest when the user is looking at "is it getting worse right now".
+    const mid = Math.floor(points.length / 2)
+    const prior   = points.slice(0, mid)
+    const current = points.slice(mid)
+    const summarise = (pts: TrendPoint[]) => {
+      const failed = pts.reduce((s, p) => s + (p.failed || 0), 0)
+      const passed = pts.reduce((s, p) => s + (p.passed || 0), 0)
+      const broken = pts.reduce((s, p) => s + (p.broken || 0), 0)
+      const total  = pts.reduce((s, p) => s + (p.total ?? (p.passed + p.failed + p.skipped + p.broken)), 0)
+      const denom  = passed + failed + broken
+      const passRate = denom > 0 ? (passed / denom) * 100 : 0
+      return { failed, total, passRate, days: pts.length }
+    }
+    return { prior: summarise(prior), current: summarise(current) }
+  }, [comparing, compareTrendsData])
 
   const model = useMemo(
     () => computeStabilityModel({ flaky, categories, topFailing, trend }),
@@ -1657,11 +1796,14 @@ export default function FailureAnalysisPage() {
       model.topFailingTest
         ? { label: 'Notify owner', onClick: () => handleNotifyOwner() } as IssueRowSpec['cta']
         : null,
-      // Trends already renders the full window's failure trend; using the
-      // same `days` value lets the user eyeball the current vs prior segment
-      // without a bespoke comparison endpoint. Cleaner than a numeric diff
-      // toast and gets the user closer to drilling into the regression.
-      { label: 'Compare to previous window', onClick: () => navigate(`/trends?days=${days}`) } as IssueRowSpec['cta'],
+      // Toggle an inline comparison panel that shows current-window vs
+      // prior-window deltas (failures, runs, pass rate). Cheap client-
+      // side compute on a double-window trend fetch — no bespoke
+      // backend endpoint needed.
+      {
+        label: comparing ? 'Hide comparison' : 'Compare to previous window',
+        onClick: () => setComparing(c => !c),
+      } as IssueRowSpec['cta'],
     ].filter((c): c is IssueRowSpec['cta'] => c !== null),
   }
 
@@ -1800,6 +1942,23 @@ export default function FailureAnalysisPage() {
             totalFailures={model.failedRuns}
             uncategorizedPct={model.uncategorizedPct}
           />
+          {comparing && (
+            comparison ? (
+              <ComparisonStrip
+                current={comparison.current}
+                prior={comparison.prior}
+                windowDays={days}
+              />
+            ) : (
+              <CardShell title="Compare to previous window" rightSlot={<span>last {days}d vs prior {days}d</span>}>
+                <div className="px-4 py-3.5 text-[12.5px] text-[var(--color-text-muted)]">
+                  {compareLoading
+                    ? 'Loading prior-window data…'
+                    : 'Not enough trend data to compare against the prior window yet.'}
+                </div>
+              </CardShell>
+            )
+          )}
           <FailureTimeline trend={trend} days={days} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">

@@ -114,6 +114,36 @@ class TestRunIntelligenceResponseShape:
         assert timeline.summary.total_stages == 0
         assert timeline.stages == []
         assert timeline.events == []
+        assert timeline.replay_integrity.replayable is False
+
+    def test_pipeline_replay_schema(self):
+        from app.models.schemas import PipelineReplayResponse
+
+        replay = PipelineReplayResponse(
+            pipeline_run_id=uuid.uuid4(),
+            test_run_id=uuid.uuid4(),
+            workflow_type="deep",
+            status="completed",
+            event_counts={"stage_completed": 2},
+        )
+        assert replay.schema_version == 1
+        assert replay.replayable is False
+        assert replay.stage_replay == []
+        assert replay.events == []
+        assert replay.audit_gaps.missing_start_events == []
+
+    def test_pipeline_event_log_health_schema(self):
+        from app.models.schemas import PipelineEventLogHealthResponse
+
+        health = PipelineEventLogHealthResponse(
+            status="degraded",
+            write_failure_count=2,
+            dead_letter_count=1,
+            dead_letter_limit=200,
+            recent_dead_letters=[{"event": {"event_type": "stage_started"}}],
+        )
+        assert health.status == "degraded"
+        assert health.dead_letter_count == 1
 
     def test_partial_errors_field(self):
         """The intelligence response can include partial_errors."""

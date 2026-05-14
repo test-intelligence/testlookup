@@ -138,6 +138,38 @@ async def check_defect_promotion_policy(
     }
 
 
+async def check_jira_ticket_creation_policy(
+    *,
+    project_id: str,
+    confidence_score: Optional[int] = None,
+    failure_category: Optional[str] = None,
+    source: str = "agent_triage",
+) -> dict[str, Any]:
+    """
+    Evaluate policy for direct Jira ticket creation from an agent.
+
+    Jira creation mutates an external system, so the default policy requires
+    human approval before the agent performs the side effect.
+    """
+    reasons = ["Jira ticket creation requires human approval"]
+    needs_approval = requires_approval(
+        ActionType.JIRA_TICKET_CREATION,
+        confidence_score=confidence_score,
+    )
+    return {
+        "requires_approval": needs_approval,
+        "initial_status": (
+            ActionStatus.PENDING_REVIEW if needs_approval else ActionStatus.APPROVED
+        ),
+        "policy_reasons": reasons if needs_approval else [],
+        "action_type": ActionType.JIRA_TICKET_CREATION,
+        "project_id": project_id,
+        "source": source,
+        "failure_category": failure_category,
+        "confidence_score": confidence_score,
+    }
+
+
 async def check_release_override_policy(
     *,
     current_recommendation: str,

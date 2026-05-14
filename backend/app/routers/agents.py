@@ -21,6 +21,8 @@ from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun, Use
 from app.models.schemas import (
     AgentPipelineResponse,
     AgentRunSummaryResponse,
+    PipelineEventLogHealthResponse,
+    PipelineReplayResponse,
     PipelineTimelineResponse,
     PipelineTimelineSummary,
     PipelineTimelineEventResponse,
@@ -337,7 +339,11 @@ async def get_pipeline_timeline(
     tokens, cost, latency, confidence, evidence count, route rationale,
     error taxonomy, fallback status, and alerts.
     """
-    from app.services.agent_cost_service import check_alerts, get_pipeline_cost_summary
+    from app.services.agent_cost_service import (
+        build_agent_observability_summary,
+        check_alerts,
+        get_pipeline_cost_summary,
+    )
     from app.services.pipeline_event_log import get_pipeline_timeline as get_pipeline_events
 
     # Verify pipeline exists
@@ -360,6 +366,14 @@ async def get_pipeline_timeline(
     )
     stages = stage_result.scalars().all()
     events = await _resolve_maybe_awaitable(get_pipeline_events(str(pipeline_id)))
+    from app.services.pipeline_replay_service import build_replay_integrity_summary
+
+    replay_integrity = build_replay_integrity_summary(pipeline, list(stages), list(events))
+    agent_observability = build_agent_observability_summary(
+        list(stages),
+        cost_summary=cost_summary,
+        alerts=alerts,
+    )
 
     # Pipeline-level timing
     pipeline_duration = None
@@ -384,6 +398,7 @@ async def get_pipeline_timeline(
         "completed_at": pipeline.completed_at.isoformat() if pipeline.completed_at else None,
         "duration_seconds": pipeline_duration,
         "cost_summary": cost_summary,
+        "agent_observability": agent_observability,
         "alerts": alerts,
         "stages": [
             {
@@ -427,7 +442,38 @@ async def get_pipeline_timeline(
             pending_stages=pending,
             progress_percent=progress,
         ).model_dump(mode="json"),
+        "replay_integrity": replay_integrity,
     }
+
+
+@router.get("/event-log/health", response_model=PipelineEventLogHealthResponse)
+async def get_pipeline_event_log_health(
+    _: Any = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """Return write-health details for the pipeline audit event log."""
+    from app.services.pipeline_event_log import get_event_log_health
+
+    health = get_event_log_health()
+    status = "degraded" if health.get("write_failure_count", 0) else "healthy"
+    return {
+        "status": status,
+        **health,
+    }
+
+
+@router.get("/pipelines/{pipeline_id}/replay", response_model=PipelineReplayResponse)
+async def get_pipeline_replay(
+    pipeline_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_active_user),
+):
+    """Return a deterministic replay document for audit reconstruction."""
+    from app.services.pipeline_replay_service import build_pipeline_replay
+
+    replay = await build_pipeline_replay(db, pipeline_id)
+    if replay is None:
+        raise HTTPException(404, detail="Pipeline run not found")
+    return replay
 
 
 @router.get("/active-runs")

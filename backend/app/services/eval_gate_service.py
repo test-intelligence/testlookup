@@ -15,6 +15,8 @@ Gate flow:
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -32,6 +34,151 @@ class GateStatus:
     FAIL = "FAIL"
     WARN = "WARN"
     NO_BASELINE = "NO_BASELINE"
+
+
+DEFAULT_AGENT_STACK_GATES: tuple[dict[str, str], ...] = (
+    {"task_type": "classification", "agent_name": "AnalysisAgent"},
+    {"task_type": "root_cause", "agent_name": "AnalysisAgent"},
+    {"task_type": "duplicate_detection", "agent_name": "DefectPromotionAgent"},
+    {"task_type": "release_decision", "agent_name": "ReleaseRiskAgent"},
+)
+_BLOCKING_GATE_STATUSES = {GateStatus.FAIL, GateStatus.NO_BASELINE}
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def _manifest_checksum(manifest: dict[str, Any]) -> str:
+    return hashlib.sha256(_canonical_json(manifest).encode("utf-8")).hexdigest()
+
+
+def build_agent_stack_gate_manifest(
+    *,
+    change_id: str,
+    prompt_versions: Optional[dict[str, str]] = None,
+    model_versions: Optional[dict[str, str]] = None,
+    routing_versions: Optional[dict[str, str]] = None,
+    required_gates: Optional[list[dict[str, str]]] = None,
+) -> dict[str, Any]:
+    """Build a deterministic manifest for prompt/model/routing changes."""
+    gates = required_gates or [dict(gate) for gate in DEFAULT_AGENT_STACK_GATES]
+    gates = sorted(
+        [
+            {
+                "task_type": str(gate["task_type"]),
+                "agent_name": str(gate["agent_name"]),
+                **({"dataset_id": str(gate["dataset_id"])} if gate.get("dataset_id") else {}),
+            }
+            for gate in gates
+        ],
+        key=lambda gate: (gate["task_type"], gate["agent_name"], gate.get("dataset_id", "")),
+    )
+    manifest = {
+        "schema_version": 1,
+        "change_id": change_id,
+        "prompt_versions": dict(sorted((prompt_versions or {}).items())),
+        "model_versions": dict(sorted((model_versions or {}).items())),
+        "routing_versions": dict(sorted((routing_versions or {}).items())),
+        "required_gates": gates,
+    }
+    manifest["manifest_checksum_sha256"] = _manifest_checksum(manifest)
+    return manifest
+
+
+def _version_change_summary(
+    manifest: dict[str, Any],
+    gate_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compare requested prompt/model/routing versions to active baselines."""
+    prompt_versions = manifest.get("prompt_versions") or {}
+    model_versions = manifest.get("model_versions") or {}
+    routing_versions = manifest.get("routing_versions") or {}
+    changes: list[dict[str, Any]] = []
+
+    for result in sorted(
+        gate_results,
+        key=lambda item: (str(item.get("task_type")), str(item.get("agent_name"))),
+    ):
+        agent_name = result.get("agent_name")
+        baseline = result.get("baseline_metrics") or {}
+        changes.append({
+            "task_type": result.get("task_type"),
+            "agent_name": agent_name,
+            "prompt_version": {
+                "candidate": prompt_versions.get(agent_name),
+                "baseline": baseline.get("prompt_version"),
+                "changed": prompt_versions.get(agent_name) != baseline.get("prompt_version"),
+            },
+            "model_name": {
+                "candidate": model_versions.get(agent_name),
+                "baseline": baseline.get("model_name"),
+                "changed": model_versions.get(agent_name) != baseline.get("model_name"),
+            },
+            "routing_version": {
+                "candidate": routing_versions.get(agent_name),
+                "baseline": None,
+                "changed": bool(routing_versions.get(agent_name)),
+            },
+        })
+    return changes
+
+
+def _overall_manifest_status(gate_results: list[dict[str, Any]]) -> str:
+    statuses = [result.get("status") for result in gate_results]
+    if any(status in _BLOCKING_GATE_STATUSES for status in statuses):
+        return GateStatus.FAIL
+    if any(status == GateStatus.WARN for status in statuses):
+        return GateStatus.WARN
+    return GateStatus.PASS
+
+
+async def evaluate_agent_stack_release_gate(
+    db: AsyncSession,
+    *,
+    change_id: str,
+    prompt_versions: Optional[dict[str, str]] = None,
+    model_versions: Optional[dict[str, str]] = None,
+    routing_versions: Optional[dict[str, str]] = None,
+    required_gates: Optional[list[dict[str, str]]] = None,
+) -> dict[str, Any]:
+    """Evaluate all required agent-stack gates before shipping a change."""
+    manifest = build_agent_stack_gate_manifest(
+        change_id=change_id,
+        prompt_versions=prompt_versions,
+        model_versions=model_versions,
+        routing_versions=routing_versions,
+        required_gates=required_gates,
+    )
+
+    gate_results: list[dict[str, Any]] = []
+    for gate in manifest["required_gates"]:
+        gate_results.append(
+            await evaluate_pre_release_gate(
+                db,
+                task_type=gate["task_type"],
+                agent_name=gate["agent_name"],
+                dataset_id=gate.get("dataset_id"),
+            )
+        )
+
+    blocking_gates = [
+        {
+            "task_type": result.get("task_type"),
+            "agent_name": result.get("agent_name"),
+            "status": result.get("status"),
+        }
+        for result in gate_results
+        if result.get("status") in _BLOCKING_GATE_STATUSES
+    ]
+    return {
+        "status": _overall_manifest_status(gate_results),
+        "manifest": manifest,
+        "gate_results": gate_results,
+        "blocking_gates": blocking_gates,
+        "version_changes": _version_change_summary(manifest, gate_results),
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 async def evaluate_pre_release_gate(

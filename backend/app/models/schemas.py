@@ -562,6 +562,19 @@ class PipelineTimelineSummary(BaseModel):
     progress_percent: float = 0.0
 
 
+class PipelineReplayAuditGaps(BaseModel):
+    missing_start_events: List[str] = Field(default_factory=list)
+    missing_terminal_events: List[str] = Field(default_factory=list)
+    missing_replay_checksums: List[str] = Field(default_factory=list)
+    missing_checkpoints: List[str] = Field(default_factory=list)
+    missing_final_state_checksum: bool = False
+
+
+class PipelineReplayIntegritySummary(BaseModel):
+    replayable: bool = False
+    audit_gaps: PipelineReplayAuditGaps = Field(default_factory=PipelineReplayAuditGaps)
+
+
 class PipelineTimelineResponse(BaseModel):
     schema_version: int = 2
     pipeline_run_id: uuid.UUID
@@ -571,10 +584,65 @@ class PipelineTimelineResponse(BaseModel):
     completed_at: Optional[Any] = None
     duration_seconds: Optional[float] = None
     cost_summary: Dict[str, Any] = Field(default_factory=dict)
+    agent_observability: Dict[str, Any] = Field(default_factory=dict)
     alerts: List[Dict[str, Any]] = Field(default_factory=list)
     stages: List[Dict[str, Any]] = Field(default_factory=list)
     events: List[PipelineTimelineEventResponse] = Field(default_factory=list)
     summary: PipelineTimelineSummary = Field(default_factory=PipelineTimelineSummary)
+    replay_integrity: PipelineReplayIntegritySummary = Field(default_factory=PipelineReplayIntegritySummary)
+
+
+class PipelineReplayEventResponse(BaseModel):
+    event_type: str
+    stage_name: Optional[str] = None
+    test_case_id: Optional[str] = None
+    timestamp: Optional[Any] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    source: Optional[str] = None
+
+
+class PipelineReplayStageResponse(BaseModel):
+    stage_name: str
+    status: str
+    started_at: Optional[Any] = None
+    completed_at: Optional[Any] = None
+    input_checksum_sha256: Optional[str] = None
+    output_checksum_sha256: Optional[str] = None
+    runtime_versions: Dict[str, str] = Field(default_factory=dict)
+    checkpoint_available: bool = False
+    restored_from_checkpoint: bool = False
+    decision_count: int = 0
+
+
+class PipelineReplayResponse(BaseModel):
+    schema_version: int = 1
+    pipeline_run_id: uuid.UUID
+    test_run_id: uuid.UUID
+    workflow_type: str
+    status: str
+    started_at: Optional[Any] = None
+    completed_at: Optional[Any] = None
+    analysis_mode_requested: Optional[str] = None
+    analysis_mode_resolved: Optional[str] = None
+    analysis_mode_resolution: Dict[str, Any] = Field(default_factory=dict)
+    final_state_checksum_sha256: Optional[str] = None
+    runtime_versions: Dict[str, str] = Field(default_factory=dict)
+    workflow_plan: Dict[str, Any] = Field(default_factory=dict)
+    workflow_verification: Dict[str, Any] = Field(default_factory=dict)
+    route_decisions: List[Dict[str, Any]] = Field(default_factory=list)
+    stage_replay: List[PipelineReplayStageResponse] = Field(default_factory=list)
+    events: List[PipelineReplayEventResponse] = Field(default_factory=list)
+    event_counts: Dict[str, int] = Field(default_factory=dict)
+    replayable: bool = False
+    audit_gaps: PipelineReplayAuditGaps = Field(default_factory=PipelineReplayAuditGaps)
+
+
+class PipelineEventLogHealthResponse(BaseModel):
+    status: str = "healthy"
+    write_failure_count: int = 0
+    dead_letter_count: int = 0
+    dead_letter_limit: int = 0
+    recent_dead_letters: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ── Run Intelligence Schemas ──────────────────────────────────

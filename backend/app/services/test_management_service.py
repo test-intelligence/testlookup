@@ -283,7 +283,29 @@ async def deprecate_managed_test_case(
 
 
 async def request_test_case_review(db: AsyncSession, case_id: uuid.UUID, current_user: User) -> TestCaseReview:
-    test_case = await get_test_case_or_404(db, case_id)
+    # If ``case_id`` doesn't resolve to a ManagedTestCase, check whether
+    # it's actually a per-run TestCase id — that's the common mistake
+    # when a caller hits this endpoint with an automation-row id from
+    # the merged /cases response. The clearer 400 with explicit guidance
+    # is much more debuggable than the bare "Test case not found".
+    managed = await db.get(ManagedTestCase, case_id)
+    if managed is None:
+        from app.models.postgres import TestCase as _TC
+        is_automation = await db.execute(
+            select(_TC.id).where(_TC.id == case_id).limit(1),
+        )
+        if is_automation.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "This id belongs to an automation TestCase row, not a "
+                    "managed_test_cases row. Automation rows must be "
+                    "promoted to a managed test case before a review can "
+                    "be requested."
+                ),
+            )
+        raise HTTPException(status_code=404, detail="Test case not found")
+    test_case = managed
     if test_case.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail=f"Cannot request review from status '{test_case.status}'")
     previous_status = test_case.status

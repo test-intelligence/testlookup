@@ -21,6 +21,7 @@ Improvements over baseline:
   - Structured audit logging with timing and decision rationale
 """
 import asyncio
+import copy
 import hashlib
 import json
 import time
@@ -55,6 +56,18 @@ _RETRY_CONFIDENCE_THRESHOLD = 40
 # Maximum retries for low-confidence analyses
 _MAX_ANALYSIS_RETRIES = 1
 
+# Non-LLM engines and deterministic fallbacks are repeatable; retrying them
+# just burns CPU/LLM fallback budget and returns the same low-confidence answer.
+_DETERMINISTIC_ANALYSIS_ENGINES = {"rules", "ml", "blocked"}
+_METADATA_CACHE_TTL_SECONDS = 30
+_METADATA_CACHE_MAX_ENTRIES = 64
+_METADATA_CACHE: dict[str, tuple[float, dict[str, dict]]] = {}
+_ANALYSIS_LATENCY_EWMA_BY_PROVIDER: dict[str, float] = {}
+_LOCAL_LLM_PROVIDERS = {"ollama", "lmstudio", "localai"}
+_REMOTE_LLM_PROVIDERS = {"openai", "gemini", "anthropic"}
+_HIGH_LATENCY_SECONDS = 20.0
+_LOW_LATENCY_SECONDS = 4.0
+
 
 def _hash_text(value: object) -> str | None:
     """Return a stable SHA-256 hash for audit fingerprints without raw text."""
@@ -69,6 +82,28 @@ def _hash_text(value: object) -> str | None:
 def _hash_json(value: object) -> str:
     payload = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _metadata_cache_key(tc_ids: list[str]) -> str:
+    return _hash_json({"test_case_ids": sorted(str(tc_id) for tc_id in tc_ids)})
+
+
+def _metadata_cache_get(cache_key: str) -> dict[str, dict] | None:
+    cached = _METADATA_CACHE.get(cache_key)
+    if not cached:
+        return None
+    cached_at, payload = cached
+    if time.monotonic() - cached_at > _METADATA_CACHE_TTL_SECONDS:
+        _METADATA_CACHE.pop(cache_key, None)
+        return None
+    return copy.deepcopy(payload)
+
+
+def _metadata_cache_set(cache_key: str, payload: dict[str, dict]) -> None:
+    if len(_METADATA_CACHE) >= _METADATA_CACHE_MAX_ENTRIES:
+        oldest_key = min(_METADATA_CACHE, key=lambda key: _METADATA_CACHE[key][0])
+        _METADATA_CACHE.pop(oldest_key, None)
+    _METADATA_CACHE[cache_key] = (time.monotonic(), copy.deepcopy(payload))
 
 
 class AnalysisAgent(BaseAgent):
@@ -157,8 +192,16 @@ class AnalysisAgent(BaseAgent):
         # Sort by priority: blockers/critical first, then by severity
         prioritized_ids = self._prioritize_tests(failed_ids, test_meta)
 
-        semaphore = asyncio.Semaphore(settings.LLM_MAX_CONCURRENT_ANALYSES)
-        concurrency = max(1, int(settings.LLM_MAX_CONCURRENT_ANALYSES or 1))
+        concurrency_policy = await self._resolve_adaptive_concurrency(state, len(prioritized_ids))
+        concurrency = concurrency_policy["concurrency"]
+        semaphore = asyncio.Semaphore(concurrency)
+        await self.log_decision(
+            pipeline_run_id,
+            decision_point="analysis_concurrency_policy",
+            chosen=str(concurrency),
+            rationale=concurrency_policy["rationale"],
+            context=concurrency_policy,
+        )
         results_list = []
         for start in range(0, len(prioritized_ids), concurrency):
             batch_ids = prioritized_ids[start:start + concurrency]
@@ -226,6 +269,7 @@ class AnalysisAgent(BaseAgent):
             f"{fallback_count}/{total_analysed} tests fell back from requested engine"
             if fallback_count else None
         )
+        self._record_latency_feedback(analyses)
 
         await self.mark_stage_done(
             pipeline_run_id,
@@ -239,6 +283,7 @@ class AnalysisAgent(BaseAgent):
                 "error_ratio": round(error_ratio, 3),
                 "mode_distribution": mode_counts,
                 "fallback_count": fallback_count,
+                "adaptive_concurrency": concurrency_policy,
             },
             analysis_mode=dominant_mode,
             fallback_reason=stage_fallback_reason,
@@ -284,6 +329,76 @@ class AnalysisAgent(BaseAgent):
 
         return sorted(failed_ids, key=_priority_key)
 
+    async def _resolve_adaptive_concurrency(self, state: dict, total_tests: int) -> dict:
+        """Choose per-run analysis fan-out from engine, provider, latency, and circuit state."""
+        base = max(1, int(settings.LLM_MAX_CONCURRENT_ANALYSES or 1))
+        provider = str(settings.LLM_PROVIDER or "unknown").lower()
+        mode = str(state.get("analysis_mode_resolved") or "auto").lower()
+        if state.get("_cost_budget_mode_override") in ("ml", "rules"):
+            mode = str(state["_cost_budget_mode_override"])
+
+        circuit_status: dict = {}
+        if mode not in _DETERMINISTIC_ANALYSIS_ENGINES:
+            try:
+                from app.streams.circuit_breaker import LLMCircuitBreaker
+                circuit_status = await LLMCircuitBreaker.get_status()
+            except Exception as exc:
+                circuit_status = {"state": "unknown", "error": str(exc)[:200]}
+
+        concurrency = base
+        reasons = [f"base={base}"]
+        if mode in {"ml", "rules"}:
+            concurrency = min(max(base, base * 4), 16)
+            reasons.append(f"deterministic_mode={mode}")
+        elif provider in _REMOTE_LLM_PROVIDERS:
+            concurrency = min(max(base, base * 2), 8)
+            reasons.append(f"remote_provider={provider}")
+        elif provider in _LOCAL_LLM_PROVIDERS:
+            concurrency = min(base, 3)
+            reasons.append(f"local_provider={provider}")
+
+        circuit_state = str(circuit_status.get("state") or "").upper()
+        if circuit_state in {"OPEN", "HALF_OPEN"}:
+            concurrency = 1
+            reasons.append(f"circuit={circuit_state}")
+
+        latency_ewma = _ANALYSIS_LATENCY_EWMA_BY_PROVIDER.get(provider)
+        if latency_ewma is not None:
+            if latency_ewma >= _HIGH_LATENCY_SECONDS:
+                concurrency = max(1, concurrency // 2)
+                reasons.append(f"high_latency_ewma={latency_ewma:.3f}s")
+            elif latency_ewma <= _LOW_LATENCY_SECONDS and provider in _REMOTE_LLM_PROVIDERS:
+                concurrency = min(concurrency + 1, 8)
+                reasons.append(f"low_latency_ewma={latency_ewma:.3f}s")
+
+        concurrency = max(1, min(int(concurrency), max(total_tests, 1)))
+        return {
+            "concurrency": concurrency,
+            "base_concurrency": base,
+            "analysis_mode": mode,
+            "provider": provider,
+            "latency_ewma_seconds": latency_ewma,
+            "circuit_state": circuit_status.get("state"),
+            "circuit_failures": circuit_status.get("failure_count_in_window"),
+            "rationale": "; ".join(reasons),
+        }
+
+    def _record_latency_feedback(self, analyses: dict[str, dict]) -> None:
+        """Update provider latency EWMA from completed per-test audit metadata."""
+        durations = [
+            float((analysis.get("_audit") or {}).get("analysis_duration_seconds"))
+            for analysis in analyses.values()
+            if isinstance((analysis.get("_audit") or {}).get("analysis_duration_seconds"), (int, float))
+        ]
+        if not durations:
+            return
+        provider = str(settings.LLM_PROVIDER or "unknown").lower()
+        observed = sum(durations) / len(durations)
+        previous = _ANALYSIS_LATENCY_EWMA_BY_PROVIDER.get(provider)
+        _ANALYSIS_LATENCY_EWMA_BY_PROVIDER[provider] = (
+            observed if previous is None else (previous * 0.7) + (observed * 0.3)
+        )
+
     async def _analyse_with_retry(
         self,
         semaphore: asyncio.Semaphore,
@@ -294,17 +409,7 @@ class AnalysisAgent(BaseAgent):
         """Run analysis with retry for low-confidence results."""
         result = await self._analyse_one(semaphore, tc_id, meta, state)
 
-        # P2-5: Smart retry — only retry on LLM failures (low confidence from
-        # actual analysis), not when data is missing (no error_message, no stack_trace).
-        # Missing data retries waste tokens since the LLM gets the same empty inputs.
-        has_input_data = bool(meta.get("error_message") or meta.get("stack_trace"))
-        if (
-            result.get("confidence_score", 0) < _RETRY_CONFIDENCE_THRESHOLD
-            and not result.get("timed_out")
-            and not result.get("error")
-            and has_input_data
-            and _MAX_ANALYSIS_RETRIES > 0
-        ):
+        if self._should_retry_analysis(result, meta):
             logger.info(
                 "low_confidence_retry",
                 confidence_score=result.get("confidence_score", 0),
@@ -319,6 +424,34 @@ class AnalysisAgent(BaseAgent):
             result["retry_count"] = 1
 
         return result
+
+    def _should_retry_analysis(self, result: dict, meta: dict) -> bool:
+        """Return True only when another LLM attempt can plausibly improve output."""
+        if _MAX_ANALYSIS_RETRIES <= 0:
+            return False
+        if result.get("confidence_score", 0) >= _RETRY_CONFIDENCE_THRESHOLD:
+            return False
+        if result.get("timed_out") or result.get("error"):
+            return False
+        if not (meta.get("error_message") or meta.get("stack_trace")):
+            return False
+
+        audit = result.get("_audit") or {}
+        analysis_mode = str(audit.get("analysis_mode") or result.get("analysis_engine") or "").lower()
+        if analysis_mode in _DETERMINISTIC_ANALYSIS_ENGINES:
+            return False
+        if result.get("classified_by") in {"rules_engine", "pattern_heuristic"}:
+            return False
+        if result.get("cache_hit") or result.get("semantic_similarity") is not None:
+            return False
+        if result.get("fallback_tier"):
+            return False
+
+        # Retry LLM parse/schema failures and under-evidenced LLM answers. These
+        # are the cases where a second provider call can produce better evidence.
+        if result.get("schema_validated") is False or result.get("schema_validation_error"):
+            return True
+        return analysis_mode in {"llm", ""}
 
     async def _analyse_one(
         self,
@@ -502,6 +635,12 @@ class AnalysisAgent(BaseAgent):
 
     async def _fetch_test_metadata(self, tc_ids: list[str]) -> dict[str, dict]:
         """Fetch enriched test metadata including error details and flakiness history."""
+        cache_key = _metadata_cache_key(tc_ids)
+        cached = _metadata_cache_get(cache_key)
+        if cached is not None:
+            logger.debug("analysis_metadata_cache_hit", test_count=len(tc_ids))
+            return cached
+
         try:
             async with AsyncSessionLocal() as db:
                 # Fetch core test case data + error info
@@ -539,6 +678,7 @@ class AnalysisAgent(BaseAgent):
                 # Fetch stack traces from MongoDB (best-effort)
                 await self._enrich_stack_traces(meta, tc_ids)
 
+                _metadata_cache_set(cache_key, meta)
                 return meta
         except Exception as db_exc:
             logger.error("fetch_test_metadata_failed", error=str(db_exc))

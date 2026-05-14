@@ -30,6 +30,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import (
+    AnomalyDetectionAgentOutput,
+    validate_agent_contract,
+)
 from app.models.postgres import TestCase, TestCaseHistory, TestRun, TestStatus
 from app.services.llm_factory import get_llm
 
@@ -209,15 +213,31 @@ class AnomalyDetectionAgent(BaseAgent):
                 },
             )
 
-            return {
-                "anomalies": anomalies,
-                "is_regression": is_regression,
-                "regression_tests": regression_tests,
-                "anomaly_summary": anomaly_summary,
-                "completed_stages": ["anomaly_detection"],
-                "errors": [],
-                "current_stage": "root_cause_analysis",
-            }
+            return validate_agent_contract(
+                AnomalyDetectionAgentOutput,
+                {
+                    "anomalies": anomalies,
+                    "is_regression": is_regression,
+                    "regression_tests": regression_tests,
+                    "anomaly_summary": anomaly_summary,
+                    "completed_stages": ["anomaly_detection"],
+                    "errors": [],
+                    "current_stage": "root_cause_analysis",
+                },
+                agent_name=self.stage_name,
+                confidence=(
+                    max(a.get("confidence", 50) for a in anomalies)
+                    if anomalies else 100
+                ),
+                evidence_refs=[
+                    {"type": "anomaly", "id": a.get("type", "unknown")}
+                    for a in anomalies
+                ],
+                decision_reason=(
+                    "regression_signals_detected"
+                    if is_regression else "baseline_checks_completed"
+                ),
+            )
 
         except Exception as exc:
             error_msg = f"Anomaly agent error: {exc}"
@@ -227,15 +247,22 @@ class AnomalyDetectionAgent(BaseAgent):
                 error=error_msg,
                 error_category="anomaly_agent_exception",
             )
-            return {
-                "anomalies": [],
-                "is_regression": False,
-                "regression_tests": [],
-                "anomaly_summary": None,
-                "errors": [error_msg],
-                "completed_stages": ["anomaly_detection"],
-                "current_stage": "root_cause_analysis",
-            }
+            return validate_agent_contract(
+                AnomalyDetectionAgentOutput,
+                {
+                    "anomalies": [],
+                    "is_regression": False,
+                    "regression_tests": [],
+                    "anomaly_summary": None,
+                    "errors": [error_msg],
+                    "completed_stages": ["anomaly_detection"],
+                    "current_stage": "root_cause_analysis",
+                },
+                agent_name=self.stage_name,
+                fallback_used=True,
+                confidence=0,
+                decision_reason="anomaly_agent_exception",
+            )
 
     # ── Private helpers ────────────────────────────────────────────────────────
 

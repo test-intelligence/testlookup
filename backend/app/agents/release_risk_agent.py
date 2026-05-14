@@ -37,6 +37,7 @@ import structlog
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import ReleaseRiskAgentOutput, validate_agent_contract
 from app.models.postgres import Defect, ReleaseDecision
 from app.services.criticality_service import (
     SCORE_MODEL_VERSION,
@@ -143,7 +144,19 @@ class ReleaseRiskAgent(BaseAgent):
             "risk_score": decision["risk_score"],
         })
 
-        return {"release_decision": decision}
+        return validate_agent_contract(
+            ReleaseRiskAgentOutput,
+            {"release_decision": decision},
+            agent_name=self.stage_name,
+            confidence=max(0, min(100, int(100 - decision.get("risk_score", 50)))),
+            evidence_refs=[
+                {"type": "score_model", "id": str(decision.get("score_model_version", SCORE_MODEL_VERSION))}
+            ],
+            decision_reason=(
+                f"Deterministic release score produced {decision['recommendation']} "
+                f"at risk {decision['risk_score']}"
+            ),
+        )
 
     # ── Evaluation orchestrator ───────────────────────────────────────────────
 

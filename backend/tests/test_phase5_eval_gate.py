@@ -362,6 +362,64 @@ class TestEvalGateRules:
         assert acc_rule["passed"] is True  # 0.75 >= 0.70 default
 
 
+class TestAgentStackReleaseGate:
+    """Agent-stack release gate manifest and status helpers."""
+
+    def test_manifest_checksum_is_deterministic(self):
+        from app.services.eval_gate_service import build_agent_stack_gate_manifest
+
+        first = build_agent_stack_gate_manifest(
+            change_id="agent-change-1",
+            prompt_versions={"ReleaseRiskAgent": "p2", "AnalysisAgent": "p1"},
+            model_versions={"AnalysisAgent": "qwen2.5"},
+            routing_versions={"AnalysisAgent": "router:v2"},
+        )
+        second = build_agent_stack_gate_manifest(
+            change_id="agent-change-1",
+            prompt_versions={"AnalysisAgent": "p1", "ReleaseRiskAgent": "p2"},
+            model_versions={"AnalysisAgent": "qwen2.5"},
+            routing_versions={"AnalysisAgent": "router:v2"},
+        )
+
+        assert first["manifest_checksum_sha256"] == second["manifest_checksum_sha256"]
+        assert first["required_gates"] == sorted(
+            first["required_gates"],
+            key=lambda gate: (gate["task_type"], gate["agent_name"], gate.get("dataset_id", "")),
+        )
+
+    def test_overall_manifest_status_blocks_missing_baselines(self):
+        from app.services.eval_gate_service import GateStatus, _overall_manifest_status
+
+        assert _overall_manifest_status([
+            {"status": GateStatus.PASS},
+            {"status": GateStatus.NO_BASELINE},
+        ]) == GateStatus.FAIL
+
+    def test_version_change_summary_compares_against_baseline(self):
+        from app.services.eval_gate_service import _version_change_summary
+
+        manifest = {
+            "prompt_versions": {"AnalysisAgent": "prompt:v2"},
+            "model_versions": {"AnalysisAgent": "qwen2.5:14b"},
+            "routing_versions": {"AnalysisAgent": "router:v2"},
+        }
+        summary = _version_change_summary(
+            manifest,
+            [{
+                "task_type": "classification",
+                "agent_name": "AnalysisAgent",
+                "baseline_metrics": {
+                    "prompt_version": "prompt:v1",
+                    "model_name": "qwen2.5:7b",
+                },
+            }],
+        )
+
+        assert summary[0]["prompt_version"]["changed"] is True
+        assert summary[0]["model_name"]["changed"] is True
+        assert summary[0]["routing_version"]["changed"] is True
+
+
 # ── Baseline Model Tests ────────────────────────────────────────────────────
 
 

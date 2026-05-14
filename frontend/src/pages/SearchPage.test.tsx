@@ -9,16 +9,20 @@ import type { GlobalSearchResponse, GlobalSearchResult, IndexStatus } from '@/ty
 // the whole searchService shape each time.
 const mockGlobalSearch = vi.fn()
 const mockGetIndexStatus = vi.fn()
+const mockGetEntityCounts = vi.fn()
 
 vi.mock('@/services/searchService', () => ({
   searchService: {
-    search:         vi.fn().mockResolvedValue({ items: [], total: 0 }),
-    globalSearch:   (...args: unknown[]) => mockGlobalSearch(...args),
+    search:           vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    globalSearch:     (...args: unknown[]) => mockGlobalSearch(...args),
     // SearchPage calls ``getIndexStatus`` on mount to render the index health
     // pill; the mock has to expose it or the page throws "is not a function".
-    getIndexStatus: () => mockGetIndexStatus(),
-    reindex:        vi.fn().mockResolvedValue({ task_id: 't', status: 'queued' }),
-    similar:        vi.fn().mockResolvedValue({ items: [], total: 0, query: '' }),
+    getIndexStatus:   () => mockGetIndexStatus(),
+    // Project-scoped totals — drives the chip + Index Health rows when
+    // no search query is active. Must exist on the mock or mount throws.
+    getEntityCounts:  (...args: unknown[]) => mockGetEntityCounts(...args),
+    reindex:          vi.fn().mockResolvedValue({ task_id: 't', status: 'queued' }),
+    similar:          vi.fn().mockResolvedValue({ items: [], total: 0, query: '' }),
   },
 }))
 
@@ -85,7 +89,13 @@ describe('SearchPage', () => {
   beforeEach(() => {
     mockGlobalSearch.mockReset()
     mockGetIndexStatus.mockReset()
+    mockGetEntityCounts.mockReset()
     mockGetIndexStatus.mockResolvedValue(makeIndexStatus())
+    // Default: no project-scoped totals available — covers the existing
+    // tests' chip-count expectations. Specific tests override per-case.
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 0, test_run: 0, suite: 0, defect: 0, flaky_test: 0, release: 0,
+    })
   })
 
   it('renders the search workflow strip and search controls', async () => {
@@ -130,5 +140,34 @@ describe('SearchPage', () => {
 
     const badges = await screen.findAllByLabelText(/index: Down/i)
     expect(badges.length).toBeGreaterThan(0)
+  })
+
+  it('shows project-scoped entity totals in the Index Health rows before any query is run', async () => {
+    // The bug this test pins: chips and Index Health rows previously
+    // showed 0 unconditionally before the user typed anything, because
+    // the page only read counts from the search response. The /search
+    // page now backfills from /api/v1/search/entity-counts at mount.
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 47,
+      test_run:  20,
+      suite:     5,
+      defect:    0,
+      flaky_test: 1,
+      release:   3,
+    })
+
+    renderAt('/search')
+
+    // Wait for entity-counts to land. The numbers are rendered inside
+    // the Index Health card next to each entity label. Use a regex on
+    // the formatted number so locale-grouped values match too.
+    expect(await screen.findByText(/^47 items/i)).toBeInTheDocument()
+    expect(screen.getByText(/^20 items/i)).toBeInTheDocument()
+    expect(screen.getByText(/^5 items/i)).toBeInTheDocument()
+    expect(screen.getByText(/^3 items/i)).toBeInTheDocument()
+
+    // The service is called with the active project from the store
+    // (proj-1 in the mock above).
+    expect(mockGetEntityCounts).toHaveBeenCalledWith('proj-1')
   })
 })

@@ -214,6 +214,12 @@ k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS,
 k8s-deploy-homelab-update: ## Rebuild images and redeploy to homelab (skip registry + models)
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh --skip-registry --skip-models $(ARGS)
 
+k8s-stop-homelab: ## Graceful pause: drain testlookup workloads + stop K3s on every node (PVCs preserved)
+	$(BASH_CMD) homelabsetup/stop-homelab.sh $(ARGS)
+
+k8s-restart-homelab: ## Resume from k8s-stop-homelab: start K3s + scale workloads back to their pre-shutdown replicas
+	$(BASH_CMD) homelabsetup/restart-homelab.sh $(ARGS)
+
 k8s-status: ## Show Kubernetes deployment status
 	kubectl get pods,svc,ing -n testlookup
 

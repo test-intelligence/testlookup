@@ -17,7 +17,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import DefectTriageAgentOutput, validate_agent_contract
 from app.models.postgres import Defect, TestCase
+from app.services.action_policy import (
+    ActionStatus,
+    check_jira_ticket_creation_policy,
+)
 from app.services.jira_client import create_jira_issue
 
 logger = structlog.get_logger("agents.triage")
@@ -90,12 +95,30 @@ class DefectTriageAgent(BaseAgent):
             },
         )
 
-        return {
-            "triage_results": triage_results,
-            "completed_stages": ["triage"],
-            "errors": errors,
-            "current_stage": "done",
-        }
+        return validate_agent_contract(
+            DefectTriageAgentOutput,
+            {
+                "triage_results": triage_results,
+                "completed_stages": ["triage"],
+                "errors": errors,
+                "current_stage": "done",
+            },
+            agent_name=self.stage_name,
+            fallback_used=bool(errors),
+            confidence=0 if errors else 100,
+            evidence_refs=[
+                {
+                    "type": "triage_result",
+                    "id": result.get("test_case_id", "unknown"),
+                    "action": result.get("action", "unknown"),
+                }
+                for result in triage_results
+            ],
+            decision_reason=(
+                "triage_completed_with_errors"
+                if errors else "triage_completed"
+            ),
+        )
 
     async def _triage_one(
         self,
@@ -174,6 +197,23 @@ class DefectTriageAgent(BaseAgent):
         jira_error = None
         idempotency_key = f"{_JIRA_IDEMPOTENCY_PREFIX}:{tc_id}:{state['test_run_id']}"
         if settings.JIRA_ENABLED:
+            policy_result = await check_jira_ticket_creation_policy(
+                project_id=project_id,
+                confidence_score=analysis.get("confidence_score"),
+                failure_category=analysis.get("failure_category", "UNKNOWN"),
+                source="defect_triage_agent",
+            )
+            if policy_result["initial_status"] == ActionStatus.PENDING_REVIEW:
+                await self._mark_defect_pending_review(defect_id, policy_result)
+                return {
+                    "test_case_id": tc_id,
+                    "action": "pending_review",
+                    "mutating_action": "jira_ticket_creation",
+                    "approval_status": ActionStatus.PENDING_REVIEW.value,
+                    "requires_approval": True,
+                    "policy_reasons": policy_result["policy_reasons"],
+                    "reason": "Jira ticket creation requires approval before execution",
+                }
             try:
                 jira_project_key = await self._get_jira_key(project_id)
                 ticket = await create_jira_issue(
@@ -208,6 +248,7 @@ class DefectTriageAgent(BaseAgent):
                         jira_ticket_id=ticket_id,
                         jira_ticket_url=ticket_url,
                         jira_status="Open",
+                        approval_status=ActionStatus.EXECUTED.value,
                     )
                 )
                 await db.commit()
@@ -223,9 +264,28 @@ class DefectTriageAgent(BaseAgent):
         return {
             "test_case_id": tc_id,
             "action": action,
+            "approval_status": (
+                ActionStatus.EXECUTED.value if ticket_key else ActionStatus.APPROVED.value
+            ),
+            "requires_approval": False,
             "ticket_key": ticket_key,
             "ticket_url": ticket_url,
         }
+
+    async def _mark_defect_pending_review(self, defect_id, policy_result: dict) -> None:
+        """Persist a policy hold before any external Jira side effect."""
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import update
+
+            await db.execute(
+                update(Defect)
+                .where(Defect.id == defect_id)
+                .values(
+                    approval_status=ActionStatus.PENDING_REVIEW.value,
+                    policy_evaluation=policy_result,
+                )
+            )
+            await db.commit()
 
     async def _get_jira_key(self, project_id: str) -> str | None:
         from app.models.postgres import Project

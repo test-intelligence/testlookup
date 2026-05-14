@@ -209,3 +209,23 @@ def validate_llm_output(
         defaults = schema.model_construct().model_dump()
         merged = {**defaults, **{k: v for k, v in raw_dict.items() if v is not None}}
         return merged
+
+
+def validate_llm_output_with_error(
+    schema: type[BaseModel],
+    raw_dict: dict[str, Any],
+    context: str = "",
+) -> tuple[dict[str, Any], str | None]:
+    """Validate parsed LLM output and return a structured failure reason."""
+    try:
+        validated = schema.model_validate(raw_dict)
+        return validated.model_dump(), None
+    except Exception as exc:
+        logger.warning(
+            "LLM output validation failed — using defaults for missing fields",
+            context=context,
+            error=str(exc),
+        )
+        defaults = schema.model_construct().model_dump()
+        merged = {**defaults, **{k: v for k, v in raw_dict.items() if v is not None}}
+        return merged, str(exc)

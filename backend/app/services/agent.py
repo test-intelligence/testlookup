@@ -239,6 +239,17 @@ async def run_triage_agent(
 
             # Parse JSON from agent output
             analysis = _parse_agent_output(raw_output)
+            if analysis.get("schema_validated") is False:
+                await _emit_event(
+                    pipeline_run_id or "",
+                    "schema_validation_failed",
+                    test_case_id=test_case_id,
+                    detail={
+                        "agent": "react_triage",
+                        "schema": "RootCauseAnalysis",
+                        "error": str(analysis.get("schema_validation_error") or "")[:500],
+                    },
+                )
             analysis["llm_provider"] = settings.LLM_PROVIDER
             analysis["llm_model"] = settings.LLM_MODEL
             analysis["requires_human_review"] = analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD
@@ -381,7 +392,7 @@ def _record_tool_spans(parent_span: Any, intermediate_steps: list) -> None:
 
 def _parse_agent_output(raw: str) -> dict:
     """Extract and parse JSON from agent final answer."""
-    from app.models.llm_schemas import RootCauseAnalysis, validate_llm_output
+    from app.models.llm_schemas import RootCauseAnalysis, validate_llm_output_with_error
     from app.services.llm_json_parser import parse_llm_json
 
     expected_keys = [
@@ -408,12 +419,14 @@ def _parse_agent_output(raw: str) -> dict:
         fallback["schema_validated"] = False
         return fallback
 
-    validated = validate_llm_output(
+    validated, validation_error = validate_llm_output_with_error(
         RootCauseAnalysis,
         parsed,
         context="react_triage_root_cause",
     )
-    validated["schema_validated"] = True
+    validated["schema_validated"] = validation_error is None
+    if validation_error:
+        validated["schema_validation_error"] = validation_error
     return validated
 
 

@@ -4,7 +4,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -240,6 +240,14 @@ class PreReleaseGateRequest(BaseModel):
     dataset_id: Optional[str] = None
 
 
+class AgentStackReleaseGateRequest(BaseModel):
+    change_id: str
+    prompt_versions: dict[str, str] = Field(default_factory=dict)
+    model_versions: dict[str, str] = Field(default_factory=dict)
+    routing_versions: dict[str, str] = Field(default_factory=dict)
+    required_gates: list[dict[str, str]] | None = None
+
+
 class SetBaselineRequest(BaseModel):
     task_type: str = "classification"
     agent_name: str = "AnalysisAgent"
@@ -271,6 +279,29 @@ async def run_pre_release_gate(
         task_type=body.task_type,
         agent_name=body.agent_name,
         dataset_id=body.dataset_id,
+    )
+
+
+@router.post("/agent-stack-release-gate")
+async def run_agent_stack_release_gate(
+    body: AgentStackReleaseGateRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Run the release gate for prompt/model/routing changes across the agent stack.
+
+    The returned manifest checksum makes the gated change set auditable.
+    """
+    from app.services.eval_gate_service import evaluate_agent_stack_release_gate
+
+    return await evaluate_agent_stack_release_gate(
+        db,
+        change_id=body.change_id,
+        prompt_versions=body.prompt_versions,
+        model_versions=body.model_versions,
+        routing_versions=body.routing_versions,
+        required_gates=body.required_gates,
     )
 
 

@@ -12,10 +12,9 @@ document suitable for a user-facing drawer. Pulls from three sources:
    persisted by ``_batch_upsert_analyses``: which engine ran, confidence
    adjustments, retries.
 
-3. **MongoDB** (``pipeline_event_log`` collection, ``decision_made``
-   events scoped to ``stage_name='workflow'``) — workflow router decisions
-   from ``_emit_route_decision`` (fast-path skip, triage skip, specialist
-   stage selection).
+3. **Postgres + MongoDB** — workflow router decisions are mirrored into
+   ``AgentPipelineRun.execution_metadata.workflow_route_decisions`` for
+   durability, with Mongo ``decision_made`` events used as the timeline copy.
 
 The response is intentionally a flat JSON document — the frontend drawer
 renders it as a timeline without needing additional round-trips. Access
@@ -112,14 +111,15 @@ async def _load_per_test_routing(
     return rows
 
 
-async def _load_workflow_events(pipeline_run_id: str) -> list[dict[str, Any]]:
+async def _load_workflow_events(pipeline_run: AgentPipelineRun) -> list[dict[str, Any]]:
     """Pull workflow-level decision events from the immutable event log.
 
     These are ``_emit_route_decision`` entries that the sync LangGraph
-    router functions fire via ``asyncio.create_task`` and live only in
-    Mongo — there's no PG mirror because the router functions don't own
-    a session.
+    router functions fire via ``asyncio.create_task``. If Mongo is missing
+    events, fall back to the durable PG execution metadata mirror.
     """
+    metadata = pipeline_run.execution_metadata or {}
+    fallback_events = list(metadata.get("workflow_route_decisions") or [])
     try:
         from app.db.mongo import get_mongo_db
         db = get_mongo_db()
@@ -127,7 +127,7 @@ async def _load_workflow_events(pipeline_run_id: str) -> list[dict[str, Any]]:
             db["pipeline_event_log"]
             .find(
                 {
-                    "pipeline_run_id": pipeline_run_id,
+                    "pipeline_run_id": str(pipeline_run.id),
                     "event_type": "decision_made",
                     "stage_name": "workflow",
                 },
@@ -149,10 +149,10 @@ async def _load_workflow_events(pipeline_run_id: str) -> list[dict[str, Any]]:
                 "alternatives": detail.get("alternatives"),
                 "context": detail.get("context"),
             })
-        return events
+        return events or fallback_events
     except Exception as exc:
         logger.warning("workflow event log query failed", error=str(exc))
-        return []
+        return fallback_events
 
 
 def _summarize_stage(stage: AgentStageResult) -> dict[str, Any]:
@@ -198,7 +198,7 @@ async def build_trail(
     workflow_events: list[dict[str, Any]] = []
     if pipeline_run is not None:
         stages = await _load_stages(db, pipeline_run.id)
-        workflow_events = await _load_workflow_events(str(pipeline_run.id))
+        workflow_events = await _load_workflow_events(pipeline_run)
 
     per_test = await _load_per_test_routing(db, run_id)
 
