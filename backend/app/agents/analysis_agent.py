@@ -32,6 +32,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import AnalysisAgentOutput, validate_agent_contract
 from app.models.postgres import AIAnalysis, TestCase, TestStatus
 from app.services.agent import run_triage_agent
 from app.services.artifact_store import store_artifact
@@ -155,12 +156,18 @@ class AnalysisAgent(BaseAgent):
                 result_data={"analysed": 0},
                 project_id=project_id,
             )
-            return {
-                "analyses": {},
-                "completed_stages": ["root_cause_analysis"],
-                "errors": [],
-                "current_stage": "summary",
-            }
+            return validate_agent_contract(
+                AnalysisAgentOutput,
+                {
+                    "analyses": {},
+                    "completed_stages": ["root_cause_analysis"],
+                    "errors": [],
+                    "current_stage": "summary",
+                },
+                agent_name=self.stage_name,
+                confidence=100,
+                decision_reason="no_failed_tests",
+            )
 
         # Hard block short-circuits the entire stage. Return an empty result
         # set with a stage_quality marker so the summary agent can explain
@@ -177,14 +184,21 @@ class AnalysisAgent(BaseAgent):
                 fallback_reason=cap_decision.rationale[:200],
                 project_id=project_id,
             )
-            return {
-                "analyses": {},
-                "completed_stages": ["root_cause_analysis"],
-                "errors": [],
-                "stage_errors": {"root_cause_analysis": [cap_decision.rationale]},
-                "stage_quality": "cost_budget_blocked",
-                "current_stage": "summary",
-            }
+            return validate_agent_contract(
+                AnalysisAgentOutput,
+                {
+                    "analyses": {},
+                    "completed_stages": ["root_cause_analysis"],
+                    "errors": [],
+                    "stage_errors": {"root_cause_analysis": [cap_decision.rationale]},
+                    "stage_quality": "cost_budget_blocked",
+                    "current_stage": "summary",
+                },
+                agent_name=self.stage_name,
+                fallback_used=True,
+                confidence=0,
+                decision_reason="cost_budget_blocked",
+            )
 
         # Fetch enriched test metadata (error_message, severity, flakiness history)
         test_meta = await self._fetch_test_metadata(failed_ids)
@@ -304,15 +318,38 @@ class AnalysisAgent(BaseAgent):
             },
         )
 
-        return {
-            "analyses": analyses,
-            "completed_stages": ["root_cause_analysis"],
-            "errors": errors,
-            "stage_errors": stage_errors,
-            "stage_quality": stage_quality,
-            "low_confidence_count": low_confidence,
-            "current_stage": "summary",
-        }
+        confidence_values = [
+            int(result.get("confidence_score") or 0)
+            for result in analyses.values()
+            if isinstance(result.get("confidence_score"), (int, float))
+        ]
+        evidence_refs = [
+            {"type": "analysis", "id": str(test_id)}
+            for test_id in sorted(analyses.keys())
+        ]
+        return validate_agent_contract(
+            AnalysisAgentOutput,
+            {
+                "analyses": analyses,
+                "completed_stages": ["root_cause_analysis"],
+                "errors": errors,
+                "stage_errors": stage_errors,
+                "stage_quality": stage_quality,
+                "low_confidence_count": low_confidence,
+                "current_stage": "summary",
+            },
+            agent_name=self.stage_name,
+            fallback_used=bool(fallback_count or errors),
+            confidence=(
+                int(sum(confidence_values) / len(confidence_values))
+                if confidence_values else 0
+            ),
+            evidence_refs=evidence_refs,
+            decision_reason=(
+                "root_cause_analysis_completed"
+                if stage_quality == "normal" else f"root_cause_analysis_{stage_quality}"
+            ),
+        )
 
     def _prioritize_tests(
         self, failed_ids: list[str], test_meta: dict[str, dict]

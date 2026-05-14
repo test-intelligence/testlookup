@@ -350,9 +350,14 @@ class JiraIssueRequest(BaseModel):
 
 
 class JiraIssueResponse(BaseModel):
-    ticket_id: str
-    ticket_key: str
-    ticket_url: str
+    ticket_id: Optional[str] = None
+    ticket_key: Optional[str] = None
+    ticket_url: Optional[str] = None
+    approval_status: Optional[str] = None
+    requires_approval: bool = False
+    policy_reasons: List[str] = Field(default_factory=list)
+    defect_id: Optional[uuid.UUID] = None
+    mutating_action: Optional[str] = None
 
 
 # ── Search Schemas ────────────────────────────────────────────
@@ -614,6 +619,19 @@ class PipelineReplayStageResponse(BaseModel):
     decision_count: int = 0
 
 
+class MemoryReference(BaseModel):
+    """Canonical pointer from generated output back to an auditable memory row."""
+    memory_entry_id: uuid.UUID
+    entity_type: str
+    entity_id: str
+    source_snapshot_id: Optional[uuid.UUID] = None
+    payload_sha256: str
+    retrieval_audit: Optional[Dict[str, Any]] = None
+    retrieval_audit_sha256: Optional[str] = None
+    memory_reference_id: Optional[str] = None
+    evidence_refs: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class PipelineReplayResponse(BaseModel):
     schema_version: int = 1
     pipeline_run_id: uuid.UUID
@@ -631,6 +649,7 @@ class PipelineReplayResponse(BaseModel):
     workflow_verification: Dict[str, Any] = Field(default_factory=dict)
     route_decisions: List[Dict[str, Any]] = Field(default_factory=list)
     stage_replay: List[PipelineReplayStageResponse] = Field(default_factory=list)
+    memory_references: List[MemoryReference] = Field(default_factory=list)
     events: List[PipelineReplayEventResponse] = Field(default_factory=list)
     event_counts: Dict[str, int] = Field(default_factory=dict)
     replayable: bool = False
@@ -2469,6 +2488,20 @@ class AIEvalRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AIEvalGateRunResponse(BaseModel):
+    id: uuid.UUID
+    change_id: str
+    status: str
+    manifest_checksum_sha256: str
+    manifest: Dict[str, Any]
+    gate_results: List[Dict[str, Any]]
+    blocking_gates: List[Dict[str, Any]]
+    version_changes: List[Dict[str, Any]]
+    evaluated_by: Optional[uuid.UUID] = None
+    evaluated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AIQualityDashboardResponse(BaseModel):
     """Combined dashboard data for AI quality metrics."""
     agreement: Optional[dict] = None  # agreement_rate, total_feedback, ...
@@ -2511,6 +2544,8 @@ class SimilarMemoryResponse(BaseModel):
     """A memory entry with a similarity score from vector recall."""
     memory: AgentMemoryEntryResponse
     similarity: float = Field(ge=0.0, le=1.0)
+    retrieval_audit: Optional[Dict[str, Any]] = None
+    memory_reference: Optional[MemoryReference] = None
 
 
 class SimilarMemoryRecallRequest(BaseModel):
@@ -2525,6 +2560,7 @@ class SimilarMemoryRecallResponse(BaseModel):
     query_signature: str
     results: List[SimilarMemoryResponse]
     total_found: int
+    retrieval_audit: Optional[Dict[str, Any]] = None
 
 
 class MemoryTimelineResponse(BaseModel):

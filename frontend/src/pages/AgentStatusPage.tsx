@@ -14,7 +14,7 @@ import { useAIConfig } from '@/hooks/useAIConfig'
 import { useRuns } from '@/hooks/useRuns'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
-import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult } from '@/types/agent'
+import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import ComputeCanvas from '@/components/agents/computeGraph/ComputeCanvas'
 import RightRail from '@/components/agents/computeGraph/RightRail'
@@ -367,6 +367,89 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
   )
 }
 
+function formatMoney(value: number | null | undefined) {
+  const n = Number(value ?? 0)
+  return `$${n.toFixed(n < 0.01 ? 4 : 2)}`
+}
+
+function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
+  const obs = timeline?.agent_observability
+  const alerts = timeline?.alerts ?? []
+  if (!obs && alerts.length === 0) return null
+
+  const costRatio = obs?.cost.budget_usd ? obs.cost.total_usd / obs.cost.budget_usd : 0
+  const costTone = costRatio >= 1 ? 'text-red-400' : costRatio >= 0.75 ? 'text-amber-400' : 'text-emerald-400'
+  const fallbackTone = (obs?.fallback.count ?? 0) > 0 ? 'text-amber-400' : 'text-emerald-400'
+  const errorTone = (obs?.errors.count ?? 0) > 0 ? 'text-red-400' : 'text-emerald-400'
+  const avgStageDuration = obs?.latency.avg_stage_duration_seconds == null
+    ? '—'
+    : `${obs.latency.avg_stage_duration_seconds}s`
+
+  return (
+    <div className="card border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30">
+      <div className="flex items-center gap-2 mb-3">
+        <Activity className="h-4 w-4 text-[var(--color-text)]" />
+        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Pipeline Observability</h3>
+        {alerts.length > 0 && (
+          <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-red-900/25 text-red-300">
+            {alerts.length} alert{alerts.length === 1 ? '' : 's'}
+          </span>
+        )}
+      </div>
+
+      {obs && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 mb-3">
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
+            <div className={`text-sm font-semibold ${costTone}`}>{formatMoney(obs.cost.total_usd)}</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">Cost / {formatMoney(obs.cost.budget_usd)}</div>
+          </div>
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
+            <div className="text-sm font-semibold text-indigo-300">{obs.tokens.total.toLocaleString()}</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">{obs.tokens.llm_calls} LLM calls</div>
+          </div>
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
+            <div className="text-sm font-semibold text-[var(--color-text)]">{avgStageDuration}</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">Avg stage</div>
+          </div>
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
+            <div className={`text-sm font-semibold ${fallbackTone}`}>{obs.fallback.count}</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">Fallbacks</div>
+          </div>
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
+            <div className={`text-sm font-semibold ${errorTone}`}>{obs.errors.count}</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">Stage errors</div>
+          </div>
+        </div>
+      )}
+
+      {alerts.length > 0 && (
+        <div className="space-y-2">
+          {alerts.map((alert, index) => (
+            <div key={`${alert.type}-${index}`} className="rounded border border-red-800/30 bg-red-950/20 p-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-red-300 mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-red-200">{alert.message}</p>
+                  {alert.routing && (
+                    <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)]">owner: {alert.routing.primary_owner}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)]">escalate: {alert.routing.escalation_owner}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)]">{alert.routing.priority}</span>
+                    </div>
+                  )}
+                  {alert.routing?.recommended_action && (
+                    <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">{alert.routing.recommended_action}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────
 
 const MODE_BADGE: Record<string, { label: string; colour: string }> = {
@@ -637,6 +720,8 @@ export default function AgentStatusPage() {
                   {showSummary ? 'Hide report' : 'View AI report'}
                 </button>
               </div>
+
+              <ObservabilityPanel timeline={timeline} />
 
               {/* Direction-C compute graph: 1750×560 canvas with absolute-
                   positioned nodes, SVG bezier edges, a decision diamond, and a

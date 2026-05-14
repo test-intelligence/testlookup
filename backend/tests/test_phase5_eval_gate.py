@@ -437,6 +437,48 @@ class TestBaselineModel:
             assert hasattr(AIEvalBaseline, field), f"Missing field: {field}"
 
 
+class TestGateRunModel:
+    """AIEvalGateRun ORM model keeps aggregate gate decisions auditable."""
+
+    def test_gate_run_fields_exist(self):
+        from app.models.postgres import AIEvalGateRun
+
+        for field in (
+            "change_id",
+            "status",
+            "manifest_checksum_sha256",
+            "manifest",
+            "gate_results",
+            "blocking_gates",
+            "version_changes",
+            "evaluated_by",
+            "evaluated_at",
+        ):
+            assert hasattr(AIEvalGateRun, field), f"Missing field: {field}"
+
+    def test_gate_run_response_schema_accepts_audit_payload(self):
+        import uuid
+        from datetime import datetime, timezone
+
+        from app.models.schemas import AIEvalGateRunResponse
+
+        response = AIEvalGateRunResponse(
+            id=uuid.uuid4(),
+            change_id="agent-change-1",
+            status="PASS",
+            manifest_checksum_sha256="a" * 64,
+            manifest={"change_id": "agent-change-1"},
+            gate_results=[{"status": "PASS"}],
+            blocking_gates=[],
+            version_changes=[],
+            evaluated_by=uuid.uuid4(),
+            evaluated_at=datetime.now(timezone.utc),
+        )
+
+        assert response.status == "PASS"
+        assert response.manifest["change_id"] == "agent-change-1"
+
+
 # ── Integration: Gate with golden datasets ───────────────────────────────────
 
 

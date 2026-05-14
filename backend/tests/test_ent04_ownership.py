@@ -15,7 +15,7 @@ import importlib.util
 import sys
 import types
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -242,6 +242,35 @@ class TestOwnershipResult:
         assert result.confidence == "none"
         assert result.service_name is None
         assert result.team_name is None
+
+
+class TestOwnershipMemoryConsumer:
+    @pytest.mark.asyncio
+    async def test_cluster_resolution_prefers_canonical_memory(self, monkeypatch):
+        from app.services.ownership_resolver_service import resolve_cluster_ownership
+
+        project_id = uuid.uuid4()
+        db = AsyncMock()
+        monkeypatch.setattr(
+            "app.services.agent_memory_service.resolve_ownership_from_memory",
+            AsyncMock(return_value={
+                "ownership": {
+                    "service_name": "checkout",
+                    "team_name": "checkout-backend",
+                    "confidence": "high",
+                },
+                "memory_reference": {
+                    "memory_entry_id": "00000000-0000-0000-0000-000000000001",
+                },
+            }),
+        )
+
+        result = await resolve_cluster_ownership(db, project_id, ["test-1"])
+
+        assert result.team_name == "checkout-backend"
+        assert result.service_name == "checkout"
+        assert result.match_source == "agent_memory"
+        db.execute.assert_not_called()
 
 
 # ── Schema validation ────────────────────────────────────────────────────────

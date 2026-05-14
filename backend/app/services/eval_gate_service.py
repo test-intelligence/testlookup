@@ -23,7 +23,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import AIEvalBaseline, AIEvalDataset
+from app.models.postgres import AIEvalBaseline, AIEvalDataset, AIEvalGateRun
 from app.services.ai_eval_service import compute_metrics_for_task_type
 
 logger = logging.getLogger("services.eval_gate")
@@ -141,6 +141,8 @@ async def evaluate_agent_stack_release_gate(
     model_versions: Optional[dict[str, str]] = None,
     routing_versions: Optional[dict[str, str]] = None,
     required_gates: Optional[list[dict[str, str]]] = None,
+    evaluated_by: Optional[Any] = None,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Evaluate all required agent-stack gates before shipping a change."""
     manifest = build_agent_stack_gate_manifest(
@@ -171,7 +173,7 @@ async def evaluate_agent_stack_release_gate(
         for result in gate_results
         if result.get("status") in _BLOCKING_GATE_STATUSES
     ]
-    return {
+    result = {
         "status": _overall_manifest_status(gate_results),
         "manifest": manifest,
         "gate_results": gate_results,
@@ -179,6 +181,47 @@ async def evaluate_agent_stack_release_gate(
         "version_changes": _version_change_summary(manifest, gate_results),
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if persist:
+        gate_run = await persist_agent_stack_gate_run(
+            db,
+            gate_result=result,
+            evaluated_by=evaluated_by,
+        )
+        result["gate_run_id"] = str(gate_run.id)
+    return result
+
+
+async def persist_agent_stack_gate_run(
+    db: AsyncSession,
+    *,
+    gate_result: dict[str, Any],
+    evaluated_by: Optional[Any] = None,
+) -> AIEvalGateRun:
+    """Persist an aggregate agent-stack release gate decision for audit."""
+    manifest = gate_result.get("manifest") or {}
+    row = AIEvalGateRun(
+        change_id=str(manifest.get("change_id") or ""),
+        status=str(gate_result.get("status") or GateStatus.FAIL),
+        manifest_checksum_sha256=str(manifest.get("manifest_checksum_sha256") or ""),
+        manifest=manifest,
+        gate_results=list(gate_result.get("gate_results") or []),
+        blocking_gates=list(gate_result.get("blocking_gates") or []),
+        version_changes=list(gate_result.get("version_changes") or []),
+        evaluated_by=evaluated_by,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    logger.info(
+        "Persisted agent-stack release gate run",
+        extra={
+            "gate_run_id": str(row.id),
+            "change_id": row.change_id,
+            "status": row.status,
+            "manifest_checksum_sha256": row.manifest_checksum_sha256,
+        },
+    )
+    return row
 
 
 async def evaluate_pre_release_gate(

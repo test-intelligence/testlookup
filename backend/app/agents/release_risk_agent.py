@@ -33,6 +33,7 @@ Step 2 — LLM reasoning (optional):
 import asyncio
 import json
 import structlog
+import uuid
 
 from app.agents.base import BaseAgent
 from app.core.config import settings
@@ -127,7 +128,9 @@ class ReleaseRiskAgent(BaseAgent):
             }
 
         # Assemble input snapshot for audit/reproducibility
+        state["release_memory_context"] = decision.get("memory_context")
         input_snapshot = await self._assemble_input_snapshot(state)
+        decision["input_snapshot"] = input_snapshot
         await self._persist_decision(test_run_id, decision, input_snapshot=input_snapshot)
 
         await self.mark_stage_done(
@@ -169,7 +172,8 @@ class ReleaseRiskAgent(BaseAgent):
         failure_clusters = state.get("failure_clusters", [])
         executive_summary = state.get("executive_summary", "")
 
-        open_defects = await self._count_open_defects(state["project_id"])
+        release_memory_context = await self._load_release_memory_context(state["project_id"])
+        open_defects = int(release_memory_context.get("open_defects") or 0)
 
         # ── Step 1: deterministic dimension scoring ───────────────────────────
         dim_scores = compute_dimension_scores(
@@ -198,6 +202,7 @@ class ReleaseRiskAgent(BaseAgent):
                     context={
                         "flaky_count": sum(1 for a in analyses.values() if a.get("is_flaky")),
                         "open_defects": open_defects,
+                        "open_defects_source": release_memory_context.get("source"),
                         "regression_test_count": len(regression_tests),
                     },
                     db=policy_db,
@@ -250,6 +255,7 @@ class ReleaseRiskAgent(BaseAgent):
             "conditions_for_go": llm_extras.get("conditions_for_go", []),
             "reasoning": llm_extras.get("reasoning", f"Composite risk {composite:.0f}/100."),
             "score_model_version": SCORE_MODEL_VERSION,
+            "memory_context": release_memory_context,
         }
 
         # Attach policy evaluation for persistence (ENT-02)
@@ -349,6 +355,7 @@ class ReleaseRiskAgent(BaseAgent):
         return {
             "assembled_at": datetime.now(tz.utc).isoformat(),
             "score_model_version": SCORE_MODEL_VERSION,
+            "memory_context": state.get("release_memory_context"),
             "pass_rate": state.get("pass_rate", 0.0),
             "total_tests": state.get("total_tests", 0),
             "is_regression": state.get("is_regression", False),
@@ -371,15 +378,52 @@ class ReleaseRiskAgent(BaseAgent):
     # ── DB helpers ────────────────────────────────────────────────────────────
 
     @staticmethod
-    async def _count_open_defects(project_id: str) -> int:
+    async def _load_release_memory_context(project_id: str) -> dict:
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import func as sa_func, select
-            result = await db.execute(
-                select(sa_func.count(Defect.id))
-                .where(Defect.project_id == project_id)
-                .where(Defect.resolution_status == "OPEN")
-            )
-            return int(result.scalar() or 0)
+            try:
+                from app.services.agent_memory_service import load_release_risk_memory_context
+
+                memory_context = await load_release_risk_memory_context(
+                    db,
+                    uuid.UUID(str(project_id)),
+                )
+                if (
+                    memory_context.get("memory_entry_count")
+                    or memory_context.get("open_defects")
+                ):
+                    return memory_context
+            except Exception as exc:
+                logger.debug("Release risk memory context unavailable: %s", exc)
+
+            open_defects = await ReleaseRiskAgent._count_open_defects_from_db(db, project_id)
+            return {
+                "schema_version": 1,
+                "memory_layer_version": "agent_memory.consumer_context:v1",
+                "source": "defect_table_fallback",
+                "open_defects": open_defects,
+                "memory_entry_count": 0,
+                "memory_references": [],
+                "retrieval_audit": {
+                    "consumer": "release_risk",
+                    "retrieval_strategy": "defect_table_fallback",
+                    "project_id": str(project_id),
+                },
+            }
+
+    @staticmethod
+    async def _count_open_defects(project_id: str) -> int:
+        context = await ReleaseRiskAgent._load_release_memory_context(project_id)
+        return int(context.get("open_defects") or 0)
+
+    @staticmethod
+    async def _count_open_defects_from_db(db, project_id: str) -> int:
+        from sqlalchemy import func as sa_func, select
+        result = await db.execute(
+            select(sa_func.count(Defect.id))
+            .where(Defect.project_id == uuid.UUID(str(project_id)))
+            .where(Defect.resolution_status == "OPEN")
+        )
+        return int(result.scalar() or 0)
 
     async def _persist_decision(self, test_run_id: str, decision: dict, input_snapshot: dict | None = None) -> None:
         async with AsyncSessionLocal() as db:

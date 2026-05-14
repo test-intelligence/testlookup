@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import structlog
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -654,9 +655,28 @@ class SummaryAgent(BaseAgent):
         try:
             from app.db.postgres import AsyncSessionLocal  # noqa: PLC0415
             from app.models.postgres import TestStatus  # noqa: PLC0415
+            from app.services.agent_memory_service import recall_similar  # noqa: PLC0415
             from app.services.semantic_search import semantic_search  # noqa: PLC0415
 
             async with AsyncSessionLocal() as db:
+                project_id = state.get("project_id")
+                if project_id:
+                    try:
+                        memory_matches = await asyncio.wait_for(
+                            recall_similar(
+                                db=db,
+                                project_id=uuid.UUID(str(project_id)),
+                                error_signature=top_error,
+                                entity_type="analysis",
+                                limit=5,
+                            ),
+                            timeout=_SIMILAR_FAILURES_TIMEOUT_SECONDS,
+                        )
+                    except (TypeError, ValueError):
+                        memory_matches = []
+                    if memory_matches:
+                        return self._format_memory_recall_items(memory_matches)
+
                 items, _total, _pages = await asyncio.wait_for(
                     semantic_search(
                         db=db,
@@ -680,6 +700,35 @@ class SummaryAgent(BaseAgent):
                 "Similar failures retrieval failed (non-blocking): %s", exc
             )
             return []
+
+    @staticmethod
+    def _format_memory_recall_items(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert audited memory recall results into summary-context items."""
+        items: list[dict[str, Any]] = []
+        for match in sorted(
+            matches,
+            key=lambda item: (
+                -float(item.get("similarity") or 0),
+                str(getattr(item.get("memory"), "id", "")),
+            ),
+        ):
+            memory = match.get("memory")
+            if not memory:
+                continue
+            payload = getattr(memory, "payload", None) or {}
+            items.append({
+                "test_case_id": str(getattr(memory, "entity_id", "")),
+                "test_name": (
+                    str(payload.get("test_name") or getattr(memory, "entity_id", ""))
+                ),
+                "failure_category": getattr(memory, "failure_category", None),
+                "root_cause_summary": getattr(memory, "root_cause_summary", None),
+                "relevance_score": match.get("similarity"),
+                "source_mode_used": "agent_memory",
+                "retrieval_audit": match.get("retrieval_audit"),
+                "memory_reference": match.get("memory_reference"),
+            })
+        return items[:5]
 
     def _build_fallback_structured_report(
         self,

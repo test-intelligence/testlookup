@@ -30,6 +30,49 @@ ALERT_CONSECUTIVE_FAILURES = 3        # alert after N consecutive stage failures
 ALERT_COST_SPIKE_FACTOR = 3.0         # alert if cost > N× the rolling average
 ALERT_COST_BUDGET_USD = 5.0           # alert if single pipeline exceeds this
 
+_ALERT_ROUTES: dict[str, dict[str, str]] = {
+    "repeated_failure": {
+        "route": "qa_lead",
+        "escalation": "stage_owner",
+        "recommended_action": "Review the failed agent stage and recent decision trail.",
+    },
+    "cost_budget_exceeded": {
+        "route": "platform_owner",
+        "escalation": "finance_owner",
+        "recommended_action": "Review LLM budget settings and downgrade policy for this project.",
+    },
+    "cost_spike": {
+        "route": "platform_owner",
+        "escalation": "qa_lead",
+        "recommended_action": "Compare this pipeline against the 7-day cost baseline.",
+    },
+}
+
+
+def _route_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Attach deterministic operator routing metadata to an alert."""
+    alert_type = str(alert.get("type") or "unknown")
+    severity = str(alert.get("severity") or "info")
+    route = _ALERT_ROUTES.get(alert_type, {
+        "route": "qa_lead",
+        "escalation": "platform_owner",
+        "recommended_action": "Review the pipeline timeline for context.",
+    })
+    priority = (
+        "p1" if severity in {"critical", "error"}
+        else "p2" if severity == "warning"
+        else "p3"
+    )
+    return {
+        **alert,
+        "routing": {
+            "primary_owner": route["route"],
+            "escalation_owner": route["escalation"],
+            "priority": priority,
+            "recommended_action": route["recommended_action"],
+        },
+    }
+
 
 def _stage_duration_seconds(stage: AgentStageResult) -> float | None:
     if not stage.started_at or not stage.completed_at:
@@ -286,4 +329,4 @@ async def check_alerts(
             },
         })
 
-    return alerts
+    return [_route_alert(alert) for alert in alerts]

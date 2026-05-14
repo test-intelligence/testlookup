@@ -63,6 +63,59 @@ export interface PipelineTimeline {
       route_rationale: string | null
     }>
   }
+  agent_observability?: {
+    schema_version: number
+    stage_count: number
+    status_counts: Record<string, number>
+    latency: {
+      total_stage_duration_seconds: number
+      max_stage_duration_seconds: number | null
+      avg_stage_duration_seconds: number | null
+    }
+    tokens: {
+      input: number
+      output: number
+      total: number
+      llm_calls: number
+    }
+    cost: {
+      total_usd: number
+      budget_usd: number
+    }
+    fallback: {
+      count: number
+      rate: number
+      stages: string[]
+    }
+    errors: {
+      count: number
+      by_category: Record<string, number>
+    }
+    quality: {
+      avg_confidence_score: number | null
+      total_evidence_count: number
+    }
+    alerts: {
+      count: number
+      by_type: Record<string, number>
+    }
+    per_agent: Array<{
+      stage_name: string
+      status: string
+      duration_seconds: number | null
+      input_tokens: number
+      output_tokens: number
+      total_tokens: number
+      llm_calls_count: number
+      cost_usd: number
+      fallback_used: boolean
+      fallback_reason: string | null
+      error_category: string | null
+      confidence_score: number | null
+      evidence_count: number
+      route_rationale: string | null
+    }>
+  }
   stages: AgentStageResult[]
   events: Array<{
     event_type: string
@@ -76,6 +129,12 @@ export interface PipelineTimeline {
     severity: string
     message: string
     detail: Record<string, unknown>
+    routing?: {
+      primary_owner: string
+      escalation_owner: string
+      priority: string
+      recommended_action: string
+    }
   }>
 }
 

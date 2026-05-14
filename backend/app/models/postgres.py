@@ -2408,6 +2408,28 @@ class AIEvalBaseline(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
+class AIEvalGateRun(Base):
+    """Historical record of an agent-stack release gate decision."""
+    __tablename__ = "ai_eval_gate_runs"
+    __table_args__ = (
+        Index("ix_aeg_change_id", "change_id"),
+        Index("ix_aeg_status", "status"),
+        Index("ix_aeg_manifest_checksum", "manifest_checksum_sha256"),
+        Index("ix_aeg_evaluated_at", "evaluated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    change_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    manifest_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    gate_results: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    blocking_gates: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    version_changes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    evaluated_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # ── Agent Memory (P3 — Unified Memory & Retrieval) ──────────────────────────
 
 

@@ -62,6 +62,16 @@ class AnomalyDetectionAgentOutput(ContractedAgentOutput):
     current_stage: str = "root_cause_analysis"
 
 
+class AnalysisAgentOutput(ContractedAgentOutput):
+    analyses: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    completed_stages: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    stage_errors: dict[str, list[str]] = Field(default_factory=dict)
+    stage_quality: Optional[str] = None
+    low_confidence_count: int = 0
+    current_stage: str = "summary"
+
+
 class SummaryAgentOutput(ContractedAgentOutput):
     executive_summary: Optional[str] = None
     summary_markdown: Optional[str] = None
@@ -77,6 +87,14 @@ class DefectTriageAgentOutput(ContractedAgentOutput):
     completed_stages: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     current_stage: str = "done"
+
+
+class FlakySentinelAgentOutput(ContractedAgentOutput):
+    flaky_findings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TestHealthAgentOutput(ContractedAgentOutput):
+    test_health_findings: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ReleaseRiskAgentOutput(ContractedAgentOutput):

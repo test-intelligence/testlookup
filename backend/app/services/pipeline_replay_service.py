@@ -1,6 +1,8 @@
 """Deterministic replay reconstruction for agent pipeline audit trails."""
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -8,7 +10,8 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import AgentPipelineRun, AgentStageResult
+from app.models.postgres import AgentMemoryEntry, AgentPipelineRun, AgentStageResult
+from app.services.agent_memory_service import build_memory_reference
 from app.services.pipeline_event_log import get_pipeline_timeline
 
 
@@ -38,6 +41,16 @@ def _event_sort_key(event: dict[str, Any]) -> tuple[str, str, str, str]:
 
 def _stage_sort_key(stage: AgentStageResult) -> tuple[str, str]:
     return (_iso(stage.started_at) or "", stage.stage_name)
+
+
+def _hash_json(value: object) -> str:
+    canonical = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _normalize_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -107,6 +120,57 @@ def _event_counts(events: list[dict[str, Any]]) -> dict[str, int]:
         event_type = str(event.get("event_type") or "unknown")
         counts[event_type] = counts.get(event_type, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _memory_reference_sort_key(reference: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(reference.get("entity_type") or ""),
+        str(reference.get("entity_id") or ""),
+        str(reference.get("memory_entry_id") or ""),
+    )
+
+
+def _memory_reference_id(reference: dict[str, Any]) -> str:
+    return _hash_json({
+        "memory_entry_id": reference.get("memory_entry_id"),
+        "entity_type": reference.get("entity_type"),
+        "entity_id": reference.get("entity_id"),
+        "payload_sha256": reference.get("payload_sha256"),
+    })
+
+
+def _replay_memory_reference(entry: AgentMemoryEntry) -> dict[str, Any]:
+    payload = entry.payload if isinstance(entry.payload, dict) else {}
+    retrieval_audit = payload.get("retrieval_audit") if isinstance(payload, dict) else None
+    if not isinstance(retrieval_audit, dict):
+        retrieval_audit = None
+    reference = build_memory_reference(entry, retrieval_audit=retrieval_audit)
+    reference["memory_reference_id"] = _memory_reference_id(reference)
+    reference["retrieval_audit_sha256"] = (
+        _hash_json(retrieval_audit) if retrieval_audit else None
+    )
+    return reference
+
+
+def _memory_references_for_replay(entries: list[AgentMemoryEntry]) -> list[dict[str, Any]]:
+    references = [_replay_memory_reference(entry) for entry in entries]
+    return sorted(references, key=_memory_reference_sort_key)
+
+
+async def _load_pipeline_memory_references(
+    db: AsyncSession,
+    pipeline_id: uuid.UUID,
+) -> list[dict[str, Any]]:
+    result = await db.execute(
+        select(AgentMemoryEntry)
+        .where(AgentMemoryEntry.pipeline_run_id == pipeline_id)
+        .order_by(
+            AgentMemoryEntry.entity_type,
+            AgentMemoryEntry.entity_id,
+            AgentMemoryEntry.id,
+        )
+    )
+    return _memory_references_for_replay(list(result.scalars().all()))
 
 
 def _integrity_report(
@@ -196,6 +260,7 @@ async def build_pipeline_replay(
 
     metadata = pipeline.execution_metadata or {}
     integrity = _integrity_report(pipeline, stages, events)
+    memory_references = await _load_pipeline_memory_references(db, pipeline_id)
 
     return {
         "schema_version": 1,
@@ -214,6 +279,7 @@ async def build_pipeline_replay(
         "workflow_verification": metadata.get("workflow_verification") or {},
         "route_decisions": _workflow_route_decisions(pipeline),
         "stage_replay": [_stage_summary(stage) for stage in stages],
+        "memory_references": memory_references,
         "events": events,
         "event_counts": _event_counts(events),
         **integrity,

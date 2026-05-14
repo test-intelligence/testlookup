@@ -59,6 +59,133 @@ def _triageable_ids(
     return triageable
 
 
+def _check_contract_evidence_support(final_state: dict[str, Any]) -> dict[str, Any]:
+    """Verify agent contracts expose evidence refs for non-empty outputs."""
+    contracts = final_state.get("agent_contracts") or {}
+    output_state_keys = {
+        "root_cause_analysis": "analyses",
+        "anomaly_detection": "anomalies",
+        "failure_clustering": "failure_clusters",
+        "summary": "structured_summary",
+        "triage": "triage_results",
+        "flaky_sentinel": "flaky_findings",
+        "test_health": "test_health_findings",
+        "release_risk": "release_decision",
+    }
+    missing_contracts: list[str] = []
+    missing_evidence: list[str] = []
+
+    for agent_name, state_key in sorted(output_state_keys.items()):
+        output_value = final_state.get(state_key)
+        has_output = bool(output_value)
+        contract = contracts.get(agent_name)
+        if has_output and not contract:
+            missing_contracts.append(agent_name)
+            continue
+        if not has_output or not contract:
+            continue
+        decision_reason = str(contract.get("decision_reason") or "")
+        fallback_used = bool(contract.get("fallback_used"))
+        evidence_refs = contract.get("evidence_refs") or []
+        no_evidence_ok = (
+            fallback_used
+            or "no_" in decision_reason
+            or "blocked" in decision_reason
+        )
+        if not evidence_refs and not no_evidence_ok:
+            missing_evidence.append(agent_name)
+
+    status = "fail" if missing_contracts else "warn" if missing_evidence else "pass"
+    return {
+        "name": "contract_evidence_support",
+        "status": status,
+        "details": {
+            "missing_contracts": missing_contracts,
+            "missing_evidence_refs": missing_evidence,
+            "contract_count": len(contracts),
+        },
+    }
+
+
+def _check_summary_provenance(final_state: dict[str, Any]) -> dict[str, Any]:
+    """Ensure generated summaries carry replayable provenance fingerprints."""
+    structured = final_state.get("structured_summary") or {}
+    provenance = final_state.get("summary_provenance") or structured.get("_provenance") or {}
+    required = [
+        "context_sha256",
+        "safe_context_sha256",
+        "input_fingerprints",
+        "prompt_versions",
+        "model_config_snapshot",
+    ]
+    missing = [key for key in required if not provenance.get(key)]
+    has_summary = bool(structured or final_state.get("summary_markdown"))
+    return {
+        "name": "summary_provenance_present",
+        "status": "pass" if (not has_summary or not missing) else "warn",
+        "details": {"missing": missing, "has_summary": has_summary},
+    }
+
+
+def _check_mutating_action_policy_alignment(final_state: dict[str, Any]) -> dict[str, Any]:
+    """Verify mutating actions are policy-gated or explicitly executed."""
+    violations: list[dict[str, Any]] = []
+    for result in final_state.get("triage_results") or []:
+        if not isinstance(result, dict):
+            continue
+        mutating_action = result.get("mutating_action")
+        action = result.get("action")
+        ticket_key = result.get("ticket_key")
+        approval_status = result.get("approval_status")
+        requires_approval = result.get("requires_approval")
+        if mutating_action == "jira_ticket_creation":
+            if approval_status != "pending_review" or requires_approval is not True:
+                violations.append({
+                    "test_case_id": result.get("test_case_id"),
+                    "reason": "jira mutation was not staged for review",
+                })
+        elif ticket_key and approval_status != "executed":
+            violations.append({
+                "test_case_id": result.get("test_case_id"),
+                "action": action,
+                "reason": "ticket-bearing result lacks executed approval status",
+            })
+
+    return {
+        "name": "mutating_actions_policy_aligned",
+        "status": "pass" if not violations else "fail",
+        "details": {"violations": violations},
+    }
+
+
+def _check_release_decision_policy_trace(final_state: dict[str, Any]) -> dict[str, Any]:
+    """Verify release decisions are tied to deterministic score/policy data."""
+    decision = final_state.get("release_decision")
+    if not decision:
+        return {
+            "name": "release_decision_policy_trace",
+            "status": "pass",
+            "details": {"release_decision_present": False},
+        }
+
+    missing: list[str] = []
+    for key in ("recommendation", "risk_score", "score_model_version"):
+        if decision.get(key) in (None, ""):
+            missing.append(key)
+    if decision.get("policy_id") and not decision.get("policy_evaluation"):
+        missing.append("policy_evaluation")
+
+    return {
+        "name": "release_decision_policy_trace",
+        "status": "pass" if not missing else "warn",
+        "details": {
+            "missing": missing,
+            "policy_id": decision.get("policy_id"),
+            "has_policy_evaluation": bool(decision.get("policy_evaluation")),
+        },
+    }
+
+
 def build_workflow_plan(
     *,
     workflow_type: str,
@@ -173,6 +300,10 @@ def verify_workflow_execution(
         "status": "pass" if (not all_green or not all_green_has_analysis) else "fail",
         "details": {"analysis_count": len(analyses), "all_green": all_green},
     })
+    checks.append(_check_contract_evidence_support(final_state))
+    checks.append(_check_summary_provenance(final_state))
+    checks.append(_check_mutating_action_policy_alignment(final_state))
+    checks.append(_check_release_decision_policy_trace(final_state))
 
     failed = [check for check in checks if check["status"] == "fail"]
     warned = [check for check in checks if check["status"] == "warn"]

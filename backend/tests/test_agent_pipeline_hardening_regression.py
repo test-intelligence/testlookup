@@ -167,6 +167,7 @@ def test_hardening_plan_tracks_remaining_phases():
         "Phase 4: Performance And Backpressure",
         "Phase 5: Full Audit Replay",
         "Refactor R2: Planner And Verifier",
+        "Refactor R3: Memory And Retrieval",
         "Refactor R4: Safety And HITL Enforcement",
         "Refactor R5: Evaluation Release Gate",
         "Refactor R6: Observability And Cost Control",
@@ -345,16 +346,34 @@ def test_pipeline_replay_service_reconstructs_deterministically():
     build_replay = _function_source("app/services/pipeline_replay_service.py", "build_pipeline_replay")
     build_summary = _function_source("app/services/pipeline_replay_service.py", "build_replay_integrity_summary")
     integrity = _function_source("app/services/pipeline_replay_service.py", "_integrity_report")
+    load_memory = _function_source(
+        "app/services/pipeline_replay_service.py",
+        "_load_pipeline_memory_references",
+    )
+    replay_reference = _function_source(
+        "app/services/pipeline_replay_service.py",
+        "_replay_memory_reference",
+    )
 
     assert "def _event_sort_key" in replay
     assert "def _stage_sort_key" in replay
+    assert "def _memory_reference_sort_key" in replay
     assert "def _workflow_route_decisions" in replay
     assert "def _synthesized_route_events" in replay
+    assert "AgentMemoryEntry" in replay
+    assert "build_memory_reference" in replay
     assert "sorted(stage_result.scalars().all(), key=_stage_sort_key)" in build_replay
     assert "events = sorted(events, key=_event_sort_key)" in build_replay
     assert '"route_decisions": _workflow_route_decisions(pipeline)' in build_replay
     assert '"stage_replay": [_stage_summary(stage) for stage in stages]' in build_replay
+    assert "memory_references = await _load_pipeline_memory_references(db, pipeline_id)" in build_replay
+    assert '"memory_references": memory_references' in build_replay
     assert '"event_counts": _event_counts(events)' in build_replay
+    assert "AgentMemoryEntry.pipeline_run_id == pipeline_id" in load_memory
+    assert "AgentMemoryEntry.entity_type" in load_memory
+    assert "retrieval_audit_sha256" in replay_reference
+    assert "retrieval_audit" in replay_reference
+    assert "memory_reference_id" in replay_reference
     assert "missing_start_events" in integrity
     assert "missing_terminal_events" in integrity
     assert "missing_replay_checksums" in integrity
@@ -393,6 +412,7 @@ def test_pipeline_replay_response_schema_is_typed():
     for cls in [
         "PipelineReplayEventResponse",
         "PipelineReplayStageResponse",
+        "MemoryReference",
         "PipelineReplayAuditGaps",
         "PipelineReplayIntegritySummary",
         "PipelineReplayResponse",
@@ -404,6 +424,7 @@ def test_pipeline_replay_response_schema_is_typed():
         "test_run_id: uuid.UUID",
         "analysis_mode_resolution: Dict[str, Any]",
         "stage_replay: List[PipelineReplayStageResponse]",
+        "memory_references: List[MemoryReference]",
         "events: List[PipelineReplayEventResponse]",
         "event_counts: Dict[str, int]",
         "audit_gaps: PipelineReplayAuditGaps",
@@ -426,8 +447,11 @@ def test_agent_contract_models_and_helper_exist():
         "IngestionAgentOutput",
         "ClusterAgentOutput",
         "AnomalyDetectionAgentOutput",
+        "AnalysisAgentOutput",
         "SummaryAgentOutput",
         "DefectTriageAgentOutput",
+        "FlakySentinelAgentOutput",
+        "TestHealthAgentOutput",
         "ReleaseRiskAgentOutput",
     ]:
         assert f"class {cls}" in contracts
@@ -475,18 +499,38 @@ def test_first_agents_validate_outputs_against_contracts():
 
 def test_next_agents_validate_outputs_against_contracts():
     anomaly = _read("app/agents/anomaly_agent.py")
+    analysis = _read("app/agents/analysis_agent.py")
     summary = _read("app/agents/summary_agent.py")
     triage = _read("app/agents/triage_agent.py")
+    flaky = _read("app/agents/flaky_sentinel_agent.py")
+    test_health = _read("app/agents/test_health_agent.py")
 
     assert "AnomalyDetectionAgentOutput" in anomaly
     assert "validate_agent_contract(" in anomaly
     assert "decision_reason=" in anomaly
+    assert "AnalysisAgentOutput" in analysis
+    assert "validate_agent_contract(" in analysis
+    assert "low_confidence_count" in analysis
     assert "SummaryAgentOutput" in summary
     assert "validate_agent_contract(" in summary
     assert "summary_provenance" in summary
     assert "DefectTriageAgentOutput" in triage
     assert "validate_agent_contract(" in triage
     assert "triage_result" in triage
+    assert "FlakySentinelAgentOutput" in flaky
+    assert "validate_agent_contract(" in flaky
+    assert "flaky_lifecycle_investigation_completed" in flaky
+    assert "TestHealthAgentOutput" in test_health
+    assert "validate_agent_contract(" in test_health
+    assert "test_health_analysis_completed" in test_health
+
+
+def test_r1_contract_coverage_rule_is_documented():
+    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+
+    assert "Contract coverage rule" in plan
+    assert "no LangGraph pipeline agent should return an" in plan
+    assert "validate_agent_contract(...)" in plan
 
 
 def test_r2_planner_and_verifier_service_is_deterministic():
@@ -510,6 +554,55 @@ def test_r2_planner_and_verifier_service_is_deterministic():
     assert "all_green_skips_analysis_work" in verifier
     assert 'state["workflow_plan"] = plan' in attach
     assert 'state["workflow_verification"] = verify_workflow_execution(plan, state)' in attach
+
+
+def test_r2_verifier_checks_evidence_and_policy_alignment():
+    planner = _read("app/services/agent_planner.py")
+    verifier = _function_source("app/services/agent_planner.py", "verify_workflow_execution")
+    evidence_check = _function_source(
+        "app/services/agent_planner.py",
+        "_check_contract_evidence_support",
+    )
+    summary_check = _function_source(
+        "app/services/agent_planner.py",
+        "_check_summary_provenance",
+    )
+    action_check = _function_source(
+        "app/services/agent_planner.py",
+        "_check_mutating_action_policy_alignment",
+    )
+    release_check = _function_source(
+        "app/services/agent_planner.py",
+        "_check_release_decision_policy_trace",
+    )
+    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+
+    for check_name in [
+        "_check_contract_evidence_support(final_state)",
+        "_check_summary_provenance(final_state)",
+        "_check_mutating_action_policy_alignment(final_state)",
+        "_check_release_decision_policy_trace(final_state)",
+    ]:
+        assert check_name in verifier
+    assert "missing_contracts" in evidence_check
+    assert "contract_evidence_support" in evidence_check
+    assert "missing_evidence_refs" in evidence_check
+    assert "summary_provenance" in summary_check
+    assert "summary_provenance_present" in summary_check
+    assert "context_sha256" in summary_check
+    assert "safe_context_sha256" in summary_check
+    assert "input_fingerprints" in summary_check
+    assert "prompt_versions" in summary_check
+    assert "model_config_snapshot" in summary_check
+    assert "pending_review" in action_check
+    assert "requires_approval" in action_check
+    assert "mutating_actions_policy_aligned" in action_check
+    assert "policy_evaluation" in release_check
+    assert "release_decision_policy_trace" in release_check
+    assert "_check_contract_evidence_support(final_state)" in planner
+    assert "deeper verifier checks" in plan
+    assert "evidence support" in plan
+    assert "policy alignment" in plan
 
 
 def test_workflow_persists_r2_plan_and_verification():
@@ -541,6 +634,138 @@ def test_replay_exposes_r2_plan_and_verification_contract():
     assert "workflow_verification: Dict[str, Any]" in schemas
 
 
+def test_r3_memory_retrieval_is_deterministic_and_auditable():
+    memory = _read("app/services/agent_memory_service.py")
+    recall = _function_source("app/services/agent_memory_service.py", "recall_similar")
+    reference = _function_source("app/services/agent_memory_service.py", "build_memory_reference")
+    persist_pipeline = _function_source("app/services/agent_memory_service.py", "persist_pipeline_memory")
+    query = _function_source("app/services/agent_memory_service.py", "_query_similar_vectors")
+    retrieval_manifest = _function_source("app/services/agent_memory_service.py", "_memory_retrieval_manifest")
+    release_memory_context = _function_source(
+        "app/services/agent_memory_service.py",
+        "load_release_risk_memory_context",
+    )
+    duplicate_memory = _function_source(
+        "app/services/agent_memory_service.py",
+        "find_duplicate_defect_memory",
+    )
+    ownership_memory = _function_source(
+        "app/services/agent_memory_service.py",
+        "resolve_ownership_from_memory",
+    )
+    normalize = _function_source("app/services/agent_memory_service.py", "_normalize_memory_signature")
+    summary_fetch = _function_source("app/agents/summary_agent.py", "_fetch_similar_failures")
+    summary_format = _function_source("app/agents/summary_agent.py", "_format_memory_recall_items")
+    release_run = _function_source("app/agents/release_risk_agent.py", "run")
+    release_evaluate = _function_source("app/agents/release_risk_agent.py", "_evaluate")
+    release_load_memory = _function_source("app/agents/release_risk_agent.py", "_load_release_memory_context")
+    defect_duplicate = _function_source("app/services/defect_promotion_service.py", "_find_duplicate_semantic")
+    defect_owner = _function_source("app/services/defect_promotion_service.py", "_resolve_defect_owner_from_memory")
+    ownership_resolver = _function_source("app/services/ownership_resolver_service.py", "resolve_cluster_ownership")
+    ownership_resolver_memory = _function_source(
+        "app/services/ownership_resolver_service.py",
+        "_resolve_cluster_ownership_from_memory",
+    )
+    snapshot_service = _read("app/services/intelligence_snapshot_service.py")
+    save_snapshot = _function_source("app/services/intelligence_snapshot_service.py", "save_snapshot")
+    snapshot_manifest = _function_source(
+        "app/services/intelligence_snapshot_service.py",
+        "build_snapshot_memory_reference_manifest",
+    )
+    schemas = _read("app/models/schemas.py")
+    router = _read("app/routers/agent_memory.py")
+    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+
+    assert "_MEMORY_RETRIEVAL_VERSION = \"agent_memory.recall:v1\"" in memory
+    assert "retrieval_version" in retrieval_manifest
+    assert "query_signature_sha256" in retrieval_manifest
+    assert "normalized_query_signature_sha256" in retrieval_manifest
+    assert "project_scoped_vector_recall" in retrieval_manifest
+    assert "re.sub" in normalize
+    assert "matches.sort(key=lambda item: (-item[\"similarity\"]" in query
+    assert "ranked_matches = sorted(" in recall
+    assert "\"retrieval_audit\"" in recall
+    assert "\"memory_reference\"" in recall
+    assert "_MEMORY_CONSUMER_CONTEXT_VERSION = \"agent_memory.consumer_context:v1\"" in memory
+    assert "load_canonical_memory_entries" in memory
+    assert "canonical_agent_memory" in memory
+    assert "consumer=\"release_risk\"" in release_memory_context
+    assert "\"open_defects\": len(active)" in release_memory_context
+    assert "consumer=\"defect_promotion_duplicate_check\"" in duplicate_memory
+    assert "recall_similar(" in duplicate_memory
+    assert "canonical_agent_memory_title_similarity" in duplicate_memory
+    assert "consumer=\"ownership_routing\"" in ownership_memory
+    assert "memory_match_score" in ownership_memory
+    for field in [
+        '"memory_entry_id"',
+        '"entity_type"',
+        '"entity_id"',
+        '"source_snapshot_id"',
+        '"payload_sha256"',
+        '"retrieval_audit"',
+        '"evidence_refs"',
+    ]:
+        assert field in reference
+    assert "recall_similar" in summary_fetch
+    assert "source_mode_used\": \"agent_memory\"" in summary_format
+    assert "\"memory_reference\": match.get(\"memory_reference\")" in summary_format
+    assert "class MemoryReference" in schemas
+    assert "memory_reference: Optional[MemoryReference]" in schemas
+    assert "retrieval_audit: Optional[Dict[str, Any]]" in schemas
+    assert "retrieval_audit=m.get(\"retrieval_audit\")" in router
+    assert "memory_reference=m.get(\"memory_reference\")" in router
+    for helper in [
+        "_append_analysis_evidence_memories",
+        "_append_summary_evidence_memories",
+        "_append_deep_finding_evidence_memories",
+        "_append_defect_memories",
+        "_append_release_input_snapshot_memory",
+        "_append_declared_ownership_memories",
+        "_append_resolved_ownership_memories",
+    ]:
+        assert helper in memory
+    for entity_type in [
+        '"evidence"',
+        '"defect_candidate"',
+        '"promoted_defect"',
+        '"release_input_snapshot"',
+        '"ownership"',
+    ]:
+        assert entity_type in memory
+    assert "_append_defect_memories(entries, base, final_state)" in persist_pipeline
+    assert "decision[\"input_snapshot\"] = input_snapshot" in release_run
+    assert "state[\"release_memory_context\"] = decision.get(\"memory_context\")" in release_run
+    assert "_load_release_memory_context(state[\"project_id\"])" in release_evaluate
+    assert "\"memory_context\": release_memory_context" in release_evaluate
+    assert "load_release_risk_memory_context" in release_load_memory
+    assert "defect_table_fallback" in release_load_memory
+    assert "find_duplicate_defect_memory" in defect_duplicate
+    assert "_resolve_defect_owner_from_memory" in _read("app/services/defect_promotion_service.py")
+    assert "resolve_ownership_from_memory" in defect_owner
+    assert "_resolve_cluster_ownership_from_memory" in ownership_resolver
+    assert "match_source=\"agent_memory\"" in ownership_resolver_memory
+    assert "CURRENT_SCHEMA_VERSION = 3" in snapshot_service
+    assert "AgentMemoryEntry" in snapshot_service
+    assert "build_memory_reference" in snapshot_service
+    for field in [
+        '"memory_reference_manifest"',
+        '"memory_reference_ids"',
+        '"memory_graph_checksum_sha256"',
+        '"memory_references"',
+    ]:
+        assert field in snapshot_service
+    assert "_load_snapshot_memory_entries(db, run_id)" in snapshot_service
+    assert "attach_memory_reference_manifest" in save_snapshot
+    assert "source_snapshot_id" in snapshot_manifest
+    assert "_memory_reference_id(reference)" in snapshot_manifest
+    assert "Refactor R3: Memory And Retrieval" in plan
+    assert "deterministically ranks equal-score matches" in plan
+    assert "canonical `memory_reference` contract" in plan
+    assert "evidence artifacts, defect candidates/promoted defects" in plan
+    assert "memory reference manifest" in plan
+    assert "R3.6 wires release risk" in plan
+
+
 def test_r4_triage_gates_jira_creation_with_action_policy():
     triage = _read("app/agents/triage_agent.py")
     triage_one = _function_source("app/agents/triage_agent.py", "_triage_one")
@@ -554,6 +779,28 @@ def test_r4_triage_gates_jira_creation_with_action_policy():
     assert triage_one.index("check_jira_ticket_creation_policy") < triage_one.index("create_jira_issue")
     assert "ActionType.JIRA_TICKET_CREATION" in policy
     assert "Jira ticket creation requires human approval" in policy
+
+
+def test_r4_manual_jira_endpoint_stages_pending_review_before_mutation():
+    router = _read("app/routers/integrations.py")
+    endpoint = _function_source("app/routers/integrations.py", "create_jira_defect")
+    stage = _function_source("app/routers/integrations.py", "_stage_pending_jira_defect")
+    schemas = _class_source("app/models/schemas.py", "JiraIssueResponse")
+    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+
+    assert "check_jira_ticket_creation_policy" in router
+    assert "_stage_pending_jira_defect" in endpoint
+    assert "ActionStatus.PENDING_REVIEW" in endpoint
+    assert endpoint.index("check_jira_ticket_creation_policy") < endpoint.index("create_jira_issue")
+    assert "mutating_action=\"jira_ticket_creation\"" in endpoint
+    assert "requested_summary_sha256" in stage
+    assert "requested_action_sha256" in stage
+    assert "promotion_source=\"manual_jira_request\"" in stage
+    assert "_json_safe" in stage
+    assert "approval_status: Optional[str]" in schemas
+    assert "requires_approval: bool" in schemas
+    assert "policy_reasons: List[str]" in schemas
+    assert "manual Jira integration endpoint uses the same policy gate" in plan
 
 
 def test_r5_agent_stack_release_gate_manifest_is_auditable():
@@ -572,15 +819,58 @@ def test_r5_agent_stack_release_gate_manifest_is_auditable():
     assert "evaluate_pre_release_gate" in release_gate
     assert '"blocking_gates"' in release_gate
     assert '"version_changes"' in release_gate
+    assert "persist_agent_stack_gate_run" in release_gate
     assert "AgentStackReleaseGateRequest" in router
     assert '@router.post("/agent-stack-release-gate")' in router
+
+
+def test_r5_agent_stack_release_gate_runs_are_persisted_for_audit():
+    service = _read("app/services/eval_gate_service.py")
+    persist = _function_source("app/services/eval_gate_service.py", "persist_agent_stack_gate_run")
+    router = _read("app/routers/ai_evaluation.py")
+    schemas = _class_source("app/models/schemas.py", "AIEvalGateRunResponse")
+    model = _class_source("app/models/postgres.py", "AIEvalGateRun")
+    migration = _read("migrations/versions/0078_ai_eval_gate_runs.py")
+    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+
+    assert "AIEvalGateRun" in service
+    assert "db.add(row)" in persist
+    assert "await db.commit()" in persist
+    assert "manifest_checksum_sha256" in persist
+    assert "gate_run_id" in service
+    assert "persist: bool = True" in router
+    assert "evaluated_by=current_user.id" in router
+    assert '@router.get("/agent-stack-release-gate/runs"' in router
+    assert "AIEvalGateRunResponse" in router
+    assert "class AIEvalGateRun" in model
+    for field in [
+        "change_id",
+        "status",
+        "manifest_checksum_sha256",
+        "manifest",
+        "gate_results",
+        "blocking_gates",
+        "version_changes",
+        "evaluated_by",
+    ]:
+        assert field in schemas
+        assert field in model
+        assert field in migration
+    assert "ai_eval_gate_runs" in migration
+    assert "historical `ai_eval_gate_runs`" in plan
 
 
 def test_r6_timeline_exposes_agent_observability_summary():
     service = _read("app/services/agent_cost_service.py")
     summary = _function_source("app/services/agent_cost_service.py", "build_agent_observability_summary")
+    check_alerts = _function_source("app/services/agent_cost_service.py", "check_alerts")
+    route_alert = _function_source("app/services/agent_cost_service.py", "_route_alert")
     router = _function_source("app/routers/agents.py", "get_pipeline_timeline")
     timeline_schema = _class_source("app/models/schemas.py", "PipelineTimelineResponse")
+    frontend_page = _read("../frontend/src/pages/AgentStatusPage.tsx")
+    frontend_types = _read("../frontend/src/types/agent.ts")
+    frontend_test = _read("../frontend/src/pages/AgentStatusPage.test.tsx")
+    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "build_agent_observability_summary" in service
     for key in [
@@ -598,3 +888,23 @@ def test_r6_timeline_exposes_agent_observability_summary():
     assert "build_agent_observability_summary" in router
     assert '"agent_observability": agent_observability' in router
     assert "agent_observability: Dict[str, Any]" in timeline_schema
+    assert "_ALERT_ROUTES" in service
+    for key in [
+        '"primary_owner"',
+        '"escalation_owner"',
+        '"priority"',
+        '"recommended_action"',
+    ]:
+        assert key in route_alert
+    assert "_route_alert(alert)" in check_alerts
+    assert "agent_observability?:" in frontend_types
+    assert "routing?:" in frontend_types
+    assert "function ObservabilityPanel" in frontend_page
+    assert "Pipeline Observability" in frontend_page
+    assert "alert.routing.primary_owner" in frontend_page
+    assert "alert.routing.escalation_owner" in frontend_page
+    assert "alert.routing.priority" in frontend_page
+    assert "surfaces observability cost signals and alert routing" in frontend_test
+    assert "frontend Agent Pipeline" in plan
+    assert "timeline now surfaces" in plan
+    assert "deterministic owner, escalation" in plan
