@@ -273,7 +273,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/reset-password" element={<ResetPasswordPage />} />
-        <Route path="/" element={<AppLayout />}>
+        <Route path="/*" element={<AppLayout />}>
           <Route index element={<Navigate to="/overview" replace />} />
           {appRoutes.map(({ path, component }) => (
             <Route key={path} path={path} element={renderLazyRoute(component)} />
@@ -289,7 +289,9 @@ export default function App() {
               }
             />
           ))}
+          <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
+        <Route path="*" element={<Navigate to="/overview" replace />} />
       </Route>
     </Routes>
   )

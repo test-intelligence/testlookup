@@ -1080,15 +1080,12 @@ export default function SearchPage() {
       return np
     }, { replace: true })
 
-    // Empty query + scope=all: keep the empty-state body grid (recent /
-    // saved / suggested) — a fan-out browse across every entity is too
-    // noisy as a landing experience. Empty query + a specific scope: hit
-    // the API in browse mode so clicking a chip with a non-zero count
-    // surfaces the most-recent records of that type.
-    if (!trimmed && s === 'all') {
-      setResponse(null)
-      return
-    }
+    // Empty query: hit the API in browse mode regardless of scope. The
+    // backend adapters fall back to "most-recent N" rows when ``q`` is
+    // empty, so landing at /search?scope=all with no query shows real
+    // data instead of an empty page. (Pre-2026-05-16 this short-circuited
+    // for scope='all', producing the asymmetric behaviour the user
+    // reported: Tests/Suites populated but All was blank.)
 
     setIsSearching(true)
     try {
@@ -1125,16 +1122,15 @@ export default function SearchPage() {
     }
   }, [setSearchParams])
 
-  // ── Auto-run on mount when there's a query OR a non-`all` scope ──────
-  // A URL like /search?scope=tests should land on a populated browse view
-  // so the chip-count number ("Tests · 65") corresponds to actual records.
+  // ── Auto-run on mount ────────────────────────────────────────────────
+  // Always fire on first mount — empty queries browse the most-recent
+  // rows so a freshly loaded /search page (any scope, including ``all``)
+  // shows real data instead of a blank slate.
   const initialRanRef = useRef(false)
   useEffect(() => {
     if (initialRanRef.current) return
     initialRanRef.current = true
-    if (query.trim() || scope !== 'all') {
-      void runSearch(query, mode, scope)
-    }
+    void runSearch(query, mode, scope)
   }, [query, mode, scope, runSearch])
 
   // ── ⌘K shortcut: focus input (unless user is already typing in another input) ──
@@ -1375,16 +1371,32 @@ export default function SearchPage() {
       {response && response.items.length === 0 && (
         <CardShell title="No results" rightSlot={<span>0 matches</span>}>
           <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-secondary)]">
-            <p className="m-0 mb-2">Nothing matched <code className="font-mono text-[12px]">{query}</code>.</p>
-            <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
-              Try a different mode (Hybrid casts the widest net), broaden the scope, or check the syntax guide on the right.
-            </p>
+            {query.trim() ? (
+              <>
+                <p className="m-0 mb-2">Nothing matched <code className="font-mono text-[12px]">{query}</code>.</p>
+                <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
+                  Try a different mode (Hybrid casts the widest net), broaden the scope, or check the syntax guide on the right.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="m-0 mb-2">Nothing to browse in <code className="font-mono text-[12px]">{projectLabel}</code> yet.</p>
+                <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
+                  Ingest a test run or pick a different project from the top bar to populate the index.
+                </p>
+              </>
+            )}
           </div>
         </CardShell>
       )}
 
-      {/* Empty-state body grid (only when no results) */}
-      {!response && (
+      {/* Browse-mode helper grid — recent/saved/suggested + index health.
+          Visible whenever no query is active, so a user landing at
+          /search with scope=all (browse mode) still sees the syntax
+          guide and Index Health alongside the auto-loaded results.
+          Hidden once the user types a query so the screen focuses on
+          their search results. */}
+      {query.trim() === '' && (
         <div className="grid gap-3.5 mt-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
           <div className="flex flex-col gap-3.5 min-w-0">
             <RecentList

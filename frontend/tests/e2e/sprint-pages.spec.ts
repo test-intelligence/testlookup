@@ -1,5 +1,172 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { performRealLogin } from './realLoginHelper'
+
+const now = new Date('2026-05-15T12:00:00Z').toISOString()
+
+async function mockMyFailuresApi(page: Page) {
+  const listRequests: string[] = []
+
+  await page.route('**/api/v1/me/assigned-failures**', async route => {
+    const url = new URL(route.request().url())
+
+    if (url.pathname.endsWith('/count')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ count: 2 }),
+      })
+      return
+    }
+
+    listRequests.push(url.search)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [
+          {
+            id: 'case-auth-1',
+            test_run_id: 'run-101',
+            test_name: 'test_login_redirects_after_sso',
+            suite_name: 'AuthSuite',
+            class_name: 'LoginSpec',
+            status: 'FAILED',
+            severity: 'major',
+            failure_category: 'PRODUCT_BUG',
+            duration_ms: 912,
+            error_message: 'Expected /dashboard, got /login',
+            created_at: now,
+            project_id: 'project-1',
+            project_name: 'Checkout',
+            build_number: '101',
+            navigation_url: '/runs/run-101/tests/case-auth-1',
+          },
+          {
+            id: 'case-api-2',
+            test_run_id: 'run-102',
+            test_name: 'test_payment_contract',
+            suite_name: 'PaymentAPI',
+            class_name: 'PaymentContractSpec',
+            status: 'BROKEN',
+            severity: 'critical',
+            failure_category: 'INFRASTRUCTURE',
+            duration_ms: 1200,
+            error_message: 'Schema mismatch',
+            created_at: now,
+            project_id: 'project-1',
+            project_name: 'Checkout',
+            build_number: '102',
+            navigation_url: '/runs/run-102/tests/case-api-2',
+          },
+        ],
+        total: 2,
+        page: Number(url.searchParams.get('page') || 1),
+        size: Number(url.searchParams.get('size') || 25),
+        pages: 1,
+        unresolved_total: 2,
+      }),
+    })
+  })
+
+  return { listRequests }
+}
+
+async function mockSuitesApi(page: Page) {
+  await page.route('**/api/v1/suites**', async route => {
+    const url = new URL(route.request().url())
+    const path = url.pathname
+
+    if (path === '/api/v1/suites') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: [
+            {
+              id: 'suite-auth',
+              project_id: 'project-1',
+              name: 'AuthSuite',
+              description: 'Login and SSO coverage',
+              is_default: true,
+              tags: null,
+              test_case_count: 12,
+              created_at: now,
+              updated_at: now,
+            },
+            {
+              id: 'suite-payments',
+              project_id: 'project-1',
+              name: 'PaymentAPI',
+              description: 'Contract tests',
+              is_default: false,
+              tags: null,
+              test_case_count: 8,
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+          total: 2,
+        }),
+      })
+      return
+    }
+
+    if (path === '/api/v1/suites/suite-auth') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'suite-auth',
+          project_id: 'project-1',
+          name: 'AuthSuite',
+          description: 'Login and SSO coverage',
+          is_default: true,
+          tags: null,
+          test_case_count: 12,
+          created_at: now,
+          updated_at: now,
+        }),
+      })
+      return
+    }
+
+    if (path === '/api/v1/suites/suite-auth/test-cases') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: [
+            {
+              id: 'canonical-auth-1',
+              project_id: 'project-1',
+              test_suite_id: 'suite-auth',
+              test_suite_name: 'AuthSuite',
+              test_fingerprint: 'fp-auth-1',
+              test_name: 'test_login_redirects_after_sso',
+              class_name: 'LoginSpec',
+              status: 'active',
+              source: 'execution',
+              first_seen_run_id: 'run-101',
+              last_seen_run_id: 'run-101',
+              last_seen_test_case_id: 'case-auth-1',
+              deleted_at_run_id: null,
+              managed_test_case_id: null,
+              review_tag: null,
+              tags: null,
+              run_count: 5,
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+          total: 1,
+        }),
+      })
+      return
+    }
+
+    await route.continue()
+  })
+}
 
 /**
  * Smoke coverage for pages shipped over the last several sprints that
@@ -17,6 +184,34 @@ test.describe('Sprint pages — smoke', () => {
   // ── /my-failures (action queue, shipped 2026-05-15) ─────────────────────
 
   test.describe('My Failures action queue', () => {
+    test('renders assigned failures from the API and deep-links rows', async ({ page }) => {
+      await mockMyFailuresApi(page)
+
+      await page.goto('/my-failures')
+      await expect(page).toHaveURL(/.*\/my-failures/)
+      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+
+      await expect(page.getByText('test_login_redirects_after_sso')).toBeVisible()
+      await expect(page.getByText('test_payment_contract')).toBeVisible()
+      await expect(page.getByText('Checkout').first()).toBeVisible()
+      await expect(page.getByText('2 assigned')).toBeVisible()
+
+      await page.getByText('test_login_redirects_after_sso').click()
+      await expect(page).toHaveURL(/.*\/runs\/run-101\/tests\/case-auth-1/)
+    })
+
+    test('changing the time window re-fetches with the selected days value', async ({ page }) => {
+      const { listRequests } = await mockMyFailuresApi(page)
+
+      await page.goto('/my-failures')
+      await expect(page.getByText('test_login_redirects_after_sso')).toBeVisible()
+
+      await page.getByRole('radio', { name: /^7d$/i }).click()
+      await expect.poll(() => listRequests.some(search => search.includes('days=7')))
+        .toBe(true)
+      await expect(page.getByRole('radio', { name: /^7d$/i })).toHaveAttribute('aria-checked', 'true')
+    })
+
     test('renders My Failures page with time-window controls', async ({ page }) => {
       await page.goto('/my-failures')
       await expect(page).toHaveURL(/.*\/my-failures/)
@@ -44,6 +239,27 @@ test.describe('Sprint pages — smoke', () => {
         // Page stays mounted; sidebar still rendered.
         await expect(page.locator('aside')).toBeVisible()
       }
+    })
+  })
+
+  // ── /suites (project-scoped suite catalogue) ────────────────────────────
+
+  test.describe('Suites', () => {
+    test('renders suite rows and opens the suite detail page', async ({ page }) => {
+      await mockSuitesApi(page)
+
+      await page.goto('/suites')
+      await expect(page).toHaveURL(/.*\/suites/)
+      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 })
+
+      await expect(page.getByText('AuthSuite')).toBeVisible()
+      await expect(page.getByText('PaymentAPI')).toBeVisible()
+      await expect(page.getByText('12')).toBeVisible()
+
+      await page.getByText('AuthSuite').click()
+      await expect(page).toHaveURL(/.*\/suites\/suite-auth/)
+      await expect(page.getByRole('heading', { name: /AuthSuite/ })).toBeVisible()
+      await expect(page.getByText('test_login_redirects_after_sso')).toBeVisible()
     })
   })
 

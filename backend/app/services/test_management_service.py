@@ -85,19 +85,26 @@ async def list_managed_test_cases(
 
 async def list_automation_test_cases(
     db: AsyncSession,
-    project_id: uuid.UUID,
+    project_id: Optional[uuid.UUID],
     *,
     search: Optional[str] = None,
     suite_name: Optional[str] = None,
     exclude_fingerprints: Optional[set[str]] = None,
 ) -> list[dict]:
     """Return synthesized ``ManagedTestCase``-shaped rows derived from per-run
-    ``TestCase`` rows for a project.
+    ``TestCase`` rows.
 
     Backs the "include automation-ingested tests" toggle on
     /test-management. Dedupes by ``test_fingerprint`` (one row per logical
     test) and joins via the latest TestRun so ``last_executed_at`` /
     ``last_execution_status`` reflect the most recent run.
+
+    When ``project_id`` is ``None`` the project filter is dropped and rows
+    span every project — this is the All-Projects path and is only safe
+    when the caller has already enforced admin gating (the router does this
+    via ``get_accessible_project_ids`` before reaching the merge path).
+    Each synthesised row reports its own ``project_id`` from the joined
+    ``TestRun`` so the frontend can route mutations correctly.
 
     The result rows are NOT inserted into ``managed_test_cases`` — they're
     serialised through ``ManagedTestCaseResponse`` for frontend display
@@ -119,11 +126,13 @@ async def list_automation_test_cases(
             TestCase.tags,
             TestRun.created_at.label("run_created_at"),
             TestRun.id.label("run_id"),
+            TestRun.project_id.label("run_project_id"),
         )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
-        .where(TestRun.project_id == project_id)
         .where(TestCase.test_fingerprint.isnot(None))
     )
+    if project_id is not None:
+        base = base.where(TestRun.project_id == project_id)
     if suite_name:
         base = base.where(TestCase.suite_name == suite_name)
     if search:
@@ -148,9 +157,10 @@ async def list_automation_test_cases(
     for r in rows:
         if r.test_fingerprint in exclude:
             continue
+        row_project_id = r.run_project_id if project_id is None else project_id
         result.append({
             "id": r.id,  # per-run TestCase id; safe as a list-row key
-            "project_id": project_id,
+            "project_id": row_project_id,
             "title": r.test_name,
             "description": None,
             "objective": None,

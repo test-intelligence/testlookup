@@ -117,17 +117,18 @@ async def list_test_cases(
 
     # 2. Pull the automation-ingested set, skipping any fingerprint that
     #    already shows up in managed rows so we don't double-count.
+    #    ``project_id`` is allowed to be None here — the early non-admin
+    #    return above already protects the cross-tenant path, so reaching
+    #    this point with project_id=None means the caller is admin and
+    #    explicitly browsing All-Projects.
     managed_fps = {m.get("test_fingerprint") for m in managed_dicts if m.get("test_fingerprint")}
-    if project_id is not None:
-        automation_dicts = await list_automation_test_cases(
-            db,
-            project_id=project_id,
-            search=search,
-            suite_name=suite_name,
-            exclude_fingerprints=managed_fps,
-        )
-    else:
-        automation_dicts = []
+    automation_dicts = await list_automation_test_cases(
+        db,
+        project_id=project_id,
+        search=search,
+        suite_name=suite_name,
+        exclude_fingerprints=managed_fps,
+    )
 
     # 3. Sort merged set by recency (last_executed_at then created_at) so
     #    the freshest signal is on top regardless of source.

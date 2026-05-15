@@ -96,6 +96,14 @@ describe('SearchPage', () => {
     mockGetEntityCounts.mockResolvedValue({
       test_case: 0, test_run: 0, suite: 0, defect: 0, flaky_test: 0, release: 0,
     })
+    // Default: empty browse response. SearchPage now auto-runs on mount
+    // for every scope (including ``all``) — tests that don't care about
+    // the response shape still need a resolvable Promise so the page
+    // doesn't crash on ``response.items.length``.
+    mockGlobalSearch.mockResolvedValue({
+      items: [], total: 0, query: '', search_type: 'hybrid',
+      entity_counts: {}, page: 1, size: 25, pages: 0,
+    } as unknown as GlobalSearchResponse)
   })
 
   it('renders the search workflow strip and search controls', async () => {
@@ -169,6 +177,49 @@ describe('SearchPage', () => {
     // The service is called with the active project from the store
     // (proj-1 in the mock above).
     expect(mockGetEntityCounts).toHaveBeenCalledWith('proj-1')
+  })
+
+  it('scope=all with empty query browses the API and renders results (regression: 2026-05-16)', async () => {
+    // Pre-fix bug (commit 7be8193): ``runSearch`` short-circuited with
+    // ``setResponse(null); return`` when the query was empty AND scope
+    // was 'all', while every other scope hit the API in browse mode.
+    // The result was an asymmetric landing experience — ``/search`` and
+    // ``/search?scope=all`` showed an empty page on first load (with no
+    // recents/saved/suggested to populate the fallback grid), while
+    // ``/search?scope=tests`` and ``/search?scope=suites`` populated
+    // immediately. The fix: empty queries browse for every scope so
+    // ``All`` mirrors the other chips.
+    mockGlobalSearch.mockResolvedValue(
+      makeResponse([
+        makeResult({ title: 'most_recent_login_test' }),
+        makeResult({
+          entity_id: 'b1eaae4a-2bd5-4d2a-8b4e-90f1b07d4ad5',
+          entity_type: 'test_run',
+          title: 'build-1042',
+          subtitle: 'main · PASSED',
+          navigation_url: '/runs/b1eaae4a-2bd5-4d2a-8b4e-90f1b07d4ad5',
+          relevance_score: 0.7,
+          metadata: { status: 'PASSED' },
+        }),
+      ]),
+    )
+
+    renderAt('/search?mode=hybrid&scope=all')
+
+    // Both rows from the browse response render — proves the page hit
+    // the API instead of short-circuiting to an empty grid.
+    expect(await screen.findByText('most_recent_login_test')).toBeInTheDocument()
+    expect(await screen.findByText('build-1042')).toBeInTheDocument()
+
+    // Service was called with an empty query and no entity_types filter
+    // (the hallmark of a scope=all browse).
+    expect(mockGlobalSearch).toHaveBeenCalled()
+    const callArgs = mockGlobalSearch.mock.calls[0][0] as {
+      q: string
+      entity_types?: string[]
+    }
+    expect(callArgs.q).toBe('')
+    expect(callArgs.entity_types).toBeUndefined()
   })
 
   it('chip counts stay on project totals when scope is narrowed (no jumping)', async () => {

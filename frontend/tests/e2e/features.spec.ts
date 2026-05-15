@@ -68,13 +68,8 @@ test.describe('Feature smoke tests', () => {
       await expect(page).toHaveURL(/.*\/projects/);
       await expect(page.locator('aside')).toBeVisible();
 
-      // Create button or empty state must be visible.
-      const createBtn = page.getByRole('button', { name: /create.*project|new project|\+/i }).first();
-      const emptyState = page.locator('text=/no projects|create your first/i').first();
-      const visible =
-        (await createBtn.isVisible().catch(() => false)) ||
-        (await emptyState.isVisible().catch(() => false));
-      expect(visible).toBe(true);
+      await expect(page.getByRole('heading', { name: /projects/i })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('button', { name: /new project|create.*project/i })).toBeVisible();
     });
   });
 
@@ -123,6 +118,7 @@ test.describe('Feature smoke tests', () => {
       await page.goto('/chat');
       // App.tsx routes the unknown path to /overview or shows a not-found —
       // either way the auth shell must stay and there must be no chat textarea.
+      await expect(page).toHaveURL(/.*\/overview/);
       await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
       const textareaCount = await page.locator('textarea').count();
       expect(textareaCount).toBe(0);
