@@ -101,8 +101,20 @@ async def reset_project(
     if mode not in ("runs", "full"):
         raise ValueError(f"Unknown reset mode: {mode!r}")
 
+    # ``FOR UPDATE`` serialises concurrent resets on the same project.
+    # Two admins clicking "Reset" at once previously raced: the first
+    # cascaded the deletes and committed; the second saw an empty
+    # project (everything already gone) and produced a phantom 200
+    # response with no audit-trail signal that nothing happened. With
+    # the row lock the second call blocks here until the first commits,
+    # then proceeds with counts=0 — the audit log row records the
+    # no-op explicitly. See docs/DATABASE_AUDIT_2026-05-16.md (P2-5).
     project = (
-        await db.execute(select(Project).where(Project.id == project_id))
+        await db.execute(
+            select(Project)
+            .where(Project.id == project_id)
+            .with_for_update()
+        )
     ).scalar_one_or_none()
     if project is None or not project.is_active:
         raise ProjectNotFound(f"Project {project_id} not found or inactive")

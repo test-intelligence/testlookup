@@ -280,20 +280,36 @@ async def _upsert_test_run(db, sentinel: SentinelFile, minio_prefix: str) -> Tes
     return cast(TestRun, run)
 
 
-async def _upsert_test_case(db, case_data: dict, run: TestRun) -> TestCase:
-    """Upsert a test case — idempotent on (run_id, test_fingerprint)."""
-    fingerprint = make_test_fingerprint(
-        case_data.get("test_name", ""),
-        case_data.get("class_name"),
-    )
+async def _upsert_test_case(
+    db,
+    case_data: dict,
+    run: TestRun,
+    *,
+    existing: Optional[TestCase] = None,
+    fingerprint: Optional[str] = None,
+) -> TestCase:
+    """Upsert a test case — idempotent on (run_id, test_fingerprint).
 
-    result = await db.execute(
-        select(TestCase).where(
-            TestCase.test_run_id == run.id,
-            TestCase.test_fingerprint == fingerprint,
+    ``existing`` and ``fingerprint`` may be supplied by the caller to
+    skip the per-row SELECT — the prefetch path in ``ingest_test_results``
+    fetches every row's existing TestCase in one query and passes the
+    match (or None) here. The unguarded call site still queries inline,
+    so this stays a drop-in replacement.
+    """
+    if fingerprint is None:
+        fingerprint = make_test_fingerprint(
+            case_data.get("test_name", ""),
+            case_data.get("class_name"),
         )
-    )
-    existing = result.scalar_one_or_none()
+
+    if existing is None:
+        result = await db.execute(
+            select(TestCase).where(
+                TestCase.test_run_id == run.id,
+                TestCase.test_fingerprint == fingerprint,
+            )
+        )
+        existing = result.scalar_one_or_none()
 
     status_map = {
         "passed": TestStatus.PASSED,

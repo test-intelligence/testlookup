@@ -132,6 +132,18 @@ celery_app.conf.update(
             "task": "app.worker.tasks.dispatch_scheduled_digests",
             "schedule": crontab(hour=7, minute=5, day_of_week="monday"),
         },
+        # P2-3 (DB audit 2026-05-16): nightly check for orphan TestSuite
+        # rows left behind by finalize_run's per-step isolation. Emits a
+        # structured WARNING + Prometheus counter per orphan so ops can
+        # decide whether to reassign / delete; the task never mutates
+        # data itself. Scheduled at 05:00 UTC, AFTER the perf-baseline
+        # refresh at 04:30 — ingestion typically lands earlier in the
+        # night and any suite_sync/canonical_sync split is well past
+        # the 60-minute "still mid-ingest" cooldown by 05:00.
+        "nightly-orphan-test-suite-flag": {
+            "task": "app.worker.tasks.flag_orphan_test_suites",
+            "schedule": crontab(hour=5, minute=0),
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,

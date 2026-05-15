@@ -1,10 +1,43 @@
-"""Async PostgreSQL database session factory using SQLAlchemy."""
-from typing import AsyncGenerator
+"""Async PostgreSQL database session factory using SQLAlchemy.
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+The engine and session factory are constructed lazily on first use so
+importing this module — and any module that imports it — does not require
+``DATABASE_URL`` to be set. This is a developer-ergonomics fix: tests that
+stub out the DB client previously had to prepend an env-var block to every
+``pytest`` invocation just to satisfy the import-time
+``create_async_engine(settings.DATABASE_URL)`` call.
+
+Lazy strategy:
+
+* ``get_engine()`` and ``get_session_factory()`` are @lru_cache'd; each
+  builds its resource the first time it is called and returns the same
+  instance forever after.
+* Module-level ``engine`` and ``AsyncSessionLocal`` names are preserved
+  via PEP 562 ``__getattr__`` so existing ``from app.db.postgres import
+  AsyncSessionLocal`` callers work unchanged. The first reference
+  triggers the lazy build; subsequent references return the cached
+  instance.
+* Tests that genuinely need to override the engine (e.g. point at a
+  fixture DB) can monkeypatch ``get_engine.cache_clear()`` and reassign
+  ``settings.DATABASE_URL`` before any code touches the engine, OR
+  monkeypatch ``app.db.postgres.get_engine`` directly.
+
+Backwards-compatible: every existing import path (``Base``, ``get_db``,
+``init_db``, ``close_db``, ``engine``, ``AsyncSessionLocal``) keeps its
+original signature.
+"""
+from functools import lru_cache
+from typing import Any, AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
+
+
+class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy ORM models."""
+    pass
 
 
 def _pool_size() -> int:
@@ -19,37 +52,57 @@ def _max_overflow() -> int:
     return {"development": 10, "staging": 30, "production": 50}.get(settings.APP_ENV, 10)
 
 
-# Create async engine with environment-aware pool sizing.
-# P3-5: pool_pre_ping only in dev (saves 1 RTT per checkout in production),
-# pool_recycle capped at 900s to stay within typical PG idle timeouts.
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.is_development,
-    pool_pre_ping=settings.APP_ENV != "production",
-    pool_size=_pool_size(),
-    max_overflow=_max_overflow(),
-    pool_recycle=min(settings.PG_POOL_RECYCLE, 900),
-    pool_timeout=settings.PG_POOL_TIMEOUT,
-)
+@lru_cache(maxsize=1)
+def get_engine() -> AsyncEngine:
+    """Build (or return the cached) async engine.
 
-# Session factory
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
-)
+    P3-5: pool_pre_ping only in dev (saves 1 RTT per checkout in
+    production), pool_recycle capped at 900s to stay within typical PG
+    idle timeouts.
+    """
+    return create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.is_development,
+        pool_pre_ping=settings.APP_ENV != "production",
+        pool_size=_pool_size(),
+        max_overflow=_max_overflow(),
+        pool_recycle=min(settings.PG_POOL_RECYCLE, 900),
+        pool_timeout=settings.PG_POOL_TIMEOUT,
+    )
 
 
-class Base(DeclarativeBase):
-    """Base class for all SQLAlchemy ORM models."""
-    pass
+@lru_cache(maxsize=1)
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Build (or return the cached) async session factory."""
+    return async_sessionmaker(
+        get_engine(),
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    """Module-level lazy attribute access (PEP 562).
+
+    Preserves ``from app.db.postgres import engine`` and
+    ``from app.db.postgres import AsyncSessionLocal`` for existing
+    callers — the engine is only constructed on first reference, not at
+    import time. Importing this module without ``DATABASE_URL`` set is
+    safe as long as no caller actually touches the engine.
+    """
+    if name == "engine":
+        return get_engine()
+    if name == "AsyncSessionLocal":
+        return get_session_factory()
+    raise AttributeError(f"module 'app.db.postgres' has no attribute {name!r}")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that provides a database session."""
-    async with AsyncSessionLocal() as session:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
         try:
             yield session
             await session.commit()
@@ -62,10 +115,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Create all tables on startup (development only). Use migrations in production."""
-    async with engine.begin() as conn:
+    async with get_engine().begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def close_db() -> None:
     """Dispose of the connection pool on shutdown."""
-    await engine.dispose()
+    await get_engine().dispose()

@@ -1517,6 +1517,14 @@ class LiveSession(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # NOT a FK to ``test_runs.id`` despite the name. This is the
+    # SDK-supplied build/run identifier (slug, e.g. "build-1042" or a
+    # Jenkins-job-name+number string) that the client sends in the
+    # ``X-Run-ID`` header on the streaming endpoints. The canonical
+    # ``test_runs.id`` UUID is resolved from this slug via
+    # ``canonical_test_run_uuid()`` in worker/tasks.py before any FK
+    # write — see memory ``feedback_live_session_slug_vs_uuid.md`` for
+    # the production incident that made this distinction expensive.
     run_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)
     machine_id: Mapped[Optional[str]] = mapped_column(String(255))
@@ -1917,6 +1925,11 @@ class RunDiff(Base):
     __tablename__ = "run_diffs"
     __table_args__ = (
         Index("ix_run_diffs_run_id", "run_id", unique=True),
+        # FK index added in migration 0085 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P3-4). Used by "show every
+        # run diffed against baseline X" queries. RunBaseline.baseline_run_id
+        # already has a matching index (``ix_run_baselines_baseline``).
+        Index("ix_run_diffs_baseline_run_id", "baseline_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -2483,7 +2496,12 @@ class AIEvalRun(Base):
     accuracy: Mapped[Optional[float]] = mapped_column(Float)
     agreement_rate: Mapped[Optional[float]] = mapped_column(Float)  # human-AI agreement
     # Detailed per-item results
-    item_results: Mapped[Optional[list]] = mapped_column(JSON)  # [{input, expected, actual, correct}]
+    # Promoted JSON → JSONB in migration 0084 for consistency with the
+    # sibling ``AIEvalGateRun.manifest`` (and the rest of the eval gate
+    # schema), unlocking GIN-indexed predicates like
+    # ``item_results @> '[{"correct": false}]'::jsonb`` if/when the
+    # eval-drift dashboards need them.
+    item_results: Mapped[Optional[list]] = mapped_column(JSONB)  # [{input, expected, actual, correct}]
     total_items: Mapped[int] = mapped_column(Integer, default=0)
     correct_items: Mapped[int] = mapped_column(Integer, default=0)
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)

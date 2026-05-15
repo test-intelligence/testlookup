@@ -200,3 +200,33 @@ async def test_reset_project_unknown_mode_rejected():
             mode="everything",  # not in the Literal type — backend must still guard
             confirmation_name="whatever",
         )
+
+
+@pytest.mark.asyncio
+async def test_reset_project_acquires_for_update_lock_on_project_row():
+    """P2-5: the project lookup must use ``SELECT ... FOR UPDATE`` so
+    two concurrent admin clicks serialise. Without the lock the second
+    call would race the first's cascade and produce a phantom success
+    against an already-empty project."""
+    from app.services.project_reset_service import reset_project
+
+    project = _project()
+    db = _fake_db(project=project, run_count=0)
+
+    await reset_project(
+        db,
+        project_id=project.id,
+        mode="runs",
+        confirmation_name=project.name,
+    )
+
+    # First execute() is the project lookup. Its compiled SQL must
+    # carry the FOR UPDATE clause. We inspect the actual statement
+    # object passed to execute().
+    first_call = db.execute.await_args_list[0]
+    stmt = first_call.args[0]
+    compiled_sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "FOR UPDATE" in compiled_sql.upper(), (
+        f"Project lookup must use SELECT ... FOR UPDATE so concurrent "
+        f"resets serialise. Got: {compiled_sql}"
+    )

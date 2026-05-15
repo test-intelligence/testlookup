@@ -198,15 +198,17 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "rest of the sweep.",
     ),
     "webhook_service.py": (
-        14,
-        "Tier 2-6: subscription CRUD (6) plus the deliver_webhook Celery "
-        "worker's per-attempt delivery row update (7) plus the replay "
-        "helper's own-session commit (1). The worker is entirely "
-        "service-owned and HTTP-handler CRUD paths need their audit row "
-        "in the same transaction as the mutation. replay_delivery owns "
-        "its own session for the same reason emit_event does: the "
-        "Celery enqueue has to happen after the new row is committed "
-        "or the worker may look up a row that doesn't exist yet.",
+        9,
+        "Tier 2-6 (post 2026-05-16 P1 follow-up cleanup): subscription "
+        "CRUD is now stage-only — create/update/delete_subscription let "
+        "get_db commit the primary mutation; the audit row uses a fresh "
+        "session inside ``_audit`` (P2-4 pattern) so audit failure no "
+        "longer rolls back the subscription. The 9 remaining commits are "
+        "all on isolated sessions: replay_delivery (1, enqueue-after-commit), "
+        "emit_event (1, enqueue-after-commit), deliver_webhook (6, each "
+        "branch of the Celery task that records delivery outcome on its "
+        "own session), and ``_audit``'s own fresh-session commit (1). "
+        "Ratcheted 14 → 9.",
     ),
     "perf_regression_service.py": (
         1,
@@ -365,7 +367,11 @@ def test_allowlist_total_is_bounded() -> None:
     # removed from the allowlist (P1-2 audit fix: persist_agent_stack_gate_run
     # and set_baseline_from_eval are router-only, no Celery worker calls
     # them, so they flush and let get_db commit).
-    assert total <= 55, (
+    # Ratcheted 55 → 50 on 2026-05-16 (later same day) after the webhook
+    # P1 follow-up cleanup: subscription CRUD converted to stage-only
+    # (14 → 9 commits remaining; the 9th is _audit's fresh-session
+    # commit that ``_count_commits`` matches by regex shape).
+    assert total <= 50, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

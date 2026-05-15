@@ -30,6 +30,64 @@ RETRYABLE_EXCEPTIONS: tuple[Type[Exception], ...] = (
 )
 
 
+def _db_retryable_exceptions() -> tuple[Type[Exception], ...]:
+    """Build the retryable-exception tuple for DB-bound operations.
+
+    Lazily resolves SQLAlchemy and asyncpg exception classes so importing
+    this module doesn't depend on either driver being installed (the
+    same lazy-bootstrap concern that motivates ``get_engine`` in
+    ``app.db.postgres``). Returns the empty tuple when neither package
+    is present — callers handle the no-retry case gracefully.
+
+    Covers ONLY transient DB faults that warrant retry. Deliberately
+    EXCLUDES ``DBAPIError`` (the parent class) because that would also
+    match ``IntegrityError`` — constraint violations are permanent and
+    retrying them just wastes a round trip before failing again with
+    the same error.
+
+    * ``sqlalchemy.exc.OperationalError`` — connection drops, pool
+      checkout failures, asyncpg "another operation in progress" races,
+      idle-timeout disconnections.
+    * ``asyncpg.PostgresError`` subclasses that signal transient
+      conditions:
+
+      - ``DeadlockDetectedError`` — Postgres killed our transaction to
+        break a deadlock. Retry usually succeeds because the conflicting
+        transaction has now completed.
+      - ``SerializationFailureError`` — serializable isolation conflict.
+        Retry resolves it.
+      - ``ConnectionDoesNotExistError`` — connection silently dropped.
+      - ``InterfaceError`` — connection in invalid state (typically
+        after a previous failure on the same connection).
+    """
+    out: list[Type[Exception]] = []
+    try:
+        from sqlalchemy.exc import OperationalError
+        out.append(OperationalError)
+    except ImportError:  # pragma: no cover - sqlalchemy is a runtime dep
+        pass
+    try:
+        import asyncpg.exceptions as _ax
+        # asyncpg has historically renamed SerializationError →
+        # SerializationFailureError; reference both for robustness.
+        for name in (
+            "DeadlockDetectedError",
+            "SerializationFailureError",
+            "SerializationError",
+            "ConnectionDoesNotExistError",
+            "InterfaceError",
+        ):
+            cls = getattr(_ax, name, None)
+            if cls is not None:
+                out.append(cls)
+    except ImportError:  # pragma: no cover - asyncpg is a runtime dep
+        pass
+    return tuple(out)
+
+
+DB_RETRYABLE_EXCEPTIONS: tuple[Type[Exception], ...] = _db_retryable_exceptions()
+
+
 async def async_retry(
     coro_factory: Callable[..., Any],
     *args: Any,

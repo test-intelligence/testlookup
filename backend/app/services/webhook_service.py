@@ -172,8 +172,12 @@ async def create_subscription(
         updated_by_user_id=actor.id,
     )
     db.add(row)
-    await db.commit()
-    await db.refresh(row)
+    # Flush so ``row.id`` (used to compute the secret key + audit row key)
+    # is populated without committing. The caller (get_db dependency)
+    # commits the subscription, has_secret flag, and any other pending
+    # state in one atomic transaction. Audit is independent — see
+    # ``_audit``, which opens its own session.
+    await db.flush()
 
     if secret:
         from app.services import secret_service
@@ -181,7 +185,6 @@ async def create_subscription(
             db, SECRET_SCOPE, _secret_key(row.id), secret, actor.id,
         )
         row.has_secret = True
-        await db.commit()
 
     await _audit(db, actor, "create", row)
     return row
@@ -217,8 +220,6 @@ async def update_subscription(
         row.max_retries = max_retries
     row.updated_by_user_id = actor.id
     row.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(row)
 
     if secret is not None:
         from app.services import secret_service
@@ -232,9 +233,9 @@ async def update_subscription(
                 db, SECRET_SCOPE, _secret_key(row.id), secret, actor.id,
             )
             row.has_secret = True
-        await db.commit()
-        await db.refresh(row)
 
+    # All mutations land in get_db's single commit at request end. Audit
+    # is independent (own session via ``_audit``).
     await _audit(db, actor, "update", row)
     return row
 
@@ -248,7 +249,7 @@ async def delete_subscription(
         raise HTTPException(status_code=_s.HTTP_404_NOT_FOUND, detail="Subscription not found")
     await _audit(db, actor, "delete", row)
     await db.delete(row)
-    await db.commit()
+    # get_db commits at request end. Audit is independent (own session).
 
 
 async def list_deliveries(
@@ -335,19 +336,63 @@ async def replay_delivery(
 async def _audit(
     db: AsyncSession, actor: User, action: str, row: WebhookSubscription,
 ) -> None:
+    """Write a SettingsAuditLog row for a webhook-subscription change.
+
+    Uses a fresh ``AsyncSessionLocal()`` (not the caller's ``db``) so:
+
+    * Transient DB faults can be retried without poisoning the caller's
+      session.
+    * The audit row is durable across the primary mutation's transaction
+      boundary, matching the historical webhook_service contract
+      ("subscription persists even if audit fails"). The previous
+      implementation achieved this via a double-commit in the caller —
+      this version achieves it via session isolation, which is also the
+      pattern adopted by ``flaky_quarantine_service._audit`` (P2-4).
+
+    Never raises. Final failure emits a structured WARNING so dropped
+    audit rows are greppable.
+    """
+    # ``db`` parameter retained for call-site compatibility.
+    del db
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import SettingsAuditLog
+    from app.services.resilience import DB_RETRYABLE_EXCEPTIONS, async_retry
+
+    entry_kwargs = dict(
+        setting_key=f"webhook_subscription:{row.id}",
+        action=action,
+        actor_id=actor.id,
+        actor_name=getattr(actor, "username", None) or getattr(actor, "email", None),
+        changed_fields=["name", "target_url", "events", "enabled"],
+    )
+
+    async def _do_write() -> None:
+        async with AsyncSessionLocal() as audit_db:
+            try:
+                audit_db.add(SettingsAuditLog(**entry_kwargs))
+                await audit_db.commit()
+            except Exception:
+                await audit_db.rollback()
+                raise
+
     try:
-        from app.models.postgres import SettingsAuditLog
-        entry = SettingsAuditLog(
-            setting_key=f"webhook_subscription:{row.id}",
-            action=action,
-            actor_id=actor.id,
-            actor_name=getattr(actor, "username", None) or getattr(actor, "email", None),
-            changed_fields=["name", "target_url", "events", "enabled"],
+        await async_retry(
+            _do_write,
+            max_retries=2,
+            base_delay=0.1,
+            max_delay=2.0,
+            retryable_exceptions=DB_RETRYABLE_EXCEPTIONS,
+            operation_name="webhook_audit",
         )
-        db.add(entry)
-        await db.commit()
     except Exception as exc:
-        logger.warning("webhook audit log failed", error=str(exc))
+        logger.warning(
+            "webhook_audit_dropped",
+            action=action,
+            subscription_id=str(row.id),
+            actor_id=str(actor.id),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
 
 
 # ── Emission ───────────────────────────────────────────────────────────────

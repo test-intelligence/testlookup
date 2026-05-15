@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import LaunchStatus, Project, TestRun
+from app.models.postgres import LaunchStatus, Project, TestCase, TestRun
 from app.services.ingestion import (
     _update_run_aggregates,
     _upsert_test_case,
@@ -115,12 +115,41 @@ async def ingest_test_results(
             from app.services.test_suite_service import default_suite_name_for
             default_suite_name = default_suite_name_for(project.name)
 
+    # P2-1 (audit doc): prefetch every existing TestCase row for this
+    # run keyed by fingerprint, so the per-row upsert loop below can
+    # skip its own SELECT. Before the prefetch, ingesting a 1000-test
+    # run did 1000 SELECTs + 1000 INSERTs; after, it's 1 SELECT + 1000
+    # INSERTs. The full bulk-INSERT optimisation is deferred (needs
+    # partial-failure design — current per-row try/except is preserved).
+    from app.services.ingestion import make_test_fingerprint  # noqa: PLC0415
+    fingerprints = [
+        make_test_fingerprint(case.get("test_name", ""), case.get("class_name"))
+        for case in results
+    ]
+    existing_by_fp: dict[str, TestCase] = {}
+    if fingerprints:
+        existing_rows = (
+            await db.execute(
+                select(TestCase).where(
+                    TestCase.test_run_id == run.id,
+                    TestCase.test_fingerprint.in_(fingerprints),
+                )
+            )
+        ).scalars().all()
+        existing_by_fp = {r.test_fingerprint: r for r in existing_rows}
+
     count = 0
-    for case_data in results:
+    for case_data, fingerprint in zip(results, fingerprints):
         if default_suite_name and not (case_data.get("suite_name") or "").strip():
             case_data["suite_name"] = default_suite_name
         try:
-            await _upsert_test_case(db, case_data, run)
+            await _upsert_test_case(
+                db,
+                case_data,
+                run,
+                existing=existing_by_fp.get(fingerprint),
+                fingerprint=fingerprint,
+            )
             count += 1
         except Exception as e:
             logger.warning(

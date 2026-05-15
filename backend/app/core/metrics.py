@@ -288,6 +288,13 @@ compliance_pack_generated_total = Counter(
     ["result"],  # success | disabled | not_available | error
 )
 
+# P2-3: orphan TestSuite rows flagged by the nightly reaper. Increments
+# once per detected orphan — see docs/DATABASE_AUDIT_2026-05-16.md.
+orphan_test_suites_total = Counter(
+    "testlookup_orphan_test_suites_total",
+    "Total orphan TestSuite rows flagged for ops review (no canonical_test_cases children)",
+)
+
 # ── Service Metadata ──────────────────────────────────────────────────────────
 
 app_info = Info(

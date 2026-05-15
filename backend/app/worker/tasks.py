@@ -2123,6 +2123,107 @@ def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
 
 
 @celery_app.task(
+    name="app.worker.tasks.flag_orphan_test_suites",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def flag_orphan_test_suites(self, min_age_minutes: int = 60) -> dict:
+    """Detect and structured-log orphan ``TestSuite`` rows for ops review.
+
+    The ingestion pipeline's ``finalize_run`` commits each step in its own
+    session via ``_run_isolated`` (resilience pattern: a failing canonical
+    sync shouldn't roll back the suite sync that already succeeded). The
+    trade-off is that suite_sync may create a TestSuite row, then
+    canonical_sync fails before linking any CanonicalTestCase rows to it
+    — leaving an empty suite dangling.
+
+    This task runs nightly, finds non-default TestSuite rows that:
+
+    * Have no ``CanonicalTestCase`` children, AND
+    * Are older than ``min_age_minutes`` (default 60 — recent suites are
+      still mid-ingest and not yet orphaned).
+
+    For each orphan it emits a structured WARNING (greppable by
+    ``event=orphan_test_suite``) and bumps the ``orphan_test_suites_total``
+    Prometheus counter. The suite row is NOT deleted automatically — an
+    operator decides whether to reassign / delete / wait for the next
+    ingest to repopulate it.
+
+    See docs/DATABASE_AUDIT_2026-05-16.md (P2-3).
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import exists, select, and_
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import CanonicalTestCase, TestSuite
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)
+        orphans: list[dict] = []
+
+        async with AsyncSessionLocal() as db:
+            # Find TestSuite rows that are NOT default AND have no
+            # canonical_test_cases children AND were created before the
+            # cutoff. Use NOT EXISTS so we don't materialise the full
+            # canonical_test_cases table.
+            stmt = (
+                select(TestSuite)
+                .where(TestSuite.is_default.is_(False))
+                .where(TestSuite.created_at < cutoff)
+                .where(
+                    ~exists().where(
+                        and_(
+                            CanonicalTestCase.test_suite_id == TestSuite.id,
+                        )
+                    )
+                )
+            )
+            rows = (await db.execute(stmt)).scalars().all()
+
+            for suite in rows:
+                logger.warning(
+                    "orphan_test_suite",
+                    extra={
+                        "event": "orphan_test_suite",
+                        "test_suite_id": str(suite.id),
+                        "project_id": str(suite.project_id),
+                        "suite_name": suite.name,
+                        "created_at": suite.created_at.isoformat() if suite.created_at else None,
+                    },
+                )
+                orphans.append({
+                    "test_suite_id": str(suite.id),
+                    "project_id": str(suite.project_id),
+                    "suite_name": suite.name,
+                })
+
+        try:
+            from app.core.metrics import orphan_test_suites_total
+            orphan_test_suites_total.inc(len(orphans))
+        except (ImportError, AttributeError):  # pragma: no cover
+            # Metrics module may not have the counter declared yet —
+            # tolerate that gracefully so the reaper still runs.
+            pass
+
+        return {
+            "min_age_minutes": min_age_minutes,
+            "orphan_count": len(orphans),
+            "orphans": orphans,
+        }
+
+    logger.info(
+        "[Task %s] flag_orphan_test_suites starting (min_age=%dm)",
+        self.request.id, min_age_minutes,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] flag_orphan_test_suites done: %d orphan(s) flagged",
+        self.request.id, result["orphan_count"],
+    )
+    return result
+
+
+@celery_app.task(
     name="app.worker.tasks.notify_test_suite_owner",
     bind=True,
     max_retries=3,

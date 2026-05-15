@@ -160,7 +160,7 @@ When a service or helper receives a session via `db: AsyncSession` parameter, th
 
 The service must NOT `await db.commit()` or `await db.rollback()` on an injected session. The caller does that — request handlers via the `get_db` dependency (commit-on-success, rollback-on-exception), or background tasks via their own `async with AsyncSessionLocal() as db:` block.
 
-Likewise, `await db.refresh(obj)` is **almost never needed** because the session factory sets `expire_on_commit=False` (see `db/postgres.py:39`). Objects stay usable after commit; refresh just spends a SELECT on data you already hold.
+Likewise, `await db.refresh(obj)` is **almost never needed** because the session factory sets `expire_on_commit=False` (see `db/postgres.py`). Objects stay fully usable after commit — every column you read before the commit is still readable after, and lazy relationship traversal is the only thing that requires a fresh round trip (and you should be using `selectinload` for those anyway). Refresh just spends a SELECT on data you already hold. The only legitimate use is "I need to re-read a value that may have been changed by another transaction since I last read it" — which is almost never the case inside a single request handler.
 
 The pattern is:
 
@@ -177,6 +177,34 @@ async def endpoint(db: AsyncSession = Depends(get_db)):
     thing = await create_thing(db, payload)
     return ThingResponse.model_validate(thing)  # get_db commits on return
 ```
+
+**Lazy engine bootstrap:**
+
+The SQLAlchemy engine and session factory are constructed lazily on first use, not at module import time. Importing `app.db.postgres` is side-effect-free; the engine builds when something actually calls `get_engine()`, `get_session_factory()`, or accesses the module-level `engine` / `AsyncSessionLocal` names (PEP 562 `__getattr__`). Tests that stub the DB client don't need `DATABASE_URL` set to import the module — only to actually touch it.
+
+To override the engine in a test (e.g. point at a fixture DB), monkeypatch `app.db.postgres.get_engine` and call `get_engine.cache_clear()` if it was already built.
+
+### Audit-log writes — attempt vs outcome
+
+`services/audit_log_service.py` exposes two helpers; pick one per call site:
+
+- **`record_outcome(db, ...)`** — writes to the caller's injected session. The audit row participates in the caller's transaction: it commits when the caller commits, and rolls back when the caller rolls back. Use when the row only makes sense in the context of a SUCCESSFUL primary mutation. *Example:* "feature flag toggled to ON" should not be recorded if the toggle itself was rolled back.
+
+- **`record_attempt(...)`** — opens a fresh `AsyncSessionLocal()`. The audit row commits independently and SURVIVES a caller rollback. Retries transient DB faults via `async_retry` against `DB_RETRYABLE_EXCEPTIONS`. Use when the *attempt* is audit-worthy on its own. *Example:* "admin issued a project reset (mode=full)" should be recorded even if the reset later fails midway. *Example:* webhook subscription audit — the subscription mutation already committed, the audit is durable evidence the operator did it.
+
+Both helpers swallow transient failures, emit a structured WARNING on terminal failure, and never raise to the caller. Legacy services that hand-roll the same pattern (e.g. `flaky_quarantine_service._audit`, `webhook_service._audit`) should migrate to these helpers when their owning module is touched for feature work; greenfield audit writes use the helpers from day one.
+
+### Foreign-key `ondelete` rubric
+
+When adding a new FK column, pick the `ondelete` behaviour using this rule:
+
+- **`CASCADE`** when the child row is meaningless without the parent. Examples: `TestCase.test_run_id` (a test result without its run is orphaned data), `Defect.project_id` (a defect outside any project can't be triaged), `QualityGate.project_id`, `WebhookSubscription.project_id`, `TestCaseHistory.test_case_id`.
+
+- **`SET NULL`** when the child has standalone value and should survive the parent's deletion. Examples: `ChatSession.project_id` (conversation history is useful retrospectively even if the project is gone), `Defect.test_case_id` (the defect still represents a real bug even if the originating per-run test row is purged — the `failure_category` + Jira link are still actionable), audit-log `actor_id` (audit trails outlive user deactivation).
+
+- **No `ondelete`** (Postgres default `NO ACTION`): use only when the deletion order is contractual — i.e. there's a service guarantee that children are explicitly cleaned up before the parent. This is rare; if you find yourself reaching for it, you probably want `CASCADE` instead.
+
+The rule applies to new FK columns and to FKs being changed. Don't bulk-rewrite existing columns just to conform — `ondelete` behaviour is load-bearing once data is in production.
 
 ### Authentication & Authorization
 
