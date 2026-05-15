@@ -646,33 +646,58 @@ async def list_test_suites(
             return []
     from sqlalchemy import text as sa_text
 
-    # Automation test cases. ``last_run_id`` resolves to the test_run row
-    # whose ``created_at`` matched MAX(tr.created_at) — used by the
-    # human-in-the-loop review action to target the latest run.
+    # Automation test cases — catalog view, not execution view.
+    #
+    # Bug history: the prior implementation counted ``COUNT(*)`` over the
+    # join of ``test_cases × test_runs``. ``test_cases`` has one row per
+    # (logical test, run), so a suite of 10 unique tests run 3 times
+    # surfaced as ``test_count=30`` and ``passed_count=27`` — the page
+    # label "test suites" implies unique tests, not per-execution counts.
+    # Fix: use ``DISTINCT ON (test_fingerprint)`` ordered by
+    # ``tr.created_at DESC`` so each logical test contributes exactly
+    # one row (its most recent execution). ``passed_count`` /
+    # ``failed_count`` then read as "of the N unique tests in this
+    # suite, how many last ran green/red" — which is the snapshot the
+    # Test Management page actually wants.
+    #
+    # ``last_run_id`` keeps its original semantic (latest run row that
+    # has this suite_name) — used by the per-suite review action to
+    # target the most recent run regardless of which logical test was in
+    # it.
     auto_where = "AND tr.project_id = :project_id" if project_id else ""
     sub_where = "AND tr2.project_id = :project_id" if project_id else ""
     auto_params: dict = {"project_id": project_id} if project_id else {}
     auto_query = sa_text(f"""
+        WITH latest_per_test AS (
+            SELECT DISTINCT ON (tc.test_fingerprint, tc.suite_name)
+                tc.suite_name,
+                tc.test_fingerprint,
+                tc.status,
+                tr.created_at AS run_created_at
+            FROM test_cases tc
+            JOIN test_runs tr ON tc.test_run_id = tr.id
+            WHERE tc.suite_name IS NOT NULL AND tc.suite_name != ''
+              AND tc.test_fingerprint IS NOT NULL
+              {auto_where}
+            ORDER BY tc.test_fingerprint, tc.suite_name, tr.created_at DESC
+        )
         SELECT
-            tc.suite_name,
+            suite_name,
             COUNT(*) AS test_count,
-            COUNT(*) FILTER (WHERE tc.status = 'PASSED') AS passed_count,
-            COUNT(*) FILTER (WHERE tc.status = 'FAILED') AS failed_count,
-            MAX(tr.created_at) AS last_run_at,
+            COUNT(*) FILTER (WHERE status = 'PASSED') AS passed_count,
+            COUNT(*) FILTER (WHERE status = 'FAILED') AS failed_count,
+            MAX(run_created_at) AS last_run_at,
             (
                 SELECT tr2.id
                 FROM test_cases tc2
                 JOIN test_runs tr2 ON tc2.test_run_id = tr2.id
-                WHERE tc2.suite_name = tc.suite_name
+                WHERE tc2.suite_name = latest_per_test.suite_name
                   {sub_where}
                 ORDER BY tr2.created_at DESC
                 LIMIT 1
             ) AS last_run_id
-        FROM test_cases tc
-        JOIN test_runs tr ON tc.test_run_id = tr.id
-        WHERE tc.suite_name IS NOT NULL AND tc.suite_name != ''
-          {auto_where}
-        GROUP BY tc.suite_name
+        FROM latest_per_test
+        GROUP BY suite_name
     """)
     auto_rows = (await db.execute(auto_query, auto_params)).fetchall()
 

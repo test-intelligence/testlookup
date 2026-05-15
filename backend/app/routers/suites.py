@@ -174,6 +174,22 @@ async def create_suite(
         description=payload.description,
         tags=payload.tags,
     )
+
+    # If the caller picked an explicit owner, write the TestSuiteOwner
+    # row now. ``set_suite_owner`` enforces the QA_LEAD role gate; the
+    # 400 propagates back to the client. Skipping this branch leaves
+    # the suite to inherit the project's default QA lead via the
+    # read-time fallback in ``resolve_suite_owner`` (or to be seeded
+    # later by ``_maybe_seed_default_owner`` on next ingest).
+    if payload.owner_user_id is not None:
+        from app.services.suite_review_service import set_suite_owner
+        await set_suite_owner(
+            db,
+            project_id=payload.project_id,
+            suite_name=suite.name,
+            owner_user_id=payload.owner_user_id,
+        )
+
     await db.commit()
     await db.refresh(suite)
     return TestSuiteResponse.model_validate({

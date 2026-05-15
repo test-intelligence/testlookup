@@ -91,6 +91,10 @@ class ProjectCreate(BaseModel):
     ocp_namespace: Optional[str] = Field(None, max_length=255)
     jenkins_job_pattern: Optional[str] = Field(None, max_length=500)
     component_owner_map: Optional[dict] = None
+    # Optional at create time — admin can set later. When set, the user must
+    # already have ProjectMember.role=QA_LEAD on this project (or be ADMIN).
+    # The router enforces the role check.
+    default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
 
 
 class ProjectUpdate(BaseModel):
@@ -105,7 +109,8 @@ class ProjectUpdate(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     tags: Optional[List[str]] = None
-    manager_user_id: Optional[uuid.UUID] = None  # migration 0076 — default suite owner
+    manager_user_id: Optional[uuid.UUID] = None  # migration 0076 — program manager
+    default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079 — default suite owner
 
 
 class ProjectResponse(TimestampMixin):
@@ -123,6 +128,7 @@ class ProjectResponse(TimestampMixin):
     tags: Optional[List[Any]] = None
     is_active: bool
     manager_user_id: Optional[uuid.UUID] = None  # migration 0076
+    default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -203,6 +209,9 @@ class TestCaseSummary(BaseModel):
     failure_category: Optional[str] = None
     has_attachments: bool = False
     created_at: datetime
+    # Auto-assigned at ingest for FAILED/BROKEN cases (migration 0080).
+    # Resolves to the suite owner → default QA lead → manager → NULL.
+    assigned_to_user_id: Optional[uuid.UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -226,6 +235,86 @@ class TestCaseListResponse(BaseModel):
     pages: int
 
 
+# ── Test Execution Review (migration 0081) ────────────────────────────────
+
+
+# Mirror of ``models.postgres.TEST_EXECUTION_REVIEW_STATES``. Kept in sync
+# with the ORM via the service-level validator.
+TestExecutionReviewState = Literal[
+    "pending_review",
+    "reviewed",
+    "defect_filed",
+    "false_positive",
+    "reproducible",
+]
+
+
+class TestExecutionReviewRead(BaseModel):
+    """Current review state for an AI-flagged failure."""
+    id: uuid.UUID
+    test_case_id: uuid.UUID
+    project_id: uuid.UUID
+    state: TestExecutionReviewState
+    reviewed_by_user_id: Optional[uuid.UUID] = None
+    reviewed_by_username: Optional[str] = None
+    reviewed_by_full_name: Optional[str] = None
+    defect_link: Optional[str] = None
+    note: Optional[str] = None
+    transitioned_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestExecutionReviewUpdate(BaseModel):
+    """Transition the review state. ``state`` is required; other fields are
+    optional context the reviewer can attach (e.g. defect URL on
+    ``defect_filed``, freeform note explaining the verdict)."""
+    state: TestExecutionReviewState
+    defect_link: Optional[str] = Field(None, max_length=2000)
+    note: Optional[str] = Field(None, max_length=4000)
+
+
+# ── My Failures inbox (migration 0080) ─────────────────────────────────────
+
+class MyFailureItem(BaseModel):
+    """A single auto-assigned failure surfaced on the calling user's inbox.
+
+    Carries enough context to render a triage row without a follow-up fetch:
+    test name + suite + run identity + project label + relative age. The
+    ``navigation_url`` is the canonical deep link to the run-detail page's
+    test-case drawer.
+    """
+    id: uuid.UUID
+    test_name: str
+    suite_name: Optional[str] = None
+    class_name: Optional[str] = None
+    status: TestStatus
+    severity: Optional[str] = None
+    failure_category: Optional[str] = None
+    error_message: Optional[str] = None
+    duration_ms: Optional[int] = None
+    created_at: datetime
+    test_run_id: uuid.UUID
+    build_number: Optional[str] = None
+    project_id: uuid.UUID
+    project_name: Optional[str] = None
+    navigation_url: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MyFailureListResponse(BaseModel):
+    items: List[MyFailureItem]
+    total: int
+    page: int
+    size: int
+    pages: int
+    # Total across the same filter without pagination — used for the
+    # sidebar badge so the user sees "you have N waiting" even on page 2.
+    unresolved_total: int
+
+
 # ── Metrics Schemas ───────────────────────────────────────────
 
 class MetricCard(BaseModel):
@@ -243,6 +332,11 @@ class DashboardSummary(BaseModel):
     new_failures_24h: MetricCard
     coverage_pct: Optional[MetricCard] = None
     release_readiness: Optional[str] = None  # "GREEN" | "AMBER" | "RED"
+    # 4-band pass-rate verdict driven by the active ReleaseGatePolicy. ``None``
+    # when no policy is active or no runs exist. ``red`` / ``orange`` /
+    # ``yellow`` / ``green`` — see PolicyPassRateBands.
+    release_readiness_band: Optional[str] = None
+    release_readiness_downgrades: List[str] = Field(default_factory=list)
 
 
 class TrendDataPoint(BaseModel):
@@ -1259,6 +1353,12 @@ class TestSuiteCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=500)
     description: Optional[str] = None
     tags: Optional[List[str]] = None
+    # Optional owner picked at creation. When provided, the suite-owner
+    # row is written immediately via ``set_suite_owner`` — which enforces
+    # the QA_LEAD role check (HTTP 400 if the user isn't eligible). Leave
+    # unset to let the project's default QA lead become the implicit
+    # owner via the read-time fallback chain.
+    owner_user_id: Optional[uuid.UUID] = None
 
 
 class TestSuiteUpdate(BaseModel):
@@ -1912,6 +2012,19 @@ class ReleaseCouncilResponse(BaseModel):
     policy_version: Optional[int] = None
     policy_level: Optional[str] = None  # "project" | "system" | "hardcoded"
     rule_evaluations: List["RuleEvaluationResponse"] = []
+    # Synthesised quick-look response — when True, this council view was
+    # derived from the run's aggregates because no ReleaseDecision row
+    # exists yet (deep investigation has not run). The UI surfaces a
+    # note prompting the user to run deep investigation for richer
+    # context (clusters, defect breakdown, override audit, LLM narrative).
+    synthesized: bool = False
+    # Pass-rate band classification from the active ReleaseGatePolicy
+    # (migration 0079 + 2026-05-14 feature). When set, the band is what
+    # the /overview verdict colour also reads from — keeping the two pages
+    # in lockstep. ``band_downgrades`` enumerates which hard caps fired,
+    # e.g. ``["p0_defects:2>0"]``.
+    release_readiness_band: Optional[str] = None
+    band_downgrades: List[str] = []
 
 
 class ReleaseCouncilOverrideRequest(BaseModel):
@@ -2215,12 +2328,47 @@ class PolicyRule(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class PolicyPassRateBands(BaseModel):
+    """Project-level 4-band classification for the build colour and verdict.
+
+    Bands are defined by the *lower* edge of each colour and must be strictly
+    increasing: ``orange_min < yellow_min < green_min``. A pass rate below
+    ``orange_min`` is red; ``[orange_min, yellow_min)`` is orange;
+    ``[yellow_min, green_min)`` is yellow; ``>= green_min`` is green.
+
+    Defaults match the user-requested levels (red <90, orange 90-95,
+    yellow 95-99, green >=99). Verdict mapping is fixed: green = GO,
+    yellow = GO with watch, orange = CONDITIONAL, red = NO_GO. Hard caps
+    (PolicyHardCaps) can downgrade the resolved band by one or two steps.
+    """
+    orange_min: float = Field(default=90.0, ge=0, le=100)
+    yellow_min: float = Field(default=95.0, ge=0, le=100)
+    green_min: float = Field(default=99.0, ge=0, le=100)
+
+
+class PolicyHardCaps(BaseModel):
+    """Hard caps that downgrade the pass-rate band before the verdict map.
+
+    Each cap is a (count) threshold; exceeding it downgrades the resolved
+    band by one step (green → yellow → orange → red, no wrap). Multiple
+    breached caps stack, capped at red. ``None`` (or 0 where ``ge=0``)
+    disables the cap.
+    """
+    max_p0_defects: int = Field(default=0, ge=0, description="Active P0 defects allowed before downgrade")
+    max_flaky_count: int = Field(default=10, ge=0, description="Flaky tests allowed before downgrade")
+    max_new_failures_24h: int = Field(default=20, ge=0, description="New failures in last 24h allowed before downgrade")
+
+
 class PolicyDocument(BaseModel):
     """The full policy rule document stored as JSON in release_gate_policies.rules."""
     schema_version: int = 1
     thresholds: PolicyThresholds = Field(default_factory=PolicyThresholds)
     dimension_weights: PolicyDimensionWeights = Field(default_factory=PolicyDimensionWeights)
     rules: List[PolicyRule] = Field(default_factory=list)
+    # Tier-1 pass-rate gating — feature added 2026-05-14. Existing rows
+    # default these on read via Pydantic, so no migration is required.
+    pass_rate_bands: PolicyPassRateBands = Field(default_factory=PolicyPassRateBands)
+    hard_caps: PolicyHardCaps = Field(default_factory=PolicyHardCaps)
 
 
 class ReleaseGatePolicyCreate(BaseModel):
@@ -3409,3 +3557,40 @@ class ClassifyUncategorizedResponse(BaseModel):
     project_id: uuid.UUID
     days: int
     suite_name: Optional[str] = None
+
+
+class DefectIntakeRequest(BaseModel):
+    """POST body for /api/v1/analytics/defects — manual defect intake.
+
+    Severity uses the P0–P3 vocabulary the Defects UI renders; it maps to the
+    `defects.severity` column's CRITICAL/HIGH/MEDIUM/LOW values server-side.
+    `test_name`/`suite_name` are optional — when both are supplied the service
+    will try to attach the new defect to the most-recent matching TestCase row,
+    otherwise the defect is created standalone (test_case_id NULL).
+    """
+    project_id: uuid.UUID
+    title: str = Field(..., min_length=3, max_length=255)
+    description: Optional[str] = Field(None, max_length=10_000)
+    severity: Literal["P0", "P1", "P2", "P3"]
+    failure_category: FailureCategory = FailureCategory.PRODUCT_BUG
+    component: Optional[str] = Field(None, max_length=255)
+    test_name: Optional[str] = Field(None, max_length=1000)
+    suite_name: Optional[str] = Field(None, max_length=500)
+    jira_ticket_url: Optional[str] = Field(None, max_length=1000)
+
+
+class DefectIntakeResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    severity: str
+    failure_category: Optional[str] = None
+    component: Optional[str] = None
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    jira_ticket_id: Optional[str] = None
+    jira_ticket_url: Optional[str] = None
+    resolution_status: str
+    ai_confidence_score: Optional[int] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)

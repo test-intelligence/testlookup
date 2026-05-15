@@ -482,11 +482,16 @@ function PipelineRibbon({
   confidencePct,
   evidenceCount,
   toolCount,
+  hasPerTestGap,
 }: {
   stages: PipelineStage[]
   confidencePct: number
   evidenceCount: number
   toolCount: number
+  /** When the run-level aggregate reports failures but per-test rows
+   *  weren't persisted, every pipeline stage renders as a placeholder
+   *  (—). Render a banner so the user understands why. */
+  hasPerTestGap?: boolean
 }) {
   const aligned = useMemo(() => alignStages(stages), [stages])
   const completedCount = aligned.filter(s => s && stageStatus(s) === 'done').length
@@ -540,6 +545,21 @@ function PipelineRibbon({
         </div>
       </div>
 
+      {hasPerTestGap && completedCount === 0 && (
+        <div
+          className="rounded-md mb-3 px-3 py-2 text-[12px] leading-relaxed"
+          style={{
+            background: 'rgba(245,158,11,0.06)',
+            borderLeft: '3px solid rgba(245,158,11,0.40)',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          <strong className="text-[var(--color-text)]">Pipeline completed but had no per-test rows to analyse.</strong>
+          {' '}The run aggregate shows failures, but the per-test detail wasn’t persisted for this
+          run (live-stream Redis buffer eviction). Re-running the build will produce a fresh run with full data;
+          this run’s aggregates remain accurate.
+        </div>
+      )}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(9, minmax(0, 1fr))' }}>
         {aligned.map((s, i) => (
           <StageCell key={i} num={i + 1} slot={PIPELINE_ORDER[i]} stage={s} isLast={i === aligned.length - 1} />
@@ -755,13 +775,57 @@ function WhatFailedCard({
   runId,
   onPromote,
   onDecisionTrail,
+  aggregateFailedTests,
+  aggregateTotalTests,
 }: {
   clusters: FailureClusterIntel[]
   runId: string
   onPromote: (cluster: FailureClusterIntel) => void
   onDecisionTrail: () => void
+  /** ``test_runs.failed_tests`` aggregate (set by ingest even when per-test
+   *  rows are missing). When > 0 with zero clusters, surface the data gap. */
+  aggregateFailedTests: number
+  /** ``test_runs.total_tests`` aggregate — used to detect runs that
+   *  legitimately had zero tests at all (vs runs that lost per-test detail). */
+  aggregateTotalTests: number
 }) {
   if (clusters.length === 0) {
+    // Distinguish two zero-cluster states:
+    //   (a) The run genuinely had no failures (total_tests > 0, failed = 0)
+    //       or no tests at all (total = 0). Render the standard empty state.
+    //   (b) The run-level aggregate reports failures (failed > 0) but no
+    //       FailureCluster rows / per-test rows exist. This happens when the
+    //       live-stream Redis event buffer expired before persist_live_session
+    //       could read the per-test events (see worker/tasks.py:213-231 —
+    //       "Live persist: event buffer empty"). The run aggregates ARE
+    //       reliable; the per-test detail just wasn't captured. Explain so
+    //       the user doesn't think the page is broken (2026-05-15 report).
+    const hasPerTestGap = aggregateFailedTests > 0
+    if (hasPerTestGap) {
+      return (
+        <CardShell
+          title="What failed"
+          rightSlot={
+            <span>{aggregateFailedTests} failure{aggregateFailedTests === 1 ? '' : 's'} · per-test detail missing</span>
+          }
+        >
+          <div className="px-4 py-4 text-[13px] space-y-2">
+            <p className="m-0 text-[var(--color-text-secondary)]">
+              The run aggregate reports <strong className="text-[var(--color-text)]">{aggregateFailedTests} failure{aggregateFailedTests === 1 ? '' : 's'}</strong>
+              {aggregateTotalTests > 0 ? <> out of {aggregateTotalTests} tests</> : null}, but the
+              per-test rows aren't available for this run — so AI clustering, root-cause analysis,
+              and the failure breakdown can't be shown.
+            </p>
+            <p className="m-0 text-[12px] text-[var(--color-text-muted)]">
+              This typically happens when a live-stream ingest's Redis event buffer expired
+              before the per-test persistence task ran. The run-level pass / fail counts
+              shown elsewhere are still accurate; just the per-test detail is missing.
+              Re-running the build will produce a fresh run with complete data.
+            </p>
+          </div>
+        </CardShell>
+      )
+    }
     return (
       <CardShell title="What failed" rightSlot={<span>0 failures</span>}>
         <div className="px-4 py-6 text-[13px] text-[var(--color-text-secondary)]">
@@ -1343,6 +1407,10 @@ export default function RunIntelligencePage() {
         confidencePct={confidencePct}
         evidenceCount={evidenceCount}
         toolCount={toolCount}
+        hasPerTestGap={
+          ((run.failed_tests ?? 0) + (run.broken_tests ?? 0)) > 0
+          && failure_clusters.length === 0
+        }
       />
 
       <section
@@ -1361,6 +1429,8 @@ export default function RunIntelligencePage() {
             runId={run.id}
             onPromote={(c) => setPromoteCluster(c)}
             onDecisionTrail={() => setDecisionTrailOpen(true)}
+            aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
+            aggregateTotalTests={run.total_tests ?? 0}
           />
           <RecommendedActionsCard
             roleActions={role_actions}

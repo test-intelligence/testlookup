@@ -66,13 +66,34 @@ async def global_search(
             "entity_counts": {}, "page": page, "size": size, "pages": 0,
         }
 
+    # When the caller narrows to a single entity type (Tests, Runs, …),
+    # bump the adapter's per-type cap so the user can paginate through
+    # the real project total. Fan-out mode keeps the small per-adapter
+    # caps because the global view shows "top N relevant per type" by
+    # design — we'd otherwise pull thousands of rows just to render one
+    # page. 2026-05-15: the user reported the Tests chip said 84 but
+    # only 25 results rendered with no way to see the rest; the cause
+    # was ``_search_test_cases.limit(50)`` capping the dataset under
+    # the slice, so pagination had nothing to paginate over.
+    narrowed_to_one = entity_types is not None and len(entity_types) == 1
+    # Cover up to ``page * size`` with headroom so the last page renders
+    # in full. ``min(..., 1000)`` is a sanity guard against pathological
+    # callers asking for page 200; if needed, the project is large
+    # enough to justify a proper per-type endpoint.
+    adapter_override_limit: Optional[int] = (
+        min(max(page * size + size, 200), 1000) if narrowed_to_one else None
+    )
+
     # Fan out to adapters
     all_results: list[dict] = []
     for entity_type in types:
         adapter = _ADAPTERS.get(entity_type)
         if adapter:
             try:
-                results = await adapter(db, q, project_id, period_start, allowed_project_ids)
+                results = await adapter(
+                    db, q, project_id, period_start, allowed_project_ids,
+                    override_limit=adapter_override_limit,
+                )
                 all_results.extend(results)
             except Exception as exc:
                 logger.warning("search_adapter_failed", entity_type=entity_type, error=str(exc))
@@ -118,6 +139,7 @@ async def _search_test_cases(
     project_id: Optional[str],
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
+    override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -130,7 +152,7 @@ async def _search_test_cases(
             cast(TestCase.tags, String).ilike(pattern, escape="\\"),
         ))
         .order_by(TestCase.created_at.desc())
-        .limit(50)
+        .limit(override_limit or 50)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
     if period_start:
@@ -159,6 +181,7 @@ async def _search_test_runs(
     project_id: Optional[str],
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
+    override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -170,7 +193,7 @@ async def _search_test_runs(
             cast(TestRun.tags, String).ilike(pattern, escape="\\"),
         ))
         .order_by(TestRun.created_at.desc())
-        .limit(20)
+        .limit(override_limit or 20)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
     if period_start:
@@ -199,6 +222,7 @@ async def _search_suites(
     project_id: Optional[str],
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
+    override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -214,7 +238,7 @@ async def _search_suites(
         )
         .group_by(TestCase.suite_name)
         .order_by(func.count().desc())
-        .limit(15)
+        .limit(override_limit or 15)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
 
@@ -240,6 +264,7 @@ async def _search_defects(
     project_id: Optional[str],
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
+    override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -248,7 +273,7 @@ async def _search_defects(
             Defect.jira_ticket_id.ilike(pattern, escape="\\"),
         ))
         .order_by(Defect.created_at.desc())
-        .limit(20)
+        .limit(override_limit or 20)
     )
     stmt = _apply_tenant_filter(stmt, Defect.project_id, project_id, allowed_project_ids)
     if period_start:
@@ -277,6 +302,7 @@ async def _search_flaky_tests(
     project_id: Optional[str],
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
+    override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     # Find test fingerprints with intermittent pass/fail that match the query
@@ -293,7 +319,7 @@ async def _search_flaky_tests(
         .where(TestCase.test_name.ilike(pattern, escape="\\"))
         .group_by(TestCaseHistory.test_fingerprint)
         .having(func.count() >= 5)
-        .limit(15)
+        .limit(override_limit or 15)
     )
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
 
@@ -322,6 +348,7 @@ async def _search_releases(
     project_id: Optional[str],
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
+    override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -331,7 +358,7 @@ async def _search_releases(
             Release.version.ilike(pattern, escape="\\"),
         ))
         .order_by(Release.created_at.desc())
-        .limit(10)
+        .limit(override_limit or 10)
     )
     stmt = _apply_tenant_filter(stmt, Release.project_id, project_id, allowed_project_ids)
 

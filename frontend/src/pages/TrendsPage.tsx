@@ -1509,8 +1509,9 @@ export default function TrendsPage() {
 
   const [days, setDays] = useState<Window>(() => {
     const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 24h. Saved choice wins so existing users keep theirs.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
+    // Default: last 7 days (was 24h prior to 2026-05-15). Saved choice
+    // wins so existing users keep theirs.
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 7
   })
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 

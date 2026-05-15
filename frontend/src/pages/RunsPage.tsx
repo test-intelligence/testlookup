@@ -1574,9 +1574,12 @@ export default function RunsPage() {
 
   const [days, setDays] = useState<Window>(() => {
     const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 24h. Previously-saved choices still take precedence so
-    // existing users don't have their window reset.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
+    // Default: last 6 days (RunsPage uses 6 not 7 in its WINDOWS literal).
+    // Bumped from 24h on 2026-05-15 — too many users landed on an empty
+    // page because their latest run was older than a day. Previously-saved
+    // choices still take precedence so existing users don't have their
+    // window reset.
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 6
   })
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 
@@ -1964,30 +1967,36 @@ export default function RunsPage() {
         />
       </section>
 
+      {/* Runs table is now full-width — matches the VerdictCard /
+          WorkflowRibbon / KPI strip widths above it. Layout updated
+          2026-05-15: the previous 1.65fr / 1fr grid cramped the table
+          into ~60% of the screen and stacked Last Green / Velocity /
+          Recommended Actions vertically in the right rail. Users
+          asked for the table to breathe and the three context cards
+          to sit parallel to the Failure signature analysis instead. */}
+      <div className="mb-3.5">
+        <RunsTable
+          runs={tableRuns}
+          primarySignature={model.primaryCluster?.signature ?? null}
+          selectedIds={selectedIds}
+          setSelectedIds={setSelectedIds}
+          onTrigger={handleTrigger}
+          onDeep={handleDeep}
+          isQaEngineer={isQaEngineer}
+          page={tablePage}
+          pages={tableTotalPages}
+          total={runs.length}
+          onPageChange={setTablePage}
+          datetimeSortDir={datetimeSortDir}
+          onToggleDatetimeSort={() => {
+            setDatetimeSortDir(d => d === 'desc' ? 'asc' : 'desc')
+            setTablePage(1)
+          }}
+        />
+      </div>
+
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
-          {/* Runs table sits above the failure-signature card so users land on
-              the raw list of builds first and the signature clustering is the
-              secondary, narrative summary below it. Table is paginated to
-              TABLE_PAGE_SIZE rows; analytics still derive from the full set. */}
-          <RunsTable
-            runs={tableRuns}
-            primarySignature={model.primaryCluster?.signature ?? null}
-            selectedIds={selectedIds}
-            setSelectedIds={setSelectedIds}
-            onTrigger={handleTrigger}
-            onDeep={handleDeep}
-            isQaEngineer={isQaEngineer}
-            page={tablePage}
-            pages={tableTotalPages}
-            total={runs.length}
-            onPageChange={setTablePage}
-            datetimeSortDir={datetimeSortDir}
-            onToggleDatetimeSort={() => {
-              setDatetimeSortDir(d => d === 'desc' ? 'asc' : 'desc')
-              setTablePage(1)
-            }}
-          />
           {model.primaryCluster && (
             <SignatureClusterCard
               primaryCluster={model.primaryCluster}

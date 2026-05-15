@@ -65,6 +65,17 @@ async def create_project(
         role=current_user.role,
     ))
 
+    # 0079: validate default_qa_lead_user_id, if provided, is permitted to
+    # own suites. Run AFTER the creator's ProjectMember is staged so the
+    # creator themselves (a QA_LEAD or higher per the dependency above)
+    # can be set as default in a single create-then-default flow.
+    if payload.default_qa_lead_user_id is not None:
+        await db.flush()
+        from app.services.suite_review_service import assert_user_is_qa_lead_on_project
+        await assert_user_is_qa_lead_on_project(
+            db, payload.default_qa_lead_user_id, project.id,
+        )
+
     await db.commit()
     await db.refresh(project)
 
@@ -110,6 +121,18 @@ async def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     updates = payload.model_dump(exclude_none=True)
+
+    # 0079: validate default_qa_lead_user_id, if changing, before persisting.
+    # ``exclude_none=True`` means the key is only present when the caller
+    # explicitly sent a UUID — passing ``null`` to clear is not possible via
+    # this update path (current schema convention; revisit if clearing is
+    # needed).
+    if "default_qa_lead_user_id" in updates:
+        from app.services.suite_review_service import assert_user_is_qa_lead_on_project
+        await assert_user_is_qa_lead_on_project(
+            db, updates["default_qa_lead_user_id"], project.id,
+        )
+
     for field, value in updates.items():
         setattr(project, field, value)
 

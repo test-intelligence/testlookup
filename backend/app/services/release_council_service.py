@@ -34,12 +34,89 @@ from app.models.schemas import (
 )
 from app.services.criticality_service import (
     SCORE_MODEL_VERSION,
+    compute_composite,
+    compute_dimension_scores,
     score_cluster,
+    score_to_recommendation,
 )
+from app.core.config import settings
 
 from app.models.constants import DIMENSION_METADATA
 
 logger = logging.getLogger("services.release_council")
+
+
+# Worst → best so worse_of returns the leftmost in a sorted pair.
+_VERDICT_RANK = {"NO_GO": 0, "CONDITIONAL": 1, "GO": 2}
+
+
+def _worse_verdict(a: str, b: str) -> str:
+    """Return whichever recommendation is stricter (NO_GO > CONDITIONAL > GO).
+
+    Unknown verdicts fall through to the input value — never softens.
+    """
+    if a not in _VERDICT_RANK:
+        return b
+    if b not in _VERDICT_RANK:
+        return a
+    return a if _VERDICT_RANK[a] <= _VERDICT_RANK[b] else b
+
+
+async def _apply_band_floor(
+    db: AsyncSession,
+    project_id: Optional[uuid.UUID],
+    recommendation: str,
+    pass_rate: float,
+    open_defects: int,
+) -> tuple[str, Optional[str], list[str]]:
+    """Layer the project's ``PolicyPassRateBands`` over the composite verdict.
+
+    "Fail-closed" semantics: if the band-derived verdict is *stricter* than
+    the composite, the recommendation is downgraded. The composite is never
+    softened — bands can only block, never unblock. This keeps /overview and
+    /release-gate in lockstep: when /overview shows red (band=red), the gate
+    cannot say GO even if the composite was below the NO_GO threshold.
+
+    The band classifier mirrors what ``metrics_service.classify_with_policy``
+    uses for /overview, so both pages produce the same colour for the same
+    project + run. Returns ``(final_recommendation, band, downgrades)``;
+    ``band`` is ``None`` and ``downgrades`` is empty when no policy is active.
+    """
+    if project_id is None:
+        return recommendation, None, []
+
+    # Local import to keep release_council_service free of metrics-service
+    # coupling at module level — _resolve_policy_for_project also depends on
+    # ReleaseGatePolicy, which release_council already touches via the
+    # policy_id / policy_version fields. Both services live downstream of
+    # the same data, so this is safe.
+    from app.services.metrics_service import (
+        _resolve_policy_for_project,
+        classify_with_policy,
+    )
+
+    policy_doc = await _resolve_policy_for_project(db, str(project_id))
+    if policy_doc is None:
+        return recommendation, None, []
+
+    bands = policy_doc.get("pass_rate_bands") or {}
+    caps = policy_doc.get("hard_caps") or {}
+    # The synth path doesn't have flaky or new_failures stats handy; pass 0
+    # so the corresponding hard caps don't fire. This is a conservative
+    # choice — when a deep run lands, those signals join the picture. The
+    # band still reflects pass-rate + open P0 defects, which is what the
+    # user explicitly asked the gate to honour.
+    classified = classify_with_policy(
+        pass_rate=pass_rate,
+        active_defects_p0=open_defects,
+        flaky_count=0,
+        new_failures_24h=0,
+        bands=bands,
+        hard_caps=caps,
+    )
+    band_verdict = classified["verdict"]
+    final = _worse_verdict(recommendation, band_verdict)
+    return final, classified["band"], classified["downgrades"]
 
 
 def _build_dimension_scores(scores_dict: Optional[dict]) -> list[DimensionScore]:
@@ -131,6 +208,126 @@ async def assemble_input_snapshot(
     return snapshot
 
 
+async def _synthesize_release_council(
+    run_id: uuid.UUID,
+    db: AsyncSession,
+) -> Optional[ReleaseCouncilResponse]:
+    """Deterministic quick-look release decision derived from a run's
+    aggregates when no ``ReleaseDecision`` row has been persisted yet.
+
+    Why this exists: the ReleaseRiskAgent only runs as part of the
+    *deep* pipeline. Runs ingested via the live-stream SDK queue
+    ``run_agent_pipeline`` with ``workflow_type="offline"``, so they
+    never get a ReleaseDecision row. Without this helper, every such
+    run produced a 404 on /api/v1/release-readiness/{id} and the
+    /release-gate page showed an "empty state — go trigger deep
+    investigation" prompt for routine successful runs.
+
+    What this is NOT:
+      * A replacement for the deep pipeline. We don't have failure
+        clusters, defect-by-component, override audit, or LLM
+        narrative here — those still require deep investigation.
+      * A persisted row. The synthesis runs at read time only; the
+        next deep run still writes the real ReleaseDecision and
+        supersedes this view.
+      * A policy evaluator. We fall back to the hardcoded thresholds
+        in ``settings`` so the synth never blocks on policy table
+        gaps. A real deep run picks up the project-scoped policy.
+
+    Returns ``None`` (caller maps to 404) only when the run itself
+    doesn't exist — that's a genuine "not found" the user should see.
+    """
+    run = (await db.execute(
+        select(TestRun).where(TestRun.id == run_id)
+    )).scalar_one_or_none()
+    if run is None:
+        return None
+
+    # Count open defects scoped to the run's project — same input the
+    # real agent uses; cheap one-query lookup.
+    open_defects = 0
+    if run.project_id is not None:
+        open_defects = int(
+            (await db.execute(
+                select(sa_func.count(Defect.id))
+                .where(Defect.project_id == run.project_id)
+                .where(Defect.resolution_status == "OPEN")
+            )).scalar_one() or 0
+        )
+
+    pass_rate = float(run.pass_rate or 0.0)
+    threshold = float(settings.RELEASE_PASS_RATE_THRESHOLD)
+
+    # With no per-test analyses available (those are produced by the
+    # offline pipeline's analysis stage, which has already run by the
+    # time this endpoint is called — but the synth deliberately stays
+    # cheap and deterministic), every analysis-driven dimension scores
+    # 0. The pass-rate-driven dimensions still produce meaningful
+    # numbers, and the hard floor below catches the failing-run case
+    # even when ``composite`` is small.
+    dim_scores = compute_dimension_scores(
+        analyses={},
+        anomalies=[],
+        pass_rate=pass_rate,
+        is_regression=False,
+        regression_tests=[],
+        failure_clusters=[],
+        open_defects=open_defects,
+    )
+    composite = compute_composite(dim_scores)
+    if pass_rate < threshold * 0.7:
+        # Mirror the agent's hard floor: a run that drops below 70% of
+        # the configured pass-rate threshold is NO_GO regardless of
+        # the composite score. Bump composite so the recommendation
+        # function reaches NO_GO via the standard mapping.
+        composite = max(composite, 60.0)
+    recommendation = score_to_recommendation(composite, pass_rate, threshold)
+
+    # Layer the active ReleaseGatePolicy's pass-rate bands over the composite
+    # so /release-gate honours the same colours /overview renders. Fail-closed:
+    # the band can downgrade the verdict but never soften it.
+    recommendation, band, band_downgrades = await _apply_band_floor(
+        db, run.project_id, recommendation, pass_rate, open_defects,
+    )
+
+    reasoning = (
+        "Quick-look decision derived from this run's aggregates "
+        f"(pass rate {pass_rate:.1f}%, {open_defects} open defects). "
+        "Run Deep Investigation for richer insights — failure "
+        "clusters, defect breakdown, and AI narrative."
+    )
+
+    return ReleaseCouncilResponse(
+        run_id=str(run_id),
+        recommendation=recommendation,
+        release_readiness_band=band,
+        band_downgrades=band_downgrades,
+        risk_score=int(round(composite)),
+        composite_risk=composite,
+        dimension_scores=_build_dimension_scores(dim_scores),
+        blocking_issues=[],
+        conditions_for_go=[],
+        reasoning=reasoning,
+        score_model_version=SCORE_MODEL_VERSION,
+        input_snapshot={
+            "synthesized": True,
+            "pass_rate": pass_rate,
+            "open_defects": open_defects,
+            "threshold": threshold,
+        },
+        cluster_insights=[],
+        baseline_diff=None,
+        open_defects_by_component=[],
+        human_override=None,
+        override_audit=[],
+        pass_rate=pass_rate,
+        build_number=run.build_number,
+        policy_level="hardcoded",
+        rule_evaluations=[],
+        synthesized=True,
+    )
+
+
 async def get_release_council(
     run_id: uuid.UUID,
     db: AsyncSession,
@@ -139,13 +336,23 @@ async def get_release_council(
     """
     Retrieve the release decision with full council context:
     dimension scores, linked cluster insights, baseline diff, open defects.
+
+    When no persisted ``ReleaseDecision`` row exists (typically because
+    deep investigation hasn't run yet), this function synthesises a
+    deterministic quick-look decision from the run's aggregates so the
+    /release-gate page can render something useful instead of a 404.
+    The synthesised response carries ``synthesized=True`` so the UI can
+    explain that richer insights (clusters, defect breakdown, override
+    audit) need a deep investigation run.
     """
     result = await db.execute(
         select(ReleaseDecision).where(ReleaseDecision.test_run_id == run_id)
     )
     decision = result.scalar_one_or_none()
     if not decision:
-        return None
+        # Caller may still get None if the run itself doesn't exist —
+        # the synth path needs the TestRun row to compute anything.
+        return await _synthesize_release_council(run_id, db)
 
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
     run = run_result.scalar_one_or_none()
@@ -235,9 +442,33 @@ async def get_release_council(
             except Exception:
                 continue
 
+    # Layer the active ReleaseGatePolicy's pass-rate bands over the persisted
+    # recommendation, same fail-closed semantic as the synthesised path. A
+    # human override is left untouched — override is a deliberate human
+    # decision that should not be silently downgraded by automated bands.
+    final_recommendation = decision.recommendation
+    band: Optional[str] = None
+    band_downgrades: list[str] = []
+    if decision.human_override is None:
+        # Count open P0 defects for the hard-cap input — the persisted snapshot
+        # tracks total open defects per component, not by severity, so we
+        # issue one extra COUNT query scoped to the project + severity=P0.
+        active_p0 = 0
+        if project_id is not None:
+            p0_result = await db.execute(
+                select(sa_func.count(Defect.id))
+                .where(Defect.project_id == project_id)
+                .where(Defect.resolution_status == "OPEN")
+                .where(Defect.severity == "P0")
+            )
+            active_p0 = int(p0_result.scalar() or 0)
+        final_recommendation, band, band_downgrades = await _apply_band_floor(
+            db, project_id, decision.recommendation, run.pass_rate if run else 0.0, active_p0,
+        )
+
     return ReleaseCouncilResponse(
         run_id=str(run_id),
-        recommendation=decision.recommendation,
+        recommendation=final_recommendation,
         risk_score=decision.risk_score,
         composite_risk=decision.composite_risk,
         dimension_scores=dim_scores,
@@ -251,7 +482,11 @@ async def get_release_council(
         open_defects_by_component=open_defects_by_component,
         human_override=decision.human_override,
         overridden_by=str(decision.overridden_by) if decision.overridden_by else None,
-        original_recommendation=decision.original_recommendation,
+        # Preserve the originally-persisted recommendation alongside any
+        # band-driven downgrade so the UI can show "GO → CONDITIONAL (band)".
+        original_recommendation=decision.original_recommendation or (
+            decision.recommendation if final_recommendation != decision.recommendation else None
+        ),
         original_risk_score=decision.original_risk_score,
         override_audit=override_audit,
         pass_rate=run.pass_rate if run else None,
@@ -259,6 +494,8 @@ async def get_release_council(
         policy_id=policy_id,
         policy_version=policy_version,
         policy_level=policy_level,
+        release_readiness_band=band,
+        band_downgrades=band_downgrades,
         rule_evaluations=rule_evaluations,
     )
 

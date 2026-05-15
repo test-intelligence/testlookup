@@ -1,9 +1,13 @@
-import useSWR from 'swr'
+import useSWR, { mutate } from 'swr'
 import { metricsService } from '@/services/metricsService'
 import { analyticsService } from '@/services/analyticsService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
+
+export function refreshDefects() {
+  return mutate((key: unknown) => Array.isArray(key) && key[0] === 'analytics-defects')
+}
 
 export function useDashboardSummary(days = 7, suiteName?: string | null) {
   return useProjectScopedSWR(

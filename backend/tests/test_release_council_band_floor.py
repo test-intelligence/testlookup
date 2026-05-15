@@ -1,0 +1,193 @@
+"""Unit tests for the release-council band-floor layer (2026-05-14 feature).
+
+Covers two helpers added to ``release_council_service.py`` so /release-gate
+and /overview produce the same colour + verdict for the same project + run:
+
+  * ``_worse_verdict(a, b)`` — pure function. Returns the stricter of two
+    recommendations on the GO < CONDITIONAL < NO_GO ladder. Used to layer
+    the band-derived verdict over the composite without ever softening.
+
+  * ``_apply_band_floor(db, project_id, recommendation, pass_rate,
+    open_defects)`` — async. Resolves the active ``ReleaseGatePolicy`` for
+    the project via ``metrics_service._resolve_policy_for_project``, runs
+    ``classify_with_policy``, and returns ``worse_of(composite, band)``.
+    No-ops when no policy is active.
+
+The integration into ``_synthesize_release_council`` and ``get_release_council``
+is exercised by ``test_release_council_synthesize.py``; here we test the
+helpers in isolation so a regression in the worse-of logic doesn't hide
+behind the larger synth response shape.
+"""
+from __future__ import annotations
+
+import uuid
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+
+# ── _worse_verdict — pure function ────────────────────────────────────────
+
+
+def test_worse_verdict_keeps_no_go_over_anything():
+    """NO_GO is the strictest verdict — never softened."""
+    from app.services.release_council_service import _worse_verdict
+    assert _worse_verdict("NO_GO", "GO") == "NO_GO"
+    assert _worse_verdict("GO", "NO_GO") == "NO_GO"
+    assert _worse_verdict("NO_GO", "CONDITIONAL") == "NO_GO"
+    assert _worse_verdict("CONDITIONAL", "NO_GO") == "NO_GO"
+    assert _worse_verdict("NO_GO", "NO_GO") == "NO_GO"
+
+
+def test_worse_verdict_keeps_conditional_over_go():
+    from app.services.release_council_service import _worse_verdict
+    assert _worse_verdict("CONDITIONAL", "GO") == "CONDITIONAL"
+    assert _worse_verdict("GO", "CONDITIONAL") == "CONDITIONAL"
+    assert _worse_verdict("CONDITIONAL", "CONDITIONAL") == "CONDITIONAL"
+
+
+def test_worse_verdict_go_only_when_both_go():
+    from app.services.release_council_service import _worse_verdict
+    assert _worse_verdict("GO", "GO") == "GO"
+
+
+def test_worse_verdict_unknown_input_never_softens():
+    """An unknown verdict on one side must NOT be allowed to soften the
+    other side. The function returns the known input rather than fall
+    through to a softer state."""
+    from app.services.release_council_service import _worse_verdict
+    assert _worse_verdict("UNKNOWN", "NO_GO") == "NO_GO"
+    assert _worse_verdict("NO_GO", "UNKNOWN") == "NO_GO"
+    assert _worse_verdict("CONDITIONAL", "UNKNOWN") == "CONDITIONAL"
+
+
+# ── _apply_band_floor — async, resolves a policy ──────────────────────────
+
+
+def _policy_first_result(rules: dict | None):
+    """Match the .first() shape used by _resolve_policy_for_project."""
+    res = MagicMock()
+    res.first = MagicMock(return_value=(rules,) if rules is not None else None)
+    return res
+
+
+@pytest.mark.asyncio
+async def test_band_floor_no_project_returns_input_unchanged():
+    """Synth path with a run that has no project_id — band-floor must be
+    a no-op so the legacy verdict is preserved."""
+    from app.services.release_council_service import _apply_band_floor
+    db = AsyncMock()
+    rec, band, downgrades = await _apply_band_floor(
+        db, project_id=None, recommendation="GO", pass_rate=99.0, open_defects=0,
+    )
+    assert rec == "GO"
+    assert band is None
+    assert downgrades == []
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_band_floor_no_policy_returns_input_unchanged():
+    """Project exists but no active ReleaseGatePolicy row — still a no-op."""
+    from app.services.release_council_service import _apply_band_floor
+    db = AsyncMock()
+    # Both lookups (project-scoped → system-default) return None.
+    db.execute = AsyncMock(side_effect=[
+        _policy_first_result(None),
+        _policy_first_result(None),
+    ])
+    rec, band, downgrades = await _apply_band_floor(
+        db, project_id=uuid.uuid4(), recommendation="CONDITIONAL",
+        pass_rate=92.0, open_defects=0,
+    )
+    assert rec == "CONDITIONAL"
+    assert band is None
+    assert downgrades == []
+
+
+@pytest.mark.asyncio
+async def test_band_floor_downgrades_when_band_is_stricter():
+    """Composite says GO (pass_rate 88 is below project's NO_GO threshold
+    but other dimensions saved it) but the band classifier says NO_GO
+    because pass_rate < orange_min. Fail-closed must downgrade to NO_GO."""
+    from app.services.release_council_service import _apply_band_floor
+    rules = {
+        "pass_rate_bands": {"orange_min": 90.0, "yellow_min": 95.0, "green_min": 99.0},
+        "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
+    }
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    rec, band, downgrades = await _apply_band_floor(
+        db, project_id=uuid.uuid4(), recommendation="GO",
+        pass_rate=88.0, open_defects=0,
+    )
+    assert band == "red"
+    assert rec == "NO_GO"
+    assert downgrades == []
+
+
+@pytest.mark.asyncio
+async def test_band_floor_never_softens_composite():
+    """Composite says NO_GO but pass_rate is excellent (99.5%, band=green).
+    Bands must NEVER soften — the composite's NO_GO stands.
+
+    This is the fail-closed invariant: deep investigation found something
+    worth blocking (clusters, regressions, defect signals) that a simple
+    pass-rate band can't see. Bands can only block, never unblock."""
+    from app.services.release_council_service import _apply_band_floor
+    rules = {
+        "pass_rate_bands": {"orange_min": 90.0, "yellow_min": 95.0, "green_min": 99.0},
+        "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
+    }
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    rec, band, downgrades = await _apply_band_floor(
+        db, project_id=uuid.uuid4(), recommendation="NO_GO",
+        pass_rate=99.5, open_defects=0,
+    )
+    # Band itself is green, but the final recommendation MUST stay NO_GO.
+    assert band == "green"
+    assert rec == "NO_GO"
+
+
+@pytest.mark.asyncio
+async def test_band_floor_p0_cap_downgrades_via_hard_caps():
+    """An open P0 defect over the hard cap fires the P0 downgrade — even
+    when the bare pass-rate would have been green."""
+    from app.services.release_council_service import _apply_band_floor
+    rules = {
+        "pass_rate_bands": {"orange_min": 90.0, "yellow_min": 95.0, "green_min": 99.0},
+        "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
+    }
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    rec, band, downgrades = await _apply_band_floor(
+        db, project_id=uuid.uuid4(), recommendation="GO",
+        pass_rate=99.5, open_defects=2,
+    )
+    # green → yellow via P0 downgrade. GO verdict survives the band step
+    # because yellow is still GO; only orange or red would change rec.
+    assert band == "yellow"
+    assert rec == "GO"
+    assert any("p0_defects" in d for d in downgrades)
+
+
+@pytest.mark.asyncio
+async def test_band_floor_returns_downgrade_audit_trail():
+    """The downgrade list must include human-readable cap identifiers so
+    the UI can show "downgraded by P0 defect cap" rather than a numeric
+    delta. Empty list when no caps fired."""
+    from app.services.release_council_service import _apply_band_floor
+    rules = {
+        "pass_rate_bands": {"orange_min": 90.0, "yellow_min": 95.0, "green_min": 99.0},
+        "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
+    }
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    _, _, downgrades = await _apply_band_floor(
+        db, project_id=uuid.uuid4(), recommendation="GO",
+        pass_rate=99.5, open_defects=5,
+    )
+    # Exactly one cap fired (P0). Format: "p0_defects:5>0".
+    assert len(downgrades) == 1
+    assert downgrades[0].startswith("p0_defects:")

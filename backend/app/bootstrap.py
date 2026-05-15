@@ -35,6 +35,7 @@ from app.routers import (
     live,
     llm_cost_budget as llm_cost_budget_router,
     metrics,
+    my_failures,
     notifications,
     onboarding,
     ownership,
@@ -58,6 +59,7 @@ from app.routers import (
     sso,
     stream,
     suites,
+    test_execution_reviews,
     test_health,
     test_management,
     users,
@@ -139,6 +141,8 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     github_integration.router,         # Tier 1 item 5: GitHub Checks integration
     webhooks_outbound.router,          # Tier 2 item 6: outbound webhook subscriptions
     suites.router,                     # Phase 3: TestSuite + CanonicalTestCase CRUD
+    my_failures.router,                # 0080: per-user "My Failures" inbox of auto-assigned failures
+    test_execution_reviews.router,     # 0081: per-TestCase human review transitions
 )
 
 

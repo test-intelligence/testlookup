@@ -89,9 +89,15 @@ celery_app.conf.update(
         # run_complete — without this the runs only show in Live Execution
         # and never propagate to Runs / Overview / Coverage / Failures /
         # Trends. Idle threshold is 15 minutes; the task is idempotent.
+        # 10-minute idle threshold (lowered from 15 on 2026-05-15 per user
+        # request). Runs every 5 minutes so a session that goes idle is
+        # closed within 5-15 minutes total. The Redis ``last_event_at``
+        # hash is the truth source for staleness — see the task body for
+        # the NULL-last_event handling.
         "close-stale-live-sessions": {
             "task": "app.worker.tasks.close_stale_live_sessions",
             "schedule": crontab(minute="*/5"),
+            "kwargs": {"idle_minutes": 10},
         },
         # Safety net for agent_pipeline_runs that got stuck in
         # status='running' — typically because a stage crashed mid-task

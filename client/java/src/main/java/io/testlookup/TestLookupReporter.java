@@ -331,7 +331,15 @@ public class TestLookupReporter {
         } catch (TestLookupException e) {
             throw e;
         } catch (Exception e) {
-            throw new TestLookupException("Request failed: " + url, e);
+            // Surface the underlying cause in the message so listeners that
+            // log only ``e.getMessage()`` still see *why* the request failed
+            // (timeout vs connect-refused vs unknown-host). The previous
+            // "Request failed: <url>" stripped the actual diagnostic, which
+            // left users with a half-disabled SDK and no way to self-recover
+            // without attaching a debugger — see 2026-05-15 regression report.
+            String cause = e.getClass().getSimpleName()
+                + (e.getMessage() != null ? ": " + e.getMessage() : "");
+            throw new TestLookupException("Request failed (" + cause + "): " + url, e);
         }
     }
 

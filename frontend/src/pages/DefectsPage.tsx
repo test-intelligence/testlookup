@@ -55,8 +55,9 @@ import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
+import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
-import { useDefects, useFailureCategories } from '@/hooks/useMetrics'
+import { refreshDefects, useDefects, useFailureCategories } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
 import type { DefectItem } from '@/types/analytics'
@@ -1471,9 +1472,19 @@ export default function DefectsPage() {
   useEffect(() => { localStorage.setItem(TAB_KEY, activeTab) }, [activeTab])
 
   const [showPicker, setShowPicker] = useState(false)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('age')
   const analyticsView = useAnalyticsView('defects')
+
+  const intakeProjectId = !isAllProjects && activeProjectId ? activeProjectId : null
+  const openIntake = () => {
+    if (!intakeProjectId) {
+      toast('Pick a single project to intake a defect', { icon: '🐞' })
+      return
+    }
+    setIntakeOpen(true)
+  }
 
   // Pull all statuses up-front so we can drive the verdict + counts.
   const { data: allDefectsData, isLoading } = useDefects(1, undefined)
@@ -1580,7 +1591,7 @@ export default function DefectsPage() {
   const verdictCtas = {
     primary: model.p0Count > 0
       ? { label: `Triage ${model.p0Count} P0${model.p0Count === 1 ? '' : 's'}`, onClick: () => toast('Triage flow — coming in Phase 2', { icon: '🎯' }) } as IssueRowSpec['cta']
-      : { label: 'New defect', onClick: () => toast('New-defect modal — coming in Phase 2', { icon: '➕' }) } as IssueRowSpec['cta'],
+      : { label: 'New defect', onClick: openIntake } as IssueRowSpec['cta'],
     secondary: [
       model.p0Unowned > 0
         ? { label: `Assign ${model.p0Unowned} unowned`, onClick: () => toast('Assign modal — coming in Phase 2', { icon: '🎯' }) } as IssueRowSpec['cta']
@@ -1633,7 +1644,7 @@ export default function DefectsPage() {
             Customize
           </GhostBtn>
           <StatusTabs active={activeTab} onChange={setActiveTab} counts={model.countsByStatus} />
-          <PrimaryBtn onClick={() => toast('New-defect modal — coming in Phase 2', { icon: '➕' })}>
+          <PrimaryBtn onClick={openIntake}>
             <Plus className="h-3.5 w-3.5" />
             New defect
           </PrimaryBtn>
@@ -1750,6 +1761,14 @@ export default function DefectsPage() {
           enabledIds={analyticsView.widgetIds}
           onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {intakeOpen && intakeProjectId && (
+        <DefectIntakeModal
+          projectId={intakeProjectId}
+          onClose={() => setIntakeOpen(false)}
+          onSuccess={() => { void refreshDefects() }}
         />
       )}
 

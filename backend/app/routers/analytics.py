@@ -4,12 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user
+from app.core.deps import get_accessible_project_ids, get_current_active_user, require_role
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import User, UserRole
 from app.models.schemas import (
     ClassifyUncategorizedRequest,
     ClassifyUncategorizedResponse,
+    DefectIntakeRequest,
+    DefectIntakeResponse,
     NotifyTestOwnerRequest,
     NotifyTestOwnerResponse,
 )
@@ -134,6 +136,49 @@ async def list_defects(
         if accessible is not None:
             return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
     return await analytics_service.list_defects(db, project_id, resolution_status, page, size)
+
+
+@router.post(
+    "/defects",
+    response_model=DefectIntakeResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+async def create_defect(
+    payload: DefectIntakeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Manual Defect Intake. Creates an OPEN defect for the project,
+    best-effort attaching to the most-recent matching TestCase when
+    ``test_name`` (and optionally ``suite_name``) are supplied.
+    """
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None and payload.project_id not in accessible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this project",
+        )
+    body = payload.model_dump()  # model_dump() already coerces Enum → its .value string
+    defect = await analytics_service.create_manual_defect(db, payload.project_id, body)
+    await db.commit()
+    await db.refresh(defect)
+    raw_category = getattr(defect.failure_category, "value", defect.failure_category)
+    return DefectIntakeResponse(
+        id=defect.id,
+        project_id=defect.project_id,
+        title=defect.title or payload.title,
+        severity=payload.severity,
+        failure_category=raw_category if isinstance(raw_category, str) else None,
+        component=defect.component,
+        test_name=payload.test_name,
+        suite_name=payload.suite_name,
+        jira_ticket_id=defect.jira_ticket_id,
+        jira_ticket_url=defect.jira_ticket_url,
+        resolution_status=defect.resolution_status,
+        ai_confidence_score=defect.ai_confidence_score,
+        created_at=defect.created_at,
+    )
 
 
 # ── AI Analysis Summary ────────────────────────────────────────────────────

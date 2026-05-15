@@ -314,16 +314,10 @@ async def run_triage_agent(
                     analysis["llm_provider"] = settings.LLM_PROVIDER
                     analysis["llm_model"] = settings.LLM_MODEL
                     analysis["analysis_engine"] = "rules"
-                    analysis["llm_unavailable_reason"] = (
-                        f"Model '{settings.LLM_MODEL}' is not installed. "
-                        f"Run: docker compose exec ollama ollama pull {settings.LLM_MODEL}"
-                    )
+                    analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
                 except Exception as rules_exc:
                     logger.error("Rules engine fallback also failed: %s", rules_exc)
-                    analysis = _fallback_analysis(
-                        f"Model '{settings.LLM_MODEL}' not installed. "
-                        f"Pull it with: docker compose exec ollama ollama pull {settings.LLM_MODEL}"
-                    )
+                    analysis = _fallback_analysis(_model_missing_hint(settings.LLM_MODEL))
 
             # ── Token limit ───────────────────────────────────────────────────
             elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
@@ -428,6 +422,31 @@ def _parse_agent_output(raw: str) -> dict:
     if validation_error:
         validated["schema_validation_error"] = validation_error
     return validated
+
+
+def _model_missing_hint(model: str) -> str:
+    """Build a runtime-aware "model not installed" hint.
+
+    The previous hardcoded ``docker compose exec ollama ollama pull ...``
+    message was wrong for K8s deployments — users on K3s / OpenShift saw
+    a Docker Compose command and (correctly) wondered why it didn't work.
+    Detect the runtime via the standard K8s service-account file and emit
+    the matching ``pull`` recipe. Falls back to a generic hint when the
+    runtime can't be detected.
+    """
+    import os
+    on_k8s = os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token")
+    if on_k8s:
+        namespace = os.environ.get("KUBERNETES_NAMESPACE", "testlookup")
+        pull_cmd = f"kubectl -n {namespace} exec deploy/testlookup-ollama -- ollama pull {model}"
+    else:
+        pull_cmd = f"docker compose exec ollama ollama pull {model}"
+    return (
+        f"Model '{model}' not installed on the Ollama instance. "
+        f"Ask your admin to pull it: {pull_cmd}. "
+        "If the Ollama pod has no internet egress (NordVPN / firewall blocking "
+        "registry.ollama.ai), the pull will fail until that's resolved."
+    )
 
 
 def _fallback_analysis(error_msg: str) -> dict:

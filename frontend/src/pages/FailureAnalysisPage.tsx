@@ -1489,9 +1489,10 @@ export default function FailureAnalysisPage() {
 
   const [days, setDays] = useState<Window>(() => {
     const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 24h. Previously-saved choice wins so existing users
-    // keep theirs.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
+    // Default: last 7 days. Bumped from 24h on 2026-05-15 — too many
+    // users landed on an empty page because their latest run was older
+    // than a day. Previously-saved choice wins so existing users keep theirs.
+    return WINDOWS.includes(saved as Window) ? (saved as Window) : 7
   })
   useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
 

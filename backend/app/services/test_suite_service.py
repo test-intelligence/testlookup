@@ -38,6 +38,7 @@ from app.models.postgres import (
     TestCase,
     TestRun,
     TestSuite,
+    TestSuiteOwner,
 )
 
 logger = structlog.get_logger("services.test_suite")
@@ -78,6 +79,7 @@ async def get_or_create_default_suite(
     db.add(suite)
     try:
         await db.flush()
+        await _maybe_seed_default_owner(db, project.id, suite.name)
     except Exception:
         await db.rollback()
         # Re-select after the partial unique index rejected our insert.
@@ -91,12 +93,82 @@ async def get_or_create_default_suite(
     return suite
 
 
+async def _maybe_seed_default_owner(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    suite_name: str,
+) -> None:
+    """Write a ``TestSuiteOwner`` row pointing at the project's default QA
+    lead, if one is configured (migration 0079).
+
+    No-ops when:
+      * ``Project.default_qa_lead_user_id`` is NULL
+      * A ``TestSuiteOwner`` row already exists for this (project, suite)
+        — i.e. a human (or an earlier ingest) already assigned the owner;
+        ingest should never silently overwrite human intent.
+
+    Failures are swallowed and logged: the suite was already inserted +
+    flushed, so a failure here must not roll back ingest. Worst-case the
+    suite resolves via the read-time fallback chain — a degraded but
+    correct outcome.
+    """
+    try:
+        project = (
+            await db.execute(
+                select(Project.default_qa_lead_user_id).where(Project.id == project_id)
+            )
+        ).first()
+        default_qa_lead_id = project[0] if project else None
+        if default_qa_lead_id is None:
+            return
+
+        existing = (
+            await db.execute(
+                select(TestSuiteOwner.id).where(
+                    TestSuiteOwner.project_id == project_id,
+                    TestSuiteOwner.suite_name == suite_name,
+                )
+            )
+        ).first()
+        if existing is not None:
+            return
+
+        db.add(TestSuiteOwner(
+            project_id=project_id,
+            suite_name=suite_name,
+            owner_user_id=default_qa_lead_id,
+        ))
+        await db.flush()
+        logger.info(
+            "suite_default_owner_seeded",
+            project_id=str(project_id),
+            suite_name=suite_name,
+            owner_user_id=str(default_qa_lead_id),
+        )
+    except Exception as exc:
+        logger.warning(
+            "suite_default_owner_seed_failed",
+            project_id=str(project_id),
+            suite_name=suite_name,
+            error=str(exc),
+        )
+
+
 async def get_or_create_suite_by_name(
     db: AsyncSession,
     project_id: uuid.UUID,
     name: str,
 ) -> TestSuite:
-    """Resolve a TestSuite for a (project, name) pair, creating if needed."""
+    """Resolve a TestSuite for a (project, name) pair, creating if needed.
+
+    When a new row is inserted and the project has a ``default_qa_lead_user_id``
+    configured (migration 0079), a corresponding ``TestSuiteOwner`` row is
+    also written so ingest-created suites have explicit ownership from day
+    one instead of relying on the read-time fallback chain. The role check
+    is intentionally skipped on this path — the user was already validated
+    when ``Project.default_qa_lead_user_id`` was set, and re-running the
+    check inside the ingest hot path would add a per-suite DB round trip.
+    """
     result = await db.execute(
         select(TestSuite).where(
             TestSuite.project_id == project_id,
@@ -111,6 +183,7 @@ async def get_or_create_suite_by_name(
     db.add(suite)
     try:
         await db.flush()
+        await _maybe_seed_default_owner(db, project_id, name)
     except Exception:
         await db.rollback()
         result = await db.execute(

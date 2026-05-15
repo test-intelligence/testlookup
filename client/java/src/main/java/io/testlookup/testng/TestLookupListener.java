@@ -123,7 +123,19 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
             );
             LOG.info("TestLookupListener: session started: " + session.getSessionId());
         } catch (Exception e) {
-            LOG.warning("TestLookupListener: disabled — " + e.getMessage());
+            // Include the exception class so users can distinguish transient
+            // connection failures (deploy in progress, hosts file wrong)
+            // from configuration errors. Previously the warning collapsed
+            // every failure mode into one terse "Request failed: <url>"
+            // line that hid the real cause — see 2026-05-15 regression
+            // where the SDK couldn't reach the backend during a deploy
+            // window and the warning didn't say so.
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            LOG.warning("TestLookupListener: disabled — " + msg);
+            // Stack trace at FINE level so users hitting the wall can
+            // enable verbose logging without code changes:
+            //   -Djava.util.logging.ConsoleHandler.level=FINE
+            LOG.log(java.util.logging.Level.FINE, "TestLookupListener startSession() exception", e);
             reporter = null;
             session = null;
         }

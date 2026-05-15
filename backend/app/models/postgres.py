@@ -5,13 +5,14 @@ from enum import Enum as PyEnum
 from typing import Any, Optional
 
 from sqlalchemy import (
-    JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -133,6 +134,18 @@ class Project(Base):
         nullable=True,
         index=True,
     )
+    # Default QA lead — every new TestSuite materialised during ingest gets a
+    # TestSuiteOwner row pointing here (migration 0079). When set, this is the
+    # first fallback in the owner-resolution chain (TestSuiteOwner row →
+    # default_qa_lead_user_id → manager_user_id). Enforced as QA_LEAD on this
+    # project (or ADMIN) at the application layer — no CHECK constraint here
+    # because ProjectMember.role is the source of truth.
+    default_qa_lead_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(             # added migration 0079
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
@@ -241,6 +254,19 @@ class TestCase(Base):
     # Failure info
     failure_category: Mapped[Optional[FailureCategory]] = mapped_column(String(30))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Per-execution assignee — set by ``finalize_run`` for every FAILED/BROKEN
+    # TestCase in the run (migration 0080). Resolution order at assignment
+    # time: TestSuiteOwner row for the suite → Project.default_qa_lead_user_id
+    # → Project.manager_user_id → NULL. Historical rows retain the owner they
+    # were assigned to at ingest time; reassigning a suite owner later does
+    # NOT retroactively rewrite past assignments — preserve the action ledger.
+    assigned_to_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(            # added migration 0080
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # S3 reference
     minio_s3_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
@@ -361,6 +387,82 @@ class SuiteRunReview(Base):
 
 
 SUITE_REVIEW_STATES = ("pending", "confirmed", "acknowledged", "review_later")
+
+
+class TestExecutionReview(Base):
+    """Per-TestCase human review overlay for AI-flagged failures (migration 0081).
+
+    When the AI analysis pipeline flags a failure as ``requires_human_review``
+    (model missing, low confidence, fallback path), the UI shows a "Pending
+    Human Review" tag. This row records the human's verdict once they look:
+    ``reviewed`` (AI was right), ``defect_filed`` (ticket created;
+    ``defect_link`` captures the URL), ``false_positive`` (flake or test bug;
+    downstream un-tags), or ``reproducible`` (failure confirmed locally,
+    awaiting fix).
+
+    Naming note: the older ``test_case_reviews`` table belongs to the
+    managed-test-AUTHORING workflow (review of an authored test definition
+    before it's published). This table is keyed on ``test_cases.id`` —
+    the execution row — and is unrelated.
+
+    One row per test_case_id (UNIQUE). Transitions mutate the row in-place;
+    cross-test audit lives in ``test_case_audit_logs`` for cases that need a
+    timeline. Keep this table small and queryable for the inbox + dashboards.
+    """
+    __tablename__ = "test_execution_reviews"
+    __table_args__ = (
+        UniqueConstraint("test_case_id", name="uq_ter_test_case_id"),
+        CheckConstraint(
+            "state IN ('pending_review', 'reviewed', 'defect_filed', "
+            "'false_positive', 'reproducible')",
+            name="ck_ter_state_valid",
+        ),
+        CheckConstraint(
+            "state <> 'defect_filed' OR NULLIF(BTRIM(defect_link), '') IS NOT NULL",
+            name="ck_ter_defect_link_required",
+        ),
+        Index("ix_ter_project_state", "project_id", "state"),
+        Index("ix_ter_reviewed_by", "reviewed_by_user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending_review",
+        server_default=text("'pending_review'"),
+    )
+    reviewed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    defect_link: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transitioned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now(),
+    )
+
+
+# State machine for TestExecutionReview. Transitions are validated in the
+# application layer (test_execution_review_service). pending_review is the
+# implicit initial state — rows are auto-inserted when the user first
+# transitions an AI-flagged failure.
+TEST_EXECUTION_REVIEW_STATES = (
+    "pending_review",
+    "reviewed",
+    "defect_filed",
+    "false_positive",
+    "reproducible",
+)
 
 
 class CanonicalTestCase(Base):

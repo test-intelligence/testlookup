@@ -45,6 +45,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import Pagination from '@/components/ui/Pagination'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { searchService } from '@/services/searchService'
 import type { SearchType } from '@/services/searchService'
@@ -1024,6 +1025,12 @@ export default function SearchPage() {
   })
   const [isSearching, setIsSearching] = useState(false)
   const [response, setResponse] = useState<GlobalSearchResponse | null>(null)
+  // 2026-05-15: the Results card previously sliced response.items down
+  // to 12 rows and the global_search adapters capped at 50 each, so a
+  // user with 84 tests had no way to see anything beyond the first
+  // batch. Pagination now flows through runSearch(...,page) and the
+  // adapters bump their per-type cap when narrowed.
+  const RESULTS_PAGE_SIZE = 25
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
   // Project-scoped totals from /api/v1/search/entity-counts — the
   // fallback for the chip + Index Health counts when no query is
@@ -1059,8 +1066,11 @@ export default function SearchPage() {
     return () => { alive = false }
   }, [activeProjectId])
 
-  // ── Run a search (or no-op when the query is empty) ──────────────────
-  const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope) => {
+  // ── Run a search (or browse the scope when the query is empty) ───────
+  // ``page`` is optional so callers that change the query/mode/scope can
+  // omit it (they want page 1); the pagination control passes the new
+  // page explicitly so a user clicking "page 2" doesn't reset back to 1.
+  const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope, page: number = 1) => {
     const trimmed = q.trim()
     setSearchParams(prev => {
       const np = new URLSearchParams(prev)
@@ -1070,7 +1080,12 @@ export default function SearchPage() {
       return np
     }, { replace: true })
 
-    if (!trimmed) {
+    // Empty query + scope=all: keep the empty-state body grid (recent /
+    // saved / suggested) — a fan-out browse across every entity is too
+    // noisy as a landing experience. Empty query + a specific scope: hit
+    // the API in browse mode so clicking a chip with a non-zero count
+    // surfaces the most-recent records of that type.
+    if (!trimmed && s === 'all') {
       setResponse(null)
       return
     }
@@ -1086,19 +1101,22 @@ export default function SearchPage() {
       const data = await searchService.globalSearch({
         q: trimmed,
         entity_types: entityKey ? [entityKey] : undefined,
-        page: 1,
-        size: 25,
+        page,
+        size: RESULTS_PAGE_SIZE,
       })
       setResponse(data)
-      // Record the search in localStorage history.
-      setRecents(prev => {
-        const next: RecentSearch[] = [
-          { id: `${Date.now()}`, query: trimmed, mode: m, scope: s, resultCount: data.total, ts: Date.now() },
-          ...prev.filter(r => r.query !== trimmed || r.scope !== s),
-        ].slice(0, MAX_RECENT)
-        writeRecents(next)
-        return next
-      })
+      // Only persist real queries to history — browse views (empty q)
+      // shouldn't pollute Recent searches.
+      if (trimmed) {
+        setRecents(prev => {
+          const next: RecentSearch[] = [
+            { id: `${Date.now()}`, query: trimmed, mode: m, scope: s, resultCount: data.total, ts: Date.now() },
+            ...prev.filter(r => r.query !== trimmed || r.scope !== s),
+          ].slice(0, MAX_RECENT)
+          writeRecents(next)
+          return next
+        })
+      }
     } catch {
       toast.error('Search failed')
       setResponse(null)
@@ -1107,15 +1125,15 @@ export default function SearchPage() {
     }
   }, [setSearchParams])
 
-  // ── Auto-run search when URL state lands with a query ────────────────
+  // ── Auto-run on mount when there's a query OR a non-`all` scope ──────
+  // A URL like /search?scope=tests should land on a populated browse view
+  // so the chip-count number ("Tests · 65") corresponds to actual records.
   const initialRanRef = useRef(false)
   useEffect(() => {
     if (initialRanRef.current) return
-    if (query.trim()) {
-      initialRanRef.current = true
+    initialRanRef.current = true
+    if (query.trim() || scope !== 'all') {
       void runSearch(query, mode, scope)
-    } else {
-      initialRanRef.current = true   // mark so we don't auto-fire on later renders
     }
   }, [query, mode, scope, runSearch])
 
@@ -1177,26 +1195,42 @@ export default function SearchPage() {
   }
 
   // ── Scope counts ────────────────────────────────────────────────────
-  // When a search response is active, the chip counts reflect the
-  // response's per-entity hits (what matched the query). When no
-  // response is active, the chips fall back to the project-scoped
-  // totals fetched from /api/v1/search/entity-counts — so a freshly
-  // loaded page shows real numbers, not 0s. Empty record while the
-  // initial fetch is in flight is treated as zeros (no flash of stale
-  // numbers from a different project).
+  // Chip-count contract (revised 2026-05-15 to fix the "counts jump
+  // when I click around" report):
+  //
+  //   * When scope === 'all' AND there's an active query, chips show
+  //     the per-type match count from the response. This is the only
+  //     case where match-count chips help — they tell the user
+  //     "narrow to Tests to see those 3 hits" vs "0 in Runs".
+  //
+  //   * Otherwise (scope is narrowed, OR no query), chips show
+  //     project-scoped totals from /api/v1/search/entity-counts.
+  //     This keeps the chip's meaning stable: it's a navigation cue
+  //     ("you have 84 tests in this project"), not a result counter.
+  //
+  // The previous implementation mixed both semantics on one screen —
+  // the scoped type's chip used the (capped) match count while the
+  // others used totals — so the Tests chip jumped 50 ↔ 84 as the
+  // user clicked between Tests and Runs. Confusing and the count
+  // wouldn't match the table either since the browse adapters cap
+  // their LIMIT below the real project total.
   const entityCounts: Record<SearchEntityType, number> = useMemo(() => {
-    const source = (response?.entity_counts
-      ?? totalCounts
-      ?? {}) as Partial<Record<SearchEntityType, number>>
-    return {
-      test_case: Number(source.test_case ?? 0),
-      test_run:  Number(source.test_run ?? 0),
-      suite:     Number(source.suite ?? 0),
-      defect:    Number(source.defect ?? 0),
-      flaky_test:Number(source.flaky_test ?? 0),
-      release:   Number(source.release ?? 0),
+    const responseCounts = (response?.entity_counts ?? {}) as Partial<Record<SearchEntityType, number>>
+    const fallback = (totalCounts ?? {}) as Partial<Record<SearchEntityType, number>>
+    const useResponseCounts = !!response && scope === 'all' && query.trim() !== ''
+    const pick = (type: SearchEntityType): number => {
+      if (useResponseCounts) return Number(responseCounts[type] ?? 0)
+      return Number(fallback[type] ?? 0)
     }
-  }, [response, totalCounts])
+    return {
+      test_case:  pick('test_case'),
+      test_run:   pick('test_run'),
+      suite:      pick('suite'),
+      defect:     pick('defect'),
+      flaky_test: pick('flaky_test'),
+      release:    pick('release'),
+    }
+  }, [response, totalCounts, scope, query])
 
   const totalIndexed = indexStatus?.document_count ?? 0
   const scopeCounts: Record<EntityScope, number> = useMemo(() => {
@@ -1277,9 +1311,9 @@ export default function SearchPage() {
         onChange={setQuery}
         onSubmit={() => runSearch(query, mode, scope)}
         mode={mode}
-        onModeChange={(m) => { setMode(m); if (query.trim()) void runSearch(query, m, scope) }}
+        onModeChange={(m) => { setMode(m); void runSearch(query, m, scope) }}
         scope={scope}
-        onScopeChange={(s) => { setScope(s); if (query.trim()) void runSearch(query, mode, s) }}
+        onScopeChange={(s) => { setScope(s); void runSearch(query, mode, s) }}
         scopeCounts={scopeCounts}
         inputRef={inputRef}
       />
@@ -1298,24 +1332,44 @@ export default function SearchPage() {
 
       {/* Live results — only when a query has been run */}
       {response && response.items.length > 0 && (
-        <CardShell
-          title={
-            <>
-              Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
-                <strong>{Intl.NumberFormat().format(response.total)}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
+        <>
+          <CardShell
+            title={
+              <>
+                Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
+                  <strong>{Intl.NumberFormat().format(response.total)}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
+                </span>
+              </>
+            }
+            rightSlot={
+              <span className="font-mono">
+                <code className="text-[11px]">{response.search_type}</code>
+                {' · '}
+                showing {((response.page - 1) * response.size) + 1}–{((response.page - 1) * response.size) + response.items.length} of {response.total}
               </span>
-            </>
-          }
-          rightSlot={
-            <span className="font-mono">
-              <code className="text-[11px]">{response.search_type}</code> · {response.items.length} shown
-            </span>
-          }
-        >
-          <div className="flex flex-col">
-            {response.items.slice(0, 12).map(r => <ResultRow key={`${r.entity_type}-${r.entity_id}`} row={r} onOpen={() => navigate(r.navigation_url)} />)}
-          </div>
-        </CardShell>
+            }
+          >
+            <div className="flex flex-col">
+              {response.items.map(r => <ResultRow key={`${r.entity_type}-${r.entity_id}`} row={r} onOpen={() => navigate(r.navigation_url)} />)}
+            </div>
+          </CardShell>
+          {response.pages > 1 && (
+            <div className="mt-3">
+              <Pagination
+                page={response.page}
+                pages={response.pages}
+                total={response.total}
+                onChange={(p) => {
+                  // Rerun the same query with the new page. Scroll to top
+                  // of the Results card so the user sees the first row
+                  // of the new page rather than the last one of the old.
+                  void runSearch(query, mode, scope, p)
+                  if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+              />
+            </div>
+          )}
+        </>
       )}
 
       {response && response.items.length === 0 && (

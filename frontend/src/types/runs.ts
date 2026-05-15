@@ -47,6 +47,13 @@ export interface RunTestCase {
   error_message?: string
   has_attachments?: boolean
   ocp_pod_name?: string
+  /**
+   * User this failure was auto-assigned to at ingest time (migration 0080).
+   * NULL when the test passed, when the project has no resolvable owner,
+   * or when the row pre-dates the auto-assignment feature. Resolution at
+   * assignment time: TestSuiteOwner → default QA lead → manager → NULL.
+   */
+  assigned_to_user_id?: string | null
 }
 
 export type RunTestCaseListResponse = PaginatedResponse<RunTestCase>

@@ -1957,6 +1957,25 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                         except Exception:
                             # Malformed timestamp — treat as stale and close.
                             is_idle = True
+                    else:
+                        # No Redis state / no last_event_at field means
+                        # either the Redis state hash expired (24h TTL —
+                        # definitely abandoned) OR the session never
+                        # received an event after registration. Fall back
+                        # to comparing ``started_at`` against the cutoff
+                        # so sessions that opened and were never used
+                        # don't sit ``active`` forever. 2026-05-15: this
+                        # branch added after finding 7 sessions on the
+                        # homelab stuck idle 50-65 min with NULL
+                        # last_event_at — they were registered by the
+                        # SDK but the first event never arrived, and the
+                        # prior reaper treated ``is_idle=True`` then
+                        # skipped them via ``not is_idle`` being false.
+                        # Result: sessions accumulated indefinitely.
+                        started_at = session.started_at
+                        if started_at and started_at.tzinfo is None:
+                            started_at = started_at.replace(tzinfo=timezone.utc)
+                        is_idle = bool(started_at and started_at < cutoff)
 
                     if not is_idle:
                         skipped_recent += 1

@@ -2,13 +2,14 @@ import { useCallback, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList,
-  FolderTree, Gauge, GitBranch, HeartPulse, Layers, LayoutDashboard, MessageSquare,
+  FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard, MessageSquare,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useAIConfig } from '@/hooks/useAIConfig'
+import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailures'
 import AppLogo from '@/components/ui/AppLogo'
 
 /* ─── Navigation structure: grouped with primary + sub-items ─── */
@@ -67,14 +68,15 @@ const GROUPS: NavGroup[] = [
     label: 'AI Reports',
     icon: Brain,
     to: '/intelligence',
-    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/quarantine', '/chat'],
+    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/quarantine'],
     children: [
       { to: '/agents',           icon: Bot,           label: 'AI Pipeline'   },
       { to: '/deep-investigate', icon: Layers,         label: 'Deep Analysis' },
       { to: '/release-gate',     icon: Shield,         label: 'Release Gate'  },
       { to: '/flaky-coach',      icon: HeartPulse,     label: 'Flaky Coach'   },
       { to: '/quarantine',       icon: ShieldAlert,    label: 'Quarantine'    },
-      { to: '/chat',             icon: MessageSquare,  label: 'Chat'          },
+      // Chat feature temporarily disabled — re-enable by uncommenting this entry, the '/chat' activePrefix above, and the route in App.tsx.
+      // { to: '/chat',             icon: MessageSquare,  label: 'Chat'          },
     ],
   },
 ]
@@ -191,6 +193,11 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-1">
+        {/* My Failures inbox — personal action queue. Sits above the group
+            tree because it's user-specific work, not a project navigation
+            target. Polls /api/v1/me/assigned-failures/count every 30s. */}
+        <MyFailuresLink />
+
         {groups.map(group => (
           <SidebarGroup key={group.key} group={group} />
         ))}
@@ -225,5 +232,41 @@ export default function Sidebar() {
         )}
       </div>
     </aside>
+  )
+}
+
+
+/**
+ * Sidebar entry for the My Failures inbox. The count badge is unscoped
+ * (across all accessible projects) so a user switching projects doesn't
+ * lose sight of pending work elsewhere. SWR polls every 30s.
+ *
+ * Rendered as its own component so the count hook only fires here — the
+ * rest of the sidebar doesn't re-render when the badge changes.
+ */
+function MyFailuresLink() {
+  const { data } = useMyFailuresCountUnscoped()
+  const count = data?.count ?? 0
+  return (
+    <NavLink
+      to="/my-failures"
+      className={({ isActive }) => clsx('sidebar-link', isActive && 'active')}
+    >
+      <Inbox className="h-4 w-4 flex-shrink-0" />
+      My Failures
+      {count > 0 && (
+        <span
+          className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums"
+          style={{
+            background: 'rgba(239,68,68,0.18)',
+            color: '#fca5a5',
+            border: '1px solid rgba(239,68,68,0.30)',
+          }}
+          aria-label={`${count} assigned failures`}
+        >
+          {count > 99 ? '99+' : count}
+        </span>
+      )}
+    </NavLink>
   )
 }

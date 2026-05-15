@@ -191,6 +191,20 @@ async def finalize_run(
         lambda d: sync_canonical_test_cases(d, pid, rid),
     )
 
+    # 0080: Assign every failed/broken TestCase in this run to the resolved
+    # suite owner so the action queue for QA leads is populated immediately
+    # after ingest. Runs AFTER canonical_sync because new suites get their
+    # TestSuiteOwner rows seeded there (via _maybe_seed_default_owner).
+    # Isolated session so an assignment failure can't poison auto-tagging
+    # or the AI pipeline that follow.
+    from app.services.failed_test_assignment_service import (
+        assign_failed_tests_to_suite_owners,
+    )
+    await _run_isolated(
+        "assign_failed_tests",
+        lambda d: assign_failed_tests_to_suite_owners(d, pid, rid),
+    )
+
     async def _tag(d: AsyncSession) -> None:
         await auto_tag_test_cases(d, rid)
         await auto_tag_test_run(d, rid)

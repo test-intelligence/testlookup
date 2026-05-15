@@ -109,8 +109,43 @@ async def get_dashboard_summary(
 
     # Release readiness — None when there's no execution evidence so the UI /
     # CLI / MCP / report consumers can render a neutral "Pending" state instead
-    # of falling through to RED on an empty dataset.
-    readiness = _compute_readiness(total_exec, pass_rate, active_defects, flaky_count)
+    # of falling through to RED on an empty dataset. When a per-project (or
+    # system-default) ReleaseGatePolicy is active, its pass_rate_bands +
+    # hard_caps drive the 4-colour band and the verdict so the dashboard
+    # honours the configured thresholds.
+    band: str | None = None
+    downgrades: list[str] = []
+    if total_exec <= 0:
+        readiness = None
+    else:
+        policy_doc = await _resolve_policy_for_project(db, project_id)
+        if policy_doc is not None:
+            bands_cfg = policy_doc.get("pass_rate_bands") or {}
+            caps_cfg = policy_doc.get("hard_caps") or {}
+            # Count active P0 defects when the policy actually uses the cap —
+            # avoids an extra COUNT query when the cap is at default 0 and
+            # the project has no P0-tracked defects.
+            active_p0 = 0
+            if int(caps_cfg.get("max_p0_defects", 0) or 0) >= 0:
+                p0_conds = [Defect.resolution_status == "OPEN", Defect.severity == "P0"]
+                if project_id:
+                    p0_conds.append(Defect.project_id == project_id)
+                p0_res = await db.execute(select(func.count(Defect.id)).where(*p0_conds))
+                active_p0 = int(p0_res.scalar() or 0)
+            classified = classify_with_policy(
+                pass_rate=pass_rate,
+                active_defects_p0=active_p0,
+                flaky_count=flaky_count,
+                new_failures_24h=new_failures_24h,
+                bands=bands_cfg,
+                hard_caps=caps_cfg,
+            )
+            band = classified["band"]
+            downgrades = classified["downgrades"]
+            verdict_to_legacy = {"GO": "GREEN", "CONDITIONAL": "AMBER", "NO_GO": "RED"}
+            readiness = verdict_to_legacy[classified["verdict"]]
+        else:
+            readiness = _compute_readiness(total_exec, pass_rate, active_defects, flaky_count)
 
     result_dict = {
         "total_executions_7d": {
@@ -144,6 +179,12 @@ async def get_dashboard_summary(
             "trend_direction": "flat",
         },
         "release_readiness": readiness,
+        # 4-colour band + downgrade audit so the UI can render the
+        # configured pass-rate verdict directly (and show *why* a band
+        # was downgraded by hard caps). ``None`` when no policy is
+        # resolved or when there's no run evidence.
+        "release_readiness_band": band,
+        "release_readiness_downgrades": downgrades,
     }
 
     # P3-6: Cache the result for subsequent requests
@@ -162,39 +203,47 @@ async def get_trend_data(
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
     suite_key = _normalize_suite_name(suite_name)
     project_filter = "AND tr.project_id = :project_id" if project_id else ""
-    suite_join = "JOIN test_cases tc ON tc.test_run_id = tr.id" if suite_key else ""
+    # 2026-05-15 bug fix: matching this filter via INNER JOIN test_cases
+    # silently dropped every run whose ``test_cases`` rows weren't persisted
+    # (a common state for live-stream ingest, which writes aggregates onto
+    # ``test_runs`` first and per-case rows asynchronously). Switch to
+    # filter via ``primary_suite_name`` + EXISTS on test_cases as backup
+    # so runs with valid aggregates but missing per-case rows still appear.
+    # Aggregates are always read from ``tr.*`` since those columns are
+    # populated even when ``test_cases`` is empty.
     suite_filter = (
-        "AND (LOWER(TRIM(tc.suite_name)) = :suite_name OR LOWER(TRIM(tr.primary_suite_name)) = :suite_name)"
+        """
+        AND (
+          LOWER(TRIM(tr.primary_suite_name)) = :suite_name
+          OR EXISTS (
+            SELECT 1 FROM test_cases tc
+            WHERE tc.test_run_id = tr.id
+              AND LOWER(TRIM(tc.suite_name)) = :suite_name
+          )
+        )
+        """
         if suite_key else ""
     )
-    select_values = (
-        """
-            COALESCE(COUNT(*) FILTER (WHERE tc.status = 'PASSED'), 0)  AS passed,
-            COALESCE(COUNT(*) FILTER (WHERE tc.status = 'FAILED'), 0)  AS failed,
-            COALESCE(COUNT(*) FILTER (WHERE tc.status = 'SKIPPED'), 0) AS skipped,
-            COALESCE(COUNT(*) FILTER (WHERE tc.status = 'BROKEN'), 0)  AS broken,
-            COALESCE(COUNT(*), 0)                                      AS total,
-            COALESCE(
-                COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0 / NULLIF(COUNT(*), 0),
-                0
-            ) AS pass_rate
-        """
-        if suite_key
-        else """
-            COALESCE(SUM(tr.passed_tests), 0)  AS passed,
-            COALESCE(SUM(tr.failed_tests), 0)  AS failed,
-            COALESCE(SUM(tr.skipped_tests), 0) AS skipped,
-            COALESCE(SUM(tr.broken_tests), 0)  AS broken,
-            COALESCE(SUM(tr.total_tests), 0)   AS total,
-            COALESCE(AVG(tr.pass_rate), 0)     AS pass_rate
-        """
-    )
+    # Aggregates always come from ``test_runs`` columns. Even when a suite is
+    # filtered, the run-level totals are correct for the runs that survive
+    # the filter — and they exist whether or not test_cases rows do.
+    select_values = """
+        COALESCE(SUM(tr.passed_tests), 0)  AS passed,
+        COALESCE(SUM(tr.failed_tests), 0)  AS failed,
+        COALESCE(SUM(tr.skipped_tests), 0) AS skipped,
+        COALESCE(SUM(tr.broken_tests), 0)  AS broken,
+        COALESCE(SUM(tr.total_tests), 0)   AS total,
+        COALESCE(
+          SUM(tr.passed_tests) * 100.0
+            / NULLIF(SUM(tr.passed_tests) + SUM(tr.failed_tests), 0),
+          0
+        ) AS pass_rate
+    """
     query = text(f"""
         SELECT
             DATE_TRUNC('day', tr.created_at) AS day,
             {select_values}
         FROM test_runs tr
-        {suite_join}
         WHERE tr.created_at >= :period_start
           {project_filter}
           {suite_filter}
@@ -234,36 +283,71 @@ async def _period_stats(
     if project_id:
         conditions.append(TestRun.project_id == project_id)
     if suite_name:
-        conditions.append(_suite_match_clause(suite_name))
-        result = await db.execute(
-            select(
-                func.count(func.distinct(TestRun.id)).label("total_runs"),
-                func.count(TestCase.id).label("total_tests"),
-                func.count(TestCase.id).filter(TestCase.status == TestStatus.PASSED).label("passed_tests"),
-                func.avg(TestCase.duration_ms).label("avg_duration_ms"),
+        # 2026-05-15 bug fix: live-stream runs persist their aggregates on
+        # ``test_runs`` (passed_tests / failed_tests / total_tests) but
+        # often DON'T persist per-test ``test_cases`` rows until later.
+        # The previous implementation INNER-JOINed ``test_cases``, so a
+        # legitimately populated suite returned 0 — dashboard panels +
+        # trend chart all went blank when the user picked the suite.
+        # Fix: filter by ``primary_suite_name`` directly (with EXISTS on
+        # test_cases as a backup for older data where the run-level
+        # suite label wasn't set), and read aggregates from ``test_runs``
+        # columns which are always populated.
+        suite_lower = suite_name  # already lowercased by _normalize_suite_name
+        from sqlalchemy import exists, select as _select
+        tc_match = exists().where(
+            TestCase.test_run_id == TestRun.id,
+        ).where(
+            func.lower(func.trim(TestCase.suite_name)) == suite_lower,
+        )
+        conditions.append(
+            or_(
+                func.lower(func.trim(TestRun.primary_suite_name)) == suite_lower,
+                tc_match,
             )
-            .join(TestCase, TestCase.test_run_id == TestRun.id)
-            .where(*conditions)
+        )
+        result = await db.execute(
+            _select(
+                func.count(TestRun.id).label("total_runs"),
+                func.coalesce(func.sum(TestRun.passed_tests), 0).label("sum_passed"),
+                func.coalesce(func.sum(TestRun.failed_tests), 0).label("sum_failed"),
+                func.coalesce(func.sum(TestRun.total_tests), 0).label("sum_total"),
+                func.avg(TestRun.duration_ms).label("avg_duration_ms"),
+            ).where(*conditions)
         )
         row = result.one()
-        total_tests = row.total_tests or 0
-        passed_tests = row.passed_tests or 0
+        sum_passed = int(row.sum_passed or 0)
+        sum_failed = int(row.sum_failed or 0)
+        denom = sum_passed + sum_failed
+        pass_rate = (sum_passed / denom * 100.0) if denom else 0.0
         return {
             "total_runs": row.total_runs or 0,
-            "pass_rate": (passed_tests / total_tests * 100.0) if total_tests else 0,
+            "pass_rate": pass_rate,
             "avg_duration_ms": int(row.avg_duration_ms or 0),
         }
+    # Weighted pass-rate across the period: sum of passed tests / sum of
+    # (passed + failed) tests across every TestRun in the window. The previous
+    # ``AVG(TestRun.pass_rate)`` treated each run equally regardless of size,
+    # so a single 0%-pass smoke run could drag the dashboard headline number
+    # well below what /live reports for the same data. /live computes
+    # ``passed / (passed + failed)`` on visible sessions, so this aligns the
+    # methodology — different time windows, identical math.
     result = await db.execute(
         select(
             func.count(TestRun.id).label("total_runs"),
-            func.avg(TestRun.pass_rate).label("pass_rate"),
+            func.coalesce(func.sum(TestRun.passed_tests), 0).label("sum_passed"),
+            func.coalesce(func.sum(TestRun.failed_tests), 0).label("sum_failed"),
             func.avg(TestRun.duration_ms).label("avg_duration_ms"),
         ).where(*conditions)
     )
     row = result.one()
+    sum_passed = int(row.sum_passed or 0)
+    sum_failed = int(row.sum_failed or 0)
+    denom = sum_passed + sum_failed
+    pass_rate = (sum_passed / denom * 100.0) if denom else 0.0
     return {
         "total_runs": row.total_runs or 0,
-        "pass_rate": float(row.pass_rate or 0),
+        "pass_rate": pass_rate,
         "avg_duration_ms": int(row.avg_duration_ms or 0),
     }
 
@@ -315,11 +399,11 @@ def _compute_readiness(
     active_defects: int,
     flaky_count: int,
 ) -> str | None:
-    """Return GREEN / AMBER / RED — or None when there's no evidence to grade.
+    """Hardcoded fallback verdict — used when no project policy is resolved.
 
-    Without any test runs in the window, every numeric input is zero and the
-    rule chain falls through to RED. That's misleading: there are no failures,
-    just no data. Return None so callers can render a neutral state.
+    Returns GREEN / AMBER / RED, or None when there's no evidence to grade
+    (no runs in the window). Without any data the previous rule chain fell
+    through to RED, which is misleading — "no data" is a neutral state.
     """
     if total_runs <= 0:
         return None
@@ -328,3 +412,104 @@ def _compute_readiness(
     if pass_rate >= 85 and active_defects <= 5:
         return "AMBER"
     return "RED"
+
+
+# Ordered worst → best so a downgrade is a leftward step.
+_BAND_ORDER: list[str] = ["red", "orange", "yellow", "green"]
+
+
+def classify_with_policy(
+    pass_rate: float,
+    active_defects_p0: int,
+    flaky_count: int,
+    new_failures_24h: int,
+    bands: dict,
+    hard_caps: dict,
+) -> dict:
+    """Resolve the 4-band colour + GO/CONDITIONAL/NO_GO verdict using a
+    project policy. Pure function — no DB access — so it's trivially
+    unit-testable and can be reused by ``/release-gate`` and the dashboard.
+
+    Args:
+      pass_rate: weighted pass-rate for the period (0-100).
+      active_defects_p0: count of OPEN P0 defects in the project.
+      flaky_count: live flaky-test count from ``_count_flaky_tests``.
+      new_failures_24h: new-failure count from the last 24h.
+      bands: ``{"orange_min", "yellow_min", "green_min"}`` from the policy.
+      hard_caps: ``{"max_p0_defects", "max_flaky_count", "max_new_failures_24h"}``.
+
+    Returns:
+      ``{band, verdict, downgrades}`` — ``band`` is one of red/orange/yellow/green;
+      ``verdict`` is GO/CONDITIONAL/NO_GO; ``downgrades`` lists which hard caps
+      fired so the UI can show "downgraded from green → orange (P0 defect, flaky)".
+    """
+    green_min = float(bands.get("green_min", 99.0))
+    yellow_min = float(bands.get("yellow_min", 95.0))
+    orange_min = float(bands.get("orange_min", 90.0))
+
+    if pass_rate >= green_min:
+        idx = 3  # green
+    elif pass_rate >= yellow_min:
+        idx = 2  # yellow
+    elif pass_rate >= orange_min:
+        idx = 1  # orange
+    else:
+        idx = 0  # red
+
+    downgrades: list[str] = []
+    max_p0 = int(hard_caps.get("max_p0_defects", 0) or 0)
+    max_flaky = int(hard_caps.get("max_flaky_count", 0) or 0)
+    max_new_fail = int(hard_caps.get("max_new_failures_24h", 0) or 0)
+    if active_defects_p0 > max_p0:
+        downgrades.append(f"p0_defects:{active_defects_p0}>{max_p0}")
+        idx = max(0, idx - 1)
+    if max_flaky > 0 and flaky_count > max_flaky:
+        downgrades.append(f"flaky:{flaky_count}>{max_flaky}")
+        idx = max(0, idx - 1)
+    if max_new_fail > 0 and new_failures_24h > max_new_fail:
+        downgrades.append(f"new_failures_24h:{new_failures_24h}>{max_new_fail}")
+        idx = max(0, idx - 1)
+
+    band = _BAND_ORDER[idx]
+    verdict = (
+        "GO" if band == "green"
+        else "GO" if band == "yellow"
+        else "CONDITIONAL" if band == "orange"
+        else "NO_GO"
+    )
+    return {"band": band, "verdict": verdict, "downgrades": downgrades}
+
+
+async def _resolve_policy_for_project(db: AsyncSession, project_id: str | None) -> dict | None:
+    """Return the active policy document (JSON) for a project, with the
+    standard precedence: project-active → system-default (project_id IS NULL,
+    is_active=True). Returns None when no policy row matches — callers fall
+    back to the hardcoded thresholds. Lean query: no row hydration, just the
+    JSON ``rules`` column."""
+    from app.models.postgres import ReleaseGatePolicy
+
+    if project_id:
+        result = await db.execute(
+            select(ReleaseGatePolicy.rules)
+            .where(
+                ReleaseGatePolicy.project_id == project_id,
+                ReleaseGatePolicy.is_active.is_(True),
+            )
+            .order_by(ReleaseGatePolicy.version.desc())
+            .limit(1)
+        )
+        row = result.first()
+        if row and row[0]:
+            return row[0]
+
+    result = await db.execute(
+        select(ReleaseGatePolicy.rules)
+        .where(
+            ReleaseGatePolicy.project_id.is_(None),
+            ReleaseGatePolicy.is_active.is_(True),
+        )
+        .order_by(ReleaseGatePolicy.version.desc())
+        .limit(1)
+    )
+    row = result.first()
+    return row[0] if row and row[0] else None

@@ -108,7 +108,12 @@ spec:
     - {}   # allow all egress — data stores are external to this namespace
 
 ---
-# Workers: no ingress, egress to everywhere in-cluster + data stores.
+# Celery workers + the beat scheduler. Same network needs (Redis broker,
+# Postgres). Beat carries ``component: scheduler`` instead of ``worker``;
+# prior to 2026-05-15 only ``worker`` was matched, so the beat pod's
+# ``wait-for-redis`` initContainer hung forever under ``default-deny-all``.
+# That stopped ``close_stale_live_sessions`` from running and live
+# sessions stuck on ``status='active'`` piled up indefinitely.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -116,8 +121,10 @@ metadata:
   namespace: testlookup
 spec:
   podSelector:
-    matchLabels:
-      app.kubernetes.io/component: worker
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [worker, scheduler]
   policyTypes:
     - Ingress
     - Egress

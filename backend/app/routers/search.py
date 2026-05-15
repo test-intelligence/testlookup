@@ -293,7 +293,7 @@ async def search_test_cases(
 
 @router.get("/global")
 async def global_search_endpoint(
-    q: str = Query(..., min_length=1),
+    q: str = Query("", description="Search query — empty browses the most-recent items in scope"),
     project_id: Optional[str] = None,
     entity_types: Optional[str] = Query(None, description="Comma-separated entity types to search"),
     days: Optional[int] = Query(None, ge=1, le=365),
@@ -307,6 +307,11 @@ async def global_search_endpoint(
 
     Searches test cases, test runs, suites, defects, flaky tests, and releases.
     Returns mixed results with entity badges and navigation URLs.
+
+    An empty ``q`` acts as a browse: the chips on the /search page show
+    project-scoped totals from ``/entity-counts``, and selecting a chip with
+    no query should surface real records of that type rather than a blank
+    panel. Adapters fall back to "most recent N" when ``q`` is empty.
     """
     # Tenant isolation: resolve the effective scope. Non-admin users without a
     # specific project get fanned out across their membership set; non-admin

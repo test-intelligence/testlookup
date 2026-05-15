@@ -155,7 +155,10 @@ export default function IntelligenceHubPage() {
   const projectId = useProjectStore(s => s.activeProjectId)
   const isAll = projectId === ALL_PROJECTS_ID
 
-  const range  = (params.get('range') ?? '24h') as RangeId
+  // Default range is 7d (was 24h prior to 2026-05-15). Most CI workloads
+  // don't ship a fresh run every day; the 24h default left first-time users
+  // staring at "0 runs". The URL param still overrides for deep-links.
+  const range  = (params.get('range') ?? '7d') as RangeId
   const branch = params.get('branch') ?? ''
   const status = params.get('status') ?? 'all'
   const query  = params.get('q') ?? ''

@@ -4,12 +4,21 @@ Non-gating layer on top of AI analysis. The pipeline still finalizes runs
 without waiting for a review; these records just capture the suite owner's
 verdict for downstream display + audit.
 
-Resolution rule for *who owns a suite*:
+Resolution rule for *who owns a suite* (since migration 0079):
 
-    explicit ``test_suite_owners`` row → ``Project.manager_user_id`` → None
+    explicit ``test_suite_owners`` row
+      → ``Project.default_qa_lead_user_id``    (the configured default QA lead)
+      → ``Project.manager_user_id``            (legacy fallback, kept for B/C)
+      → None
 
-The fallback is reported via ``is_fallback=True`` so the UI can render the
-distinction (an explicit owner vs. the default project manager).
+``is_fallback=True`` whenever the resolution didn't come from the explicit
+``test_suite_owners`` row, so the UI can render the distinction.
+
+Assignment enforcement: ``set_suite_owner`` rejects non-QA_LEAD users (returns
+HTTP 400) unless the candidate is an instance ADMIN. See
+``assert_user_is_qa_lead_on_project`` below for the exact rule. ADMIN bypass
+exists so an instance admin can backstop an empty project (no QA_LEAD members
+yet) without first promoting themselves into ProjectMember.
 """
 from __future__ import annotations
 
@@ -18,18 +27,81 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     SUITE_REVIEW_STATES,
     Project,
+    ProjectMember,
     SuiteRunReview,
     TestSuiteOwner,
     User,
+    UserRole,
 )
 
 logger = structlog.get_logger(__name__)
+
+
+# ── role validation ───────────────────────────────────────────────────────
+
+
+async def assert_user_is_qa_lead_on_project(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> None:
+    """Raise HTTP 400 unless ``user_id`` is permitted to own suites in
+    ``project_id``.
+
+    Allowed:
+      * Instance ADMIN (``User.role = 'ADMIN'``) — backstop for empty
+        projects, mirrors the existing pattern in ``require_role``.
+      * Project member with ``ProjectMember.role = 'QA_LEAD'``.
+      * The project's own ``default_qa_lead_user_id`` (covers the
+        bootstrap case where the row was set by an admin before the
+        ProjectMember row exists).
+
+    Anything else returns 400 so the caller renders a precise error.
+    Raises 400 for unknown user too — callers should not pass dangling
+    references.
+    """
+    user = (
+        await db.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User not found",
+        )
+
+    # Instance ADMIN bypass.
+    if str(user.role) == UserRole.ADMIN.value or user.role == UserRole.ADMIN:
+        return
+
+    member = (
+        await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.user_id == user_id,
+                ProjectMember.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member and (
+        member.role == UserRole.QA_LEAD
+        or str(member.role) == UserRole.QA_LEAD.value
+    ):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"User must have role QA_LEAD on project {project_id} to be "
+            "assigned as a suite owner. Add them as a project member with "
+            "role QA_LEAD first."
+        ),
+    )
 
 
 # ── owner resolution ──────────────────────────────────────────────────────
@@ -42,9 +114,11 @@ async def resolve_suite_owner(
 ) -> tuple[Optional[User], bool]:
     """Return ``(owner_user, is_fallback)``.
 
-    is_fallback=False when the explicit suite-owner row resolved the user.
-    is_fallback=True when we fell through to ``Project.manager_user_id``.
-    Both are None when neither is set.
+    Resolution order (migration 0079):
+      1. explicit ``test_suite_owners`` row → ``is_fallback=False``
+      2. ``Project.default_qa_lead_user_id`` → ``is_fallback=True``
+      3. ``Project.manager_user_id`` (legacy) → ``is_fallback=True``
+      4. (None, False)
     """
     explicit = (
         await db.execute(
@@ -65,7 +139,20 @@ async def resolve_suite_owner(
     project = (
         await db.execute(select(Project).where(Project.id == project_id))
     ).scalar_one_or_none()
-    if project and project.manager_user_id:
+    if project is None:
+        return None, False
+
+    # Default QA lead is the preferred fallback (post-0079).
+    if project.default_qa_lead_user_id:
+        user = (
+            await db.execute(select(User).where(User.id == project.default_qa_lead_user_id))
+        ).scalar_one_or_none()
+        if user:
+            return user, True
+
+    # Legacy manager_user_id fallback — kept so existing deployments don't
+    # lose their resolved owners when default_qa_lead_user_id is still NULL.
+    if project.manager_user_id:
         user = (
             await db.execute(select(User).where(User.id == project.manager_user_id))
         ).scalar_one_or_none()
@@ -106,7 +193,11 @@ async def list_suite_owners(
     for owner_id in explicit_by_suite.values():
         if owner_id:
             needed_user_ids.add(owner_id)
-    fallback_id = project.manager_user_id if project else None
+    # 0079: prefer the configured default QA lead; legacy manager_user_id is
+    # the second-tier fallback so older deployments don't regress.
+    fallback_id = None
+    if project:
+        fallback_id = project.default_qa_lead_user_id or project.manager_user_id
     if fallback_id:
         needed_user_ids.add(fallback_id)
 
@@ -141,8 +232,14 @@ async def set_suite_owner(
     """Upsert the explicit owner row. ``owner_user_id=None`` clears it.
 
     If the caller passes None and a row exists, the row is deleted so the
-    project-manager fallback kicks in cleanly.
+    default-QA-lead / manager fallback kicks in cleanly.
+
+    When ``owner_user_id`` is non-None, the candidate is validated against
+    the project's QA_LEAD members (or instance ADMIN) before the write.
+    Non-QA_LEAD assignment raises HTTP 400.
     """
+    if owner_user_id is not None:
+        await assert_user_is_qa_lead_on_project(db, owner_user_id, project_id)
     existing = (
         await db.execute(
             select(TestSuiteOwner).where(

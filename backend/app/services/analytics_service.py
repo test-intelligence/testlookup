@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import re
+import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import text
+from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.postgres import Defect, TestCase
 
 
 def _period_start(days: int) -> datetime:
@@ -362,6 +366,76 @@ async def list_defects(
     count_params = {key: value for key, value in params.items() if key not in ("limit", "offset")}
     total = (await db.execute(count_query, count_params)).scalar() or 0
     return {"items": [dict(row._mapping) for row in rows], "total": total, "page": page, "size": size, "pages": -(-total // size)}
+
+
+# Maps the UI's P0–P3 vocabulary onto the defects.severity column's CRITICAL/HIGH/MEDIUM/LOW values.
+_SEVERITY_FROM_PRIORITY = {
+    "P0": "CRITICAL",
+    "P1": "HIGH",
+    "P2": "MEDIUM",
+    "P3": "LOW",
+}
+
+# Jira keys look like `ABC-123` — extract from a pasted browse URL.
+_JIRA_KEY_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
+
+
+def _jira_key_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    match = _JIRA_KEY_RE.search(url)
+    return match.group(1) if match else None
+
+
+async def _find_recent_test_case_id(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    test_name: str | None,
+    suite_name: str | None,
+) -> uuid.UUID | None:
+    """Best-effort attach: find the most recent matching TestCase in the project.
+
+    Returns None when no match is found — the caller stores the defect with a
+    NULL test_case_id rather than failing the intake.
+    """
+    if not test_name:
+        return None
+    stmt = (
+        select(TestCase.id)
+        .where(TestCase.test_name == test_name)
+        .where(TestCase.project_id == project_id)
+    )
+    if suite_name:
+        stmt = stmt.where(TestCase.suite_name == suite_name)
+    stmt = stmt.order_by(desc(TestCase.created_at)).limit(1)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def create_manual_defect(db: AsyncSession, project_id: uuid.UUID, payload: dict) -> Defect:
+    """Insert a manually-intaken defect. Caller commits the session."""
+    test_case_id = await _find_recent_test_case_id(
+        db,
+        project_id,
+        payload.get("test_name"),
+        payload.get("suite_name"),
+    )
+    severity_label = _SEVERITY_FROM_PRIORITY.get(payload["severity"], "MEDIUM")
+    defect = Defect(
+        project_id=project_id,
+        test_case_id=test_case_id,
+        title=payload["title"][:255],
+        description=payload.get("description"),
+        severity=severity_label,
+        failure_category=payload.get("failure_category"),
+        component=payload.get("component"),
+        jira_ticket_url=payload.get("jira_ticket_url"),
+        jira_ticket_id=_jira_key_from_url(payload.get("jira_ticket_url")),
+        resolution_status="OPEN",
+        promotion_source="manual",
+    )
+    db.add(defect)
+    await db.flush()
+    return defect
 
 
 async def ai_analysis_summary(db: AsyncSession, project_id: str | None, days: int) -> dict:

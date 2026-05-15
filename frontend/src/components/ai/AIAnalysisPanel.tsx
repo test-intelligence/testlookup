@@ -9,6 +9,7 @@ import { aiService } from '@/services/aiService'
 import type { AnalysisResult, ConfidenceWhy, RoleActions } from '@/types/ai'
 import { confidenceColor } from '@/utils/formatters'
 import RoleActionCard from '@/components/ai/RoleActionCard'
+import ReviewStateControl from '@/components/ai/ReviewStateControl'
 
 interface Props {
   testCaseId: string
@@ -342,9 +343,13 @@ export default function AIAnalysisPanel({
           </span>
         )}
         {result.requires_human_review && (
-          <span className="badge bg-amber-900/40 text-amber-300 border border-amber-700/50">
-            ⏳ Pending Human Review
-          </span>
+          // ReviewStateControl is the interactive replacement for the
+          // previous static "Pending Human Review" badge (2026-05-15
+          // feature). It reads the migration-0081 ``test_execution_reviews``
+          // row when one exists, otherwise renders the implicit
+          // pending_review state. Picking a transition writes via
+          // PUT /api/v1/test-cases/{id}/review.
+          <ReviewStateControl testCaseId={testCaseId} />
         )}
       </div>
 

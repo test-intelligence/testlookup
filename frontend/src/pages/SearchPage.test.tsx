@@ -170,4 +170,32 @@ describe('SearchPage', () => {
     // (proj-1 in the mock above).
     expect(mockGetEntityCounts).toHaveBeenCalledWith('proj-1')
   })
+
+  it('chip counts stay on project totals when scope is narrowed (no jumping)', async () => {
+    // The bug this test pins (2026-05-15): clicking through the scope
+    // chips made the Tests count jump 84 ↔ 50 because the chip used the
+    // (capped) match count for the scoped type and the project total
+    // for the rest. After the fix, chips always show project totals
+    // unless scope='all' AND a query is active — keeping the meaning
+    // stable: chip = "you have N items of this type in your project."
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 84, test_run: 39, suite: 5, defect: 0, flaky_test: 0, release: 28,
+    })
+    // The browse response (scope=suites) returns only 6 suites — but the
+    // chip for Tests should still read 84, not 0 (it wasn't searched).
+    mockGlobalSearch.mockResolvedValue({
+      items: [], total: 6,
+      query: '', search_type: 'hybrid',
+      entity_counts: { suite: 6 } as Record<string, number>,
+      page: 1, size: 25, pages: 1,
+    } as unknown as GlobalSearchResponse)
+
+    renderAt('/search?mode=hybrid&scope=suites')
+
+    // Tests chip stays on the project total (84) instead of falling
+    // through to 0 or to the capped match count for the previous scope.
+    await screen.findByText(/^84$/, { exact: false })
+    // Runs chip stays on 39 (the project total), not 0.
+    expect(screen.getByText(/^39$/, { exact: false })).toBeInTheDocument()
+  })
 })
