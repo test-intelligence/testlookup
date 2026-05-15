@@ -835,7 +835,14 @@ def test_r5_agent_stack_release_gate_runs_are_persisted_for_audit():
 
     assert "AIEvalGateRun" in service
     assert "db.add(row)" in persist
-    assert "await db.commit()" in persist
+    # Persistence used to call ``db.commit()`` directly. Per the
+    # 2026-05-16 P1-2 audit fix (see docs/DATABASE_AUDIT_2026-05-16.md
+    # and backend/CLAUDE.md "Commit responsibility (single-owner rule)"),
+    # services that receive an injected session must NOT commit — they
+    # flush so callers can read server-generated values, and the request
+    # handler / get_db dependency commits. The row is still persisted on
+    # the same transaction; only the commit site moved.
+    assert "await db.flush()" in persist
     assert "manifest_checksum_sha256" in persist
     assert "gate_run_id" in service
     assert "persist: bool = True" in router

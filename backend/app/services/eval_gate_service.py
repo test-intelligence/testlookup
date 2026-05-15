@@ -210,8 +210,11 @@ async def persist_agent_stack_gate_run(
         evaluated_by=evaluated_by,
     )
     db.add(row)
-    await db.commit()
-    await db.refresh(row)
+    # Service receives an injected session — committing is the caller's
+    # responsibility (the request handler's get_db dependency, or the
+    # Celery task's session context manager). Flush so callers can read
+    # ``row.id`` immediately.
+    await db.flush()
     logger.info(
         "Persisted agent-stack release gate run",
         extra={
@@ -367,8 +370,9 @@ async def set_baseline_from_eval(
         is_active=True,
     )
     db.add(baseline)
-    await db.commit()
-    await db.refresh(baseline)
+    # Service receives an injected session — caller commits. Flush so the
+    # response can read ``baseline.id`` immediately.
+    await db.flush()
 
     return {
         "baseline_id": str(baseline.id),

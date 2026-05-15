@@ -730,6 +730,10 @@ async def test_create_manual_defect_maps_p0_to_critical_and_links_test_case():
     assert defect.jira_ticket_url == "https://example.atlassian.net/browse/ABC-1234"
     assert defect.component == "checkout-service"
     db.flush.assert_awaited_once()
+    # Single-owner commit rule (see backend/CLAUDE.md): services with an
+    # injected session must NOT commit. The router / get_db dependency
+    # owns the transaction lifecycle.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

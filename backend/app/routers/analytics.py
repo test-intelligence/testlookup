@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user, require_role
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_current_active_user,
+    require_role,
+    resolve_project_scope,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
@@ -34,11 +39,19 @@ async def flaky_tests(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return tests with highest flakiness rate (intermittent pass/fail pattern)."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return _EMPTY_LIST
-    return await analytics_service.flaky_tests(db, project_id, days, limit, suite_name=suite_name)
+    # ``resolve_project_scope`` returns (pinned_uuid_or_None, allowed_ids_or_None)
+    # and raises 403 when a non-admin requests a project they don't belong to.
+    # Both slots get forwarded to the service so the raw-SQL ``_tenant_filter``
+    # applies the right ``=`` or ``IN (...)`` clause as defence-in-depth.
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await analytics_service.flaky_tests(
+        db,
+        str(scoped) if scoped else None,
+        days,
+        limit,
+        suite_name=suite_name,
+        allowed_project_ids=allowed,
+    )
 
 
 # ── Failure Category Distribution ─────────────────────────────────────────
@@ -52,11 +65,14 @@ async def failure_categories(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return distribution of failure categories for AI-analysed test cases."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"categories": [], "period_days": days}
-    return await analytics_service.failure_categories(db, project_id, days, suite_name=suite_name)
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await analytics_service.failure_categories(
+        db,
+        str(scoped) if scoped else None,
+        days,
+        suite_name=suite_name,
+        allowed_project_ids=allowed,
+    )
 
 
 # ── Top Failing Tests ──────────────────────────────────────────────────────
@@ -71,11 +87,15 @@ async def top_failing_tests(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return tests with the highest total failure count in the period."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return _EMPTY_LIST
-    return await analytics_service.top_failing_tests(db, project_id, days, limit, suite_name=suite_name)
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await analytics_service.top_failing_tests(
+        db,
+        str(scoped) if scoped else None,
+        days,
+        limit,
+        suite_name=suite_name,
+        allowed_project_ids=allowed,
+    )
 
 
 # ── Coverage Snapshot ──────────────────────────────────────────────────────
@@ -89,11 +109,14 @@ async def coverage_stats(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return test suite coverage stats aggregated over the period."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"suites": [], "period_days": days, "total_suites": 0}
-    return await analytics_service.coverage_stats(db, project_id, days, suite_name=suite_name)
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await analytics_service.coverage_stats(
+        db,
+        str(scoped) if scoped else None,
+        days,
+        suite_name=suite_name,
+        allowed_project_ids=allowed,
+    )
 
 
 # ── Suite Detail ───────────────────────────────────────────────────────────
@@ -112,11 +135,14 @@ async def suite_detail(
       - Per-test-case aggregates with flakiness flag
       - Last 10 test runs that included this suite
     """
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"summary": {}, "tests": [], "recent_runs": []}
-    return await analytics_service.suite_detail(db, project_id, suite_name, days)
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await analytics_service.suite_detail(
+        db,
+        str(scoped) if scoped else None,
+        suite_name,
+        days,
+        allowed_project_ids=allowed,
+    )
 
 
 # ── Defects List ───────────────────────────────────────────────────────────
@@ -131,11 +157,15 @@ async def list_defects(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return defects for a project with optional resolution status filter."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
-    return await analytics_service.list_defects(db, project_id, resolution_status, page, size)
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await analytics_service.list_defects(
+        db,
+        str(scoped) if scoped else None,
+        resolution_status,
+        page,
+        size,
+        allowed_project_ids=allowed,
+    )
 
 
 @router.post(
@@ -160,9 +190,12 @@ async def create_defect(
             detail="You do not have access to this project",
         )
     body = payload.model_dump()  # model_dump() already coerces Enum → its .value string
+    # ``create_manual_defect`` flushes so id + server defaults (created_at) are
+    # populated on the row. The request-scoped session is committed by the
+    # ``get_db`` dependency once the response is built — see
+    # ``backend/app/db/postgres.py``. ``expire_on_commit=False`` keeps the
+    # defect usable without a refresh.
     defect = await analytics_service.create_manual_defect(db, payload.project_id, body)
-    await db.commit()
-    await db.refresh(defect)
     raw_category = getattr(defect.failure_category, "value", defect.failure_category)
     return DefectIntakeResponse(
         id=defect.id,
@@ -191,11 +224,13 @@ async def ai_analysis_summary(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return summary of AI analysis results for the project."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"summary": {}, "period_days": days}
-    return await analytics_service.ai_analysis_summary(db, project_id, days)
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await analytics_service.ai_analysis_summary(
+        db,
+        str(scoped) if scoped else None,
+        days,
+        allowed_project_ids=allowed,
+    )
 
 
 # ── Notify suite owner about a recurring failure ───────────────────────────

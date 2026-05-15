@@ -159,11 +159,13 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "Celery-task-owned: training data export runs in an isolated "
         "worker session, no request handoff.",
     ),
-    "eval_gate_service.py": (
-        1,
-        "AI eval gate: persists evaluation result during a Celery-scheduled "
-        "gate check. Worker-owned tx boundary.",
-    ),
+    # eval_gate_service.py — removed from allowlist 2026-05-16 (P1-2 fix).
+    # ``persist_agent_stack_gate_run`` and ``set_baseline_from_eval`` are
+    # called from router handlers (Depends(get_db)) only — no Celery
+    # worker calls them. The single-owner commit rule applies: services
+    # flush, the dependency commits. See docs/DATABASE_AUDIT_2026-05-16.md
+    # (P1-2) and backend/CLAUDE.md "Commit responsibility (single-owner
+    # rule)".
     # ── Tier 0-2 services (2026-04-14 batch) ──────────────────────────
     # Each of these services integrates with audit-log writes that must
     # land in the same transaction as the primary mutation. Stage-only
@@ -359,7 +361,11 @@ def test_allowlist_total_is_bounded() -> None:
     # webhook_service.replay_delivery, which must own its own session
     # for the same enqueue-after-commit reason as emit_event. Ratchet
     # back down further as the remaining services migrate.
-    assert total <= 56, (
+    # Ratcheted 56 → 55 on 2026-05-16 after eval_gate_service was
+    # removed from the allowlist (P1-2 audit fix: persist_agent_stack_gate_run
+    # and set_baseline_from_eval are router-only, no Celery worker calls
+    # them, so they flush and let get_db commit).
+    assert total <= 55, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

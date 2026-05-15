@@ -152,6 +152,32 @@ async with AsyncSessionLocal() as db:
         raise
 ```
 
+**Commit responsibility (single-owner rule):**
+
+When a service or helper receives a session via `db: AsyncSession` parameter, the **caller** owns the transaction lifecycle. The service may:
+- `db.add(...)`, `db.delete(...)`, mutate ORM objects
+- `await db.flush()` to materialise server-generated values (PK, defaults) without ending the transaction
+
+The service must NOT `await db.commit()` or `await db.rollback()` on an injected session. The caller does that — request handlers via the `get_db` dependency (commit-on-success, rollback-on-exception), or background tasks via their own `async with AsyncSessionLocal() as db:` block.
+
+Likewise, `await db.refresh(obj)` is **almost never needed** because the session factory sets `expire_on_commit=False` (see `db/postgres.py:39`). Objects stay usable after commit; refresh just spends a SELECT on data you already hold.
+
+The pattern is:
+
+```python
+# Service — receives injected session, never commits
+async def create_thing(db: AsyncSession, payload: dict) -> Thing:
+    thing = Thing(**payload)
+    db.add(thing)
+    await db.flush()            # populate thing.id + server defaults
+    return thing                # caller commits
+
+# Router — relies on get_db
+async def endpoint(db: AsyncSession = Depends(get_db)):
+    thing = await create_thing(db, payload)
+    return ThingResponse.model_validate(thing)  # get_db commits on return
+```
+
 ### Authentication & Authorization
 
 ```python

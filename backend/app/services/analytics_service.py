@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Iterable, Optional
 
 from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,15 +41,65 @@ def _add_suite_param(params: dict, suite_name: str | None) -> str:
     return _suite_filter_sql()
 
 
+def _tenant_filter(
+    params: dict,
+    *,
+    project_id: str | uuid.UUID | None,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]],
+    table_alias: str = "tr",
+    column: str = "project_id",
+) -> str:
+    """Defence-in-depth tenant scoping for raw-SQL analytics queries.
+
+    Each analytics function previously built ``project_filter = "AND
+    tr.project_id = :project_id" if project_id else ""`` inline. When the
+    caller passed ``project_id=None`` (any caller — agent, task, future
+    router) the WHERE clause silently dropped the tenant filter and the
+    query returned cross-project rows. That was guarded at the router
+    layer (returns empty for non-admin with no project_id), but the
+    service trusted the gate. This helper hardens the service:
+
+    * ``project_id`` set  → ``AND {alias}.{column} = :project_id`` (pin)
+    * ``project_id`` None + ``allowed_project_ids`` non-empty set →
+      ``AND {alias}.{column} IN (:pid_0, :pid_1, ...)`` (membership scope)
+    * ``project_id`` None + ``allowed_project_ids`` empty set →
+      ``AND FALSE`` (zero results, no cross-tenant leak)
+    * ``project_id`` None + ``allowed_project_ids`` None →
+      ``""`` (no filter; unrestricted — admin-only callers must opt in
+      explicitly by passing ``None``; new non-admin callers should
+      always pass a set, even empty)
+
+    Mutates ``params`` in place to bind the placeholder values.
+    """
+    if project_id:
+        params["project_id"] = str(project_id)
+        return f"AND {table_alias}.{column} = :project_id"
+    if allowed_project_ids is None:
+        # Unrestricted scope — admin path. Callers that don't intend this
+        # should pass an empty set, which fails closed.
+        return ""
+    ids = list(allowed_project_ids)
+    if not ids:
+        # Empty membership set — fail closed.
+        return "AND FALSE"
+    placeholders = ", ".join(f":pid_{i}" for i, _ in enumerate(ids))
+    for i, pid in enumerate(ids):
+        params[f"pid_{i}"] = str(pid)
+    return f"AND {table_alias}.{column} IN ({placeholders})"
+
+
 async def flaky_tests(
     db: AsyncSession,
     project_id: str | None,
     days: int,
     limit: int,
     suite_name: str | None = None,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
 ) -> dict:
-    project_filter = "AND tr.project_id = :project_id" if project_id else ""
     params: dict = {"period_start": _period_start(days), "limit": limit}
+    project_filter = _tenant_filter(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     suite_filter = _add_suite_param(params, suite_name)
     query = text(
         f"""
@@ -79,8 +130,6 @@ async def flaky_tests(
         LIMIT :limit
         """
     )
-    if project_id:
-        params["project_id"] = str(project_id)
     result = await db.execute(query, params)
     rows = result.fetchall()
     return {"items": [dict(row._mapping) for row in rows], "period_days": days, "total": len(rows)}
@@ -91,9 +140,12 @@ async def failure_categories(
     project_id: str | None,
     days: int,
     suite_name: str | None = None,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
 ) -> dict:
-    project_filter = "AND tr.project_id = :project_id" if project_id else ""
     params: dict = {"period_start": _period_start(days)}
+    project_filter = _tenant_filter(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     suite_filter = _add_suite_param(params, suite_name)
     query = text(
         f"""
@@ -110,8 +162,6 @@ async def failure_categories(
         ORDER BY count DESC
         """
     )
-    if project_id:
-        params["project_id"] = str(project_id)
     result = await db.execute(query, params)
     return {"items": [dict(row._mapping) for row in result.fetchall()], "period_days": days}
 
@@ -122,9 +172,12 @@ async def top_failing_tests(
     days: int,
     limit: int,
     suite_name: str | None = None,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
 ) -> dict:
-    project_filter = "AND tr.project_id = :project_id" if project_id else ""
     params: dict = {"period_start": _period_start(days), "limit": limit}
+    project_filter = _tenant_filter(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     suite_filter = _add_suite_param(params, suite_name)
     query = text(
         f"""
@@ -147,8 +200,6 @@ async def top_failing_tests(
         LIMIT :limit
         """
     )
-    if project_id:
-        params["project_id"] = str(project_id)
     result = await db.execute(query, params)
     return {"items": [dict(row._mapping) for row in result.fetchall()], "period_days": days}
 
@@ -158,10 +209,13 @@ async def coverage_stats(
     project_id: str | None,
     days: int,
     suite_name: str | None = None,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
 ) -> dict:
     period_start = _period_start(days)
-    project_filter = "AND tr.project_id = :project_id" if project_id else ""
     params: dict = {"period_start": period_start}
+    project_filter = _tenant_filter(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     suite_filter = _add_suite_param(params, suite_name)
     suite_query = text(
         f"""
@@ -204,8 +258,6 @@ async def coverage_stats(
           {suite_filter}
         """
     )
-    if project_id:
-        params["project_id"] = str(project_id)
     suites = (await db.execute(suite_query, params)).fetchall()
     total = (await db.execute(total_query, params)).one()
     return {
@@ -215,14 +267,20 @@ async def coverage_stats(
     }
 
 
-async def suite_detail(db: AsyncSession, project_id: str | None, suite_name: str, days: int) -> dict:
-    project_filter = "AND tr.project_id = :project_id" if project_id else ""
+async def suite_detail(
+    db: AsyncSession,
+    project_id: str | None,
+    suite_name: str,
+    days: int,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+) -> dict:
     params: dict = {
         "suite_name": suite_name,
         "period_start": _period_start(days),
     }
-    if project_id:
-        params["project_id"] = str(project_id)
+    project_filter = _tenant_filter(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     summary_query = text(
         f"""
         SELECT
@@ -318,9 +376,20 @@ async def list_defects(
     resolution_status: str | None,
     page: int,
     size: int,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
 ) -> dict:
-    project_filter = "AND d.project_id = :project_id" if project_id else ""
+    params: dict = {"limit": size, "offset": (page - 1) * size}
+    # defects table is queried directly here (alias ``d``), so scope on
+    # ``d.project_id`` rather than going through ``tr``.
+    project_filter = _tenant_filter(
+        params,
+        project_id=project_id,
+        allowed_project_ids=allowed_project_ids,
+        table_alias="d",
+    )
     status_filter = "AND d.resolution_status = :resolution_status" if resolution_status else ""
+    if resolution_status:
+        params["resolution_status"] = resolution_status.upper()
     query = text(
         f"""
         SELECT
@@ -348,11 +417,6 @@ async def list_defects(
         LIMIT :limit OFFSET :offset
         """
     )
-    params: dict = {"limit": size, "offset": (page - 1) * size}
-    if project_id:
-        params["project_id"] = str(project_id)
-    if resolution_status:
-        params["resolution_status"] = resolution_status.upper()
 
     rows = (await db.execute(query, params)).fetchall()
     count_query = text(
@@ -441,8 +505,16 @@ async def create_manual_defect(db: AsyncSession, project_id: uuid.UUID, payload:
     return defect
 
 
-async def ai_analysis_summary(db: AsyncSession, project_id: str | None, days: int) -> dict:
-    project_filter = "AND tr.project_id = :project_id" if project_id else ""
+async def ai_analysis_summary(
+    db: AsyncSession,
+    project_id: str | None,
+    days: int,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+) -> dict:
+    params: dict = {"period_start": _period_start(days)}
+    project_filter = _tenant_filter(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     query = text(
         f"""
         SELECT
@@ -460,8 +532,5 @@ async def ai_analysis_summary(db: AsyncSession, project_id: str | None, days: in
           {project_filter}
         """
     )
-    params: dict = {"period_start": _period_start(days)}
-    if project_id:
-        params["project_id"] = str(project_id)
     result = await db.execute(query, params)
     return dict(result.one()._mapping)

@@ -533,6 +533,10 @@ class TestCaseHistory(Base):
     __tablename__ = "test_case_history"
     __table_args__ = (
         Index("ix_history_fingerprint_date", "test_fingerprint", "created_at"),
+        # FK indexes added in migration 0082 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        Index("ix_history_test_case_id", "test_case_id"),
+        Index("ix_history_test_run_id",  "test_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -594,6 +598,9 @@ class Defect(Base):
             unique=True,
             postgresql_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
         ),
+        # FK index added in migration 0082 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        Index("ix_defects_project_id", "project_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -666,6 +673,11 @@ class DefectCandidate(Base):
 class QualityGate(Base):
     """Quality gate rule configuration per project."""
     __tablename__ = "quality_gates"
+    # FK index added in migration 0082 — see
+    # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+    __table_args__ = (
+        Index("ix_quality_gates_project", "project_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
@@ -707,8 +719,11 @@ class NotificationPreference(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     channel: Mapped[NotificationChannel] = mapped_column(String(20), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    # JSON list of NotificationEventType values the user subscribed to
-    events: Mapped[list] = mapped_column(JSON, default=list)
+    # JSONB list of NotificationEventType values the user subscribed to.
+    # Type promoted from JSON → JSONB in migration 0083 for consistency
+    # with ``WebhookSubscription.events`` and so future "list users
+    # subscribed to event X" queries can use a GIN index.
+    events: Mapped[list] = mapped_column(JSONB, default=list)
     # Alert only when pass_rate falls below this percentage
     failure_rate_threshold: Mapped[Optional[float]] = mapped_column(Float, default=80.0)
     # Channel-specific overrides (if None, falls back to global settings)
