@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Defect, TestCase
+from app.models.postgres import Defect, TestCase, TestRun
 
 
 def _period_start(days: int) -> datetime:
@@ -400,14 +400,17 @@ async def _find_recent_test_case_id(
     """
     if not test_name:
         return None
+    # TestCase has no direct project_id — scope through TestRun.project_id and
+    # order by run recency (TestCase has no created_at column on this schema).
     stmt = (
         select(TestCase.id)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
         .where(TestCase.test_name == test_name)
-        .where(TestCase.project_id == project_id)
+        .where(TestRun.project_id == project_id)
     )
     if suite_name:
         stmt = stmt.where(TestCase.suite_name == suite_name)
-    stmt = stmt.order_by(desc(TestCase.created_at)).limit(1)
+    stmt = stmt.order_by(desc(TestRun.created_at)).limit(1)
     return (await db.execute(stmt)).scalar_one_or_none()
 
 

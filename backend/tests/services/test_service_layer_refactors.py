@@ -683,6 +683,127 @@ async def test_analytics_service_list_defects_returns_pagination_metadata():
     assert result["items"][0]["jira_ticket_id"] == "QA-123"
 
 
+# ── create_manual_defect — manual Defect Intake ───────────────────────────────
+#
+# Covers the service added for the "New defect" flow on the Defects page.
+# Verified behaviours:
+#   * P0–P3 severity maps to the defects.severity column's CRITICAL/HIGH/MEDIUM/LOW
+#     vocabulary (not the raw P-codes).
+#   * promotion_source is always 'manual' and resolution_status defaults to 'OPEN'
+#     regardless of what the caller passed.
+#   * When a test_name is supplied AND a matching TestCase exists, the new defect
+#     row's test_case_id is attached.
+#   * When no test_name is supplied OR no matching TestCase is found, test_case_id
+#     stays NULL — intake must not fail on missing test linkage.
+#   * Jira browse URL → jira_ticket_id auto-extracted; a malformed URL gives None.
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_maps_p0_to_critical_and_links_test_case():
+    project_id = uuid.uuid4()
+    matched_test_case_id = uuid.uuid4()
+    # First execute() resolves the recent-matching-test-case lookup.
+    db = FakeAsyncDB([FakeExecuteResult(scalar=matched_test_case_id)])
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Checkout fails on second attempt",
+            "description": "Repro: add to cart, pay, retry.",
+            "severity": "P0",
+            "failure_category": "PRODUCT_BUG",
+            "component": "checkout-service",
+            "test_name": "checkout.test_payment_retry",
+            "suite_name": "checkout-smoke",
+            "jira_ticket_url": "https://example.atlassian.net/browse/ABC-1234",
+        },
+    )
+
+    assert len(db.added) == 1
+    assert defect is db.added[0]
+    assert defect.severity == "CRITICAL"
+    assert defect.resolution_status == "OPEN"
+    assert defect.promotion_source == "manual"
+    assert defect.test_case_id == matched_test_case_id
+    assert defect.jira_ticket_id == "ABC-1234"
+    assert defect.jira_ticket_url == "https://example.atlassian.net/browse/ABC-1234"
+    assert defect.component == "checkout-service"
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_falls_back_to_null_test_case_id_when_no_match():
+    project_id = uuid.uuid4()
+    # The lookup runs and returns no row.
+    db = FakeAsyncDB([FakeExecuteResult(scalar=None)])
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Latency spike in /search",
+            "severity": "P2",
+            "failure_category": "INFRASTRUCTURE",
+            "test_name": "search.test_latency_p99",
+            "suite_name": "search-perf",
+            "jira_ticket_url": None,
+        },
+    )
+
+    assert defect.severity == "MEDIUM"
+    assert defect.test_case_id is None
+    assert defect.jira_ticket_id is None
+    assert defect.jira_ticket_url is None
+    assert defect.promotion_source == "manual"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_without_test_name_skips_lookup():
+    """When no test_name is supplied the service must NOT query for a TestCase
+    — that would emit an unbounded scan. We assert by giving the FakeAsyncDB
+    zero pre-staged results: any call to .execute() would IndexError.
+    """
+    project_id = uuid.uuid4()
+    db = FakeAsyncDB([])  # zero stubbed executes — calling execute would error
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Standalone defect, no test linkage",
+            "severity": "P3",
+            "failure_category": "UNKNOWN",
+            "test_name": None,
+            "suite_name": None,
+        },
+    )
+
+    assert defect.severity == "LOW"
+    assert defect.test_case_id is None
+    assert defect.promotion_source == "manual"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_handles_malformed_jira_url():
+    project_id = uuid.uuid4()
+    db = FakeAsyncDB([])
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Bad jira url",
+            "severity": "P1",
+            "jira_ticket_url": "https://example.com/no-key-here",
+        },
+    )
+
+    assert defect.severity == "HIGH"
+    assert defect.jira_ticket_url == "https://example.com/no-key-here"
+    assert defect.jira_ticket_id is None
+
+
 @pytest.mark.asyncio
 async def test_stream_service_create_session_stores_token_and_initializes_live_state():
     project_id = uuid.uuid4()

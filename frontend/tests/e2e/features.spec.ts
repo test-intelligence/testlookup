@@ -110,30 +110,30 @@ test.describe('Feature smoke tests', () => {
     });
   });
 
-  // ── Chat / AI agent ───────────────────────────────────────────────────────
+  // ── Chat / AI agent (route disabled) ─────────────────────────────────────
+  //
+  // The /chat route was disabled in DefectsPage cleanup work — the route
+  // and the sidebar entry are commented out. These tests pin the disabled
+  // state so the route doesn't silently re-render without a sidebar entry
+  // and so the sidebar doesn't grow back a Chat link without re-enabling
+  // the route. Re-enable both checks if /chat is brought back.
 
-  test.describe('Chat / AI agent', () => {
-    test('renders chat page with input', async ({ page }) => {
+  test.describe('Chat / AI agent (disabled)', () => {
+    test('navigating to /chat falls through to the auth shell only', async ({ page }) => {
       await page.goto('/chat');
-      await expect(page).toHaveURL(/.*\/chat/);
-      await expect(page.locator('aside')).toBeVisible();
-
-      // Chat input is a textarea; previous frontend security work added a
-      // 5000-char maxLength cap. Verify the textarea is present.
-      const textarea = page.locator('textarea').first();
-      await expect(textarea).toBeVisible({ timeout: 10000 });
+      // App.tsx routes the unknown path to /overview or shows a not-found —
+      // either way the auth shell must stay and there must be no chat textarea.
+      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
+      const textareaCount = await page.locator('textarea').count();
+      expect(textareaCount).toBe(0);
     });
 
-    test('chat textarea enforces 5000 char maxLength', async ({ page }) => {
-      await page.goto('/chat');
-      const textarea = page.locator('textarea').first();
-      await textarea.waitFor({ state: 'visible', timeout: 10000 });
-
-      // Use evaluate to read the maxLength attribute reliably across browsers.
-      const maxLength = await textarea.evaluate(
-        (el: HTMLTextAreaElement) => el.maxLength,
-      );
-      expect(maxLength).toBe(5000);
+    test('sidebar does not expose a Chat link', async ({ page }) => {
+      await page.goto('/overview');
+      await expect(page.locator('aside')).toBeVisible({ timeout: 10000 });
+      // No sidebar anchor should target /chat while the route is disabled.
+      const chatLinkCount = await page.locator('aside a[href="/chat"]').count();
+      expect(chatLinkCount).toBe(0);
     });
   });
 
