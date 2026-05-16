@@ -22,6 +22,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
 import { useMyFailures } from '@/hooks/useMyFailures'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useAuthStore } from '@/store/authStore'
 import type { MyFailureItem } from '@/types/myFailures'
 
@@ -55,7 +56,12 @@ export default function MyFailuresPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
-  const [days, setDays] = useState<number>(30)
+  // Time window comes from the shared user-level preference so a
+  // selection made on any other page (Summary, Live, Coverage, …)
+  // follows the user here. Snapped to this page's allowed set.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, DAYS_OPTIONS)
   const [page, setPage] = useState(1)
   const size = 25
 
@@ -91,7 +97,7 @@ export default function MyFailuresPage() {
                 type="button"
                 role="radio"
                 aria-checked={active}
-                onClick={() => { setDays(d); setPage(1) }}
+                onClick={() => { setStoredDays(d); setPage(1) }}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
                 style={{
                   background: active ? 'rgba(68,147,248,0.14)' : 'transparent',
@@ -140,6 +146,7 @@ export default function MyFailuresPage() {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider w-2">{/* severity dot */}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test Suite</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Project · Build</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
                 <th
@@ -204,13 +211,21 @@ function FailureRow({
         <span className="inline-block h-2 w-2 rounded-full" style={{ background: dot }} aria-hidden />
       </td>
       <td className="px-4 py-3">
-        <div className="text-[var(--color-text)] font-medium truncate max-w-[420px]" title={item.test_name}>
+        <div className="text-[var(--color-text)] font-medium truncate max-w-[360px]" title={item.test_name}>
           {item.test_name}
         </div>
-        <div className="text-[11px] text-[var(--color-text-muted)] truncate max-w-[420px]">
-          {item.suite_name ?? '—'}
-          {item.error_message ? <> · <span className="font-mono">{item.error_message}</span></> : null}
-        </div>
+        {item.error_message && (
+          <div className="text-[11px] text-[var(--color-text-muted)] truncate max-w-[360px] font-mono">
+            {item.error_message}
+          </div>
+        )}
+      </td>
+      <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)] align-middle">
+        {item.suite_name ? (
+          <span className="truncate max-w-[200px] inline-block align-middle" title={item.suite_name}>{item.suite_name}</span>
+        ) : (
+          <span className="text-[var(--color-text-faint)]">—</span>
+        )}
       </td>
       <td className="px-4 py-3 text-[var(--color-text-muted)]">
         <div className="text-[var(--color-text-secondary)] truncate max-w-[200px]">{item.project_name ?? '—'}</div>

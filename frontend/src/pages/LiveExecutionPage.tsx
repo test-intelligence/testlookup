@@ -54,6 +54,8 @@ import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
+import { isActivelyRunning, isStaleRunning } from '@/utils/liveSessionFreshness'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -533,9 +535,13 @@ export default function LiveExecutionPage() {
   const projectId = isAllProjects ? undefined : selectedProject?.id?.toString()
   const [selectedSuite, setSelectedSuite] = useState('')
   // Cutoff (in days) for completed sessions shown alongside the always-current
-  // active set. 1 = last 24 hours; 0 = no cutoff. Default 1 (last 24h) for
-  // parity with Overview/Runs/Trends/Coverage — widen via the picker.
-  const [days, setDays] = useState<LiveWindow>(1)
+  // active set. 1 = last 24 hours; 0 = no cutoff. Sourced from the
+  // shared user-level preference so selecting "24h" here propagates to
+  // Overview/Runs/Trends/Coverage/Summary/My Failures and vice versa.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, LIVE_WINDOWS) as LiveWindow
+  const setDays = setStoredDays
 
   const {
     sessions,
@@ -570,8 +576,18 @@ export default function LiveExecutionPage() {
     if (!selectedSuite) return sessions
     return sessions.filter(s => suiteMatchesValue(s.suite_name, selectedSuite))
   }, [sessions, selectedSuite])
+  // A run is "active" only when it's still emitting telemetry. A run that
+  // stops sending events stays as ``status='running'`` in the DB until the
+  // 10-min reaper picks it up — those sessions are kept visible (with an
+  // "Idle" badge in the table) but excluded from the hero count so the
+  // page doesn't claim "5 active runs" when 3 of them are silently stuck.
+  // See ``utils/liveSessionFreshness.ts``.
   const suiteScopedRunningSessions = useMemo(
-    () => suiteScopedSessions.filter(s => s.status === 'running'),
+    () => suiteScopedSessions.filter(s => isActivelyRunning(s)),
+    [suiteScopedSessions],
+  )
+  const suiteScopedStaleSessions = useMemo(
+    () => suiteScopedSessions.filter(s => isStaleRunning(s)),
     [suiteScopedSessions],
   )
 
@@ -593,7 +609,9 @@ export default function LiveExecutionPage() {
 
   const visibleSessions = useMemo(() => {
     let list = suiteScopedSessions
-    if (filter === 'running')  list = list.filter(s => s.status === 'running')
+    // "Running" filter chip matches the hero definition — actually-active
+    // sessions only, not stale rows awaiting the reaper.
+    if (filter === 'running')  list = list.filter(s => isActivelyRunning(s))
     if (filter === 'failures') list = list.filter(s => (s.failed ?? 0) > 0)
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -788,15 +806,27 @@ export default function LiveExecutionPage() {
   // Anchor everything on whether anything is happening RIGHT NOW. Drives the
   // hero-state copy in the status strip and the LIVE badge animation.
   const liveSummary = (() => {
+    const idleCount = suiteScopedStaleSessions.length
+    const idleSuffix = idleCount > 0
+      ? ` · ${idleCount} idle waiting on reaper`
+      : ''
     if (suiteScopedRunningSessions.length > 0) {
       const totalActive = suiteScopedRunningSessions.reduce((a, s) => a + (s.total || 0), 0)
-      return { hero: `${suiteScopedRunningSessions.length} active run${suiteScopedRunningSessions.length > 1 ? 's' : ''}`, sub: `${totalActive.toLocaleString()} tests in flight`, isLive: true }
+      return {
+        hero: `${suiteScopedRunningSessions.length} active run${suiteScopedRunningSessions.length > 1 ? 's' : ''}`,
+        sub: `${totalActive.toLocaleString()} tests in flight${idleSuffix}`,
+        isLive: true,
+      }
     }
     if (suiteScopedSessions.length > 0) {
       const last = suiteScopedSessions.find(s => s.completed_at) ?? suiteScopedSessions[0]
       const lastTs = last?.completed_at || last?.last_event_at
       const ago = lastTs ? relativeTime(new Date(lastTs).getTime()) : '—'
-      return { hero: 'No active runs', sub: `Last completed ${ago}`, isLive: false }
+      return {
+        hero: 'No active runs',
+        sub: `Last completed ${ago}${idleSuffix}`,
+        isLive: false,
+      }
     }
     return { hero: 'No active runs', sub: 'Stream is connected — waiting for the first run', isLive: false }
   })()
@@ -1171,7 +1201,9 @@ export default function LiveExecutionPage() {
             {(['all', 'running', 'failures'] as const).map(f => {
               const count =
                 f === 'all' ? suiteScopedSessions.length :
-                f === 'running' ? suiteScopedSessions.filter(s => s.status === 'running').length :
+                // Match the hero's "active" definition so the chip badge
+                // doesn't disagree with the headline KPI.
+                f === 'running' ? suiteScopedSessions.filter(s => isActivelyRunning(s)).length :
                 suiteScopedSessions.filter(s => (s.failed ?? 0) > 0).length
               return (
                 <button
@@ -1277,14 +1309,27 @@ export default function LiveExecutionPage() {
                       />
                     </td>
                     <td className="px-3 py-3">
-                      <span className={clsx(
-                        'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border',
-                        s.status === 'running'
-                          ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
-                          : 'bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]',
-                      )}>
-                        {s.status}
-                      </span>
+                      {(() => {
+                        // A ``running`` row that hasn't emitted in ~60s is
+                        // probably dead-and-waiting-for-the-reaper. Surface
+                        // that explicitly so the user doesn't think it's
+                        // still in flight.
+                        const stale = isStaleRunning(s)
+                        return (
+                          <span className={clsx(
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border',
+                            stale
+                              ? 'bg-amber-900/30 text-amber-300 border-amber-700/30'
+                              : s.status === 'running'
+                                ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
+                                : 'bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]',
+                          )}
+                          title={stale ? 'No telemetry for over a minute — pending reaper cleanup' : undefined}
+                          >
+                            {stale ? 'idle' : s.status}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.total}</td>
                     <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.passed}</td>

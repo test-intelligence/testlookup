@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MyFailuresPage from './MyFailuresPage'
 import type { MyFailureListResponse } from '@/types/myFailures'
+import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
 
 const mockList = vi.fn()
 const mockCount = vi.fn()
@@ -73,6 +74,43 @@ describe('MyFailuresPage', () => {
   beforeEach(() => {
     mockList.mockReset()
     mockCount.mockReset()
+    // Reset the shared time-window store between tests so state from
+    // one test doesn't bleed into the next.
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+  })
+
+  it('defaults to 24h when the shared store has no prior selection', async () => {
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+    await waitFor(() => {
+      expect(mockList).toHaveBeenCalledWith(
+        expect.objectContaining({ days: 1, page: 1, size: 25 }),
+      )
+    })
+  })
+
+  it('uses the persisted shared window on mount (set by another page)', async () => {
+    // Pretend the user picked 30d on a different page first.
+    useTimeWindowStore.setState({ days: 30 })
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+    await waitFor(() => {
+      expect(mockList).toHaveBeenCalledWith(
+        expect.objectContaining({ days: 30 }),
+      )
+    })
+  })
+
+  it('writes the new window to the shared store when the user picks one', async () => {
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+    await waitFor(() => expect(mockList).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByText('7d'))
+
+    await waitFor(() => {
+      expect(useTimeWindowStore.getState().days).toBe(7)
+    })
   })
 
   it('renders the empty state when the backend returns total=0', async () => {
@@ -127,6 +165,29 @@ describe('MyFailuresPage', () => {
       )
       expect(mockList.mock.calls.length).toBeGreaterThan(initialCalls)
     })
+  })
+
+  it('renders the Test Suite column with the suite_name from the payload', async () => {
+    mockList.mockResolvedValue(makeResponse([
+      {
+        id: 'cc1', test_name: 'test_login_failed',
+        suite_name: 'Realistic TestNG client examples',
+        status: 'FAILED', severity: 'major',
+        error_message: null,
+        created_at: new Date().toISOString(),
+        test_run_id: 'run-1', build_number: '42',
+        project_id: 'p1', project_name: 'P',
+        navigation_url: '/runs/run-1/tests/cc1',
+        class_name: null, failure_category: null, duration_ms: null,
+      },
+    ]))
+
+    renderPage()
+
+    // Column header renders.
+    expect(await screen.findByText('Test Suite')).toBeInTheDocument()
+    // Suite value renders in its own cell (not bundled under the test name).
+    expect(screen.getByText('Realistic TestNG client examples')).toBeInTheDocument()
   })
 
   it('renders the per-test failure count badge from the backend payload', async () => {

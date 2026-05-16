@@ -10,6 +10,7 @@ import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildValueMetricsWorkflow } from '@/components/workflow/workflowPresets'
 import { valueMetricsService, type ValueMetrics } from '@/services/valueMetricsService'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 
 function MetricCard({ icon: Icon, label, value, sub, color }: {
   icon: React.ElementType; label: string; value: string | number; sub?: string; color: string
@@ -38,7 +39,15 @@ export default function ValueMetricsPage() {
   const projectId = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined)
   const [metrics, setMetrics] = useState<ValueMetrics | null>(null)
   const [loading, setLoading] = useState(true)
-  const [days, setDays] = useState(30)
+  // Global shared time window — Value Metrics' options diverge from
+  // most other pages (no 24h, includes 1y), so we snap the shared value
+  // to the nearest supported option here. Picking a value here also
+  // propagates to other pages that may snap to a different nearest.
+  const VALUE_OPTIONS = [7, 30, 90, 365] as const
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, VALUE_OPTIONS)
+  const setDays = setStoredDays
 
   useEffect(() => {
     setLoading(true)

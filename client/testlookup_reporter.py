@@ -69,6 +69,12 @@ MAX_RETRIES        = 5         # retries per flush on transient errors
 RETRY_BASE_DELAY   = 0.5       # seconds
 CONNECT_TIMEOUT    = 10.0
 READ_TIMEOUT       = 30.0
+# Emit a ``live_heartbeat`` event whenever the SDK has been silent this long.
+# The server uses Redis ``last_event_at`` to drive its 5-minute idle-session
+# reaper; without the heartbeat a legitimate run with a single long test
+# would be falsely closed mid-flight. 30s is well under the reaper threshold
+# so genuinely-dead clients still get reaped promptly.
+HEARTBEAT_INTERVAL = 30.0      # seconds
 
 
 # ── Configuration Loader ──────────────────────────────────────────────────────
@@ -828,14 +834,22 @@ class LiveStream:
 
         self._queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
         self._flusher_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
         self._stats = {"sent": 0, "failed": 0}
         self._session_id: Optional[str] = None  # set by the server on first batch
+        # Wall-clock ms of the most recent real (non-heartbeat) event we
+        # enqueued. Used to suppress heartbeats while the session is busy
+        # so we don't add noise to a healthy stream.
+        self._last_real_enqueue_ms: float = time.time() * 1_000
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     async def __aenter__(self) -> "LiveStream":
         self._flusher_task = asyncio.create_task(
             self._flusher_loop(), name=f"testlookup-livestream-{self._run_id[:24]}"
+        )
+        self._heartbeat_task = asyncio.create_task(
+            self._heartbeat_loop(), name=f"testlookup-heartbeat-{self._run_id[:24]}"
         )
         return self
 
@@ -854,6 +868,12 @@ class LiveStream:
             self._flusher_task.cancel()
             try:
                 await self._flusher_task
+            except asyncio.CancelledError:
+                pass
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
         await self._flush_all()
@@ -906,11 +926,13 @@ class LiveStream:
         if tags:          event["tags"] = tags
         if metadata:      event["metadata"] = metadata
 
+        self._last_real_enqueue_ms = time.time() * 1_000
         await self._queue.put(event)
         if self._queue.qsize() >= self._batch_size:
             await self._flush_once()
 
     async def log(self, message: str, level: str = "INFO", metadata: Optional[dict] = None) -> None:
+        self._last_real_enqueue_ms = time.time() * 1_000
         await self._queue.put({
             "event_type": "log",
             "test_name": None,
@@ -920,6 +942,7 @@ class LiveStream:
         })
 
     async def metric(self, name: str, value: float, unit: str = "", metadata: Optional[dict] = None) -> None:
+        self._last_real_enqueue_ms = time.time() * 1_000
         await self._queue.put({
             "event_type": "metric",
             "test_name": name,
@@ -943,6 +966,43 @@ class LiveStream:
                 raise
             except Exception as exc:
                 logger.debug("LiveStream flusher loop error (non-fatal): %s", exc)
+
+    async def _heartbeat_loop(self) -> None:
+        """Periodic driver — wakes every ``HEARTBEAT_INTERVAL`` and asks
+        the helper whether to emit. Kept tiny so the testable decision
+        logic lives in ``_maybe_emit_heartbeat`` instead of being trapped
+        behind ``asyncio.sleep``.
+        """
+        while True:
+            try:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                await self._maybe_emit_heartbeat()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("LiveStream heartbeat loop error (non-fatal): %s", exc)
+
+    async def _maybe_emit_heartbeat(self) -> bool:
+        """Enqueue a ``live_heartbeat`` event if the SDK has been silent
+        for at least ``HEARTBEAT_INTERVAL`` seconds. Returns ``True``
+        when a heartbeat was actually enqueued, ``False`` when
+        suppressed (the session is busy).
+
+        Mirrors the Java SDK's behaviour: bumps the server's Redis
+        ``last_event_at`` so the idle-session reaper doesn't kill a
+        legitimately-running session during a long inter-test gap.
+        We intentionally do NOT update ``_last_real_enqueue_ms`` for
+        heartbeats — that timer tracks *real* activity, so heartbeats
+        suppressing themselves would defeat the point.
+        """
+        idle_s = time.time() - (self._last_real_enqueue_ms / 1_000.0)
+        if idle_s < HEARTBEAT_INTERVAL:
+            return False
+        await self._queue.put({
+            "event_type": "live_heartbeat",
+            "timestamp_ms": int(time.time() * 1_000),
+        })
+        return True
 
     async def _flush_once(self) -> None:
         if self._queue.empty():

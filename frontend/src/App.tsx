@@ -114,6 +114,7 @@ const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
 const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
 const MyFailuresPage = lazy(() => import('@/pages/MyFailuresPage'))
+const SummaryReportPage = lazy(() => import('@/pages/SummaryReportPage'))
 
 type AppRoute = {
   path: string
@@ -151,6 +152,7 @@ const appRoutes: AppRoute[] = [
   { path: 'test-management', component: TestManagementPage },
   { path: 'live', component: LiveExecutionPage },
   { path: 'my-failures', component: MyFailuresPage },
+  { path: 'reports/summary', component: SummaryReportPage },
   // Profile is accessible to ALL authenticated roles
   { path: 'settings/profile', component: ProfilePage },
 ]

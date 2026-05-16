@@ -275,6 +275,65 @@ class TestExecutionReviewUpdate(BaseModel):
     note: Optional[str] = Field(None, max_length=4000)
 
 
+# ── Summary Report (per-project consolidated stats) ────────────────────────
+
+
+class SummaryTotals(BaseModel):
+    total_test_cases: int
+    passed: int
+    failed: int
+    skipped: int
+    broken: int
+    # ``evaluated`` = passed + failed + broken (skipped excluded from rate math).
+    evaluated: int
+    pass_rate_pct: float
+    fail_rate_pct: float
+    skip_rate_pct: float
+    broken_rate_pct: float
+    # Pass rate that ignores skipped tests — matches the /overview headline.
+    weighted_pass_rate_pct: float
+
+
+class SummarySuiteRow(BaseModel):
+    suite_name: str
+    total: int
+    passed: int
+    failed: int
+    skipped: int
+    broken: int
+    pass_rate_pct: float
+    weighted_pass_rate_pct: float
+    last_run_at: Optional[str] = None
+
+
+class SummaryTopFailingTest(BaseModel):
+    suite_name: Optional[str] = None
+    class_name: Optional[str] = None
+    test_name: str
+    failures: int
+
+
+class SummaryReportResponse(BaseModel):
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
+    mode: Literal["window", "latest"]
+    window_days: int
+    generated_at: str
+    period_start: str
+    period_end: str
+    totals: SummaryTotals
+    run_count: int
+    # Average runs per day. ``None`` in ``latest`` mode (where the
+    # denominator is meaningless — only the latest run per suite counts).
+    runs_per_day: Optional[float] = None
+    avg_duration_ms: int
+    latest_run_at: Optional[str] = None
+    flaky_test_count: int
+    flaky_rate_pct: float
+    suites: List[SummarySuiteRow]
+    top_failing_tests: List[SummaryTopFailingTest]
+
+
 # ── My Failures inbox (migration 0080) ─────────────────────────────────────
 
 class MyFailureItem(BaseModel):
@@ -1549,7 +1608,12 @@ class LiveEvent(BaseModel):
     """A single test execution event from a client machine."""
     event_type: str = Field(
         ...,
-        description="run_start | test_start | test_result | log | metric | run_complete",
+        description=(
+            "run_start | test_start | test_result | log | metric | run_complete | live_heartbeat. "
+            "live_heartbeat is a no-op refresh emitted by SDK clients during long inter-test "
+            "gaps — it only bumps the Redis last_event_at field so the reaper doesn't close "
+            "the session as idle."
+        ),
     )
     test_name: Optional[str] = Field(None, max_length=1000)
     status: Optional[str] = Field(None, description="PASSED | FAILED | SKIPPED | BROKEN")

@@ -59,6 +59,7 @@ from app.routers import (
     sso,
     stream,
     suites,
+    summary_report,
     test_execution_reviews,
     test_health,
     test_management,
@@ -143,6 +144,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     suites.router,                     # Phase 3: TestSuite + CanonicalTestCase CRUD
     my_failures.router,                # 0080: per-user "My Failures" inbox of auto-assigned failures
     test_execution_reviews.router,     # 0081: per-TestCase human review transitions
+    summary_report.router,             # Per-project consolidated summary report + PDF export
 )
 
 

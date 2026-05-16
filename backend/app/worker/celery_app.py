@@ -88,16 +88,27 @@ celery_app.conf.update(
         # Safety net for live sessions whose clients forgot to send
         # run_complete — without this the runs only show in Live Execution
         # and never propagate to Runs / Overview / Coverage / Failures /
-        # Trends. Idle threshold is 15 minutes; the task is idempotent.
-        # 10-minute idle threshold (lowered from 15 on 2026-05-15 per user
-        # request). Runs every 5 minutes so a session that goes idle is
-        # closed within 5-15 minutes total. The Redis ``last_event_at``
-        # hash is the truth source for staleness — see the task body for
-        # the NULL-last_event handling.
+        # Trends. The task is idempotent.
+        #
+        # 5-minute idle threshold (lowered from 10 on 2026-05-16 after a
+        # homelab repro showed 5 ``running`` sessions in the API when
+        # only 2 were emitting telemetry — the Live page now flags stale
+        # rows immediately at the 60s mark via ``utils/liveSessionFreshness``
+        # but the DB still owned the lie for up to 15 minutes). Sweep
+        # every 2 minutes so worst-case staleness is ~7 minutes total
+        # (5 min threshold + 2 min between sweeps).
+        #
+        # Tuning note: most test frameworks emit start/end events per
+        # test, so legitimate inter-event gaps are well under a minute.
+        # Workloads with single tests that take >5 min between events
+        # (load tests, long e2e flows) should bump this back to 10 or
+        # add SDK-side heartbeats. The Redis ``last_event_at`` hash is
+        # the truth source for staleness — see the task body for the
+        # NULL-last_event handling.
         "close-stale-live-sessions": {
             "task": "app.worker.tasks.close_stale_live_sessions",
-            "schedule": crontab(minute="*/5"),
-            "kwargs": {"idle_minutes": 10},
+            "schedule": crontab(minute="*/2"),
+            "kwargs": {"idle_minutes": 5},
         },
         # Safety net for agent_pipeline_runs that got stuck in
         # status='running' — typically because a stage crashed mid-task

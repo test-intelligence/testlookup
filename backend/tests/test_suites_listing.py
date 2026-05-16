@@ -50,6 +50,18 @@ class _CountsExecResult:
         return self._rows
 
 
+class _MissingSuitesResult:
+    """Mimics .fetchall() for the test_runs.primary_suite_name backfill
+    probe. An empty list signals "no live-stream gaps detected" so the
+    handler skips the auto-backfill branch."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
 def _suite(name: str, *, is_default: bool = False, project_id=None):
     return SimpleNamespace(
         id=uuid.uuid4(),
@@ -90,8 +102,10 @@ async def test_list_test_suites_returns_items_with_counts():
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             _SuitesExecResult([default_suite, api_suite]),
+            _MissingSuitesResult([]),  # no live-stream gap to backfill
             _CountsExecResult(counts_rows),
-        ])
+        ]),
+        rollback=AsyncMock(),
     )
 
     result = await list_test_suites(db, project_ids=[project_id])
@@ -112,7 +126,11 @@ async def test_list_test_suites_skips_count_query_when_disabled():
     suite = _suite("alpha", project_id=project_id)
 
     db = SimpleNamespace(
-        execute=AsyncMock(return_value=_SuitesExecResult([suite]))
+        execute=AsyncMock(side_effect=[
+            _SuitesExecResult([suite]),
+            _MissingSuitesResult([]),  # no live-stream gap to backfill
+        ]),
+        rollback=AsyncMock(),
     )
 
     result = await list_test_suites(
@@ -121,7 +139,8 @@ async def test_list_test_suites_skips_count_query_when_disabled():
 
     assert len(result) == 1
     assert result[0]["test_case_count"] == 0
-    assert db.execute.await_count == 1  # only the suites query, no counts
+    # Suites query + backfill probe; counts query is skipped by the flag.
+    assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -141,3 +160,67 @@ async def test_list_test_suites_all_projects_when_project_ids_is_none():
     assert len(result) == 1
     assert result[0]["name"] == "cross-project"
     assert result[0]["test_case_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_test_suites_backfills_missing_suites_from_test_runs():
+    """Regression: a suite name present on ``test_runs.primary_suite_name``
+    but missing from the ``test_suites`` table must be auto-created and
+    appear in the response. Without this fix the /suites page hides any
+    suite stuck in the live-stream finalize_run gap (CLAUDE.md pitfall #15).
+    """
+    from app.services.test_suite_service import list_test_suites
+
+    project_id = uuid.uuid4()
+    existing_default = _suite("All Tests", is_default=True, project_id=project_id)
+
+    # Simulate the gap: the backfill probe finds a suite name on
+    # test_runs that has no matching test_suites row.
+    gap_row = SimpleNamespace(
+        project_id=project_id,
+        suite_name="Realistic TestNG client examples",
+    )
+
+    execute_call_count = {"n": 0}
+
+    async def fake_execute(*_args, **_kwargs):
+        execute_call_count["n"] += 1
+        # 1: suites query → returns one existing suite.
+        # 2: missing-rows probe → one gap row to backfill.
+        # 3: flush after db.add(...) — SimpleNamespace flush returns None;
+        #    SQLAlchemy's session ``add`` is synchronous so this isn't a
+        #    call into execute. But ``await db.flush()`` is. Mock both.
+        # 4: counts query → returns counts for the existing + backfilled.
+        if execute_call_count["n"] == 1:
+            return _SuitesExecResult([existing_default])
+        if execute_call_count["n"] == 2:
+            return _MissingSuitesResult([gap_row])
+        # Counts query (the only query after backfill that uses ``.all()``).
+        return _CountsExecResult([(existing_default.id, 4)])
+
+    # Track ``add``'d rows so we can verify the backfill happens and the
+    # synthesized suite is returned to the caller.
+    added: list = []
+
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=fake_execute),
+        flush=AsyncMock(),
+        rollback=AsyncMock(),
+        add=lambda obj: added.append(obj),
+    )
+
+    result = await list_test_suites(db, project_ids=[project_id])
+
+    # Backfilled suite landed in the result.
+    by_name = {item["name"]: item for item in result}
+    assert "Realistic TestNG client examples" in by_name, (
+        "expected the live-stream gap suite to be backfilled and surfaced"
+    )
+    assert by_name["All Tests"]["is_default"] is True
+    # The default suite should still sort first.
+    assert result[0]["name"] == "All Tests"
+    # Exactly one row was add()'d (the missing suite); not the existing one.
+    assert len(added) == 1
+    assert added[0].name == "Realistic TestNG client examples"
+    assert added[0].project_id == project_id
+    assert added[0].is_default is False

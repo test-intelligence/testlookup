@@ -53,6 +53,7 @@ import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
@@ -61,7 +62,6 @@ import type { TestRun } from '@/types/runs'
 // 1 = last 24 hours, 0 = all time.
 const WINDOWS = [1, 6, 14, 30, 90, 0] as const
 type Window = (typeof WINDOWS)[number]
-const WINDOW_KEY = 'tl.runs.window'
 
 const WINDOW_LABELS: Record<Window, string> = {
   1:  'Last 24 hours',
@@ -1572,16 +1572,15 @@ export default function RunsPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { isQaEngineer } = usePermissions()
 
-  const [days, setDays] = useState<Window>(() => {
-    const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 6 days (RunsPage uses 6 not 7 in its WINDOWS literal).
-    // Bumped from 24h on 2026-05-15 — too many users landed on an empty
-    // page because their latest run was older than a day. Previously-saved
-    // choices still take precedence so existing users don't have their
-    // window reset.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 6
-  })
-  useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
+  // Global shared time-window preference — selection here propagates
+  // to every other window-filtered page (and vice versa). Snapped to
+  // RunsPage's allowed set, which includes ``6`` (instead of 7) and
+  // ``0`` (= all time) so the shared value may differ from what other
+  // pages display.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, WINDOWS) as Window
+  const setDays = setStoredDays as (w: Window) => void
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
   const [selectedSuite, setSelectedSuite] = useState('')

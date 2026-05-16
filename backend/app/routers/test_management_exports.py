@@ -701,6 +701,57 @@ async def list_test_suites(
     """)
     auto_rows = (await db.execute(auto_query, auto_params)).fetchall()
 
+    # Live-stream gap fallback: surface suites that exist in ``test_runs``
+    # via ``primary_suite_name`` but whose per-test rows didn't land in
+    # ``test_cases``. Without this, a user-reported bug recurs where a
+    # suite (e.g. "Realistic TestNG client examples") is visible on /runs
+    # and /coverage but invisible on /test-management because the catalog
+    # SQL above only reads from test_cases. Same root cause as the
+    # ingestion_pipeline.finalize_run skip documented in CLAUDE.md
+    # pitfall #15 — and the same union-fallback pattern used in
+    # services/summary_report_service._per_suite_breakdown_window.
+    run_aggregate_where = "AND tr.project_id = :project_id" if project_id else ""
+    run_aggregate_query = sa_text(f"""
+        SELECT
+            NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
+            COALESCE(SUM(tr.total_tests),  0) AS test_count,
+            COALESCE(SUM(tr.passed_tests), 0) AS passed_count,
+            COALESCE(SUM(tr.failed_tests), 0) AS failed_count,
+            MAX(tr.created_at) AS last_run_at,
+            (
+                SELECT tr3.id
+                FROM test_runs tr3
+                WHERE NULLIF(TRIM(tr3.primary_suite_name), '')
+                      = NULLIF(TRIM(tr.primary_suite_name), '')
+                  {("AND tr3.project_id = :project_id" if project_id else "")}
+                ORDER BY tr3.created_at DESC
+                LIMIT 1
+            ) AS last_run_id
+        FROM test_runs tr
+        WHERE tr.primary_suite_name IS NOT NULL
+          AND TRIM(tr.primary_suite_name) <> ''
+          AND NOT EXISTS (
+              SELECT 1 FROM test_cases tc2
+              WHERE tc2.test_run_id = tr.id
+          )
+          {run_aggregate_where}
+        GROUP BY NULLIF(TRIM(tr.primary_suite_name), '')
+        HAVING NULLIF(TRIM(tr.primary_suite_name), '') IS NOT NULL
+    """)
+    try:
+        run_aggregate_rows = (await db.execute(
+            run_aggregate_query, auto_params,
+        )).fetchall()
+    except Exception as exc:
+        # Defensive: a missing column in an older deployment shouldn't
+        # 500 the page; we just lose the fallback rows.
+        logger.warning(
+            "test_runs.primary_suite_name fallback failed, skipping",
+            error=str(exc),
+        )
+        await db.rollback()
+        run_aggregate_rows = []
+
     # Manual managed test cases (suite_name added in migration 0013)
     manual_where = "AND project_id = :project_id" if project_id else ""
     manual_params: dict = {"project_id": project_id} if project_id else {}
@@ -723,7 +774,9 @@ async def list_test_suites(
         await db.rollback()
         manual_rows = []
 
-    # Merge both sources by suite_name
+    # Merge sources by suite_name. Order matters only for first-write
+    # semantics — auto + manual + run-aggregate all use the same merge
+    # rules (sum counts, keep newest last_run_at).
     merged: dict[str, dict] = {}
     for row in auto_rows:
         merged[row.suite_name] = {
@@ -731,6 +784,20 @@ async def list_test_suites(
             "test_count": row.test_count,
             "passed_count": row.passed_count,
             "failed_count": row.failed_count,
+            "last_run_at": row.last_run_at,
+            "last_run_id": row.last_run_id,
+        }
+    # Run-aggregate fallback rows. Skip suites already covered by
+    # ``auto_rows`` — those have authoritative per-test data and a
+    # double-count from the run-level sum would be wrong.
+    for row in run_aggregate_rows:
+        if not row.suite_name or row.suite_name in merged:
+            continue
+        merged[row.suite_name] = {
+            "suite_name": row.suite_name,
+            "test_count": int(row.test_count or 0),
+            "passed_count": int(row.passed_count or 0),
+            "failed_count": int(row.failed_count or 0),
             "last_run_at": row.last_run_at,
             "last_run_id": row.last_run_id,
         }

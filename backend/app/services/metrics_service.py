@@ -258,9 +258,17 @@ async def get_trend_data(
     result = await db.execute(query, params)
     rows = result.fetchall()
 
+    # ISO yyyy-mm-dd is the wire format every consumer expects:
+    # ``frontend/src/pages/CoveragePage.tsx::CadenceHeatmap`` and
+    # ``frontend/src/pages/TrendsPage.tsx::buildCadenceCells`` both key
+    # their date lookup with ``new Date().toISOString().slice(0, 10)``,
+    # and ``OverviewPage`` builds ``${date}T00:00:00Z`` to compute
+    # ``timeAgo``. Returning a locale-formatted ``"May 16"`` here made
+    # every key miss, leaving the cadence heatmaps and trend timelines
+    # empty even when run data existed.
     return [
         {
-            "date": row.day.strftime("%b %d"),
+            "date": row.day.strftime("%Y-%m-%d"),
             "passed": int(row.passed),
             "failed": int(row.failed),
             "skipped": int(row.skipped),

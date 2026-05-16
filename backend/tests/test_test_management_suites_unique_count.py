@@ -115,6 +115,7 @@ async def test_list_test_suites_returns_unique_counts_from_cte(monkeypatch):
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             _Result(auto_rows),
+            _Result([]),       # run-aggregate fallback — no live-stream gap rows
             _Result(manual_rows),
         ]),
         rollback=AsyncMock(),
@@ -165,6 +166,7 @@ async def test_list_test_suites_merges_managed_cases_additively(monkeypatch):
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             _Result(auto_rows),
+            _Result([]),       # run-aggregate fallback — no live-stream gap rows
             _Result(manual_rows),
         ]),
         rollback=AsyncMock(),
@@ -184,3 +186,101 @@ async def test_list_test_suites_merges_managed_cases_additively(monkeypatch):
     by_name = {s["suite_name"]: s for s in result}
     # 10 automation-derived + 3 manually authored = 13.
     assert by_name["auth-api"]["test_count"] == 13
+
+
+@pytest.mark.asyncio
+async def test_list_test_suites_surfaces_live_stream_gap_suites(monkeypatch):
+    """Regression for user-reported "test suite not on /test-management".
+
+    A suite (e.g. "Realistic TestNG client examples") whose runs landed
+    ``test_runs.primary_suite_name`` aggregates but never persisted
+    per-test ``test_cases`` rows (the live-stream Redis-buffer gap)
+    used to be invisible on the Test Suites tab. The handler now unions
+    a run-aggregate query as a fallback. Pin that the fallback row's
+    counts come through with the run-level totals.
+    """
+    from app.routers.test_management_exports import list_test_suites
+
+    project_id = uuid.uuid4()
+    # auto_rows is empty — per-test data never landed for this suite.
+    auto_rows: list = []
+    # run-aggregate fallback row sourced from ``test_runs``.
+    run_aggregate_rows = [_row(
+        suite_name="Realistic TestNG client examples",
+        test_count=12, passed_count=10, failed_count=2,
+        last_run_at=None, last_run_id=uuid.uuid4(),
+    )]
+    manual_rows: list = []
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[
+            _Result(auto_rows),
+            _Result(run_aggregate_rows),
+            _Result(manual_rows),
+        ]),
+        rollback=AsyncMock(),
+    )
+
+    async def _no_owners(_db, _project_id, _names):
+        return {}
+    import app.services.suite_review_service as _sros
+    monkeypatch.setattr(_sros, "list_suite_owners", _no_owners)
+
+    result = await list_test_suites(
+        project_id=project_id,
+        db=db,
+        current_user=SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    by_name = {s["suite_name"]: s for s in result}
+    assert "Realistic TestNG client examples" in by_name, (
+        "live-stream-gap suite must be surfaced via the run-aggregate fallback"
+    )
+    suite = by_name["Realistic TestNG client examples"]
+    assert suite["test_count"] == 12
+    assert suite["passed_count"] == 10
+    assert suite["failed_count"] == 2
+    # pass_rate = 10/12 * 100 = 83.3
+    assert suite["pass_rate"] == 83.3
+
+
+@pytest.mark.asyncio
+async def test_list_test_suites_run_aggregate_does_not_double_count_existing(monkeypatch):
+    """If a suite has both per-test rows AND a run-aggregate fallback
+    row (rare but possible during a partial backfill), the authoritative
+    per-test counts win. The fallback row is dropped to avoid doubling
+    the test_count."""
+    from app.routers.test_management_exports import list_test_suites
+
+    project_id = uuid.uuid4()
+    auto_rows = [_row(
+        suite_name="auth-api", test_count=10, passed_count=9, failed_count=1,
+        last_run_at=None, last_run_id=uuid.uuid4(),
+    )]
+    # A fallback row would double-count if blindly summed.
+    run_aggregate_rows = [_row(
+        suite_name="auth-api", test_count=10, passed_count=9, failed_count=1,
+        last_run_at=None, last_run_id=uuid.uuid4(),
+    )]
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[
+            _Result(auto_rows),
+            _Result(run_aggregate_rows),
+            _Result([]),
+        ]),
+        rollback=AsyncMock(),
+    )
+
+    async def _no_owners(_db, _project_id, _names):
+        return {}
+    import app.services.suite_review_service as _sros
+    monkeypatch.setattr(_sros, "list_suite_owners", _no_owners)
+
+    result = await list_test_suites(
+        project_id=project_id,
+        db=db,
+        current_user=SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    by_name = {s["suite_name"]: s for s in result}
+    # Per-test rows win; the fallback row is dropped, not summed.
+    assert by_name["auth-api"]["test_count"] == 10

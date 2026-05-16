@@ -129,6 +129,13 @@ class LiveEventStreamConsumer:
             await self._on_test_result(run_id, payload)
         elif event_type == "run_complete":
             await self._on_run_complete(run_id, payload)
+        elif event_type == "live_heartbeat":
+            # No-op — the synchronous ingest handler already refreshed the
+            # Redis ``last_event_at`` field before the message hit this
+            # stream, which is the only thing the reaper cares about. We
+            # also intentionally do NOT broadcast heartbeats to the
+            # WebSocket so the page's event feed stays signal-only.
+            return
         else:
             logger.debug("Unknown live event type=%s run=%s — ignoring", event_type, run_id)
 

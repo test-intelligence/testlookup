@@ -353,6 +353,14 @@ async def list_test_suites(
 ) -> list[dict]:
     """Return suites for the given projects (or all if ``project_ids is None``)
     with an optional per-suite canonical_test_cases count.
+
+    Auto-backfills missing ``TestSuite`` rows for suites whose runs landed
+    aggregates on ``test_runs.primary_suite_name`` but never triggered
+    ``ingestion_pipeline.finalize_run`` (the live-stream gap from
+    CLAUDE.md pitfall #15). Without the backfill these suites are
+    invisible on /suites even though they're visible on /runs, /coverage
+    and /test-management. The backfill creates a regular non-default
+    ``TestSuite`` row so the navigate-to-id flow keeps working.
     """
     stmt = select(TestSuite)
     if project_ids is not None:
@@ -361,6 +369,87 @@ async def list_test_suites(
         stmt = stmt.where(TestSuite.project_id.in_(project_ids))
     stmt = stmt.order_by(TestSuite.is_default.desc(), TestSuite.name.asc())
     suites = list((await db.execute(stmt)).scalars().all())
+
+    # ── Live-stream gap backfill ─────────────────────────────────────────
+    # Read-on-write is normally a smell, but here the alternatives are
+    # worse: render virtual entries breaks navigate-to-id, and asking the
+    # user to wait for an out-of-band reaper is the opposite of helpful
+    # for "the suite is missing from the list" support requests. The
+    # backfill is idempotent (unique constraint catches concurrent
+    # writes) and only fires when there's a real gap.
+    if project_ids is not None:
+        from sqlalchemy import text as sa_text
+
+        missing_query = sa_text("""
+            SELECT
+                tr.project_id,
+                NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name
+            FROM test_runs tr
+            WHERE tr.project_id IN :pids
+              AND tr.primary_suite_name IS NOT NULL
+              AND TRIM(tr.primary_suite_name) <> ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM test_suites ts
+                  WHERE ts.project_id = tr.project_id
+                    AND ts.name = NULLIF(TRIM(tr.primary_suite_name), '')
+              )
+            GROUP BY tr.project_id, NULLIF(TRIM(tr.primary_suite_name), '')
+        """).bindparams(pids=tuple(project_ids))
+        try:
+            missing_rows = (await db.execute(missing_query)).fetchall()
+        except Exception as exc:
+            # An older deployment / migration mismatch shouldn't 500
+            # /suites — degrade by skipping the backfill.
+            logger.warning("test_suites backfill probe failed, skipping",
+                           error=str(exc))
+            await db.rollback()
+            missing_rows = []
+
+        if missing_rows:
+            existing_keys = {(s.project_id, s.name) for s in suites}
+            backfilled = False
+            for row in missing_rows:
+                if row.suite_name is None:
+                    continue
+                if (row.project_id, row.suite_name) in existing_keys:
+                    continue
+                try:
+                    suite = TestSuite(
+                        project_id=row.project_id,
+                        name=row.suite_name,
+                        description=None,
+                        tags=None,
+                        is_default=False,
+                    )
+                    db.add(suite)
+                    await db.flush()
+                    suites.append(suite)
+                    existing_keys.add((row.project_id, row.suite_name))
+                    backfilled = True
+                    logger.info(
+                        "backfilled_missing_test_suite",
+                        project_id=str(row.project_id),
+                        suite_name=row.suite_name,
+                    )
+                except IntegrityError:
+                    # Concurrent backfill from another request — rollback
+                    # the pending insert and refetch the now-present row
+                    # so the caller still sees it in this response.
+                    await db.rollback()
+                    refetch_q = await db.execute(
+                        select(TestSuite).where(
+                            TestSuite.project_id == row.project_id,
+                            TestSuite.name == row.suite_name,
+                        )
+                    )
+                    existing = refetch_q.scalar_one_or_none()
+                    if existing is not None:
+                        suites.append(existing)
+                        existing_keys.add((row.project_id, row.suite_name))
+            if backfilled:
+                # Re-sort so the response order is stable and matches the
+                # original ``ORDER BY is_default DESC, name ASC`` contract.
+                suites.sort(key=lambda s: (not s.is_default, s.name.lower()))
 
     counts_by_suite: dict[uuid.UUID, int] = {}
     if include_counts and suites:

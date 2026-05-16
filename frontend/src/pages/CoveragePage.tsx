@@ -55,6 +55,7 @@ import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useCoverage, useTrendData } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
@@ -62,7 +63,6 @@ import type { TrendPoint } from '@/types/metrics'
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
 const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
-const WINDOW_KEY = 'tl.coverage.window'
 
 // ── Verdict thresholds ────────────────────────────────────────────────────
 type Verdict = 'HEALTHY' | 'AT_RISK' | 'BLOCKED' | 'PENDING'
@@ -1214,13 +1214,13 @@ export default function CoveragePage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
-  const [days, setDays] = useState<Window>(() => {
-    const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 7 days (was 24h prior to 2026-05-15). Saved choice
-    // wins so existing users keep theirs.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 7
-  })
-  useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
+  // Window is a global user preference (shared with Live / Trends /
+  // Runs / Failures / Summary / Overview / My Failures). Snap to this
+  // page's allowed set when the stored value isn't supported here.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, WINDOWS) as Window
+  const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
   const [selectedSuite, setSelectedSuite] = useState('')

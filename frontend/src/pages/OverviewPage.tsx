@@ -12,6 +12,7 @@ import { useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
 import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import type { TrendPoint } from '@/types/metrics'
@@ -20,7 +21,7 @@ import type { TestRun } from '@/types/runs'
 
 // `1` = last 24 hours. Label is rendered as "24h" (the only sub-day option);
 // all other values render as `${d}d`.
-const TIME_OPTIONS = [1, 7, 14, 30, 90]
+const TIME_OPTIONS = [1, 7, 14, 30, 90] as const
 
 // 5-state verdict layered over the backend's 4-band pass-rate classification
 // (red/orange/yellow/green) plus the legacy "no data → PENDING" sentinel.
@@ -655,7 +656,12 @@ function ExecutionTrendChart({ trends, days }: { trends: TrendPoint[]; days: num
   const data = useMemo(
     () =>
       trends.map((p) => ({
-        date: p.date.length > 10 ? p.date.slice(5, 10) : p.date,
+        // ``p.date`` is ISO ``yyyy-mm-dd`` from the backend; chart x-axis
+        // wants the short ``mm-dd`` for compactness. Slice 5..10. The
+        // legacy ``"May 16"`` format (length 6) is no longer produced;
+        // the ``length >= 10`` guard keeps any stray short value usable
+        // rather than crashing if a caller injects one.
+        date: p.date.length >= 10 ? p.date.slice(5, 10) : p.date,
         passed: p.passed,
         failed: p.failed,
         skipped: p.skipped,
@@ -882,12 +888,14 @@ function runHasSuite(run: TestRun, suiteName: string): boolean {
 export default function OverviewPage() {
   // Default window is last 24h (days=1) across Overview/Runs/Live/Trends/
   // Coverage so users land on the freshest picture by default. They can
-  // widen via the picker; on pages with localStorage persistence (Runs,
-  // Trends, Coverage) any previously-saved choice still wins.
-  // Default to 7-day window so the dashboard surfaces signal on first
-  // visit even when the latest test run is from yesterday/last-week.
-  // The TIME_OPTIONS row lets the user narrow to 24h if they want.
-  const [days, setDays] = useState(7)
+  // Window is a global user-level preference (shared with Runs / Trends
+  // / Coverage / Failures / Live / Summary / My Failures). Picking 24h
+  // here propagates everywhere and vice versa. Snapped to this page's
+  // allowed set.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, TIME_OPTIONS)
+  const setDays = setStoredDays
   const [showPicker, setShowPicker] = useState(false)
   const [selectedSuite, setSelectedSuite] = useState('')
   const project = useProjectStore((s) => s.activeProject)

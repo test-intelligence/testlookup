@@ -166,6 +166,18 @@ type-check: ## Run type checking (mypy + tsc)
 	$(DOCKER_COMPOSE) exec backend mypy app/
 	$(DOCKER_COMPOSE) exec frontend npm run type-check
 
+quality-gate: ## Run cross-cutting invariant guards (backend / frontend / database / agents)
+	python scripts/quality_gate.py
+
+quality-gate-list: ## List every quality-gate guard with a one-line description
+	python scripts/quality_gate.py --list
+
+quality-gate-update-baseline: ## Re-snapshot the ratchet baseline (review the diff before commit)
+	python scripts/quality_gate.py --update-baseline
+
+quality-gate-test: ## Run the unit tests for the quality-gate script itself
+	cd scripts && python -m pytest test_quality_gate.py -v
+
 # ── Build ─────────────────────────────────────────────────────
 
 build: ## Build production Docker images

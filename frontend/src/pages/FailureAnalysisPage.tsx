@@ -61,6 +61,7 @@ import {
   useFailureCategories, useFlakyTests, useTopFailing, useTrendData,
 } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type {
   FailureCategoryItem, FlakyTestItem, TopFailingItem,
 } from '@/types/analytics'
@@ -71,11 +72,134 @@ import type { TrendPoint } from '@/types/metrics'
 // Overview/Runs/Live/Trends/Coverage so users get a single mental model.
 const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
-// ``.v2`` invalidates the legacy ``tl.failures.window`` value so users who
-// had saved 30d before the 24h-default change get reset to the new default
-// on next visit. Picking another window still persists going forward.
-const WINDOW_KEY = 'tl.failures.window.v2'
 
+// ── CSV export ────────────────────────────────────────────────────────────
+/** Wrap a CSV cell. Fields containing comma / quote / newline must be
+ *  quoted, and inner double-quotes must be escaped by doubling. */
+function csvCell(value: unknown): string {
+  if (value == null) return ''
+  const s = String(value)
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+interface ExportSources {
+  topFailing: TopFailingItem[]
+  flaky: FlakyTestItem[]
+  categories: FailureCategoryItem[]
+  meta: {
+    projectName: string
+    windowLabel: string
+    suiteName: string | null
+    generatedAt: string
+  }
+}
+
+/** Build the multi-section CSV that ``Export`` produces. Three sections:
+ *  metadata header, top failing tests, failure categories, flaky tests.
+ *  Sections are separated by a blank line and a ``# Section`` marker so
+ *  Excel/Sheets users can navigate without manual splitting. */
+export function buildFailuresCsv({
+  topFailing, flaky, categories, meta,
+}: ExportSources): string {
+  const lines: string[] = []
+
+  // Header / metadata block — explains the source of truth so a CSV
+  // pasted into a Slack channel still answers "what window / project".
+  lines.push('# TestLookup — Failure analysis export')
+  lines.push(`# Project,${csvCell(meta.projectName)}`)
+  lines.push(`# Window,${csvCell(meta.windowLabel)}`)
+  lines.push(`# Suite filter,${csvCell(meta.suiteName ?? 'All suites')}`)
+  lines.push(`# Generated,${csvCell(meta.generatedAt)}`)
+  lines.push('')
+
+  lines.push('# Top failing tests')
+  lines.push(['test_name', 'suite_name', 'class_name', 'failure_category', 'fail_count', 'last_failed'].join(','))
+  for (const t of topFailing) {
+    lines.push([
+      csvCell(t.test_name),
+      csvCell(t.suite_name ?? ''),
+      csvCell(t.class_name ?? ''),
+      csvCell(t.failure_category ?? ''),
+      csvCell(t.fail_count),
+      csvCell(t.last_failed ?? ''),
+    ].join(','))
+  }
+  lines.push('')
+
+  lines.push('# Failure categories')
+  lines.push(['category', 'count'].join(','))
+  for (const c of categories) {
+    lines.push([csvCell(c.category), csvCell(c.count)].join(','))
+  }
+  lines.push('')
+
+  lines.push('# Flaky tests')
+  lines.push(['test_name', 'suite_name', 'total_runs', 'fail_count', 'failure_rate_pct'].join(','))
+  for (const f of flaky) {
+    lines.push([
+      csvCell(f.test_name),
+      csvCell(f.suite_name ?? ''),
+      csvCell(f.total_runs),
+      csvCell(f.fail_count),
+      csvCell(f.failure_rate_pct),
+    ].join(','))
+  }
+  // Trailing newline so POSIX tooling (wc -l, awk) counts the last row.
+  return lines.join('\r\n') + '\r\n'
+}
+
+/** Build a filename slug from a project name. Lowercases, replaces any
+ *  non-alphanumeric run with a single dash, and trims edge dashes. */
+function slugifyProjectName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project'
+}
+
+/** Triggers a CSV download of the in-memory failure data. Pure DOM —
+ *  no backend round-trip — because the data the user wants is already
+ *  on the page; a server-side ``GET /export`` would just re-serialise
+ *  what we already have. */
+function handleExportCsv({
+  topFailing, flaky, categories, project, days, suiteFilter,
+}: {
+  topFailing: TopFailingItem[]
+  flaky: FlakyTestItem[]
+  categories: FailureCategoryItem[]
+  project: { id: string; name: string } | null
+  days: number
+  suiteFilter: string | null
+}): void {
+  const hasData = topFailing.length > 0 || flaky.length > 0 || categories.length > 0
+  if (!hasData) {
+    toast('No failure data to export in this window', { icon: '📭' })
+    return
+  }
+  const windowLabel = days === 1 ? '24h' : `${days}d`
+  const csv = buildFailuresCsv({
+    topFailing, flaky, categories,
+    meta: {
+      projectName: project?.name ?? 'All projects',
+      windowLabel,
+      suiteName: suiteFilter,
+      generatedAt: new Date().toISOString(),
+    },
+  })
+  // ﻿ BOM so Excel opens the file with UTF-8 encoding by default;
+  // without it, non-ASCII test names (German umlauts, Japanese
+  // characters in suite labels, etc.) render as mojibake.
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const projectSlug = project ? slugifyProjectName(project.name) : 'all-projects'
+  const suiteSlug = suiteFilter ? `-${slugifyProjectName(suiteFilter)}` : ''
+  a.download = `failures-${projectSlug}${suiteSlug}-${windowLabel}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  toast.success(`Exported ${topFailing.length} failing test${topFailing.length === 1 ? '' : 's'}`)
+}
 // ── Verdict ────────────────────────────────────────────────────────────────
 type Verdict = 'REPEAT_FAILURE' | 'FLAKY' | 'FIRST_TIME' | 'RECOVERING' | 'STABLE' | 'PENDING'
 
@@ -847,6 +971,38 @@ function WhatsFailingCard({
   onBisect: () => void
   onMute: () => void
 }) {
+  // Aggregate failed-run count from trend (which reads test_runs.failed_tests
+  // directly). A suite can have failed run aggregates (pass rate < 100%)
+  // while test_cases rows haven't landed — the live-stream Redis-buffer gap
+  // from CLAUDE.md pitfall #15. Cross-check so we don't render the green
+  // "every recent run passed" all-clear while pass-rate / KPI tiles show
+  // the same suite is failing.
+  const failingExecutions = trend.reduce(
+    (s, p) => s + (p.failed || 0) + (p.broken || 0), 0,
+  )
+  const perTestRowsMissing = (
+    (!topFailingTest || topFailingTest.fail_count === 0) && failingExecutions > 0
+  )
+
+  if (perTestRowsMissing) {
+    return (
+      <CardShell
+        title="What's failing"
+        rightSlot={<Pill tone="warn">Per-test data pending</Pill>}
+      >
+        <div className="px-4 py-6 flex flex-col items-center text-center">
+          <TriangleAlert className="h-8 w-8 mb-2" style={{ color: '#fcd34d' }} />
+          <p className="text-[13px] text-[var(--color-text-secondary)] m-0 max-w-md">
+            <strong style={{ color: 'var(--color-text)' }}>{failingExecutions}</strong>{' '}
+            failing execution{failingExecutions === 1 ? '' : 's'} detected in this window,
+            but per-test rows haven&apos;t been persisted yet — common right after a
+            live-stream run finishes. Inspect the failed runs on the Runs page.
+          </p>
+        </div>
+      </CardShell>
+    )
+  }
+
   if (!topFailingTest || topFailingTest.fail_count === 0) {
     return (
       <CardShell title="What's failing" rightSlot={<Pill tone="good">No failures</Pill>}>
@@ -1487,14 +1643,13 @@ export default function FailureAnalysisPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
-  const [days, setDays] = useState<Window>(() => {
-    const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 7 days. Bumped from 24h on 2026-05-15 — too many
-    // users landed on an empty page because their latest run was older
-    // than a day. Previously-saved choice wins so existing users keep theirs.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 7
-  })
-  useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
+  // Global shared time-window preference — picking 24h here propagates
+  // to /reports/summary, /live, /coverage, /trends, /runs, /overview,
+  // /my-failures and vice versa. Snapped to this page's allowed set.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, WINDOWS) as Window
+  const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
   const [selectedSuite, setSelectedSuite] = useState('')
@@ -1733,15 +1888,45 @@ export default function FailureAnalysisPage() {
   const issues: IssueRowSpec[] = []
   if (model.topFailingTest && model.topFailingTest.fail_count > 0) {
     const t = model.topFailingTest
-    const failurePct = model.totalRuns > 0
-      ? Math.round((t.fail_count / model.totalRuns) * 100)
-      : 100
+    // Prefer the flaky-list entry for this exact test (if it exists)
+    // since that carries the test's OWN ``total_runs`` — the only
+    // denominator that makes "failure rate" honest. Falling back to
+    // ``model.totalRuns`` (executions across every test in the window)
+    // produced the user-reported "0% failure rate on test X — failed
+    // 8 of 2773" bug: 8/2773 rounds to 0%, and the denominator was
+    // comparing one test's failures to the entire suite's executions.
+    const flakyMatch = flaky.find(f => f.test_name === t.test_name)
+    const perTestRatePct = flakyMatch && flakyMatch.total_runs > 0
+      ? (flakyMatch.fail_count / flakyMatch.total_runs) * 100
+      : null
+    // Share of failures in the current window — meaningful when the
+    // per-test rate isn't available. Tells the user "this single test
+    // accounts for X% of the failures you're looking at."
+    const failureSharePct = model.failedRuns > 0
+      ? (t.fail_count / model.failedRuns) * 100
+      : null
+
+    // Format a percentage so values under 1% show one decimal instead
+    // of collapsing to "0%". 8/2773 now reads as "0.3%", not "0%".
+    const fmtPct = (n: number): string => (
+      n > 0 && n < 1 ? `${n.toFixed(1)}%` : `${Math.round(n)}%`
+    )
+
+    const headline = perTestRatePct !== null
+      ? <><strong>{fmtPct(perTestRatePct)} failure rate</strong> on <code>{t.test_name}</code> — failed {t.fail_count} of {flakyMatch!.total_runs} executions.</>
+      // Drop the misleading denominator when we don't actually know this
+      // test's run count. Lead with the count + share so the user gets
+      // an actionable signal rather than a fake-precise rate.
+      : (
+          <><code>{t.test_name}</code> failed <strong>{t.fail_count}</strong> time{t.fail_count === 1 ? '' : 's'} in this window{failureSharePct !== null ? <> — <strong>{fmtPct(failureSharePct)}</strong> of failures here</> : null}.</>
+        )
+
     issues.push({
       tone: 'bad',
       Icon: XCircle,
       body: (
         <>
-          <strong>{failurePct}% failure rate</strong> on <code>{t.test_name}</code> — failed {t.fail_count} of {model.totalRuns || t.fail_count} executions.
+          {headline}
           {model.repeatFailures.length > 1 && <> <span className="dim">+{model.repeatFailures.length - 1} other repeat{model.repeatFailures.length - 1 === 1 ? '' : 's'}.</span></>}
         </>
       ),
@@ -1758,13 +1943,22 @@ export default function FailureAnalysisPage() {
     })
   }
   if (model.uncategorizedPct >= 50) {
+    // Re-worded from the previous "clustering ran but 100% of failures
+    // couldn't be matched to a known pattern. No owner auto-routed; no
+    // playbook attached." That phrasing implied (a) the cluster stage
+    // was the categorisation source (it isn't — categories come from
+    // the AI triage path), and (b) something concrete failed during
+    // owner routing (the routing simply doesn't fire without a
+    // category). The new wording is shorter, accurate, and points the
+    // user at the actionable next step.
+    const pct = Math.round(model.uncategorizedPct)
     issues.push({
       tone: 'warn',
       Icon: AlertTriangle,
       body: (
         <>
-          <strong>Category unknown</strong> — clustering ran but {Math.round(model.uncategorizedPct)}% of failures couldn't be matched to a known pattern.
-          {' '}<span className="dim">No owner auto-routed; no playbook attached.</span>
+          <strong>{pct}% of failures aren&apos;t categorised yet.</strong>
+          {' '}<span className="dim">Classify them so owners can be auto-routed and a playbook applied.</span>
         </>
       ),
       cta: {
@@ -1852,8 +2046,10 @@ export default function FailureAnalysisPage() {
             allLabel="All suites"
           />
           <GhostBtn
-            onClick={() => toast('Export failure CSV — coming in Phase 2', { icon: '📦' })}
-            title="Export failure data"
+            onClick={() => handleExportCsv({
+              topFailing, flaky, categories, project, days, suiteFilter,
+            })}
+            title="Export failure data as CSV"
           >
             <Download className="h-3.5 w-3.5" />
             Export

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
@@ -13,6 +12,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useSuiteDetail } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailSummary } from '@/types/analytics'
 
 const PERIODS = [
@@ -20,7 +20,8 @@ const PERIODS = [
   { label: '14d', days: 14 },
   { label: '30d', days: 30 },
   { label: '90d', days: 90 },
-]
+] as const
+const PERIOD_DAYS = PERIODS.map(p => p.days) as readonly number[]
 
 const TOOLTIP_STYLE = {
   backgroundColor: '#1e293b', border: '1px solid #334155',
@@ -85,7 +86,16 @@ export default function SuiteDetailPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
   const suiteName  = searchParams.get('name') ?? ''
-  const [days, setDays] = useState(() => Number(searchParams.get('days') ?? 30))
+  // Precedence: explicit URL ``?days=`` (deep link) > shared global
+  // preference > snapped default. Picking a period here also updates the
+  // global preference so the user's choice survives navigation.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const urlDays = Number(searchParams.get('days'))
+  const days = PERIOD_DAYS.includes(urlDays)
+    ? urlDays
+    : snapToAllowed(storedDays, PERIOD_DAYS)
+  const setDays = setStoredDays
 
   const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
 

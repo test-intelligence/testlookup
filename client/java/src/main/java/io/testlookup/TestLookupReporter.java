@@ -88,6 +88,17 @@ public class TestLookupReporter {
     private static final int CONNECT_TIMEOUT_SEC = 10;
     private static final int REQUEST_TIMEOUT_SEC = 30;
 
+    /**
+     * Heartbeat interval — emit a ``live_heartbeat`` event whenever the
+     * SDK has been silent this long. The server uses Redis
+     * ``last_event_at`` to drive its idle-session reaper (5-minute
+     * threshold by default); without the heartbeat a legitimate run with
+     * a single long test would be falsely closed mid-flight. The
+     * interval is well under the server's reaper threshold so the
+     * reaper still fires promptly when the client genuinely dies.
+     */
+    private static final long HEARTBEAT_INTERVAL_MS = 30_000L;
+
     // ── Builder ──────────────────────────────────────────────────────────────
 
     private final String     baseUrl;
@@ -479,6 +490,9 @@ public class TestLookupReporter {
         private final ScheduledExecutorService    scheduler;
         private final AtomicLong                  statSent    = new AtomicLong();
         private final AtomicLong                  statFailed  = new AtomicLong();
+        /** Wall-clock epoch ms of the most recent real (non-heartbeat) event we
+         *  enqueued — used to suppress heartbeats while the session is busy. */
+        private final AtomicLong                  lastRealEnqueueMs = new AtomicLong(Instant.now().toEpochMilli());
         private volatile boolean                  closed      = false;
 
         LiveSession(String sessionId, String sessionToken, String runId,
@@ -500,6 +514,17 @@ public class TestLookupReporter {
                 this::flushOnce,
                 reporter.getBatchIntervalMs(),
                 reporter.getBatchIntervalMs(),
+                TimeUnit.MILLISECONDS
+            );
+
+            // Heartbeat task — keeps the server-side last_event_at fresh
+            // during long inter-test gaps so the idle-session reaper
+            // doesn't kill a legitimately-running session. Runs on the
+            // same scheduler so it shuts down with the session.
+            scheduler.scheduleAtFixedRate(
+                this::heartbeatTick,
+                HEARTBEAT_INTERVAL_MS,
+                HEARTBEAT_INTERVAL_MS,
                 TimeUnit.MILLISECONDS
             );
             LOG.info("TestLookup: session started: " + sessionId + " run=" + runId);
@@ -599,11 +624,36 @@ public class TestLookupReporter {
         // ── Internal ─────────────────────────────────────────────────────────
 
         private void enqueue(ObjectNode event) {
+            lastRealEnqueueMs.set(Instant.now().toEpochMilli());
             if (!queue.offer(event)) {
                 LOG.warning("TestLookup: event queue full — dropping event");
             }
             if (queue.size() >= reporter.getBatchSize()) {
                 scheduler.execute(this::flushOnce);
+            }
+        }
+
+        /**
+         * Emit a ``live_heartbeat`` event if no real event has been
+         * enqueued in {@link #HEARTBEAT_INTERVAL_MS}. The heartbeat
+         * carries no test payload — its only job is to bump the
+         * server-side ``last_event_at`` so the reaper doesn't classify
+         * the session as idle. We don't update
+         * {@code lastRealEnqueueMs} for heartbeats so the suppression
+         * check stays based on real activity only.
+         */
+        void heartbeatTick() {
+            if (closed) return;
+            long sinceLast = Instant.now().toEpochMilli() - lastRealEnqueueMs.get();
+            if (sinceLast < HEARTBEAT_INTERVAL_MS) return;
+            ObjectNode event = MAPPER.createObjectNode();
+            event.put("event_type",   "live_heartbeat");
+            event.put("timestamp_ms", Instant.now().toEpochMilli());
+            // NB: skip enqueue()'s lastRealEnqueueMs.set — heartbeat is
+            // not a "real" event, so we don't want it to suppress the
+            // next heartbeat tick.
+            if (!queue.offer(event)) {
+                LOG.fine("TestLookup: heartbeat dropped, queue full");
             }
         }
 
