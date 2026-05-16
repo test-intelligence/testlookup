@@ -137,6 +137,32 @@ async def list_my_assigned_failures(
     )
     rows = (await db.execute(list_stmt)).all()
 
+    # Per-test failure count inside the same window. Grouped by the natural
+    # identity (project + suite + class + test name) so the same test across
+    # runs collapses to a single bucket. Single query for the whole page →
+    # no N+1.
+    count_by_key: dict[tuple, int] = {}
+    if rows:
+        count_stmt = (
+            select(
+                TestRun.project_id,
+                TestCase.suite_name,
+                TestCase.class_name,
+                TestCase.test_name,
+                func.count(TestCase.id).label("n"),
+            )
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(*base_filters)
+            .group_by(
+                TestRun.project_id,
+                TestCase.suite_name,
+                TestCase.class_name,
+                TestCase.test_name,
+            )
+        )
+        for c in (await db.execute(count_stmt)).all():
+            count_by_key[(c.project_id, c.suite_name, c.class_name, c.test_name)] = int(c.n)
+
     items: list[MyFailureItem] = []
     for r in rows:
         # Truncate error_message to keep payloads bounded — full message is
@@ -144,6 +170,7 @@ async def list_my_assigned_failures(
         err = (r.error_message or "")
         if len(err) > 280:
             err = err[:277] + "..."
+        key = (r.project_id, r.suite_name, r.class_name, r.test_name)
         items.append(MyFailureItem(
             id=r.id,
             test_name=r.test_name,
@@ -160,6 +187,7 @@ async def list_my_assigned_failures(
             project_id=r.project_id,
             project_name=r.project_name,
             navigation_url=f"/runs/{r.test_run_id}/tests/{r.id}",
+            failure_count=count_by_key.get(key, 1),
         ))
 
     pages = math.ceil(total / size) if size > 0 else 0

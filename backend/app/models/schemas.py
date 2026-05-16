@@ -300,6 +300,10 @@ class MyFailureItem(BaseModel):
     project_id: uuid.UUID
     project_name: Optional[str] = None
     navigation_url: str
+    # Count of times THIS test (same project + suite + class + test name) has
+    # failed for this user inside the active time window. Lets the inbox row
+    # show "× 7 in 7 days" so repeat offenders are visible at a glance.
+    failure_count: int = 1
 
     model_config = ConfigDict(from_attributes=True)
 

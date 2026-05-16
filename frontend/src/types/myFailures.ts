@@ -20,6 +20,12 @@ export interface MyFailureItem {
   project_id: string
   project_name?: string | null
   navigation_url: string
+  /**
+   * Times this test (same project + suite + class + name) has failed for the
+   * current user within the selected window. Lets the inbox surface repeat
+   * offenders without a follow-up fetch. Defaults to 1 for older payloads.
+   */
+  failure_count?: number
 }
 
 export interface MyFailureListResponse {

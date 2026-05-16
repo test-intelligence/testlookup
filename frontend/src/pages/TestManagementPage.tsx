@@ -26,6 +26,7 @@ import {
   testManagementService,
 } from '@/services/testManagementService'
 import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
+import { deriveTestManagementTotals } from '@/utils/testManagementTotals'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import type {
   AIReviewResult,
@@ -981,7 +982,14 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
 
   // ── Library health model (synthesised) ─────────────────────────────
   const fullList: ManagedTestCase[] = healthRoll?.items ?? casesRaw
-  const totalCases = healthRoll?.total ?? data?.total ?? fullList.length
+  // Two distinct totals — both surfaced separately to fix the recurring
+  // "Cases 25 of 0" misread (third regression 2026-05-16). See
+  // ``utils/testManagementTotals.ts`` for the helper + unit tests.
+  const { authoredTotal, casesTotal } = deriveTestManagementTotals({
+    healthRoll,
+    data,
+    casesLength: cases.length,
+  })
   const activeCount       = fullList.filter(c => c.status === 'active').length
   const automatedCount    = fullList.filter(c => c.is_automated).length
   const automatedPct      = fullList.length > 0 ? Math.round((automatedCount / fullList.length) * 100) : 0
@@ -1078,7 +1086,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         healthScore={healthScore}
         healthTag={healthTag}
         healthTone={healthTone}
-        totalCases={totalCases}
+        totalCases={authoredTotal}
         reviewCount={reviewCount}
         staleCount={staleCount}
         deprecatedInActive={deprecatedInActive}
@@ -1124,7 +1132,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
               style={{ borderBottom: '1px solid var(--color-border)' }}
             >
               <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
-                Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {totalCases} · sorted by {sortLabel}</span>
+                Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
               </h3>
               <div className="flex items-center gap-2 flex-wrap">
                 <button

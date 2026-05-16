@@ -129,6 +129,29 @@ describe('MyFailuresPage', () => {
     })
   })
 
+  it('renders the per-test failure count badge from the backend payload', async () => {
+    mockList.mockResolvedValue(makeResponse([
+      {
+        id: 'cc1', test_name: 'test_login_failed',
+        suite_name: 'AuthSuite',
+        status: 'FAILED', severity: 'major',
+        error_message: null,
+        created_at: new Date().toISOString(),
+        test_run_id: 'run-1', build_number: null,
+        project_id: 'p1', project_name: 'P1',
+        navigation_url: '/runs/run-1/tests/cc1',
+        class_name: null, failure_category: null, duration_ms: null,
+        failure_count: 7,
+      },
+    ]))
+
+    renderPage()
+
+    // Badge text is "× 7" — tolerate either the ASCII ``x`` or the U+00D7
+    // multiplication sign that the component uses.
+    expect(await screen.findByText(/[×x]\s*7/i)).toBeInTheDocument()
+  })
+
   it('navigates via the backend-provided navigation_url on row click', async () => {
     mockList.mockResolvedValue(makeResponse([
       {

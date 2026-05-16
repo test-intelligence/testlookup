@@ -314,6 +314,11 @@ async def get_or_create_review(
     )
     db.add(row)
     await db.flush()
+    # Materialise server-side defaults (created_at / updated_at) so callers
+    # that serialize the row before the request commits don't trigger a
+    # sync lazy-load on the expired columns — that path raises
+    # ``sqlalchemy.exc.MissingGreenlet`` inside the async session.
+    await db.refresh(row)
     return row
 
 
@@ -340,6 +345,12 @@ async def update_review(
         datetime.now(timezone.utc) if state != "pending" else None
     )
     await db.flush()
+    # The ``updated_at`` column is recomputed server-side via
+    # ``onupdate=func.now()`` and gets expired after flush. Refresh so a
+    # subsequent attribute read (e.g. Pydantic response serialization
+    # before the request commits) doesn't fire a sync lazy-load and raise
+    # ``MissingGreenlet``.
+    await db.refresh(review)
     logger.info(
         "suite_review_updated",
         review_id=str(review.id),

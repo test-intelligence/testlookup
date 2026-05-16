@@ -1,0 +1,69 @@
+# Build-context exclusions for the backend image.
+#
+# This file is read by ``docker build`` when the context is
+# ``backend/`` (see homelabsetup/deploy-homelab.sh:346). Without it,
+# Docker tries to ship every file under backend/ to the daemon — which
+# (a) makes the context huge (~70 MB before this file), (b) breaks on
+# Windows when pytest-owned directories like ``.pytest_cache`` are
+# permission-locked, and (c) busts the image cache on unrelated edits
+# (a single test run changes ``.pytest_cache/v/cache/lastfailed`` and
+# invalidates every cached layer after COPY).
+
+# ── Python build artifacts / caches ──────────────────────────────────
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# ── Local virtualenvs (don't ship into the image) ────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Secrets / per-developer config ───────────────────────────────────
+# .env files contain DATABASE_URL, JWT_SECRET_KEY, LLM API keys, etc.
+# Production config is injected via k8s Secrets — never via image bake.
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+credentials.json
+
+# ── IDE / OS clutter ─────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ── Logs ─────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Test artifacts the SDK build context staging leaves behind ───────
+# (deploy-homelab.sh stages client SDKs INTO backend/clients/ before
+# building; pytest_cache from a prior local run can be there too.)
+clients/**/__pycache__/
+clients/**/.pytest_cache/
+clients/**/target/
+clients/**/node_modules/
+
+# ── Documentation / READMEs that don't need to be in the image ───────
+README.md
+*.md
+docs/

@@ -114,6 +114,16 @@ async def test_list_hydrates_rows_and_builds_navigation_url():
     db.execute = AsyncMock(side_effect=[
         _count_result(1),
         _list_result([row]),
+        # Third call is the per-test failure-count grouping query.
+        _list_result([
+            SimpleNamespace(
+                project_id=row.project_id,
+                suite_name=row.suite_name,
+                class_name=row.class_name,
+                test_name=row.test_name,
+                n=1,
+            ),
+        ]),
     ])
     user = SimpleNamespace(id=uuid.uuid4())
 
@@ -128,6 +138,7 @@ async def test_list_hydrates_rows_and_builds_navigation_url():
     assert item.project_name == "GoogleSearch"
     # navigation_url drives the row click handler — keep it stable.
     assert item.navigation_url == f"/runs/{run_id}/tests/{case_id}"
+    assert item.failure_count == 1
 
 
 @pytest.mark.asyncio
@@ -157,6 +168,7 @@ async def test_list_truncates_long_error_message():
     db.execute = AsyncMock(side_effect=[
         _count_result(1),
         _list_result([row]),
+        _list_result([]),  # failure-count grouping — no aggregation rows OK
     ])
     user = SimpleNamespace(id=uuid.uuid4())
 
@@ -167,6 +179,71 @@ async def test_list_truncates_long_error_message():
     # 280-char cap with ellipsis = 280 chars total.
     assert len(result.items[0].error_message) == 280
     assert result.items[0].error_message.endswith("...")
+    # No grouping row matched → default failure_count = 1.
+    assert result.items[0].failure_count == 1
+
+
+@pytest.mark.asyncio
+async def test_list_attaches_per_test_failure_count_from_grouping_query():
+    """Each row gets ``failure_count`` = count of same-test failures in the
+    selected window so the inbox can surface repeat offenders.
+    Grouping key is (project_id, suite_name, class_name, test_name)."""
+    from app.routers.my_failures import list_my_assigned_failures
+
+    project_id = uuid.uuid4()
+    # Two rows for the same logical test (different runs) + one unrelated row.
+    repeat_row_a = SimpleNamespace(
+        id=uuid.uuid4(),
+        test_name="test_flaky",
+        suite_name="checkout-api",
+        class_name="com.example.CheckoutTests",
+        status="FAILED",
+        severity="major",
+        failure_category=None,
+        error_message=None,
+        duration_ms=None,
+        created_at=datetime.now(timezone.utc),
+        test_run_id=uuid.uuid4(),
+        build_number=None,
+        project_id=project_id,
+        project_name="P",
+    )
+    repeat_row_b = SimpleNamespace(**{**repeat_row_a.__dict__, "id": uuid.uuid4(), "test_run_id": uuid.uuid4()})
+    other_row = SimpleNamespace(**{**repeat_row_a.__dict__, "id": uuid.uuid4(), "test_name": "test_other"})
+
+    grouping = [
+        SimpleNamespace(
+            project_id=project_id,
+            suite_name="checkout-api",
+            class_name="com.example.CheckoutTests",
+            test_name="test_flaky",
+            n=5,
+        ),
+        SimpleNamespace(
+            project_id=project_id,
+            suite_name="checkout-api",
+            class_name="com.example.CheckoutTests",
+            test_name="test_other",
+            n=1,
+        ),
+    ]
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _count_result(3),
+        _list_result([repeat_row_a, repeat_row_b, other_row]),
+        _list_result(grouping),
+    ])
+    user = SimpleNamespace(id=uuid.uuid4())
+
+    result = await list_my_assigned_failures(
+        project_id=None, days=7, page=1, size=25, db=db, current_user=user,
+    )
+
+    by_test = {item.test_name: item.failure_count for item in result.items}
+    # Both occurrences of the repeating test share the same count.
+    assert [item.failure_count for item in result.items if item.test_name == "test_flaky"] == [5, 5]
+    assert by_test["test_other"] == 1
 
 
 # ── count endpoint ─────────────────────────────────────────────────────────

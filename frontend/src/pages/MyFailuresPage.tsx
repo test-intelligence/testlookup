@@ -142,13 +142,24 @@ export default function MyFailuresPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Project · Build</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
+                <th
+                  className="px-4 py-3 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider"
+                  title={`Failures of this test in the last ${days === 1 ? '24 hours' : `${days} days`}`}
+                >
+                  Failures
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Age</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider w-4">{/* open */}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {data.items.map(item => (
-                <FailureRow key={item.id} item={item} onOpen={() => navigate(item.navigation_url)} />
+                <FailureRow
+                  key={item.id}
+                  item={item}
+                  windowDays={days}
+                  onOpen={() => navigate(item.navigation_url)}
+                />
               ))}
             </tbody>
           </table>
@@ -164,8 +175,26 @@ export default function MyFailuresPage() {
   )
 }
 
-function FailureRow({ item, onOpen }: { item: MyFailureItem; onOpen: () => void }) {
+function FailureRow({
+  item,
+  windowDays,
+  onOpen,
+}: {
+  item: MyFailureItem
+  windowDays: number
+  onOpen: () => void
+}) {
   const dot = severityDot(item.severity)
+  const count = item.failure_count ?? 1
+  const windowLabel = windowDays === 1 ? '24h' : `${windowDays}d`
+  // Visual emphasis scales with repetition — a single failure stays neutral,
+  // 2-4 is amber, 5+ is red so repeat offenders pop without screen-real-estate cost.
+  const countTone =
+    count >= 5
+      ? 'bg-red-900/40 text-red-300'
+      : count >= 2
+      ? 'bg-amber-900/30 text-amber-300'
+      : 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'
   return (
     <tr
       onClick={onOpen}
@@ -192,6 +221,14 @@ function FailureRow({ item, onOpen }: { item: MyFailureItem; onOpen: () => void 
       <td className="px-4 py-3">
         <span className={clsx('text-[11px] px-2 py-0.5 rounded font-medium', statusBadgeClass(item.status))}>
           {item.status}
+        </span>
+      </td>
+      <td className="px-4 py-3 text-right">
+        <span
+          className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium tabular-nums', countTone)}
+          title={`Failed ${count} time${count === 1 ? '' : 's'} in the last ${windowLabel}`}
+        >
+          × {count}
         </span>
       </td>
       <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">
