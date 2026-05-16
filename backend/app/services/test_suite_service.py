@@ -223,6 +223,33 @@ async def sync_canonical_test_cases(
     )
     run_cases = list(cases_result.scalars().all())
     if not run_cases:
+        # Live-stream gap fallback: a run can land in ``test_runs`` with a
+        # populated ``primary_suite_name`` aggregate but zero ``test_cases``
+        # rows when the Redis event buffer was evicted before
+        # ``persist_live_session`` read it (or when an SDK only sends
+        # heartbeats without per-test events). Without this branch, the
+        # finalize pipeline early-returns and ``TestSuite`` never gets
+        # created — surfacing as "suite missing on /suites and /test-management"
+        # bug reports. Read-side fallbacks (router union queries, list_test_suites
+        # backfill) work around the gap, but the right place to close it
+        # is here: materialise the TestSuite row at write time so all
+        # catalog consumers see a consistent view.
+        run_row = await db.execute(
+            select(TestRun).where(TestRun.id == run_id)
+        )
+        test_run = run_row.scalar_one_or_none()
+        suite_name = (
+            (test_run.primary_suite_name or "").strip() if test_run else ""
+        )
+        if suite_name:
+            await get_or_create_suite_by_name(db, project_id, suite_name)
+            counts["added"] = 1
+            logger.info(
+                "canonical_sync_aggregate_only",
+                project_id=str(project_id),
+                run_id=str(run_id),
+                suite_name=suite_name,
+            )
         return counts
 
     # ── Resolve TestSuite for every suite_name in the run ────────

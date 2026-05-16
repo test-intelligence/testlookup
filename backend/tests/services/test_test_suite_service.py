@@ -109,14 +109,75 @@ def _make_test_case(fingerprint: str, suite_name: str | None, test_name: str = "
 
 @pytest.mark.asyncio
 async def test_sync_canonical_no_cases_returns_zero_counts():
+    """The empty-cases path with NO primary_suite_name fallback returns
+    the zero-count summary unchanged. Live-stream-gap branch is exercised
+    in ``test_sync_canonical_creates_test_suite_from_primary_suite_name``."""
     empty_result = FakeExecuteResult()
     empty_result.scalars = lambda: SimpleNamespace(all=lambda: [])
+    # Second execute call (TestRun lookup) returns scalar None — no primary_suite_name
+    # to fall back on, so the fallback branch is a no-op.
+    no_run_result = FakeExecuteResult(scalar_value=None)
 
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=empty_result)
+    db.execute = AsyncMock(side_effect=[empty_result, no_run_result])
 
     result = await svc.sync_canonical_test_cases(db, uuid.uuid4(), uuid.uuid4())
     assert result == {"added": 0, "updated": 0, "linked": 0, "skipped": 0}
+
+
+@pytest.mark.asyncio
+async def test_sync_canonical_creates_test_suite_from_primary_suite_name():
+    """Regression for live-stream-gap missing suites (CLAUDE.md pitfall #15).
+
+    When ``test_cases`` is empty for a run BUT ``test_runs.primary_suite_name``
+    is populated (typical state when the SDK heartbeat updates run aggregates
+    but the per-event Redis buffer was evicted before persist), the finalize
+    step must still materialise a ``TestSuite`` row so /suites and
+    /test-management surface the suite. Without this, the run is "invisible
+    catalog-wise" until a manual reaper runs.
+    """
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+
+    empty_cases = FakeExecuteResult()
+    empty_cases.scalars = lambda: SimpleNamespace(all=lambda: [])
+
+    # The TestRun row carries the primary_suite_name set by stream_service
+    # during live ingest.
+    test_run = SimpleNamespace(
+        id=run_id,
+        primary_suite_name="Realistic TestNG client examples",
+    )
+    run_lookup = FakeExecuteResult(scalar_value=test_run)
+
+    # get_or_create_suite_by_name (called by the new fallback) does a
+    # SELECT TestSuite first; return None so the create branch fires.
+    no_existing_suite = FakeExecuteResult(scalar_value=None)
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[empty_cases, run_lookup, no_existing_suite])
+    # Stamp ids on flush to mimic SQLAlchemy default uuid generation, so
+    # the seeded suite owner path (no-op since the project has no
+    # default_qa_lead_user_id) doesn't bomb on a None id.
+    def _stamp(*_a, **_k):
+        for call in db.add.call_args_list:
+            obj = call.args[0]
+            if getattr(obj, "id", None) is None:
+                obj.id = uuid.uuid4()
+    db.flush = AsyncMock(side_effect=_stamp)
+
+    result = await svc.sync_canonical_test_cases(db, project_id, run_id)
+
+    # The fallback added the TestSuite via db.add(...) — pin that we
+    # actually created the row, not just early-returned.
+    added_args = [c.args[0] for c in db.add.call_args_list]
+    suite_names = [
+        getattr(o, "name", None) for o in added_args
+        if hasattr(o, "name")
+    ]
+    assert "Realistic TestNG client examples" in suite_names
+    # And the count map reflects the addition for observability.
+    assert result["added"] == 1
 
 
 @pytest.mark.asyncio
