@@ -9,22 +9,44 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { refreshSuites, useSuites } from '@/hooks/useSuites'
 import { suitesService } from '@/services/suitesService'
+import type { Project } from '@/types/projects'
 import type { TestSuite } from '@/types/suites'
 
 interface CreateModalProps {
-  projectId: string
+  // Pre-resolved project for single-project mode. When ``null``, the
+  // modal renders a project picker and reads its choice from
+  // ``projectOptions``. Pairing the two props keeps the single-project
+  // path zero-config — callers that already know the project pass
+  // ``defaultProjectId`` and never need to touch ``projectOptions``.
+  defaultProjectId: string | null
+  projectOptions: Project[]
   onClose: () => void
   onCreated: () => void
 }
 
-function CreateSuiteModal({ projectId, onClose, onCreated }: CreateModalProps) {
+function CreateSuiteModal({
+  defaultProjectId,
+  projectOptions,
+  onClose,
+  onCreated,
+}: CreateModalProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
+  // When ``defaultProjectId`` is supplied (single-project mode) we lock
+  // the picker to it. In All-Projects mode the picker starts empty and
+  // the user must choose explicitly — there's no sensible default to
+  // pre-fill across N projects, and silently picking the alphabetically
+  // first one would cause "I created a suite in the wrong place"
+  // mistakes that are hard to undo.
+  const [pickedProjectId, setPickedProjectId] = useState<string>(defaultProjectId ?? '')
+  const showProjectPicker = defaultProjectId === null
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) return
+    const projectId = defaultProjectId ?? pickedProjectId
+    if (!projectId) return
     setSaving(true)
     try {
       await suitesService.create({
@@ -32,7 +54,12 @@ function CreateSuiteModal({ projectId, onClose, onCreated }: CreateModalProps) {
         name: name.trim(),
         description: description.trim() || null,
       })
-      toast.success(`Suite "${name.trim()}" created`)
+      const targetName = projectOptions.find((p) => p.id === projectId)?.name
+      toast.success(
+        targetName
+          ? `Suite "${name.trim()}" created in ${targetName}`
+          : `Suite "${name.trim()}" created`,
+      )
       onCreated()
       onClose()
     } catch (err: unknown) {
@@ -55,9 +82,37 @@ function CreateSuiteModal({ projectId, onClose, onCreated }: CreateModalProps) {
           </button>
         </div>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          {showProjectPicker && (
+            // All-Projects mode: the page-level scope doesn't pin a
+            // single project, so the user must choose one for this
+            // suite. Showing only projects the user is a member of (the
+            // store-cached list) is the right scope — backend would
+            // reject any other id with 403 anyway.
+            <div>
+              <label htmlFor="suite-project" className="text-sm text-[var(--color-text-muted)]">Project</label>
+              <select
+                id="suite-project"
+                value={pickedProjectId}
+                onChange={(e) => setPickedProjectId(e.target.value)}
+                required
+                className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]"
+              >
+                <option value="">Select a project…</option>
+                {projectOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              {projectOptions.length === 0 && (
+                <p className="mt-1 text-xs text-amber-400">
+                  No projects available — you must be a member of at least one project to create a suite.
+                </p>
+              )}
+            </div>
+          )}
           <div>
-            <label className="text-sm text-[var(--color-text-muted)]">Name</label>
+            <label htmlFor="suite-name" className="text-sm text-[var(--color-text-muted)]">Name</label>
             <input
+              id="suite-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -68,8 +123,9 @@ function CreateSuiteModal({ projectId, onClose, onCreated }: CreateModalProps) {
             />
           </div>
           <div>
-            <label className="text-sm text-[var(--color-text-muted)]">Description (optional)</label>
+            <label htmlFor="suite-description" className="text-sm text-[var(--color-text-muted)]">Description (optional)</label>
             <textarea
+              id="suite-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
@@ -86,7 +142,11 @@ function CreateSuiteModal({ projectId, onClose, onCreated }: CreateModalProps) {
             </button>
             <button
               type="submit"
-              disabled={saving || !name.trim()}
+              disabled={
+                saving ||
+                !name.trim() ||
+                (showProjectPicker && !pickedProjectId)
+              }
               className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             >
               {saving ? 'Creating…' : 'Create suite'}
@@ -103,12 +163,22 @@ export default function SuitesPage() {
   const project = useProjectStore((s) => s.activeProject)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+  // Member-of project list, populated by the store on app boot and
+  // refreshed by TopBar / login flows. Reading directly from the store
+  // avoids a second projects fetch just for the create-suite picker.
+  const accessibleProjects = useProjectStore((s) => s.projects)
   const { canAccessManagement, hasRole } = usePermissions()
   const canEdit = canAccessManagement || hasRole('QA_ENGINEER')
   const canSetDefault = hasRole('QA_LEAD')
 
   const { data, isLoading, error } = useSuites()
   const [showCreate, setShowCreate] = useState(false)
+  // Create is allowed when the user has the role AND either a specific
+  // project is active OR they have at least one accessible project to
+  // pick from in All-Projects mode. The second condition saves a
+  // failure-after-submit when the user has zero memberships.
+  const canCreate =
+    canEdit && (!isAllProjects ? !!project : accessibleProjects.length > 0)
 
   async function handleSetDefault(suite: TestSuite) {
     try {
@@ -164,7 +234,7 @@ export default function SuitesPage() {
         title="Test Suites"
         subtitle="Project-scoped groupings of test cases. The default suite catches new cases ingested without an explicit suite name."
         actions={
-          canEdit && !isAllProjects && project ? (
+          canCreate ? (
             <button
               onClick={() => setShowCreate(true)}
               className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
@@ -245,9 +315,12 @@ export default function SuitesPage() {
         </div>
       )}
 
-      {showCreate && project && (
+      {showCreate && (
         <CreateSuiteModal
-          projectId={project.id}
+          // Single-project mode pre-pins the project; All-Projects mode
+          // passes ``null`` so the modal's picker drives the choice.
+          defaultProjectId={!isAllProjects && project ? project.id : null}
+          projectOptions={accessibleProjects}
           onClose={() => setShowCreate(false)}
           onCreated={() => refreshSuites()}
         />

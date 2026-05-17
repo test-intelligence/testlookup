@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.postgres import LaunchStatus, LiveSession, Project, TestRun
 from app.models.schemas import (
     ActiveSessionsResponse,
@@ -265,6 +266,54 @@ async def close_session(
 
     await upsert_test_run(db, session, state or {})
 
+    # ── 15-day durable event archive ───────────────────────────────────────
+    # The Redis buffer that holds raw SDK events for a live run has a
+    # 25-hour TTL. ``persist_live_session`` normally drains it minutes after
+    # close_session fires, but a worker crash / transient error can leave
+    # ``test_cases`` rows missing once the TTL lapses — and the user reports
+    # "Recover from buffer" failing on day 2+ of a run they want to revisit.
+    # Copy the events to ``TestRun.event_archive`` *before* queuing persist
+    # so the Run Intelligence page stays recoverable for 15 days from this
+    # moment regardless of the Redis TTL. Best-effort: a failure here must
+    # not block session close.
+    try:
+        from app.streams import LIVE_TESTCASES_KEY
+        from app.db.redis_client import get_redis
+        from app.models.postgres import TestRun
+
+        redis = get_redis()
+        list_key = LIVE_TESTCASES_KEY.format(run_id=session.run_id)
+        raw_events = await redis.lrange(list_key, 0, -1)
+        decoded: list = []
+        import json as _json
+        for raw in raw_events:
+            try:
+                decoded.append(_json.loads(raw))
+            except Exception:
+                continue
+        if decoded:
+            run_uuid = canonical_test_run_uuid(session.run_id)
+            tr = (
+                await db.execute(select(TestRun).where(TestRun.id == run_uuid))
+            ).scalar_one_or_none()
+            if tr is not None:
+                tr.event_archive = decoded
+                tr.event_archive_at = now
+                logger.info(
+                    "live_event_archive_written",
+                    run_id=session.run_id,
+                    event_count=len(decoded),
+                )
+    except Exception as arc_err:
+        # Archive failures are non-fatal — persist_live_session reads from
+        # Redis first, so as long as the buffer is fresh recovery still
+        # works. The user only loses the long-tail (>25h) recovery path.
+        logger.warning(
+            "live_event_archive_failed",
+            session_id=session_id,
+            error=str(arc_err),
+        )
+
     # Release linking — explicit session.release_name wins; otherwise fall
     # back to the project's default release (migration 0077). Wrapped in a
     # broad try/except so a release-linking error never blocks session close.
@@ -287,6 +336,13 @@ async def close_session(
 
     try:
         from app.worker.tasks import persist_live_session
+        from app.worker.ingestion_routing import queue_for_project
+
+        # Phase 2.4 — route per-project to a shard queue so one noisy
+        # project can't starve another's persist throughput. Falls back
+        # to the legacy ``ingestion`` queue when sharding is disabled
+        # (``LIVE_INGEST_SHARD_COUNT=0`` — used in tests).
+        target_queue = queue_for_project(str(session.project_id))
 
         persist_live_session.apply_async(
             kwargs={
@@ -299,18 +355,18 @@ async def close_session(
                 "commit_hash": session.commit_hash or "",
                 "final_state": state or {},
             },
-            queue="ingestion",
+            queue=target_queue,
             priority=7,
         )
-        logger.info(f"queued_persist_live_session session_id={session_id}")
+        logger.info(
+            f"queued_persist_live_session session_id={session_id} queue={target_queue}"
+        )
     except Exception as exc:
         logger.warning(
             f"persist_live_session_queue_failed session_id={session_id}: {exc}"
         )
 
     try:
-        from app.worker.tasks import run_agent_pipeline
-
         # ``session.run_id`` is the SDK-supplied slug (e.g. ``local-abc12345``),
         # not necessarily a UUID. The pipeline task writes to
         # ``agent_pipeline_runs.test_run_id`` which is ``UUID(as_uuid=True)``
@@ -322,16 +378,21 @@ async def close_session(
         # persist_live_session do.
         canonical_run_uuid = canonical_test_run_uuid(session.run_id)
 
-        run_agent_pipeline.apply_async(
-            kwargs={
-                "test_run_id": str(canonical_run_uuid),
-                "project_id": str(session.project_id),
-                "build_number": session.build_number or session_id,
-                "workflow_type": "offline",
-            },
-            queue="ai_analysis",
-            priority=6,
-            countdown=45,
+        # Phase 3 — route through the debouncer so per-project bursts
+        # don't fire 500 LLM pipelines at once. The debouncer also
+        # applies the daily $10 LLM budget cap (services/llm_cost_budget)
+        # before fanning out, so projects over budget transparently
+        # degrade to rules/ml instead of falling off the cliff.
+        # ``AI_PIPELINE_DEBOUNCE_ENABLED=False`` reverts to immediate
+        # dispatch for tests + any deploy that hasn't enabled the beat
+        # schedule yet.
+        from app.services.ai_pipeline_debouncer import enqueue_pipeline_for_run
+
+        await enqueue_pipeline_for_run(
+            project_id=str(session.project_id),
+            test_run_id=str(canonical_run_uuid),
+            build_number=session.build_number or session_id,
+            workflow_type="offline",
         )
         logger.info(
             f"ai_pipeline_queued_from_live session_id={session_id} "
@@ -341,6 +402,21 @@ async def close_session(
         logger.warning(
             f"ai_pipeline_queue_failed session_id={session_id}: {exc}"
         )
+
+
+async def _resolve_project_id_for_run(run_id: str) -> Optional[str]:
+    """Helper used by ``_persist_event_batch`` to attribute the batch's
+    test-event count to the right project for the high-volume detector.
+    Best-effort: returns None on lookup failure and the detector simply
+    skips this batch (the rolling counter is observability, not auth)."""
+    try:
+        from app.db.postgres import AsyncSessionLocal
+        run_uuid = canonical_test_run_uuid(run_id)
+        async with AsyncSessionLocal() as db:
+            run = await db.get(TestRun, run_uuid)
+            return str(run.project_id) if run else None
+    except Exception:
+        return None
 
 
 async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
@@ -387,6 +463,21 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
                 await await_if_needed(pipe.hincrby(state_key, counter_field, 1))
             last_test_name = event_dict.get("test_name") or last_test_name
 
+    # Phase 2.1 — bound the per-run list to LIVE_BUFFER_MAX_EVENTS_PER_RUN
+    # so a single long-lived run can't grow the Redis footprint unbounded
+    # even while it's within rate-limit budget. ``LTRIM`` keeps the
+    # NEWEST events (oldest get evicted) so the dashboard always shows
+    # the most recent activity. The trade-off: if persist_live_session
+    # is delayed past the buffer cap, the dropped events are lost for
+    # the per-test rollup. Aggregates remain accurate because they
+    # come from HINCRBY counters that we DON'T trim. See
+    # docs/SCALABLE_INGESTION_DESIGN.md § Phase 2.
+    buffer_cap = settings.LIVE_BUFFER_MAX_EVENTS_PER_RUN
+    if buffer_cap > 0:
+        # LTRIM start=-N keeps the last N entries. Cheap O(1) operation
+        # on Redis Lists; we run it on every batch so the cap is enforced
+        # as soon as it's exceeded rather than only at TTL refresh.
+        await await_if_needed(pipe.ltrim(list_key, -buffer_cap, -1))
     await await_if_needed(pipe.expire(list_key, 90_000))  # 25 h TTL — same as consumer's buffer
     if last_test_name:
         await await_if_needed(pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name}))
@@ -395,7 +486,60 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
     await await_if_needed(pipe.expire(state_key, 86_400))
     await pipe.execute()
 
+    # Phase 4.1 — feed the high-volume detector with the test_result
+    # event count from this batch. Project_id is looked up lazily (one
+    # cached DB read per run) and never blocks the ingest path —
+    # ``record_test_events`` swallows its own errors.
+    test_event_count = sum(
+        1 for e in events
+        if (e.model_dump() if hasattr(e, "model_dump") else dict(e)).get("event_type") == "test_result"
+    )
+    if test_event_count > 0:
+        try:
+            from app.services.high_volume_detector import record_test_events
+            project_id = await _resolve_project_id_for_run(run_id)
+            if project_id:
+                await record_test_events(project_id, test_event_count)
+        except Exception as exc:
+            logger.warning(
+                "high_volume_record_failed run_id=%s error=%s", run_id, exc,
+            )
+
     return accepted
+
+
+async def resolve_project_id_for_session(
+    session_id: str, x_session_token: str,
+) -> Optional[uuid.UUID]:
+    """Look up the project_id for a live session, given its session-token.
+
+    Used by the ``/stream/events/batch`` admission gate so the per-project
+    rate-limit charge lands on the right bucket. Returns ``None`` when
+    the session token isn't recognised — the caller treats that as
+    "skip the rate-limit charge", and ``ingest_event_batch`` will then
+    raise its own 401 a few lines later. We don't want to surface the
+    token failure twice or burn a rate-limit token on an invalid auth.
+    """
+    redis = get_redis()
+    try:
+        stored = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
+    except Exception:
+        return None
+    if not stored or stored != session_id:
+        return None
+    # Look up the project_id on the LiveSession row. The cheaper path
+    # would be to cache (token → project_id) in Redis at session-create
+    # time, but that's a tier-2 optimisation; the per-request DB cost
+    # here is one indexed PK lookup.
+    from app.db.postgres import AsyncSessionLocal
+
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
+        return None
+    async with AsyncSessionLocal() as db:
+        session = await db.get(LiveSession, sid)
+        return session.project_id if session else None
 
 
 async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:

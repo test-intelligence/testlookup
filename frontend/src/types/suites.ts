@@ -77,3 +77,13 @@ export interface CanonicalRunHistoryResponse {
   items: CanonicalRunHistoryItem[]
   total: number
 }
+
+// Shape of POST /api/v1/canonical-test-cases/bulk-link — backend caps the
+// batch at 200 and atomically rejects the whole call on any cross-project
+// id. ``missing_ids`` surfaces ids the UI selected that no longer resolve
+// (deleted in flight) so the page can clear them from selection.
+export interface CanonicalTestCaseBulkLinkResponse {
+  moved: number
+  skipped_already_in_target: number
+  missing_ids: string[]
+}

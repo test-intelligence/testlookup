@@ -68,6 +68,7 @@ const CoveragePage = lazy(() => import('@/pages/CoveragePage'))
 const SuiteDetailPage = lazy(() => import('@/pages/SuiteDetailPage'))
 const SuitesPage = lazy(() => import('@/pages/SuitesPage'))
 const SuiteCasesPage = lazy(() => import('@/pages/SuiteCasesPage'))
+const CanonicalDetailPage = lazy(() => import('@/pages/CanonicalDetailPage'))
 const FailureAnalysisPage = lazy(() => import('@/pages/FailureAnalysisPage'))
 const TrendsPage = lazy(() => import('@/pages/TrendsPage'))
 const DefectsPage = lazy(() => import('@/pages/DefectsPage'))
@@ -135,6 +136,7 @@ const appRoutes: AppRoute[] = [
   { path: 'coverage/suite', component: SuiteDetailPage },
   { path: 'suites', component: SuitesPage },
   { path: 'suites/:suiteId', component: SuiteCasesPage },
+  { path: 'canonical-test-cases/:canonicalId', component: CanonicalDetailPage },
   { path: 'failures', component: FailureAnalysisPage },
   { path: 'trends', component: TrendsPage },
   { path: 'defects', component: DefectsPage },

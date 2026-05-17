@@ -205,6 +205,14 @@ class TestRun(Base):
     primary_suite_name: Mapped[Optional[str]] = mapped_column(String(500), index=True)
     suite_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
+    # 15-day durable archive of the raw SDK events for live-stream runs.
+    # Written at session-close time so /runs/{id}/recover-live can replay
+    # test_case rows long after the 25-hour Redis buffer TTL has lapsed
+    # (migration 0086, 2026-05-16). Null for non-live runs and for live
+    # runs whose archive has been purged after the 15-day window.
+    event_archive: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    event_archive_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -1051,7 +1059,13 @@ class ManagedTestCase(Base):
     priority: Mapped[str] = mapped_column(String(20), default="medium")       # critical|high|medium|low
     severity: Mapped[str] = mapped_column(String(20), default="major")        # blocker|critical|major|minor|trivial
     feature_area: Mapped[Optional[str]] = mapped_column(String(500))
-    suite_name: Mapped[Optional[str]] = mapped_column(String(500))            # Optional suite grouping
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))            # Legacy free-text suite label; superseded by test_suite_id when set.
+    # Migration 0087 — structured anchor to the canonical suite entity.
+    # Nullable so historical rows + create-without-suite paths keep working;
+    # SET NULL on delete so a suite drop doesn't cascade authored cases away.
+    test_suite_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="SET NULL"), nullable=True
+    )
     tags: Mapped[Optional[list]] = mapped_column(JSON)              # list[str]
 
     # Lifecycle state machine

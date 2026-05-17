@@ -1,7 +1,7 @@
 """Test run and test case list endpoints."""
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -292,23 +292,63 @@ async def recover_live_run_from_buffer(
             detail=f"Run already has {tc_count} test case rows — nothing to recover.",
         )
 
-    # The Redis buffer key uses whatever the SDK supplied as run_id (could
-    # be a slug or this UUID). Try the UUID form first; that's what live
-    # runs created in the post-2026-05 deploys use. If the buffer key for
-    # the bare UUID is empty, we have nothing to recover.
+    # Recovery sources, in preference order:
+    #   1. Live Redis buffer (25-hour TTL). Fresh path; what
+    #      persist_live_session would normally read from.
+    #   2. ``TestRun.event_archive`` (migration 0086) — durable copy
+    #      written at close_session time, retained for 15 days. Lets
+    #      users recover per-test rows on day 2+ of a run, well past
+    #      the Redis TTL.
+    # Either source produces the same event payload, so the existing
+    # persist_live_session task does the actual materialisation — we
+    # just stage the payload back into Redis when source 2 wins so the
+    # task can keep its single read path.
     redis = get_redis()
     list_key = LIVE_TESTCASES_KEY.format(run_id=str(run_id))
     buffer_len = await redis.llen(list_key)
-    if not buffer_len:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "The SDK event buffer for this run is empty or has expired "
-                "(25-hour TTL). Re-run the suite, or re-ingest the results "
-                "as a file upload."
-            ),
-        )
+    source = "redis"
 
+    if not buffer_len:
+        # Try the durable archive. The 15-day window is enforced here so
+        # an expired archive surfaces a clear "expired" error rather than
+        # a silent "succeeded but produced nothing".
+        archive = list(run.event_archive or [])
+        archived_at = run.event_archive_at
+        age_days: Optional[float] = None
+        if archived_at is not None:
+            from datetime import datetime as _dt, timezone as _tz
+            now = _dt.now(_tz.utc)
+            age_days = (now - archived_at).total_seconds() / 86400.0
+
+        if not archive or age_days is None or age_days > 15:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No buffered events found. The 25-hour Redis buffer has "
+                    "expired and either no durable archive was written or it "
+                    "is older than the 15-day recovery window. Re-run the "
+                    "suite, or re-ingest the results as a file upload."
+                ),
+            )
+
+        # Stage archived events back into Redis so persist_live_session can
+        # read from its usual location. Use a short TTL so the staging keys
+        # don't pile up; the task drains them quickly and deletes the key
+        # itself on success.
+        import json as _json
+        # Push events one at a time to preserve the JSON-encoded shape
+        # that the original SDK writes (and that persist_live_session
+        # ``json.loads()``-decodes).
+        for ev in archive:
+            await redis.rpush(list_key, _json.dumps(ev))
+        await redis.expire(list_key, 3600)  # 1h is plenty for the worker
+        buffer_len = len(archive)
+        source = "archive"
+
+    # Phase 2.4 — same per-project shard routing the close_session path
+    # uses, so a manual recovery from the dashboard doesn't bypass the
+    # fairness queue.
+    from app.worker.ingestion_routing import queue_for_project
     persist_live_session.apply_async(
         kwargs={
             "run_id": str(run_id),
@@ -324,13 +364,14 @@ async def recover_live_run_from_buffer(
                 "total": run.total_tests or 0,
             },
         },
-        queue="ingestion",
+        queue=queue_for_project(str(run.project_id)),
         priority=7,
     )
     return {
         "queued": True,
         "run_id": str(run_id),
         "buffered_events": buffer_len,
+        "source": source,
         "message": (
             f"Persistence task queued. {buffer_len} buffered events will be "
             "materialised into TestCase rows."

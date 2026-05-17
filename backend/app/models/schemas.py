@@ -1058,6 +1058,10 @@ class ManagedTestCaseCreate(BaseModel):
     priority: str = "medium"
     severity: str = "major"
     feature_area: Optional[str] = None
+    # Free-text suite label (legacy). When set without ``test_suite_id``,
+    # the service resolves-or-creates a matching TestSuite and populates
+    # the FK so authored cases participate in the same catalog graph as
+    # executed ones (migration 0087).
     suite_name: Optional[str] = None
     tags: Optional[List[str]] = None
     estimated_duration_minutes: Optional[int] = None
@@ -1106,6 +1110,10 @@ class ManagedTestCaseResponse(BaseModel):
     severity: str
     feature_area: Optional[str] = None
     suite_name: Optional[str] = None
+    # Structured suite anchor (migration 0087). Null for legacy rows that
+    # haven't been backfilled; new rows created with a ``suite_name`` get
+    # this populated by the service create path.
+    test_suite_id: Optional[uuid.UUID] = None
     tags: Optional[List[Any]] = None
     status: str
     version: int
@@ -1480,6 +1488,27 @@ class CanonicalTestCaseListResponse(BaseModel):
 class CanonicalTestCaseLinkRequest(BaseModel):
     """Move a canonical test case to a different suite within the same project."""
     test_suite_id: uuid.UUID
+
+
+class CanonicalTestCaseBulkLinkRequest(BaseModel):
+    """Move multiple canonical test cases to a different suite within the
+    same project. Pair with ``POST /api/v1/canonical-test-cases/bulk-link``."""
+    target_test_suite_id: uuid.UUID
+    # Hard ceiling matches the service-side ``BULK_LINK_MAX_IDS`` so the
+    # validation 422 happens before the handler runs. The minimum of 1
+    # rules out an empty-body request that does nothing — callers should
+    # not POST a no-op.
+    canonical_ids: List[uuid.UUID] = Field(..., min_length=1, max_length=200)
+
+
+class CanonicalTestCaseBulkLinkResponse(BaseModel):
+    """Outcome of a bulk-link request. ``moved`` and
+    ``skipped_already_in_target`` always sum to the number of ids that
+    actually resolved to a canonical row; ``missing_ids`` lists requested
+    ids that didn't resolve (stale UI selection, deleted in flight)."""
+    moved: int
+    skipped_already_in_target: int
+    missing_ids: List[uuid.UUID]
 
 
 class AIGenerateTestCasesRequest(BaseModel):

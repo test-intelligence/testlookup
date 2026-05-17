@@ -202,7 +202,10 @@ async def finalize_run(
                 )
 
     from app.services.suite_sync_service import sync_suite_membership
-    from app.services.test_suite_service import sync_canonical_test_cases
+    from app.services.test_suite_service import (
+        reconcile_canonical_deletions,
+        sync_canonical_test_cases,
+    )
     from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
 
     await _run_isolated(
@@ -218,6 +221,20 @@ async def finalize_run(
     await _run_isolated(
         "canonical_sync",
         lambda d: sync_canonical_test_cases(d, pid, rid),
+    )
+
+    # Phase I follow-up: project-scoped deletion detection across the last
+    # N runs. sync_canonical_test_cases handles the *appearance* half
+    # (insert new, restore previously-deleted on re-sighting); this step
+    # handles the *disappearance* half. Required before Phase 2b can drop
+    # the legacy suite_memberships ``<suite>-deleted`` bucket.
+    #
+    # Isolated session: a project-wide read sweep + write isn't worth
+    # poisoning the per-run finalize transaction. Reconciler is a no-op
+    # when CANONICAL_DELETION_WINDOW_RUNS == 0 (the cutover-comparison knob).
+    await _run_isolated(
+        "canonical_deletion_reconcile",
+        lambda d: reconcile_canonical_deletions(d, pid),
     )
 
     # 0080: Assign every failed/broken TestCase in this run to the resolved

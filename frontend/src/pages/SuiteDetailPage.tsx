@@ -1,7 +1,7 @@
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
-  Clock, Activity, AlertTriangle, Calendar,
+  Clock, Activity, AlertTriangle, Calendar, FolderTree,
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -11,6 +11,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useSuiteDetail } from '@/hooks/useMetrics'
+import { useSuites } from '@/hooks/useSuites'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailSummary } from '@/types/analytics'
@@ -98,6 +99,17 @@ export default function SuiteDetailPage() {
   const setDays = setStoredDays
 
   const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
+  // The reverse-direction link to the catalog needs a TestSuite *id*,
+  // but the analytics page only knows the name (from the URL). Use the
+  // already-cached ``useSuites`` SWR entry to resolve it. The lookup is
+  // cheap (O(N) over a few dozen suites at most) and the fetch is
+  // shared with the rest of the app; we don't pay for it again here.
+  const { data: allSuites } = useSuites()
+  const catalogSuite = allSuites?.items.find(
+    (s) =>
+      s.name === suiteName &&
+      (activeProjectId === ALL_PROJECTS_ID || s.project_id === activeProjectId),
+  )
 
   if (!project && !isAllProjects) {
     return (
@@ -149,6 +161,27 @@ export default function SuiteDetailPage() {
     </div>
   )
 
+  // Pivot back to the catalog ("what tests live in this suite") from the
+  // analytics view ("how have those tests performed"). Only rendered when
+  // we can resolve the catalog suite id — analytics pages can be reached
+  // for suites that exist as a free-text aggregate on test_runs but
+  // haven't been materialised into a TestSuite row yet (live-stream gap
+  // fallback). For those we hide the link rather than navigating to a
+  // 404'd ``/suites/null`` route.
+  const headerActions = (
+    <div className="flex items-center gap-2">
+      {catalogSuite && (
+        <Link
+          to={`/suites/${catalogSuite.id}`}
+          className="inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm text-[var(--color-text-muted)] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
+        >
+          <FolderTree className="h-4 w-4" /> Open catalog
+        </Link>
+      )}
+      {periodSelector}
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       <button
@@ -160,7 +193,7 @@ export default function SuiteDetailPage() {
       </button>
       <PageHeader
         title={suiteName}
-        actions={periodSelector}
+        actions={headerActions}
       />
 
       {isLoading ? (

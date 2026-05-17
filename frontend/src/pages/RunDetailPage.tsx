@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, GitCompare, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
@@ -8,7 +8,9 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useRun, useTestCases } from '@/hooks/useRuns'
+import { useRun, useRuns, useTestCases } from '@/hooks/useRuns'
+import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
+import type { TestRun } from '@/types/runs'
 import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
@@ -233,6 +235,40 @@ export default function RunDetailPage() {
   useProjectChangeRedirect('/runs', Boolean(runId))
 
   const { data: run } = useRun(runId)
+
+  // Fetch a small page of recent runs for THIS run's suite so the
+  // "Compare with previous run" CTA can pick the chronologically
+  // immediately preceding run. We fetch only when we know the suite
+  // (i.e. ``run.primary_suite_name`` is populated); the conditional
+  // ``suite_name`` param leaves the hook idle for runs without suite
+  // attribution. 50 results is plenty — the previous run is almost
+  // always one or two slots away from the current one.
+  const suiteForCompare = run?.primary_suite_name ?? null
+  const { data: suiteRunsData } = useRuns(
+    suiteForCompare
+      ? { page: 1, size: 50, days: 0, suite_name: suiteForCompare }
+      : undefined,
+  )
+  const suiteRuns = (suiteRunsData?.items ?? []) as TestRun[]
+
+  function handleCompareWithPrevious() {
+    if (!run) return
+    if (!run.primary_suite_name) {
+      toast('This run has no suite attribution — cannot pick a previous-of-same-suite.', { icon: '⚠️' })
+      return
+    }
+    const previous = findPreviousRunOfSuite(run, suiteRuns)
+    const href = buildCompareWithPreviousHref(run, previous)
+    if (!href) {
+      toast(
+        `No earlier run of "${run.primary_suite_name}" found — this may be the first ingested run for the suite.`,
+        { icon: '⚠️' },
+      )
+      return
+    }
+    navigate(href)
+  }
+
   const { data, isLoading, error } = useTestCases(runId, {
     page, size: 25,
     ...(statusFilter && { status: statusFilter }),
@@ -363,6 +399,20 @@ export default function RunDetailPage() {
                   </button>
                 </>
               )}
+              <button
+                type="button"
+                onClick={handleCompareWithPrevious}
+                disabled={!run.primary_suite_name}
+                title={
+                  run.primary_suite_name
+                    ? `Compare this run to the previous run of "${run.primary_suite_name}"`
+                    : 'No suite attribution on this run — cannot pick a previous-of-same-suite'
+                }
+                className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+              >
+                <GitCompare className="h-3.5 w-3.5" />
+                Compare to previous
+              </button>
               <Link
                 to={`/runs/${runId}/intelligence`}
                 className="btn-primary text-xs flex items-center gap-1.5 py-1"
@@ -443,6 +493,9 @@ export default function RunDetailPage() {
                 // ``Recover from buffer`` button below triggers a fresh
                 // persist task that idempotency-checks based on actual
                 // TestCase row count rather than a stuck dedup flag.
+                // Migration 0086 also archives the events on the TestRun
+                // row at session-close time so the 15-day fallback path
+                // works even after the 25-hour Redis TTL has lapsed.
                 return (
                   <>
                     <p className="text-[var(--color-text)]">
@@ -453,10 +506,12 @@ export default function RunDetailPage() {
                       but per-test details aren't loaded yet.
                     </p>
                     <p className="text-xs">
-                      The SDK's event buffer is held in Redis for 25 hours after
-                      a run closes. If persistence didn't finish first time
-                      (worker crash, transient error), try replaying the
-                      buffer below. After that window, re-run the suite or
+                      Buffered events are held in Redis for 25 hours after a run
+                      closes, and a durable copy is archived on the run for{' '}
+                      <strong>up to 15 days</strong>. If persistence didn&apos;t
+                      finish on the first try (worker crash, transient error),
+                      use the button below to replay from whichever source is
+                      still available. After 15 days, re-run the suite or
                       re-ingest the results as a file upload.
                     </p>
                     <div className="flex items-center gap-3 mt-1">

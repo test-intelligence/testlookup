@@ -34,6 +34,11 @@ def _fake_caller_db():
     db.delete = AsyncMock()
     db.flush = AsyncMock()
     db.execute = AsyncMock()
+    # ``create_subscription`` now project-guards with ``db.get(Project,
+    # project_id)`` (see Phase-OS-Deploy follow-up). Default to a non-None
+    # sentinel so the guard passes; tests targeting the missing-project
+    # path override this with ``AsyncMock(return_value=None)``.
+    db.get = AsyncMock(return_value=SimpleNamespace(id="project-sentinel"))
     db.commit = AsyncMock(side_effect=AssertionError(
         "caller's session must not be committed — get_db owns the transaction"
     ))

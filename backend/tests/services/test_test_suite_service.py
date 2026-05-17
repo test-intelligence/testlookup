@@ -295,3 +295,396 @@ async def test_sync_canonical_skips_cases_with_no_fingerprint():
     result = await svc.sync_canonical_test_cases(db, project_id, run_id)
     assert result["skipped"] == 1
     assert result["added"] == 0
+
+
+# ── reconcile_canonical_deletions ───────────────────────────────────────────
+
+
+def _canonical(*, fingerprint: str, status: str = "active") -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        test_fingerprint=fingerprint,
+        status=status,
+        deleted_at_run_id=None,
+        last_seen_run_id=None,
+        test_name="test_x",
+        class_name="C",
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletion_short_circuits_when_window_is_zero():
+    """``CANONICAL_DELETION_WINDOW_RUNS=0`` is the Phase-2b cutover knob —
+    the reconciler must be a hard no-op so canonical vs legacy
+    suite_memberships row-count comparisons stay clean."""
+    project_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute = AsyncMock()  # must NOT be called
+
+    result = await svc.reconcile_canonical_deletions(
+        db, project_id, window_runs=0
+    )
+    assert result == {"deleted": 0, "unchanged": 0, "window_size": 0}
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletion_noop_when_project_has_no_runs():
+    """An empty project must not have its catalog wiped on the very first
+    reconciler tick after migration — without recent runs there is nothing
+    to compare against and the safe answer is 'do nothing'."""
+    project_id = uuid.uuid4()
+    no_runs = FakeExecuteResult()
+    no_runs.all = lambda: []  # zero recent runs
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=no_runs)
+
+    result = await svc.reconcile_canonical_deletions(
+        db, project_id, window_runs=5
+    )
+    assert result["deleted"] == 0
+    assert result["window_size"] == 0
+    # Only the runs lookup was issued — no fingerprint scan, no canonical sweep.
+    assert db.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletion_marks_stale_active_canonicals_only():
+    """The reconciler's core contract: an active canonical whose
+    fingerprint is missing from every run in the window is marked
+    ``deleted``; one that's present in the window is left alone; rows
+    with non-active statuses (``deleted``, ``needs_review``) are never
+    touched (state machine ownership belongs to other paths)."""
+    project_id = uuid.uuid4()
+    recent_run_ids = [uuid.uuid4() for _ in range(3)]
+
+    # Three active canonicals: stale, present, and previously-deleted-but-active-now
+    # would be a contradiction so we use stale + present + needs_review.
+    stale = _canonical(fingerprint="stale-fp")
+    present = _canonical(fingerprint="present-fp")
+    # needs_review must NOT be touched even if absent — only "active" is in scope.
+    needs_review = _canonical(fingerprint="absent-but-not-active", status="needs_review")
+
+    runs_result = FakeExecuteResult()
+    runs_result.all = lambda: [(rid,) for rid in recent_run_ids]
+    fps_result = FakeExecuteResult()
+    fps_result.all = lambda: [("present-fp",)]
+    actives_result = FakeExecuteResult()
+    actives_result.scalars = lambda: SimpleNamespace(all=lambda: [stale, present])
+    # needs_review never appears in the sweep because the WHERE clause filters by status=='active'.
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[runs_result, fps_result, actives_result])
+
+    result = await svc.reconcile_canonical_deletions(
+        db, project_id, window_runs=3
+    )
+
+    assert result == {"deleted": 1, "unchanged": 1, "window_size": 3}
+    assert stale.status == "deleted"
+    # deleted_at points at the MOST RECENT run in the window (the run after
+    # which we noticed the absence), not any older one.
+    assert stale.deleted_at_run_id == recent_run_ids[0]
+    # Present + needs_review stay put.
+    assert present.status == "active"
+    assert present.deleted_at_run_id is None
+    assert needs_review.status == "needs_review"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletion_idempotent_on_rerun():
+    """Running the reconciler twice in a row over the same DB state must
+    NOT keep deleting things — the second run should report 0 deleted."""
+    project_id = uuid.uuid4()
+    recent_run_ids = [uuid.uuid4() for _ in range(5)]
+
+    # First pass: stale → deleted, present → unchanged.
+    stale = _canonical(fingerprint="stale-fp")
+    present = _canonical(fingerprint="present-fp")
+
+    runs_result_1 = FakeExecuteResult()
+    runs_result_1.all = lambda: [(rid,) for rid in recent_run_ids]
+    fps_result_1 = FakeExecuteResult()
+    fps_result_1.all = lambda: [("present-fp",)]
+    actives_result_1 = FakeExecuteResult()
+    actives_result_1.scalars = lambda: SimpleNamespace(all=lambda: [stale, present])
+
+    # Second pass: stale is now status='deleted' so the WHERE filter excludes
+    # it from the actives sweep — only ``present`` is scanned.
+    runs_result_2 = FakeExecuteResult()
+    runs_result_2.all = lambda: [(rid,) for rid in recent_run_ids]
+    fps_result_2 = FakeExecuteResult()
+    fps_result_2.all = lambda: [("present-fp",)]
+    actives_result_2 = FakeExecuteResult()
+    actives_result_2.scalars = lambda: SimpleNamespace(all=lambda: [present])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        runs_result_1, fps_result_1, actives_result_1,
+        runs_result_2, fps_result_2, actives_result_2,
+    ])
+
+    first = await svc.reconcile_canonical_deletions(db, project_id, window_runs=5)
+    second = await svc.reconcile_canonical_deletions(db, project_id, window_runs=5)
+
+    assert first["deleted"] == 1
+    assert second["deleted"] == 0
+    assert second["unchanged"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletion_window_size_capped_by_actual_runs():
+    """Asking for a 5-run window when the project has 2 runs: window_size
+    must report the actual number considered, not the requested cap."""
+    project_id = uuid.uuid4()
+    only_two = [uuid.uuid4(), uuid.uuid4()]
+
+    runs_result = FakeExecuteResult()
+    runs_result.all = lambda: [(rid,) for rid in only_two]
+    fps_result = FakeExecuteResult()
+    fps_result.all = lambda: [("fp-a",)]
+    actives_result = FakeExecuteResult()
+    actives_result.scalars = lambda: SimpleNamespace(all=lambda: [])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[runs_result, fps_result, actives_result])
+
+    result = await svc.reconcile_canonical_deletions(
+        db, project_id, window_runs=5
+    )
+    assert result["window_size"] == 2
+
+
+@pytest.mark.asyncio
+async def test_reconcile_deletion_filters_null_fingerprints():
+    """Test cases without a fingerprint can't match anything; the
+    sweep must not let a NULL fingerprint sneak into the seen set
+    and accidentally "rescue" a stale canonical that also has NULL
+    (which shouldn't exist, but defence-in-depth)."""
+    project_id = uuid.uuid4()
+    stale = _canonical(fingerprint="stale-fp")
+
+    runs_result = FakeExecuteResult()
+    runs_result.all = lambda: [(uuid.uuid4(),)]
+    # Seen fingerprints include a None + an unrelated fp.
+    fps_result = FakeExecuteResult()
+    fps_result.all = lambda: [(None,), ("other-fp",)]
+    actives_result = FakeExecuteResult()
+    actives_result.scalars = lambda: SimpleNamespace(all=lambda: [stale])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[runs_result, fps_result, actives_result])
+
+    result = await svc.reconcile_canonical_deletions(
+        db, project_id, window_runs=1
+    )
+    assert result["deleted"] == 1
+    assert stale.status == "deleted"
+
+
+# ── bulk_link_canonicals_to_suite ────────────────────────────────────────────
+
+
+def _movable_canonical(*, project_id, suite_id=None):
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=project_id,
+        test_suite_id=suite_id or uuid.uuid4(),
+        test_fingerprint=f"fp-{uuid.uuid4().hex[:6]}",
+        status="active",
+    )
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_empty_list_is_noop():
+    """Empty input must NOT issue any DB call — saves a round trip on
+    accidental UI submit-with-zero-selected."""
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+
+    db = AsyncMock()
+    db.execute = AsyncMock()
+    db.flush = AsyncMock()
+
+    result = await svc.bulk_link_canonicals_to_suite(db, target, [])
+    assert result == {"moved": 0, "skipped_already_in_target": 0, "missing_ids": []}
+    db.execute.assert_not_awaited()
+    db.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_moves_within_same_project():
+    """Happy path: every id resolves, every canonical belongs to the
+    target suite's project, none are already in the target suite."""
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    c1 = _movable_canonical(project_id=project_id)
+    c2 = _movable_canonical(project_id=project_id)
+
+    found_result = FakeExecuteResult()
+    found_result.scalars = lambda: SimpleNamespace(all=lambda: [c1, c2])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=found_result)
+    db.flush = AsyncMock()
+
+    result = await svc.bulk_link_canonicals_to_suite(db, target, [c1.id, c2.id])
+
+    assert result == {
+        "moved": 2,
+        "skipped_already_in_target": 0,
+        "missing_ids": [],
+    }
+    assert c1.test_suite_id == target.id
+    assert c2.test_suite_id == target.id
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_skips_canonicals_already_in_target():
+    """An id whose canonical already lives in the target suite is a
+    no-op for that row — count it under ``skipped_already_in_target``
+    so the UI can show "2 already there, 3 moved"."""
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    already_there = _movable_canonical(project_id=project_id, suite_id=target.id)
+    moving = _movable_canonical(project_id=project_id)
+
+    found_result = FakeExecuteResult()
+    found_result.scalars = lambda: SimpleNamespace(all=lambda: [already_there, moving])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=found_result)
+    db.flush = AsyncMock()
+
+    result = await svc.bulk_link_canonicals_to_suite(
+        db, target, [already_there.id, moving.id]
+    )
+
+    assert result["moved"] == 1
+    assert result["skipped_already_in_target"] == 1
+    assert moving.test_suite_id == target.id
+    # The flush is gated on moved>0 — verify it still fired since one row moved.
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_no_flush_when_nothing_moves():
+    """If every supplied id is already in the target suite, no write
+    happens — saves a no-op flush round trip."""
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    c1 = _movable_canonical(project_id=project_id, suite_id=target.id)
+
+    found_result = FakeExecuteResult()
+    found_result.scalars = lambda: SimpleNamespace(all=lambda: [c1])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=found_result)
+    db.flush = AsyncMock()
+
+    result = await svc.bulk_link_canonicals_to_suite(db, target, [c1.id])
+
+    assert result["moved"] == 0
+    assert result["skipped_already_in_target"] == 1
+    db.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_surfaces_missing_ids_without_failing():
+    """A stale UI selection that includes ids deleted in flight must
+    NOT 4xx — the resolvable ones still move, and the missing ones
+    come back in the response so the UI can drop them."""
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    resolves = _movable_canonical(project_id=project_id)
+    deleted_id = uuid.uuid4()
+
+    found_result = FakeExecuteResult()
+    found_result.scalars = lambda: SimpleNamespace(all=lambda: [resolves])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=found_result)
+    db.flush = AsyncMock()
+
+    result = await svc.bulk_link_canonicals_to_suite(
+        db, target, [resolves.id, deleted_id]
+    )
+
+    assert result["moved"] == 1
+    assert result["missing_ids"] == [deleted_id]
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_rejects_entire_batch_on_cross_project_id():
+    """Even ONE id from a different project must fail the WHOLE batch
+    with 400 — partial moves would leak data across tenant boundaries."""
+    from fastapi import HTTPException
+
+    project_a = uuid.uuid4()
+    project_b = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_a)
+    valid = _movable_canonical(project_id=project_a)
+    cross = _movable_canonical(project_id=project_b)  # different project
+
+    found_result = FakeExecuteResult()
+    found_result.scalars = lambda: SimpleNamespace(all=lambda: [valid, cross])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=found_result)
+    db.flush = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.bulk_link_canonicals_to_suite(db, target, [valid.id, cross.id])
+
+    assert exc_info.value.status_code == 400
+    # Crucial: the valid one was NOT mutated before the raise.
+    assert valid.test_suite_id != target.id
+    db.flush.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_rejects_oversized_batch():
+    """Hard cap on batch size — the schema-level validation catches
+    most callers, but the service refuses defence-in-depth too."""
+    from fastapi import HTTPException
+
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    too_many = [uuid.uuid4() for _ in range(svc.BULK_LINK_MAX_IDS + 1)]
+
+    db = AsyncMock()
+    db.execute = AsyncMock()
+    db.flush = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.bulk_link_canonicals_to_suite(db, target, too_many)
+
+    assert exc_info.value.status_code == 400
+    # Refused before any DB read.
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_link_dedups_duplicate_ids_in_input():
+    """The UI sometimes sends the same id twice (re-selection mishaps).
+    The service must NOT double-count those — moved should reflect
+    distinct canonicals."""
+    project_id = uuid.uuid4()
+    target = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    c1 = _movable_canonical(project_id=project_id)
+
+    found_result = FakeExecuteResult()
+    found_result.scalars = lambda: SimpleNamespace(all=lambda: [c1])
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=found_result)
+    db.flush = AsyncMock()
+
+    # Same id three times.
+    result = await svc.bulk_link_canonicals_to_suite(db, target, [c1.id, c1.id, c1.id])
+
+    assert result["moved"] == 1
+    assert result["missing_ids"] == []

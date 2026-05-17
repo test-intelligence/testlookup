@@ -24,7 +24,7 @@ and the deletion UX is settled, will implement explicit lifecycle.
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from fastapi import HTTPException, status
@@ -729,6 +729,218 @@ async def link_canonical_to_suite(
     canonical.test_suite_id = target_suite.id
     await db.flush()
     return canonical
+
+
+# Maximum canonical_ids per bulk-link request. 200 covers the realistic
+# multi-select case (a SuiteCasesPage typically renders a few-dozen rows
+# per scroll viewport) and keeps the worst-case round-trip bounded.
+BULK_LINK_MAX_IDS = 200
+
+
+async def bulk_link_canonicals_to_suite(
+    db: AsyncSession,
+    target_suite: TestSuite,
+    canonical_ids: list[uuid.UUID],
+) -> dict[str, Any]:
+    """Move a batch of canonical test cases to ``target_suite``.
+
+    Single-canonical analogue: ``link_canonical_to_suite``. The bulk
+    variant exists so the UI can move 50 cases in one round trip instead
+    of N — and so we can reject the *entire* batch atomically when even
+    one id belongs to a different project, matching the "cross-project
+    move refused" semantic the single-move path enforces.
+
+    Contract:
+
+      * Empty ``canonical_ids`` → ``moved=0, missing=0`` and no DB write.
+      * Any id resolving to a canonical whose ``project_id`` differs from
+        ``target_suite.project_id`` → ``HTTPException(400)`` BEFORE any
+        write. The whole batch fails closed; no partial moves.
+      * Ids that don't resolve at all are surfaced in ``missing_ids`` so
+        the caller can decide whether to retry, show a toast, etc. They
+        do NOT block the batch.
+      * Successfully resolved canonicals get ``test_suite_id`` flipped to
+        ``target_suite.id`` and a single ``db.flush()`` is issued at the
+        end — the caller still owns ``commit()``.
+
+    Returns: ``{"moved": int, "skipped_already_in_target": int,
+    "missing_ids": [uuid, ...]}``.
+    """
+    if not canonical_ids:
+        return {"moved": 0, "skipped_already_in_target": 0, "missing_ids": []}
+
+    if len(canonical_ids) > BULK_LINK_MAX_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Too many test cases in one batch ({len(canonical_ids)}). "
+                f"Bulk-link is capped at {BULK_LINK_MAX_IDS}; "
+                "split the selection or apply in chunks."
+            ),
+        )
+
+    # De-dup the input. Callers (UI multi-select) sometimes send the same
+    # id twice — we don't want that to double-count "moved".
+    unique_ids = list({cid for cid in canonical_ids})
+
+    result = await db.execute(
+        select(CanonicalTestCase).where(CanonicalTestCase.id.in_(unique_ids))
+    )
+    found = list(result.scalars().all())
+    found_by_id = {c.id: c for c in found}
+    missing_ids = [cid for cid in unique_ids if cid not in found_by_id]
+
+    # Cross-project guard fires BEFORE any mutation: an attacker shouldn't
+    # be able to move 1 valid + 1 cross-project case and have the valid
+    # one silently land. Validate-then-write.
+    cross_project = [
+        c for c in found if c.project_id != target_suite.project_id
+    ]
+    if cross_project:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cannot move test cases to a suite in a different project "
+                f"({len(cross_project)} of {len(found)} ids are from other projects)"
+            ),
+        )
+
+    moved = 0
+    skipped = 0
+    for canonical in found:
+        if canonical.test_suite_id == target_suite.id:
+            skipped += 1
+            continue
+        canonical.test_suite_id = target_suite.id
+        moved += 1
+
+    if moved:
+        await db.flush()
+
+    logger.info(
+        "canonical_bulk_link",
+        target_suite_id=str(target_suite.id),
+        project_id=str(target_suite.project_id),
+        requested=len(unique_ids),
+        moved=moved,
+        skipped_already_in_target=skipped,
+        missing=len(missing_ids),
+    )
+
+    return {
+        "moved": moved,
+        "skipped_already_in_target": skipped,
+        "missing_ids": missing_ids,
+    }
+
+
+async def reconcile_canonical_deletions(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    window_runs: Optional[int] = None,
+) -> dict[str, int]:
+    """Mark active canonicals as ``deleted`` when their fingerprint hasn't
+    appeared in any of the project's last ``window_runs`` test runs.
+
+    Counterpart to ``sync_canonical_test_cases``: that function handles
+    *appearance* (insert new + restore previously-deleted on re-sighting);
+    this one handles *disappearance*. Together they close the canonical
+    lifecycle so Phase 2b can drop ``suite_memberships`` (the legacy
+    ``<suite>-deleted`` bucket lived in that table).
+
+    Why a multi-run window instead of "absent from the latest run":
+    single-run absence is noisy — a run scoped to a tag filter, partial
+    suite, or a developer's ad-hoc selection routinely omits tests that
+    are very much still part of the codebase. Marking those ``deleted``
+    on the spot would spam the catalog with false positives that have
+    to be restored on the very next full run. N=5 (the default; tune via
+    ``CANONICAL_DELETION_WINDOW_RUNS``) means a test has to be missing
+    from five consecutive runs before we trust the absence.
+
+    Returns counts for observability: ``deleted`` (newly marked),
+    ``unchanged`` (still active, present in the window), ``window_size``
+    (actual runs considered — may be less than the requested window
+    when the project has fewer recent runs).
+
+    Setting ``window_runs=0`` (or the env default ``CANONICAL_DELETION_WINDOW_RUNS=0``)
+    short-circuits the reconciler — useful during the Phase 2b cutover
+    while comparing canonical vs legacy suite_memberships row counts.
+    """
+    from app.core.config import settings
+
+    effective_window = (
+        window_runs if window_runs is not None
+        else settings.CANONICAL_DELETION_WINDOW_RUNS
+    )
+    if effective_window <= 0:
+        return {"deleted": 0, "unchanged": 0, "window_size": 0}
+
+    # Fetch the project's most recent N runs (newest first). We need
+    # both the run ids (for the deleted_at pointer) and the union of
+    # fingerprints seen across those runs.
+    recent_runs_q = await db.execute(
+        select(TestRun.id)
+        .where(TestRun.project_id == project_id)
+        .order_by(TestRun.created_at.desc())
+        .limit(effective_window)
+    )
+    recent_run_ids = [row[0] for row in recent_runs_q.all()]
+    if not recent_run_ids:
+        # No runs at all → nothing to compare against. Don't touch any
+        # canonicals; an empty project shouldn't have its catalog wiped
+        # on the first reconciler tick after migration.
+        return {"deleted": 0, "unchanged": 0, "window_size": 0}
+
+    # Fingerprints observed across the window. NULL/empty fingerprints
+    # are filtered — they'd never match anyway.
+    fp_q = await db.execute(
+        select(TestCase.test_fingerprint)
+        .distinct()
+        .where(
+            TestCase.test_run_id.in_(recent_run_ids),
+            TestCase.test_fingerprint.is_not(None),
+        )
+    )
+    seen_fingerprints = {row[0] for row in fp_q.all() if row[0]}
+
+    # Now sweep active canonicals for this project. We only flip
+    # ``status='active'`` rows — never touch ``deleted`` (already done),
+    # ``needs_review`` (a human has to clear that), or any other lifecycle
+    # value a future migration adds.
+    active_q = await db.execute(
+        select(CanonicalTestCase).where(
+            CanonicalTestCase.project_id == project_id,
+            CanonicalTestCase.status == "active",
+        )
+    )
+    active_canonicals = list(active_q.scalars().all())
+
+    # The "most recent run that didn't include this fingerprint" pointer
+    # is just the newest run in the window — the canonical was absent
+    # from all N runs, so the latest one is the one we point at.
+    deleted_at_run_id = recent_run_ids[0]
+
+    counts = {"deleted": 0, "unchanged": 0, "window_size": len(recent_run_ids)}
+    for canonical in active_canonicals:
+        if canonical.test_fingerprint in seen_fingerprints:
+            counts["unchanged"] += 1
+            continue
+        canonical.status = "deleted"
+        canonical.deleted_at_run_id = deleted_at_run_id
+        counts["deleted"] += 1
+
+    if counts["deleted"]:
+        logger.info(
+            "canonical_deletion_reconciler",
+            project_id=str(project_id),
+            window_runs=counts["window_size"],
+            deleted=counts["deleted"],
+            unchanged=counts["unchanged"],
+            deleted_at_run_id=str(deleted_at_run_id),
+        )
+
+    return counts
 
 
 async def list_runs_for_canonical(

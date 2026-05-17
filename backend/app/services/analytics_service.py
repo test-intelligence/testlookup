@@ -5,10 +5,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
+from fastapi import HTTPException
 from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Defect, TestCase, TestRun
+from app.models.postgres import Defect, Project, TestCase, TestRun
 
 
 def _period_start(days: int) -> datetime:
@@ -480,6 +481,16 @@ async def _find_recent_test_case_id(
 
 async def create_manual_defect(db: AsyncSession, project_id: uuid.UUID, payload: dict) -> Defect:
     """Insert a manually-intaken defect. Caller commits the session."""
+    # Project-existence guard. ``_find_recent_test_case_id`` below
+    # silently returns None when no test case matches the project, so a
+    # bogus project_id wouldn't fail until commit-time as an opaque FK
+    # violation. Surfacing the 404 here makes the FE error toast actionable.
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project {project_id} not found — refresh the page or pick a different project.",
+        )
     test_case_id = await _find_recent_test_case_id(
         db,
         project_id,

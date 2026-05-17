@@ -306,7 +306,45 @@ def persist_live_session(
                 run.end_time      = now
 
             # ── Insert TestCase rows ──────────────────────────────────────────
-            for event in events:
+            # Phase 2.2 — bulk-insert via SQLAlchemy Core ``insert(...)``
+            # with chunked ``execute_many``. Replaces a per-row ``db.add()``
+            # loop that issued one INSERT per event (= one round-trip per
+            # event). For a 5K-event run that's 5K round-trips serial on
+            # one connection; here it's 5 chunked round-trips. Memory
+            # footprint stays bounded by ``PERSIST_LIVE_BULK_INSERT_CHUNK``
+            # (default 1000 rows × ~500 B/row ≈ 500 KB per chunk).
+            from app.core.config import settings as _settings
+            chunk_size = max(1, _settings.PERSIST_LIVE_BULK_INSERT_CHUNK)
+            # Phase 4.2 — high-volume sampling. When the detector has
+            # flagged this project, drop to 1-of-N persistence so the
+            # bulk-insert stays well under the round-trip budget at
+            # 500-concurrent-run scale. Aggregates remain accurate
+            # because they come from ``test_runs.passed_tests`` /
+            # ``failed_tests`` (HINCRBY-sourced), not from a count of
+            # persisted ``test_cases`` rows. Logged so support can
+            # spot the sampling effect when comparing live-state
+            # counts against on-disk row counts.
+            sampled_events = events
+            sample_n = max(1, _settings.HIGH_VOLUME_SAMPLE_EVERY_N)
+            if sample_n > 1:
+                try:
+                    from app.services.high_volume_detector import is_high_volume
+                    if await is_high_volume(project_id):
+                        sampled_events = events[::sample_n]
+                        if len(sampled_events) < len(events):
+                            logger.info(
+                                "[Task %s] high_volume sampling run=%s "
+                                "kept=%d of %d (1-of-%d)",
+                                self.request.id, run_id,
+                                len(sampled_events), len(events), sample_n,
+                            )
+                except Exception as exc:  # pragma: no cover - fail-OPEN
+                    logger.warning(
+                        "[Task %s] high_volume sampling check failed: %s",
+                        self.request.id, exc,
+                    )
+            rows: list[dict] = []
+            for event in sampled_events:
                 test_name  = event.get("test_name") or ""
                 class_name = event.get("class_name") or ""
                 raw_status = (event.get("status") or "UNKNOWN").upper()
@@ -320,19 +358,24 @@ def persist_live_session(
                     f"{test_name}:{class_name}".encode()
                 ).hexdigest()
 
-                tc = TestCase(
-                    id=_uuid_mod.uuid4(),
-                    test_run_id=run.id,
-                    test_fingerprint=fingerprint,
-                    test_name=test_name[:1000],
-                    suite_name=(event.get("suite_name") or "")[:500] or None,
-                    class_name=class_name[:500] or None,
-                    status=tc_status,
-                    duration_ms=event.get("duration_ms"),
-                    error_message=event.get("error_message"),
-                    tags=event.get("tags"),
-                )
-                db.add(tc)
+                rows.append({
+                    "id": _uuid_mod.uuid4(),
+                    "test_run_id": run.id,
+                    "test_fingerprint": fingerprint,
+                    "test_name": test_name[:1000],
+                    "suite_name": (event.get("suite_name") or "")[:500] or None,
+                    "class_name": class_name[:500] or None,
+                    "status": tc_status.value if hasattr(tc_status, "value") else tc_status,
+                    "duration_ms": event.get("duration_ms"),
+                    "error_message": event.get("error_message"),
+                    "tags": event.get("tags"),
+                })
+            if rows:
+                from sqlalchemy import insert as _sa_insert
+                stmt = _sa_insert(TestCase)
+                for offset in range(0, len(rows), chunk_size):
+                    chunk = rows[offset:offset + chunk_size]
+                    await db.execute(stmt, chunk)
 
             await db.commit()
             logger.info(
@@ -372,7 +415,31 @@ def persist_live_session(
         _run_async(_run())
     except Exception as exc:
         logger.error("[Task %s] persist_live_session failed: %s", self.request.id, exc)
-        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+        # Phase 4.3 — when retries are exhausted, write a structured
+        # dead-letter record so operators can inspect what blew up
+        # without grepping logs. ``self.retry`` raises ``MaxRetriesExceededError``
+        # when the retry budget is exhausted; we catch that to write
+        # the DLQ entry, then re-raise so Celery marks the task FAILED.
+        try:
+            raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+        except Exception as final_exc:
+            from celery.exceptions import MaxRetriesExceededError
+            if isinstance(final_exc, MaxRetriesExceededError):
+                try:
+                    from app.services.ingestion_dlq import record_persist_failure
+                    _run_async(record_persist_failure(
+                        run_id=run_id,
+                        project_id=project_id,
+                        task_id=self.request.id,
+                        retry_count=self.request.retries,
+                        error=str(exc),
+                    ))
+                except Exception as dlq_exc:  # pragma: no cover - DLQ is best-effort
+                    logger.error(
+                        "[Task %s] DLQ write failed for run=%s: %s",
+                        self.request.id, run_id, dlq_exc,
+                    )
+            raise
 
 
 @celery_app.task(
@@ -2224,6 +2291,79 @@ def flag_orphan_test_suites(self, min_age_minutes: int = 60) -> dict:
 
 
 @celery_app.task(
+    name="app.worker.tasks.reconcile_canonical_deletions",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def reconcile_canonical_deletions(self) -> dict:
+    """Nightly safety net for canonical-deletion detection (Phase I follow-up).
+
+    ``finalize_run`` already calls ``test_suite_service.reconcile_canonical_deletions``
+    in an isolated session for every completed run, which is the primary
+    write path. This beat task exists for two failure modes that primary
+    path can't catch:
+
+      1. A run finalizes but the isolated reconcile step itself raises
+         (transient DB blip, lock conflict). Without this safety net the
+         canonical stays ``active`` until the next run for that project.
+      2. A project that's gone quiet — no new runs for days — needs
+         its catalog kept honest. Otherwise stale ``active`` rows
+         persist indefinitely after the underlying tests were removed.
+
+    Iterates every project and runs the same service function. Per-project
+    failures are logged but never abort the sweep so one bad project
+    doesn't starve the rest.
+    """
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services.test_suite_service import (
+        reconcile_canonical_deletions as _reconcile,
+    )
+
+    async def _sweep() -> dict:
+        totals = {"projects_scanned": 0, "deleted": 0, "errors": 0}
+
+        async with AsyncSessionLocal() as db:
+            projects = (await db.execute(select(Project.id))).all()
+            project_ids = [row[0] for row in projects]
+
+        for project_id in project_ids:
+            async with AsyncSessionLocal() as project_db:
+                try:
+                    result = await _reconcile(project_db, project_id)
+                    await project_db.commit()
+                    totals["projects_scanned"] += 1
+                    totals["deleted"] += int(result.get("deleted", 0))
+                except Exception as exc:
+                    await project_db.rollback()
+                    totals["errors"] += 1
+                    logger.warning(
+                        "reconcile_canonical_deletions project failed",
+                        extra={
+                            "event": "canonical_deletion_reconcile_failed",
+                            "project_id": str(project_id),
+                            "error": str(exc),
+                        },
+                    )
+
+        return totals
+
+    logger.info(
+        "[Task %s] reconcile_canonical_deletions starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] reconcile_canonical_deletions done: scanned=%d deleted=%d errors=%d",
+        self.request.id,
+        result["projects_scanned"], result["deleted"], result["errors"],
+    )
+    return result
+
+
+@celery_app.task(
     name="app.worker.tasks.notify_test_suite_owner",
     bind=True,
     max_retries=3,
@@ -2317,3 +2457,34 @@ def notify_test_suite_owner(
     except Exception as exc:
         # Let Celery retry with backoff; max_retries=3 caps it.
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.flush_ai_pipeline_queue",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def flush_ai_pipeline_queue(self) -> dict:
+    """Drain the AI-pipeline debouncer (Phase 3).
+
+    Scheduled every 2 minutes by Celery beat (see ``celery_app.py``).
+    Pulls runs older than ``AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS`` from
+    the SortedSet, groups them by project, applies the per-project
+    LLM cost-budget cap, and fans out one ``run_agent_pipeline`` per
+    surviving run.
+
+    Returns the flush-summary dict for log inspection. Errors are
+    caught + logged inside ``flush_pending`` — this task body just
+    schedules the async call and surfaces the result.
+    """
+    from app.services.ai_pipeline_debouncer import flush_pending
+
+    try:
+        return _run_async(flush_pending())
+    except Exception as exc:
+        logger.warning(
+            "flush_ai_pipeline_queue_failed task=%s error=%s",
+            self.request.id, exc,
+        )
+        return {"drained": 0, "error": str(exc)}

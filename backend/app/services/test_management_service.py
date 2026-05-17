@@ -212,11 +212,27 @@ async def create_managed_test_case(
             status_code=404,
             detail=f"Project {payload.project_id} not found — refresh the page or pick a different project.",
         )
+
+    # Migration 0087 — resolve or create the structured suite anchor when the
+    # caller supplied a ``suite_name``. This lets authored cases participate
+    # in the same catalog graph as executed ones (rename-propagation,
+    # cross-project move refusal, suite-scoped queries). Legacy callers that
+    # don't set ``suite_name`` keep working — ``test_suite_id`` stays NULL.
+    test_suite_id: Optional[uuid.UUID] = None
+    suite_name = (payload.suite_name or "").strip() or None
+    if suite_name is not None:
+        from app.services.test_suite_service import get_or_create_suite_by_name
+        suite = await get_or_create_suite_by_name(
+            db, payload.project_id, suite_name
+        )
+        test_suite_id = suite.id
+
     test_case = ManagedTestCase(
         **payload.model_dump(exclude_unset=True, exclude={"change_summary"}),
         author_id=current_user.id,
         status="draft",
         version=1,
+        test_suite_id=test_suite_id,
     )
     db.add(test_case)
     await db.flush()
@@ -254,6 +270,24 @@ async def update_managed_test_case(
 
     old = {"title": test_case.title, "status": test_case.status, "version": test_case.version}
     update_data = payload.model_dump(exclude_unset=True)
+
+    # Migration 0087 — keep ``test_suite_id`` in lockstep with ``suite_name``
+    # changes. When the caller renames the suite (or clears it), we
+    # resolve-or-create the new suite under the case's own project; never
+    # cross-project. The structured FK update happens *before*
+    # apply_model_updates so the version snapshot below already reflects
+    # the resolved anchor.
+    if "suite_name" in update_data:
+        new_suite_name = (update_data["suite_name"] or "").strip() or None
+        if new_suite_name is None:
+            update_data["test_suite_id"] = None
+        else:
+            from app.services.test_suite_service import get_or_create_suite_by_name
+            suite = await get_or_create_suite_by_name(
+                db, test_case.project_id, new_suite_name
+            )
+            update_data["test_suite_id"] = suite.id
+
     apply_model_updates(test_case, update_data)
     test_case.version += 1
 

@@ -34,6 +34,8 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
+    CanonicalTestCaseBulkLinkRequest,
+    CanonicalTestCaseBulkLinkResponse,
     CanonicalTestCaseLinkRequest,
     CanonicalTestCaseListResponse,
     CanonicalTestCaseResponse,
@@ -381,6 +383,41 @@ async def link_canonical_to_suite(
     await db.commit()
     await db.refresh(canonical)
     return _canonical_to_response(canonical)
+
+
+@router.post(
+    "/api/v1/canonical-test-cases/bulk-link",
+    response_model=CanonicalTestCaseBulkLinkResponse,
+    dependencies=[Depends(require_role(UserRole.QA_ENGINEER))],
+)
+async def bulk_link_canonicals_to_suite(
+    payload: CanonicalTestCaseBulkLinkRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Move a batch of canonical test cases to a single target suite.
+
+    Companion to the single-id ``/canonical-test-cases/{id}/link`` route —
+    unblocks the SuiteCasesPage multi-select bulk-move UX. Same auth and
+    cross-project semantics: caller must have access to the target
+    suite's project, and any id from a different project rejects the
+    entire batch with 400 (no partial moves).
+
+    Ids that don't resolve to an existing canonical are surfaced in
+    ``missing_ids`` so the UI can clear stale rows from its selection
+    without re-fetching the whole page.
+    """
+    target = await svc.get_suite_or_404(db, payload.target_test_suite_id)
+    # Project-access check uses the target suite's project — the service
+    # layer's cross-project guard then ensures every id also belongs
+    # there, so we can't be tricked into moving an inaccessible project's
+    # cases via a target suite the caller does have access to.
+    await _enforce_project_access(db, current_user, target.project_id)
+    result = await svc.bulk_link_canonicals_to_suite(
+        db, target, payload.canonical_ids
+    )
+    await db.commit()
+    return result
 
 
 @router.get("/api/v1/canonical-test-cases/{canonical_id}/runs")

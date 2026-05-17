@@ -87,6 +87,83 @@ class Settings(BaseSettings):
     WS_MAX_TOTAL_CONNECTIONS: int = 5000
     WS_BROADCAST_TIMEOUT: float = 5.0           # seconds before dropping a dead connection
 
+    # ── Live-stream ingestion gate (Phase 1, 2026-05-16) ──────
+    # See docs/SCALABLE_INGESTION_DESIGN.md. Both limits operate per
+    # project, per minute. Set to 0 to disable.
+    INGEST_RATE_LIMIT_PER_MINUTE: int = 200       # batches per project per minute
+    # Adaptive Redis-memory backpressure. When ``maxmemory`` is set on
+    # Redis, the percentage gate fires; when it isn't, the absolute
+    # byte gate kicks in instead. Both 0 disables the check entirely.
+    INGEST_REDIS_MEMORY_THRESHOLD_PCT: float = 75.0   # of maxmemory
+    INGEST_REDIS_MEMORY_ABSOLUTE_BYTES: int = 0       # 0 = disabled
+
+    # ── Phase 2 buffer + worker fairness (2026-05-16) ─────────
+    # Per-run Redis-list cap. ``LTRIM`` keeps the newest N events;
+    # older events are evicted when the list exceeds the cap. 50K
+    # events × 500B/event = 25 MB max per run. 0 disables the cap
+    # (legacy behaviour — unbounded list growth).
+    LIVE_BUFFER_MAX_EVENTS_PER_RUN: int = 50_000
+    # Chunk size for the bulk-insert path in persist_live_session.
+    # Larger chunks = fewer round-trips but more memory per session
+    # transaction. 1000 is a healthy middle ground for the asyncpg
+    # driver — round-trip cost amortises while staying under the
+    # 1MB statement-size sweet spot.
+    PERSIST_LIVE_BULK_INSERT_CHUNK: int = 1_000
+    # Number of Celery shards for live-stream persist tasks. Workers
+    # subscribe to ``ingestion.shard.<i>`` queues; tasks route by
+    # ``hash(project_id) mod N``. Increase to widen horizontal worker
+    # capacity without touching the consumer code. Set to 0 to fall
+    # back to the legacy single-queue routing (used by tests).
+    LIVE_INGEST_SHARD_COUNT: int = 8
+
+    # ── Phase 3 AI pipeline debouncer (2026-05-16) ────────────
+    # When True, ``stream_service.close_session`` no longer fires
+    # ``run_agent_pipeline`` directly; the run lands in a Redis
+    # SortedSet drained every 2 minutes by the beat task. Set to
+    # False to revert to the legacy per-run direct dispatch — used
+    # by tests + any deploy that hasn't enabled the beat schedule.
+    AI_PIPELINE_DEBOUNCE_ENABLED: bool = True
+    # Minimum age a run must reach before the debouncer flushes it.
+    # Shorter = lower per-run analysis latency but less burst-coalescing.
+    # The default matches a 2-minute beat cadence (debounce ≪ cadence).
+    AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS: int = 60
+
+    # ── Phase 4 high-volume sampling (2026-05-16) ─────────────
+    # Auto-flag a project as ``high_volume`` when it sustains
+    # ``HIGH_VOLUME_TESTS_PER_MINUTE`` test events per minute for
+    # ``HIGH_VOLUME_CONSECUTIVE_MINUTES`` consecutive minutes. The
+    # flag drives the sampler in ``persist_live_session`` to store
+    # only 1-of-N TestCase rows. Aggregates remain 100% accurate
+    # because they come from the live-state HINCRBY counters.
+    HIGH_VOLUME_AUTO_DETECT_ENABLED: bool = True
+    HIGH_VOLUME_TESTS_PER_MINUTE: int = 1_000
+    HIGH_VOLUME_CONSECUTIVE_MINUTES: int = 3
+    # Sample rate for flagged projects. ``N=2`` stores 1-of-2 rows
+    # (50% per the design doc § 5b). ``N=1`` disables sampling even
+    # when the flag is active (used to dial back if persistence
+    # becomes the bottleneck again).
+    HIGH_VOLUME_SAMPLE_EVERY_N: int = 2
+
+    # ── Phase 4.3 ingestion dead-letter queue (2026-05-16) ────
+    # When ``persist_live_session`` exhausts its retry budget, a
+    # structured failure record is written to the Redis-backed DLQ
+    # for operator inspection. Set to False to disable the writes
+    # (used by tests that don't want the DLQ side effect).
+    INGESTION_DLQ_ENABLED: bool = True
+
+    # ── Phase I — canonical-deletion detection (2026-05-17) ───
+    # A CanonicalTestCase is marked ``status='deleted'`` when its
+    # fingerprint hasn't appeared in any of the project's last
+    # ``CANONICAL_DELETION_WINDOW_RUNS`` runs. The window guards
+    # against false positives from a single run that was scoped to
+    # a tag filter or partial suite. The reconciler runs both
+    # synchronously at the tail of ``finalize_run`` and as a nightly
+    # beat safety net (``nightly-canonical-deletion-reconcile``).
+    # Set to 0 to disable deletion detection entirely (e.g. while
+    # comparing canonical vs legacy suite_memberships during the
+    # Phase 2b cutover window).
+    CANONICAL_DELETION_WINDOW_RUNS: int = 5
+
     # ── LLM Provider ─────────────────────────────────────────
     LLM_PROVIDER: Literal["ollama", "lmstudio", "localai", "vllm", "openai", "gemini", "anthropic"] = "ollama"
     LLM_MODEL: str = "qwen2.5:7b"

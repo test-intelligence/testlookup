@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import User, WebhookDelivery, WebhookSubscription
+from app.models.postgres import Project, User, WebhookDelivery, WebhookSubscription
 
 logger = structlog.get_logger("services.webhook")
 
@@ -162,6 +162,18 @@ async def create_subscription(
     secret: Optional[str],
 ) -> WebhookSubscription:
     validate_events(events)
+    # Project-existence guard. The router-level access check rejects ids
+    # outside the caller's membership, but admins and stale UI sessions
+    # can still target a deleted project — we'd otherwise blow up with
+    # an opaque FK-violation 500 on commit after writing the secret +
+    # audit row. Surface the actionable 404 up front.
+    from fastapi import HTTPException
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project {project_id} not found — refresh the page or pick a different project.",
+        )
     row = WebhookSubscription(
         project_id=project_id,
         name=name,

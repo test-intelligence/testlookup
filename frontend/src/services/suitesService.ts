@@ -2,6 +2,7 @@ import { deleteData, getData, patchData, postData } from './http'
 import type {
   CanonicalRunHistoryResponse,
   CanonicalTestCase,
+  CanonicalTestCaseBulkLinkResponse,
   CanonicalTestCaseListResponse,
   TestSuite,
   TestSuiteCreatePayload,
@@ -55,6 +56,12 @@ export const suitesService = {
     postData<CanonicalTestCase>(
       `/api/v1/canonical-test-cases/${canonicalId}/link`,
       { test_suite_id: suiteId },
+    ),
+
+  bulkLinkCanonicals: (targetSuiteId: string, canonicalIds: string[]) =>
+    postData<CanonicalTestCaseBulkLinkResponse>(
+      '/api/v1/canonical-test-cases/bulk-link',
+      { target_test_suite_id: targetSuiteId, canonical_ids: canonicalIds },
     ),
 
   listCanonicalRuns: (canonicalId: string) =>

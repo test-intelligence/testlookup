@@ -43,13 +43,55 @@ class Base(DeclarativeBase):
 def _pool_size() -> int:
     if settings.PG_POOL_SIZE is not None:
         return settings.PG_POOL_SIZE
-    return {"development": 5, "staging": 15, "production": 20}.get(settings.APP_ENV, 5)
+    # Production default bumped from 20 → 40 in 2026-05-16 (Phase 2.3 of
+    # the scalable-ingestion redesign). At 500 concurrent live runs with
+    # 5 sessions per ``finalize_run``, a single worker needs ~40
+    # connections in its pool to avoid pool-checkout queueing. The 8
+    # Celery shards × 40 = 320 aggregate worker connections; PG
+    # ``max_connections`` should be ≥ 500 with headroom. See
+    # docs/SCALABLE_INGESTION_DESIGN.md § Phase 2.
+    return {"development": 5, "staging": 15, "production": 40}.get(settings.APP_ENV, 5)
 
 
 def _max_overflow() -> int:
     if settings.PG_MAX_OVERFLOW is not None:
         return settings.PG_MAX_OVERFLOW
-    return {"development": 10, "staging": 30, "production": 50}.get(settings.APP_ENV, 10)
+    # Bumped 50 → 100 alongside the pool-size change so a burst can
+    # temporarily exceed steady-state without ``QueuePool limit`` errors.
+    return {"development": 10, "staging": 30, "production": 100}.get(settings.APP_ENV, 10)
+
+
+# Phase 2.3 — minimum recommended pool sizing per process. A worker
+# whose effective pool is smaller than this should log a warning at
+# startup so the operator sees it before the system hits load. The
+# values are derived from "5 sessions per finalize_run × ~10 concurrent
+# finalizes per worker = 50 connections" — slightly below the
+# production default so dev/staging don't false-alarm.
+_RECOMMENDED_MIN_POOL_FOR_INGESTION_WORKERS = 30
+
+
+def warn_if_pool_undersized_for_ingestion() -> None:
+    """Emit a structured warning when the configured pool is too small
+    for the Phase-2 ingestion targets. Called once at process startup
+    by ``bootstrap.py`` so the warning lands in container logs at the
+    moment the size mismatch matters."""
+    import structlog as _sl
+    log = _sl.get_logger("db.pool")
+    effective = _pool_size() + _max_overflow()
+    if effective < _RECOMMENDED_MIN_POOL_FOR_INGESTION_WORKERS:
+        log.warning(
+            "pg_pool_undersized_for_ingestion",
+            effective_pool_capacity=effective,
+            pool_size=_pool_size(),
+            max_overflow=_max_overflow(),
+            recommended_min=_RECOMMENDED_MIN_POOL_FOR_INGESTION_WORKERS,
+            note=(
+                "Under Phase 2 ingestion load (500 concurrent live runs), "
+                "this pool will queue checkouts and slow finalize_run. "
+                "Set PG_POOL_SIZE / PG_MAX_OVERFLOW env vars or run "
+                "in production-mode for the auto-tuned defaults."
+            ),
+        )
 
 
 @lru_cache(maxsize=1)

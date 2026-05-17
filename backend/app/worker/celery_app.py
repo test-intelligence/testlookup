@@ -20,12 +20,28 @@ celery_app = Celery(
 
 _default_exchange = Exchange("default", type="direct")
 
-celery_app.conf.task_queues = (
-    Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
-    Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
-    Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
-    Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
-)
+# Phase 2.4 — declare every ingestion shard queue at boot so workers can
+# subscribe without re-deriving the list. The legacy ``ingestion`` queue
+# stays declared for non-shardable tasks (``ingest_test_run`` etc.) and
+# for tests / deployments where ``LIVE_INGEST_SHARD_COUNT=0``. Build the
+# tuple imperatively so the shard count is read from settings at startup,
+# not frozen at module-import time.
+def _build_task_queues() -> tuple[Queue, ...]:
+    base = [
+        Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
+        Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
+        Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
+        Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
+    ]
+    # Lazy import to avoid the ``app.core.config`` → ``Celery`` import
+    # cycle that bites if we put this at module top.
+    from app.worker.ingestion_routing import all_shard_queues
+    for q in all_shard_queues():
+        base.append(Queue(q, _default_exchange, routing_key=q, queue_arguments={"x-max-priority": 10}))
+    return tuple(base)
+
+
+celery_app.conf.task_queues = _build_task_queues()
 
 celery_app.conf.update(
     task_serializer="json",
@@ -79,6 +95,16 @@ celery_app.conf.update(
         "integration-health-probes": {
             "task": "app.worker.tasks.run_integration_health_probes",
             "schedule": crontab(minute="*/15"),
+        },
+        # Phase 3 — AI pipeline debouncer flush (every 2 minutes).
+        # Drains the per-project SortedSet built by
+        # services.ai_pipeline_debouncer.enqueue_pipeline_for_run,
+        # applies the daily LLM cost-budget cap, then fans out
+        # run_agent_pipeline tasks. See
+        # docs/SCALABLE_INGESTION_DESIGN.md § Phase 3.
+        "flush-ai-pipeline-queue": {
+            "task": "app.worker.tasks.flush_ai_pipeline_queue",
+            "schedule": crontab(minute="*/2"),
         },
         # RAG-6: Knowledge source freshness re-sync (every 4 hours)
         "knowledge-source-resync": {
@@ -154,6 +180,16 @@ celery_app.conf.update(
         "nightly-orphan-test-suite-flag": {
             "task": "app.worker.tasks.flag_orphan_test_suites",
             "schedule": crontab(hour=5, minute=0),
+        },
+        # Phase I follow-up: project-wide canonical-deletion reconcile.
+        # finalize_run already calls the same service per-run; this beat
+        # is the safety net for (a) ingest-time isolated-session failures
+        # and (b) quiet projects with no new runs. 05:30 UTC keeps it
+        # downstream of orphan-suite flagging so we don't race the
+        # late-night ingestion tail.
+        "nightly-canonical-deletion-reconcile": {
+            "task": "app.worker.tasks.reconcile_canonical_deletions",
+            "schedule": crontab(hour=5, minute=30),
         },
     },
     # Prevent memory bloat from stale results
