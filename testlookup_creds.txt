@@ -26,3 +26,20 @@ testlookup.launch=Smoke suite
 # testlookup.branch=${CI_BRANCH}
 # testlookup.commit=${CI_COMMIT_SHA}
 
+# Send test results AND a final run_complete event so the run finalises
+# (creates the TestRun row + triggers AI analysis). Without run_complete
+# the session stays active and the run won't appear in Runs / Overview.
+curl -X POST http://testlookup.local/api/v1/stream/ingest \
+  -H "X-API-Key: qai_ShQgzOyBG7MKfVlvZVulwBbR0-TobYBne7G0Ul9GmkE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_id": "ci-build-1",
+    "meta": {"launch_name": "Smoke suite"},
+    "events": [
+      {"event_type":"test_result","test_name":"smoke","status":"PASSED","duration_ms":15},
+      {"event_type":"run_complete"}
+    ]
+  }'
+  
+  
+  qalead: yzxopDxOTONiTaaE

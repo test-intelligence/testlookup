@@ -148,6 +148,7 @@ def persist_live_session(
     branch: str = "",
     commit_hash: str = "",
     final_state: dict | None = None,
+    suite_name: str | None = None,
 ):
     """
     Persist a completed live execution session to PostgreSQL.
@@ -274,6 +275,7 @@ def persist_live_session(
             existing = await db.execute(select(TestRun).where(TestRun.id == run_uuid))
             run = existing.scalar_one_or_none()
 
+            session_suite = (suite_name or "").strip() or None
             if run is None:
                 run = TestRun(
                     id=run_uuid,
@@ -289,6 +291,8 @@ def persist_live_session(
                     skipped_tests=skipped,
                     broken_tests=broken,
                     pass_rate=pass_rate,
+                    primary_suite_name=session_suite,
+                    suite_names=[session_suite] if session_suite else None,
                     start_time=now,
                     end_time=now,
                 )
@@ -304,6 +308,12 @@ def persist_live_session(
                 run.broken_tests  = broken
                 run.pass_rate     = pass_rate
                 run.end_time      = now
+                # Stamp primary_suite_name if upsert_test_run never ran
+                # for this session (race window: session opens + closes
+                # without the periodic upsert firing).
+                if session_suite and not run.primary_suite_name:
+                    run.primary_suite_name = session_suite
+                    run.suite_names = [session_suite]
 
             # ── Insert TestCase rows ──────────────────────────────────────────
             # Phase 2.2 — bulk-insert via SQLAlchemy Core ``insert(...)``
@@ -343,6 +353,16 @@ def persist_live_session(
                         "[Task %s] high_volume sampling check failed: %s",
                         self.request.id, exc,
                     )
+            # Fall back to the session-level suite_name when the per-event
+            # field is missing. SDKs send testlookup.suite once at session
+            # create (stamped on TestRun.primary_suite_name) and typically
+            # don't repeat it on every event — so persisted TestCase rows
+            # ended up with NULL suite_name, invisible to every page that
+            # groups by tc.suite_name (test-management Test Suites tab,
+            # /reports/summary's cases_agg path, /coverage/suite).
+            session_suite_default = (suite_name or "").strip() or None
+            run_suite_default = getattr(run, "primary_suite_name", None) or None
+            default_suite = session_suite_default or run_suite_default
             rows: list[dict] = []
             for event in sampled_events:
                 test_name  = event.get("test_name") or ""
@@ -358,12 +378,15 @@ def persist_live_session(
                     f"{test_name}:{class_name}".encode()
                 ).hexdigest()
 
+                event_suite = (event.get("suite_name") or "").strip()
+                resolved_suite = (event_suite or default_suite or "")[:500] or None
+
                 rows.append({
                     "id": _uuid_mod.uuid4(),
                     "test_run_id": run.id,
                     "test_fingerprint": fingerprint,
                     "test_name": test_name[:1000],
-                    "suite_name": (event.get("suite_name") or "")[:500] or None,
+                    "suite_name": resolved_suite,
                     "class_name": class_name[:500] or None,
                     "status": tc_status.value if hasattr(tc_status, "value") else tc_status,
                     "duration_ms": event.get("duration_ms"),
@@ -2359,6 +2382,104 @@ def reconcile_canonical_deletions(self) -> dict:
         "[Task %s] reconcile_canonical_deletions done: scanned=%d deleted=%d errors=%d",
         self.request.id,
         result["projects_scanned"], result["deleted"], result["errors"],
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_unassigned_failures",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def backfill_unassigned_failures(self, max_runs_per_project: int = 200) -> dict:
+    """Retroactively assign FAILED/BROKEN TestCases left unassigned.
+
+    Drives two related backfills:
+
+    * ``default_qa_lead_service.backfill_default_qa_lead_for_all_projects``
+      to provision the synthetic QA-lead user on projects created before
+      this feature shipped.
+    * ``failed_test_assignment_service.backfill_unassigned_failures`` for
+      every project so already-ingested failures pick up the new owner.
+
+    Both resolvers are idempotent (default-lead provisioning is a no-op
+    when the FK is already set; per-run assignment only touches NULL
+    rows), so this can run on a tight cadence without risking write
+    storms. One project is processed per session so a stuck project
+    doesn't starve the others.
+    """
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services.default_qa_lead_service import (
+        backfill_default_qa_lead_for_all_projects,
+    )
+    from app.services.failed_test_assignment_service import (
+        backfill_unassigned_failures as _backfill,
+    )
+
+    async def _sweep() -> dict:
+        totals = {
+            "projects_scanned": 0,
+            "default_leads_provisioned": 0,
+            "runs": 0,
+            "assigned": 0,
+            "unassigned": 0,
+            "errors": 0,
+        }
+
+        # Pass 1: make sure every project has a default QA-lead user. The
+        # per-run assignment in pass 2 reads ``default_qa_lead_user_id`` so
+        # provisioning MUST land first.
+        async with AsyncSessionLocal() as lead_db:
+            try:
+                lead_counts = await backfill_default_qa_lead_for_all_projects(lead_db)
+                await lead_db.commit()
+                totals["default_leads_provisioned"] = int(
+                    lead_counts.get("provisioned", 0)
+                )
+            except Exception as exc:
+                await lead_db.rollback()
+                totals["errors"] += 1
+                logger.warning(
+                    "default_qa_lead_backfill failed: error=%s", exc,
+                )
+
+        async with AsyncSessionLocal() as db:
+            project_ids = [
+                row[0] for row in (await db.execute(select(Project.id))).all()
+            ]
+
+        for project_id in project_ids:
+            async with AsyncSessionLocal() as project_db:
+                try:
+                    result = await _backfill(
+                        project_db, project_id, max_runs=max_runs_per_project
+                    )
+                    await project_db.commit()
+                    totals["projects_scanned"] += 1
+                    totals["runs"] += int(result.get("runs", 0))
+                    totals["assigned"] += int(result.get("assigned", 0))
+                    totals["unassigned"] += int(result.get("unassigned", 0))
+                except Exception as exc:
+                    await project_db.rollback()
+                    totals["errors"] += 1
+                    logger.warning(
+                        "backfill_unassigned_failures project failed: project=%s error=%s",
+                        str(project_id), exc,
+                    )
+
+        return totals
+
+    logger.info(
+        "[Task %s] backfill_unassigned_failures starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] backfill_unassigned_failures done: %s",
+        self.request.id, result,
     )
     return result
 

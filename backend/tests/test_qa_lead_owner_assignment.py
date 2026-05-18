@@ -413,6 +413,7 @@ async def test_assign_unassigned_when_no_owner_anywhere():
     db.execute = AsyncMock(side_effect=[
         _all_result(failures),
         _first_result((None, None)),       # no default QA lead, no manager
+        _all_result([]),                    # no QA_LEAD/ADMIN project members
         _all_result([]),                    # no TestSuiteOwner rows
     ])
 
@@ -435,6 +436,7 @@ async def test_assign_resolves_via_test_suite_owner():
     db.execute = AsyncMock(side_effect=[
         _all_result(failures),
         _first_result((None, None)),
+        _all_result([]),  # member fallback probe — irrelevant, explicit owner wins
         _all_result([SimpleNamespace(suite_name="Smoke", owner_user_id=owner_id)]),
         MagicMock(),  # UPDATE result
     ])
@@ -482,12 +484,76 @@ async def test_assign_skips_already_assigned():
     db.execute = AsyncMock(side_effect=[
         _all_result(failures),
         _first_result((None, None)),
+        _all_result([]),  # member fallback probe — row already assigned, ignored
         _all_result([SimpleNamespace(suite_name="Smoke", owner_user_id=new_owner)]),
     ])
 
     counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
     assert counts["already_assigned"] == 1
     assert counts["assigned"] == 0
+
+
+@pytest.mark.asyncio
+async def test_assign_falls_back_to_project_member_when_owner_config_unset():
+    """When ``default_qa_lead_user_id`` and ``manager_user_id`` are both NULL
+    AND no ``TestSuiteOwner`` row exists, a project member at QA_LEAD (or
+    ADMIN as a secondary fallback) should still receive the assignment so
+    the /my-failures inbox doesn't go permanently empty on fresh projects.
+    """
+    from app.services.failed_test_assignment_service import (
+        assign_failed_tests_to_suite_owners,
+    )
+
+    qa_lead_member_id = uuid.uuid4()
+    admin_member_id = uuid.uuid4()
+    failures = [
+        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None),
+    ]
+    member_rows = [
+        # Order is created_at ASC; the service prefers QA_LEAD over ADMIN
+        # regardless of insertion order so even though ADMIN is older here,
+        # the QA_LEAD wins.
+        SimpleNamespace(user_id=admin_member_id, role=UserRole.ADMIN.value),
+        SimpleNamespace(user_id=qa_lead_member_id, role=UserRole.QA_LEAD.value),
+    ]
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _all_result(failures),
+        _first_result((None, None)),       # no owner config
+        _all_result(member_rows),           # project members include a QA_LEAD
+        _all_result([]),                    # no explicit TestSuiteOwner row
+        MagicMock(),                        # UPDATE
+    ])
+
+    counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
+    assert counts["assigned"] == 1
+    assert counts["unassigned"] == 0
+
+
+@pytest.mark.asyncio
+async def test_assign_falls_back_to_admin_when_no_qa_lead_member():
+    """No QA_LEAD members → first ADMIN member is the fallback."""
+    from app.services.failed_test_assignment_service import (
+        assign_failed_tests_to_suite_owners,
+    )
+
+    admin_id = uuid.uuid4()
+    failures = [
+        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None),
+    ]
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _all_result(failures),
+        _first_result((None, None)),
+        _all_result([
+            SimpleNamespace(user_id=admin_id, role=UserRole.ADMIN.value),
+        ]),
+        _all_result([]),
+        MagicMock(),  # UPDATE
+    ])
+
+    counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
+    assert counts["assigned"] == 1
 
 
 @pytest.mark.asyncio

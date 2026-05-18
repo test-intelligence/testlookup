@@ -199,33 +199,90 @@ async def _window_totals(
     start: datetime,
     end: datetime,
 ) -> tuple[_Totals, int, int, Optional[datetime]]:
-    """Sum aggregates across every TestRun in [start, end)."""
-    stmt = select(
+    """Project-wide unique-test totals across the window.
+
+    Counts are DISTINCT-fingerprint counts, not execution counts. A
+    project that ran 4 tests 25 times reports total=4. Status buckets
+    come from each fingerprint's most recent execution in the window.
+
+    Falls back to the run-aggregate SUM only when no fingerprinted
+    test_cases are present in the window (e.g., live-stream runs that
+    never landed test_cases — their TestRun.total_tests still reflect
+    HINCRBY counters and would otherwise be lost from the headline).
+    ``run_count`` / ``avg_duration_ms`` / ``latest`` are always read
+    from test_runs because they're inherently run-scoped, not
+    test-scoped.
+    """
+    run_stmt = select(
         func.count(TestRun.id).label("runs"),
-        func.coalesce(func.sum(TestRun.total_tests), 0).label("total"),
-        func.coalesce(func.sum(TestRun.passed_tests), 0).label("passed"),
-        func.coalesce(func.sum(TestRun.failed_tests), 0).label("failed"),
-        func.coalesce(func.sum(TestRun.skipped_tests), 0).label("skipped"),
-        func.coalesce(func.sum(TestRun.broken_tests), 0).label("broken"),
         func.coalesce(func.avg(TestRun.duration_ms), 0).label("avg_duration_ms"),
         func.max(TestRun.created_at).label("latest"),
+        func.coalesce(func.sum(TestRun.total_tests), 0).label("agg_total"),
+        func.coalesce(func.sum(TestRun.passed_tests), 0).label("agg_passed"),
+        func.coalesce(func.sum(TestRun.failed_tests), 0).label("agg_failed"),
+        func.coalesce(func.sum(TestRun.skipped_tests), 0).label("agg_skipped"),
+        func.coalesce(func.sum(TestRun.broken_tests), 0).label("agg_broken"),
     ).where(
         TestRun.project_id == project_id,
         TestRun.created_at >= start,
         TestRun.created_at < end,
     )
-    row = (await db.execute(stmt)).one()
+    run_row = (await db.execute(run_stmt)).one()
+
+    uniq_stmt = text(
+        """
+        WITH latest_per_fp AS (
+            SELECT DISTINCT ON (tc.test_fingerprint)
+                tc.test_fingerprint,
+                tc.status
+            FROM test_cases tc
+            JOIN test_runs tr ON tr.id = tc.test_run_id
+            WHERE tr.project_id = :project_id
+              AND tr.created_at >= :start
+              AND tr.created_at < :end
+              AND tc.test_fingerprint IS NOT NULL
+            ORDER BY tc.test_fingerprint, tr.created_at DESC
+        )
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE status = 'PASSED')  AS passed,
+            COUNT(*) FILTER (WHERE status = 'FAILED')  AS failed,
+            COUNT(*) FILTER (WHERE status = 'SKIPPED') AS skipped,
+            COUNT(*) FILTER (WHERE status = 'BROKEN')  AS broken
+        FROM latest_per_fp
+        """
+    )
+    uniq_row = (
+        await db.execute(
+            uniq_stmt,
+            {"project_id": str(project_id), "start": start, "end": end},
+        )
+    ).one()
+
+    unique_total = int(uniq_row.total or 0)
+    if unique_total > 0:
+        totals = _Totals(
+            total=unique_total,
+            passed=int(uniq_row.passed or 0),
+            failed=int(uniq_row.failed or 0),
+            skipped=int(uniq_row.skipped or 0),
+            broken=int(uniq_row.broken or 0),
+        )
+    else:
+        # No fingerprinted test_cases — surface the run-aggregate sums
+        # so live-stream-only projects don't see a hollow zero.
+        totals = _Totals(
+            total=int(run_row.agg_total or 0),
+            passed=int(run_row.agg_passed or 0),
+            failed=int(run_row.agg_failed or 0),
+            skipped=int(run_row.agg_skipped or 0),
+            broken=int(run_row.agg_broken or 0),
+        )
     return (
-        _Totals(
-            total=int(row.total or 0),
-            passed=int(row.passed or 0),
-            failed=int(row.failed or 0),
-            skipped=int(row.skipped or 0),
-            broken=int(row.broken or 0),
-        ),
-        int(row.runs or 0),
-        int(row.avg_duration_ms or 0),
-        row.latest,
+        totals,
+        int(run_row.runs or 0),
+        int(run_row.avg_duration_ms or 0),
+        run_row.latest,
     )
 
 
@@ -293,6 +350,13 @@ async def _per_suite_breakdown_window(
 ) -> list[dict]:
     """Per-suite stats across every test_case row in the window.
 
+    Counts are unique-test counts (DISTINCT test_fingerprint), not
+    execution counts. A suite of 4 unique tests run 25 times in the
+    window reports ``total=4``, not ``total=100`` — the page label
+    "Total tests" implies the test catalog, not per-execution volume.
+    The most recent execution per fingerprint determines its
+    passed/failed/skipped/broken status for the window.
+
     Two data sources are merged so suites visible on /runs and /live but
     missing their per-test rows still show up (the live-stream Redis
     buffer eviction issue means a run's ``test_runs`` aggregates can
@@ -312,15 +376,16 @@ async def _per_suite_breakdown_window(
     """
     query = text(
         """
-        WITH cases_agg AS (
-            SELECT
+        WITH latest_per_fp AS (
+            -- One row per (suite, fingerprint): the most recent
+            -- execution in the window. Pass/fail buckets come from
+            -- this row so the snapshot reads as "of the N unique
+            -- tests in this suite, how many last ran green/red".
+            SELECT DISTINCT ON (tc.suite_name, tc.test_fingerprint)
                 tc.suite_name AS suite_name,
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE tc.status = 'PASSED')  AS passed,
-                COUNT(*) FILTER (WHERE tc.status = 'FAILED')  AS failed,
-                COUNT(*) FILTER (WHERE tc.status = 'SKIPPED') AS skipped,
-                COUNT(*) FILTER (WHERE tc.status = 'BROKEN')  AS broken,
-                MAX(tr.created_at) AS last_run_at
+                tc.test_fingerprint,
+                tc.status,
+                tr.created_at AS run_created_at
             FROM test_cases tc
             JOIN test_runs tr ON tr.id = tc.test_run_id
             WHERE tr.project_id = :project_id
@@ -328,7 +393,20 @@ async def _per_suite_breakdown_window(
               AND tr.created_at < :end
               AND tc.suite_name IS NOT NULL
               AND tc.suite_name <> ''
-            GROUP BY tc.suite_name
+              AND tc.test_fingerprint IS NOT NULL
+            ORDER BY tc.suite_name, tc.test_fingerprint, tr.created_at DESC
+        ),
+        cases_agg AS (
+            SELECT
+                suite_name,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE status = 'PASSED')  AS passed,
+                COUNT(*) FILTER (WHERE status = 'FAILED')  AS failed,
+                COUNT(*) FILTER (WHERE status = 'SKIPPED') AS skipped,
+                COUNT(*) FILTER (WHERE status = 'BROKEN')  AS broken,
+                MAX(run_created_at) AS last_run_at
+            FROM latest_per_fp
+            GROUP BY suite_name
         ),
         runs_missing_cases AS (
             -- Runs in the window whose per-test rows didn't land. The

@@ -191,6 +191,17 @@ celery_app.conf.update(
             "task": "app.worker.tasks.reconcile_canonical_deletions",
             "schedule": crontab(hour=5, minute=30),
         },
+        # Backfill /my-failures inbox: any FAILED/BROKEN TestCase still
+        # unassigned (project had no owner config at ingest time, or a
+        # finalize_run step failed in isolation) gets re-resolved here.
+        # The assignment service is idempotent — only NULL rows are
+        # touched — so running every 15 minutes is safe and catches new
+        # rows fast enough that QA leads aren't waiting for the next
+        # ingest to see their queue populate.
+        "backfill-unassigned-failures": {
+            "task": "app.worker.tasks.backfill_unassigned_failures",
+            "schedule": crontab(minute="*/15"),
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,

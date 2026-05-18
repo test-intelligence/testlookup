@@ -363,6 +363,7 @@ async def recover_live_run_from_buffer(
                 "broken": run.broken_tests or 0,
                 "total": run.total_tests or 0,
             },
+            "suite_name": run.primary_suite_name or None,
         },
         queue=queue_for_project(str(run.project_id)),
         priority=7,

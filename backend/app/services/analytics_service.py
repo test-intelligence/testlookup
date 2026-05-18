@@ -362,9 +362,100 @@ async def suite_detail(
     summary_row = (await db.execute(summary_query, params)).one()
     cases_rows = (await db.execute(cases_query, params)).fetchall()
     runs_rows = (await db.execute(runs_query, params)).fetchall()
+    summary = _row_dict(summary_row)
+
+    # Run-level aggregate fallback. When the per-test rows didn't land
+    # (live-stream Redis buffer eviction, or a write-path bug that left
+    # tc.suite_name NULL for runs whose TestRun.primary_suite_name is
+    # set), the summary above reads zero from test_cases. The /reports/
+    # summary page in this same window would still show the suite via
+    # its runs_missing_cases UNION-ALL path — so /coverage/suite would
+    # contradict it ("0 tests" vs "100 tests"). Mirror that fallback so
+    # the two surfaces agree.
+    needs_fallback = (
+        not summary.get("total_executions")
+        and not cases_rows
+        and not runs_rows
+    )
+    if needs_fallback:
+        run_fallback_params: dict = {"period_start": _period_start(days)}
+        run_fallback_project_filter = _tenant_filter(
+            run_fallback_params,
+            project_id=project_id,
+            allowed_project_ids=allowed_project_ids,
+        )
+        run_fallback_params["suite_name"] = _normalise_suite_name(suite_name)
+        run_fallback_query = text(
+            f"""
+            SELECT
+                COALESCE(SUM(tr.total_tests),   0)  AS unique_tests,
+                COALESCE(SUM(tr.total_tests),   0)  AS total_executions,
+                COALESCE(SUM(tr.passed_tests),  0)  AS passed,
+                COALESCE(SUM(tr.failed_tests),  0)
+                  + COALESCE(SUM(tr.broken_tests), 0) AS failed,
+                COALESCE(SUM(tr.skipped_tests), 0)  AS skipped,
+                CASE
+                    WHEN COALESCE(SUM(tr.total_tests), 0) = 0 THEN 0.0
+                    ELSE ROUND(
+                        SUM(tr.passed_tests) * 100.0
+                        / NULLIF(SUM(tr.total_tests), 0), 1
+                    )
+                END                                  AS pass_rate,
+                COALESCE(ROUND(AVG(tr.duration_ms)::numeric, 0), 0) AS avg_duration_ms,
+                MAX(tr.created_at)                   AS last_run_at
+            FROM test_runs tr
+            WHERE LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_name
+              AND tr.created_at >= :period_start
+              AND NOT EXISTS (
+                  SELECT 1 FROM test_cases tc2
+                  WHERE tc2.test_run_id = tr.id
+              )
+              {run_fallback_project_filter}
+            """
+        )
+        recent_runs_fallback_query = text(
+            f"""
+            SELECT
+                tr.id::text                                  AS test_run_id,
+                tr.build_number,
+                tr.created_at                                AS run_date,
+                COALESCE(tr.passed_tests, 0)                 AS passed,
+                COALESCE(tr.failed_tests, 0)
+                  + COALESCE(tr.broken_tests, 0)             AS failed,
+                COALESCE(tr.skipped_tests, 0)                AS skipped,
+                CASE
+                    WHEN COALESCE(tr.total_tests, 0) = 0 THEN 0.0
+                    ELSE ROUND(
+                        COALESCE(tr.passed_tests, 0) * 100.0
+                        / NULLIF(tr.total_tests, 0), 1
+                    )
+                END                                          AS pass_rate
+            FROM test_runs tr
+            WHERE LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_name
+              AND tr.created_at >= :period_start
+              AND NOT EXISTS (
+                  SELECT 1 FROM test_cases tc2
+                  WHERE tc2.test_run_id = tr.id
+              )
+              {run_fallback_project_filter}
+            ORDER BY tr.created_at DESC
+            LIMIT 15
+            """
+        )
+        fallback_summary = (
+            await db.execute(run_fallback_query, run_fallback_params)
+        ).one()
+        fallback_runs = (
+            await db.execute(recent_runs_fallback_query, run_fallback_params)
+        ).fetchall()
+        fallback_total = int(fallback_summary.total_executions or 0)
+        if fallback_total > 0:
+            summary = _row_dict(fallback_summary)
+            runs_rows = fallback_runs
+
     return {
         "suite_name": suite_name,
-        "summary": _row_dict(summary_row),
+        "summary": summary,
         "test_cases": [_row_dict(row) for row in cases_rows],
         "recent_runs": [_row_dict(row) for row in runs_rows],
         "period_days": days,

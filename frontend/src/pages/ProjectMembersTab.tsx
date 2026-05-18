@@ -1,11 +1,12 @@
 // Project Members Tab component — imported into UserManagementPage
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ShieldCheck, UserMinus, UserPlus } from 'lucide-react'
+import { AlertTriangle, KeyRound, ShieldCheck, UserMinus, UserPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useUsers } from '@/hooks/useUserManagement'
 import { userManagementService, type ProjectMember, type UserItem, type UserRole } from '@/services/userManagementService'
 import { projectsService } from '@/services/projectsService'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { copyTextToClipboard } from '@/utils/clipboard'
 import type { Project } from '@/types/projects'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
@@ -27,6 +28,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
   // mis-click on the picker doesn't immediately fire a PUT.
   const [defaultQaLeadDraft, setDefaultQaLeadDraft] = useState<string>('')
   const [savingDefault, setSavingDefault] = useState(false)
+  const [resettingDefaultLead, setResettingDefaultLead] = useState(false)
 
   // Use SWR hook for users — reliable, auto-retries, and shares cache with Users tab
   const { data: allUsers, isLoading: usersLoading, error: usersError } = useUsers()
@@ -80,6 +82,28 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
       toast.error(msg || 'Failed to update default QA Lead')
     } finally {
       setSavingDefault(false)
+    }
+  }
+
+  async function handleResetDefaultQaLeadPassword() {
+    if (!selectedProjectId) return
+    if (!confirm(
+      'Reset the password of this project’s auto-provisioned QA Lead user?\n\n'
+      + 'The new password will be displayed once — copy it before closing.'
+    )) return
+    setResettingDefaultLead(true)
+    try {
+      const result = await projectsService.resetDefaultQaLeadPassword(selectedProjectId)
+      await copyTextToClipboard(result.password)
+      toast.success(
+        `Password reset for ${result.email}. Copied to clipboard.`,
+        { duration: 8000 },
+      )
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to reset password')
+    } finally {
+      setResettingDefaultLead(false)
     }
   }
 
@@ -196,6 +220,21 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                   <span className="ml-2 text-[var(--color-text-faint)]">(ADMIN required to change)</span>
                 </p>
               )}
+
+              <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleResetDefaultQaLeadPassword}
+                  disabled={resettingDefaultLead}
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+                  title="Reset the auto-provisioned default QA Lead user's password"
+                >
+                  {resettingDefaultLead ? <LoadingSpinner size="sm" /> : <KeyRound className="h-3.5 w-3.5" />}
+                  {resettingDefaultLead ? 'Resetting…' : 'Reset QA Lead password'}
+                </button>
+                <span className="text-[11px] text-[var(--color-text-faint)]">
+                  New password is copied to your clipboard.
+                </span>
+              </div>
             </div>
           </div>
         </div>

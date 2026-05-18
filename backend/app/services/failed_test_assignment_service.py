@@ -32,8 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     Project,
+    ProjectMember,
     TestCase,
+    TestRun,
+    TestStatus,
     TestSuiteOwner,
+    UserRole,
 )
 
 logger = structlog.get_logger(__name__)
@@ -43,6 +47,43 @@ logger = structlog.get_logger(__name__)
 # parser couldn't classify; treating it as "failed" would generate spurious
 # action items.
 ACTIONABLE_STATUSES = ("FAILED", "BROKEN")
+
+# Project-member fallback role priority. When neither
+# ``Project.default_qa_lead_user_id`` nor ``Project.manager_user_id`` is
+# configured, pick the oldest project member at the most senior role still
+# capable of triaging failures. Without this, projects that ingest before
+# any QA-lead config (the common case for fresh installs and demo data)
+# would leave every failure unassigned and ``/my-failures`` would stay
+# permanently empty.
+_FALLBACK_MEMBER_ROLES = (UserRole.QA_LEAD.value, UserRole.ADMIN.value)
+
+
+async def _resolve_member_fallback(
+    db: AsyncSession, project_id: uuid.UUID
+) -> Optional[uuid.UUID]:
+    """Pick a project-member fallback when the project has no owner config.
+
+    Returns the oldest ``ProjectMember`` whose role is QA_LEAD (preferred)
+    or ADMIN — they're the roles authorised to triage. Returns NULL only
+    when the project genuinely has no such member.
+    """
+    result = await db.execute(
+        select(ProjectMember.user_id, ProjectMember.role)
+        .where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.role.in_(_FALLBACK_MEMBER_ROLES),
+        )
+        .order_by(ProjectMember.created_at.asc())
+    )
+    rows = list(result.all())
+    if not rows:
+        return None
+    # Prefer QA_LEAD over ADMIN when both are present, then oldest within
+    # the chosen role bucket so the choice is deterministic across runs.
+    qa_leads = [r.user_id for r in rows if r.role == UserRole.QA_LEAD.value]
+    if qa_leads:
+        return qa_leads[0]
+    return rows[0].user_id
 
 
 async def assign_failed_tests_to_suite_owners(
@@ -56,7 +97,9 @@ async def assign_failed_tests_to_suite_owners(
       1. Explicit ``TestSuiteOwner`` row for the (project, suite_name).
       2. Project-level ``default_qa_lead_user_id``.
       3. Project-level ``manager_user_id`` (legacy).
-      4. Unassigned — left NULL.
+      4. Oldest project member at role QA_LEAD (preferred) or ADMIN —
+         covers fresh projects where owner config was never set.
+      5. Unassigned — left NULL.
 
     The function:
       * Fetches all FAILED/BROKEN test cases in the run.
@@ -96,7 +139,12 @@ async def assign_failed_tests_to_suite_owners(
         project_row[0] if project_row else None
     )
     manager_id: Optional[uuid.UUID] = project_row[1] if project_row else None
-    project_fallback_id = default_qa_lead_id or manager_id
+    project_fallback_id: Optional[uuid.UUID] = default_qa_lead_id or manager_id
+    # Last-resort fallback: pick a project member at QA_LEAD / ADMIN.
+    # Resolved lazily so projects with explicit config don't pay the extra
+    # round trip.
+    if project_fallback_id is None:
+        project_fallback_id = await _resolve_member_fallback(db, project_id)
 
     # 3. Resolve the default-suite name so cases with NULL suite_name (rare
     # post-Phase 2 but still possible from legacy ingest paths) map to its
@@ -175,3 +223,54 @@ async def assign_failed_tests_to_suite_owners(
         distinct_owners=len(by_owner),
     )
     return counts
+
+
+async def backfill_unassigned_failures(
+    db: AsyncSession,
+    project_id: Optional[uuid.UUID] = None,
+    max_runs: int = 200,
+) -> dict[str, int]:
+    """Retroactively assign FAILED/BROKEN TestCases left unassigned by earlier
+    ingests (e.g., before the project-member fallback shipped, or before a
+    project had any owner config).
+
+    Walks the most recent ``max_runs`` runs that still contain at least one
+    actionable TestCase with ``assigned_to_user_id IS NULL`` and re-runs the
+    per-run resolver. Idempotent because the resolver itself only writes to
+    rows currently NULL.
+    """
+    stmt = (
+        select(TestRun.id, TestRun.project_id)
+        .join(TestCase, TestCase.test_run_id == TestRun.id)
+        .where(
+            TestCase.assigned_to_user_id.is_(None),
+            TestCase.status.in_(_actionable_status_values()),
+        )
+    )
+    if project_id is not None:
+        stmt = stmt.where(TestRun.project_id == project_id)
+    stmt = stmt.group_by(TestRun.id, TestRun.project_id).order_by(
+        TestRun.created_at.desc()
+    ).limit(max_runs)
+
+    pairs = list((await db.execute(stmt)).all())
+    totals = {"runs": 0, "assigned": 0, "unassigned": 0}
+    for run_id, pid in pairs:
+        counts = await assign_failed_tests_to_suite_owners(db, pid, run_id)
+        totals["runs"] += 1
+        totals["assigned"] += counts.get("assigned", 0)
+        totals["unassigned"] += counts.get("unassigned", 0)
+    logger.info(
+        "failed_tests_backfill_complete",
+        project_id=str(project_id) if project_id else None,
+        **totals,
+    )
+    return totals
+
+
+def _actionable_status_values() -> tuple[str, ...]:
+    """Materialise the actionable status values for ``IN (...)`` filters
+    (TestCase.status is a String(20) column, not the enum). Kept as a
+    helper to avoid drifting from ACTIONABLE_STATUSES.
+    """
+    return tuple(s.value if isinstance(s, TestStatus) else s for s in ACTIONABLE_STATUSES)

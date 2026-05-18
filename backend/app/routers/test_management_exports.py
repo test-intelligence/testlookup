@@ -744,12 +744,15 @@ async def list_test_suites(
         )).fetchall()
     except Exception as exc:
         # Defensive: a missing column in an older deployment shouldn't
-        # 500 the page; we just lose the fallback rows.
+        # 500 the page; we just lose the fallback rows. NEVER call
+        # db.rollback() on an injected session — the request handler owns
+        # the transaction. A service-layer rollback aborts the caller's
+        # transaction, surfacing as a downstream 500 with no traceback
+        # (see memory ``sqlalchemy-in-expanding`` / Bug #5).
         logger.warning(
             "test_runs.primary_suite_name fallback failed, skipping",
             error=str(exc),
         )
-        await db.rollback()
         run_aggregate_rows = []
 
     # Manual managed test cases (suite_name added in migration 0013)
@@ -770,8 +773,8 @@ async def list_test_suites(
     try:
         manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
     except Exception as exc:
+        # Same single-owner rule — don't rollback an injected session.
         logger.warning("managed_test_cases.suite_name not available, skipping manual suites", error=str(exc))
-        await db.rollback()
         manual_rows = []
 
     # Merge sources by suite_name. Order matters only for first-write

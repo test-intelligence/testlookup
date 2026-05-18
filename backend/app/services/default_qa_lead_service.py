@@ -1,0 +1,201 @@
+"""Per-project default QA-lead user (auto-provisioned).
+
+Every project gets a dedicated QA-lead user at creation time so failed
+test cases always have a deterministic assignee for the ``/my-failures``
+inbox. The auto-provisioned user:
+
+* has username/email derived from the project slug (``qalead-<slug>``)
+* gets role ``QA_LEAD``
+* is added to the project as a ``ProjectMember`` with role ``QA_LEAD``
+* is stamped as ``Project.default_qa_lead_user_id``
+* starts with a fixed default password (``DEFAULT_QA_LEAD_PASSWORD``) so
+  operators can rotate it via the password-reset endpoint without first
+  pulling it out of a side-channel.
+
+The helpers are idempotent: re-running ``ensure_default_qa_lead`` on a
+project that already has one returns the existing user without mutating
+anything.
+"""
+from __future__ import annotations
+
+import uuid
+from typing import Optional
+
+import structlog
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import get_password_hash
+from app.models.postgres import Project, ProjectMember, User, UserRole
+
+logger = structlog.get_logger(__name__)
+
+# Default password assigned at provision time. Documented so operators
+# know the starting state — production setups should rotate this via
+# the reset-password endpoint after first login.
+DEFAULT_QA_LEAD_PASSWORD = "QaLead@2026!"
+
+# Email domain used for the synthetic accounts. Kept distinct from real
+# user domains so directory-style listings can filter them out cheaply.
+_DEFAULT_QA_LEAD_DOMAIN = "qa-lead.testlookup.local"
+
+
+def _slugify_for_username(slug: str) -> str:
+    """Trim a project slug to fit the ``users.username`` 100-char cap with
+    the ``qalead-`` prefix, while keeping the slug recognisable.
+    """
+    base = (slug or "").strip().lower()
+    if not base:
+        base = "project"
+    candidate = f"qalead-{base}"
+    return candidate[:100]
+
+
+def _default_email(slug: str) -> str:
+    """Email for the synthetic QA-lead user. Matches the username so the
+    login form works with either field.
+    """
+    base = (slug or "").strip().lower() or "project"
+    return f"qalead-{base}@{_DEFAULT_QA_LEAD_DOMAIN}"[:255]
+
+
+def _default_full_name(project_name: str) -> str:
+    return f"{project_name} QA Lead"[:255]
+
+
+async def ensure_default_qa_lead(
+    db: AsyncSession,
+    project: Project,
+) -> User:
+    """Return the project's default QA-lead user, creating one if absent.
+
+    Idempotent across:
+      * Projects that already have ``default_qa_lead_user_id`` set — returns
+        the existing user, no mutation.
+      * Projects that don't, but where the synthetic user already exists
+        (e.g. a previous create-then-rollback) — attaches the existing user
+        and writes the FK without creating a duplicate.
+
+    The caller owns the transaction (per the single-owner rule in
+    ``backend/CLAUDE.md``). This service only ``flush``-es so the new user's
+    PK is materialised; commit happens at the caller's request boundary.
+    """
+    if project.default_qa_lead_user_id is not None:
+        existing = await db.get(User, project.default_qa_lead_user_id)
+        if existing is not None:
+            return existing
+        # FK points at a deleted user — fall through and re-provision so
+        # the column never dangles.
+
+    target_email = _default_email(project.slug)
+    target_username = _slugify_for_username(project.slug)
+
+    # Reuse a synthetic user if one already exists (idempotent retry).
+    found = (
+        await db.execute(select(User).where(User.email == target_email))
+    ).scalar_one_or_none()
+    if found is None:
+        found = User(
+            email=target_email,
+            username=target_username,
+            full_name=_default_full_name(project.name),
+            hashed_password=get_password_hash(DEFAULT_QA_LEAD_PASSWORD),
+            role=UserRole.QA_LEAD.value,
+            is_active=True,
+            must_change_password=False,
+        )
+        db.add(found)
+        await db.flush()
+        logger.info(
+            "default_qa_lead_user_created",
+            project_id=str(project.id),
+            user_id=str(found.id),
+            email=target_email,
+        )
+
+    # Ensure the synthetic user is a project member at QA_LEAD.
+    member_row = (
+        await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == found.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member_row is None:
+        db.add(
+            ProjectMember(
+                user_id=found.id,
+                project_id=project.id,
+                role=UserRole.QA_LEAD.value,
+            )
+        )
+        await db.flush()
+    elif member_row.role != UserRole.QA_LEAD.value:
+        member_row.role = UserRole.QA_LEAD.value
+
+    # Stamp the FK so downstream auto-assignment short-circuits to this user.
+    if project.default_qa_lead_user_id != found.id:
+        project.default_qa_lead_user_id = found.id
+        await db.flush()
+
+    return found
+
+
+async def reset_default_qa_lead_password(
+    db: AsyncSession,
+    project: Project,
+    new_password: Optional[str] = None,
+) -> tuple[User, str]:
+    """Reset the project's default QA-lead user password.
+
+    Returns ``(user, password_used)``. When ``new_password`` is omitted the
+    documented default (``DEFAULT_QA_LEAD_PASSWORD``) is applied so the
+    caller can hand the operator a known starting value without leaking
+    the live hash. Caller owns commit.
+    """
+    user = await ensure_default_qa_lead(db, project)
+    chosen = new_password if new_password else DEFAULT_QA_LEAD_PASSWORD
+    user.hashed_password = get_password_hash(chosen)
+    user.must_change_password = False
+    await db.flush()
+    logger.info(
+        "default_qa_lead_password_reset",
+        project_id=str(project.id),
+        user_id=str(user.id),
+        custom_password=new_password is not None,
+    )
+    return user, chosen
+
+
+async def backfill_default_qa_lead_for_all_projects(
+    db: AsyncSession,
+) -> dict[str, int]:
+    """Walk every active project and ensure it has a default QA lead user.
+
+    Used at deploy time (and via the Celery beat alongside the inbox
+    backfill) so existing projects don't stay locked out of the
+    ``/my-failures`` flow after this feature lands.
+    """
+    totals = {"provisioned": 0, "already_set": 0, "errors": 0}
+    projects = (
+        await db.execute(
+            select(Project).where(Project.is_active.is_(True))
+        )
+    ).scalars().all()
+    for project in projects:
+        had_lead = project.default_qa_lead_user_id is not None
+        try:
+            await ensure_default_qa_lead(db, project)
+            if had_lead:
+                totals["already_set"] += 1
+            else:
+                totals["provisioned"] += 1
+        except Exception as exc:  # pragma: no cover - tolerate per-row
+            totals["errors"] += 1
+            logger.warning(
+                "default_qa_lead_backfill_failed",
+                project_id=str(project.id),
+                error=str(exc),
+            )
+    return totals

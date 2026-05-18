@@ -354,6 +354,7 @@ async def close_session(
                 "branch": session.branch or "",
                 "commit_hash": session.commit_hash or "",
                 "final_state": state or {},
+                "suite_name": session.suite_name or None,
             },
             queue=target_queue,
             priority=7,

@@ -75,6 +75,14 @@ async def create_project(
         await assert_user_is_qa_lead_on_project(
             db, payload.default_qa_lead_user_id, project.id,
         )
+    else:
+        # Auto-provision a synthetic QA-lead user so the project has a
+        # deterministic default failure assignee from day one. Without
+        # this, every fresh project's /my-failures inbox would stay
+        # empty until an admin manually configures an owner.
+        from app.services.default_qa_lead_service import ensure_default_qa_lead
+        await db.flush()
+        await ensure_default_qa_lead(db, project)
 
     await db.commit()
     await db.refresh(project)
@@ -202,3 +210,44 @@ async def reset_project_data(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return result
+
+
+@router.post(
+    "/{project_id}/default-qa-lead/reset-password",
+    dependencies=[Depends(require_project_access())],
+)
+async def reset_default_qa_lead_password_endpoint(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Reset the project's auto-provisioned QA-lead account password.
+
+    Any user with access to the project can call this — the account is a
+    shared, per-project triage inbox, not a personal user, so rotating
+    its password is a routine project-admin task.
+
+    Idempotently provisions the QA-lead user first if it doesn't exist
+    yet (covers projects created before this feature shipped). Returns
+    the new password so the operator can hand it off; the response is
+    not persisted anywhere else.
+    """
+    from app.services.default_qa_lead_service import (
+        reset_default_qa_lead_password,
+    )
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    user, password = await reset_default_qa_lead_password(db, project)
+    await db.commit()
+    return {
+        "user_id": str(user.id),
+        "email": user.email,
+        "username": user.username,
+        "password": password,
+        "project_id": str(project.id),
+        "actor_id": str(current_user.id),
+    }

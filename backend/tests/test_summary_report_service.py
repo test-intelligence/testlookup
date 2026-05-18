@@ -51,6 +51,14 @@ def _all(rows):
 
 def _totals_row(*, runs=0, total=0, passed=0, failed=0, skipped=0, broken=0,
                 avg=0, latest=None):
+    """Row shape returned by ``_window_totals`` *run-aggregate* / ``_latest_totals``.
+
+    Carries both the legacy ``total/passed/...`` names (consumed by
+    ``_latest_totals``) and the ``agg_*`` aliases (consumed by
+    ``_window_totals`` to derive a run-aggregate fallback). The window
+    path also issues a second ``db.execute`` for the unique-fingerprint
+    count — see ``_uniq_row``.
+    """
     return SimpleNamespace(
         runs=runs,
         total=total,
@@ -60,6 +68,25 @@ def _totals_row(*, runs=0, total=0, passed=0, failed=0, skipped=0, broken=0,
         broken=broken,
         avg_duration_ms=avg,
         latest=latest,
+        agg_total=total,
+        agg_passed=passed,
+        agg_failed=failed,
+        agg_skipped=skipped,
+        agg_broken=broken,
+    )
+
+
+def _uniq_row(*, total=0, passed=0, failed=0, skipped=0, broken=0):
+    """Row shape returned by the unique-fingerprint count query in
+    ``_window_totals``. When ``total > 0`` the service surfaces these
+    values as the headline; otherwise it falls back to the run-aggregate
+    sums on the ``_totals_row``."""
+    return SimpleNamespace(
+        total=total,
+        passed=passed,
+        failed=failed,
+        skipped=skipped,
+        broken=broken,
     )
 
 
@@ -128,10 +155,13 @@ async def test_window_mode_aggregates_runs_and_emits_per_suite_breakdown():
     # db.execute internally too; queue its scalar result in the right slot.
     db.execute = AsyncMock(side_effect=[
         _scalar("GoogleProject"),                       # _resolve_project_name
-        _one(_totals_row(                                # _window_totals
+        _one(_totals_row(                                # _window_totals run-aggregate
             runs=4, total=200, passed=180, failed=15, skipped=3, broken=2,
             avg=12_345, latest=now,
         )),
+        # _window_totals unique-fingerprint pass. Same numbers here so the
+        # headline matches the per-run sum (no live-stream-only suites).
+        _one(_uniq_row(total=200, passed=180, failed=15, skipped=3, broken=2)),
         _all([                                           # _per_suite_breakdown_window
             _suite_row(suite_name="auth-api", total=80,  passed=78, failed=2,  last_run_at=now),
             _suite_row(suite_name="checkout-api", total=120, passed=102, failed=13, broken=2, skipped=3, last_run_at=now),
@@ -196,7 +226,8 @@ async def test_zero_totals_produce_safe_pct_math():
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
         _scalar("P"),
-        _one(_totals_row()),       # all zeros
+        _one(_totals_row()),       # _window_totals run-aggregate — all zeros
+        _one(_uniq_row()),         # _window_totals unique-fingerprint — all zeros
         _all([]),                  # no suites
         _scalar(0),                # no flaky
         _all([]),                  # no top failing

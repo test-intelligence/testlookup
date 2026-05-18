@@ -715,19 +715,32 @@ export default function LiveExecutionPage() {
     }
   }, [wsStatus, suiteScopedRunningSessions.length, recentEvents, suiteScopedSessions.length, visibleSessions.length, visibleStats.overallPassRate])
 
-  // Group sessions by build_number, keep most recent per build. The legacy
-  // ingestion path reported each run twice (slug + UUID) so we dedupe to
-  // present one row per build with the canonical UUID underneath.
+  // Dedup by ``run_id`` so each LiveSession gets exactly one row in the
+  // table. The earlier implementation deduped by ``build_number``, which
+  // existed to collapse a legacy ingestion duplicate (one logical run
+  // produced two LiveSession rows — slug + UUID — sharing a single
+  // build_number). That duplication is gone: the modern SDK creates one
+  // LiveSession per run with a server-generated UUID, and parallel
+  // TestNG / pytest runs that share a build label (e.g.
+  // ``testng-<timestamp>``) are GENUINELY distinct runs that should
+  // each get their own row. Incident 2026-05-18: 4 active runs showed
+  // ``4 running`` in the hero but only 1 in the table because all four
+  // shared the same SDK-supplied build_number.
+  //
+  // Keeping the dedup function (rather than dropping it entirely) so a
+  // future double-emit bug would still collapse identical run_ids
+  // instead of rendering ghost rows. ``run_id`` is the LiveSession PK,
+  // so this is effectively a no-op for normal traffic.
   const dedupedSessions = useMemo(() => {
-    const byBuild = new Map<string, LiveSessionState>()
+    const byRunId = new Map<string, LiveSessionState>()
     for (const s of visibleSessions) {
-      const key = s.build_number || s.run_id
-      const existing = byBuild.get(key)
+      const key = s.run_id
+      const existing = byRunId.get(key)
       const ts = s.last_event_at || s.started_at || ''
       const existingTs = existing ? (existing.last_event_at || existing.started_at || '') : ''
-      if (!existing || ts > existingTs) byBuild.set(key, s)
+      if (!existing || ts > existingTs) byRunId.set(key, s)
     }
-    return [...byBuild.values()]
+    return [...byRunId.values()]
   }, [visibleSessions])
 
   // Client-side pagination of the sessions table. KPIs and the workflow
@@ -1388,9 +1401,15 @@ export default function LiveExecutionPage() {
         />
         <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
           <span>
-            {dedupedSessions.length} build{dedupedSessions.length === 1 ? '' : 's'}
+            {dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
             {visibleSessions.length > dedupedSessions.length && (
-              <> · deduplicated by canonical UUID (each run was reported {Math.round(visibleSessions.length / Math.max(dedupedSessions.length, 1))}× — slug + UUID)</>
+              // Reach this branch only if a future double-emit produces
+              // two LiveSession rows with the SAME ``run_id`` — at which
+              // point telling the user "duplicate run_id collapsed" is
+              // the right copy. The legacy slug-vs-UUID pattern is gone
+              // (the dedup is now keyed by run_id; see comment at
+              // ``dedupedSessions`` above).
+              <> · {visibleSessions.length - dedupedSessions.length} duplicate run_id row{visibleSessions.length - dedupedSessions.length === 1 ? '' : 's'} collapsed</>
             )}
           </span>
           {visibleSessions.length > dedupedSessions.length && (

@@ -121,14 +121,26 @@ async def list_test_cases(
     #    return above already protects the cross-tenant path, so reaching
     #    this point with project_id=None means the caller is admin and
     #    explicitly browsing All-Projects.
+    #
+    # ``test_type`` filter is applied client-of-merge here. Synthesised
+    # automation rows are hardcoded ``test_type="automation"``, so:
+    #   - test_type unset → include all automation rows
+    #   - test_type == "automation" → include all automation rows
+    #   - test_type == anything else → drop the automation half entirely
+    # Without this gate, switching the Type filter on the Test Cases
+    # tab appeared no-op because the automation half ignored the
+    # filter and dominated the count.
     managed_fps = {m.get("test_fingerprint") for m in managed_dicts if m.get("test_fingerprint")}
-    automation_dicts = await list_automation_test_cases(
-        db,
-        project_id=project_id,
-        search=search,
-        suite_name=suite_name,
-        exclude_fingerprints=managed_fps,
-    )
+    if test_type and test_type.lower() != "automation":
+        automation_dicts: list[dict] = []
+    else:
+        automation_dicts = await list_automation_test_cases(
+            db,
+            project_id=project_id,
+            search=search,
+            suite_name=suite_name,
+            exclude_fingerprints=managed_fps,
+        )
 
     # 3. Sort merged set by recency (last_executed_at then created_at) so
     #    the freshest signal is on top regardless of source.
