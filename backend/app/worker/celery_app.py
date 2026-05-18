@@ -1,4 +1,6 @@
 """Celery application configuration."""
+from datetime import timedelta
+
 from celery import Celery
 from celery.schedules import crontab
 from kombu import Exchange, Queue
@@ -201,6 +203,19 @@ celery_app.conf.update(
         "backfill-unassigned-failures": {
             "task": "app.worker.tasks.backfill_unassigned_failures",
             "schedule": crontab(minute="*/15"),
+        },
+        # Phase 4.5: incremental drain of live-stream event buffers.
+        # Without this, the 50K LTRIM cap on long-running sessions
+        # silently drops the oldest per-test rows; HINCRBY aggregates
+        # stay accurate so TestRun.total_tests reports a number the
+        # test_cases table can't back up. The 30s cadence keeps the
+        # window of at-risk events bounded; the per-run SET-NX lock
+        # in the drainer makes overlapping ticks safe.
+        # ``timedelta`` (not ``crontab``) — celery beat supports both,
+        # and 30s isn't expressible with crontab granularity.
+        "drain-active-live-sessions": {
+            "task": "app.worker.tasks.drain_active_live_sessions",
+            "schedule": timedelta(seconds=30),
         },
     },
     # Prevent memory bloat from stale results

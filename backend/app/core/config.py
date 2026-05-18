@@ -116,6 +116,23 @@ class Settings(BaseSettings):
     # back to the legacy single-queue routing (used by tests).
     LIVE_INGEST_SHARD_COUNT: int = 8
 
+    # ── Phase 4.5 incremental drain (2026-05-18) ──────────────
+    # Live sessions stream events to a per-run Redis LIST capped at
+    # ``LIVE_BUFFER_MAX_EVENTS_PER_RUN``. When the cap fires, the OLDEST
+    # events fall off; aggregates from the HINCRBY hash stay accurate
+    # but per-test rows are lost. The incremental drain task persists
+    # buffered events to ``test_cases`` mid-session so the LTRIM only
+    # ever evicts events that are already durable in Postgres. Default
+    # ON. Disable to fall back to the legacy "drain only at
+    # close_session" behaviour.
+    LIVE_SESSION_DRAIN_ENABLED: bool = True
+    # Max events drained per run per beat tick. The drain task runs
+    # every 30s (see Celery beat ``drain-active-live-sessions``); at
+    # 50K events/run × 30s window that's ~1667 events/sec sustained
+    # per run, well within asyncpg single-connection throughput. Raise
+    # for very-high-volume runs; the bulk-insert path scales linearly.
+    LIVE_SESSION_DRAIN_BATCH_SIZE: int = 5_000
+
     # ── Phase 3 AI pipeline debouncer (2026-05-16) ────────────
     # When True, ``stream_service.close_session`` no longer fires
     # ``run_agent_pipeline`` directly; the run lands in a Redis

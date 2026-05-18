@@ -204,32 +204,40 @@ def persist_live_session(
         )
 
         # ── Compute aggregate counts ──────────────────────────────────────────
-        passed  = sum(1 for e in events if (e.get("status") or "").upper() == "PASSED")
-        failed  = sum(1 for e in events if (e.get("status") or "").upper() == "FAILED")
-        skipped = sum(1 for e in events if (e.get("status") or "").upper() == "SKIPPED")
-        broken  = sum(1 for e in events if (e.get("status") or "").upper() == "BROKEN")
-        total   = len(events) or final_state.get("total", 0)
+        # ``final_state`` comes from the authoritative HINCRBY counters
+        # (LIVE_STATE_KEY hash). It's accurate even when the per-test
+        # buffer hit its LTRIM cap mid-run or got partially drained by
+        # the Phase 4.5 incremental-drain task. Prefer it whenever a
+        # ``total`` was reported; only fall back to event-derived counts
+        # for legacy paths that never populated final_state (e.g.
+        # ``recover_live_run_from_buffer``).
+        fs_total = final_state.get("total")
+        if fs_total is not None and int(fs_total) > 0:
+            passed  = int(final_state.get("passed",  0) or 0)
+            failed  = int(final_state.get("failed",  0) or 0)
+            skipped = int(final_state.get("skipped", 0) or 0)
+            broken  = int(final_state.get("broken",  0) or 0)
+            total   = int(fs_total)
+        else:
+            passed  = sum(1 for e in events if (e.get("status") or "").upper() == "PASSED")
+            failed  = sum(1 for e in events if (e.get("status") or "").upper() == "FAILED")
+            skipped = sum(1 for e in events if (e.get("status") or "").upper() == "SKIPPED")
+            broken  = sum(1 for e in events if (e.get("status") or "").upper() == "BROKEN")
+            total   = len(events) or final_state.get("total", 0)
 
-        # Fall back to Redis final_state if events are missing (e.g. buffer expired)
-        if not events:
-            passed  = final_state.get("passed",  0)
-            failed  = final_state.get("failed",  0)
-            skipped = final_state.get("skipped", 0)
-            broken  = final_state.get("broken",  0)
-            total   = final_state.get("total",   0)
-            # Aggregate counters say tests ran but per-test buffer is empty
-            # — TestRun will be created but the run-detail page won't have
-            # per-test rows. Surface this loudly so the empty Run Detail
-            # table on the UI is traceable to a real root cause (buffer TTL,
-            # dedup-skipped retry, or rpush failure in publish_event_batch).
-            if (passed + failed + skipped + broken) > 0:
-                logger.warning(
-                    "[Task %s] Live persist: event buffer empty for run=%s but "
-                    "final_state reports passed=%d failed=%d skipped=%d broken=%d. "
-                    "TestRun aggregates will be written; per-test TestCase rows "
-                    "cannot be reconstructed without the buffered events.",
-                    self.request.id, run_id, passed, failed, skipped, broken,
-                )
+        # Empty buffer at close — surface loudly so the empty Run
+        # Detail table on the UI is traceable to a real root cause
+        # (buffer TTL, dedup-skipped retry, or rpush failure in
+        # publish_event_batch). Aggregates above already reflect the
+        # truth regardless.
+        if not events and (passed + failed + skipped + broken) > 0:
+            logger.warning(
+                "[Task %s] Live persist: event buffer empty for run=%s but "
+                "final_state reports passed=%d failed=%d skipped=%d broken=%d. "
+                "TestRun aggregates will be written; per-test TestCase rows "
+                "cannot be reconstructed without the buffered events.",
+                self.request.id, run_id, passed, failed, skipped, broken,
+            )
 
         # If total wasn't tracked explicitly, derive it from component counts
         total = total or (passed + failed + skipped + broken)
@@ -255,20 +263,29 @@ def persist_live_session(
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
 
-            # Idempotency check — see comment at top of _run. Must be on the
-            # same session as the writes below; opening a separate session
-            # for this query was the source of the asyncpg "another
-            # operation in progress" error that silently dropped retries.
+            # Idempotency check. Phase 4.5 incremental drain means a run
+            # can legitimately have BOTH existing TestCase rows AND a
+            # non-empty buffer (the tail of events that landed between
+            # the last drain tick and close_session). So we only skip
+            # when there's truly nothing left to do: buffer empty AND
+            # rows already present. The "buffer empty + rows present"
+            # path covers Celery retries firing this task twice for the
+            # same close, plus the legacy manual-recovery flow.
             existing_tc_count = (
                 await db.execute(
                     _sel(_func.count(TestCase.id)).where(TestCase.test_run_id == run_uuid)
                 )
             ).scalar() or 0
-            if existing_tc_count > 0:
+            if existing_tc_count > 0 and not events:
                 logger.info(
-                    "[Task %s] Skipping persist for run=%s — %d TestCase rows already present",
+                    "[Task %s] Skipping persist for run=%s — %d TestCase rows already "
+                    "present and buffer is empty (incremental drain or earlier retry)",
                     self.request.id, run_id, existing_tc_count,
                 )
+                # Genuine no-op — a previous tick already drained
+                # everything OR this is a duplicate close_session
+                # retry. Skip finalize_run too; running it a second
+                # time double-fires auto-tagging + suite_sync.
                 return
 
             # Upsert TestRun — skip if already exists (idempotent)
@@ -2382,6 +2399,37 @@ def reconcile_canonical_deletions(self) -> dict:
         "[Task %s] reconcile_canonical_deletions done: scanned=%d deleted=%d errors=%d",
         self.request.id,
         result["projects_scanned"], result["deleted"], result["errors"],
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.drain_active_live_sessions",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def drain_active_live_sessions(self) -> dict:
+    """Phase 4.5 — drain every active live session's Redis event buffer
+    into Postgres ``test_cases`` rows.
+
+    Runs on a 30-second beat schedule (``drain-active-live-sessions``)
+    so a long-running session that exceeds the ``LTRIM`` cap doesn't
+    lose its oldest per-test rows. The drain task is idempotent
+    (per-run SET-NX lock + LRANGE/LTRIM atomicity under append-only
+    writers) so overlapping ticks degrade gracefully.
+
+    The terminal ``persist_live_session`` + ``finalize_run`` chain at
+    ``close_session`` time is unchanged — this task only writes per-
+    test rows progressively so close-time has less to do.
+    """
+    from app.services.live_session_drainer import drain_all_active_runs
+
+    logger.info("[Task %s] drain_active_live_sessions starting", self.request.id)
+    result = cast(dict[str, Any], _run_async(drain_all_active_runs()))
+    logger.info(
+        "[Task %s] drain_active_live_sessions done: %s",
+        self.request.id, result,
     )
     return result
 
