@@ -243,6 +243,122 @@ def test_base_agent_subclass_flags_standalone_class(monkeypatch: pytest.MonkeyPa
     assert "rogue.py" in violations[0].file.as_posix()
 
 
+# ── Guard: homelab.build-tag-placeholder ─────────────────────────────────────
+
+
+def _write_homelab_overlay(tmp_path: Path, tags: dict[str, str | None]) -> Path:
+    """Render a minimal overlay file whose ``images:`` block matches the
+    real one's shape. ``tags`` maps image name → ``newTag`` value, or
+    ``None`` to omit the ``newTag:`` line entirely (simulating the
+    "missing newTag" failure mode).
+    """
+    rel = "k8s/overlays/homelab/kustomization.yaml"
+    path = tmp_path / rel
+    blocks: list[str] = []
+    for name, tag in tags.items():
+        block = f"  - name: {name}\n"
+        block += f"    newName: registry.local:30500/{name}\n"
+        if tag is not None:
+            block += f"    newTag: {tag}\n"
+        blocks.append(block)
+    body = "images:\n" + "".join(blocks)
+    _write(path, body)
+    return path
+
+
+def test_homelab_build_tag_placeholder_passes_when_all_placeholders(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_homelab_overlay(tmp_path, {
+        "testlookup/backend": "BUILD_TAG_PLACEHOLDER",
+        "testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
+        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+    })
+    assert qg._homelab_build_tag_placeholder() == []
+
+
+def test_homelab_build_tag_placeholder_fails_on_substituted_tag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The killer scenario: deploy-homelab.sh was killed mid-run after
+    its sed but before its EXIT trap. The substituted timestamp tag got
+    committed by accident."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_homelab_overlay(tmp_path, {
+        "testlookup/backend": "build-20260518-013421",
+        "testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
+        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+    })
+    violations = qg._homelab_build_tag_placeholder()
+    assert len(violations) == 1
+    assert "testlookup/backend" in violations[0].message
+    assert "build-20260518-013421" in violations[0].message
+    assert violations[0].line > 0  # points at the offending line
+
+
+def test_homelab_build_tag_placeholder_fails_when_all_substituted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """All three images substituted = three violations (one per image)."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_homelab_overlay(tmp_path, {
+        "testlookup/backend": "build-20260518-013421",
+        "testlookup/frontend": "build-20260518-013421",
+        "testlookup/mcp": "build-20260518-013421",
+    })
+    violations = qg._homelab_build_tag_placeholder()
+    assert len(violations) == 3
+    names = {v.message.split("'")[1] for v in violations}
+    assert names == {"testlookup/backend", "testlookup/frontend", "testlookup/mcp"}
+
+
+def test_homelab_build_tag_placeholder_flags_missing_image_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dropping one of the pinned images out of the overlay entirely
+    must also fail — otherwise the cluster would silently fall back to
+    whatever ``image:`` line lives in the base deployment, which could
+    be a floating tag."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_homelab_overlay(tmp_path, {
+        "testlookup/backend": "BUILD_TAG_PLACEHOLDER",
+        # testlookup/frontend omitted entirely
+        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+    })
+    violations = qg._homelab_build_tag_placeholder()
+    assert len(violations) == 1
+    assert "testlookup/frontend" in violations[0].message
+    assert "missing 'images:' entry" in violations[0].message
+
+
+def test_homelab_build_tag_placeholder_flags_missing_new_tag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An entry without any ``newTag:`` line at all — the cluster would
+    inherit the base's tag, which is a regression we want to catch."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_homelab_overlay(tmp_path, {
+        "testlookup/backend": None,  # no newTag line
+        "testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
+        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+    })
+    violations = qg._homelab_build_tag_placeholder()
+    assert len(violations) == 1
+    assert "no newTag" in violations[0].message
+
+
+def test_homelab_build_tag_placeholder_passes_when_overlay_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A repo that doesn't ship the homelab overlay shouldn't fail the
+    guard — the overlay's optional. Forked / minimal checkouts must
+    stay green."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    # Don't write k8s/overlays/homelab/kustomization.yaml at all.
+    assert qg._homelab_build_tag_placeholder() == []
+
+
 # ── Ratchet behaviour: baseline + new-violation diff ─────────────────────────
 
 

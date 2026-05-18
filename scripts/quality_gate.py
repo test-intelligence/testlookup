@@ -537,6 +537,124 @@ def _agents_log_decision_present() -> list[Violation]:
     return violations
 
 
+# ── Homelab guards ───────────────────────────────────────────────────────────
+
+_HOMELAB_OVERLAY_REL = "k8s/overlays/homelab/kustomization.yaml"
+# Images whose ``newTag:`` must remain the placeholder at rest. Mirrors
+# the ``images:`` block at the bottom of the homelab overlay; if a new
+# locally-built image is added there, append it here too.
+_HOMELAB_PINNED_IMAGES = (
+    "testlookup/backend",
+    "testlookup/frontend",
+    "testlookup/mcp",
+)
+_HOMELAB_PLACEHOLDER = "BUILD_TAG_PLACEHOLDER"
+
+# Match a kustomize ``images:`` entry block:
+#   - name: testlookup/backend
+#     newName: registry.local:30500/testlookup/backend
+#     newTag: BUILD_TAG_PLACEHOLDER
+# Captures the image name and the newTag value on the line that follows
+# (one or more lines down). Tolerant of intervening ``newName:`` /
+# blank / comment lines so the layout in the overlay can evolve without
+# breaking the guard. The non-greedy ``.*?`` + DOTALL is bounded by the
+# next ``- name:`` or end-of-string via a positive lookahead — we want
+# only the ``newTag:`` belonging to *this* image, not the one for the
+# next image in the list.
+_HOMELAB_IMAGE_BLOCK_RE = re.compile(
+    r"-\s*name:\s*(?P<name>\S+)"
+    r"(?P<body>.*?)"
+    r"(?=^\s*-\s*name:|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
+_HOMELAB_NEW_TAG_RE = re.compile(
+    r"^\s*newTag:\s*(?P<tag>\S+)\s*$",
+    re.MULTILINE,
+)
+
+
+def _homelab_build_tag_placeholder() -> list[Violation]:
+    """The homelab overlay's ``newTag:`` for every locally-built image
+    must equal ``BUILD_TAG_PLACEHOLDER`` at rest. ``deploy-homelab.sh``
+    substitutes it in-place per-deploy and ``trap``s a restore on exit,
+    but a hard kill (SIGKILL, runner OOM, power loss between the sed
+    and the restore) can leave a real timestamp committed by mistake.
+
+    The existing ``k8s-image-pin-check`` CI guard already rejects the
+    word ``latest``; this guard closes the matching hole for any other
+    accidentally-committed substituted tag (e.g. ``build-20260518-013421``).
+    """
+    path = REPO_ROOT / _HOMELAB_OVERLAY_REL
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8")
+
+    # Build a name → (newTag value, line number) map by walking the
+    # ``images:`` block entries. Line numbers are best-effort: we record
+    # the line of the ``newTag:`` match so the failure points at the
+    # exact offender, not the top of the file.
+    line_offsets: list[int] = [0]
+    running = 0
+    for ch in text:
+        if ch == "\n":
+            line_offsets.append(running + 1)
+        running += 1
+
+    def char_to_line(offset: int) -> int:
+        """1-indexed line number for a character offset."""
+        # Linear scan is fine — overlay file is < 500 lines.
+        for i, start in enumerate(line_offsets):
+            if start > offset:
+                return i
+        return len(line_offsets)
+
+    violations: list[Violation] = []
+    seen: dict[str, tuple[str, int]] = {}
+    for block in _HOMELAB_IMAGE_BLOCK_RE.finditer(text):
+        name = block.group("name").strip()
+        if name not in _HOMELAB_PINNED_IMAGES:
+            continue
+        tag_match = _HOMELAB_NEW_TAG_RE.search(block.group("body"))
+        if not tag_match:
+            # Missing newTag is a bug in the overlay shape — flag it so
+            # nobody silently regresses to a floating tag.
+            seen[name] = ("", char_to_line(block.start()))
+            continue
+        # Translate the match's offset back to the absolute file offset
+        # so the line number points at the real ``newTag:`` line.
+        abs_offset = block.start("body") + tag_match.start("tag")
+        seen[name] = (tag_match.group("tag").strip(), char_to_line(abs_offset))
+
+    for name in _HOMELAB_PINNED_IMAGES:
+        entry = seen.get(name)
+        if entry is None:
+            violations.append(Violation(
+                path, 0,
+                f"homelab overlay missing 'images:' entry for {name!r} — "
+                "every locally-built image must be pinned to "
+                f"{_HOMELAB_PLACEHOLDER}",
+            ))
+            continue
+        tag, line = entry
+        if not tag:
+            violations.append(Violation(
+                path, line,
+                f"{name!r} has no newTag — pin it to {_HOMELAB_PLACEHOLDER} "
+                "so deploy-homelab.sh substitutes it per-deploy",
+            ))
+            continue
+        if tag != _HOMELAB_PLACEHOLDER:
+            violations.append(Violation(
+                path, line,
+                f"{name!r} newTag is {tag!r} — must be "
+                f"{_HOMELAB_PLACEHOLDER}. A previous deploy-homelab.sh "
+                "run was likely killed mid-deploy before its trap "
+                "could restore the placeholder. Reset with: "
+                f"git checkout -- {_HOMELAB_OVERLAY_REL}",
+            ))
+    return violations
+
+
 def _agents_routing_metadata_populated() -> list[Violation]:
     """``analysis_router.classify_test`` must populate a ``_routing``
     dict on every return so per-test rows carry mode-used /
@@ -635,6 +753,19 @@ GUARDS: list[Guard] = [
         description="analysis_router.classify_test populates the _routing dict on every return.",
         check=_agents_routing_metadata_populated,
         fix_hint="Set `result['_routing'] = {...}` before returning from classify_test (mode_requested / mode_resolved / mode_used / fallback_*).",
+    ),
+    Guard(
+        name="homelab.build-tag-placeholder",
+        description=(
+            "k8s/overlays/homelab/kustomization.yaml must keep newTag: "
+            "BUILD_TAG_PLACEHOLDER for every locally-built image at rest."
+        ),
+        check=_homelab_build_tag_placeholder,
+        fix_hint=(
+            "Run `git checkout -- k8s/overlays/homelab/kustomization.yaml` "
+            "to restore the placeholder. A previous deploy-homelab.sh run "
+            "was likely killed before its EXIT trap could fire."
+        ),
     ),
 ]
 
