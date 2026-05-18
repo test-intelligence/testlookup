@@ -108,6 +108,8 @@ async def test_list_hydrates_rows_and_builds_navigation_url():
         build_number=2029,
         project_id=project_id,
         project_name="GoogleSearch",
+        triage_status="PENDING_REVIEW",
+        triage_notes=None,
     )
 
     db = AsyncMock()
@@ -162,6 +164,8 @@ async def test_list_truncates_long_error_message():
         build_number=None,
         project_id=uuid.uuid4(),
         project_name="P",
+        triage_status="PENDING_REVIEW",
+        triage_notes=None,
     )
 
     db = AsyncMock()
@@ -207,6 +211,8 @@ async def test_list_attaches_per_test_failure_count_from_grouping_query():
         build_number=None,
         project_id=project_id,
         project_name="P",
+        triage_status="PENDING_REVIEW",
+        triage_notes=None,
     )
     repeat_row_b = SimpleNamespace(**{**repeat_row_a.__dict__, "id": uuid.uuid4(), "test_run_id": uuid.uuid4()})
     other_row = SimpleNamespace(**{**repeat_row_a.__dict__, "id": uuid.uuid4(), "test_name": "test_other"})

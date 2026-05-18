@@ -959,6 +959,225 @@ export default function LiveExecutionPage() {
         </div>
       </section>
 
+      {/* ════ Sessions table (deduped) ════ */}
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--color-border)] flex-wrap">
+          <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">Sessions</h2>
+          <div className="flex items-center gap-1 bg-[var(--color-bg-card)] rounded-md p-0.5">
+            {(['all', 'running', 'failures'] as const).map(f => {
+              const count =
+                f === 'all' ? suiteScopedSessions.length :
+                // Match the hero's "active" definition so the chip badge
+                // doesn't disagree with the headline KPI.
+                f === 'running' ? suiteScopedSessions.filter(s => isActivelyRunning(s)).length :
+                suiteScopedSessions.filter(s => (s.failed ?? 0) > 0).length
+              return (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFilter(f)}
+                  className={clsx(
+                    'px-2.5 py-1 rounded text-xs font-medium',
+                    filter === f
+                      ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                  )}
+                >
+                  {f === 'failures' ? 'Has failures' : f.charAt(0).toUpperCase() + f.slice(1)}
+                  <span className="ml-1 text-[var(--color-text-muted)]">{count}</span>
+                </button>
+              )
+            })}
+          </div>
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search runs…"
+              className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded pl-8 pr-2 py-1 text-xs w-44 text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)]"
+            />
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-[var(--color-text-muted)] text-[10px] uppercase tracking-wider">
+              <tr className="border-b border-[var(--color-border)]">
+                <th className="px-5 py-2.5 text-left font-medium">Build</th>
+                <th className="px-3 py-2.5 text-left font-medium">Suite</th>
+                <th className="px-3 py-2.5 text-left font-medium">Status</th>
+                <th
+                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('total')}
+                >
+                  <span className="flex items-center justify-end gap-1">Tests <SortIcon field="total" /></span>
+                </th>
+                <th className="px-3 py-2.5 text-right font-medium">Pass</th>
+                <th
+                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('failed')}
+                >
+                  <span className="flex items-center justify-end gap-1">Failed <SortIcon field="failed" /></span>
+                </th>
+                <th className="px-3 py-2.5 text-left font-medium" style={{ width: 200 }}>Outcome</th>
+                <th className="px-3 py-2.5 text-left font-medium">Release</th>
+                <th
+                  className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('started_at')}
+                >
+                  <span className="flex items-center justify-end gap-1">Started <SortIcon field="started_at" /></span>
+                </th>
+                <th className="px-5 py-2.5 text-right font-medium">End</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(showRawSessions ? visibleSessions : dedupedSessions).length === 0 && (
+                <tr>
+                  <td colSpan={10} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
+                    {suiteScopedSessions.length === 0
+                      ? 'No active execution sessions. Start a test run with the client SDK.'
+                      : 'No sessions match the current filter.'}
+                  </td>
+                </tr>
+              )}
+              {pagedSessions.map(s => {
+                const passW = s.total > 0 ? (s.passed / s.total) * 100 : 0
+                const failW = s.total > 0 ? (s.failed / s.total) * 100 : 0
+                return (
+                  <tr key={s.run_id} className="border-b border-[var(--color-border)] hover:bg-[rgba(68,147,248,.04)] last:border-b-0">
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className={clsx('h-2 w-2 rounded-full flex-shrink-0', statusDot(s.status))} />
+                        <div>
+                          {/* Use the canonical TestRun.id for navigation — SDK
+                              run_ids are often slugs (e.g. `local-abc12345`)
+                              that 422 against the UUID-typed /runs/{id} path.
+                              Fall back to the slug only if the backend hasn't
+                              populated test_run_id (older response shape). */}
+                          <Link
+                            to={`/runs/${s.test_run_id || s.run_id}`}
+                            className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-2)]"
+                          >
+                            {s.build_number || s.run_id.slice(0, 8)}
+                          </Link>
+                          <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
+                            {s.run_id.slice(0, 8)}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <SuiteBadge
+                        primary={(s as unknown as { suite_name?: string | null }).suite_name}
+                        all={null}
+                        linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      {(() => {
+                        // A ``running`` row that hasn't emitted in ~60s is
+                        // probably dead-and-waiting-for-the-reaper. Surface
+                        // that explicitly so the user doesn't think it's
+                        // still in flight.
+                        const stale = isStaleRunning(s)
+                        return (
+                          <span className={clsx(
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border',
+                            stale
+                              ? 'bg-amber-900/30 text-amber-300 border-amber-700/30'
+                              : s.status === 'running'
+                                ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
+                                : 'bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]',
+                          )}
+                          title={stale ? 'No telemetry for over a minute — pending reaper cleanup' : undefined}
+                          >
+                            {stale ? 'idle' : s.status}
+                          </span>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.total}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.passed}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-red-400 font-medium">
+                      {s.failed > 0 ? s.failed : <span className="text-[var(--color-text-faint)]">0</span>}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="bg-[var(--color-bg-hover)] rounded-full h-1.5 overflow-hidden flex w-24">
+                          <span className="bg-emerald-500 h-full" style={{ width: `${passW}%` }} />
+                          <span className="bg-red-500 h-full" style={{ width: `${failW}%` }} />
+                        </div>
+                        <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
+                          {s.pass_rate.toFixed(1)}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      {s.release_name ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-violet-900/30 text-violet-300 border-violet-700/30">
+                          <Package className="w-2.5 h-2.5" />
+                          {s.release_name}
+                        </span>
+                      ) : (
+                        <span className="text-[var(--color-text-faint)]">—</span>
+                      )}
+                    </td>
+                    {/* Started — kept sortable via the same column that previously
+                        held the (now misleadingly labelled) "Completed" cell. */}
+                    <td className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums">
+                      {s.started_at ? new Date(s.started_at).toLocaleString() : '—'}
+                    </td>
+                    {/* End — completed_at when the session has closed; otherwise
+                        last_event_at gives the "still running, last seen" hint. */}
+                    <td
+                      className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums"
+                      title={!s.completed_at && s.last_event_at ? `Still running · last event ${new Date(s.last_event_at).toLocaleString()}` : undefined}
+                    >
+                      {s.completed_at
+                        ? new Date(s.completed_at).toLocaleString()
+                        : s.last_event_at
+                          ? `${new Date(s.last_event_at).toLocaleString()} (live)`
+                          : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          page={tablePage}
+          pages={tableTotalPages}
+          total={sessionsForTable.length}
+          onChange={setTablePage}
+        />
+        <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
+          <span>
+            {dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
+            {visibleSessions.length > dedupedSessions.length && (
+              // Reach this branch only if a future double-emit produces
+              // two LiveSession rows with the SAME ``run_id`` — at which
+              // point telling the user "duplicate run_id collapsed" is
+              // the right copy. The legacy slug-vs-UUID pattern is gone
+              // (the dedup is now keyed by run_id; see comment at
+              // ``dedupedSessions`` above).
+              <> · {visibleSessions.length - dedupedSessions.length} duplicate run_id row{visibleSessions.length - dedupedSessions.length === 1 ? '' : 's'} collapsed</>
+            )}
+          </span>
+          {visibleSessions.length > dedupedSessions.length && (
+            <button
+              type="button"
+              onClick={() => setShowRawSessions(v => !v)}
+              className="text-[var(--color-accent-2)] hover:underline flex items-center gap-1"
+            >
+              <List className="w-3 h-3" />
+              {showRawSessions ? 'Hide raw rows' : `Show ${visibleSessions.length} raw rows`}
+            </button>
+          )}
+        </div>
+      </section>
+
       {/* ════ Workflow + Event feed ════ */}
       <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5">
         {/* Workflow flow + selected detail */}
@@ -1204,225 +1423,6 @@ export default function LiveExecutionPage() {
             <span className="font-mono">{recentEvents.length} buffered</span>
           </div>
         </aside>
-      </section>
-
-      {/* ════ Sessions table (deduped) ════ */}
-      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--color-border)] flex-wrap">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">Sessions</h2>
-          <div className="flex items-center gap-1 bg-[var(--color-bg-card)] rounded-md p-0.5">
-            {(['all', 'running', 'failures'] as const).map(f => {
-              const count =
-                f === 'all' ? suiteScopedSessions.length :
-                // Match the hero's "active" definition so the chip badge
-                // doesn't disagree with the headline KPI.
-                f === 'running' ? suiteScopedSessions.filter(s => isActivelyRunning(s)).length :
-                suiteScopedSessions.filter(s => (s.failed ?? 0) > 0).length
-              return (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFilter(f)}
-                  className={clsx(
-                    'px-2.5 py-1 rounded text-xs font-medium',
-                    filter === f
-                      ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                  )}
-                >
-                  {f === 'failures' ? 'Has failures' : f.charAt(0).toUpperCase() + f.slice(1)}
-                  <span className="ml-1 text-[var(--color-text-muted)]">{count}</span>
-                </button>
-              )
-            })}
-          </div>
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search runs…"
-              className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded pl-8 pr-2 py-1 text-xs w-44 text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)]"
-            />
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="text-[var(--color-text-muted)] text-[10px] uppercase tracking-wider">
-              <tr className="border-b border-[var(--color-border)]">
-                <th className="px-5 py-2.5 text-left font-medium">Build</th>
-                <th className="px-3 py-2.5 text-left font-medium">Suite</th>
-                <th className="px-3 py-2.5 text-left font-medium">Status</th>
-                <th
-                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('total')}
-                >
-                  <span className="flex items-center justify-end gap-1">Tests <SortIcon field="total" /></span>
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">Pass</th>
-                <th
-                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('failed')}
-                >
-                  <span className="flex items-center justify-end gap-1">Failed <SortIcon field="failed" /></span>
-                </th>
-                <th className="px-3 py-2.5 text-left font-medium" style={{ width: 200 }}>Outcome</th>
-                <th className="px-3 py-2.5 text-left font-medium">Release</th>
-                <th
-                  className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('started_at')}
-                >
-                  <span className="flex items-center justify-end gap-1">Started <SortIcon field="started_at" /></span>
-                </th>
-                <th className="px-5 py-2.5 text-right font-medium">End</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(showRawSessions ? visibleSessions : dedupedSessions).length === 0 && (
-                <tr>
-                  <td colSpan={10} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
-                    {suiteScopedSessions.length === 0
-                      ? 'No active execution sessions. Start a test run with the client SDK.'
-                      : 'No sessions match the current filter.'}
-                  </td>
-                </tr>
-              )}
-              {pagedSessions.map(s => {
-                const passW = s.total > 0 ? (s.passed / s.total) * 100 : 0
-                const failW = s.total > 0 ? (s.failed / s.total) * 100 : 0
-                return (
-                  <tr key={s.run_id} className="border-b border-[var(--color-border)] hover:bg-[rgba(68,147,248,.04)] last:border-b-0">
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={clsx('h-2 w-2 rounded-full flex-shrink-0', statusDot(s.status))} />
-                        <div>
-                          {/* Use the canonical TestRun.id for navigation — SDK
-                              run_ids are often slugs (e.g. `local-abc12345`)
-                              that 422 against the UUID-typed /runs/{id} path.
-                              Fall back to the slug only if the backend hasn't
-                              populated test_run_id (older response shape). */}
-                          <Link
-                            to={`/runs/${s.test_run_id || s.run_id}`}
-                            className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-2)]"
-                          >
-                            {s.build_number || s.run_id.slice(0, 8)}
-                          </Link>
-                          <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
-                            {s.run_id.slice(0, 8)}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <SuiteBadge
-                        primary={(s as unknown as { suite_name?: string | null }).suite_name}
-                        all={null}
-                        linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
-                      />
-                    </td>
-                    <td className="px-3 py-3">
-                      {(() => {
-                        // A ``running`` row that hasn't emitted in ~60s is
-                        // probably dead-and-waiting-for-the-reaper. Surface
-                        // that explicitly so the user doesn't think it's
-                        // still in flight.
-                        const stale = isStaleRunning(s)
-                        return (
-                          <span className={clsx(
-                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border',
-                            stale
-                              ? 'bg-amber-900/30 text-amber-300 border-amber-700/30'
-                              : s.status === 'running'
-                                ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
-                                : 'bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]',
-                          )}
-                          title={stale ? 'No telemetry for over a minute — pending reaper cleanup' : undefined}
-                          >
-                            {stale ? 'idle' : s.status}
-                          </span>
-                        )
-                      })()}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.total}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.passed}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-red-400 font-medium">
-                      {s.failed > 0 ? s.failed : <span className="text-[var(--color-text-faint)]">0</span>}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="bg-[var(--color-bg-hover)] rounded-full h-1.5 overflow-hidden flex w-24">
-                          <span className="bg-emerald-500 h-full" style={{ width: `${passW}%` }} />
-                          <span className="bg-red-500 h-full" style={{ width: `${failW}%` }} />
-                        </div>
-                        <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
-                          {s.pass_rate.toFixed(1)}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      {s.release_name ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-violet-900/30 text-violet-300 border-violet-700/30">
-                          <Package className="w-2.5 h-2.5" />
-                          {s.release_name}
-                        </span>
-                      ) : (
-                        <span className="text-[var(--color-text-faint)]">—</span>
-                      )}
-                    </td>
-                    {/* Started — kept sortable via the same column that previously
-                        held the (now misleadingly labelled) "Completed" cell. */}
-                    <td className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums">
-                      {s.started_at ? new Date(s.started_at).toLocaleString() : '—'}
-                    </td>
-                    {/* End — completed_at when the session has closed; otherwise
-                        last_event_at gives the "still running, last seen" hint. */}
-                    <td
-                      className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums"
-                      title={!s.completed_at && s.last_event_at ? `Still running · last event ${new Date(s.last_event_at).toLocaleString()}` : undefined}
-                    >
-                      {s.completed_at
-                        ? new Date(s.completed_at).toLocaleString()
-                        : s.last_event_at
-                          ? `${new Date(s.last_event_at).toLocaleString()} (live)`
-                          : '—'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          page={tablePage}
-          pages={tableTotalPages}
-          total={sessionsForTable.length}
-          onChange={setTablePage}
-        />
-        <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
-          <span>
-            {dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
-            {visibleSessions.length > dedupedSessions.length && (
-              // Reach this branch only if a future double-emit produces
-              // two LiveSession rows with the SAME ``run_id`` — at which
-              // point telling the user "duplicate run_id collapsed" is
-              // the right copy. The legacy slug-vs-UUID pattern is gone
-              // (the dedup is now keyed by run_id; see comment at
-              // ``dedupedSessions`` above).
-              <> · {visibleSessions.length - dedupedSessions.length} duplicate run_id row{visibleSessions.length - dedupedSessions.length === 1 ? '' : 's'} collapsed</>
-            )}
-          </span>
-          {visibleSessions.length > dedupedSessions.length && (
-            <button
-              type="button"
-              onClick={() => setShowRawSessions(v => !v)}
-              className="text-[var(--color-accent-2)] hover:underline flex items-center gap-1"
-            >
-              <List className="w-3 h-3" />
-              {showRawSessions ? 'Hide raw rows' : `Show ${visibleSessions.length} raw rows`}
-            </button>
-          )}
-        </div>
       </section>
 
       {/* ════ Connect a runner (collapsed) ════ */}

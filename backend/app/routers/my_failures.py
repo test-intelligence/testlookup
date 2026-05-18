@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,9 +39,19 @@ from app.models.postgres import (
     TestCase,
     TestRun,
     TestStatus,
+    TriageStatus,
     User,
 )
-from app.models.schemas import MyFailureItem, MyFailureListResponse
+from app.models.schemas import MyFailureItem, MyFailureListResponse, TriageStatusUpdate
+from app.services.failed_test_reassignment_service import (
+    ReassignmentError,
+    get_reassignment_options,
+    reassign_failure,
+)
+from app.services.failed_test_triage_service import (
+    TriageError,
+    update_triage_status,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -88,9 +98,15 @@ async def list_my_assigned_failures(
     scoped_project_id = _parse_project_id(project_id)
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
 
+    # Phase: triage workflow (migration 0088). Inbox shows only rows
+    # the assignee hasn't actioned yet. ``REVIEWED_APPROVED /
+    # DEFECT_CREATED / WONT_FIX`` rows are off the inbox by design;
+    # they remain accessible from the per-run detail page where the
+    # status badge surfaces the resolution.
     base_filters = [
         TestCase.assigned_to_user_id == current_user.id,
         TestCase.status.in_(_ACTIONABLE_STATUSES),
+        TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
         TestCase.created_at >= period_start,
     ]
     if scoped_project_id is not None:
@@ -124,6 +140,8 @@ async def list_my_assigned_failures(
             TestCase.duration_ms,
             TestCase.created_at,
             TestCase.test_run_id,
+            TestCase.triage_status,
+            TestCase.triage_notes,
             TestRun.build_number,
             TestRun.project_id,
             Project.name.label("project_name"),
@@ -187,6 +205,8 @@ async def list_my_assigned_failures(
             project_id=r.project_id,
             project_name=r.project_name,
             navigation_url=f"/runs/{r.test_run_id}/tests/{r.id}",
+            triage_status=r.triage_status,
+            triage_notes=r.triage_notes,
             failure_count=count_by_key.get(key, 1),
         ))
 
@@ -221,6 +241,8 @@ async def my_assigned_failures_count(
     filters = [
         TestCase.assigned_to_user_id == current_user.id,
         TestCase.status.in_(_ACTIONABLE_STATUSES),
+        # Match the inbox list endpoint — badge counts only PENDING_REVIEW.
+        TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
         TestCase.created_at >= period_start,
     ]
     if scoped_project_id is not None:
@@ -233,3 +255,204 @@ async def my_assigned_failures_count(
     )
     count = int((await db.execute(stmt)).scalar() or 0)
     return {"count": count}
+
+
+# ── Reassignment ──────────────────────────────────────────────────────────
+
+
+@router.get("/assigned-failures/{test_case_id}/reassign-options")
+async def get_reassign_options(
+    test_case_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Picker payload for the reassign modal.
+
+    Returns the resolved suite owner (when one exists) plus every
+    QA_ENGINEER project member. The frontend renders these as the
+    only valid reassignment targets — anyone outside this set fails
+    the ``PUT .../reassign`` endpoint's 422 validation.
+
+    Same authorisation contract as the PUT: caller must be QA_LEAD or
+    ADMIN on the project. Returning 403 here (instead of an empty
+    payload) keeps the UI honest about WHY the picker is unavailable.
+    """
+    try:
+        return await get_reassignment_options(db, test_case_id, current_user)
+    except ReassignmentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@router.put("/assigned-failures/{test_case_id}/reassign", response_model=MyFailureItem)
+async def reassign_assigned_failure(
+    test_case_id: uuid.UUID,
+    new_assignee_user_id: uuid.UUID = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Move a FAILED/BROKEN TestCase to a new owner.
+
+    Authorisation:
+      * Caller must be QA_LEAD or ADMIN on the failure's project.
+      * ``new_assignee_user_id`` must be EITHER the resolved suite owner
+        OR a QA_ENGINEER project member. Anyone else 422s — including
+        another QA_LEAD or ADMIN. The auto-assigner already covers
+        intra-Lead reassignment via its pool distribution.
+
+    Returns the updated ``MyFailureItem`` so the frontend can drop the
+    new row into the (now-correct) owner's view without re-fetching the
+    whole list. The caller's own list shrinks by one on the next poll.
+    """
+    try:
+        tc = await reassign_failure(
+            db, test_case_id, new_assignee_user_id, current_user,
+        )
+        await db.commit()
+    except ReassignmentError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+    # Hydrate a MyFailureItem for the response. Lean re-select so we
+    # surface the same column set the list endpoint uses, avoiding a
+    # frontend-side type divergence.
+    row = (
+        await db.execute(
+            select(
+                TestCase.id,
+                TestCase.test_name,
+                TestCase.suite_name,
+                TestCase.class_name,
+                TestCase.status,
+                TestCase.severity,
+                TestCase.failure_category,
+                TestCase.error_message,
+                TestCase.duration_ms,
+                TestCase.created_at,
+                TestCase.test_run_id,
+                TestRun.build_number,
+                TestRun.project_id,
+                Project.name.label("project_name"),
+            )
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .join(Project, Project.id == TestRun.project_id)
+            .where(TestCase.id == tc.id)
+        )
+    ).one()
+    err = (row.error_message or "")
+    if len(err) > 280:
+        err = err[:277] + "..."
+    return MyFailureItem(
+        id=row.id,
+        test_name=row.test_name,
+        suite_name=row.suite_name,
+        class_name=row.class_name,
+        status=row.status,
+        severity=row.severity,
+        failure_category=row.failure_category,
+        error_message=err or None,
+        duration_ms=row.duration_ms,
+        created_at=row.created_at,
+        test_run_id=row.test_run_id,
+        build_number=str(row.build_number) if row.build_number is not None else None,
+        project_id=row.project_id,
+        project_name=row.project_name,
+        navigation_url=f"/runs/{row.test_run_id}/tests/{row.id}",
+        failure_count=1,
+    )
+
+
+# ── Triage status ─────────────────────────────────────────────────────────
+
+
+@router.put(
+    "/assigned-failures/{test_case_id}/triage",
+    response_model=MyFailureItem,
+)
+async def update_failure_triage_status(
+    test_case_id: uuid.UUID,
+    payload: TriageStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Move a failure to a new ``triage_status``.
+
+    Statuses (see ``TriageStatus`` enum):
+
+    * ``PENDING_REVIEW``     — default; the row appears on /my-failures.
+    * ``REVIEWED_APPROVED``  — looked at, no action. Known flake or
+                               environmental issue.
+    * ``DEFECT_CREATED``     — defect/bug logged. ``notes`` typically
+                               holds the bug link.
+    * ``WONT_FIX``           — deprecated test or accepted failure.
+                               ``notes`` typically holds the rationale.
+
+    Authorisation: the assignee themselves, OR a QA_LEAD / ADMIN on the
+    project. Anyone else 403s.
+
+    The row drops off ``GET /assigned-failures`` (and the count badge)
+    on the next poll once status moves off PENDING_REVIEW — that's the
+    primary mechanism for "resolving" an inbox item.
+    """
+    try:
+        tc = await update_triage_status(
+            db,
+            test_case_id=test_case_id,
+            new_status=payload.status,
+            notes=payload.notes,
+            actor_user=current_user,
+        )
+        await db.commit()
+    except TriageError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+    # Hydrate a MyFailureItem so the frontend can splice the row into
+    # the (new) status bucket without re-fetching.
+    row = (
+        await db.execute(
+            select(
+                TestCase.id,
+                TestCase.test_name,
+                TestCase.suite_name,
+                TestCase.class_name,
+                TestCase.status,
+                TestCase.severity,
+                TestCase.failure_category,
+                TestCase.error_message,
+                TestCase.duration_ms,
+                TestCase.created_at,
+                TestCase.test_run_id,
+                TestCase.triage_status,
+                TestCase.triage_notes,
+                TestRun.build_number,
+                TestRun.project_id,
+                Project.name.label("project_name"),
+            )
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .join(Project, Project.id == TestRun.project_id)
+            .where(TestCase.id == tc.id)
+        )
+    ).one()
+    err = (row.error_message or "")
+    if len(err) > 280:
+        err = err[:277] + "..."
+    return MyFailureItem(
+        id=row.id,
+        test_name=row.test_name,
+        suite_name=row.suite_name,
+        class_name=row.class_name,
+        status=row.status,
+        severity=row.severity,
+        failure_category=row.failure_category,
+        error_message=err or None,
+        duration_ms=row.duration_ms,
+        created_at=row.created_at,
+        test_run_id=row.test_run_id,
+        build_number=str(row.build_number) if row.build_number is not None else None,
+        project_id=row.project_id,
+        project_name=row.project_name,
+        navigation_url=f"/runs/{row.test_run_id}/tests/{row.id}",
+        triage_status=row.triage_status,
+        triage_notes=row.triage_notes,
+        failure_count=1,
+    )

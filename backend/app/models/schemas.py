@@ -359,12 +359,38 @@ class MyFailureItem(BaseModel):
     project_id: uuid.UUID
     project_name: Optional[str] = None
     navigation_url: str
+    # Triage workflow state (migration 0088). The inbox endpoint filters
+    # to PENDING_REVIEW, but exposing the field lets callers like the
+    # run-detail page render the full status without a separate fetch.
+    triage_status: str = "PENDING_REVIEW"
+    triage_notes: Optional[str] = None
     # Count of times THIS test (same project + suite + class + test name) has
     # failed for this user inside the active time window. Lets the inbox row
     # show "× 7 in 7 days" so repeat offenders are visible at a glance.
     failure_count: int = 1
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TriageStatusUpdate(BaseModel):
+    """Body of ``PUT /api/v1/me/assigned-failures/{id}/triage``.
+
+    ``status`` is validated against the ``TriageStatus`` enum at the
+    service layer (the regex form here keeps the OpenAPI schema readable
+    while still rejecting arbitrary strings; we don't gain anything
+    from using a Pydantic Enum directly because the service maps to the
+    canonical enum anyway).
+    """
+    status: str = Field(
+        ...,
+        pattern=r"^(PENDING_REVIEW|REVIEWED_APPROVED|DEFECT_CREATED|WONT_FIX|AUTOMATION_SCRIPT_ISSUE|FLAKY_TEST)$",
+        description="New triage status. Any value other than PENDING_REVIEW drops the row from the assignee's /my-failures inbox.",
+    )
+    notes: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Free-form context. Typically a defect link for DEFECT_CREATED or a rationale for WONT_FIX / REVIEWED_APPROVED.",
+    )
 
 
 class MyFailureListResponse(BaseModel):

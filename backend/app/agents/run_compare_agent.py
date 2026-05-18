@@ -79,7 +79,11 @@ class RunCompareAgent:
             parsed["markdown_report"] = _markdown_from_report(parsed)
             return parsed
         except Exception as exc:
-            logger.warning("run compare AI report fallback used: %s", exc)
+            # structlog's BoundLogger doesn't accept positional ``%s``-style
+            # args; passing them raises TypeError mid-except, which would
+            # propagate the original LLM failure as a 500 from the compare
+            # endpoint. Use kwargs.
+            logger.warning("run_compare_ai_report_fallback_used", error=str(exc))
             fallback["status"] = "ready"
             fallback["fallback_used"] = True
             fallback["markdown_report"] = _markdown_from_report(fallback)

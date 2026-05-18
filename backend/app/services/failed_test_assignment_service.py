@@ -23,6 +23,7 @@ failures, so a hiccup here cannot break the broader run finalisation.
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Optional
 
@@ -50,22 +51,25 @@ ACTIONABLE_STATUSES = ("FAILED", "BROKEN")
 
 # Project-member fallback role priority. When neither
 # ``Project.default_qa_lead_user_id`` nor ``Project.manager_user_id`` is
-# configured, pick the oldest project member at the most senior role still
-# capable of triaging failures. Without this, projects that ingest before
-# any QA-lead config (the common case for fresh installs and demo data)
-# would leave every failure unassigned and ``/my-failures`` would stay
-# permanently empty.
+# configured, pick from project members with these roles. QA_LEAD first
+# (the role authorised to triage); ADMIN only as the last resort so a
+# project with no QA Lead at all still gets failures into someone's
+# inbox.
 _FALLBACK_MEMBER_ROLES = (UserRole.QA_LEAD.value, UserRole.ADMIN.value)
 
 
-async def _resolve_member_fallback(
-    db: AsyncSession, project_id: uuid.UUID
-) -> Optional[uuid.UUID]:
-    """Pick a project-member fallback when the project has no owner config.
+async def _resolve_qa_lead_pool(
+    db: AsyncSession, project_id: uuid.UUID,
+) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+    """Return ``(qa_leads, admins)`` for the project — both lists ordered
+    by ``ProjectMember.created_at ASC`` so the hash-mod-N distribution
+    below is deterministic across runs.
 
-    Returns the oldest ``ProjectMember`` whose role is QA_LEAD (preferred)
-    or ADMIN — they're the roles authorised to triage. Returns NULL only
-    when the project genuinely has no such member.
+    Used as the SECONDARY assignment surface when neither an explicit
+    ``TestSuiteOwner`` row nor the suite's configured owner matches.
+    The user's stated requirement is "failures should be assigned to
+    all users with QA Lead roles for the project" — i.e. spread, don't
+    concentrate.
     """
     result = await db.execute(
         select(ProjectMember.user_id, ProjectMember.role)
@@ -76,14 +80,32 @@ async def _resolve_member_fallback(
         .order_by(ProjectMember.created_at.asc())
     )
     rows = list(result.all())
-    if not rows:
-        return None
-    # Prefer QA_LEAD over ADMIN when both are present, then oldest within
-    # the chosen role bucket so the choice is deterministic across runs.
     qa_leads = [r.user_id for r in rows if r.role == UserRole.QA_LEAD.value]
-    if qa_leads:
-        return qa_leads[0]
-    return rows[0].user_id
+    admins = [r.user_id for r in rows if r.role == UserRole.ADMIN.value]
+    return qa_leads, admins
+
+
+def _pick_pool_member(
+    pool: list[uuid.UUID],
+    fingerprint: Optional[str],
+    salt: str = "",
+) -> Optional[uuid.UUID]:
+    """Deterministically pick one user from ``pool`` based on the test's
+    fingerprint. Same fingerprint always lands with the same person so
+    repeat failures don't get spread across multiple inboxes.
+
+    ``salt`` lets the caller bias the bucket selection (e.g. project_id)
+    so the same fingerprint in two different projects still distributes
+    independently.
+    """
+    if not pool:
+        return None
+    if not fingerprint:
+        # Pre-fingerprint legacy rows — fall back to the first member.
+        return pool[0]
+    digest = hashlib.md5(f"{salt}:{fingerprint}".encode()).hexdigest()
+    idx = int(digest, 16) % len(pool)
+    return pool[idx]
 
 
 async def assign_failed_tests_to_suite_owners(
@@ -91,22 +113,28 @@ async def assign_failed_tests_to_suite_owners(
     project_id: uuid.UUID,
     run_id: uuid.UUID,
 ) -> dict[str, int]:
-    """Assign every actionable failure in ``run_id`` to its suite owner.
+    """Assign every actionable failure in ``run_id`` to a triager.
 
-    Resolution per suite:
+    Resolution per failure:
       1. Explicit ``TestSuiteOwner`` row for the (project, suite_name).
-      2. Project-level ``default_qa_lead_user_id``.
-      3. Project-level ``manager_user_id`` (legacy).
-      4. Oldest project member at role QA_LEAD (preferred) or ADMIN —
-         covers fresh projects where owner config was never set.
-      5. Unassigned — left NULL.
+      2. Otherwise distribute across the **project's QA Lead pool** via
+         a deterministic hash of ``test_fingerprint`` — repeat failures
+         of the same test always land with the same person, but the
+         pool gets spread evenly so no single QA Lead's inbox
+         monopolises every failure. The pool is built from project
+         members with role ``QA_LEAD``; ``Project.default_qa_lead_user_id``
+         is folded into the pool (deduplicated) so a configured
+         default is still represented but never monopolises.
+      3. If no QA_LEAD members exist, fall back to
+         ``Project.manager_user_id`` (legacy field), then to the
+         project's ADMIN pool (same hash distribution).
+      4. Unassigned — left NULL.
 
     The function:
       * Fetches all FAILED/BROKEN test cases in the run.
       * Batch-fetches every ``TestSuiteOwner`` for the involved suites in one
         round trip.
-      * Issues one UPDATE per (resolved owner) bucket so we don't fire a
-        statement per test case.
+      * Buckets failures by resolved owner so writes are batched.
       * Writes only to rows currently NULL so human reassignments are
         preserved.
 
@@ -114,11 +142,17 @@ async def assign_failed_tests_to_suite_owners(
     """
     counts = {"assigned": 0, "already_assigned": 0, "unassigned": 0}
 
-    # 1. Fetch failed/broken cases for this run. ``suite_name`` may be NULL
-    # for cases that landed in the default suite — handle those via the
-    # default-suite fallback below.
+    # 1. Fetch failed/broken cases for this run. ``test_fingerprint`` is
+    # the stable identity that the pool-distribution hash keys off of;
+    # ``suite_name`` may be NULL for cases that landed in the default
+    # suite — handle those via the default-suite fallback below.
     failures_result = await db.execute(
-        select(TestCase.id, TestCase.suite_name, TestCase.assigned_to_user_id)
+        select(
+            TestCase.id,
+            TestCase.suite_name,
+            TestCase.assigned_to_user_id,
+            TestCase.test_fingerprint,
+        )
         .where(
             TestCase.test_run_id == run_id,
             TestCase.status.in_(ACTIONABLE_STATUSES),
@@ -128,7 +162,11 @@ async def assign_failed_tests_to_suite_owners(
     if not failures:
         return counts
 
-    # 2. Resolve the project-level fallbacks once.
+    # 2. Resolve the project-level fields + QA Lead pool. Pool is built
+    # from QA_LEAD members + the configured default (if any) so a
+    # default QA lead who isn't yet a project member still receives
+    # their share — useful during the brief window after a project is
+    # created and before membership is fully provisioned.
     project_row = (
         await db.execute(
             select(Project.default_qa_lead_user_id, Project.manager_user_id)
@@ -139,12 +177,11 @@ async def assign_failed_tests_to_suite_owners(
         project_row[0] if project_row else None
     )
     manager_id: Optional[uuid.UUID] = project_row[1] if project_row else None
-    project_fallback_id: Optional[uuid.UUID] = default_qa_lead_id or manager_id
-    # Last-resort fallback: pick a project member at QA_LEAD / ADMIN.
-    # Resolved lazily so projects with explicit config don't pay the extra
-    # round trip.
-    if project_fallback_id is None:
-        project_fallback_id = await _resolve_member_fallback(db, project_id)
+
+    qa_lead_pool, admin_pool = await _resolve_qa_lead_pool(db, project_id)
+    if default_qa_lead_id and default_qa_lead_id not in qa_lead_pool:
+        # Honour the configured default even if it isn't a member row yet.
+        qa_lead_pool = [default_qa_lead_id, *qa_lead_pool]
 
     # 3. Resolve the default-suite name so cases with NULL suite_name (rare
     # post-Phase 2 but still possible from legacy ingest paths) map to its
@@ -179,10 +216,12 @@ async def assign_failed_tests_to_suite_owners(
             if row.owner_user_id is not None:
                 owner_by_suite[row.suite_name] = row.owner_user_id
 
-    # 5. Bucket the failure ids by resolved owner. The hot loop is in
-    # Python because each test case independently resolves its owner
-    # (explicit → project fallback → NULL) — but the WRITES are batched
-    # one UPDATE per bucket below.
+    # 5. Bucket the failure ids by resolved owner. Each failure
+    # independently resolves its owner via the chain documented in the
+    # docstring — explicit suite-owner row > QA-Lead-pool distribution
+    # > manager fallback > ADMIN-pool distribution > NULL. WRITES are
+    # batched: one UPDATE per (resolved owner) bucket below.
+    salt = str(project_id)
     by_owner: dict[uuid.UUID, list[uuid.UUID]] = {}
     for f in failures:
         if f.assigned_to_user_id is not None:
@@ -192,8 +231,12 @@ async def assign_failed_tests_to_suite_owners(
         owner_id: Optional[uuid.UUID] = (
             owner_by_suite.get(suite_key) if suite_key else None
         )
-        if owner_id is None:
-            owner_id = project_fallback_id
+        if owner_id is None and qa_lead_pool:
+            owner_id = _pick_pool_member(qa_lead_pool, f.test_fingerprint, salt)
+        if owner_id is None and manager_id is not None:
+            owner_id = manager_id
+        if owner_id is None and admin_pool:
+            owner_id = _pick_pool_member(admin_pool, f.test_fingerprint, salt)
         if owner_id is None:
             counts["unassigned"] += 1
             continue
@@ -221,6 +264,8 @@ async def assign_failed_tests_to_suite_owners(
         already_assigned=counts["already_assigned"],
         unassigned=counts["unassigned"],
         distinct_owners=len(by_owner),
+        qa_lead_pool_size=len(qa_lead_pool),
+        admin_pool_size=len(admin_pool),
     )
     return counts
 

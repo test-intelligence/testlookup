@@ -77,6 +77,22 @@ class UserRole(str, PyEnum):
     ADMIN = "ADMIN"
 
 
+class TriageStatus(str, PyEnum):
+    """Per-failure triage workflow state (migration 0088).
+
+    Distinct from ``TestStatus`` (which is the test's execution outcome).
+    Every auto-assigned FAILED/BROKEN TestCase starts at ``PENDING_REVIEW``
+    and is moved off the ``/my-failures`` inbox once the assignee or a
+    QA Lead picks one of the resolved states.
+    """
+    PENDING_REVIEW         = "PENDING_REVIEW"         # default — appears on /my-failures
+    REVIEWED_APPROVED      = "REVIEWED_APPROVED"      # no action — accepted as-is after review
+    DEFECT_CREATED         = "DEFECT_CREATED"         # defect/bug logged; notes hold the link
+    WONT_FIX               = "WONT_FIX"               # deprecated test / accepted failure
+    AUTOMATION_SCRIPT_ISSUE = "AUTOMATION_SCRIPT_ISSUE"  # test code bug, not a product bug
+    FLAKY_TEST             = "FLAKY_TEST"             # nondeterministic — quarantine candidate
+
+
 class NotificationChannel(str, PyEnum):
     EMAIL = "email"
     SLACK = "slack"
@@ -231,6 +247,13 @@ class TestCase(Base):
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
         Index("ix_test_cases_search", "search_vector", postgresql_using="gin"),
         Index("ix_test_cases_canonical", "canonical_test_case_id"),
+        # Hot path: ``/my-failures`` filters by ``assigned_to_user_id +
+        # triage_status = 'PENDING_REVIEW'``. Composite index keeps the
+        # inbox query a single index scan (added migration 0088).
+        Index(
+            "ix_test_cases_assignee_triage",
+            "assigned_to_user_id", "triage_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -274,6 +297,33 @@ class TestCase(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    # ── Triage workflow (migration 0088) ────────────────────────────
+    # Every auto-assigned FAILED/BROKEN row starts at PENDING_REVIEW.
+    # The /my-failures inbox filters to PENDING_REVIEW only; moving to
+    # any other status removes the row from the assignee's queue. PASSED
+    # / SKIPPED rows carry PENDING_REVIEW too but no UI surfaces them —
+    # the default keeps the column NOT NULL without a per-status branch
+    # in the assigner.
+    triage_status: Mapped[TriageStatus] = mapped_column(
+        String(30),
+        nullable=False,
+        default=TriageStatus.PENDING_REVIEW.value,
+        server_default=TriageStatus.PENDING_REVIEW.value,
+    )
+    # Free-form notes set when the assignee moves status off PENDING_REVIEW —
+    # typically a Jira link for DEFECT_CREATED or a rationale for
+    # WONT_FIX / REVIEWED_APPROVED. Cap is 2k chars to keep the row
+    # bounded; longer write-ups belong on the linked defect.
+    triage_notes: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    triage_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    triage_updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     # S3 reference

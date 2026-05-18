@@ -3,6 +3,20 @@
  * (TestCase.assigned_to_user_id from migration 0080). The backend writes
  * navigation_url so the frontend never has to reconstruct deep links.
  */
+/**
+ * Per-failure triage workflow state (matches backend ``TriageStatus`` enum,
+ * migration 0088). PENDING_REVIEW is the only status that shows on /my-failures;
+ * the others are resolution states the assignee or a QA Lead picks to drop
+ * the row off the inbox.
+ */
+export type TriageStatus =
+  | 'PENDING_REVIEW'
+  | 'REVIEWED_APPROVED'
+  | 'DEFECT_CREATED'
+  | 'WONT_FIX'
+  | 'AUTOMATION_SCRIPT_ISSUE'
+  | 'FLAKY_TEST'
+
 export interface MyFailureItem {
   id: string
   test_name: string
@@ -20,6 +34,10 @@ export interface MyFailureItem {
   project_id: string
   project_name?: string | null
   navigation_url: string
+  /** Workflow state; the inbox filters to PENDING_REVIEW only. */
+  triage_status?: TriageStatus
+  /** Optional context — typically a defect link or rationale. */
+  triage_notes?: string | null
   /**
    * Times this test (same project + suite + class + name) has failed for the
    * current user within the selected window. Lets the inbox surface repeat

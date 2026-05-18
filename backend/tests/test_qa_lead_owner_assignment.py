@@ -407,7 +407,7 @@ async def test_assign_unassigned_when_no_owner_anywhere():
     )
 
     failures = [
-        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None, test_fingerprint="fp-smoke"),
     ]
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
@@ -430,7 +430,7 @@ async def test_assign_resolves_via_test_suite_owner():
 
     owner_id = uuid.uuid4()
     failures = [
-        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None, test_fingerprint="fp-smoke"),
     ]
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
@@ -454,14 +454,15 @@ async def test_assign_falls_back_to_default_qa_lead():
 
     default_qa_lead_id = uuid.uuid4()
     failures = [
-        SimpleNamespace(id=uuid.uuid4(), suite_name="UnownedSuite", assigned_to_user_id=None),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="UnownedSuite", assigned_to_user_id=None, test_fingerprint="fp-x"),
     ]
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
         _all_result(failures),
         _first_result((default_qa_lead_id, uuid.uuid4())),
+        _all_result([]),       # _resolve_qa_lead_pool — no QA_LEAD/ADMIN members
         _all_result([]),       # no explicit suite owner
-        MagicMock(),
+        MagicMock(),           # UPDATE
     ])
 
     counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
@@ -507,7 +508,7 @@ async def test_assign_falls_back_to_project_member_when_owner_config_unset():
     qa_lead_member_id = uuid.uuid4()
     admin_member_id = uuid.uuid4()
     failures = [
-        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None, test_fingerprint="fp-smoke"),
     ]
     member_rows = [
         # Order is created_at ASC; the service prefers QA_LEAD over ADMIN
@@ -539,7 +540,7 @@ async def test_assign_falls_back_to_admin_when_no_qa_lead_member():
 
     admin_id = uuid.uuid4()
     failures = [
-        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="Smoke", assigned_to_user_id=None, test_fingerprint="fp-smoke"),
     ]
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
@@ -557,6 +558,78 @@ async def test_assign_falls_back_to_admin_when_no_qa_lead_member():
 
 
 @pytest.mark.asyncio
+async def test_assign_distributes_across_qa_lead_pool():
+    """When 2+ QA Leads are members of a project AND no explicit suite
+    owner matches, failures get distributed across the pool by hashing
+    test_fingerprint. The exact bucket selection is deterministic but
+    not directly asserted — instead we assert that BOTH leads end up
+    receiving assignments when fed enough distinct fingerprints (the
+    odds of all 20 landing on one bucket are 1 in 2^19 ≈ negligible).
+    """
+    from app.services.failed_test_assignment_service import (
+        assign_failed_tests_to_suite_owners,
+    )
+
+    lead_a = uuid.uuid4()
+    lead_b = uuid.uuid4()
+    failures = [
+        SimpleNamespace(
+            id=uuid.uuid4(), suite_name="Smoke",
+            assigned_to_user_id=None, test_fingerprint=f"fp-{i}",
+        )
+        for i in range(20)
+    ]
+    member_rows = [
+        SimpleNamespace(user_id=lead_a, role=UserRole.QA_LEAD.value),
+        SimpleNamespace(user_id=lead_b, role=UserRole.QA_LEAD.value),
+    ]
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _all_result(failures),
+        _first_result((None, None)),       # no explicit default / manager
+        _all_result(member_rows),           # 2-QA-Lead pool
+        _all_result([]),                    # no TestSuiteOwner
+        MagicMock(),                        # UPDATE bucket 1
+        MagicMock(),                        # UPDATE bucket 2
+    ])
+
+    counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
+    assert counts["assigned"] == 20
+    assert counts["unassigned"] == 0
+
+
+@pytest.mark.asyncio
+async def test_assign_default_qa_lead_folded_into_pool():
+    """When ``Project.default_qa_lead_user_id`` is set but the configured
+    user isn't yet a QA_LEAD ProjectMember, they STILL go into the pool
+    (deduped) so the assignment honours operator intent without waiting
+    for membership backfill."""
+    from app.services.failed_test_assignment_service import (
+        assign_failed_tests_to_suite_owners,
+    )
+
+    default_id = uuid.uuid4()
+    failures = [
+        SimpleNamespace(
+            id=uuid.uuid4(), suite_name="Smoke",
+            assigned_to_user_id=None, test_fingerprint="fp",
+        ),
+    ]
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _all_result(failures),
+        _first_result((default_id, None)),  # default set, manager NULL
+        _all_result([]),                      # no QA_LEAD project members yet
+        _all_result([]),                      # no TestSuiteOwner
+        MagicMock(),                          # UPDATE
+    ])
+
+    counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
+    assert counts["assigned"] == 1
+    assert counts["unassigned"] == 0
+
+
+@pytest.mark.asyncio
 async def test_assign_mixed_batch():
     """Three failures, three resolution outcomes — verify all counted correctly."""
     from app.services.failed_test_assignment_service import (
@@ -566,17 +639,18 @@ async def test_assign_mixed_batch():
     explicit_owner = uuid.uuid4()
     default_qa_lead = uuid.uuid4()
     failures = [
-        SimpleNamespace(id=uuid.uuid4(), suite_name="A", assigned_to_user_id=None),
-        SimpleNamespace(id=uuid.uuid4(), suite_name="B", assigned_to_user_id=None),
-        SimpleNamespace(id=uuid.uuid4(), suite_name="A", assigned_to_user_id=uuid.uuid4()),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="A", assigned_to_user_id=None, test_fingerprint="fp-a"),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="B", assigned_to_user_id=None, test_fingerprint="fp-b"),
+        SimpleNamespace(id=uuid.uuid4(), suite_name="A", assigned_to_user_id=uuid.uuid4(), test_fingerprint="fp-a2"),
     ]
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
         _all_result(failures),
         _first_result((default_qa_lead, None)),
+        _all_result([]),  # _resolve_qa_lead_pool — empty; default_qa_lead is folded in
         _all_result([SimpleNamespace(suite_name="A", owner_user_id=explicit_owner)]),
         MagicMock(),  # UPDATE bucket 1 (explicit_owner)
-        MagicMock(),  # UPDATE bucket 2 (default_qa_lead via fallback)
+        MagicMock(),  # UPDATE bucket 2 (default_qa_lead via pool)
     ])
 
     counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
