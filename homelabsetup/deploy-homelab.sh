@@ -45,18 +45,25 @@ SKIP_REGISTRY=false
 SKIP_BUILD=false
 SKIP_MODELS=false
 SKIP_DNS=false
+# Bypass the pre-apply K3s containerd mirror check (incident 2026-05-17).
+# Default off — the check catches the "every locally-built image
+# ImagePullBackOffs because /etc/rancher/k3s/registries.yaml is missing"
+# failure mode that hit us 4 times in a row. Set to true to opt out
+# (e.g. when running against a non-K3s cluster).
+SKIP_MIRROR_CHECK=false
 TEARDOWN=false
 TEARDOWN_ALL=false
 
 for arg in "$@"; do
   case $arg in
-    --skip-registry) SKIP_REGISTRY=true ;;
-    --skip-build)    SKIP_BUILD=true ;;
-    --skip-models)   SKIP_MODELS=true ;;
-    --skip-dns)      SKIP_DNS=true ;;
-    --teardown)      TEARDOWN=true ;;
-    --teardown-all)  TEARDOWN_ALL=true ;;
-    *)               echo -e "${RED}Unknown flag: $arg${NC}"; exit 1 ;;
+    --skip-registry)     SKIP_REGISTRY=true ;;
+    --skip-build)        SKIP_BUILD=true ;;
+    --skip-models)       SKIP_MODELS=true ;;
+    --skip-dns)          SKIP_DNS=true ;;
+    --skip-mirror-check) SKIP_MIRROR_CHECK=true ;;
+    --teardown)          TEARDOWN=true ;;
+    --teardown-all)      TEARDOWN_ALL=true ;;
+    *)                   echo -e "${RED}Unknown flag: $arg${NC}"; exit 1 ;;
   esac
 done
 
@@ -263,7 +270,10 @@ EOF
     echo "    sudo mkdir -p /etc/rancher/k3s"
     echo "    sudo tee /etc/rancher/k3s/registries.yaml <<'YAML'"
     echo "    mirrors:"
-    echo "      \"registry.local:5000\":"
+    # Port 30500 (NodePort), NOT 5000 (pod-internal). Containerd needs
+    # the same port the kustomization image refs use — see
+    # docs/CLAUDE.md pitfall + feedback_homelab_registry_port_consistency.
+    echo "      \"registry.local:30500\":"
     echo "        endpoint:"
     echo "          - \"http://192.168.0.101:30500\""
     echo "    YAML"
@@ -290,9 +300,17 @@ fi
 # deploy is auditable as a single unit. The tag is later substituted into
 # kustomization.yaml in place of the BUILD_TAG_PLACEHOLDER literal so
 # nothing in the cluster ever runs a :latest tag.
-BUILD_TAG="build-$(date -u +%Y%m%d-%H%M%S)"
-
+#
+# Two modes:
+#   * Normal (build path) — generate a fresh ``build-YYYYMMDD-HHMMSS`` tag
+#     so this deploy is auditable as a single unit.
+#   * ``--skip-build`` — DO NOT invent a fresh tag. The image at that tag
+#     wouldn't exist in the registry (we skipped pushing), and every pod
+#     would land in ImagePullBackOff (incident 2026-05-17). Instead,
+#     resolve the most recent build-* tag that exists for ALL THREE
+#     images and reuse it.
 if [ "$SKIP_BUILD" = false ]; then
+  BUILD_TAG="build-$(date -u +%Y%m%d-%H%M%S)"
   header "Step 2 — Build and Push Container Images"
   log "Build tag for this run: ${BUILD_TAG}"
 
@@ -377,7 +395,69 @@ if [ "$SKIP_BUILD" = false ]; then
   log "Images pushed. Registry catalog:"
   curl -s "http://${PUSH_REGISTRY}/v2/_catalog" 2>/dev/null || warn "Could not query registry catalog"
 else
-  log "Skipping image builds (--skip-build)"
+  log "Skipping image builds (--skip-build) — resolving an existing tag from the registry"
+  # Resolve to a tag that ACTUALLY exists in the registry. Without this
+  # the deploy would substitute a fresh BUILD_TAG into kustomization.yaml
+  # that has no corresponding images, putting every pod in ImagePullBackOff.
+  #
+  # Strategy:
+  #   1. Pick the registry endpoint the same way the build path does.
+  #   2. Fetch the tag list for each of the three images.
+  #   3. Take the newest tag that appears in ALL THREE catalogs and that
+  #      matches the build-YYYYMMDD-HHMMSS shape (skip floating tags).
+  #   4. Hard-fail with a helpful message if no common tag exists — the
+  #      caller probably wanted a fresh build, or the registry got wiped.
+  if curl -sf --max-time 3 "http://registry.local:30500/v2/_catalog" >/dev/null 2>&1; then
+    LOOKUP_REGISTRY="registry.local:30500"
+  elif curl -sf --max-time 3 "http://${CONTROL_NODE}:30500/v2/_catalog" >/dev/null 2>&1; then
+    LOOKUP_REGISTRY="${CONTROL_NODE}:30500"
+  else
+    error "Registry not reachable at registry.local:30500 or ${CONTROL_NODE}:30500. Cannot resolve a tag for --skip-build. Re-run without --skip-build to push fresh images."
+  fi
+
+  _existing_common_tag() {
+    local backend frontend mcp
+    backend=$(curl -sf --max-time 10 "http://${LOOKUP_REGISTRY}/v2/testlookup/backend/tags/list"  2>/dev/null \
+      | sed -e 's/.*"tags":\[//' -e 's/\].*//' -e 's/"//g' -e 's/,/\n/g' \
+      | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true)
+    frontend=$(curl -sf --max-time 10 "http://${LOOKUP_REGISTRY}/v2/testlookup/frontend/tags/list" 2>/dev/null \
+      | sed -e 's/.*"tags":\[//' -e 's/\].*//' -e 's/"//g' -e 's/,/\n/g' \
+      | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true)
+    mcp=$(curl -sf --max-time 10 "http://${LOOKUP_REGISTRY}/v2/testlookup/mcp/tags/list"      2>/dev/null \
+      | sed -e 's/.*"tags":\[//' -e 's/\].*//' -e 's/"//g' -e 's/,/\n/g' \
+      | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true)
+    # Tags sort lexicographically === chronologically because the format
+    # is fixed-width ``build-YYYYMMDD-HHMMSS``. Sort each list desc, then
+    # take the first tag that appears in all three.
+    comm -12 \
+      <(printf '%s\n' "$backend"  | sort -ru) \
+      <(comm -12 \
+        <(printf '%s\n' "$frontend" | sort -ru) \
+        <(printf '%s\n' "$mcp"      | sort -ru)) \
+      | head -n 1
+  }
+
+  BUILD_TAG=$(_existing_common_tag)
+  if [ -z "$BUILD_TAG" ]; then
+    cat >&2 <<EOF
+[!] --skip-build asked us to reuse an existing image tag, but no
+    build-YYYYMMDD-HHMMSS tag exists for ALL THREE images
+    (backend / frontend / mcp) at http://${LOOKUP_REGISTRY}.
+
+    Likely causes:
+      * The registry pod's PVC was wiped (cleanup --all, or a
+        re-deploy without persistence).
+      * The first deploy never completed a build/push round.
+      * Tags exist for some images but not others — a partial build.
+
+    Fix: re-run WITHOUT --skip-build so the script builds + pushes fresh
+    images:
+
+        ./homelabsetup/deploy-homelab.sh --skip-registry --skip-models
+EOF
+    exit 1
+  fi
+  log "Resolved BUILD_TAG=${BUILD_TAG} (newest tag present in all three image catalogs)"
 fi
 
 # ── Step 3: Create Namespace ───────────────────────────────
@@ -488,6 +568,87 @@ rm -f "${OVERLAY_KUSTOMIZATION}.tmp"
 if grep -q "BUILD_TAG_PLACEHOLDER" "$OVERLAY_KUSTOMIZATION"; then
   warn "BUILD_TAG_PLACEHOLDER still present in kustomization.yaml after substitution. Aborting."
   exit 1
+fi
+
+# Pre-apply K3s mirror precheck. Without /etc/rancher/k3s/registries.yaml
+# on every node, containerd treats registry.local:30500 as an unknown
+# registry, falls back to HTTPS, and ImagePullBackOff hits every pod —
+# the only one the bootstrap script handles, the deploy script silently
+# assumes. Verify the file exists on each Ready node before applying so
+# we surface the actionable fix BEFORE the cluster spends 5+ minutes
+# stuck in pull retries. Detects the file via a single ``kubectl debug
+# node`` exec per node (no SSH required from the build host).
+log "Pre-checking K3s containerd mirror config on every node..."
+mirror_missing_nodes=()
+mirror_check_skipped=false
+node_names="$(kubectl get nodes -o name 2>/dev/null | sed 's|^node/||')"
+if [ -z "$node_names" ]; then
+  warn "Could not list nodes via kubectl; skipping mirror precheck."
+  mirror_check_skipped=true
+else
+  for node in $node_names; do
+    # ``kubectl debug node/<n>`` spawns a privileged debug pod with the
+    # node's filesystem at /host. The grep returns 0 only when the
+    # registries.yaml contains a ``registry.local:30500`` mirror entry —
+    # so we catch both "file missing" and "file present but wrong port"
+    # in one check. Output is suppressed; only the exit code matters.
+    if ! kubectl debug node/"$node" --image=busybox:1.36 \
+           --quiet --profile=sysadmin -- \
+           chroot /host grep -q "registry.local:30500" \
+                /etc/rancher/k3s/registries.yaml >/dev/null 2>&1; then
+      mirror_missing_nodes+=("$node")
+    fi
+  done
+  # Clean up the debug pods the check left behind. They auto-terminate
+  # after the chroot returns but the pod records linger until kubectl
+  # prunes them.
+  kubectl -n default delete pods -l created-by=kubectl-debug --ignore-not-found=true >/dev/null 2>&1 || true
+fi
+
+if [ "$mirror_check_skipped" = false ] && [ ${#mirror_missing_nodes[@]} -gt 0 ]; then
+  cat >&2 <<EOF
+
+══════════════════════════════════════════════════════════════════════
+[!] K3s containerd mirror config is missing on:
+$(printf "       - %s\n" "${mirror_missing_nodes[@]}")
+
+    Without this, every locally-built TestLookup image
+    (registry.local:30500/testlookup/*) will ImagePullBackOff because
+    containerd treats the registry as unknown and tries HTTPS.
+
+    Fix — run this from the build host (Git Bash works):
+
+        NODE_USER=labadmin
+        NODE1_IP=192.168.0.101
+        for ip in 192.168.0.101 192.168.0.102 192.168.0.103; do
+          ssh -o StrictHostKeyChecking=no \$NODE_USER@\$ip bash <<'REMOTE'
+            sudo grep -q "registry.local" /etc/hosts || \\
+              echo "192.168.0.101 registry.local" | sudo tee -a /etc/hosts
+            sudo mkdir -p /etc/rancher/k3s
+            sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<YAML
+mirrors:
+  "registry.local:30500":
+    endpoint:
+      - "http://192.168.0.101:30500"
+  "192.168.0.101:30500":
+    endpoint:
+      - "http://192.168.0.101:30500"
+YAML
+            sudo systemctl restart k3s 2>/dev/null || sudo systemctl restart k3s-agent
+        REMOTE
+        done
+
+    Or re-run ./homelabsetup/bootstrap-homelab.sh (idempotent) which
+    automates the same thing.
+
+    Pass --skip-mirror-check to bypass this guard (NOT recommended).
+══════════════════════════════════════════════════════════════════════
+EOF
+  if [ "${SKIP_MIRROR_CHECK:-false}" = true ]; then
+    warn "Continuing anyway because --skip-mirror-check was passed."
+  else
+    exit 1
+  fi
 fi
 
 log "Applying Kustomize overlay..."
@@ -693,11 +854,20 @@ if [ "$SKIP_DNS" = false ]; then
     HOSTS_FILE="/etc/hosts"
     [ -f "/c/Windows/System32/drivers/etc/hosts" ] && HOSTS_FILE="/c/Windows/System32/drivers/etc/hosts"
 
-    if grep -q "testlookup.local" "$HOSTS_FILE" 2>/dev/null; then
-      log "testlookup.local already in hosts file."
-    else
+    # Verify the IP in the hosts file matches the CURRENT Traefik IP.
+    # When MetalLB's IPAddressPool is recreated (e.g. during a fresh
+    # bootstrap) the assigned LoadBalancer IP can change — we shipped
+    # 192.168.0.200 → 192.168.0.201 on 2026-05-18 and the browser kept
+    # hitting the old IP because the hosts file was never updated. The
+    # check below catches that drift and tells the user the exact
+    # one-line fix instead of just declaring "all good" on a stale entry.
+    HOSTS_LINE="$(grep -E '^[^#]*\stestlookup\.local(\s|$)' "$HOSTS_FILE" 2>/dev/null \
+                   | head -1 || true)"
+    HOSTS_IP="$(echo "$HOSTS_LINE" | awk '{print $1}')"
+
+    if [ -z "$HOSTS_LINE" ]; then
       echo ""
-      warn "Add this to your hosts file:"
+      warn "testlookup.local is NOT in your hosts file. Add it:"
       echo ""
       echo "  Windows (Admin PowerShell):"
       echo "    Add-Content C:\\Windows\\System32\\drivers\\etc\\hosts \"$TRAEFIK_IP testlookup.local\""
@@ -708,6 +878,21 @@ if [ "$SKIP_DNS" = false ]; then
       echo ""
       warn "Note: Some browsers auto-upgrade .local to HTTPS. Use http:// explicitly."
       echo ""
+    elif [ "$HOSTS_IP" != "$TRAEFIK_IP" ]; then
+      echo ""
+      warn "Hosts file points testlookup.local → ${HOSTS_IP}, but Traefik is now on ${TRAEFIK_IP}."
+      warn "Update the entry — the browser is hitting the wrong IP and getting nothing back."
+      echo ""
+      echo "  Windows (Admin PowerShell — replace existing line):"
+      echo "    \$h = 'C:\\Windows\\System32\\drivers\\etc\\hosts'"
+      echo "    (Get-Content \$h) -replace '\\d+\\.\\d+\\.\\d+\\.\\d+\\s+testlookup\\.local', '$TRAEFIK_IP testlookup.local' | Set-Content \$h"
+      echo "    ipconfig /flushdns"
+      echo ""
+      echo "  Linux/Mac:"
+      echo "    sudo sed -i.bak -E 's/^[0-9.]+[[:space:]]+testlookup\\.local/$TRAEFIK_IP testlookup.local/' /etc/hosts"
+      echo ""
+    else
+      log "Hosts file already maps testlookup.local → ${TRAEFIK_IP} ✓"
     fi
   else
     warn "Could not determine Traefik IP. Check: kubectl -n kube-system get svc traefik"

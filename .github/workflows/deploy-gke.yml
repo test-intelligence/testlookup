@@ -1,0 +1,142 @@
+name: Deploy to GCP GKE
+
+# Reference workflow for cloud deploys — GCP mirror of deploy-eks.yml.
+# Wraps ``scripts/deploy-k8s.sh`` with GCP-specific authentication +
+# Artifact Registry push + ``gcloud container clusters get-credentials``,
+# then hands off to the script.
+#
+# Uses **Workload Identity Federation** (OIDC) rather than the legacy
+# ``credentials_json`` service-account key path. The legacy key path
+# still works via google-github-actions/auth@v2 — see the docs section
+# for the trade-off — but OIDC leaves no rotatable secret in the repo.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   GCP_WIF_PROVIDER         Full workload-identity-provider resource ID,
+#                            e.g. projects/123/locations/global/workloadIdentityPools/gh/providers/gh-prov
+#   GCP_SERVICE_ACCOUNT      SA email the workflow impersonates,
+#                            e.g. testlookup-ci@PROJECT.iam.gserviceaccount.com
+#   GCP_PROJECT_ID           GCP project containing the GKE cluster + AR repo
+#   GCP_AR_LOCATION          Artifact Registry location, e.g. us-central1
+#   GCP_AR_REPOSITORY        AR repo name, e.g. testlookup-images
+#   GKE_CLUSTER_NAME         e.g. testlookup-prod
+#   GKE_LOCATION             Cluster region OR zone, e.g. us-central1
+#   BACKEND_URL              (Optional) post-deploy health probe target
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to build + deploy (e.g. v0.1.0, sha-abc1234).'
+        required: true
+        default: ''
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_TAG: ${{ inputs.image_tag || github.ref_name }}
+  # AR host format: ``<LOCATION>-docker.pkg.dev``. We assemble the full
+  # registry prefix as a job-level env so the build + deploy steps stay
+  # symmetric and the deploy script's --registry arg gets the same value
+  # the docker push used.
+  AR_HOST: ${{ secrets.GCP_AR_LOCATION }}-docker.pkg.dev
+  AR_PREFIX: ${{ secrets.GCP_AR_LOCATION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPOSITORY }}
+
+jobs:
+  build-and-push:
+    name: Build & Push to Artifact Registry
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ env.IMAGE_TAG }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        # ``gcloud auth configure-docker`` registers a credential helper
+        # for the AR host so subsequent ``docker push`` calls authenticate
+        # automatically via the impersonated SA's token.
+        run: gcloud auth configure-docker "$AR_HOST" --quiet
+
+      - name: Build & push backend image
+        run: |
+          REPO="$AR_PREFIX/testlookup/backend"
+          docker build -t "$REPO:$IMAGE_TAG" ./backend
+          docker push "$REPO:$IMAGE_TAG"
+
+      - name: Build & push frontend image
+        run: |
+          REPO="$AR_PREFIX/testlookup/frontend"
+          docker build -t "$REPO:$IMAGE_TAG" ./frontend
+          docker push "$REPO:$IMAGE_TAG"
+
+      - name: Build & push MCP image
+        run: |
+          REPO="$AR_PREFIX/testlookup/mcp"
+          docker build -t "$REPO:$IMAGE_TAG" ./mcp
+          docker push "$REPO:$IMAGE_TAG"
+
+  deploy:
+    name: Apply to GKE
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    # Same ``production`` environment binding as deploy-eks.yml so the
+    # required-reviewer gates configured at repo level apply uniformly.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
+          location: ${{ secrets.GKE_LOCATION }}
+
+      - name: Deploy via deploy-k8s.sh
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          # ``--registry`` becomes the prefix prepended to each
+          # ``testlookup/{backend,frontend,mcp}`` image reference in the
+          # kustomize overlay. Match exactly what the build step pushed.
+          REGISTRY: ${{ env.AR_PREFIX }}
+        run: |
+          chmod +x scripts/deploy-k8s.sh
+          scripts/deploy-k8s.sh \
+            --cloud=gcp \
+            --image-tag="$IMAGE_TAG" \
+            --registry="$REGISTRY"
+
+      - name: Smoke check
+        # The deploy script already waits for rollout (5min timeout per
+        # deployment); this probes the public ingress as a final sanity
+        # check. Skipped when BACKEND_URL secret is unset.
+        if: ${{ secrets.BACKEND_URL != '' }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl --fail --silent --show-error "${{ secrets.BACKEND_URL }}/health"; then
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i failed; sleeping 10s"
+            sleep 10
+          done
+          echo "Health check FAILED after 5 attempts"
+          exit 1

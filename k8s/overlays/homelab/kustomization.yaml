@@ -230,12 +230,22 @@ images:
   # :latest. The placeholder below intentionally won't resolve in any registry —
   # running ``kubectl apply -k`` directly (bypassing the deploy script) is
   # expected to fail at ImagePull, which prevents accidental :latest deploys.
+  #
+  # **Port 30500, not 5000.** This is the NodePort the registry pod is
+  # exposed on (``REGISTRY_NODEPORT`` in bootstrap-homelab.sh, mirrored
+  # via ``/etc/rancher/k3s/registries.yaml`` on every K3s node). An
+  # earlier revision pointed at ``:5000`` (the registry's pod-internal
+  # port), which the K3s containerd mirror config did NOT cover, so
+  # pulls failed at the imagePull step with "connection refused" on
+  # every worker node while pushes (which use the NodePort directly)
+  # kept succeeding. Keep this in sync with bootstrap-homelab.sh:47 +
+  # deploy-homelab.sh:28.
   - name: testlookup/backend
-    newName: registry.local:5000/testlookup/backend
+    newName: registry.local:30500/testlookup/backend
     newTag: BUILD_TAG_PLACEHOLDER
   - name: testlookup/frontend
-    newName: registry.local:5000/testlookup/frontend
+    newName: registry.local:30500/testlookup/frontend
     newTag: BUILD_TAG_PLACEHOLDER
   - name: testlookup/mcp
-    newName: registry.local:5000/testlookup/mcp
+    newName: registry.local:30500/testlookup/mcp
     newTag: BUILD_TAG_PLACEHOLDER

@@ -128,14 +128,19 @@ describe('SummaryReportPage', () => {
     useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
   })
 
-  it('defaults to 24h (days=1) on first visit', async () => {
-    mockGet.mockResolvedValue(makeReport())
+  it('defaults to 24h window + latest-per-suite aggregation on first visit', async () => {
+    // Regression for 2026-05-18 bug report: fresh users were landing on
+    // the window-mode view and seeing Suite totals scaled by run count
+    // (5 runs × 100 tests = 500), which reads as duplicate rows. Latest
+    // mode shows one snapshot per suite — what users actually expect on
+    // "show me where things stand right now".
+    mockGet.mockResolvedValue(makeReport({ mode: 'latest' }))
 
     renderPage()
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 1, mode: 'window' as SummaryReportMode }),
+        expect.objectContaining({ days: 1, mode: 'latest' as SummaryReportMode }),
       )
     })
   })
@@ -268,18 +273,22 @@ describe('SummaryReportPage', () => {
     fireEvent.click(screen.getByText('30d'))
 
     await waitFor(() => {
+      // Default mode is now ``latest`` (post-2026-05-18 bug fix); we
+      // assert window-change preserves whatever mode is currently
+      // active rather than re-asserting on the default.
       expect(mockGet).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 30, mode: 'window' as SummaryReportMode }),
+        expect.objectContaining({ days: 30, mode: 'latest' as SummaryReportMode }),
       )
       expect(mockGet.mock.calls.length).toBeGreaterThan(initialCalls)
     })
 
     const beforeMode = mockGet.mock.calls.length
-    fireEvent.click(screen.getByText(/Latest run per suite/i))
+    // Switch FROM the default 'latest' TO 'window' to exercise the toggle.
+    fireEvent.click(screen.getByText(/All runs in window/i))
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith(
-        expect.objectContaining({ mode: 'latest' as SummaryReportMode }),
+        expect.objectContaining({ mode: 'window' as SummaryReportMode }),
       )
       expect(mockGet.mock.calls.length).toBeGreaterThan(beforeMode)
     })
@@ -304,12 +313,14 @@ describe('SummaryReportPage', () => {
     fireEvent.click(button)
 
     await waitFor(() => {
-      // Default window is 24h (days=1) — pin that here so a future bump
-      // of the default doesn't silently regress the "starting point".
+      // Default window is 24h (days=1) and default aggregation mode is
+      // ``latest`` post-2026-05-18 (bug fix: ``window`` mode produces
+      // run-count-scaled totals that read as duplicates). Pin both so a
+      // future bump of either default doesn't silently regress.
       expect(mockDownloadPdf).toHaveBeenCalledWith({
         project_id: 'p1',
         days: 1,
-        mode: 'window',
+        mode: 'latest',
       })
     })
 

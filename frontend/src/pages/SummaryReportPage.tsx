@@ -29,12 +29,22 @@ const DAYS_OPTIONS = [1, 7, 30, 90] as const
  *  navigation without leaking into pages that don't have a mode. */
 const LS_MODE_KEY = 'summary-report.mode'
 
+/** Default aggregation mode. ``latest`` shows one snapshot per suite
+ *  (the most recent run in the window), which matches user intent on
+ *  "show me where things stand right now" — a fresh user landing on
+ *  /reports/summary expects current state, not volume-weighted history.
+ *  The volume-weighted ``window`` view is still available via the
+ *  toggle, but isn't the default because it produces totals scaled by
+ *  run count (5 runs × 100 tests = 500 total) which reads as duplicate
+ *  rows to anyone who hasn't read the docstring. */
+const DEFAULT_MODE: SummaryReportMode = 'latest'
+
 function loadStoredMode(): SummaryReportMode {
   try {
     const raw = localStorage.getItem(LS_MODE_KEY)
-    return raw === 'latest' || raw === 'window' ? raw : 'window'
+    return raw === 'latest' || raw === 'window' ? raw : DEFAULT_MODE
   } catch {
-    return 'window'
+    return DEFAULT_MODE
   }
 }
 

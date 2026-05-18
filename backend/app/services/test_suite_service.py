@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 import structlog
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import bindparam, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -407,6 +407,16 @@ async def list_test_suites(
     if project_ids is not None:
         from sqlalchemy import text as sa_text
 
+        # ``IN :pids`` must use ``expanding=True`` so SQLAlchemy expands
+        # the list into one placeholder per element (``IN ($1, $2, ...)``)
+        # at execute time. Without it, asyncpg receives a single ``$1``
+        # placeholder and the Python tuple gets bound as a single value
+        # — PostgreSQL then can't match a UUID column to a tuple and
+        # the query 500s. Incident 2026-05-18: a single-project caller
+        # (project_id query param on /suites) triggered the bad binding
+        # and the surrounding ``except Exception: await db.rollback()``
+        # then aborted the request's transaction, blowing up the entire
+        # handler instead of degrading the backfill gracefully.
         missing_query = sa_text("""
             SELECT
                 tr.project_id,
@@ -421,15 +431,22 @@ async def list_test_suites(
                     AND ts.name = NULLIF(TRIM(tr.primary_suite_name), '')
               )
             GROUP BY tr.project_id, NULLIF(TRIM(tr.primary_suite_name), '')
-        """).bindparams(pids=tuple(project_ids))
+        """).bindparams(bindparam("pids", expanding=True))
         try:
-            missing_rows = (await db.execute(missing_query)).fetchall()
+            missing_rows = (
+                await db.execute(missing_query, {"pids": list(project_ids)})
+            ).fetchall()
         except Exception as exc:
-            # An older deployment / migration mismatch shouldn't 500
-            # /suites — degrade by skipping the backfill.
-            logger.warning("test_suites backfill probe failed, skipping",
-                           error=str(exc))
-            await db.rollback()
+            # Degrade: a backfill probe failure shouldn't 500 /suites,
+            # AND must not roll back the caller's transaction (this is
+            # an injected session — caller owns commit/rollback per
+            # backend/CLAUDE.md "Commit responsibility (single-owner
+            # rule)"). Swallow + log + continue with whatever suites
+            # we already fetched.
+            logger.warning(
+                "test_suites backfill probe failed, skipping",
+                error=str(exc),
+            )
             missing_rows = []
 
         if missing_rows:

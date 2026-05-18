@@ -297,6 +297,73 @@ async def test_sync_canonical_skips_cases_with_no_fingerprint():
     assert result["added"] == 0
 
 
+# ── list_test_suites backfill probe (regression for /suites?project_id 500) ───
+
+
+@pytest.mark.asyncio
+async def test_list_test_suites_backfill_does_not_rollback_on_probe_failure():
+    """Regression: when the backfill probe raises (e.g. asyncpg IN-binding
+    error from missing ``expanding=True``), the service must NOT call
+    ``db.rollback()`` on the injected session. The handler's ``get_db``
+    dependency owns the transaction lifecycle; a service-side rollback
+    aborts every other DB op in the request, producing a downstream 500
+    that masks the real (degraded-but-correct) behaviour.
+
+    The fix: catch the probe exception, log a warning, set
+    ``missing_rows = []``, and continue. ``await db.rollback()`` is
+    NEVER called from inside ``list_test_suites``.
+
+    Reference incident 2026-05-18 — /suites?project_id=<uuid> returned
+    500 because the original code did:
+
+        WHERE tr.project_id IN :pids   # without expanding=True
+        ...except Exception: await db.rollback()
+
+    The IN binding raised; rollback aborted the request; commit-time
+    failed; 500 with no traceback in logs.
+    """
+    project_id = uuid.uuid4()
+
+    db = AsyncMock()
+    # First call (selecting TestSuite rows) returns empty so the
+    # backfill probe is the next thing to fire.
+    empty_suites = FakeExecuteResult()
+    empty_suites.scalars = lambda: SimpleNamespace(all=lambda: [])
+
+    # Make the backfill probe raise — simulates the original asyncpg
+    # IN-binding failure or any other DB error during the backfill.
+    db.execute = AsyncMock(side_effect=[empty_suites, RuntimeError("boom")])
+    db.rollback = AsyncMock()
+
+    # Must NOT raise to the caller, AND must NOT call db.rollback().
+    result = await svc.list_test_suites(db, [project_id])
+
+    assert result == []
+    db.rollback.assert_not_awaited()
+
+
+def test_list_test_suites_uses_expanding_bind_for_in_clause():
+    """Pin the canonical SQLAlchemy pattern for `IN :pids` bindings.
+
+    Source-inspection test: opening the test_suite_service.py source
+    and confirming the backfill query uses ``bindparam("pids",
+    expanding=True)`` rather than the previous broken
+    ``bindparams(pids=tuple(project_ids))``. The latter fails when
+    asyncpg can't expand a tuple at the SQL layer for the IN clause.
+    """
+    from pathlib import Path
+    source = Path(svc.__file__).read_text(encoding="utf-8")
+    assert 'bindparam("pids", expanding=True)' in source, (
+        "list_test_suites backfill must use bindparam('pids', expanding=True). "
+        "The non-expanding form 500s /suites?project_id=<uuid>."
+    )
+    # And the broken pattern must NOT be present anywhere.
+    assert 'bindparams(pids=tuple(' not in source, (
+        "Found the legacy non-expanding bind pattern — replace with "
+        "bindparam('pids', expanding=True)."
+    )
+
+
 # ── reconcile_canonical_deletions ───────────────────────────────────────────
 
 

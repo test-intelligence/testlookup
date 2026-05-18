@@ -177,7 +177,21 @@ spec:
             - --loglevel=info
             - --concurrency=4
             - -Q
-            - ingestion
+            # Subscribe to BOTH the legacy ``ingestion`` queue AND every
+            # ``ingestion.shard.<i>`` queue. ``persist_live_session`` is
+            # routed to ``ingestion.shard.<hash(project_id) mod N>`` by
+            # the Phase 2 fairness work (services/stream_service.py +
+            # worker/ingestion_routing.py). Without the shard queues in
+            # this -Q list, tasks pile up unconsumed and per-test rows
+            # never get written — the symptom is /suites empty +
+            # /failures showing "per-test rows haven't been persisted
+            # yet" while /runs displays the aggregate counts cleanly.
+            # Incident 2026-05-18.
+            #
+            # Keep this in lockstep with LIVE_INGEST_SHARD_COUNT
+            # (default 8 — see core/config.py). If you change the
+            # shard count, update this list too.
+            - ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7
             - --max-tasks-per-child=200
           envFrom:
             - configMapRef:
