@@ -12,6 +12,7 @@ import {
   useSuites,
   useSuiteTestCases,
 } from '@/hooks/useSuites'
+import { useSuiteDetail } from '@/hooks/useMetrics'
 import { suitesService } from '@/services/suitesService'
 import type { CanonicalTestCase, TestSuite } from '@/types/suites'
 
@@ -237,6 +238,14 @@ export default function SuiteCasesPage() {
   const { data: suite, isLoading: suiteLoading, error: suiteError } = useSuite(suiteId)
   const { data: casesData, isLoading: casesLoading } = useSuiteTestCases(suiteId)
   const { data: allSuites } = useSuites()
+  // Pull run-level aggregates for the same suite so the empty state can
+  // distinguish "this suite has truly never ingested anything" from
+  // "runs landed but per-test rows were not persisted" (the JUnit-XML
+  // run-summary / live-buffer-eviction case). Mirrors the wording used
+  // by ``/test-management?tab=Test+Suites`` and ``/coverage/suite``.
+  const { data: suiteSummary } = useSuiteDetail(suite?.name ?? null, 30)
+  const runLevelExecutions = suiteSummary?.summary?.total_executions ?? 0
+  const runLevelUnique = suiteSummary?.summary?.unique_tests ?? 0
   const [moveTarget, setMoveTarget] = useState<CanonicalTestCase | null>(null)
   // Selection lives in a Set keyed by canonical id. Surface as an array
   // to the modal but a Set is the right shape for O(1) "is selected"
@@ -316,6 +325,23 @@ export default function SuiteCasesPage() {
 
       {casesLoading ? (
         <LoadingSpinner />
+      ) : cases.length === 0 && (runLevelExecutions > 0 || runLevelUnique > 0) ? (
+        <div className="rounded border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
+          <p className="font-medium">
+            {runLevelUnique || runLevelExecutions} test{(runLevelUnique || runLevelExecutions) === 1 ? '' : 's'} reported by recent runs, but per-test rows are missing for this suite.
+          </p>
+          <p className="mt-1 text-xs text-amber-300/80">
+            This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
+            the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
+            or the live buffer evicted before persistence. Re-run the suite to populate detail rows, or
+            {' '}
+            <Link to={`/coverage/suite?name=${encodeURIComponent(suite.name)}`} className="underline decoration-dotted underline-offset-2 hover:text-amber-200">
+              open analytics
+            </Link>
+            {' '}
+            to see the run-level totals.
+          </p>
+        </div>
       ) : cases.length === 0 ? (
         <EmptyState
           title="No test cases in this suite"

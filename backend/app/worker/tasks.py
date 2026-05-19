@@ -2561,6 +2561,72 @@ def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> di
 
 
 @celery_app.task(
+    name="app.worker.tasks.auto_recover_completed_live_runs",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def auto_recover_completed_live_runs(
+    self,
+    lookback_hours: int = 24,
+    max_runs: int = 100,
+) -> dict:
+    """Recover REAL per-test rows from ``TestRun.event_archive`` for
+    completed live_stream runs whose ``test_cases`` table is empty.
+
+    Defensive net for the close_session → persist_live_session handoff.
+    When the worker dispatch is dropped (silent apply_async failure,
+    queue backpressure, worker restart) the run shows correct aggregates
+    on /runs but per-test detail is missing on /test-management,
+    /coverage/suite, and the run-detail page. The hourly
+    ``backfill_placeholder_test_cases`` task eventually inserts marker
+    rows but loses the real test names the SDK shipped. We capture
+    those names in ``TestRun.event_archive`` at close-time (15-day TTL)
+    so this task can materialise them when the regular handoff
+    misfired. Runs on its own cadence (every 2 minutes) so users see
+    real per-test detail within ~2 minutes of close_session, well
+    before the placeholder backfill fires.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.live_run_recovery_service import (
+        auto_recover_completed_runs,
+        repair_clobbered_primary_suite_names,
+    )
+
+    async def _run() -> dict:
+        async with AsyncSessionLocal() as db:
+            recover = await auto_recover_completed_runs(
+                db,
+                lookback_hours=lookback_hours,
+                max_runs=max_runs,
+            )
+            # Companion sweep — heal runs whose finalize_run path
+            # clobbered ``primary_suite_name`` with the per-event
+            # dominant suite (e.g. a test class name from the old
+            # TestNG-listener default). Reads ``LiveSession.suite_name``
+            # as the authoritative session label. Bounded by the same
+            # 24h window so we don't rewrite ancient runs the user
+            # has long since accepted as-is.
+            repair = await repair_clobbered_primary_suite_names(
+                db,
+                lookback_hours=lookback_hours,
+                max_runs=max(max_runs, 200),
+            )
+            await db.commit()
+            return {"recover": recover, "repair": repair}
+
+    logger.info(
+        "[Task %s] auto_recover_completed_live_runs starting", self.request.id
+    )
+    result = cast(dict[str, Any], _run_async(_run()))
+    logger.info(
+        "[Task %s] auto_recover_completed_live_runs done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
     name="app.worker.tasks.backfill_unassigned_failures",
     bind=True,
     queue="default",
