@@ -1111,7 +1111,17 @@ function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
     >
       <td style={{ padding: '10px 12px' }}>
         <div className="flex flex-col min-w-0">
-          <SuiteBadge primary={row.suiteLabel} all={row.suiteNames} className="self-start max-w-full" />
+          {/* Clickable badge → /test-management Test Suites tab pre-
+              filtered to this suite. Same deep-link shape used by the
+              /runs and /live tables. SuiteBadge handles the
+              ``stopPropagation`` internally so clicking the chip
+              doesn't also fire the row's onClick (run-detail nav). */}
+          <SuiteBadge
+            primary={row.suiteLabel}
+            all={row.suiteNames}
+            className="self-start max-w-full"
+            linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+          />
           <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums mt-1">
             {row.whenRel} · {row.whenAbs}
           </span>
@@ -1550,7 +1560,13 @@ export default function DeepInvestigationPage() {
             {model.focusedRun && (
               <>
                 <span aria-hidden>·</span>
-                <SuiteBadge primary={model.focusedRun.primary_suite_name} all={model.focusedRun.suite_names} />
+                {/* Header suite chip is clickable too — same target as
+                    the past-investigations rows below. */}
+                <SuiteBadge
+                  primary={model.focusedRun.primary_suite_name}
+                  all={model.focusedRun.suite_names}
+                  linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+                />
               </>
             )}
             <span aria-hidden>·</span>
