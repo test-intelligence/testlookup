@@ -307,6 +307,10 @@ interface ProposedCluster {
 interface PastRun {
   runId: string
   runIdLabel: string
+  /** Per-(project, suite) human-readable run number, 1-based. Mirrors
+   *  the same value shown on /runs, /live, /my-failures, etc. May be
+   *  null for legacy runs ingested before the field existed. */
+  runSeq: number | null
   suiteLabel: string | null
   suiteNames: string[] | null
   whenRel: string
@@ -399,6 +403,7 @@ function buildModel({
     return {
       runId: r.id,
       runIdLabel: r.id.slice(0, 8),
+      runSeq: r.run_seq ?? null,
       suiteLabel: r.primary_suite_name ?? r.suite_names?.[0] ?? null,
       suiteNames: r.suite_names ?? null,
       whenRel: ageRel,
@@ -1062,6 +1067,11 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
           <thead>
             <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
               <Th label="Test Suite" />
+              {/* Per-(project, suite) human-readable run number,
+                  alongside the suite the row belongs to. Same value
+                  rendered on /runs, /live, /my-failures, /intelligence,
+                  and /agents — the column is named "Run" everywhere. */}
+              <Th label="Run" />
               <Th label="Failures" align="right" />
               <Th label="Clusters" align="right" />
               <Th label="Defects" align="right" />
@@ -1073,7 +1083,7 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center py-8 text-[var(--color-text-muted)]">
+                <td colSpan={8} className="text-center py-8 text-[var(--color-text-muted)]">
                   No past investigations.
                 </td>
               </tr>
@@ -1106,6 +1116,14 @@ function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
             {row.whenRel} · {row.whenAbs}
           </span>
         </div>
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        {/* Run #N when known; fall back to the 8-char run-uuid slug
+            (already computed as ``row.runIdLabel`` above) so legacy
+            rows still have a clickable handle. */}
+        <span className="font-mono text-[12px] text-[var(--color-text)]">
+          {row.runSeq != null ? `Run #${row.runSeq}` : row.runIdLabel}
+        </span>
       </td>
       <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.failures}</td>
       <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.clusters}</td>

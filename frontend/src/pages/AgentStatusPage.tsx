@@ -339,7 +339,12 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
     <div className="card border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/30">
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <Activity className="w-4 h-4 text-[var(--color-text)] animate-pulse" />
-        <span className="text-sm font-semibold text-[var(--color-text)]">Build {run.build_number}</span>
+        {/* Per-(project, suite) Run #N — server-computed, stable across
+            pages. Falls back to the SDK build_number for live sessions
+            on legacy runs whose TestRun row hasn't been materialised yet. */}
+        <span className="text-sm font-semibold text-[var(--color-text)]">
+          {run.run_seq != null ? `Run #${run.run_seq}` : `Build ${run.build_number}`}
+        </span>
         <SuiteBadge primary={run.suite_name} all={run.suite_name ? [run.suite_name] : null} />
         <span className="ml-auto text-xs bg-[var(--color-bg-secondary)]/60 text-[var(--color-text)] px-2 py-0.5 rounded-full">
           LIVE
@@ -571,7 +576,11 @@ export default function AgentStatusPage() {
               <option value="">— All recent pipelines —</option>
               {recentRuns.map((r) => {
                 const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
-                const label = `${suite} · #${r.build_number}`
+                // Picker label uses Run #N when available (matches the
+                // /runs and /live pages); legacy rows still render the
+                // raw build_number prefixed with "#" for continuity.
+                const runLabel = r.run_seq != null ? `Run #${r.run_seq}` : `#${r.build_number}`
+                const label = `${suite} · ${runLabel}`
                 return (
                   <option key={r.id} value={r.id}>{label}</option>
                 )
@@ -623,9 +632,10 @@ export default function AgentStatusPage() {
                 <option value="">— Pick a test suite &amp; build —</option>
                 {recentRuns.map((r) => {
                   const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
+                  const runLabel = r.run_seq != null ? `Run #${r.run_seq}` : `#${r.build_number}`
                   return (
                     <option key={r.id} value={r.id}>
-                      {`${suite} · #${r.build_number}`}
+                      {`${suite} · ${runLabel}`}
                     </option>
                   )
                 })}

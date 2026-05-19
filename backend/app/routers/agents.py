@@ -477,10 +477,44 @@ async def get_pipeline_replay(
 
 
 @router.get("/active-runs")
-async def get_active_live_runs(_: Any = Depends(get_current_active_user)):
-    """Get all currently monitored live test runs."""
+async def get_active_live_runs(
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_active_user),
+):
+    """Get all currently monitored live test runs.
+
+    Enriches each Redis-state row with ``run_seq`` (per-(project,
+    primary_suite_name) human-readable run number) by resolving each
+    run's canonical TestRun.id. ``run_seq`` is null when the run's
+    TestRun row doesn't exist yet — the Phase 4.5 incremental drain
+    creates it within ~30s of the first event, so very-new active
+    sessions fall through to the SDK ``build_number`` on the UI.
+    """
+    import uuid as _uuid
     from app.streams.live_run_state import RedisLiveRunState
-    return {"active_runs": await RedisLiveRunState.get_all_active()}
+    from app.services.stream_service import canonical_test_run_uuid
+    from app.services.runs_service import fetch_run_seq_map
+
+    active = await RedisLiveRunState.get_all_active()
+    if active:
+        run_uuids: list[_uuid.UUID] = []
+        slug_to_uuid: dict[str, str] = {}
+        for r in active:
+            slug = r.get("run_id")
+            if not slug:
+                continue
+            try:
+                u = canonical_test_run_uuid(slug)
+                run_uuids.append(u)
+                slug_to_uuid[slug] = str(u)
+            except Exception:
+                continue
+        seq_map = await fetch_run_seq_map(db, run_uuids) if run_uuids else {}
+        for r in active:
+            slug = r.get("run_id") or ""
+            canonical = slug_to_uuid.get(slug)
+            r["run_seq"] = seq_map.get(canonical) if canonical else None
+    return {"active_runs": active}
 
 
 @router.get("/active-runs/{run_id}")

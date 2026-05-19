@@ -179,4 +179,9 @@ export interface ActiveLiveRun {
   // Run-level suite (testlookup.suite > testlookup.launch). Present once the
   // backend's live-session row carries suite_name; older runs may omit it.
   suite_name?: string | null
+  // Per-(project, primary_suite_name) human-readable run number. Null
+  // for very-new active sessions whose TestRun row hasn't been created
+  // yet (the Phase 4.5 drain creates it ~30s after the first event);
+  // the UI falls back to ``Build {build_number}`` in that window.
+  run_seq?: number | null
 }
