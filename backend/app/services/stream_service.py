@@ -149,6 +149,54 @@ async def create_session(
     db.add(session)
     await db.flush()
 
+    # Companion TestRun stub so /runs (and the Pipeline-signal KPI on
+    # it) include this run from the moment it starts — not 30s later
+    # when the Phase 4.5 drainer fires its first non-empty drain, and
+    # not at session-complete when persist_live_session runs. Without
+    # this, a short live session that finishes inside the drainer
+    # window never lands in test_runs at all, and the Pipeline-signal
+    # count stays frozen on historical builds. (Bug 2026-05-19.)
+    #
+    # ``upsert_test_run`` and the drainer both use ``id``-keyed
+    # upsert semantics, so this stub is a forward-compatible write —
+    # the persist path on session-complete updates these aggregates
+    # to the final values and flips ``status`` to its terminal value.
+    started_at = session.started_at
+    # SAVEPOINT-wrap the stub write so a duplicate-key race with a
+    # concurrent ingest/replay can't poison the outer transaction —
+    # ``db.begin_nested()`` issues SAVEPOINT and SQLAlchemy auto-rolls
+    # back to it on exception. The outer LiveSession write stays
+    # committed regardless. Services don't own ``db.rollback()`` on
+    # injected sessions; the SAVEPOINT is the right primitive here.
+    try:
+        async with db.begin_nested():
+            stub = TestRun(
+                id=uuid.UUID(session_id),
+                project_id=project_uuid,
+                build_number=payload.build_number or run_id[:8],
+                trigger_source="live_stream",
+                status=LaunchStatus.IN_PROGRESS,
+                total_tests=payload.total_tests or 0,
+                passed_tests=0,
+                failed_tests=0,
+                skipped_tests=0,
+                broken_tests=0,
+                primary_suite_name=getattr(payload, "suite_name", None) or None,
+                suite_names=[getattr(payload, "suite_name", None)] if getattr(payload, "suite_name", None) else None,
+                branch=payload.branch,
+                commit_hash=payload.commit_hash,
+                start_time=started_at,
+                end_time=started_at,
+            )
+            db.add(stub)
+            await db.flush()
+    except Exception as exc:
+        logger.warning(
+            "live_session_test_run_stub_skipped",
+            run_id=run_id,
+            error=str(exc),
+        )
+
     redis = get_redis()
     await redis.setex(SESSION_TOKEN_KEY.format(token=session_token), SESSION_TTL, session_id)
 
