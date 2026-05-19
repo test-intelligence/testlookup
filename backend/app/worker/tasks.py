@@ -422,54 +422,74 @@ def persist_live_session(
                 # event without per-test ``test_result`` events, or when
                 # the Phase 4.5 drain couldn't fire because the session
                 # lifetime was shorter than its 30s tick. Without a
-                # placeholder, the failure aggregates surface on /runs +
-                # /coverage but the action queue (/my-failures) and the
-                # per-suite case table stay empty, and the user can't
-                # triage anything.
+                # placeholder, the aggregates surface on /runs +
+                # /coverage but the action queue (/my-failures), the
+                # per-suite case table, and the run-detail per-test
+                # view all stay empty.
                 #
-                # Synthesize ONE placeholder TestCase per missing
-                # failure so the failure is visible and triagable. The
-                # row is clearly labelled "[ingestion gap]" so an
-                # operator immediately knows the per-test detail
-                # wasn't captured. fingerprint includes the run id to
-                # keep placeholders unique per-run (re-running the test
-                # won't duplicate against the same run).
-                placeholder_count = int(failed) + int(broken)
+                # Synthesize ONE placeholder TestCase per reported
+                # test so EVERY bucket (passed / failed / broken /
+                # skipped) materialises. Earlier versions only
+                # synthesized failures + broken — leaving the user
+                # with the "100 reported, 0 visible" confusion the
+                # 2026-05-19 bug captured. The row is clearly
+                # labelled "[ingestion gap]" so an operator
+                # immediately sees synthesised rows. Fingerprint
+                # seeds with the run id so re-running the task is
+                # idempotent (same hash = unique-constraint conflict
+                # = no duplicates).
+                placeholder_count = (
+                    int(passed) + int(failed) + int(skipped) + int(broken)
+                )
                 if placeholder_count > 0:
                     from sqlalchemy import insert as _sa_insert
                     placeholder_rows = []
-                    for i in range(placeholder_count):
-                        ph_status = (
-                            TestStatus.FAILED.value if i < int(failed)
-                            else TestStatus.BROKEN.value
-                        )
-                        ph_fp = hashlib.md5(
-                            f"placeholder:{run.id}:{i}".encode()
-                        ).hexdigest()
-                        placeholder_rows.append({
-                            "id": _uuid_mod.uuid4(),
-                            "test_run_id": run.id,
-                            "test_fingerprint": ph_fp,
-                            "test_name": f"[ingestion gap — per-test detail unavailable] #{i + 1}",
-                            "suite_name": default_suite,
-                            "class_name": None,
-                            "status": ph_status,
-                            "duration_ms": None,
-                            "error_message": (
-                                "Per-test events were lost during ingestion. "
-                                f"Run reported {int(failed)} failure(s) and "
-                                f"{int(broken)} broken test(s); re-run the "
-                                "suite to capture per-test detail."
-                            ),
-                            "tags": None,
-                        })
+                    bucket_sequence = (
+                        (int(passed),  TestStatus.PASSED.value),
+                        (int(failed),  TestStatus.FAILED.value),
+                        (int(broken),  TestStatus.BROKEN.value),
+                        (int(skipped), TestStatus.SKIPPED.value),
+                    )
+                    i = 0
+                    for count, status_value in bucket_sequence:
+                        for _ in range(count):
+                            ph_fp = hashlib.md5(
+                                f"placeholder:{run.id}:{i}".encode()
+                            ).hexdigest()
+                            placeholder_rows.append({
+                                "id": _uuid_mod.uuid4(),
+                                "test_run_id": run.id,
+                                "test_fingerprint": ph_fp,
+                                "test_name": (
+                                    f"[ingestion gap — per-test detail "
+                                    f"unavailable] #{i + 1}"
+                                ),
+                                "suite_name": default_suite,
+                                "class_name": None,
+                                "status": status_value,
+                                "duration_ms": None,
+                                "error_message": (
+                                    "Per-test events were lost during "
+                                    "ingestion. Run reported "
+                                    f"{int(passed)} passed / "
+                                    f"{int(failed)} failed / "
+                                    f"{int(broken)} broken / "
+                                    f"{int(skipped)} skipped; re-run "
+                                    "the suite to capture per-test "
+                                    "detail."
+                                ) if status_value != TestStatus.PASSED.value else None,
+                                "tags": None,
+                            })
+                            i += 1
                     stmt = _sa_insert(TestCase)
                     await db.execute(stmt, placeholder_rows)
                     logger.warning(
-                        "[Task %s] Synthesized %d placeholder TestCase row(s) "
-                        "for run=%s because the event buffer was empty but "
-                        "final_state reported failures.",
+                        "[Task %s] Synthesized %d placeholder TestCase "
+                        "row(s) for run=%s (passed=%d failed=%d "
+                        "broken=%d skipped=%d) because the event buffer "
+                        "was empty but final_state reported tests ran.",
                         self.request.id, placeholder_count, run_id,
+                        int(passed), int(failed), int(broken), int(skipped),
                     )
 
             await db.commit()

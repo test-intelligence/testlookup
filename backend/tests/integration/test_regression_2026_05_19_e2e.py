@@ -129,3 +129,128 @@ async def test_test_case_review_get_returns_null_when_no_review(client, auth_as,
     # FastAPI serialises None → "null". Both shapes are acceptable
     # depending on response_model handling.
     assert resp.text in ("null", "", "null\n")
+
+
+# ── /runs/{id}/recover-live synthesis fallback ─────────────────────────────
+
+
+async def test_recover_live_falls_back_to_synthesis_when_buffer_and_archive_empty(
+    client, auth_as, fake_db,
+):
+    """End-to-end pin for the 2026-05-19 user-reported bug:
+
+    Live run reports aggregates (100 tests / 90 passed / 10 failed)
+    but has zero test_cases rows. Both the 25-hour Redis buffer and
+    the 15-day durable archive are empty/expired. Pre-fix: the
+    recovery endpoint 422'd, leaving the user stuck. Post-fix:
+    endpoint queues persist_live_session with ``source="synthesis"``
+    so the task's synthesis branch generates one placeholder row
+    per reported test.
+    """
+    from tests.integration.conftest import fake_execute_result
+    from app.models.postgres import LaunchStatus
+
+    auth_as(role=UserRole.QA_ENGINEER)
+    run_id = uuid.uuid4()
+
+    fake_run = SimpleNamespace(
+        id=run_id,
+        project_id=uuid.uuid4(),
+        trigger_source="live_stream",
+        status=LaunchStatus.COMPLETED,
+        passed_tests=90,
+        failed_tests=10,
+        broken_tests=0,
+        skipped_tests=0,
+        total_tests=100,
+        build_number="b-2029",
+        branch="main",
+        commit_hash=None,
+        primary_suite_name="Auth",
+        event_archive=None,       # no durable archive
+        event_archive_at=None,
+    )
+    # Router executes two queries: TestRun lookup, then COUNT(test_cases).
+    fake_db.set_execute_results([
+        fake_execute_result(scalar=fake_run),
+        fake_execute_result(scalar=0),  # tc_count == 0
+    ])
+
+    fake_redis = AsyncMock()
+    fake_redis.llen = AsyncMock(return_value=0)  # empty Redis buffer
+
+    queued_kwargs = {}
+
+    def _apply_async(**kwargs):
+        queued_kwargs.update(kwargs)
+        return SimpleNamespace(id="celery-task-synth")
+
+    with patch("app.db.redis_client.get_redis", return_value=fake_redis), \
+         patch("app.worker.tasks.persist_live_session") as task, \
+         patch("app.worker.ingestion_routing.queue_for_project",
+               return_value="ingestion.shard.0"):
+        task.apply_async = _apply_async
+
+        resp = await client.post(f"/api/v1/runs/{run_id}/recover-live")
+
+    assert resp.status_code == 202, (
+        f"Recovery must succeed with 202 (was 422 pre-fix). body={resp.text}"
+    )
+    body = resp.json()
+    assert body["queued"] is True
+    assert body["source"] == "synthesis", (
+        "When buffer + archive are empty but aggregates are non-zero, "
+        "the endpoint must fall back to source='synthesis' instead of 422."
+    )
+    assert body["buffered_events"] == 0
+    # The persist task fires with the run's aggregates in final_state so
+    # the synthesis branch can size + bucket the placeholder rows.
+    task_kwargs = queued_kwargs.get("kwargs") or {}
+    final_state = task_kwargs.get("final_state") or {}
+    assert final_state.get("passed") == 90
+    assert final_state.get("failed") == 10
+
+
+async def test_recover_live_still_422s_when_nothing_to_recover(
+    client, auth_as, fake_db,
+):
+    """Sanity check on the guard — a run with zero aggregates AND no
+    buffer AND no archive truly has nothing to materialise. The 422
+    stays."""
+    from tests.integration.conftest import fake_execute_result
+    from app.models.postgres import LaunchStatus
+
+    auth_as(role=UserRole.QA_ENGINEER)
+    run_id = uuid.uuid4()
+
+    fake_run = SimpleNamespace(
+        id=run_id,
+        project_id=uuid.uuid4(),
+        trigger_source="live_stream",
+        status=LaunchStatus.COMPLETED,
+        passed_tests=0,
+        failed_tests=0,
+        broken_tests=0,
+        skipped_tests=0,
+        total_tests=0,
+        build_number="b-2030",
+        branch="main",
+        commit_hash=None,
+        primary_suite_name=None,
+        event_archive=None,
+        event_archive_at=None,
+    )
+    fake_db.set_execute_results([
+        fake_execute_result(scalar=fake_run),
+        fake_execute_result(scalar=0),
+    ])
+
+    fake_redis = AsyncMock()
+    fake_redis.llen = AsyncMock(return_value=0)
+
+    with patch("app.db.redis_client.get_redis", return_value=fake_redis):
+        resp = await client.post(f"/api/v1/runs/{run_id}/recover-live")
+
+    assert resp.status_code == 422
+    detail = resp.json().get("detail", "")
+    assert "no buffered events" in detail.lower()

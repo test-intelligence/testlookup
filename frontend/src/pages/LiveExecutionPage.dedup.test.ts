@@ -14,39 +14,36 @@
  * traffic, still defends against a future double-emit by collapsing
  * identical run_ids.
  *
- * Strategy for this test: read the LiveExecutionPage source and
- * assert the dedup block uses ``run_id`` as the Map key, not
- * ``build_number``. This catches an accidental revert — the kind
- * that would otherwise only surface in a rare parallel-runs
- * scenario in production.
+ * Strategy: pull the page source via Vite's ``?raw`` import (no Node
+ * built-ins so the production ``tsc`` build doesn't trip on this
+ * test) and assert the dedup block uses ``run_id`` as the Map key,
+ * not ``build_number``. Catches an accidental revert.
  */
-import * as fs from 'node:fs'
-import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const PAGE_FILE = path.resolve(__dirname, 'LiveExecutionPage.tsx')
+// Vite ``?raw`` query imports the file as a string at build time.
+// Available out of the box with vite/vitest — no Node ``fs`` needed.
+import pageSource from './LiveExecutionPage.tsx?raw'
 
 describe('LiveExecutionPage — Sessions table dedup key (regression)', () => {
-  const src = fs.readFileSync(PAGE_FILE, 'utf-8')
-
   it('dedupedSessions keys the Map by s.run_id, not s.build_number', () => {
     // The exact line we want to lock in:
     //   const key = s.run_id
-    expect(src).toMatch(/const\s+key\s*=\s*s\.run_id/)
+    expect(pageSource).toMatch(/const\s+key\s*=\s*s\.run_id/)
     // And the OLD shape must NOT come back as a dedup key:
-    expect(src).not.toMatch(/const\s+key\s*=\s*s\.build_number/)
+    expect(pageSource).not.toMatch(/const\s+key\s*=\s*s\.build_number/)
   })
 
-  it('the dedup Map is named byRunId so future reviewers see the intent', () => {
-    expect(src).toMatch(/new\s+Map<string,\s*LiveSessionState>/)
-    expect(src).toMatch(/byRunId/)
+  it('the dedup Map is typed Map<string, LiveSessionState>', () => {
+    expect(pageSource).toMatch(/new\s+Map<string,\s*LiveSessionState>/)
+    expect(pageSource).toMatch(/byRunId/)
   })
 
   it('the dedup picks the latest s.last_event_at / s.started_at on collision', () => {
     // Without the "latest wins" tiebreak, two identical run_ids could
     // render alternately as the WebSocket churns. The recency rule
     // keeps the row stable.
-    expect(src).toMatch(/last_event_at/)
-    expect(src).toMatch(/started_at/)
+    expect(pageSource).toMatch(/last_event_at/)
+    expect(pageSource).toMatch(/started_at/)
   })
 })

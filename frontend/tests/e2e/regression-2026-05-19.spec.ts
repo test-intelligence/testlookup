@@ -104,4 +104,27 @@ test.describe('Regression smoke (2026-05-18/19)', () => {
     // 500 is a regression — the endpoint must always be present.
     expect(resp.status()).toBeLessThan(500)
   })
+
+  test('/api/v1/runs/{id}/recover-live returns 4xx (not 5xx) for unknown run', async ({ request }) => {
+    // Bug 2026-05-19: a live run reporting "100 tests, 90 passed, 10
+    // failed" but with zero test_cases rows had no recovery path
+    // when both Redis buffer and durable archive were empty. The
+    // endpoint now falls back to source="synthesis" — queueing the
+    // persist task with empty events so its synthesis branch
+    // materialises one placeholder row per reported test.
+    //
+    // This probe just asserts the endpoint exists and doesn't 5xx.
+    // The synthesis fallback contract is pinned at the
+    // backend-integration layer:
+    //   backend/tests/integration/test_regression_2026_05_19_e2e.py
+    //     ::test_recover_live_falls_back_to_synthesis_when_buffer_and_archive_empty
+    const resp = await request.post(
+      '/api/v1/runs/00000000-0000-0000-0000-000000000000/recover-live',
+      { failOnStatusCode: false },
+    )
+    expect(resp.status()).toBeLessThan(500)
+    // Unknown run → 404. Live-stream guard / no-aggregates guard → 422.
+    // Both are valid 4xx responses for this synthetic probe id.
+    expect([404, 422]).toContain(resp.status())
+  })
 })
