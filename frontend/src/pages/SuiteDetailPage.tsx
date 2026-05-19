@@ -20,6 +20,7 @@ import type { SuiteDetailSummary } from '@/types/analytics'
 import { testManagementService } from '@/services/testManagementService'
 
 const PERIODS = [
+  { label: '1d',  days: 1 },
   { label: '7d',  days: 7 },
   { label: '14d', days: 14 },
   { label: '30d', days: 30 },
@@ -178,6 +179,22 @@ export default function SuiteDetailPage() {
   const testCases: TestCaseRow[] = data?.test_cases  ?? []
   const recentRuns: RunRow[]     = data?.recent_runs ?? []
 
+  // Run-level aggregates (unique_tests / total_executions / recent_runs) are
+  // populated even when the SDK shipped a TestNG/JUnit run without per-test
+  // rows (e.g. JUnit XML with <testsuite tests=…> but no <testcase> elements,
+  // or a live session whose Redis buffer evicted before persistence). The
+  // page used to gate the *entire* view on ``testCases.length`` and fall
+  // through to "No data for this suite" — hiding the real totals that every
+  // other surface (/test-management, /reports/summary) shows. We now bail
+  // only when there is genuinely nothing to summarise, and let the per-test
+  // table render its own inline explanation when only the per-test detail
+  // is missing.
+  const hasAnyData =
+    (summary.unique_tests ?? 0) > 0
+    || (summary.total_executions ?? 0) > 0
+    || recentRuns.length > 0
+    || trendPoints.some(p => p.run_count > 0)
+
   // Chart data — pass rate trend across recent runs (oldest first)
   const chartData = [...recentRuns].reverse().map((r) => ({
     name: r.build_number ?? fmtDate(r.run_date),
@@ -247,7 +264,7 @@ export default function SuiteDetailPage() {
           title="Failed to load suite details"
           description="Check the console for errors or try again"
         />
-      ) : testCases.length === 0 ? (
+      ) : !hasAnyData ? (
         <EmptyState
           icon={<Layers className="h-8 w-8" />}
           title="No data for this suite"
@@ -365,6 +382,18 @@ export default function SuiteDetailPage() {
             <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">
               Test Cases ({testCases.length})
             </h3>
+            {testCases.length === 0 ? (
+              <div className="rounded border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
+                <p className="font-medium">
+                  {summary.total_executions ?? 0} test{(summary.total_executions ?? 0) === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
+                </p>
+                <p className="mt-1 text-xs text-amber-300/80">
+                  This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
+                  the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
+                  or the live buffer evicted before persistence. Re-run the suite to populate detail rows.
+                </p>
+              </div>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -426,6 +455,7 @@ export default function SuiteDetailPage() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
 
           {/* Recent Runs Table */}

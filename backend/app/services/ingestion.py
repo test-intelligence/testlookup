@@ -470,19 +470,43 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
         [(row.suite_name, int(row.n)) for row in suite_q.all()],
     )
 
+    # Don't clobber a primary_suite_name supplied at session/upload time
+    # by recomputing it from per-event ``suite_name`` values. The live-
+    # stream path stamps it from the SDK-supplied session ``suite_name``
+    # (authoritative — that's the user's chosen run label, e.g. the
+    # testng.xml ``<suite name="…">`` value). Earlier this function
+    # overwrote it with the dominant per-event suite, which surfaced as
+    # the "API Regression Multi-Class" label being replaced by a test
+    # class name like ``com.example.OrderApiRegressionTests`` after
+    # finalize_run ran. File uploads still get a value because the
+    # initial create leaves ``primary_suite_name`` NULL and the IS NULL
+    # branch fills it on first pass. (Bug 2026-05-19.)
+    existing_psn_q = await db.execute(
+        select(TestRun.primary_suite_name).where(TestRun.id == run_id)
+    )
+    existing_psn = (existing_psn_q.scalar_one_or_none() or "").strip() or None
+
+    values_to_update: dict = {
+        "total_tests":   total,
+        "passed_tests":  passed,
+        "failed_tests":  counts.failed or 0,
+        "skipped_tests": counts.skipped or 0,
+        "broken_tests":  counts.broken or 0,
+        "pass_rate":     pass_rate,
+        "status":        LaunchStatus.PASSED if pass_rate == 100 else LaunchStatus.FAILED,
+        "end_time":      datetime.now(timezone.utc),
+        # ``suite_names`` is the full set actually present in the
+        # events — always refresh it (its purpose is to mirror the
+        # current per-event reality, not to encode a user-chosen
+        # label). ``primary_suite_name`` is what users see in the UI;
+        # see the IS NULL guard above.
+        "suite_names":   suite_names_sorted,
+    }
+    if existing_psn is None:
+        values_to_update["primary_suite_name"] = primary_suite
+
     await db.execute(
         update(TestRun)
         .where(TestRun.id == run_id)
-        .values(
-            total_tests=total,
-            passed_tests=passed,
-            failed_tests=counts.failed or 0,
-            skipped_tests=counts.skipped or 0,
-            broken_tests=counts.broken or 0,
-            pass_rate=pass_rate,
-            status=LaunchStatus.PASSED if pass_rate == 100 else LaunchStatus.FAILED,
-            end_time=datetime.now(timezone.utc),
-            primary_suite_name=primary_suite,
-            suite_names=suite_names_sorted,
-        )
+        .values(**values_to_update)
     )

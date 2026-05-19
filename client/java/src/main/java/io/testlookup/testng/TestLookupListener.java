@@ -104,10 +104,25 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
             // testlookup.suite preferred, testlookup.launch as the fallback —
             // both flow into SessionOptions.suiteName so every event in the run
-            // is stamped with the same suite identifier.
+            // is stamped with the same suite identifier. When neither is
+            // configured via the suite-param/JVM/env channels the listener
+            // sees, the TestNG <suite name="..."> value is a sensible last
+            // resort — it's the same label the test author put on the run.
+            // (Reporter.suiteName from testlookup.properties is also read by
+            // the SDK Builder at session-create time and serves as the
+            // session-level default downstream; this listener-level fallback
+            // closes the gap for runs where testlookup.properties doesn't
+            // configure a suite at all.)
             String configuredSuiteLocal = resolve(suite, "testlookup.suite",  "TESTLOOKUP_SUITE",  null);
             if (configuredSuiteLocal == null) {
                 configuredSuiteLocal = resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null);
+            }
+            if (configuredSuiteLocal == null) {
+                String testngSuiteName = suite.getName();
+                if (testngSuiteName != null && !testngSuiteName.isEmpty()
+                        && !"Default suite".equalsIgnoreCase(testngSuiteName)) {
+                    configuredSuiteLocal = testngSuiteName;
+                }
             }
             this.configuredSuite = configuredSuiteLocal;
 
@@ -187,10 +202,6 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
         long durationMs = result.getEndMillis() - result.getStartMillis();
         String testName  = result.getMethod().getMethodName();
-        // User-configured suite wins; otherwise fall back to the test class name.
-        String suiteName = configuredSuite != null
-            ? configuredSuite
-            : result.getTestClass().getName();
 
         String error = null;
         String stack = null;
@@ -202,14 +213,29 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
             stack = sw.toString();
         }
 
-        RecordOptions opts = RecordOptions.builder()
-            .suiteName(suiteName)
+        // Per-event ``suite_name`` is set only when the listener could
+        // explicitly resolve one from testng.xml ``<parameter>``, JVM
+        // property, or env var. When it can't, we deliberately leave it
+        // null so ``LiveSession.record()`` falls back to the session-level
+        // suite the Reporter resolved from ``testlookup.properties``
+        // (``reporting.suite_name`` / ``reporting.launch_name``) and the
+        // ``<suite name="...">`` value carried on the session payload.
+        // The previous behaviour defaulted to ``result.getTestClass().getName()``
+        // when configuredSuite was null, which split a single logical
+        // suite into N per-class buckets on /test-management and
+        // /coverage/suite (one per test class) even when the user had
+        // ``testlookup.launch=My Suite`` in testlookup.properties.
+        // ``class_name`` is still captured separately, so the per-class
+        // grouping is recoverable without overloading suite_name.
+        RecordOptions.Builder optsBuilder = RecordOptions.builder()
             .className(result.getTestClass().getRealClass().getName())
             .error(error)
-            .stackTrace(stack)
-            .build();
+            .stackTrace(stack);
+        if (configuredSuite != null) {
+            optsBuilder.suiteName(configuredSuite);
+        }
 
-        session.record(testName, status, durationMs, opts);
+        session.record(testName, status, durationMs, optsBuilder.build());
     }
 
     /**

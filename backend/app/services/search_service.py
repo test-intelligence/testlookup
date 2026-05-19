@@ -24,6 +24,13 @@ def build_search_filters(
         or_(
             TestCase.test_name.ilike(pattern, escape="\\"),
             TestCase.suite_name.ilike(pattern, escape="\\"),
+            # Run-level suite label — surfaces tests of live_stream runs
+            # whose per-event ``tc.suite_name`` is the test class name
+            # (old TestNG-listener behaviour). Without this, a query for
+            # the session-supplied label ("API Regression Multi-Class")
+            # never matches those tests even though they're clearly
+            # part of that suite.
+            TestRun.primary_suite_name.ilike(pattern, escape="\\"),
             TestCase.error_message.ilike(pattern, escape="\\"),
         )
     ]

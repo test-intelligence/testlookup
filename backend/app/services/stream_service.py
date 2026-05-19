@@ -191,10 +191,13 @@ async def create_session(
             db.add(stub)
             await db.flush()
     except Exception as exc:
+        # stdlib ``logging`` doesn't take arbitrary kwargs the way
+        # structlog does (the rest of this module is on stdlib logging
+        # via ``logger = logging.getLogger(__name__)``). Format the
+        # fields into the message instead.
         logger.warning(
-            "live_session_test_run_stub_skipped",
-            run_id=run_id,
-            error=str(exc),
+            "live_session_test_run_stub_skipped run_id=%s error=%s",
+            run_id, exc,
         )
 
     redis = get_redis()

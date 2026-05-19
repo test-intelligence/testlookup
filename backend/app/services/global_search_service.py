@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import structlog
-from sqlalchemy import cast, func, select, or_, String
+from sqlalchemy import case, cast, func, select, or_, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -148,6 +148,11 @@ async def _search_test_cases(
         .where(or_(
             TestCase.test_name.ilike(pattern, escape="\\"),
             TestCase.suite_name.ilike(pattern, escape="\\"),
+            # Run-level label so a query for the session-supplied suite
+            # name (e.g. "API Regression Multi-Class") still surfaces
+            # tests of live_stream runs whose per-event ``tc.suite_name``
+            # is the test class name.
+            TestRun.primary_suite_name.ilike(pattern, escape="\\"),
             TestCase.error_message.ilike(pattern, escape="\\"),
             cast(TestCase.tags, String).ilike(pattern, escape="\\"),
         ))
@@ -225,18 +230,34 @@ async def _search_suites(
     override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
+    # Group by effective suite name — preferring ``tr.primary_suite_name``
+    # for live_stream runs so a session label like "API Regression
+    # Multi-Class" is searchable even when the SDK stamped the test
+    # class name on every per-event ``tc.suite_name``. File uploads
+    # keep their per-event suite (the COALESCE falls through to
+    # ``tc.suite_name`` when ``primary_suite_name`` isn't set or the
+    # run isn't a live_stream). The ILIKE filter is applied to the
+    # effective name so the query string finds run-level labels even
+    # when no ``tc.suite_name`` row contains the substring.
+    effective_suite = func.coalesce(
+        case(
+            (TestRun.trigger_source == "live_stream",
+             func.nullif(func.trim(TestRun.primary_suite_name), "")),
+            else_=None,
+        ),
+        func.nullif(func.trim(TestCase.suite_name), ""),
+    )
     stmt = (
         select(
-            TestCase.suite_name,
+            effective_suite.label("suite_name"),
             func.count().label("test_count"),
         )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
         .where(
-            TestCase.suite_name.ilike(pattern, escape="\\"),
-            TestCase.suite_name.isnot(None),
-            TestCase.suite_name != "",
+            effective_suite.ilike(pattern, escape="\\"),
+            effective_suite.isnot(None),
         )
-        .group_by(TestCase.suite_name)
+        .group_by(effective_suite)
         .order_by(func.count().desc())
         .limit(override_limit or 15)
     )

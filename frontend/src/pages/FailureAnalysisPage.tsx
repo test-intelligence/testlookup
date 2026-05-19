@@ -1229,8 +1229,8 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct }: {
 type ComparisonStats = { failed: number; total: number; passRate: number; days: number }
 
 function ComparisonStrip({
-  current, prior, windowDays,
-}: { current: ComparisonStats; prior: ComparisonStats; windowDays: number }) {
+  current, prior, windowDays, suiteName,
+}: { current: ComparisonStats; prior: ComparisonStats; windowDays: number; suiteName?: string | null }) {
   const failedDelta = current.failed - prior.failed
   const totalDelta  = current.total  - prior.total
   const rateDelta   = current.passRate - prior.passRate
@@ -1246,14 +1246,36 @@ function ComparisonStrip({
   const colourForRateDelta = (delta: number): string =>
     Math.abs(delta) < 0.01 ? NEUTRAL : (delta > 0 ? GREEN : RED)
 
+  // Days of actual data behind each half. The backend returns one
+  // trend point per day-with-runs, so a sparse project (only 2 days
+  // of activity in a 14-day window) produces ``current.days = 1``
+  // and ``prior.days = 1``. The card title used to say
+  // "last {windowDays}d vs prior {windowDays}d" unconditionally,
+  // which misled users into reading the numbers as 14-day totals
+  // when they were actually single-day totals. Now we show the
+  // requested window when both halves cover it, and the actual
+  // data spans otherwise.
+  const actualLabel = (current.days >= windowDays && prior.days >= windowDays)
+    ? `last ${windowDays}d vs prior ${windowDays}d`
+    : `last ${current.days}d (of ${windowDays}d) vs prior ${prior.days}d`
+
   return (
     <CardShell
       title="Compare to previous window"
-      rightSlot={<span>last {windowDays}d vs prior {windowDays}d</span>}
+      rightSlot={<span>{actualLabel}</span>}
     >
       <div className="px-4 py-3.5">
         <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
-          Aggregated from daily trends. Prior window = the {prior.days} days immediately before this window.
+          {suiteName ? (
+            <>
+              Filtered to suite <code className="font-mono text-[11px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1 py-px rounded-sm">{suiteName}</code>.
+              {' '}Aggregated from daily trends; prior window = the {prior.days} day{prior.days === 1 ? '' : 's'} immediately before this window.
+            </>
+          ) : (
+            <>
+              Aggregated from daily trends. Prior window = the {prior.days} day{prior.days === 1 ? '' : 's'} immediately before this window.
+            </>
+          )}
         </p>
         <div className="grid gap-2.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
           <ComparisonCell
@@ -1265,7 +1287,7 @@ function ComparisonStrip({
             formatter={(n) => Intl.NumberFormat().format(n)}
           />
           <ComparisonCell
-            label="Total runs"
+            label="Test executions"
             current={current.total}
             prior={prior.total}
             delta={totalDelta}
@@ -2145,6 +2167,7 @@ export default function FailureAnalysisPage() {
                 current={comparison.current}
                 prior={comparison.prior}
                 windowDays={days}
+                suiteName={selectedSuite || null}
               />
             ) : (
               <CardShell title="Compare to previous window" rightSlot={<span>last {days}d vs prior {days}d</span>}>

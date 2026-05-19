@@ -422,54 +422,74 @@ def persist_live_session(
                 # event without per-test ``test_result`` events, or when
                 # the Phase 4.5 drain couldn't fire because the session
                 # lifetime was shorter than its 30s tick. Without a
-                # placeholder, the failure aggregates surface on /runs +
-                # /coverage but the action queue (/my-failures) and the
-                # per-suite case table stay empty, and the user can't
-                # triage anything.
+                # placeholder, the aggregates surface on /runs +
+                # /coverage but the action queue (/my-failures), the
+                # per-suite case table, and the run-detail per-test
+                # view all stay empty.
                 #
-                # Synthesize ONE placeholder TestCase per missing
-                # failure so the failure is visible and triagable. The
-                # row is clearly labelled "[ingestion gap]" so an
-                # operator immediately knows the per-test detail
-                # wasn't captured. fingerprint includes the run id to
-                # keep placeholders unique per-run (re-running the test
-                # won't duplicate against the same run).
-                placeholder_count = int(failed) + int(broken)
+                # Synthesize ONE placeholder TestCase per reported
+                # test so EVERY bucket (passed / failed / broken /
+                # skipped) materialises. Earlier versions only
+                # synthesized failures + broken — leaving the user
+                # with the "100 reported, 0 visible" confusion the
+                # 2026-05-19 bug captured. The row is clearly
+                # labelled "[ingestion gap]" so an operator
+                # immediately sees synthesised rows. Fingerprint
+                # seeds with the run id so re-running the task is
+                # idempotent (same hash = unique-constraint conflict
+                # = no duplicates).
+                placeholder_count = (
+                    int(passed) + int(failed) + int(skipped) + int(broken)
+                )
                 if placeholder_count > 0:
                     from sqlalchemy import insert as _sa_insert
                     placeholder_rows = []
-                    for i in range(placeholder_count):
-                        ph_status = (
-                            TestStatus.FAILED.value if i < int(failed)
-                            else TestStatus.BROKEN.value
-                        )
-                        ph_fp = hashlib.md5(
-                            f"placeholder:{run.id}:{i}".encode()
-                        ).hexdigest()
-                        placeholder_rows.append({
-                            "id": _uuid_mod.uuid4(),
-                            "test_run_id": run.id,
-                            "test_fingerprint": ph_fp,
-                            "test_name": f"[ingestion gap — per-test detail unavailable] #{i + 1}",
-                            "suite_name": default_suite,
-                            "class_name": None,
-                            "status": ph_status,
-                            "duration_ms": None,
-                            "error_message": (
-                                "Per-test events were lost during ingestion. "
-                                f"Run reported {int(failed)} failure(s) and "
-                                f"{int(broken)} broken test(s); re-run the "
-                                "suite to capture per-test detail."
-                            ),
-                            "tags": None,
-                        })
+                    bucket_sequence = (
+                        (int(passed),  TestStatus.PASSED.value),
+                        (int(failed),  TestStatus.FAILED.value),
+                        (int(broken),  TestStatus.BROKEN.value),
+                        (int(skipped), TestStatus.SKIPPED.value),
+                    )
+                    i = 0
+                    for count, status_value in bucket_sequence:
+                        for _ in range(count):
+                            ph_fp = hashlib.md5(
+                                f"placeholder:{run.id}:{i}".encode()
+                            ).hexdigest()
+                            placeholder_rows.append({
+                                "id": _uuid_mod.uuid4(),
+                                "test_run_id": run.id,
+                                "test_fingerprint": ph_fp,
+                                "test_name": (
+                                    f"[ingestion gap — per-test detail "
+                                    f"unavailable] #{i + 1}"
+                                ),
+                                "suite_name": default_suite,
+                                "class_name": None,
+                                "status": status_value,
+                                "duration_ms": None,
+                                "error_message": (
+                                    "Per-test events were lost during "
+                                    "ingestion. Run reported "
+                                    f"{int(passed)} passed / "
+                                    f"{int(failed)} failed / "
+                                    f"{int(broken)} broken / "
+                                    f"{int(skipped)} skipped; re-run "
+                                    "the suite to capture per-test "
+                                    "detail."
+                                ) if status_value != TestStatus.PASSED.value else None,
+                                "tags": None,
+                            })
+                            i += 1
                     stmt = _sa_insert(TestCase)
                     await db.execute(stmt, placeholder_rows)
                     logger.warning(
-                        "[Task %s] Synthesized %d placeholder TestCase row(s) "
-                        "for run=%s because the event buffer was empty but "
-                        "final_state reported failures.",
+                        "[Task %s] Synthesized %d placeholder TestCase "
+                        "row(s) for run=%s (passed=%d failed=%d "
+                        "broken=%d skipped=%d) because the event buffer "
+                        "was empty but final_state reported tests ran.",
                         self.request.id, placeholder_count, run_id,
+                        int(passed), int(failed), int(broken), int(skipped),
                     )
 
             await db.commit()
@@ -2535,6 +2555,72 @@ def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> di
     result = cast(dict[str, Any], _run_async(_run()))
     logger.info(
         "[Task %s] backfill_placeholder_test_cases done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.auto_recover_completed_live_runs",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def auto_recover_completed_live_runs(
+    self,
+    lookback_hours: int = 24,
+    max_runs: int = 100,
+) -> dict:
+    """Recover REAL per-test rows from ``TestRun.event_archive`` for
+    completed live_stream runs whose ``test_cases`` table is empty.
+
+    Defensive net for the close_session → persist_live_session handoff.
+    When the worker dispatch is dropped (silent apply_async failure,
+    queue backpressure, worker restart) the run shows correct aggregates
+    on /runs but per-test detail is missing on /test-management,
+    /coverage/suite, and the run-detail page. The hourly
+    ``backfill_placeholder_test_cases`` task eventually inserts marker
+    rows but loses the real test names the SDK shipped. We capture
+    those names in ``TestRun.event_archive`` at close-time (15-day TTL)
+    so this task can materialise them when the regular handoff
+    misfired. Runs on its own cadence (every 2 minutes) so users see
+    real per-test detail within ~2 minutes of close_session, well
+    before the placeholder backfill fires.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.live_run_recovery_service import (
+        auto_recover_completed_runs,
+        repair_clobbered_primary_suite_names,
+    )
+
+    async def _run() -> dict:
+        async with AsyncSessionLocal() as db:
+            recover = await auto_recover_completed_runs(
+                db,
+                lookback_hours=lookback_hours,
+                max_runs=max_runs,
+            )
+            # Companion sweep — heal runs whose finalize_run path
+            # clobbered ``primary_suite_name`` with the per-event
+            # dominant suite (e.g. a test class name from the old
+            # TestNG-listener default). Reads ``LiveSession.suite_name``
+            # as the authoritative session label. Bounded by the same
+            # 24h window so we don't rewrite ancient runs the user
+            # has long since accepted as-is.
+            repair = await repair_clobbered_primary_suite_names(
+                db,
+                lookback_hours=lookback_hours,
+                max_runs=max(max_runs, 200),
+            )
+            await db.commit()
+            return {"recover": recover, "repair": repair}
+
+    logger.info(
+        "[Task %s] auto_recover_completed_live_runs starting", self.request.id
+    )
+    result = cast(dict[str, Any], _run_async(_run()))
+    logger.info(
+        "[Task %s] auto_recover_completed_live_runs done: %s",
         self.request.id, result,
     )
     return result

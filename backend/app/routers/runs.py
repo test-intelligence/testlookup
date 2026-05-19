@@ -347,29 +347,46 @@ async def recover_live_run_from_buffer(
             age_days = (now - archived_at).total_seconds() / 86400.0
 
         if not archive or age_days is None or age_days > 15:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "No buffered events found. The 25-hour Redis buffer has "
-                    "expired and either no durable archive was written or it "
-                    "is older than the 15-day recovery window. Re-run the "
-                    "suite, or re-ingest the results as a file upload."
-                ),
+            # Neither Redis buffer nor archive available. Previously this
+            # 422'd with a "re-run the suite" message — leaving the user
+            # stuck on a run that shows aggregates but no per-test detail
+            # AND no way to recover. The synthesis branch in
+            # ``persist_live_session`` covers exactly this case: when
+            # events are empty but final_state reports tests ran, it
+            # synthesizes one placeholder row per reported test so the
+            # run-detail page surfaces SOMETHING the user can interact
+            # with. Queue the same task with no buffered events so the
+            # synthesis fires. (Bug 2026-05-19.)
+            total_reported = (
+                int(run.passed_tests or 0)
+                + int(run.failed_tests or 0)
+                + int(run.skipped_tests or 0)
+                + int(run.broken_tests or 0)
             )
-
-        # Stage archived events back into Redis so persist_live_session can
-        # read from its usual location. Use a short TTL so the staging keys
-        # don't pile up; the task drains them quickly and deletes the key
-        # itself on success.
-        import json as _json
-        # Push events one at a time to preserve the JSON-encoded shape
-        # that the original SDK writes (and that persist_live_session
-        # ``json.loads()``-decodes).
-        for ev in archive:
-            await redis.rpush(list_key, _json.dumps(ev))
-        await redis.expire(list_key, 3600)  # 1h is plenty for the worker
-        buffer_len = len(archive)
-        source = "archive"
+            if total_reported <= 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "No buffered events found and no aggregates to "
+                        "synthesise from. Re-run the suite, or re-ingest "
+                        "the results as a file upload."
+                    ),
+                )
+            # Fall through into the apply_async call below; ``buffer_len``
+            # stays 0 and the task's synthesis branch generates
+            # ``total_reported`` placeholder rows.
+            source = "synthesis"
+        else:
+            # Stage archived events back into Redis so persist_live_session
+            # can read from its usual location. Use a short TTL so staging
+            # keys don't pile up; the task drains them and deletes the key
+            # itself on success.
+            import json as _json
+            for ev in archive:
+                await redis.rpush(list_key, _json.dumps(ev))
+            await redis.expire(list_key, 3600)  # 1h is plenty for the worker
+            buffer_len = len(archive)
+            source = "archive"
 
     # Phase 2.4 — same per-project shard routing the close_session path
     # uses, so a manual recovery from the dashboard doesn't bypass the
@@ -394,13 +411,22 @@ async def recover_live_run_from_buffer(
         queue=queue_for_project(str(run.project_id)),
         priority=7,
     )
+    if source == "synthesis":
+        message = (
+            "No buffered events available — synthesising placeholder rows "
+            "from the run's aggregates. The per-test view will populate "
+            "with marker rows so triage and navigation work; rerun the "
+            "suite to capture real per-test detail."
+        )
+    else:
+        message = (
+            f"Persistence task queued. {buffer_len} buffered events will "
+            "be materialised into TestCase rows."
+        )
     return {
         "queued": True,
         "run_id": str(run_id),
         "buffered_events": buffer_len,
         "source": source,
-        "message": (
-            f"Persistence task queued. {buffer_len} buffered events will be "
-            "materialised into TestCase rows."
-        ),
+        "message": message,
     }

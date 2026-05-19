@@ -381,20 +381,43 @@ async def _per_suite_breakdown_window(
             -- execution in the window. Pass/fail buckets come from
             -- this row so the snapshot reads as "of the N unique
             -- tests in this suite, how many last ran green/red".
-            SELECT DISTINCT ON (tc.suite_name, tc.test_fingerprint)
-                tc.suite_name AS suite_name,
+            --
+            -- Suite attribution rule: for live_stream runs we trust
+            -- ``tr.primary_suite_name`` — that's the authoritative
+            -- session-supplied label the SDK stamped at create_session
+            -- time (from ``testlookup.suite`` / ``testlookup.launch``
+            -- / the testng.xml ``<suite name="…">``). Per-event
+            -- ``tc.suite_name`` for live_stream runs can be the test
+            -- class name when the SDK didn't resolve a session suite,
+            -- which would split one logical run into N per-class
+            -- buckets here. File uploads keep their per-event
+            -- grouping — multi-``<testsuite>`` XML inputs need the
+            -- breakout, and the parser sets tc.suite_name from each
+            -- <testsuite name="…"> directly. Coalesce to tc.suite_name
+            -- so legacy / cross-source rows still bucket correctly.
+            SELECT DISTINCT ON (effective_suite, tc.test_fingerprint)
+                effective_suite AS suite_name,
                 tc.test_fingerprint,
                 tc.status,
                 tr.created_at AS run_created_at
             FROM test_cases tc
             JOIN test_runs tr ON tr.id = tc.test_run_id
+            CROSS JOIN LATERAL (
+                SELECT COALESCE(
+                    CASE
+                        WHEN tr.trigger_source = 'live_stream'
+                            THEN NULLIF(TRIM(tr.primary_suite_name), '')
+                        ELSE NULL
+                    END,
+                    NULLIF(TRIM(tc.suite_name), '')
+                ) AS effective_suite
+            ) eff
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
-              AND tc.suite_name IS NOT NULL
-              AND tc.suite_name <> ''
+              AND effective_suite IS NOT NULL
               AND tc.test_fingerprint IS NOT NULL
-            ORDER BY tc.suite_name, tc.test_fingerprint, tr.created_at DESC
+            ORDER BY effective_suite, tc.test_fingerprint, tr.created_at DESC
         ),
         cases_agg AS (
             SELECT
@@ -494,8 +517,24 @@ async def _per_suite_breakdown_latest(
         WITH all_candidates AS (
             -- Test-cases-driven candidates: every (suite, run) pair where
             -- per-test rows have landed for the run.
+            --
+            -- Same effective-suite rule as ``_per_suite_breakdown_window``:
+            -- for live_stream runs prefer ``tr.primary_suite_name`` over
+            -- ``tc.suite_name`` so a session label like "API Regression
+            -- Multi-Class" doesn't get split into per-class buckets when
+            -- the SDK stamped the test class name on each event. File
+            -- uploads still bucket by per-event suite (parsed from
+            -- ``<testsuite name="…">``) so multi-suite XML inputs keep
+            -- their breakdown.
             SELECT
-                tc.suite_name AS suite_name,
+                COALESCE(
+                    CASE
+                        WHEN tr.trigger_source = 'live_stream'
+                            THEN NULLIF(TRIM(tr.primary_suite_name), '')
+                        ELSE NULL
+                    END,
+                    NULLIF(TRIM(tc.suite_name), '')
+                ) AS suite_name,
                 tc.test_run_id,
                 tr.created_at AS run_created_at,
                 FALSE AS uses_run_aggregate
@@ -504,8 +543,14 @@ async def _per_suite_breakdown_latest(
             WHERE tr.project_id = :project_id
               AND tr.created_at >= :start
               AND tr.created_at < :end
-              AND tc.suite_name IS NOT NULL
-              AND tc.suite_name <> ''
+              AND COALESCE(
+                    CASE
+                        WHEN tr.trigger_source = 'live_stream'
+                            THEN NULLIF(TRIM(tr.primary_suite_name), '')
+                        ELSE NULL
+                    END,
+                    NULLIF(TRIM(tc.suite_name), '')
+                  ) IS NOT NULL
             UNION ALL
             -- Run-level fallback: runs whose per-test rows didn't land.
             SELECT
@@ -535,6 +580,16 @@ async def _per_suite_breakdown_latest(
             ORDER BY suite_name, run_created_at DESC
         ),
         cases_path AS (
+            -- Match test_cases on the SAME effective-suite expression
+            -- ``all_candidates`` uses. Without re-deriving here, a
+            -- live_stream run whose ``tc.suite_name`` is a per-class
+            -- value but whose ``tr.primary_suite_name`` is the session
+            -- label would join no rows (l.suite_name = session label,
+            -- tc.suite_name = class name → mismatch) and the suite
+            -- would silently report zero tests. Re-derive via the
+            -- same CASE so live_stream rows match by run-level label
+            -- and file-upload rows continue to match by per-event
+            -- ``tc.suite_name``.
             SELECT
                 l.suite_name,
                 COUNT(tc.id) AS total,
@@ -544,8 +599,17 @@ async def _per_suite_breakdown_latest(
                 COUNT(*) FILTER (WHERE tc.status = 'BROKEN')  AS broken,
                 MAX(l.run_created_at) AS last_run_at
             FROM latest_run_per_suite l
-            JOIN test_cases tc ON tc.test_run_id = l.test_run_id
-                              AND tc.suite_name = l.suite_name
+            JOIN test_runs tr2 ON tr2.id = l.test_run_id
+            JOIN test_cases tc
+              ON tc.test_run_id = l.test_run_id
+             AND COALESCE(
+                    CASE
+                        WHEN tr2.trigger_source = 'live_stream'
+                            THEN NULLIF(TRIM(tr2.primary_suite_name), '')
+                        ELSE NULL
+                    END,
+                    NULLIF(TRIM(tc.suite_name), '')
+                 ) = l.suite_name
             WHERE l.uses_run_aggregate = FALSE
             GROUP BY l.suite_name
         ),

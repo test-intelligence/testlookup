@@ -1645,25 +1645,31 @@ export default function RunsPage() {
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
   const [selectedSuite, setSelectedSuite] = useState('')
-  const [allPages, setAllPages] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   // Client-side table pagination. Analytics widgets (signature clustering,
   // build velocity, KPIs) continue to consume the full fetched window so
   // their derived metrics stay accurate; only the table view is sliced.
   const TABLE_PAGE_SIZE = 25
+  // Analytics fetch size. Was 50 (capped) which made the Pipeline-signal
+  // denominator frozen at "of 50" no matter the selected window — KPIs
+  // and verdict reflected only the latest page slice. 500 covers
+  // realistic windows (1y of daily builds is ~365) so the verdict,
+  // cluster card, KPI strip and velocity grid summarise the actual
+  // window the user picked. ``runs.length`` may still be < server total
+  // when a project ingests >500 runs in-window; the disclosure footer
+  // surfaces that.
+  const ANALYTICS_FETCH_SIZE = 500
   const [tablePage, setTablePage] = useState(1)
   // Reset to page 1 whenever the filters change so users aren't stuck on
   // an empty page after narrowing the window.
-  useEffect(() => { setTablePage(1) }, [days, statusFilter, allPages, selectedSuite])
+  useEffect(() => { setTablePage(1) }, [days, statusFilter, selectedSuite])
   useEffect(() => { setSelectedIds(new Set()) }, [days, statusFilter, selectedSuite])
 
   const { options: suiteOptions } = useSuiteOptions(days || 0)
 
   const { data, isLoading } = useRuns({
     page: 1,
-    // ``allPages`` (existing checkbox) widens the fetch when the user wants
-    // to see further back; default keeps the 50-run window for analytics.
-    size: allPages ? 500 : 50,
+    size: ANALYTICS_FETCH_SIZE,
     days: days || undefined,
     ...(statusFilter && { status: statusFilter }),
     ...(selectedSuite && { suite_name: selectedSuite }),
@@ -1970,10 +1976,6 @@ export default function RunsPage() {
               {model.failedRuns}
             </span>
           </GhostBtn>
-          <label className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)] px-1.5 cursor-pointer select-none">
-            <input type="checkbox" checked={allPages} onChange={(e) => setAllPages(e.target.checked)} />
-            All pages
-          </label>
           <GhostSelect
             value={days}
             onChange={(v) => setDays(v)}

@@ -231,6 +231,18 @@ celery_app.conf.update(
             "task": "app.worker.tasks.backfill_placeholder_test_cases",
             "schedule": crontab(minute=10),  # once per hour at :10
         },
+        # Auto-recovery for completed live_stream runs whose
+        # close_session → persist_live_session handoff dropped on the
+        # floor (silent apply_async failure, queue backpressure, worker
+        # restart). Re-stages ``TestRun.event_archive`` into Redis and
+        # re-queues the persist task so the REAL test names land in
+        # ``test_cases`` within ~2 minutes — before the hourly
+        # ``backfill-placeholder-test-cases`` task would mask them
+        # with ``[ingestion gap …]`` rows.
+        "auto-recover-completed-live-runs": {
+            "task": "app.worker.tasks.auto_recover_completed_live_runs",
+            "schedule": timedelta(minutes=2),
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,
