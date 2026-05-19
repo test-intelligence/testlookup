@@ -82,7 +82,21 @@ export default function MyFailuresPage() {
   const [page, setPage] = useState(1)
   const size = 25
 
-  const { data, isLoading, error } = useMyFailures({ days, page, size })
+  // Mine = caller's own assignments only (default).
+  // Team = every unresolved failure on the project (QA_LEAD/ADMIN only).
+  //
+  // Background: failures are auto-assigned at ingest time to the suite
+  // owner — or to the project's default-QA-Lead user when no explicit
+  // owner exists (see backend/services/default_qa_lead_service). A
+  // project admin viewing /my-failures would otherwise see almost
+  // nothing because the synthetic QA-Lead user owns the bulk. The
+  // toggle gives leads/admins a one-click view of the whole project's
+  // open inbox without reassigning rows.
+  const [scope, setScope] = useState<'mine' | 'team'>('mine')
+  const canSeeTeam = isQaLead
+  const effectiveScope: 'mine' | 'team' = canSeeTeam ? scope : 'mine'
+
+  const { data, isLoading, error } = useMyFailures({ days, page, size, scope: effectiveScope })
 
   const scopeLabel = isAllProjects ? 'all your projects' : (project?.name ?? 'the selected project')
 
@@ -127,6 +141,44 @@ export default function MyFailuresPage() {
             )
           })}
         </div>
+        {canSeeTeam && (
+          <>
+            <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
+            <span
+              className="inline-flex items-center gap-1.5 text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]"
+              style={{ letterSpacing: 'var(--tracking-wider)' }}
+            >
+              Scope
+            </span>
+            <div role="radiogroup" aria-label="Scope" className="flex items-center gap-1.5">
+              {(['mine', 'team'] as const).map(opt => {
+                const active = effectiveScope === opt
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => { setScope(opt); setPage(1) }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors capitalize"
+                    style={{
+                      background: active ? 'rgba(68,147,248,0.14)' : 'transparent',
+                      borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
+                      color: active ? '#93c5fd' : 'var(--color-text-muted)',
+                    }}
+                    title={
+                      opt === 'mine'
+                        ? "Only failures assigned to you"
+                        : "Every unresolved failure across the project (QA_LEAD/ADMIN)"
+                    }
+                  >
+                    {opt}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
         <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
         <span className="text-[12px] text-[var(--color-text-muted)]">
           Status: <code className="font-mono text-[11px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">FAILED, BROKEN</code>
@@ -150,10 +202,16 @@ export default function MyFailuresPage() {
         </div>
       ) : !data || data.items.length === 0 ? (
         <EmptyState
-          title="You’re caught up"
-          description={`No failed or broken tests assigned to you in the last ${
-            days === 1 ? '24 hours' : `${days} days`
-          }. New failures land here automatically when a test run is ingested.`}
+          title={effectiveScope === 'team' ? 'No open team failures' : 'You’re caught up'}
+          description={
+            effectiveScope === 'team'
+              ? `No unresolved failures across ${scopeLabel} in the last ${
+                  days === 1 ? '24 hours' : `${days} days`
+                }. New failures land here as soon as runs are ingested.`
+              : `No failed or broken tests assigned to you in the last ${
+                  days === 1 ? '24 hours' : `${days} days`
+                }. New failures land here automatically when a test run is ingested.`
+          }
           icon={<Inbox className="h-6 w-6" />}
         />
       ) : (

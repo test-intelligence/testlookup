@@ -41,6 +41,7 @@ from app.models.postgres import (
     TestStatus,
     TriageStatus,
     User,
+    UserRole,
 )
 from app.models.schemas import MyFailureItem, MyFailureListResponse, TriageStatusUpdate
 from app.services.failed_test_reassignment_service import (
@@ -82,6 +83,14 @@ async def list_my_assigned_failures(
     days: int = Query(30, ge=1, le=365, description="Time window (created_at)"),
     page: int = Query(1, ge=1),
     size: int = Query(25, ge=1, le=100),
+    scope: str = Query(
+        "mine",
+        pattern="^(mine|team)$",
+        description=(
+            "'mine' = caller's assigned failures only; "
+            "'team' = all failures across project (QA_LEAD/ADMIN only)"
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -98,17 +107,30 @@ async def list_my_assigned_failures(
     scoped_project_id = _parse_project_id(project_id)
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
 
+    # Team scope is only honoured for QA_LEAD / ADMIN. Anyone else
+    # silently falls back to ``mine`` so the URL can't be tampered with
+    # to leak cross-user data. The synthetic default-QA-Lead user picks
+    # up most auto-assignments, so callers viewing as admin would
+    # otherwise see almost nothing — team scope is the natural way to
+    # see project-wide unresolved failures without re-assigning rows.
+    effective_scope = scope
+    if scope == "team" and current_user.role not in (
+        UserRole.QA_LEAD.value, UserRole.ADMIN.value,
+    ):
+        effective_scope = "mine"
+
     # Phase: triage workflow (migration 0088). Inbox shows only rows
     # the assignee hasn't actioned yet. ``REVIEWED_APPROVED /
     # DEFECT_CREATED / WONT_FIX`` rows are off the inbox by design;
     # they remain accessible from the per-run detail page where the
     # status badge surfaces the resolution.
     base_filters = [
-        TestCase.assigned_to_user_id == current_user.id,
         TestCase.status.in_(_ACTIONABLE_STATUSES),
         TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
         TestCase.created_at >= period_start,
     ]
+    if effective_scope == "mine":
+        base_filters.append(TestCase.assigned_to_user_id == current_user.id)
     if scoped_project_id is not None:
         base_filters.append(TestRun.project_id == scoped_project_id)
 
@@ -233,6 +255,7 @@ async def list_my_assigned_failures(
 async def my_assigned_failures_count(
     project_id: Optional[str] = Query(None),
     days: int = Query(30, ge=1, le=365),
+    scope: str = Query("mine", pattern="^(mine|team)$"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -246,13 +269,20 @@ async def my_assigned_failures_count(
     scoped_project_id = _parse_project_id(project_id)
     period_start = datetime.now(timezone.utc) - timedelta(days=days)
 
+    effective_scope = scope
+    if scope == "team" and current_user.role not in (
+        UserRole.QA_LEAD.value, UserRole.ADMIN.value,
+    ):
+        effective_scope = "mine"
+
     filters = [
-        TestCase.assigned_to_user_id == current_user.id,
         TestCase.status.in_(_ACTIONABLE_STATUSES),
         # Match the inbox list endpoint — badge counts only PENDING_REVIEW.
         TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
         TestCase.created_at >= period_start,
     ]
+    if effective_scope == "mine":
+        filters.append(TestCase.assigned_to_user_id == current_user.id)
     if scoped_project_id is not None:
         filters.append(TestRun.project_id == scoped_project_id)
 

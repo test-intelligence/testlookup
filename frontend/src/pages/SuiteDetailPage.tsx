@@ -1,10 +1,12 @@
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
   Clock, Activity, AlertTriangle, Calendar, FolderTree,
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, Legend,
 } from 'recharts'
 import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
@@ -15,6 +17,7 @@ import { useSuites } from '@/hooks/useSuites'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailSummary } from '@/types/analytics'
+import { testManagementService } from '@/services/testManagementService'
 
 const PERIODS = [
   { label: '7d',  days: 7 },
@@ -99,6 +102,34 @@ export default function SuiteDetailPage() {
   const setDays = setStoredDays
 
   const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
+
+  // Per-day trend (run_count + passed/failed/skipped) for the same time
+  // window. Owned by the new ``suite_history_service`` so every page
+  // shows the same numbers. Polled in lockstep with the days selector;
+  // refresh is bounded to the user's window so a chatty live-stream
+  // run-set doesn't refire the query every poll.
+  type SuiteTrendPoint = {
+    date: string
+    run_count: number
+    total_tests: number
+    passed_count: number
+    failed_count: number
+    skipped_count: number
+    broken_count: number
+  }
+  const [trendPoints, setTrendPoints] = useState<SuiteTrendPoint[]>([])
+  const [trendLoading, setTrendLoading] = useState(false)
+  useEffect(() => {
+    if (!suiteName) { setTrendPoints([]); return }
+    let alive = true
+    setTrendLoading(true)
+    const pid = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
+    testManagementService.getSuiteTrend(suiteName, pid, days)
+      .then(res => { if (alive) setTrendPoints(res.points || []) })
+      .catch(() => { if (alive) setTrendPoints([]) })
+      .finally(() => { if (alive) setTrendLoading(false) })
+    return () => { alive = false }
+  }, [suiteName, activeProjectId, days])
   // The reverse-direction link to the catalog needs a TestSuite *id*,
   // but the analytics page only knows the name (from the URL). Use the
   // already-cached ``useSuites`` SWR entry to resolve it. The lookup is
@@ -252,6 +283,42 @@ export default function SuiteDetailPage() {
               </div>
             ))}
           </div>
+
+          {/* Run-history trend — per-day count of runs that included this
+              suite, broken down by status. Independent of the
+              recent-runs pass-rate chart below (which is per-run,
+              snapshot-style). Hidden when there's less than one day of
+              data so empty suites don't show a flat zero chart. */}
+          {trendPoints.some(p => p.run_count > 0) && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">
+                  Run history — last {days} days
+                </h3>
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  {trendPoints.reduce((a, p) => a + p.run_count, 0)} runs ·
+                  {' '}{trendPoints.reduce((a, p) => a + p.total_tests, 0)} executions
+                </span>
+              </div>
+              {trendLoading ? (
+                <div className="flex items-center justify-center h-48"><LoadingSpinner size="sm" /></div>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={trendPoints} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="date" tick={AXIS_TICK} axisLine={false} tickLine={false} />
+                    <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="passed_count"  name="Passed"  stackId="status" fill="#10b981" />
+                    <Bar dataKey="failed_count"  name="Failed"  stackId="status" fill="#ef4444" />
+                    <Bar dataKey="skipped_count" name="Skipped" stackId="status" fill="#f59e0b" />
+                    <Bar dataKey="broken_count"  name="Broken"  stackId="status" fill="#fb923c" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          )}
 
           {/* Pass Rate Trend */}
           {chartData.length > 1 && (

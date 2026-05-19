@@ -80,6 +80,28 @@ jobs:
         # and ``gcloud auth configure-docker`` on GKE.
         run: az acr login --name "${{ secrets.AZURE_ACR_NAME }}"
 
+      - name: Stage client SDKs into backend context
+        # Populate ``backend/__client_sdks_staged/`` so the production
+        # Dockerfile bakes the SDK artifacts into the image (the
+        # ``/api/v1/sdk/{lang}`` endpoint reads from there). Mirrors the
+        # equivalent step in ci.yml and homelabsetup/deploy-homelab.sh.
+        # Without this the Dockerfile's mkdir fallback prevents a build
+        # failure but the image ships with an empty SDK directory.
+        run: |
+          set -euo pipefail
+          STAGED_SDK="./backend/__client_sdks_staged"
+          rm -rf "$STAGED_SDK"
+          mkdir -p "$STAGED_SDK"
+          rsync -a \
+            --exclude='.pytest_cache' --exclude='__pycache__' \
+            --exclude='*.pyc' --exclude='.venv' --exclude='venv' \
+            --exclude='node_modules' --exclude='.tox' \
+            --exclude='.mypy_cache' --exclude='.ruff_cache' \
+            --exclude='target' --exclude='build' \
+            --exclude='*.egg-info' --exclude='.coverage' \
+            --exclude='htmlcov' --exclude='.DS_Store' \
+            ./client/ "$STAGED_SDK/"
+
       - name: Build & push backend image
         run: |
           REPO="$ACR_HOST/testlookup/backend"

@@ -246,7 +246,10 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
             client = get_http_client()
             resp = await client.get(url, headers=self._headers(), params=params, timeout=15.0)
             if resp.status_code != 200:
-                logger.warning("Failed to fetch epic children for %s: HTTP %d", epic_key, resp.status_code)
+                logger.warning(
+                    "jira_epic_children_fetch_failed",
+                    epic_key=epic_key, status_code=resp.status_code,
+                )
                 return ""
             data = resp.json()
 
@@ -269,5 +272,8 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
 
             return "\n".join(children_parts)
         except Exception as exc:
-            logger.warning("Error fetching epic children for %s: %s", epic_key, exc)
+            logger.warning(
+                "jira_epic_children_error",
+                epic_key=epic_key, error=str(exc),
+            )
             return ""

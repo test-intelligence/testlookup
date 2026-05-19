@@ -21,7 +21,7 @@ export const myFailuresService = {
    * ``project_id`` is optional; the backend honours ``"all"`` and missing as
    * "no project filter." Default time window is 30 days (server-side default).
    */
-  list: (params: { project_id?: string | null; days?: number; page?: number; size?: number }) =>
+  list: (params: { project_id?: string | null; days?: number; page?: number; size?: number; scope?: 'mine' | 'team' }) =>
     getData<MyFailureListResponse>('/api/v1/me/assigned-failures', {
       params: {
         // null → omit so the server runs the unscoped path; sending the
@@ -30,15 +30,17 @@ export const myFailuresService = {
         ...(params.days != null ? { days: params.days } : {}),
         ...(params.page != null ? { page: params.page } : {}),
         ...(params.size != null ? { size: params.size } : {}),
+        ...(params.scope ? { scope: params.scope } : {}),
       },
     }),
 
   /** Lightweight count for the sidebar badge — no row hydration. */
-  count: (params: { project_id?: string | null; days?: number }) =>
+  count: (params: { project_id?: string | null; days?: number; scope?: 'mine' | 'team' }) =>
     getData<{ count: number }>('/api/v1/me/assigned-failures/count', {
       params: {
         ...(params.project_id ? { project_id: params.project_id } : {}),
         ...(params.days != null ? { days: params.days } : {}),
+        ...(params.scope ? { scope: params.scope } : {}),
       },
     }),
 

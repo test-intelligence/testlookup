@@ -108,6 +108,15 @@ async def upsert_review(
         )
         db.add(row)
         await db.flush()
+        # ``updated_at`` is a server-default ``func.now()`` column with
+        # ``onupdate=func.now()``. After flush it's "expired" on the
+        # ORM side — the next attribute access triggers a lazy SELECT
+        # which under async sessions needs greenlet context that the
+        # Pydantic serialiser doesn't have, raising MissingGreenlet
+        # mid-response. Refresh explicitly so the value materialises
+        # in the session before we hand the row to ``hydrate_response``.
+        # See memory/feedback_missing_greenlet_after_flush.md.
+        await db.refresh(row)
         logger.info(
             "test_execution_review_created",
             test_case_id=str(test_case_id),
@@ -126,6 +135,10 @@ async def upsert_review(
     if note is not None:
         existing.note = note or None
     await db.flush()
+    # Same MissingGreenlet trap on the update path — ``updated_at``'s
+    # ``onupdate=func.now()`` triggers a lazy load post-flush. Refresh
+    # before returning so the serialiser sees a hydrated value.
+    await db.refresh(existing)
     logger.info(
         "test_execution_review_transitioned",
         test_case_id=str(test_case_id),

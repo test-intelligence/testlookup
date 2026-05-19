@@ -884,6 +884,19 @@ async def list_test_suites(
             db, project_id, [s["suite_name"] for s in merged.values()]
         )
 
+    # Cumulative history (run_count + total_passed/failed/skipped/broken)
+    # comes from the shared service so every suite-bearing page reads the
+    # same shape. The snapshot fields above (test_count, passed_count,
+    # failed_count) keep their original "of the unique tests in this suite,
+    # how many last ran red/green" semantics — additive, not a replacement.
+    from app.services.suite_history_service import compute_suite_history
+    history_map = await compute_suite_history(
+        db,
+        project_id=project_id,
+        suite_names=[s["suite_name"] for s in merged.values()] or None,
+        days=None,
+    )
+
     result = sorted(merged.values(), key=lambda x: x["test_count"], reverse=True)
     logger.info("listing_test_suites", count=len(result), project_id=str(project_id) if project_id else None)
 
@@ -896,6 +909,13 @@ async def list_test_suites(
             "last_run_at": s["last_run_at"].isoformat() if s["last_run_at"] else None,
             "last_run_id": str(s["last_run_id"]) if s["last_run_id"] else None,
             "pass_rate": round(s["passed_count"] / s["test_count"] * 100, 1) if s["test_count"] > 0 else None,
+            # Cumulative aggregates (lifetime, all runs).
+            "run_count": history_map.get(s["suite_name"], {}).get("run_count", 0),
+            "total_executions": history_map.get(s["suite_name"], {}).get("total_tests", 0),
+            "total_passed": history_map.get(s["suite_name"], {}).get("passed_count", 0),
+            "total_failed": history_map.get(s["suite_name"], {}).get("failed_count", 0),
+            "total_skipped": history_map.get(s["suite_name"], {}).get("skipped_count", 0),
+            "total_broken": history_map.get(s["suite_name"], {}).get("broken_count", 0),
             "owner_user_id": owner_map.get(s["suite_name"], {}).get("owner_user_id"),
             "owner_email": owner_map.get(s["suite_name"], {}).get("owner_email"),
             "owner_full_name": owner_map.get(s["suite_name"], {}).get("owner_full_name"),
@@ -903,6 +923,49 @@ async def list_test_suites(
         }
         for s in result
     ]
+
+
+@router.get("/suites/{suite_name}/trend")
+async def get_suite_trend(
+    suite_name: str,
+    project_id: Optional[uuid.UUID] = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Per-day trend points for one suite over the time window.
+
+    Returns ``{suite_name, days, points: [{date, run_count, total_tests,
+    passed_count, failed_count, skipped_count, broken_count}]}``. Empty
+    days are emitted with all-zero counts so the chart x-axis stays
+    continuous.
+
+    Powers the trend chart on /coverage/suite and the sparkline on
+    /test-management Test Suites. Single source of truth lives in
+    ``services/suite_history_service.compute_suite_trend`` so /suites
+    /reports/summary can adopt the same shape later.
+    """
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        # Cross-project trend is meaningless — a suite name can collide
+        # across projects, so we 200 with an empty trend rather than
+        # surface a misleading cross-tenant aggregate.
+        if accessible is not None:
+            return {"suite_name": suite_name, "days": days, "points": []}
+
+    from app.services.suite_history_service import compute_suite_trend
+    points = await compute_suite_trend(
+        db,
+        project_id=project_id,
+        suite_name=suite_name,
+        days=days,
+    )
+    return {
+        "suite_name": suite_name,
+        "days": days,
+        "points": points,
+    }
 
 
 @router.get("/suites/{suite_name}/cases")

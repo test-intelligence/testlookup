@@ -214,7 +214,7 @@ class ReleaseRiskAgent(BaseAgent):
                 composite = policy_result.effective_composite
                 recommendation = policy_result.recommendation
         except Exception as exc:
-            logger.warning("Policy evaluation failed (falling back to defaults): %s", exc)
+            logger.warning("policy_evaluation_failed_using_defaults", error=str(exc))
             policy_result = None
 
         if policy_result is None:
@@ -397,7 +397,7 @@ class ReleaseRiskAgent(BaseAgent):
                 ):
                     return memory_context
             except Exception as exc:
-                logger.debug("Release risk memory context unavailable: %s", exc)
+                logger.debug("release_risk_memory_context_unavailable", error=str(exc))
 
             open_defects = await ReleaseRiskAgent._count_open_defects_from_db(db, project_id)
             return {

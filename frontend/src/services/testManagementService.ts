@@ -193,12 +193,47 @@ export const testManagementService = {
     last_run_at: string | null
     last_run_id: string | null
     pass_rate: number | null
+    // Cumulative aggregates (lifetime, all runs) — additive to the
+    // snapshot fields above. Powers the new "# Runs / Pass / Fail /
+    // Skip" columns on the Test Suites table.
+    run_count?: number
+    total_executions?: number
+    total_passed?: number
+    total_failed?: number
+    total_skipped?: number
+    total_broken?: number
     owner_user_id?: string | null
     owner_email?: string | null
     owner_full_name?: string | null
     owner_is_fallback?: boolean
   }>> =>
     getData('/api/v1/test-management/suites', { params: projectId ? { project_id: projectId } : {} }),
+
+  /**
+   * Per-day trend for one suite over ``days`` days. Used by the
+   * /coverage/suite chart and the sparkline on /test-management.
+   * Empty days are zero-filled so the chart x-axis is continuous.
+   */
+  getSuiteTrend: (
+    suiteName: string,
+    projectId: string | null,
+    days: number = 30,
+  ): Promise<{
+    suite_name: string
+    days: number
+    points: Array<{
+      date: string
+      run_count: number
+      total_tests: number
+      passed_count: number
+      failed_count: number
+      skipped_count: number
+      broken_count: number
+    }>
+  }> =>
+    getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/trend`, {
+      params: { ...(projectId ? { project_id: projectId } : {}), days },
+    }),
 
   /**
    * Paginated list of test cases in a suite. Response shape is

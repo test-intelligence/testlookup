@@ -2948,6 +2948,15 @@ interface SuiteItem {
   last_run_at: string | null
   last_run_id: string | null
   pass_rate: number | null
+  // Cumulative aggregates surfaced as the new "# Runs / Pass / Fail /
+  // Skip" cells. Optional so older API responses without these fields
+  // render zero rather than NaN.
+  run_count?: number
+  total_executions?: number
+  total_passed?: number
+  total_failed?: number
+  total_skipped?: number
+  total_broken?: number
   owner_user_id?: string | null
   owner_email?: string | null
   owner_full_name?: string | null
@@ -3320,6 +3329,32 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       {suite.pass_rate.toFixed(1)}% pass rate
                     </span>
                   )}
+                  {/* Cumulative run history — total runs that included this
+                      suite plus per-status totals across those runs. Skipped
+                      when run_count is zero so the row stays compact for
+                      manual-only suites. */}
+                  {(suite.run_count ?? 0) > 0 && (
+                    <span
+                      className="text-[var(--color-text-faint)]"
+                      title={`${suite.run_count} runs · ${suite.total_executions ?? 0} executions`}
+                    >
+                      {suite.run_count} run{suite.run_count === 1 ? '' : 's'}
+                      {(suite.total_skipped ?? 0) > 0 && (
+                        <span className="text-amber-300/80 ml-2">{suite.total_skipped} skipped</span>
+                      )}
+                      {(suite.total_broken ?? 0) > 0 && (
+                        <span className="text-orange-300/80 ml-2">{suite.total_broken} broken</span>
+                      )}
+                    </span>
+                  )}
+                  <Link
+                    to={`/coverage/suite?name=${encodeURIComponent(suite.suite_name)}&days=30`}
+                    className="text-[var(--color-accent)] hover:underline text-[11px]"
+                    onClick={e => e.stopPropagation()}
+                    title="View per-day trend"
+                  >
+                    Trend →
+                  </Link>
                   <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                     <User className="h-3 w-3" />
                     {isEditingOwner ? (
