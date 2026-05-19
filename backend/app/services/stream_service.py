@@ -299,19 +299,24 @@ async def close_session(
             if tr is not None:
                 tr.event_archive = decoded
                 tr.event_archive_at = now
+                # NOTE: this module uses stdlib ``logging`` (see line 26).
+                # Stdlib's Logger doesn't accept structlog-style ``key=value``
+                # kwargs — passing them raises ``TypeError: Logger._log()
+                # got an unexpected keyword argument 'session_id'`` which
+                # then propagates as a 500 from the wrapping handler.
+                # Use stdlib-format f-strings (the prevailing style in this
+                # module) so the call works regardless of whether the
+                # exception path or the success path fires.
                 logger.info(
-                    "live_event_archive_written",
-                    run_id=session.run_id,
-                    event_count=len(decoded),
+                    f"live_event_archive_written run_id={session.run_id} "
+                    f"event_count={len(decoded)}"
                 )
     except Exception as arc_err:
         # Archive failures are non-fatal — persist_live_session reads from
         # Redis first, so as long as the buffer is fresh recovery still
         # works. The user only loses the long-tail (>25h) recovery path.
         logger.warning(
-            "live_event_archive_failed",
-            session_id=session_id,
-            error=str(arc_err),
+            f"live_event_archive_failed session_id={session_id}: {arc_err}"
         )
 
     # Release linking — explicit session.release_name wins; otherwise fall
@@ -868,6 +873,29 @@ async def list_active_sessions(
         completed_sessions.append(build_test_run_fallback_state(run))
 
     sessions = active_sessions + completed_sessions
+
+    # Stamp the per-(project, suite) run sequence on every session so the
+    # /live UI can render "Run #N" instead of the opaque SDK-supplied
+    # build_number. Resolves via the canonical ``test_run_id`` — both
+    # active sessions (Phase 4.5 drain pre-creates the TestRun row in
+    # IN_PROGRESS state) and completed ones (TestRun already exists)
+    # are covered. Bulk-fetched once for the full page payload.
+    from app.services.runs_service import fetch_run_seq_map
+    seq_ids: list[uuid.UUID] = []
+    for s in sessions:
+        if s.test_run_id:
+            try:
+                seq_ids.append(uuid.UUID(s.test_run_id))
+            except ValueError:
+                # ``run_id`` slugs that don't round-trip through UUID
+                # are pre-Phase-4.5 legacy rows; their run_seq stays None.
+                continue
+    if seq_ids:
+        seq_map = await fetch_run_seq_map(db, seq_ids)
+        for s in sessions:
+            if s.test_run_id and s.test_run_id in seq_map:
+                s.run_seq = seq_map[s.test_run_id]
+
     return ActiveSessionsResponse(sessions=sessions, count=len(sessions))
 
 

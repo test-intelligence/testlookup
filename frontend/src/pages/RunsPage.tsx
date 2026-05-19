@@ -1152,11 +1152,16 @@ function RunsTable({
                       aria-label={`Select #${r.build_number}`}
                     />
                   </td>
-                  {/* Build column links to the run detail page — the
-                      previous short run-id cell was redundant and removed. */}
+                  {/* Build column links to the run detail page. Header
+                      label is "Build" for historical continuity, but the
+                      VALUE is the human-readable, per-(project, suite)
+                      incremental "Run #N" — server-side ROW_NUMBER()
+                      over the partition. Falls back to the raw SDK
+                      build_number for legacy rows that pre-date the
+                      run_seq field. */}
                   <td className="font-mono text-[12.5px] font-semibold" style={{ padding: '8px 12px' }}>
                     <Link to={`/runs/${r.id}`} className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline">
-                      #{String(r.build_number)}
+                      {r.run_seq != null ? `Run #${r.run_seq}` : `#${String(r.build_number)}`}
                     </Link>
                   </td>
                   <td style={{ padding: '8px 12px' }}>

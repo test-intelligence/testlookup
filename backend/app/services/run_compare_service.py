@@ -240,11 +240,36 @@ async def _load_test_rows(
     Same-fingerprint duplicates inside a single run (e.g. retries) are
     resolved by keeping the last-observed row — matches how the release
     dashboards render the run.
+
+    Suite scoping mirrors ``resolve_latest_suite_pair``'s union semantics
+    so the compare path doesn't reject runs the resolver accepted. The
+    SDK sends ``testlookup.suite`` once at session-create — it lands on
+    ``TestRun.primary_suite_name`` but per-event ``TestCase.suite_name``
+    stays NULL for live-stream runs. A pure ``TestCase.suite_name == X``
+    filter then matches zero rows even though the run is correctly
+    tagged at the run level. See ``feedback_live_stream_suite_name_nulls``.
     """
     stmt = select(TestCase).where(TestCase.test_run_id == run_id)
     suite_key = normalize_suite_name(suite_name)
     if suite_key:
-        stmt = stmt.where(func.lower(func.trim(TestCase.suite_name)) == suite_key)
+        # Run-level match: if this run's ``primary_suite_name`` matches,
+        # ALL test cases for the run belong to that suite regardless of
+        # the per-row column. Embedded as a correlated EXISTS so the
+        # whole filter stays a single query.
+        run_level_match = (
+            select(TestRun.id)
+            .where(
+                TestRun.id == run_id,
+                func.lower(func.trim(TestRun.primary_suite_name)) == suite_key,
+            )
+            .exists()
+        )
+        stmt = stmt.where(
+            or_(
+                func.lower(func.trim(TestCase.suite_name)) == suite_key,
+                run_level_match,
+            )
+        )
     result = await db.execute(stmt)
     rows: dict[str, TestCase] = {}
     for tc in result.scalars().all():

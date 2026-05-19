@@ -48,6 +48,10 @@ export interface LiveSessionState {
   release_name?: string
   launch_name?: string
   suite_name?: string | null
+  /** Per-(project, primary_suite_name) run number, 1-based, computed
+   *  server-side via ROW_NUMBER(). The /live UI shows ``Run #N`` instead
+   *  of the SDK build_number so the same run is recognisable across pages. */
+  run_seq?: number | null
 }
 
 export interface ActiveSessionsResponse {

@@ -16,7 +16,24 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+# The list endpoint now calls ``runs_service.fetch_run_seq_map`` to
+# decorate each row with its per-(project, suite) run number. The helper
+# fires its own SELECTs which would otherwise drain the test's
+# ``execute.side_effect`` list and trip StopAsyncIteration. Patch it to
+# an empty dict for tests that don't care about the sequence value —
+# dedicated coverage lives in ``tests/services/test_run_seq_map.py``.
+def _patch_run_seq_map():
+    """Patch at the source — the router imports the helper lazily inside
+    the function (``from app.services.runs_service import
+    fetch_run_seq_map``), so a patch on the router-side name wouldn't
+    intercept the local-import lookup."""
+    return patch(
+        "app.services.runs_service.fetch_run_seq_map",
+        AsyncMock(return_value={}),
+    )
 
 import pytest
 
@@ -129,9 +146,10 @@ async def test_list_hydrates_rows_and_builds_navigation_url():
     ])
     user = SimpleNamespace(id=uuid.uuid4())
 
-    result = await list_my_assigned_failures(
-        project_id=None, days=30, page=1, size=25, db=db, current_user=user,
-    )
+    with _patch_run_seq_map():
+        result = await list_my_assigned_failures(
+            project_id=None, days=30, page=1, size=25, db=db, current_user=user,
+        )
     assert result.total == 1
     assert len(result.items) == 1
     item = result.items[0]
@@ -176,9 +194,10 @@ async def test_list_truncates_long_error_message():
     ])
     user = SimpleNamespace(id=uuid.uuid4())
 
-    result = await list_my_assigned_failures(
-        project_id=None, days=30, page=1, size=25, db=db, current_user=user,
-    )
+    with _patch_run_seq_map():
+        result = await list_my_assigned_failures(
+            project_id=None, days=30, page=1, size=25, db=db, current_user=user,
+        )
     assert result.items[0].error_message is not None
     # 280-char cap with ellipsis = 280 chars total.
     assert len(result.items[0].error_message) == 280
@@ -242,9 +261,10 @@ async def test_list_attaches_per_test_failure_count_from_grouping_query():
     ])
     user = SimpleNamespace(id=uuid.uuid4())
 
-    result = await list_my_assigned_failures(
-        project_id=None, days=7, page=1, size=25, db=db, current_user=user,
-    )
+    with _patch_run_seq_map():
+        result = await list_my_assigned_failures(
+            project_id=None, days=7, page=1, size=25, db=db, current_user=user,
+        )
 
     by_test = {item.test_name: item.failure_count for item in result.items}
     # Both occurrences of the repeating test share the same count.

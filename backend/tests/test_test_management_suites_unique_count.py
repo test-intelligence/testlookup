@@ -78,6 +78,29 @@ def _row(**kw):
     return SimpleNamespace(**kw)
 
 
+class _NoopSavepoint:
+    """Minimal async-context-manager that quacks like ``db.begin_nested()``.
+
+    The handler wraps the two fallback queries in ``async with
+    db.begin_nested():`` to isolate SQL failures into a SAVEPOINT so they
+    don't poison the outer transaction. The tests don't exercise real
+    SQL, so the savepoint is a no-op here — just enter+exit cleanly.
+    """
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        # Returning False lets exceptions propagate; the handler's
+        # except clause then swallows them as the fallback rows-empty.
+        return False
+
+
+def _make_begin_nested():
+    """Factory so each ``db = SimpleNamespace(...)`` block can attach
+    its own callable returning a fresh ``_NoopSavepoint``."""
+    return lambda: _NoopSavepoint()
+
+
 @pytest.mark.asyncio
 async def test_list_test_suites_returns_unique_counts_from_cte(monkeypatch):
     """Handler-level: feed the mocked DB the shape the new CTE returns
@@ -119,6 +142,7 @@ async def test_list_test_suites_returns_unique_counts_from_cte(monkeypatch):
             _Result(manual_rows),
         ]),
         rollback=AsyncMock(),
+        begin_nested=_make_begin_nested(),
     )
 
     # Patch the suite-owner bulk lookup so the handler doesn't hit
@@ -170,6 +194,7 @@ async def test_list_test_suites_merges_managed_cases_additively(monkeypatch):
             _Result(manual_rows),
         ]),
         rollback=AsyncMock(),
+        begin_nested=_make_begin_nested(),
     )
 
     async def _no_owners(_db, _project_id, _names):
@@ -218,6 +243,7 @@ async def test_list_test_suites_surfaces_live_stream_gap_suites(monkeypatch):
             _Result(manual_rows),
         ]),
         rollback=AsyncMock(),
+        begin_nested=_make_begin_nested(),
     )
 
     async def _no_owners(_db, _project_id, _names):
@@ -268,6 +294,7 @@ async def test_list_test_suites_run_aggregate_does_not_double_count_existing(mon
             _Result([]),
         ]),
         rollback=AsyncMock(),
+        begin_nested=_make_begin_nested(),
     )
 
     async def _no_owners(_db, _project_id, _names):

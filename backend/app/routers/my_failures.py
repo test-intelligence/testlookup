@@ -181,6 +181,13 @@ async def list_my_assigned_failures(
         for c in (await db.execute(count_stmt)).all():
             count_by_key[(c.project_id, c.suite_name, c.class_name, c.test_name)] = int(c.n)
 
+    # Per-(project, suite) run sequence so the inbox can show "Run #N"
+    # instead of the opaque SDK-supplied build_number. The map is bulk-
+    # fetched once for every distinct test_run_id on the page.
+    from app.services.runs_service import fetch_run_seq_map
+    distinct_run_ids = list({r.test_run_id for r in rows})
+    run_seq_map = await fetch_run_seq_map(db, distinct_run_ids)
+
     items: list[MyFailureItem] = []
     for r in rows:
         # Truncate error_message to keep payloads bounded — full message is
@@ -207,6 +214,7 @@ async def list_my_assigned_failures(
             navigation_url=f"/runs/{r.test_run_id}/tests/{r.id}",
             triage_status=r.triage_status,
             triage_notes=r.triage_notes,
+            run_seq=run_seq_map.get(str(r.test_run_id)),
             failure_count=count_by_key.get(key, 1),
         ))
 
@@ -341,6 +349,8 @@ async def reassign_assigned_failure(
     err = (row.error_message or "")
     if len(err) > 280:
         err = err[:277] + "..."
+    from app.services.runs_service import fetch_run_seq_map
+    seq_map = await fetch_run_seq_map(db, [row.test_run_id])
     return MyFailureItem(
         id=row.id,
         test_name=row.test_name,
@@ -357,6 +367,7 @@ async def reassign_assigned_failure(
         project_id=row.project_id,
         project_name=row.project_name,
         navigation_url=f"/runs/{row.test_run_id}/tests/{row.id}",
+        run_seq=seq_map.get(str(row.test_run_id)),
         failure_count=1,
     )
 
@@ -436,6 +447,8 @@ async def update_failure_triage_status(
     err = (row.error_message or "")
     if len(err) > 280:
         err = err[:277] + "..."
+    from app.services.runs_service import fetch_run_seq_map
+    seq_map = await fetch_run_seq_map(db, [row.test_run_id])
     return MyFailureItem(
         id=row.id,
         test_name=row.test_name,
@@ -454,5 +467,6 @@ async def update_failure_triage_status(
         navigation_url=f"/runs/{row.test_run_id}/tests/{row.id}",
         triage_status=row.triage_status,
         triage_notes=row.triage_notes,
+        run_seq=seq_map.get(str(row.test_run_id)),
         failure_count=1,
     )

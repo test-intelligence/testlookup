@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Project, Release, ReleaseTestRunLink, TestCase, TestRun
@@ -26,6 +26,7 @@ def enrich_runs_with_release(
     runs: list[TestRun],
     release_map: dict[str, dict[str, str | None]],
     project_map: dict[str, str] | None = None,
+    run_seq_map: dict[str, int] | None = None,
 ) -> list[dict]:
     enriched = []
     for run in runs:
@@ -35,8 +36,78 @@ def enrich_runs_with_release(
         item["release_id"] = release.get("id")
         if project_map is not None:
             item["project_name"] = project_map.get(str(run.project_id)) if run.project_id else None
+        if run_seq_map is not None:
+            item["run_seq"] = run_seq_map.get(str(run.id))
         enriched.append(item)
     return enriched
+
+
+# Suite normalisation expression used by ``fetch_run_seq_map``. NULL +
+# empty-string + whitespace-only suite names all collapse to a single
+# "unnamed" partition so a run that never had ``primary_suite_name`` set
+# still gets a stable sequence number within its project.
+_SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "")))
+
+
+async def fetch_run_seq_map(
+    db: AsyncSession, run_ids: list[uuid.UUID],
+) -> dict[str, int]:
+    """Per-(project, primary_suite_name) incremental run number, starting at 1.
+
+    The sequence is computed across the **entire** history of the
+    partitions involved — not just the requested ``run_ids`` — so a run's
+    number is stable as the user paginates, filters, or revisits the
+    page weeks later. Filtering to only the page rows would shift the
+    sequence per request, which would defeat the whole point of a
+    human-readable identifier.
+
+    Strategy:
+      1. Look up each requested run's ``(project_id, suite_key)`` pair.
+      2. Run a single window-function pass over EVERY run in those
+         partitions, with stable tie-breaker ``ORDER BY created_at ASC,
+         id ASC`` so equal-timestamp inserts don't swap numbers.
+      3. Return ``{run_id: rn}`` for the originally requested ids.
+
+    Empty input → empty result, no queries fired. Used by ``/runs``,
+    ``/live``, and ``/my-failures`` so a given run's "Run #N" label
+    matches everywhere it appears.
+    """
+    if not run_ids:
+        return {}
+
+    # 1. Pairs in scope.
+    pair_q = select(
+        TestRun.project_id,
+        _SUITE_NORM.label("suite_key"),
+    ).where(TestRun.id.in_(run_ids)).distinct()
+    pairs = list((await db.execute(pair_q)).all())
+    if not pairs:
+        return {}
+
+    # 2. Build the per-pair filter as an OR of AND-pairs. SQLAlchemy
+    # supports ``tuple_(a, b).in_(...)`` but its asyncpg compilation
+    # path is finicky with mixed-type tuples — explicit ORs are
+    # uglier but bulletproof. Partition count is bounded by the page
+    # size (one project + a handful of suites in practice).
+    # Attribute access (not unpacking) so mock rows that aren't
+    # tuple-iterable still work in unit tests.
+    pair_filters = [
+        and_(TestRun.project_id == p.project_id, _SUITE_NORM == p.suite_key)
+        for p in pairs
+    ]
+    ranked = (
+        select(
+            TestRun.id,
+            func.row_number().over(
+                partition_by=(TestRun.project_id, _SUITE_NORM),
+                order_by=(TestRun.created_at.asc(), TestRun.id.asc()),
+            ).label("rn"),
+        )
+        .where(or_(*pair_filters))
+        .subquery()
+    )
+    final_q = select(ranked.c.id, ranked.c.rn).where(ranked.c.id.in_(run_ids))
+    return {str(rid): int(rn) for rid, rn in (await db.execute(final_q)).all()}
 
 
 async def fetch_project_name_map(db: AsyncSession, project_ids: list[uuid.UUID]) -> dict[str, str]:
@@ -168,9 +239,15 @@ async def list_project_runs(
         if row[0].project_id and row.project_name
     }
 
-    release_map = await fetch_release_map(db, [run.id for run in runs])
+    run_ids = [run.id for run in runs]
+    release_map = await fetch_release_map(db, run_ids)
+    run_seq_map = await fetch_run_seq_map(db, run_ids)
     pages = -(-total // size)
-    return enrich_runs_with_release(runs, release_map, project_map), total, pages
+    return (
+        enrich_runs_with_release(runs, release_map, project_map, run_seq_map=run_seq_map),
+        total,
+        pages,
+    )
 
 
 async def get_run_with_release(db: AsyncSession, run_id: uuid.UUID):
@@ -180,7 +257,10 @@ async def get_run_with_release(db: AsyncSession, run_id: uuid.UUID):
     release_map = await fetch_release_map(db, [run_id])
     project_ids = [run.project_id] if run.project_id else []
     project_map = await fetch_project_name_map(db, project_ids)
-    return enrich_runs_with_release([run], release_map, project_map)[0]
+    run_seq_map = await fetch_run_seq_map(db, [run_id])
+    return enrich_runs_with_release(
+        [run], release_map, project_map, run_seq_map=run_seq_map,
+    )[0]
 
 
 async def list_run_test_cases(

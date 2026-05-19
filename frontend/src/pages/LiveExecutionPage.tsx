@@ -1059,10 +1059,18 @@ export default function LiveExecutionPage() {
                             to={`/runs/${s.test_run_id || s.run_id}`}
                             className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-2)]"
                           >
-                            {s.build_number || s.run_id.slice(0, 8)}
+                            {/* Prefer the per-suite incremental Run #N
+                                identifier (1-based) — backed by a
+                                server-side ROW_NUMBER() over the
+                                (project, suite) partition. Falls back
+                                to the raw SDK build_number, then to a
+                                short run_id slice. */}
+                            {s.run_seq != null
+                              ? `Run #${s.run_seq}`
+                              : s.build_number || s.run_id.slice(0, 8)}
                           </Link>
                           <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
-                            {s.run_id.slice(0, 8)}
+                            {s.build_number || s.run_id.slice(0, 8)}
                           </div>
                         </div>
                       </div>

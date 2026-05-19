@@ -364,6 +364,10 @@ class MyFailureItem(BaseModel):
     # run-detail page render the full status without a separate fetch.
     triage_status: str = "PENDING_REVIEW"
     triage_notes: Optional[str] = None
+    # Per-(project, primary_suite_name) human-readable run number. Starts
+    # at 1 and increments with each new run in the same partition.
+    # Optional because legacy clients of this schema may not populate it.
+    run_seq: Optional[int] = None
     # Count of times THIS test (same project + suite + class + test name) has
     # failed for this user inside the active time window. Lets the inbox row
     # show "× 7 in 7 days" so repeat offenders are visible at a glance.
@@ -1799,6 +1803,10 @@ class LiveSessionState(BaseModel):
     # Run-level suite identifier (testlookup.suite > testlookup.launch).
     # Surfaced by /live's UI as a dedicated Suite column.
     suite_name: Optional[str] = None
+    # Per-(project, primary_suite_name) human-readable run number, 1-based.
+    # The /live UI shows ``Run #N`` instead of the SDK-supplied
+    # build_number so users can correlate the same run across pages.
+    run_seq: Optional[int] = None
 
 
 class ActiveSessionsResponse(BaseModel):

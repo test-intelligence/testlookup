@@ -25,7 +25,12 @@ export function useRunCompare(
     },
     { revalidateOnFocus: false },
   )
-  return { compare: data, isLoading, isError: !!error }
+  return {
+    compare: data,
+    isLoading,
+    isError: !!error,
+    error: error as unknown,
+  }
 }
 
 export function useLatestSuiteCompare(suiteName: string | null, projectId?: string | null) {
@@ -35,5 +40,23 @@ export function useLatestSuiteCompare(suiteName: string | null, projectId?: stri
     () => runCompareService.compareLatestSuite(suiteName!.trim(), projectId),
     { revalidateOnFocus: false },
   )
-  return { compare: data, isLoading, isError: !!error }
+  return {
+    compare: data,
+    isLoading,
+    isError: !!error,
+    error: error as unknown,
+  }
+}
+
+/**
+ * Extract the backend's ``detail`` from an axios error, falling back to
+ * the JS Error message, then a generic string. Centralised so both the
+ * page and any future shared component render the same copy.
+ */
+export function extractCompareErrorMessage(err: unknown): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })
+    ?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (err instanceof Error && err.message) return err.message
+  return 'Failed to load compare'
 }

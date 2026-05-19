@@ -164,7 +164,7 @@ export default function MyFailuresPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider w-2">{/* severity dot */}</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test Suite</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Project · Build</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Run</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
                 <th
                   className="px-4 py-3 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider"
@@ -297,11 +297,25 @@ function FailureRow({
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
       </td>
-      <td className="px-4 py-3 text-[var(--color-text-muted)]">
-        <div className="text-[var(--color-text-secondary)] truncate max-w-[200px]">{item.project_name ?? '—'}</div>
-        <div className="text-[11px] tabular-nums">
-          {item.build_number ? <>Build {item.build_number}</> : <span className="text-[var(--color-text-faint)]">—</span>}
-        </div>
+      <td className="px-4 py-3 text-[var(--color-text-secondary)] font-mono text-xs">
+        {/* Project name is now omitted because the user selects it in
+            the global project dropdown — surfacing it again per-row is
+            redundant. Run identifier is the human-readable, per-(project,
+            suite) incremental ``Run #N``; falls back to the raw SDK
+            build_number for pre-run_seq rows. The short test_run_id slug
+            is shown underneath as a copy/correlation aid. */}
+        {item.run_seq != null ? (
+          <span className="text-[var(--color-text)]">Run #{item.run_seq}</span>
+        ) : item.build_number ? (
+          <span className="text-[var(--color-text)]">{item.build_number}</span>
+        ) : (
+          <span className="text-[var(--color-text-faint)]">—</span>
+        )}
+        {item.test_run_id && (
+          <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">
+            {item.test_run_id.slice(0, 8)}
+          </div>
+        )}
       </td>
       <td className="px-4 py-3">
         <span className={clsx('text-[11px] px-2 py-0.5 rounded font-medium', statusBadgeClass(item.status))}>

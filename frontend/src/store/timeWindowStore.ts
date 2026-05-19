@@ -22,9 +22,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-/** Default time window — 24 hours. Matches the user's request that 24h be
- *  the starting point and only change when they explicitly pick something else. */
-export const DEFAULT_TIME_WINDOW_DAYS = 1
+/** Default time window — 7 days. Updated 2026-05-18 from 24h based on
+ *  user feedback that "7d is the more useful starting view for trends,
+ *  coverage, and the inbox; 24h is too noisy for a first impression."
+ *  Pages with a different intrinsic default (e.g. Live, which is always
+ *  current) snap via ``snapToAllowed`` to the closest in-range option. */
+export const DEFAULT_TIME_WINDOW_DAYS = 7
 
 interface TimeWindowStore {
   /** Current global window in days. ``1`` = last 24 hours. */
@@ -40,10 +43,23 @@ export const useTimeWindowStore = create<TimeWindowStore>()(
     }),
     {
       name: 'testlookup-time-window',
-      // Future-proofing: bump the version when the schema of stored state
-      // changes (e.g. if we ever add per-section overrides). Today there's
-      // only one field so a migrate function isn't needed.
-      version: 1,
+      // v2 (2026-05-18): default flipped from 24h → 7d. Bumping the
+      // version forces ``zustand/persist`` to re-seed any stored state
+      // that hasn't been touched, so users who previously took the
+      // implicit-default 24h pick up the new default on their next visit
+      // (users who explicitly picked 24h still see 24h — the migrate
+      // step below preserves any non-default value).
+      version: 2,
+      migrate: (persistedState, fromVersion) => {
+        // v1 → v2: only re-seed if the user was on the OLD default (1).
+        // Any other explicit selection is preserved. ``persistedState``
+        // shape from v1 is ``{ days: number }``.
+        const state = (persistedState as { days?: number } | undefined) ?? {}
+        if (fromVersion < 2 && state.days === 1) {
+          return { ...state, days: DEFAULT_TIME_WINDOW_DAYS }
+        }
+        return state as unknown
+      },
     },
   ),
 )

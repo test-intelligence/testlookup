@@ -711,6 +711,17 @@ async def list_test_suites(
     # pitfall #15 — and the same union-fallback pattern used in
     # services/summary_report_service._per_suite_breakdown_window.
     run_aggregate_where = "AND tr.project_id = :project_id" if project_id else ""
+    # Pick the latest run per (project, suite_key) inline with
+    # ``array_agg(... ORDER BY ...)[1]`` instead of a correlated subquery.
+    # The previous shape — ``(SELECT tr3.id ... WHERE tr3.suite_key =
+    # tr.primary_suite_name)`` — referenced the raw ungrouped column
+    # ``tr.primary_suite_name`` from the outer GROUP BY's expression
+    # ``NULLIF(TRIM(tr.primary_suite_name), '')``. Postgres rejected
+    # that with ``GroupingError: subquery uses ungrouped column``,
+    # and because the failure poisoned the surrounding transaction,
+    # every later query in this handler ALSO 500'd with
+    # ``InFailedSQLTransactionError`` — including ``list_suite_owners``
+    # which is the one users saw fail in the trace.
     run_aggregate_query = sa_text(f"""
         SELECT
             NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
@@ -718,15 +729,7 @@ async def list_test_suites(
             COALESCE(SUM(tr.passed_tests), 0) AS passed_count,
             COALESCE(SUM(tr.failed_tests), 0) AS failed_count,
             MAX(tr.created_at) AS last_run_at,
-            (
-                SELECT tr3.id
-                FROM test_runs tr3
-                WHERE NULLIF(TRIM(tr3.primary_suite_name), '')
-                      = NULLIF(TRIM(tr.primary_suite_name), '')
-                  {("AND tr3.project_id = :project_id" if project_id else "")}
-                ORDER BY tr3.created_at DESC
-                LIMIT 1
-            ) AS last_run_id
+            (array_agg(tr.id ORDER BY tr.created_at DESC))[1] AS last_run_id
         FROM test_runs tr
         WHERE tr.primary_suite_name IS NOT NULL
           AND TRIM(tr.primary_suite_name) <> ''
@@ -738,17 +741,20 @@ async def list_test_suites(
         GROUP BY NULLIF(TRIM(tr.primary_suite_name), '')
         HAVING NULLIF(TRIM(tr.primary_suite_name), '') IS NOT NULL
     """)
+    # Wrap in a SAVEPOINT so any future SQL failure (older deployment
+    # missing a column, dialect quirk, etc.) is isolated from the outer
+    # transaction. Without this, a thrown query leaves the session in
+    # ``InFailedSQLTransactionError`` for every subsequent statement in
+    # the handler. ``db.begin_nested()`` issues ``SAVEPOINT``;
+    # SQLAlchemy auto-rollbacks the savepoint on exception. The outer
+    # transaction (owned by ``get_db``) stays clean. Reference pattern:
+    # ``services/release_linker.py``.
     try:
-        run_aggregate_rows = (await db.execute(
-            run_aggregate_query, auto_params,
-        )).fetchall()
+        async with db.begin_nested():
+            run_aggregate_rows = (await db.execute(
+                run_aggregate_query, auto_params,
+            )).fetchall()
     except Exception as exc:
-        # Defensive: a missing column in an older deployment shouldn't
-        # 500 the page; we just lose the fallback rows. NEVER call
-        # db.rollback() on an injected session — the request handler owns
-        # the transaction. A service-layer rollback aborts the caller's
-        # transaction, surfacing as a downstream 500 with no traceback
-        # (see memory ``sqlalchemy-in-expanding`` / Bug #5).
         logger.warning(
             "test_runs.primary_suite_name fallback failed, skipping",
             error=str(exc),
@@ -771,9 +777,13 @@ async def list_test_suites(
         GROUP BY suite_name
     """)
     try:
-        manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
+        async with db.begin_nested():
+            manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
     except Exception as exc:
-        # Same single-owner rule — don't rollback an injected session.
+        # SAVEPOINT-scoped, see comment on the run_aggregate try-block.
+        # Without the savepoint, an error here (e.g. older deployment
+        # without the suite_name column) would poison the outer
+        # transaction and cascade into a 500 on the next query.
         logger.warning("managed_test_cases.suite_name not available, skipping manual suites", error=str(exc))
         manual_rows = []
 

@@ -26,6 +26,10 @@ export interface TestRun {
   trigger_source?: string
   primary_suite_name?: string | null
   suite_names?: string[] | null
+  /** Human-readable, per-(project, primary_suite_name) run number, 1-based.
+   *  Computed server-side via ROW_NUMBER() so it's stable across pages.
+   *  Optional for backward-compat with older API responses. */
+  run_seq?: number | null
 }
 
 export type TestRunListResponse = PaginatedResponse<TestRun>

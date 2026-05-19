@@ -38,6 +38,10 @@ export interface MyFailureItem {
   triage_status?: TriageStatus
   /** Optional context — typically a defect link or rationale. */
   triage_notes?: string | null
+  /** Per-(project, primary_suite_name) run number, 1-based, computed
+   *  server-side via ROW_NUMBER(). The inbox shows this instead of the
+   *  opaque SDK build_number. */
+  run_seq?: number | null
   /**
    * Times this test (same project + suite + class + name) has failed for the
    * current user within the selected window. Lets the inbox surface repeat

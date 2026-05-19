@@ -237,6 +237,14 @@ async def test_list_project_runs_enriches_paginated_runs():
         runs_service,
         "fetch_release_map",
         AsyncMock(return_value={str(run_id): {"id": "rel-1", "name": "Release 1"}}),
+    ), patch.object(
+        # ``fetch_run_seq_map`` issues its own queries; stub it so the
+        # FakeAsyncDB doesn't have to model the window-function SQL. The
+        # helper's behaviour is covered by dedicated tests in
+        # tests/services/test_run_seq_map.py.
+        runs_service,
+        "fetch_run_seq_map",
+        AsyncMock(return_value={str(run_id): 1}),
     ):
         items, total, pages = await runs_service.list_project_runs(db, "project-1", 1, 20, "FAILED", None)
 
@@ -1189,7 +1197,14 @@ async def test_stream_service_list_active_sessions_combines_sources():
     ]
 
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(get_all_active=AsyncMock(return_value=active)))
-    with patch.dict(sys.modules, {"app.streams.live_run_state": live_state_module}):
+    # ``list_active_sessions`` now also decorates each session with its
+    # per-(project, suite) ``run_seq`` via ``runs_service.fetch_run_seq_map``.
+    # The helper fires its own SELECTs which would drain FakeAsyncDB's
+    # canned-result list; stub it to an empty dict for this test, which
+    # only asserts on session presence + ordering. Dedicated coverage
+    # for the helper lives in tests/services/test_run_seq_map.py.
+    with patch.dict(sys.modules, {"app.streams.live_run_state": live_state_module}), \
+         patch("app.services.runs_service.fetch_run_seq_map", AsyncMock(return_value={})):
         result = await stream_service.list_active_sessions(db, str(project_id))
 
     assert result.count == 3
