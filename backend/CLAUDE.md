@@ -17,6 +17,11 @@ pytest tests/ -v --tb=short
 pytest tests/test_agent.py -v            # single file
 pytest tests/test_agent.py::TestClass::test_method -v  # single test
 
+# Regression suite only — pins for every 2026-05-18/19 user-reported
+# bug fix + enhancement. Master index: ``docs/REGRESSION_TEST_SUITE.md``.
+pytest -m regression -v
+pytest -m "not regression" -v        # everything except the regression pins
+
 # Lint & format
 ruff check app/ tests/
 ruff format app/ tests/

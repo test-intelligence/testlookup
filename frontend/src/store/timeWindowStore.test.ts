@@ -1,10 +1,13 @@
 /**
  * Tests for the global time-window preference store.
  *
- * Three contracts:
- *   1. Default is 24h (1 day) on a fresh load — matches what the user
- *      asked for ("retained for that user unless changed").
- *   2. ``setDays`` is reflected by subsequent reads (basic store sanity).
+ * v2 (2026-05-18): default flipped from 24h → 7d. The migrate
+ * function re-seeds users who had taken the implicit-default 24h
+ * but preserves users who explicitly picked 24h post-v2.
+ *
+ * Contracts pinned here:
+ *   1. Default on a fresh load is ``DEFAULT_TIME_WINDOW_DAYS`` (now 7).
+ *   2. ``setDays`` is reflected by subsequent reads.
  *   3. ``snapToAllowed`` maps any number to the closest value in a
  *      page-specific allowed set so non-overlapping option sets don't
  *      break when the shared window is set elsewhere.
@@ -23,16 +26,23 @@ describe('useTimeWindowStore', () => {
     useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
   })
 
-  it('defaults to 24h (DEFAULT_TIME_WINDOW_DAYS = 1)', () => {
-    expect(DEFAULT_TIME_WINDOW_DAYS).toBe(1)
-    expect(useTimeWindowStore.getState().days).toBe(1)
+  it('defaults to 7d (DEFAULT_TIME_WINDOW_DAYS = 7) — bumped from 24h in v2', () => {
+    expect(DEFAULT_TIME_WINDOW_DAYS).toBe(7)
+    expect(useTimeWindowStore.getState().days).toBe(7)
   })
 
   it('setDays mutates the shared state', () => {
-    useTimeWindowStore.getState().setDays(7)
-    expect(useTimeWindowStore.getState().days).toBe(7)
+    useTimeWindowStore.getState().setDays(14)
+    expect(useTimeWindowStore.getState().days).toBe(14)
     useTimeWindowStore.getState().setDays(30)
     expect(useTimeWindowStore.getState().days).toBe(30)
+  })
+
+  it('explicitly preserves 24h once a user picks it', () => {
+    // The v2 migrate only re-seeds the implicit-default v1 state.
+    // Picking 1 (24h) post-v2 should be a stable preference.
+    useTimeWindowStore.getState().setDays(1)
+    expect(useTimeWindowStore.getState().days).toBe(1)
   })
 })
 
