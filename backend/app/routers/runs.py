@@ -205,13 +205,39 @@ async def get_regression_diff(
     """
     Return a "What changed since last good run?" diff for the given test run.
     P3-9: Business logic extracted to regression_diff_service.
+
+    In-flight live runs (no TestRun row yet — only a LiveSession) get a
+    graceful in-progress payload instead of a 404. The frontend renders
+    "Diff will be available once the run completes" rather than a
+    broken error toast. (Bug 2026-05-19 — Run Detail page hit 404s for
+    sessions clicked during the first ~30s before the drainer
+    materialised the TestRun row.)
     """
     from app.services.regression_diff_service import compute_regression_diff
 
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
     run = run_result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="Test run not found")
+        from app.models.postgres import LiveSession
+        live = (
+            await db.execute(select(LiveSession).where(LiveSession.id == run_id))
+        ).scalar_one_or_none()
+        if live is None:
+            raise HTTPException(status_code=404, detail="Test run not found")
+        return {
+            "run_id": str(run_id),
+            "status": "in_progress",
+            "diff_available": False,
+            "reason": "live_run_in_progress",
+            "message": (
+                "This run is still streaming. The regression diff "
+                "becomes available once the run finalises."
+            ),
+            "added": [],
+            "removed": [],
+            "flipped_to_failing": [],
+            "flipped_to_passing": [],
+        }
 
     return await compute_regression_diff(run, db)
 

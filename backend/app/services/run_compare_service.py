@@ -457,15 +457,40 @@ async def compare_runs(
     left_tests = await _load_test_rows(db, left_id, suite_name=suite_name)
     right_tests = await _load_test_rows(db, right_id, suite_name=suite_name)
 
+    # Soft-fail mode: when a suite name is supplied but the requested
+    # runs have no per-test rows for it (very common for live-stream
+    # PASSED runs that finalised before placeholder synthesis kicked
+    # in, or for runs that lost their per-test buffer to the 50K LTRIM
+    # cap before the drainer fired), we used to raise LookupError and
+    # the UI rendered "Suite was not found in the left and right run"
+    # — confusing because the resolver had already proved the suite
+    # IS tagged on both runs via ``primary_suite_name``.
+    #
+    # Bug 2026-05-19: 47 runs available via the resolver, "Compare
+    # latest" raised the lookup error anyway. Fix: when both runs
+    # carry the suite at the RUN level but lack per-test detail, fall
+    # through with an empty delta set + a ``data_gap`` warning. The
+    # frontend now renders aggregate-only diff with a banner instead
+    # of a generic error.
     if suite_name and (not left_tests or not right_tests):
-        missing = []
-        if not left_tests:
-            missing.append("left")
-        if not right_tests:
-            missing.append("right")
-        raise LookupError(
-            f"Suite {suite_name} was not found in the {' and '.join(missing)} run"
+        suite_key = normalize_suite_name(suite_name)
+        both_runs_tagged = (
+            normalize_suite_name(getattr(left_run, "primary_suite_name", None)) == suite_key
+            and normalize_suite_name(getattr(right_run, "primary_suite_name", None)) == suite_key
         )
+        if not both_runs_tagged:
+            missing = []
+            if not left_tests:
+                missing.append("left")
+            if not right_tests:
+                missing.append("right")
+            raise LookupError(
+                f"Suite {suite_name} was not found in the {' and '.join(missing)} run"
+            )
+        # Empty per-test sets on both/either side, but the runs ARE
+        # tagged with this suite. Continue with empty maps so the
+        # downstream code emits an empty delta list + aggregate
+        # summary instead of failing the request.
 
     all_fingerprints = set(left_tests.keys()) | set(right_tests.keys())
 
@@ -634,6 +659,16 @@ async def compare_runs(
     if left_summary["duration_ms"] is not None and right_summary["duration_ms"] is not None:
         delta_duration_ms = int(right_summary["duration_ms"]) - int(left_summary["duration_ms"])
 
+    # Surface a data-gap flag so the UI can show "Aggregate-only diff —
+    # per-test detail unavailable for this suite" instead of an empty
+    # delta list with no explanation. Fires when the run carries the
+    # suite via ``primary_suite_name`` but ``test_cases`` is empty for
+    # one or both sides (Phase 4.5 buffer-eviction / passing live runs
+    # that skipped placeholder synthesis).
+    data_gap = bool(
+        suite_name and (not left_tests or not right_tests)
+    )
+
     return {
         "left": left_summary,
         "right": right_summary,
@@ -659,4 +694,5 @@ async def compare_runs(
         "renamed": counts["renamed"],
         "test_deltas": deltas,
         "truncated": truncated,
+        "data_gap": data_gap,
     }

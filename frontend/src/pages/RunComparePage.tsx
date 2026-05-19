@@ -303,11 +303,17 @@ function filterRunsBySuite(runs: TestRun[], suiteName: string): TestRun[] {
 }
 
 function formatRunOption(run: TestRun): string {
-  const build = run.build_number || run.id.slice(0, 8)
+  // User feedback 2026-05-19: the "Runs in suite" preview should
+  // identify the run by its stable Run #N (or short UUID) rather than
+  // the SDK-supplied build_number, which is often a noisy timestamp
+  // slug (e.g. ``testng-1779170467999``). Falls back to the short id
+  // when the run hasn't been numbered yet.
+  const seq = (run as TestRun & { run_seq?: number | null }).run_seq
+  const ident = seq != null ? `Run #${seq}` : `Run ${run.id.slice(0, 8)}`
   const branch = run.branch ? ` · ${run.branch}` : ''
   const release = run.release_name ? ` · ${run.release_name}` : ''
   const created = new Date(run.created_at).toLocaleString()
-  return `Build ${build} · ${run.status}${branch}${release} · ${created}`
+  return `${ident} · ${run.status}${branch}${release} · ${created}`
 }
 
 function RunSelectPreview({

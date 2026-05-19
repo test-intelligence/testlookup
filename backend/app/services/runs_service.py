@@ -253,7 +253,26 @@ async def list_project_runs(
 async def get_run_with_release(db: AsyncSession, run_id: uuid.UUID):
     run = (await db.execute(select(TestRun).where(TestRun.id == run_id))).scalar_one_or_none()
     if not run:
-        return None
+        # Live-session fallback: a brand-new live session that hasn't
+        # drained any events yet has a LiveSession row but no TestRun
+        # row — the drainer only creates the TestRun on first non-empty
+        # drain (every 30s) and ``persist_live_session`` creates it on
+        # session-complete. Without this fallback, clicking the row
+        # from /live during the first 30s 404s. (Bug 2026-05-19.)
+        #
+        # ``LiveSession.id`` == the ``run_id`` returned to the SDK in the
+        # modern flow (``create_live_session``: ``session_id =
+        # str(uuid.uuid4())`` then ``run_id = session_id``). For the
+        # SDK-supplied slug flow, ``LiveSession.run_id`` is the slug; we
+        # don't match on that here — the user-facing /live page emits
+        # the canonical UUID so clicking always hits this branch.
+        from app.models.postgres import LiveSession
+        live = (
+            await db.execute(select(LiveSession).where(LiveSession.id == run_id))
+        ).scalar_one_or_none()
+        if live is None:
+            return None
+        run = _synthesize_run_from_live_session(live)
     release_map = await fetch_release_map(db, [run_id])
     project_ids = [run.project_id] if run.project_id else []
     project_map = await fetch_project_name_map(db, project_ids)
@@ -261,6 +280,36 @@ async def get_run_with_release(db: AsyncSession, run_id: uuid.UUID):
     return enrich_runs_with_release(
         [run], release_map, project_map, run_seq_map=run_seq_map,
     )[0]
+
+
+def _synthesize_run_from_live_session(live) -> "TestRun":
+    """Build a TestRun-shaped object from a still-active LiveSession.
+
+    Detached from the session — never added to ``db``. Caller renders
+    it via ``enrich_runs_with_release`` exactly like a real row, so the
+    page handlers don't need a separate code path for in-flight runs.
+    The aggregates are zero because no events have been drained yet;
+    once the 30s drainer fires (or the SDK sends ``run_complete``) the
+    real TestRun row materialises and this fallback stops firing.
+    """
+    from app.models.postgres import LaunchStatus
+    run = TestRun(
+        id=live.id,
+        project_id=live.project_id,
+        build_number=live.build_number or str(live.id)[:8],
+        trigger_source="live_stream",
+        status=LaunchStatus.IN_PROGRESS,
+        total_tests=int(getattr(live, "total_tests", 0) or 0),
+        passed_tests=0,
+        failed_tests=0,
+        skipped_tests=0,
+        broken_tests=0,
+        primary_suite_name=getattr(live, "suite_name", None),
+        start_time=live.started_at,
+        end_time=live.started_at,
+        created_at=live.started_at,
+    )
+    return run
 
 
 async def list_run_test_cases(

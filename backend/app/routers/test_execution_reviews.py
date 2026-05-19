@@ -18,6 +18,7 @@ the QA_ENGINEER day-to-day.
 from __future__ import annotations
 
 import uuid
+from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -57,12 +58,24 @@ async def _assert_project_access(
         )
 
 
-@router.get("/{test_case_id}/review", response_model=TestExecutionReviewRead)
+@router.get(
+    "/{test_case_id}/review",
+    response_model=Optional[TestExecutionReviewRead],
+)
 async def get_test_case_review(
     test_case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Current review state for a test case, or ``null`` if no transition
+    has been recorded yet (the implicit ``pending_review`` initial state).
+
+    Returns 200 with ``null`` rather than 404 for the "no review yet"
+    case so test-run detail pages don't pepper the browser network
+    tab with red error rows on every page load. The frontend service
+    treats ``null`` and 404 identically — but 200/null keeps the tab
+    clean and removes a UI-test false positive. (Bug 2026-05-19.)
+    """
     project_id = await svc.get_test_case_project(db, test_case_id)
     if project_id is None:
         raise HTTPException(status_code=404, detail="Test case not found")
@@ -70,10 +83,7 @@ async def get_test_case_review(
 
     review = await svc.get_review(db, test_case_id)
     if review is None:
-        # No transition recorded yet — UI treats this 404 as "still in
-        # pending_review" (the implicit initial state). Keeps the row count
-        # small for projects with thousands of AI-flagged cases.
-        raise HTTPException(status_code=404, detail="No review recorded yet")
+        return None
     return await svc.hydrate_response(db, review)
 
 

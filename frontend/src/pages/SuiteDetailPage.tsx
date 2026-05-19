@@ -83,7 +83,7 @@ function fmtDate(iso: string | null | undefined) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SuiteDetailPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const project       = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -91,15 +91,27 @@ export default function SuiteDetailPage() {
 
   const suiteName  = searchParams.get('name') ?? ''
   // Precedence: explicit URL ``?days=`` (deep link) > shared global
-  // preference > snapped default. Picking a period here also updates the
-  // global preference so the user's choice survives navigation.
+  // preference > snapped default. Picking a period in the UI also
+  // rewrites the URL so the chip *and* the data refresh together —
+  // previously the URL pinned ``days``, so clicking 7d updated the
+  // store but ``days`` (derived) stayed on the URL value and the
+  // chart never refreshed. (Bug reported 2026-05-19 on
+  // /coverage/suite?name=…&days=90.)
   const storedDays = useTimeWindowStore(s => s.days)
   const setStoredDays = useTimeWindowStore(s => s.setDays)
   const urlDays = Number(searchParams.get('days'))
   const days = PERIOD_DAYS.includes(urlDays)
     ? urlDays
     : snapToAllowed(storedDays, PERIOD_DAYS)
-  const setDays = setStoredDays
+  const setDays = (next: number) => {
+    setStoredDays(next)
+    // Rewrite ?days= in the URL so the derived ``days`` value above
+    // re-reads the new selection on the next render. ``replace`` so
+    // the back button doesn't accumulate one entry per click.
+    const params = new URLSearchParams(searchParams)
+    params.set('days', String(next))
+    setSearchParams(params, { replace: true })
+  }
 
   const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
 
