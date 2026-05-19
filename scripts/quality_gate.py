@@ -281,6 +281,63 @@ def _backend_pii_log_redaction() -> list[Violation]:
     return violations
 
 
+# Modules using structlog (``logger = structlog.get_logger(...)``).
+# structlog's BoundLogger.warning/info/error has signature
+# ``(event, **kwargs)`` — it does NOT accept stdlib-style positional
+# args after the event string. Calls like
+# ``logger.warning("foo: %s", exc)`` blow up with ``TypeError:
+# BoundLoggerBase._proxy_to_logger() takes from 2 to 3 positional
+# arguments but 4 were given`` the moment they fire — and when they
+# fire from inside an ``except`` block on a request path, the
+# TypeError escapes the handler and 500s the endpoint.
+# Reference incident: 2026-05-18 ``/runs/compare/latest`` was 500-ing
+# every call because ``run_compare_agent.py:82`` had this pattern and
+# Ollama was unreachable (so the except handler fired). See
+# ``memory/feedback_structlog_positional_args.md``.
+_STRUCTLOG_LOGGER_RE = re.compile(
+    r"\blogger\s*=\s*structlog\.get_logger",
+)
+_STRUCTLOG_POSITIONAL_RE = re.compile(
+    # ``logger.<level>("…%X…", arg)`` — format-string + positional arg.
+    # Allows ``%s``, ``%d``, ``%r``, ``%f``, ``%!s``.
+    r'logger\.(warning|info|error|debug|exception|critical)\(\s*'
+    r'["\'][^"\']*%[sdrf!][^"\']*["\']\s*,\s*[^)=]',
+)
+
+
+def _backend_structlog_positional_args() -> list[Violation]:
+    """structlog BoundLogger doesn't accept stdlib-style positional args.
+
+    Walk modules that bind a structlog logger and flag every call site
+    using ``%s``-format + positional arguments. The baseline tolerates
+    the 44 pre-existing call sites; new ones fail CI loudly.
+
+    Fix at the call site: replace
+    ``logger.warning("X failed: %s", exc)`` with
+    ``logger.warning("X_failed", error=str(exc))``.
+    """
+    violations: list[Violation] = []
+    for path in iter_files(REPO_ROOT / "backend" / "app", (".py",)):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if not _STRUCTLOG_LOGGER_RE.search(text):
+            # Module uses stdlib logging (or no logger at all) — the
+            # positional-arg pattern is fine there. Skip.
+            continue
+        for ln, line in grep_lines(path, _STRUCTLOG_POSITIONAL_RE):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            violations.append(Violation(
+                path, ln,
+                "structlog logger called with positional %s args — use "
+                "kwargs (logger.warning(\"event_name\", error=str(exc)))",
+            ))
+    return violations
+
+
 # ── Frontend guards ──────────────────────────────────────────────────────────
 
 _CLIPBOARD_RE = re.compile(r"navigator\.clipboard\.writeText\b")
@@ -699,6 +756,18 @@ GUARDS: list[Guard] = [
         description="logger.* calls passing PII (email / password / api_key) verbatim.",
         check=_backend_pii_log_redaction,
         fix_hint="Wrap the value with privacy_service.sanitize_for_logging(...) before logging.",
+    ),
+    Guard(
+        name="backend.structlog-positional-args",
+        description=(
+            "structlog logger called with positional %s args — explodes "
+            "with TypeError mid-call (BoundLogger.warning is (event, **kw))."
+        ),
+        check=_backend_structlog_positional_args,
+        fix_hint=(
+            "Use kwargs: ``logger.warning(\"event_name\", error=str(exc))``. "
+            "See memory/feedback_structlog_positional_args.md."
+        ),
     ),
     Guard(
         name="frontend.clipboard-util",

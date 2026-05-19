@@ -35,12 +35,20 @@ export interface TestExecutionReviewUpdate {
 
 export const testExecutionReviewService = {
   /**
-   * Fetch the current review for a test case. Backend returns 404 when no
-   * transition has happened yet — callers should treat that as "still in
-   * the implicit pending_review state."
+   * Fetch the current review for a test case. Resolves to ``null`` when
+   * the backend returns 404 — that means "no review row yet, treat as
+   * the implicit ``pending_review`` state." Same pattern as
+   * ``aiService.getAnalysis``. Without this catch, every test-case
+   * detail page open for a not-yet-reviewed case shows an error toast
+   * even though the 404 is informational.
    */
-  get: (testCaseId: string) =>
-    getData<TestExecutionReviewRead>(`/api/v1/test-cases/${testCaseId}/review`),
+  get: (testCaseId: string): Promise<TestExecutionReviewRead | null> =>
+    getData<TestExecutionReviewRead>(`/api/v1/test-cases/${testCaseId}/review`)
+      .catch((err: unknown) => {
+        const status = (err as { response?: { status?: number } })?.response?.status
+        if (status === 404) return null
+        throw err
+      }),
 
   /** Upsert. Use this for both first transition and subsequent state changes. */
   upsert: (testCaseId: string, payload: TestExecutionReviewUpdate) =>

@@ -117,7 +117,11 @@ class ReleaseRiskAgent(BaseAgent):
         try:
             decision = await self._evaluate(state)
         except Exception as exc:
-            logger.error("Release risk evaluation failed: %s", exc, exc_info=True)
+            # structlog-on-stdlib-positional-args trap: pass via kwargs.
+            logger.error(
+                "release_risk_evaluation_failed",
+                error=str(exc), exc_info=True,
+            )
             decision = {
                 "recommendation": "CONDITIONAL_GO",
                 "risk_score": 50,

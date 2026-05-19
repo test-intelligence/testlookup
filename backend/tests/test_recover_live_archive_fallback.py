@@ -46,6 +46,13 @@ def _run_row(*, event_archive=None, event_archive_at=None):
         total_tests=3,
         event_archive=event_archive,
         event_archive_at=event_archive_at,
+        # Added 2026-05-19: ``routers/runs.py::recover_live_run_from_buffer``
+        # reads ``run.primary_suite_name`` when building the
+        # ``persist_live_session.apply_async`` kwargs. Without this
+        # attribute the call raises AttributeError on the SimpleNamespace
+        # — surfacing as "test_recover_uses_redis_when_buffer_is_fresh"
+        # failure even though the recovery path itself is unchanged.
+        primary_suite_name=None,
     )
 
 

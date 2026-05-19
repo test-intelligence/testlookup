@@ -578,10 +578,14 @@ function PipelineRibbon({
             color: 'var(--color-text-secondary)',
           }}
         >
-          <strong className="text-[var(--color-text)]">Pipeline completed but had no per-test rows to analyse.</strong>
-          {' '}The run aggregate shows failures, but the per-test detail wasn’t persisted for this
-          run (live-stream Redis buffer eviction). Re-running the build will produce a fresh run with full data;
-          this run’s aggregates remain accurate.
+          <strong className="text-[var(--color-text)]">Per-test detail is being recovered.</strong>
+          {' '}
+          The run reports failure counters but per-test rows weren't persisted during ingestion (live-stream
+          buffer was evicted before persist). A retroactive backfill task synthesises placeholder rows for
+          affected runs on an hourly cadence — once it fires, this run's failures will appear on{' '}
+          <a href="/my-failures" className="text-[var(--color-accent)] hover:underline">/my-failures</a>{' '}
+          and below. Aggregate counters stay accurate in the meantime; re-running the build will produce a
+          fresh run with full per-test detail.
         </div>
       )}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(9, minmax(0, 1fr))' }}>

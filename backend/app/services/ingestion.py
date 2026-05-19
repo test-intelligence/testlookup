@@ -143,11 +143,16 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             await _update_run_aggregates(db, run.id)
 
             # ── Sync suite membership traceability (TS-2) ──
+            # NOTE: this module binds a STRUCTLOG logger (line 32).
+            # structlog's BoundLogger.warning is ``(event, **kwargs)`` —
+            # positional %s args raise TypeError mid-call, which would
+            # escape the except and 500 the ingest. Every log inside an
+            # except block on this hot post-ingest path uses kwargs.
             try:
                 from app.services.suite_sync_service import sync_suite_membership
                 await sync_suite_membership(db, run.project_id, run.id)
             except Exception as sync_err:
-                logger.warning("Suite membership sync failed (non-blocking): %s", sync_err)
+                logger.warning("suite_membership_sync_failed", error=str(sync_err))
 
             # ── Auto-tag test cases and run (TG-5/6) ─────
             try:
@@ -155,7 +160,7 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                 await auto_tag_test_cases(db, run.id)
                 await auto_tag_test_run(db, run.id)
             except Exception as tag_err:
-                logger.warning("Auto-tagging failed (non-blocking): %s", tag_err)
+                logger.warning("auto_tagging_failed", error=str(tag_err))
 
             # ── Link to release (explicit name wins; falls back to the
             # project's default release — migration 0077) ────────────────
@@ -169,11 +174,14 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                 )
                 if result and result[1]:
                     logger.info(
-                        "Auto-created release '%s' for run %s",
-                        result[0].name, run.id,
+                        "auto_release_created",
+                        release_name=result[0].name, run_id=str(run.id),
                     )
             except Exception as rel_err:
-                logger.warning("Release linking failed for run %s: %s", run.id, rel_err)
+                logger.warning(
+                    "release_linking_failed",
+                    run_id=str(run.id), error=str(rel_err),
+                )
 
             await db.commit()
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")
@@ -215,7 +223,9 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     project_name=_project_name,
                 )
             except Exception as notify_err:
-                logger.warning("Failed to enqueue run notifications: %s", notify_err)
+                logger.warning(
+                    "run_notifications_enqueue_failed", error=str(notify_err),
+                )
 
             # Trigger the multi-agent analysis pipeline
             try:
@@ -226,9 +236,11 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     build_number=run.build_number,
                     workflow_type="offline",
                 )
-                logger.info("Agent pipeline queued for run %s", run.id)
+                logger.info("agent_pipeline_queued", run_id=str(run.id))
             except Exception as pipeline_err:
-                logger.warning("Failed to queue agent pipeline: %s", pipeline_err)
+                logger.warning(
+                    "agent_pipeline_queue_failed", error=str(pipeline_err),
+                )
 
         except Exception as e:
             await db.rollback()

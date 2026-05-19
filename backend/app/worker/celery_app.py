@@ -217,6 +217,20 @@ celery_app.conf.update(
             "task": "app.worker.tasks.drain_active_live_sessions",
             "schedule": timedelta(seconds=30),
         },
+        # Retroactive placeholder synthesis for historical TestRuns
+        # whose failure counters are populated but whose test_cases
+        # table is empty (live-stream buffer was evicted or the SDK
+        # never sent test_result events). Inserts the same placeholder
+        # rows that ``persist_live_session`` now creates at write
+        # time, so old runs flow into /my-failures + /test-management
+        # alongside new ones. Hourly cadence — idempotent, and the
+        # 15-min ``backfill-unassigned-failures`` beat then assigns
+        # them within minutes. First run after deploy backfills the
+        # entire history (capped at 500 runs/project).
+        "backfill-placeholder-test-cases": {
+            "task": "app.worker.tasks.backfill_placeholder_test_cases",
+            "schedule": crontab(minute=10),  # once per hour at :10
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,

@@ -2490,6 +2490,57 @@ def drain_active_live_sessions(self) -> dict:
 
 
 @celery_app.task(
+    name="app.worker.tasks.backfill_placeholder_test_cases",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> dict:
+    """Retroactively synthesize placeholder TestCase rows.
+
+    For every TestRun where ``failed_tests + broken_tests > 0`` but
+    no ``test_cases`` rows exist (the live-stream-buffer-eviction or
+    SDK-no-test_result-events scenario), this task inserts the same
+    placeholder rows that ``persist_live_session`` now creates at
+    write time for new runs. The follow-on
+    ``backfill_unassigned_failures`` beat task (every 15 min) then
+    picks them up via ``failed_test_assignment_service`` so the
+    placeholders appear on ``/my-failures``.
+
+    Idempotent — the candidate query filters to runs with zero
+    test_cases, so a second tick after the first one's commit
+    produces zero new rows.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.placeholder_backfill_service import (
+        backfill_placeholders_all_projects,
+    )
+
+    async def _run() -> dict:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await backfill_placeholders_all_projects(
+                    db, max_runs_per_project=max_runs_per_project,
+                )
+                await db.commit()
+                return result
+            except Exception:
+                await db.rollback()
+                raise
+
+    logger.info(
+        "[Task %s] backfill_placeholder_test_cases starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_run()))
+    logger.info(
+        "[Task %s] backfill_placeholder_test_cases done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
     name="app.worker.tasks.backfill_unassigned_failures",
     bind=True,
     queue="default",
