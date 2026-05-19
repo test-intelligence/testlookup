@@ -52,7 +52,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useFailureClusters, useDeepFindings } from '@/hooks/useDeepInvestigation'
-import { useRuns } from '@/hooks/useRuns'
+import { useRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -1439,7 +1439,19 @@ export default function DeepInvestigationPage() {
     }
   }, [runId, recentItems, runsLoading, project, navigate])
 
-  const focusedRun = recentItems.find(r => r.id === runId) ?? null
+  // Direct fetch for the deep-linked run when it isn't in the recent-6
+  // list (the user arrived from another page with a runId that's older
+  // than the page-size cutoff). Without this, ``focusedRun`` was null →
+  // ``eligibleFailures`` 0 → the KPI panels rendered empty until the
+  // user picked a suite (which re-fetched and surfaced the run via the
+  // suite-filtered request). The direct fetch makes the KPIs populate
+  // on initial load regardless of how the user arrived.
+  const fallbackFetch = useRun(
+    runId && !recentItems.find(r => r.id === runId) ? runId : undefined,
+  )
+  const focusedRun = (recentItems.find(r => r.id === runId)
+    ?? (fallbackFetch.data as TestRun | undefined)
+    ?? null)
 
   useEffect(() => {
     if (selectedSuite && runId && recentItems.length > 0 && !focusedRun && !runsLoading) {

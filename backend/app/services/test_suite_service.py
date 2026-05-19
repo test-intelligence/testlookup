@@ -659,6 +659,13 @@ async def list_legacy_suite_test_cases(
     run. One row per ``test_fingerprint`` — the most recent run wins for
     last_seen_run_id / class_name.
     """
+    # Cases belong to a suite when EITHER the per-row ``tc.suite_name``
+    # OR the run-level ``tr.primary_suite_name`` matches. SDK live-
+    # stream paths only stamp the run-level value (per-row stays NULL);
+    # legacy ingests only set the per-row value. The OR covers both.
+    # See ``feedback_live_stream_suite_name_nulls``.
+    from sqlalchemy import or_
+    suite_key = (suite.name or "").strip().lower()
     base = (
         select(
             TestCase.id,
@@ -671,7 +678,10 @@ async def list_legacy_suite_test_cases(
         .join(TestRun, TestCase.test_run_id == TestRun.id)
         .where(
             TestRun.project_id == suite.project_id,
-            TestCase.suite_name == suite.name,
+            or_(
+                func.lower(func.trim(TestCase.suite_name)) == suite_key,
+                func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, ""))) == suite_key,
+            ),
         )
     )
     base_sq = base.subquery()

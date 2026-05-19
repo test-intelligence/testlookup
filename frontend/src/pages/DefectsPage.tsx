@@ -1530,7 +1530,20 @@ export default function DefectsPage() {
 
   const lede: React.ReactNode = (() => {
     if (verdict === 'PENDING')
-      return <>No defects in this project. Run AI analysis or create one manually to populate the queue.</>
+      // Surface concrete next steps when the queue is empty but the
+      // project may still have failures worth triaging. Three explicit
+      // routes: review unassigned failures on /my-failures, hand off
+      // to deep AI investigation, or create a defect manually.
+      return (
+        <>
+          No defects in this project yet. To populate the queue:
+          {' '}
+          <Link to="/my-failures" className="text-[var(--color-accent)] hover:underline">review your assigned failures</Link>
+          {', '}
+          <Link to="/deep-investigate" className="text-[var(--color-accent)] hover:underline">run an AI investigation</Link>
+          {', or use the <strong>New defect</strong> button above to create one manually.'}
+        </>
+      )
     if (verdict === 'HEALTHY')
       return <>No P0 defects open and no Jira bridge gaps. Treat the queue as clean — focus on closing the long tail.</>
     if (verdict === 'BLOCKED' && model.p0Count > 0) {

@@ -242,10 +242,10 @@ images:
   # deploy-homelab.sh:28.
   - name: testlookup/backend
     newName: registry.local:30500/testlookup/backend
-    newTag: build-20260519-025538
+    newTag: BUILD_TAG_PLACEHOLDER
   - name: testlookup/frontend
     newName: registry.local:30500/testlookup/frontend
-    newTag: build-20260519-025538
+    newTag: BUILD_TAG_PLACEHOLDER
   - name: testlookup/mcp
     newName: registry.local:30500/testlookup/mcp
-    newTag: build-20260519-025538
+    newTag: BUILD_TAG_PLACEHOLDER

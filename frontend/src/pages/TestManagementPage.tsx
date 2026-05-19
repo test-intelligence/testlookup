@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
   Star, Clock, User, CheckCircle2, XCircle, AlertCircle,
@@ -2406,8 +2406,14 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
     if (!selectedSuite) { toast.error('Select a suite'); return }
     setLinking(true)
     try {
-      // Get all managed test cases from this suite
-      const cases = await testManagementService.getSuiteCases(selectedSuite, projectId)
+      // Get all managed test cases from this suite. Bulk-link wants
+      // the FULL list — request the server cap (500) and warn the user
+      // if their suite has more cases than that fit on one page.
+      const casesResp = await testManagementService.getSuiteCases(selectedSuite, projectId, { size: 500 })
+      const cases = casesResp.items
+      if (casesResp.total > casesResp.items.length) {
+        toast('Note: this suite has more cases than the bulk-link cap (500). Some may need to be added manually.', { icon: '⚠' })
+      }
       const managedCases = cases.filter(c => (c as unknown as { source?: string }).source === 'manual' || !('source' in c))
       if (managedCases.length === 0) {
         toast.error('No managed test cases found in this suite to link')
@@ -2956,9 +2962,14 @@ interface SuiteCase {
   duration_ms: number | null
   class_name: string | null
   package_name: string | null
+  /** TestRun.id of the latest execution. Present on automation rows;
+   *  manual managed cases don't carry one. Used to deep-link the
+   *  test-name cell to ``/runs/<run_id>/tests/<id>``. */
+  test_run_id?: string | null
   created_at: string | null
   execution_count?: number
   last_execution_at?: string | null
+  source?: 'automation' | 'manual'
 }
 
 interface TestSuitesTabProps { projectId: string | null }
@@ -3020,6 +3031,12 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   const [loading, setLoading] = useState(false)
   const [expandedSuite, setExpandedSuite] = useState<string | null>(deepLinkSuite)
   const [suiteCases, setSuiteCases] = useState<Record<string, SuiteCase[]>>({})
+  // Per-suite pagination state for the cases inline-expand. Keyed by
+  // suite_name so each open suite tracks its own page independently.
+  const [suiteCasesPage, setSuiteCasesPage] = useState<Record<string, number>>({})
+  const [suiteCasesPages, setSuiteCasesPages] = useState<Record<string, number>>({})
+  const [suiteCasesTotal, setSuiteCasesTotal] = useState<Record<string, number>>({})
+  const SUITE_CASES_PAGE_SIZE = 25
   const [loadingCases, setLoadingCases] = useState<string | null>(null)
   const [suiteDeleted, setSuiteDeleted] = useState<Record<string, Array<{ id: string; test_name: string; class_name: string | null; review_tag: string | null; deleted_at_run_id: string | null }>>>({})
   const [suiteChanges, setSuiteChanges] = useState<Record<string, Array<{ event_type: string; test_name: string; details: string | null }>>>({})
@@ -3125,18 +3142,34 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     }
   }
 
-  async function loadSuiteData(suiteName: string) {
-    if (suiteCases[suiteName]) return
+  async function loadSuiteData(suiteName: string, page: number = 1) {
+    // Page-1 only seeds deleted + changes (those don't paginate). Later
+    // pages skip the side queries — we already have them cached.
+    const seedSideData = page === 1 && !suiteCases[suiteName]
     setLoadingCases(suiteName)
     try {
-      const [cases, deleted, changes] = await Promise.all([
-        testManagementService.getSuiteCases(suiteName, projectId),
-        testManagementService.getSuiteDeleted(suiteName, projectId).catch(() => []),
-        testManagementService.getSuiteChanges(suiteName, projectId).catch(() => []),
-      ])
-      setSuiteCases(prev => ({ ...prev, [suiteName]: cases }))
-      setSuiteDeleted(prev => ({ ...prev, [suiteName]: deleted }))
-      setSuiteChanges(prev => ({ ...prev, [suiteName]: changes }))
+      if (seedSideData) {
+        const [casesResp, deleted, changes] = await Promise.all([
+          testManagementService.getSuiteCases(suiteName, projectId, { page, size: SUITE_CASES_PAGE_SIZE }),
+          testManagementService.getSuiteDeleted(suiteName, projectId).catch(() => []),
+          testManagementService.getSuiteChanges(suiteName, projectId).catch(() => []),
+        ])
+        setSuiteCases(prev => ({ ...prev, [suiteName]: casesResp.items }))
+        setSuiteCasesPage(prev => ({ ...prev, [suiteName]: casesResp.page }))
+        setSuiteCasesPages(prev => ({ ...prev, [suiteName]: casesResp.pages }))
+        setSuiteCasesTotal(prev => ({ ...prev, [suiteName]: casesResp.total }))
+        setSuiteDeleted(prev => ({ ...prev, [suiteName]: deleted }))
+        setSuiteChanges(prev => ({ ...prev, [suiteName]: changes }))
+      } else {
+        // Subsequent page changes — just refresh the cases slice.
+        const casesResp = await testManagementService.getSuiteCases(
+          suiteName, projectId, { page, size: SUITE_CASES_PAGE_SIZE },
+        )
+        setSuiteCases(prev => ({ ...prev, [suiteName]: casesResp.items }))
+        setSuiteCasesPage(prev => ({ ...prev, [suiteName]: casesResp.page }))
+        setSuiteCasesPages(prev => ({ ...prev, [suiteName]: casesResp.pages }))
+        setSuiteCasesTotal(prev => ({ ...prev, [suiteName]: casesResp.total }))
+      }
     } catch {
       toast.error('Failed to load suite cases')
     } finally {
@@ -3150,7 +3183,16 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
       return
     }
     setExpandedSuite(suiteName)
-    await loadSuiteData(suiteName)
+    // Skip the network call when this suite's first page is already
+    // cached — pagination only re-fetches when the user changes pages
+    // via ``handleSuiteCasesPageChange``.
+    if (!suiteCases[suiteName]) {
+      await loadSuiteData(suiteName, 1)
+    }
+  }
+
+  async function handleSuiteCasesPageChange(suiteName: string, page: number) {
+    await loadSuiteData(suiteName, page)
   }
 
   const CASE_STATUS_COLORS: Record<string, string> = {
@@ -3375,7 +3417,24 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     <tbody className="divide-y divide-[var(--color-border)]/60">
                       {(suiteCases[suite.suite_name] ?? []).map(tc => (
                         <tr key={tc.id} className="hover:bg-[var(--color-bg-secondary)]/40 transition-colors">
-                          <td className="px-4 py-2.5 text-[var(--color-text)] font-medium text-xs truncate max-w-xs">{tc.test_name}</td>
+                          <td className="px-4 py-2.5 text-[var(--color-text)] font-medium text-xs truncate max-w-xs">
+                            {/* Automation rows link to the per-test
+                                detail page; manual managed cases
+                                aren't run-scoped so they stay plain
+                                text (their canonical detail surface
+                                is the Test Cases tab, not the per-run
+                                drawer). */}
+                            {tc.test_run_id ? (
+                              <Link
+                                to={`/runs/${tc.test_run_id}/tests/${tc.id}`}
+                                className="hover:text-[var(--color-accent)] hover:underline"
+                              >
+                                {tc.test_name}
+                              </Link>
+                            ) : (
+                              tc.test_name
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 text-[var(--color-text-muted)] text-xs">
                             {tc.class_name && <span>{tc.class_name}</span>}
                             {tc.package_name && <span className="text-[var(--color-text-faint)]"> · {tc.package_name}</span>}
@@ -3399,11 +3458,70 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       ))}
                       {(suiteCases[suite.suite_name] ?? []).length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">No test cases in this suite</td>
+                          <td colSpan={6} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
+                            {suite.test_count > 0 ? (
+                              // Suite-card aggregate counted ``test_count``
+                              // tests from a TestRun.total_tests fallback
+                              // (HINCRBY counters at session close), but
+                              // the per-test rows never persisted —
+                              // typically because the live-stream SDK
+                              // didn't send ``test_result`` events or
+                              // the Redis buffer was already evicted by
+                              // the time persist_live_session ran. The
+                              // count is real; the per-test data isn't
+                              // recoverable for this run.
+                              <>
+                                {suite.test_count} test{suite.test_count === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
+                                <br />
+                                <span className="text-[var(--color-text-faint)]">
+                                  This happens when the SDK doesn't emit
+                                  ``test_result`` events or the buffer evicts
+                                  before persistence. Re-run the suite to
+                                  populate detail rows.
+                                </span>
+                              </>
+                            ) : (
+                              'No test cases in this suite'
+                            )}
+                          </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
+                  {/* Pagination — visible only when there's more than
+                      one page of cases. The total / range banner sits
+                      below the controls for a quick "showing N of M"
+                      confirmation. */}
+                  {(suiteCasesPages[suite.suite_name] ?? 1) > 1 && (
+                    <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                        Page {suiteCasesPage[suite.suite_name] ?? 1} of {suiteCasesPages[suite.suite_name] ?? 1}
+                        {' · '}
+                        {suiteCasesTotal[suite.suite_name] ?? 0} test case{(suiteCasesTotal[suite.suite_name] ?? 0) === 1 ? '' : 's'} total
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={(suiteCasesPage[suite.suite_name] ?? 1) <= 1 || loadingCases === suite.suite_name}
+                          onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) - 1)}
+                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                        >
+                          Prev
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            (suiteCasesPage[suite.suite_name] ?? 1) >= (suiteCasesPages[suite.suite_name] ?? 1)
+                            || loadingCases === suite.suite_name
+                          }
+                          onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) + 1)}
+                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {/* Recent Changes */}

@@ -372,30 +372,77 @@ function Count({ label, value, color }: { label: string; value: number; color: s
   )
 }
 
+type SuiteSortKey = 'suite' | 'last_run'
+type SuiteSortDir = 'asc' | 'desc'
+
 function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
   const storedDays = useTimeWindowStore(s => s.days)
+  // Default per request: most-recent activity at the top. The user
+  // typically wants "what ran last" before "what's biggest", so the
+  // initial order is ``last_run DESC``; clicking the Suite header
+  // switches to alphabetical, with a toggle for asc/desc.
+  const [sortKey, setSortKey] = useState<SuiteSortKey>('last_run')
+  const [sortDir, setSortDir] = useState<SuiteSortDir>('desc')
+
+  function handleSort(key: SuiteSortKey) {
+    if (sortKey === key) {
+      // Same column twice → flip direction.
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      // Suite alpha defaults to ASC (A→Z); date defaults to DESC.
+      setSortDir(key === 'suite' ? 'asc' : 'desc')
+    }
+  }
+
   const sorted = useMemo(() => {
-    // Default: largest suite first; this matches the API order but keeps the
-    // contract explicit so future API tweaks don't silently re-sort the UI.
-    return [...rows].sort((a, b) => b.total - a.total)
-  }, [rows])
+    const mult = sortDir === 'desc' ? -1 : 1
+    const copy = [...rows]
+    if (sortKey === 'suite') {
+      copy.sort((a, b) => a.suite_name.localeCompare(b.suite_name) * mult)
+    } else {
+      // last_run sort. Treat missing timestamps as the epoch — they
+      // sink to the bottom under DESC, top under ASC.
+      copy.sort((a, b) => {
+        const ta = a.last_run_at ? new Date(a.last_run_at).getTime() : 0
+        const tb = b.last_run_at ? new Date(b.last_run_at).getTime() : 0
+        return (ta - tb) * mult
+      })
+    }
+    return copy
+  }, [rows, sortKey, sortDir])
 
   if (sorted.length === 0) {
     return <p className="text-[12.5px] text-[var(--color-text-muted)]">No suites with executions in this window.</p>
   }
+  const arrow = (k: SuiteSortKey) => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
   return (
     <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-[var(--color-bg-secondary)]/80">
           <tr>
-            <th className="px-4 py-2.5 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Suite</th>
+            <th
+              className="px-4 py-2.5 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider cursor-pointer select-none hover:text-[var(--color-text)]"
+              onClick={() => handleSort('suite')}
+              aria-sort={sortKey === 'suite' ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+              title="Sort by suite name"
+            >
+              Suite{arrow('suite')}
+            </th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Total</th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Pass</th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Fail</th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Skip</th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Broken</th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Pass %</th>
-            <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Last run</th>
+            <th
+              className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider cursor-pointer select-none hover:text-[var(--color-text)]"
+              onClick={() => handleSort('last_run')}
+              aria-sort={sortKey === 'last_run' ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+              title="Sort by last run timestamp"
+            >
+              Last run{arrow('last_run')}
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[var(--color-border)]/60">

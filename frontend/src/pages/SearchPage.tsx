@@ -1228,7 +1228,20 @@ export default function SearchPage() {
     }
   }, [response, totalCounts, scope, query])
 
-  const totalIndexed = indexStatus?.document_count ?? 0
+  // ``indexStatus.document_count`` reflects what's actually in the
+  // BM25/embedding index. On a fresh deploy (or before the reindex
+  // task fires for the first time) this is 0 even though the database
+  // is full of data. Falling back to the entity-counts sum keeps the
+  // headline honest about what the user can search across, since the
+  // database read paths still work even when the vector index is
+  // cold. Once reindex catches up, the indexStatus value wins.
+  const databaseTotal = useMemo(
+    () => Object.values(totalCounts ?? {}).reduce((s, n) => s + (n as number), 0),
+    [totalCounts],
+  )
+  const totalIndexed = indexStatus?.document_count
+    ? indexStatus.document_count
+    : databaseTotal
   const scopeCounts: Record<EntityScope, number> = useMemo(() => {
     const summed = Object.values(entityCounts).reduce((s, n) => s + n, 0)
     return {

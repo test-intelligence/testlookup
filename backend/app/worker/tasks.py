@@ -416,6 +416,61 @@ def persist_live_session(
                 for offset in range(0, len(rows), chunk_size):
                     chunk = rows[offset:offset + chunk_size]
                     await db.execute(stmt, chunk)
+            else:
+                # Buffer was empty but final_state reports tests ran.
+                # This happens when the SDK only sends a ``run_complete``
+                # event without per-test ``test_result`` events, or when
+                # the Phase 4.5 drain couldn't fire because the session
+                # lifetime was shorter than its 30s tick. Without a
+                # placeholder, the failure aggregates surface on /runs +
+                # /coverage but the action queue (/my-failures) and the
+                # per-suite case table stay empty, and the user can't
+                # triage anything.
+                #
+                # Synthesize ONE placeholder TestCase per missing
+                # failure so the failure is visible and triagable. The
+                # row is clearly labelled "[ingestion gap]" so an
+                # operator immediately knows the per-test detail
+                # wasn't captured. fingerprint includes the run id to
+                # keep placeholders unique per-run (re-running the test
+                # won't duplicate against the same run).
+                placeholder_count = int(failed) + int(broken)
+                if placeholder_count > 0:
+                    from sqlalchemy import insert as _sa_insert
+                    placeholder_rows = []
+                    for i in range(placeholder_count):
+                        ph_status = (
+                            TestStatus.FAILED.value if i < int(failed)
+                            else TestStatus.BROKEN.value
+                        )
+                        ph_fp = hashlib.md5(
+                            f"placeholder:{run.id}:{i}".encode()
+                        ).hexdigest()
+                        placeholder_rows.append({
+                            "id": _uuid_mod.uuid4(),
+                            "test_run_id": run.id,
+                            "test_fingerprint": ph_fp,
+                            "test_name": f"[ingestion gap — per-test detail unavailable] #{i + 1}",
+                            "suite_name": default_suite,
+                            "class_name": None,
+                            "status": ph_status,
+                            "duration_ms": None,
+                            "error_message": (
+                                "Per-test events were lost during ingestion. "
+                                f"Run reported {int(failed)} failure(s) and "
+                                f"{int(broken)} broken test(s); re-run the "
+                                "suite to capture per-test detail."
+                            ),
+                            "tags": None,
+                        })
+                    stmt = _sa_insert(TestCase)
+                    await db.execute(stmt, placeholder_rows)
+                    logger.warning(
+                        "[Task %s] Synthesized %d placeholder TestCase row(s) "
+                        "for run=%s because the event buffer was empty but "
+                        "final_state reported failures.",
+                        self.request.id, placeholder_count, run_id,
+                    )
 
             await db.commit()
             logger.info(

@@ -139,10 +139,43 @@ function LiveWindowPicker({ value, onChange }: { value: LiveWindow; onChange: (w
 
 // ── Sort helpers ───────────────────────────────────────────────────────────
 
-type SortField = 'pass_rate' | 'total' | 'failed' | 'started_at'
+type SortField = 'pass_rate' | 'total' | 'failed' | 'started_at' | 'build' | 'suite'
 type SortDir   = 'asc' | 'desc'
 
 function sortSessions(sessions: LiveSessionState[], field: SortField, dir: SortDir) {
+  // String sorts (Build, Suite) compare via localeCompare; numeric/date
+  // sorts use subtraction. Wrapping in a single sign-flipped multiplier
+  // keeps the asc/desc switch trivial.
+  const mult = dir === 'asc' ? 1 : -1
+
+  if (field === 'build') {
+    return [...sessions].sort((a, b) => {
+      // Prefer the human-readable run_seq when available — same value
+      // the Build column renders. Fall back to ``build_number`` so
+      // legacy rows without run_seq still sort sensibly. Both branches
+      // sort by run_seq ASC first when populated; build_number is
+      // alpha-compared as a tie-breaker.
+      const aSeq = a.run_seq ?? null
+      const bSeq = b.run_seq ?? null
+      if (aSeq != null && bSeq != null) return (aSeq - bSeq) * mult
+      if (aSeq != null) return -1 * mult  // populated < missing
+      if (bSeq != null) return 1 * mult
+      return (a.build_number || '').localeCompare(b.build_number || '') * mult
+    })
+  }
+
+  if (field === 'suite') {
+    return [...sessions].sort((a, b) => {
+      const av = (a.suite_name || '').trim()
+      const bv = (b.suite_name || '').trim()
+      // Empty suite names always sink to the bottom regardless of dir
+      // so the user can scan named suites first.
+      if (!av && bv) return 1
+      if (av && !bv) return -1
+      return av.localeCompare(bv) * mult
+    })
+  }
+
   return [...sessions].sort((a, b) => {
     let va: number
     let vb: number
@@ -153,7 +186,7 @@ function sortSessions(sessions: LiveSessionState[], field: SortField, dir: SortD
       va = (a[field] as number) ?? 0
       vb = (b[field] as number) ?? 0
     }
-    return dir === 'asc' ? va - vb : vb - va
+    return (va - vb) * mult
   })
 }
 
@@ -1004,8 +1037,18 @@ export default function LiveExecutionPage() {
           <table className="w-full text-xs">
             <thead className="text-[var(--color-text-muted)] text-[10px] uppercase tracking-wider">
               <tr className="border-b border-[var(--color-border)]">
-                <th className="px-5 py-2.5 text-left font-medium">Build</th>
-                <th className="px-3 py-2.5 text-left font-medium">Suite</th>
+                <th
+                  className="px-5 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('build')}
+                >
+                  <span className="flex items-center gap-1">Build <SortIcon field="build" /></span>
+                </th>
+                <th
+                  className="px-3 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('suite')}
+                >
+                  <span className="flex items-center gap-1">Suite <SortIcon field="suite" /></span>
+                </th>
                 <th className="px-3 py-2.5 text-left font-medium">Status</th>
                 <th
                   className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"

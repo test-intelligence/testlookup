@@ -277,10 +277,22 @@ async def suite_detail(
 ) -> dict:
     params: dict = {
         "suite_name": suite_name,
+        "suite_key": (suite_name or "").strip().lower(),
         "period_start": _period_start(days),
     }
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
+    # Match by EITHER the per-row ``tc.suite_name`` OR the run-level
+    # ``tr.primary_suite_name``. Live-stream SDKs only stamp the run-
+    # level value (per-row stays NULL); legacy ingests only stamp the
+    # per-row value; TestNG-class-as-suite ingests set per-row to the
+    # class name AND run-level to the suite. Strict per-row match used
+    # to miss all but the third. Case-insensitive trim so trailing
+    # spaces / casing drift between SDK fields don't drop cases.
+    suite_match = (
+        "(LOWER(TRIM(COALESCE(tc.suite_name, ''))) = :suite_key "
+        "OR LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_key)"
     )
     summary_query = text(
         f"""
@@ -298,7 +310,7 @@ async def suite_detail(
             MAX(tc.created_at)                                               AS last_run_at
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id
-        WHERE COALESCE(tc.suite_name, 'Unknown Suite') = :suite_name
+        WHERE {suite_match}
           AND tc.created_at >= :period_start
           {project_filter}
         """
@@ -328,7 +340,7 @@ async def suite_detail(
             ) AS is_flaky
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id
-        WHERE COALESCE(tc.suite_name, 'Unknown Suite') = :suite_name
+        WHERE {suite_match}
           AND tc.created_at >= :period_start
           {project_filter}
         GROUP BY tc.test_fingerprint
@@ -351,7 +363,7 @@ async def suite_detail(
             ) AS pass_rate
         FROM test_runs tr
         JOIN test_cases tc ON tc.test_run_id = tr.id
-        WHERE COALESCE(tc.suite_name, 'Unknown Suite') = :suite_name
+        WHERE {suite_match}
           AND tr.created_at >= :period_start
           {project_filter}
         GROUP BY tr.id, tr.build_number, tr.created_at

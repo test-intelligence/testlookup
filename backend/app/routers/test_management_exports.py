@@ -667,30 +667,44 @@ async def list_test_suites(
     auto_where = "AND tr.project_id = :project_id" if project_id else ""
     sub_where = "AND tr2.project_id = :project_id" if project_id else ""
     auto_params: dict = {"project_id": project_id} if project_id else {}
-    # Effective-suite resolution: per-row ``tc.suite_name`` when present,
-    # otherwise the run-level ``tr.primary_suite_name``. Without this,
-    # live-stream runs (whose per-event suite_name is NULL because the
-    # SDK only stamps ``testlookup.suite`` once at session create) get
-    # filtered out of the catalog view — surfacing as "suite X has 0
-    # cases" while the run-aggregate fallback below reports the
-    # execution-sum total instead of unique tests. See
-    # ``feedback_live_stream_suite_name_nulls``. Once these rows
-    # participate in ``latest_per_test``, the run-aggregate fallback's
-    # ``NOT EXISTS test_cases`` clause stops firing for the same suite,
-    # so there's no double-counting either.
+    # A test_case row legitimately belongs to TWO suite buckets when its
+    # per-row ``tc.suite_name`` (often the Java class name from a TestNG
+    # SDK) differs from its run-level ``tr.primary_suite_name`` (the
+    # ``testlookup.suite`` the SDK stamps once at session create). User-
+    # facing list: clicking either bucket should surface the same case.
+    # A COALESCE picks ONE name; a UNION ALL emits the row under BOTH
+    # (deduped by DISTINCT ON when names happen to match). See
+    # ``feedback_live_stream_suite_name_nulls`` for the SDK behaviour
+    # this addresses.
+    #
+    # Path A: run-level suite (``primary_suite_name`` not NULL).
+    # Path B: per-row suite (``tc.suite_name`` not NULL and DISTINCT
+    #         FROM the run-level value to avoid double-counting when
+    #         they happen to match).
     auto_query = sa_text(f"""
         WITH effective AS (
             SELECT
-                COALESCE(
-                    NULLIF(TRIM(tc.suite_name), ''),
-                    NULLIF(TRIM(tr.primary_suite_name), '')
-                ) AS suite_name,
+                NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
                 tc.test_fingerprint,
                 tc.status,
                 tr.created_at AS run_created_at
             FROM test_cases tc
             JOIN test_runs tr ON tc.test_run_id = tr.id
             WHERE tc.test_fingerprint IS NOT NULL
+              AND NULLIF(TRIM(tr.primary_suite_name), '') IS NOT NULL
+              {auto_where}
+            UNION ALL
+            SELECT
+                NULLIF(TRIM(tc.suite_name), '') AS suite_name,
+                tc.test_fingerprint,
+                tc.status,
+                tr.created_at AS run_created_at
+            FROM test_cases tc
+            JOIN test_runs tr ON tc.test_run_id = tr.id
+            WHERE tc.test_fingerprint IS NOT NULL
+              AND NULLIF(TRIM(tc.suite_name), '') IS NOT NULL
+              AND NULLIF(TRIM(tr.primary_suite_name), '')
+                  IS DISTINCT FROM NULLIF(TRIM(tc.suite_name), '')
               {auto_where}
         ),
         latest_per_test AS (
@@ -895,16 +909,32 @@ async def list_test_suites(
 async def get_suite_test_cases(
     suite_name: str,
     project_id: Optional[uuid.UUID] = Query(None),
-    limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=500),
+    # ``limit`` kept for one release as a back-compat shim: clients on
+    # the old single-list shape still passed ``limit=100``. When
+    # present and > 0 we honour it as the page size; new callers
+    # should send ``page`` + ``size`` instead.
+    limit: Optional[int] = Query(None, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Return test cases for a given suite_name from both automation runs and managed test cases."""
+    """Paginated test cases for a suite, merging automation runs +
+    managed cases. Returns ``{items, total, page, pages, size}``.
+
+    Suite-match semantics: per-row ``tc.suite_name`` OR run-level
+    ``tr.primary_suite_name`` — both contribute, so a SDK that stamps
+    the Java class as the per-row name but ``testlookup.suite`` at the
+    run level still surfaces the case under the run-level suite.
+    """
+    if limit is not None:
+        size = limit
+    empty_page = {"items": [], "total": 0, "page": page, "pages": 0, "size": size}
     if not project_id:
         from app.core.deps import get_accessible_project_ids
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
-            return []
+            return empty_page
     from sqlalchemy import func, or_
 
     from app.models.postgres import TestCase, TestRun
@@ -932,6 +962,10 @@ async def get_suite_test_cases(
             TestCase.duration_ms,
             TestCase.class_name,
             TestCase.package_name,
+            # Carry the run id through to the response so the
+            # frontend can deep-link each row to
+            # ``/runs/<run_id>/tests/<test_case_id>``.
+            TestCase.test_run_id.label("test_run_id"),
             TestRun.created_at.label("run_created_at"),
         )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
@@ -961,6 +995,12 @@ async def get_suite_test_cases(
         .group_by(base_sq.c.test_fingerprint)
         .subquery()
     )
+    # Total before pagination — counts unique fingerprints in scope.
+    auto_total_q = select(func.count()).select_from(
+        select(counts_sq.c.fp).subquery()
+    )
+    auto_total = int((await db.execute(auto_total_q)).scalar() or 0)
+
     aggregated = (
         select(
             latest_sq.c.id,
@@ -970,12 +1010,14 @@ async def get_suite_test_cases(
             latest_sq.c.duration_ms,
             latest_sq.c.class_name,
             latest_sq.c.package_name,
+            latest_sq.c.test_run_id,
             counts_sq.c.execution_count,
             counts_sq.c.last_execution_at,
         )
         .join(counts_sq, latest_sq.c.test_fingerprint == counts_sq.c.fp)
         .order_by(counts_sq.c.last_execution_at.desc().nulls_last())
-        .limit(limit)
+        .offset((page - 1) * size)
+        .limit(size)
     )
     auto_rows = (await db.execute(aggregated)).all()
 
@@ -983,14 +1025,23 @@ async def get_suite_test_cases(
     # the suites list endpoint so a suite typed as "Smoke" matches a
     # managed-case row stored as " smoke" (trailing space, user typo)
     # without forcing the operator to fix the data.
-    manual_stmt = (
+    manual_base = (
         select(ManagedTestCase)
         .where(func.lower(func.trim(ManagedTestCase.suite_name)) == suite_key)
-        .order_by(ManagedTestCase.created_at.desc())
-        .limit(limit)
     )
     if project_id:
-        manual_stmt = manual_stmt.where(ManagedTestCase.project_id == project_id)
+        manual_base = manual_base.where(ManagedTestCase.project_id == project_id)
+    manual_total = int(
+        (await db.execute(
+            select(func.count()).select_from(manual_base.subquery())
+        )).scalar() or 0
+    )
+    manual_stmt = (
+        manual_base
+        .order_by(ManagedTestCase.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
 
     manual_cases = (await db.execute(manual_stmt)).scalars().all()
 
@@ -1005,6 +1056,7 @@ async def get_suite_test_cases(
             "duration_ms": row.duration_ms,
             "class_name": row.class_name,
             "package_name": row.package_name,
+            "test_run_id": str(row.test_run_id) if row.test_run_id else None,
             "created_at": last_exec.isoformat() if last_exec else None,
             "execution_count": int(row.execution_count or 0),
             "last_execution_at": last_exec.isoformat() if last_exec else None,
@@ -1026,9 +1078,20 @@ async def get_suite_test_cases(
             "source": "manual",
         })
 
-    # Sort combined by last_execution_at desc (falls back to created_at)
+    # Sort combined by last_execution_at desc (falls back to created_at).
+    # Auto + manual page-slices were taken independently so the combined
+    # list can have up to ``2 * size`` rows; trim post-sort to honour
+    # the requested page size. ``total`` is the sum across both sources.
     result.sort(key=lambda x: x["last_execution_at"] or x["created_at"] or "", reverse=True)
-    return result[:limit]
+    total = auto_total + manual_total
+    pages = -(-total // size) if size > 0 else 0
+    return {
+        "items": result[:size],
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "size": size,
+    }
 
 
 # ── Suite Membership Traceability (TS-5) ──────────────────────────────────────

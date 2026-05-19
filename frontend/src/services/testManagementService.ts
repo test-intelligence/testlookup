@@ -200,8 +200,47 @@ export const testManagementService = {
   }>> =>
     getData('/api/v1/test-management/suites', { params: projectId ? { project_id: projectId } : {} }),
 
-  getSuiteCases: (suiteName: string, projectId: string | null): Promise<Array<{id: string; test_name: string; suite_name: string; status: string; duration_ms: number | null; class_name: string | null; package_name: string | null; created_at: string | null; execution_count?: number; last_execution_at?: string | null}>> =>
-    getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/cases`, { params: projectId ? { project_id: projectId } : {} }),
+  /**
+   * Paginated list of test cases in a suite. Response shape is
+   * ``{ items, total, page, pages, size }``. Default ``size=25``;
+   * for callers that need every case (e.g. bulk-link), pass
+   * ``size=500`` (the server cap). Match semantics: per-row
+   * ``tc.suite_name`` OR run-level ``tr.primary_suite_name``.
+   */
+  getSuiteCases: (
+    suiteName: string,
+    projectId: string | null,
+    opts: { page?: number; size?: number } = {},
+  ): Promise<{
+    items: Array<{
+      id: string
+      test_name: string
+      suite_name: string
+      status: string
+      duration_ms: number | null
+      class_name: string | null
+      package_name: string | null
+      /** TestRun.id of the latest execution. Present on automation rows
+       *  so the UI can deep-link to ``/runs/<run_id>/tests/<id>``. Null
+       *  for manual managed cases (which aren't run-scoped). */
+      test_run_id?: string | null
+      created_at: string | null
+      execution_count?: number
+      last_execution_at?: string | null
+      source?: 'automation' | 'manual'
+    }>
+    total: number
+    page: number
+    pages: number
+    size: number
+  }> =>
+    getData(`/api/v1/test-management/suites/${encodeURIComponent(suiteName)}/cases`, {
+      params: {
+        ...(projectId ? { project_id: projectId } : {}),
+        ...(opts.page != null ? { page: opts.page } : {}),
+        ...(opts.size != null ? { size: opts.size } : {}),
+      },
+    }),
 
   // Suite Traceability (TS-5)
   getSuiteMembership: (suiteName: string, projectId: string | null, status?: string): Promise<SuiteMembershipItem[]> =>
