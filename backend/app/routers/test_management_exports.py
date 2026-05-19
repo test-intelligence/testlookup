@@ -667,19 +667,41 @@ async def list_test_suites(
     auto_where = "AND tr.project_id = :project_id" if project_id else ""
     sub_where = "AND tr2.project_id = :project_id" if project_id else ""
     auto_params: dict = {"project_id": project_id} if project_id else {}
+    # Effective-suite resolution: per-row ``tc.suite_name`` when present,
+    # otherwise the run-level ``tr.primary_suite_name``. Without this,
+    # live-stream runs (whose per-event suite_name is NULL because the
+    # SDK only stamps ``testlookup.suite`` once at session create) get
+    # filtered out of the catalog view — surfacing as "suite X has 0
+    # cases" while the run-aggregate fallback below reports the
+    # execution-sum total instead of unique tests. See
+    # ``feedback_live_stream_suite_name_nulls``. Once these rows
+    # participate in ``latest_per_test``, the run-aggregate fallback's
+    # ``NOT EXISTS test_cases`` clause stops firing for the same suite,
+    # so there's no double-counting either.
     auto_query = sa_text(f"""
-        WITH latest_per_test AS (
-            SELECT DISTINCT ON (tc.test_fingerprint, tc.suite_name)
-                tc.suite_name,
+        WITH effective AS (
+            SELECT
+                COALESCE(
+                    NULLIF(TRIM(tc.suite_name), ''),
+                    NULLIF(TRIM(tr.primary_suite_name), '')
+                ) AS suite_name,
                 tc.test_fingerprint,
                 tc.status,
                 tr.created_at AS run_created_at
             FROM test_cases tc
             JOIN test_runs tr ON tc.test_run_id = tr.id
-            WHERE tc.suite_name IS NOT NULL AND tc.suite_name != ''
-              AND tc.test_fingerprint IS NOT NULL
+            WHERE tc.test_fingerprint IS NOT NULL
               {auto_where}
-            ORDER BY tc.test_fingerprint, tc.suite_name, tr.created_at DESC
+        ),
+        latest_per_test AS (
+            SELECT DISTINCT ON (test_fingerprint, suite_name)
+                suite_name,
+                test_fingerprint,
+                status,
+                run_created_at
+            FROM effective
+            WHERE suite_name IS NOT NULL
+            ORDER BY test_fingerprint, suite_name, run_created_at DESC
         )
         SELECT
             suite_name,
@@ -689,9 +711,15 @@ async def list_test_suites(
             MAX(run_created_at) AS last_run_at,
             (
                 SELECT tr2.id
-                FROM test_cases tc2
-                JOIN test_runs tr2 ON tc2.test_run_id = tr2.id
-                WHERE tc2.suite_name = latest_per_test.suite_name
+                FROM test_runs tr2
+                WHERE (
+                    NULLIF(TRIM(tr2.primary_suite_name), '') = latest_per_test.suite_name
+                    OR EXISTS (
+                        SELECT 1 FROM test_cases tc2
+                        WHERE tc2.test_run_id = tr2.id
+                          AND tc2.suite_name = latest_per_test.suite_name
+                    )
+                )
                   {sub_where}
                 ORDER BY tr2.created_at DESC
                 LIMIT 1
@@ -877,13 +905,23 @@ async def get_suite_test_cases(
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
             return []
-    from sqlalchemy import func
+    from sqlalchemy import func, or_
 
     from app.models.postgres import TestCase, TestRun
 
     # Automation test cases — aggregate by fingerprint so each unique test
     # collapses to one row carrying its execution count and most-recent run
     # date. Latest-run row wins for status/duration/class via DISTINCT ON.
+    #
+    # Suite-match WHERE clause: per-row OR run-level. The SDK only stamps
+    # ``testlookup.suite`` once at session create — it lands on
+    # ``TestRun.primary_suite_name`` while every ``TestCase.suite_name``
+    # of a live-stream run stays NULL. A strict ``TestCase.suite_name =
+    # X`` filter then returns zero rows even though the run is correctly
+    # tagged. The list endpoint's resolver already unions both columns
+    # (see ``feedback_live_stream_suite_name_nulls``); this filter
+    # mirrors it so the cases UI agrees with the suite-card counts.
+    suite_key = (suite_name or "").strip().lower()
     base = (
         select(
             TestCase.id,
@@ -897,7 +935,12 @@ async def get_suite_test_cases(
             TestRun.created_at.label("run_created_at"),
         )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
-        .where(TestCase.suite_name == suite_name)
+        .where(
+            or_(
+                func.lower(func.trim(TestCase.suite_name)) == suite_key,
+                func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, ""))) == suite_key,
+            )
+        )
     )
     if project_id:
         base = base.where(TestRun.project_id == project_id)
@@ -936,10 +979,13 @@ async def get_suite_test_cases(
     )
     auto_rows = (await db.execute(aggregated)).all()
 
-    # Manual managed test cases
+    # Manual managed test cases — same case-insensitive trim match as
+    # the suites list endpoint so a suite typed as "Smoke" matches a
+    # managed-case row stored as " smoke" (trailing space, user typo)
+    # without forcing the operator to fix the data.
     manual_stmt = (
         select(ManagedTestCase)
-        .where(ManagedTestCase.suite_name == suite_name)
+        .where(func.lower(func.trim(ManagedTestCase.suite_name)) == suite_key)
         .order_by(ManagedTestCase.created_at.desc())
         .limit(limit)
     )

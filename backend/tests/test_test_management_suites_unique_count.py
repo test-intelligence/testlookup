@@ -43,8 +43,14 @@ def test_suites_sql_uses_distinct_on_test_fingerprint():
     from app.routers import test_management_exports as mod
 
     src = inspect.getsource(mod.list_test_suites)
+    # Match either ``DISTINCT ON (tc.test_fingerprint, ...)`` (original
+    # form) OR ``DISTINCT ON (test_fingerprint, ...)`` (post-2026-05-18,
+    # when the CTE was restructured to source from an inner ``effective``
+    # CTE so per-row + run-level suite_name both feed the dedup). The
+    # invariant — "dedupe by fingerprint before counting" — is identical
+    # in both forms; only the alias differs.
     assert re.search(
-        r"DISTINCT\s+ON\s*\(\s*tc\.test_fingerprint",
+        r"DISTINCT\s+ON\s*\(\s*(?:\w+\.)?test_fingerprint",
         src,
         re.IGNORECASE,
     ), (
