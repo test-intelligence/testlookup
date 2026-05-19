@@ -24,6 +24,10 @@ export interface TestSuiteCreatePayload {
   name: string
   description?: string | null
   tags?: string[] | null
+  /** Optional owner picked at creation. Backend enforces QA_LEAD role; a
+   *  non-eligible user returns HTTP 400. Leaving unset falls back to the
+   *  project's default QA lead via ``resolve_suite_owner``. */
+  owner_user_id?: string | null
 }
 
 export interface TestSuiteUpdatePayload {
@@ -72,4 +76,14 @@ export interface CanonicalRunHistoryItem {
 export interface CanonicalRunHistoryResponse {
   items: CanonicalRunHistoryItem[]
   total: number
+}
+
+// Shape of POST /api/v1/canonical-test-cases/bulk-link — backend caps the
+// batch at 200 and atomically rejects the whole call on any cross-project
+// id. ``missing_ids`` surfaces ids the UI selected that no longer resolve
+// (deleted in flight) so the page can clear them from selection.
+export interface CanonicalTestCaseBulkLinkResponse {
+  moved: number
+  skipped_already_in_target: number
+  missing_ids: string[]
 }

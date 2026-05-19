@@ -19,7 +19,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import SuiteBadge from '@/components/ui/SuiteBadge'
-import { useLatestSuiteCompare, useRunCompare } from '@/hooks/useRunCompare'
+import { extractCompareErrorMessage, useLatestSuiteCompare, useRunCompare } from '@/hooks/useRunCompare'
 import { useRuns } from '@/hooks/useRuns'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import type {
@@ -71,6 +71,7 @@ export default function RunComparePage() {
   const compare = mode === 'latest' ? latest.compare : manual.compare
   const isLoading = mode === 'latest' ? latest.isLoading : manual.isLoading
   const isError = mode === 'latest' ? latest.isError : manual.isError
+  const error = mode === 'latest' ? latest.error : manual.error
 
   function apply() {
     const next = new URLSearchParams()
@@ -233,7 +234,24 @@ export default function RunComparePage() {
       ) : isLoading ? (
         <LoadingSpinner size="lg" />
       ) : isError ? (
-        <EmptyState title="Failed to load compare" />
+        // Surface the backend's actual ``detail`` instead of a generic
+        // "Failed to load". The 404 paths in particular ("At least two
+        // completed runs are required …", "Suite X was not found in the
+        // left and right run") are useful diagnostics — users need to
+        // know whether to wait for more runs or to fix the suite-name
+        // mapping.
+        (() => {
+          const message = extractCompareErrorMessage(error)
+          const isInsufficientData =
+            message.toLowerCase().includes('at least two')
+            || message.toLowerCase().includes('was not found')
+          return (
+            <EmptyState
+              title={isInsufficientData ? 'Not enough data to compare' : 'Failed to load compare'}
+              description={message}
+            />
+          )
+        })()
       ) : !compare ? null : (
         <div className="space-y-4">
           <SummaryTiles compare={compare} />
@@ -285,11 +303,17 @@ function filterRunsBySuite(runs: TestRun[], suiteName: string): TestRun[] {
 }
 
 function formatRunOption(run: TestRun): string {
-  const build = run.build_number || run.id.slice(0, 8)
+  // User feedback 2026-05-19: the "Runs in suite" preview should
+  // identify the run by its stable Run #N (or short UUID) rather than
+  // the SDK-supplied build_number, which is often a noisy timestamp
+  // slug (e.g. ``testng-1779170467999``). Falls back to the short id
+  // when the run hasn't been numbered yet.
+  const seq = (run as TestRun & { run_seq?: number | null }).run_seq
+  const ident = seq != null ? `Run #${seq}` : `Run ${run.id.slice(0, 8)}`
   const branch = run.branch ? ` · ${run.branch}` : ''
   const release = run.release_name ? ` · ${run.release_name}` : ''
   const created = new Date(run.created_at).toLocaleString()
-  return `Build ${build} · ${run.status}${branch}${release} · ${created}`
+  return `${ident} · ${run.status}${branch}${release} · ${created}`
 }
 
 function RunSelectPreview({

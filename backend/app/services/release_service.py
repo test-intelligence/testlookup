@@ -99,9 +99,21 @@ async def list_releases(db: AsyncSession, project_id: Optional[str], status: Opt
 
 async def create_release(db: AsyncSession, body) -> Release:
     """Stage a new release (and its initial phases). Handler commits + serializes."""
+    # Project-existence guard. Without it, a stale ``activeProjectId`` on
+    # the FE (or a hand-rolled API call against a deleted project) hits
+    # the asyncpg ForeignKeyViolationError as an opaque 500. The 404 here
+    # is the same shape ``test_management_service.create_managed_test_case``
+    # uses so the FE error-toast pipeline can format it identically.
+    project_uuid = uuid.UUID(body.project_id)
+    project = await db.get(Project, project_uuid)
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project {body.project_id} not found — refresh the page or pick a different project.",
+        )
     logger.info("creating_release", project_id=body.project_id, name=body.name)
     release = Release(
-        project_id=uuid.UUID(body.project_id),
+        project_id=project_uuid,
         name=body.name,
         version=body.version,
         description=body.description,

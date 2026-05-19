@@ -1,0 +1,185 @@
+name: Deploy to Azure AKS
+
+# Reference workflow for cloud deploys — Azure mirror of deploy-eks.yml +
+# deploy-gke.yml. Wraps ``scripts/deploy-k8s.sh`` with Azure-specific
+# authentication + Azure Container Registry (ACR) push + ``az aks
+# get-credentials``, then hands off to the script.
+#
+# Uses **OpenID Connect** (federated credentials on an Azure AD app
+# registration / managed identity) rather than the legacy
+# ``AZURE_CREDENTIALS`` JSON service-principal secret. The legacy path
+# still works via ``azure/login@v2`` — see docs/deployment/azure-aks.md
+# § 10 for the trade-off — but OIDC leaves no rotatable secret in the
+# repo.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   AZURE_CLIENT_ID            App registration / managed-identity client ID
+#                              (the workload identity GitHub impersonates)
+#   AZURE_TENANT_ID            Azure AD tenant containing the app registration
+#   AZURE_SUBSCRIPTION_ID      Subscription that owns the AKS cluster + ACR
+#   AZURE_RESOURCE_GROUP       Resource group containing the AKS cluster
+#                              (e.g. testlookup-prod-rg)
+#   AZURE_ACR_NAME             ACR registry name *without* the .azurecr.io
+#                              suffix (e.g. testlookupacr). The workflow
+#                              composes the full host as
+#                              ``$AZURE_ACR_NAME.azurecr.io``.
+#   AKS_CLUSTER_NAME           e.g. testlookup-prod
+#   BACKEND_URL                (Optional) post-deploy health probe target
+#                              (e.g. https://testlookup.example.com)
+#
+# Trigger:
+#   * manual: workflow_dispatch with an explicit image tag (recommended)
+#   * automatic: push of a v*.*.* tag (mirrors deploy-production.yml on GCP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to build + deploy (e.g. v0.1.0, sha-abc1234).'
+        required: true
+        default: ''
+  push:
+    tags:
+      - 'v*.*.*'
+
+# OIDC token issuance for ``azure/login@v2``. Without ``id-token: write``
+# the action falls back to ``AZURE_CREDENTIALS`` JSON — possible but
+# discouraged; the OIDC path leaves no rotatable secret behind.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_TAG: ${{ inputs.image_tag || github.ref_name }}
+  # ACR host format: ``<NAME>.azurecr.io``. Composed here so the build +
+  # deploy steps stay symmetric and the deploy script's ``--registry``
+  # arg gets the same value the docker push used.
+  ACR_HOST: ${{ secrets.AZURE_ACR_NAME }}.azurecr.io
+
+jobs:
+  build-and-push:
+    name: Build & Push to ACR
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ env.IMAGE_TAG }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        # ``az acr login`` issues a short-lived docker credential bound
+        # to the workflow's federated identity, so subsequent
+        # ``docker push`` calls authenticate without a long-lived
+        # password in the repo. Equivalent to amazon-ecr-login@v2 on EKS
+        # and ``gcloud auth configure-docker`` on GKE.
+        run: az acr login --name "${{ secrets.AZURE_ACR_NAME }}"
+
+      - name: Stage client SDKs into backend context
+        # Populate ``backend/__client_sdks_staged/`` so the production
+        # Dockerfile bakes the SDK artifacts into the image (the
+        # ``/api/v1/sdk/{lang}`` endpoint reads from there). Mirrors the
+        # equivalent step in ci.yml and homelabsetup/deploy-homelab.sh.
+        # Without this the Dockerfile's mkdir fallback prevents a build
+        # failure but the image ships with an empty SDK directory.
+        run: |
+          set -euo pipefail
+          STAGED_SDK="./backend/__client_sdks_staged"
+          rm -rf "$STAGED_SDK"
+          mkdir -p "$STAGED_SDK"
+          rsync -a \
+            --exclude='.pytest_cache' --exclude='__pycache__' \
+            --exclude='*.pyc' --exclude='.venv' --exclude='venv' \
+            --exclude='node_modules' --exclude='.tox' \
+            --exclude='.mypy_cache' --exclude='.ruff_cache' \
+            --exclude='target' --exclude='build' \
+            --exclude='*.egg-info' --exclude='.coverage' \
+            --exclude='htmlcov' --exclude='.DS_Store' \
+            ./client/ "$STAGED_SDK/"
+
+      - name: Build & push backend image
+        run: |
+          REPO="$ACR_HOST/testlookup/backend"
+          docker build -t "$REPO:$IMAGE_TAG" ./backend
+          docker push "$REPO:$IMAGE_TAG"
+
+      - name: Build & push frontend image
+        run: |
+          REPO="$ACR_HOST/testlookup/frontend"
+          docker build -t "$REPO:$IMAGE_TAG" ./frontend
+          docker push "$REPO:$IMAGE_TAG"
+
+      - name: Build & push MCP image
+        run: |
+          REPO="$ACR_HOST/testlookup/mcp"
+          docker build -t "$REPO:$IMAGE_TAG" ./mcp
+          docker push "$REPO:$IMAGE_TAG"
+
+  deploy:
+    name: Apply to AKS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    # Same ``production`` environment binding as deploy-eks.yml +
+    # deploy-gke.yml so the required-reviewer gates configured at repo
+    # level apply uniformly across clouds.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        # ``--overwrite-existing`` makes the step idempotent across
+        # re-runs (otherwise the second run errors on a conflicting
+        # kubeconfig entry). ``--admin`` is intentionally omitted —
+        # the workflow identity must have a real RBAC binding via
+        # ``Azure Kubernetes Service Cluster User Role`` + a
+        # ClusterRoleBinding for the actual permissions used by the
+        # deploy. ``--admin`` bypasses Azure AD integration entirely
+        # and is a footgun for shared clusters.
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ secrets.AKS_CLUSTER_NAME }}" \
+            --overwrite-existing
+
+      - name: Deploy via deploy-k8s.sh
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          # ``--registry`` becomes the prefix prepended to each
+          # ``testlookup/{backend,frontend,mcp}`` image reference in the
+          # kustomize overlay. Match exactly what the build step pushed.
+          REGISTRY: ${{ env.ACR_HOST }}
+        run: |
+          chmod +x scripts/deploy-k8s.sh
+          scripts/deploy-k8s.sh \
+            --cloud=azure \
+            --image-tag="$IMAGE_TAG" \
+            --registry="$REGISTRY"
+
+      - name: Smoke check
+        # The deploy script already waits for rollout (5min timeout per
+        # deployment); this probes the public ingress as a final sanity
+        # check. Skipped when BACKEND_URL secret is unset.
+        if: ${{ secrets.BACKEND_URL != '' }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl --fail --silent --show-error "${{ secrets.BACKEND_URL }}/health"; then
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i failed; sleeping 10s"
+            sleep 10
+          done
+          echo "Health check FAILED after 5 attempts"
+          exit 1

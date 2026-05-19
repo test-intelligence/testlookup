@@ -55,8 +55,9 @@ import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
+import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
-import { useDefects, useFailureCategories } from '@/hooks/useMetrics'
+import { refreshDefects, useDefects, useFailureCategories } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
 import type { DefectItem } from '@/types/analytics'
@@ -1471,9 +1472,19 @@ export default function DefectsPage() {
   useEffect(() => { localStorage.setItem(TAB_KEY, activeTab) }, [activeTab])
 
   const [showPicker, setShowPicker] = useState(false)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('age')
   const analyticsView = useAnalyticsView('defects')
+
+  const intakeProjectId = !isAllProjects && activeProjectId ? activeProjectId : null
+  const openIntake = () => {
+    if (!intakeProjectId) {
+      toast('Pick a single project to intake a defect', { icon: '🐞' })
+      return
+    }
+    setIntakeOpen(true)
+  }
 
   // Pull all statuses up-front so we can drive the verdict + counts.
   const { data: allDefectsData, isLoading } = useDefects(1, undefined)
@@ -1519,7 +1530,20 @@ export default function DefectsPage() {
 
   const lede: React.ReactNode = (() => {
     if (verdict === 'PENDING')
-      return <>No defects in this project. Run AI analysis or create one manually to populate the queue.</>
+      // Surface concrete next steps when the queue is empty but the
+      // project may still have failures worth triaging. Three explicit
+      // routes: review unassigned failures on /my-failures, hand off
+      // to deep AI investigation, or create a defect manually.
+      return (
+        <>
+          No defects in this project yet. To populate the queue:
+          {' '}
+          <Link to="/my-failures" className="text-[var(--color-accent)] hover:underline">review your assigned failures</Link>
+          {', '}
+          <Link to="/deep-investigate" className="text-[var(--color-accent)] hover:underline">run an AI investigation</Link>
+          {', or use the <strong>New defect</strong> button above to create one manually.'}
+        </>
+      )
     if (verdict === 'HEALTHY')
       return <>No P0 defects open and no Jira bridge gaps. Treat the queue as clean — focus on closing the long tail.</>
     if (verdict === 'BLOCKED' && model.p0Count > 0) {
@@ -1580,7 +1604,7 @@ export default function DefectsPage() {
   const verdictCtas = {
     primary: model.p0Count > 0
       ? { label: `Triage ${model.p0Count} P0${model.p0Count === 1 ? '' : 's'}`, onClick: () => toast('Triage flow — coming in Phase 2', { icon: '🎯' }) } as IssueRowSpec['cta']
-      : { label: 'New defect', onClick: () => toast('New-defect modal — coming in Phase 2', { icon: '➕' }) } as IssueRowSpec['cta'],
+      : { label: 'New defect', onClick: openIntake } as IssueRowSpec['cta'],
     secondary: [
       model.p0Unowned > 0
         ? { label: `Assign ${model.p0Unowned} unowned`, onClick: () => toast('Assign modal — coming in Phase 2', { icon: '🎯' }) } as IssueRowSpec['cta']
@@ -1633,7 +1657,7 @@ export default function DefectsPage() {
             Customize
           </GhostBtn>
           <StatusTabs active={activeTab} onChange={setActiveTab} counts={model.countsByStatus} />
-          <PrimaryBtn onClick={() => toast('New-defect modal — coming in Phase 2', { icon: '➕' })}>
+          <PrimaryBtn onClick={openIntake}>
             <Plus className="h-3.5 w-3.5" />
             New defect
           </PrimaryBtn>
@@ -1750,6 +1774,14 @@ export default function DefectsPage() {
           enabledIds={analyticsView.widgetIds}
           onSave={(ids) => { analyticsView.setWidgets(ids); void analyticsView.save() }}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {intakeOpen && intakeProjectId && (
+        <DefectIntakeModal
+          projectId={intakeProjectId}
+          onClose={() => setIntakeOpen(false)}
+          onSuccess={() => { void refreshDefects() }}
         />
       )}
 

@@ -40,8 +40,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertCircle, AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight,
-  Clock, Code as CodeIcon, GitBranch, Layers, Search, ShieldCheck, Sparkles,
-  Stethoscope, TrendingUp, Wrench, XCircle, Zap,
+  Clock, Code as CodeIcon, GitBranch, GitCompare, Layers, Search, ShieldCheck,
+  Sparkles, Stethoscope, TrendingUp, Wrench, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -53,15 +53,16 @@ import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
+import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours, 0 = all time.
 const WINDOWS = [1, 6, 14, 30, 90, 0] as const
 type Window = (typeof WINDOWS)[number]
-const WINDOW_KEY = 'tl.runs.window'
 
 const WINDOW_LABELS: Record<Window, string> = {
   1:  'Last 24 hours',
@@ -188,6 +189,9 @@ interface PipelineModel {
   avgPassRate: number
   redStreak: number                  // consecutive failures from newest backwards
   lastGreen: TestRun | null
+  /** Most recent failed run. Paired with ``lastGreen`` to populate the
+   *  bisect modal (``/runs/compare?left=<green>&right=<failed>``). */
+  latestFailedRun: TestRun | null
   hoursSinceLastGreen: number | null
   primaryCluster: SignatureCluster | null
   outlierClusters: SignatureCluster[]
@@ -249,6 +253,37 @@ function findLastGreen(runs: TestRun[]): TestRun | null {
   return sorted.find(r => isPassed(r.status)) ?? null
 }
 
+function findLatestFailed(runs: TestRun[]): TestRun | null {
+  // The bisect TARGET — the most recent failing run. Paired with
+  // ``findLastGreen`` (the BASELINE) to form the left/right of the
+  // ``/runs/compare`` query that the Bisect CTA navigates to.
+  const sorted = [...runs].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
+  return sorted.find(r => isFailed(r.status)) ?? null
+}
+
+/** Construct the deep-link to /runs/compare for the bisect modal. Returns
+ *  null when either side is missing (no green run found, or no failing run
+ *  to compare against) — call sites should then either disable the button
+ *  or surface a helpful "nothing to bisect" toast. */
+export function buildBisectHref(model: {
+  lastGreen: TestRun | null
+  latestFailedRun: TestRun | null
+}): string | null {
+  if (!model.lastGreen || !model.latestFailedRun) return null
+  const params = new URLSearchParams()
+  params.set('mode', 'manual')
+  params.set('left', model.lastGreen.id)
+  params.set('right', model.latestFailedRun.id)
+  // Prefer the failing run's suite (the suite the user is investigating);
+  // fall back to the green run's suite so the suite filter on the compare
+  // page is always populated when we have any signal at all.
+  const suite = model.latestFailedRun.primary_suite_name
+    || model.lastGreen.primary_suite_name
+    || ''
+  if (suite) params.set('suite', suite)
+  return `/runs/compare?${params.toString()}`
+}
+
 function hoursSince(iso: string | null | undefined): number | null {
   if (!iso) return null
   const ms = Date.now() - new Date(iso).getTime()
@@ -293,6 +328,7 @@ function buildPipelineModel(runs: TestRun[]): PipelineModel {
     : 0
   const redStreak = computeRedStreak(runs)
   const lastGreen = findLastGreen(runs)
+  const latestFailedRun = findLatestFailed(runs)
 
   // Metadata coverage — % of runs that have branch + release_name + duration.
   const withMeta = runs.filter(r => !!r.branch && !!r.release_name && (r.duration_ms ?? 0) > 0).length
@@ -330,7 +366,7 @@ function buildPipelineModel(runs: TestRun[]): PipelineModel {
     composite, dimensions,
     totalRuns, failedRuns, passedRuns, inProgressRuns,
     avgPassRate,
-    redStreak, lastGreen,
+    redStreak, lastGreen, latestFailedRun,
     hoursSinceLastGreen,
     primaryCluster: primary, outlierClusters: outliers,
     hasMissingMetadata, metadataCoveragePct,
@@ -988,6 +1024,7 @@ function ClusterRow({
 // ── Runs table ────────────────────────────────────────────────────────────
 function RunsTable({
   runs, primarySignature, selectedIds, setSelectedIds, onTrigger, onDeep,
+  onCompareWithPrevious,
   isQaEngineer,
   page, pages, total, onPageChange,
   datetimeSortDir, onToggleDatetimeSort,
@@ -998,6 +1035,11 @@ function RunsTable({
   setSelectedIds: (s: Set<string>) => void
   onTrigger: (id: string) => void
   onDeep: (id: string) => void
+  /** Fired when the user clicks the per-row "Compare to previous" icon.
+   *  The parent uses the full ``runs`` array (not just this page slice)
+   *  to find the previous-of-same-suite candidate, so the lookup pool
+   *  isn't broken by client-side pagination. */
+  onCompareWithPrevious: (run: TestRun) => void
   isQaEngineer: boolean
   /** Pagination props — parent computes pages from full ``runs.length``. */
   page: number
@@ -1110,11 +1152,16 @@ function RunsTable({
                       aria-label={`Select #${r.build_number}`}
                     />
                   </td>
-                  {/* Build column links to the run detail page — the
-                      previous short run-id cell was redundant and removed. */}
+                  {/* Build column links to the run detail page. Header
+                      label is "Build" for historical continuity, but the
+                      VALUE is the human-readable, per-(project, suite)
+                      incremental "Run #N" — server-side ROW_NUMBER()
+                      over the partition. Falls back to the raw SDK
+                      build_number for legacy rows that pre-date the
+                      run_seq field. */}
                   <td className="font-mono text-[12.5px] font-semibold" style={{ padding: '8px 12px' }}>
                     <Link to={`/runs/${r.id}`} className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline">
-                      #{String(r.build_number)}
+                      {r.run_seq != null ? `Run #${r.run_seq}` : `#${String(r.build_number)}`}
                     </Link>
                   </td>
                   <td style={{ padding: '8px 12px' }}>
@@ -1217,6 +1264,20 @@ function RunsTable({
                         style={{ borderColor: 'var(--color-border)' }}
                       >
                         <Stethoscope className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onCompareWithPrevious(r)}
+                        disabled={!r.primary_suite_name}
+                        title={
+                          r.primary_suite_name
+                            ? `Compare to the previous run of "${r.primary_suite_name}"`
+                            : 'No suite attribution on this run — cannot pick a previous-of-same-suite'
+                        }
+                        className="inline-flex items-center justify-center h-6 w-6 rounded-md border text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+                        style={{ borderColor: 'var(--color-border)' }}
+                      >
+                        <GitCompare className="h-3 w-3" />
                       </button>
                     </div>
                   </td>
@@ -1406,7 +1467,7 @@ interface RecRow {
   cta: { label: string; onClick: () => void; dim?: boolean }
 }
 
-function buildRecActions(model: PipelineModel): RecRow[] {
+function buildRecActions(model: PipelineModel, onBisect: () => void): RecRow[] {
   const recs: RecRow[] = []
   const lastGreenSha = model.lastGreen ? model.lastGreen.id.slice(0, 7) : null
   if (model.primaryCluster && lastGreenSha) {
@@ -1421,7 +1482,7 @@ function buildRecActions(model: PipelineModel): RecRow[] {
           {' '}The failing test signature is <code>{shortSignatureLabel(model.primaryCluster)}</code>.
         </>
       ),
-      cta: { label: 'Start', onClick: () => toast('Bisect modal — coming in Phase 2', { icon: '🪓' }) },
+      cta: { label: 'Start', onClick: onBisect },
     })
   }
   if (model.primaryCluster && model.primaryCluster.members.length >= 2) {
@@ -1572,13 +1633,15 @@ export default function RunsPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { isQaEngineer } = usePermissions()
 
-  const [days, setDays] = useState<Window>(() => {
-    const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 24h. Previously-saved choices still take precedence so
-    // existing users don't have their window reset.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
-  })
-  useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
+  // Global shared time-window preference — selection here propagates
+  // to every other window-filtered page (and vice versa). Snapped to
+  // RunsPage's allowed set, which includes ``6`` (instead of 7) and
+  // ``0`` (= all time) so the shared value may differ from what other
+  // pages display.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, WINDOWS) as Window
+  const setDays = setStoredDays as (w: Window) => void
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
   const [selectedSuite, setSelectedSuite] = useState('')
@@ -1625,8 +1688,53 @@ export default function RunsPage() {
   const model = useMemo(() => buildPipelineModel(runs), [runs])
   const verdict = pickVerdict(model)
   const ribbonStages = useMemo(() => buildRibbon(model), [model])
-  const recs = useMemo(() => buildRecActions(model), [model])
   const sigLabel = model.primaryCluster ? shortSignatureLabel(model.primaryCluster) : null
+
+  // Bisect navigation — shared by every "Bisect" / "Start bisect" /
+  // "Bisect from green" / "Bisect from last green" button on the page.
+  // When either side is missing (no green run in window, or no failing
+  // run to compare against), toast a clear reason instead of nav'ing
+  // to a half-populated compare page.
+  const handleBisect = (): void => {
+    const href = buildBisectHref(model)
+    if (!href) {
+      if (!model.lastGreen) {
+        toast('No green run found in this window — widen the window to enable bisect.', { icon: '⚠️' })
+      } else {
+        toast('No failing run to bisect — everything is green.', { icon: '✅' })
+      }
+      return
+    }
+    navigate(href)
+  }
+
+  // Per-row "Compare to previous run" handler — picks the chronologically
+  // immediately preceding run with the same ``primary_suite_name`` from
+  // the full fetched ``runs`` list (not the paginated ``tableRuns`` slice,
+  // so the previous-of-same-suite can live on a different page).
+  const handleCompareWithPrevious = (run: TestRun): void => {
+    if (!run.primary_suite_name) {
+      toast('This run has no suite attribution — cannot pick a previous-of-same-suite.', { icon: '⚠️' })
+      return
+    }
+    const previous = findPreviousRunOfSuite(run, runs)
+    const href = buildCompareWithPreviousHref(run, previous)
+    if (!href) {
+      toast(
+        `No earlier run of "${run.primary_suite_name}" in this window — widen the window or pick a different run.`,
+        { icon: '⚠️' },
+      )
+      return
+    }
+    navigate(href)
+  }
+
+  // Not memoised — buildRecActions captures the latest ``handleBisect``
+  // closure (which depends on render-time state via ``model``). The
+  // function returns a small fixed array per render; memoisation here
+  // would require tracking handleBisect identity, which is more code
+  // than the equality saves.
+  const recs = buildRecActions(model, handleBisect)
 
   if (!project && !isAllProjects) {
     return (
@@ -1758,7 +1866,7 @@ export default function RunsPage() {
           {' '}{model.hoursSinceLastGreen != null ? `${model.hoursSinceLastGreen}h ago` : 'before this window'} — every build since has failed.
         </>
       ),
-      cta: { label: 'Bisect from green', onClick: () => toast('Bisect modal — coming in Phase 2', { icon: '🪓' }) },
+      cta: { label: 'Bisect from green', onClick: handleBisect },
     })
   }
   if (model.primaryCluster && model.primaryCluster.members.length >= 2) {
@@ -1790,7 +1898,7 @@ export default function RunsPage() {
 
   const verdictCtas = {
     primary: model.lastGreen
-      ? { label: 'Bisect from last green', onClick: () => toast('Bisect modal — coming in Phase 2', { icon: '🪓' }) } as IssueRowSpec['cta']
+      ? { label: 'Bisect from last green', onClick: handleBisect } as IssueRowSpec['cta']
       : { label: 'Refresh', onClick: () => window.location.reload() } as IssueRowSpec['cta'],
     secondary: [
       runs[0]
@@ -1964,30 +2072,37 @@ export default function RunsPage() {
         />
       </section>
 
+      {/* Runs table is now full-width — matches the VerdictCard /
+          WorkflowRibbon / KPI strip widths above it. Layout updated
+          2026-05-15: the previous 1.65fr / 1fr grid cramped the table
+          into ~60% of the screen and stacked Last Green / Velocity /
+          Recommended Actions vertically in the right rail. Users
+          asked for the table to breathe and the three context cards
+          to sit parallel to the Failure signature analysis instead. */}
+      <div className="mb-3.5">
+        <RunsTable
+          runs={tableRuns}
+          primarySignature={model.primaryCluster?.signature ?? null}
+          selectedIds={selectedIds}
+          setSelectedIds={setSelectedIds}
+          onTrigger={handleTrigger}
+          onDeep={handleDeep}
+          onCompareWithPrevious={handleCompareWithPrevious}
+          isQaEngineer={isQaEngineer}
+          page={tablePage}
+          pages={tableTotalPages}
+          total={runs.length}
+          onPageChange={setTablePage}
+          datetimeSortDir={datetimeSortDir}
+          onToggleDatetimeSort={() => {
+            setDatetimeSortDir(d => d === 'desc' ? 'asc' : 'desc')
+            setTablePage(1)
+          }}
+        />
+      </div>
+
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
-          {/* Runs table sits above the failure-signature card so users land on
-              the raw list of builds first and the signature clustering is the
-              secondary, narrative summary below it. Table is paginated to
-              TABLE_PAGE_SIZE rows; analytics still derive from the full set. */}
-          <RunsTable
-            runs={tableRuns}
-            primarySignature={model.primaryCluster?.signature ?? null}
-            selectedIds={selectedIds}
-            setSelectedIds={setSelectedIds}
-            onTrigger={handleTrigger}
-            onDeep={handleDeep}
-            isQaEngineer={isQaEngineer}
-            page={tablePage}
-            pages={tableTotalPages}
-            total={runs.length}
-            onPageChange={setTablePage}
-            datetimeSortDir={datetimeSortDir}
-            onToggleDatetimeSort={() => {
-              setDatetimeSortDir(d => d === 'desc' ? 'asc' : 'desc')
-              setTablePage(1)
-            }}
-          />
           {model.primaryCluster && (
             <SignatureClusterCard
               primaryCluster={model.primaryCluster}
@@ -1998,7 +2113,7 @@ export default function RunsPage() {
           )}
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
-          <LastGreenCallout model={model} onBisect={() => toast('Bisect modal — coming in Phase 2', { icon: '🪓' })} />
+          <LastGreenCallout model={model} onBisect={handleBisect} />
           <BuildVelocityCard cells={model.velocityCells} redStreak={model.redStreak} />
           <RecommendedActions recs={recs} />
         </div>

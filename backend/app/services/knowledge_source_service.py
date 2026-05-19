@@ -20,6 +20,7 @@ from app.models.postgres import (
     KnowledgeSource,
     KnowledgeSourceType,
     KnowledgeSyncStatus,
+    Project,
     User,
 )
 
@@ -141,6 +142,17 @@ async def create_source(
 ) -> KnowledgeSource:
     await require_rag_enabled_async(db)
     await _check_project_access(db, user, project_id)
+    # Project-existence guard fires AFTER the access check so non-admins
+    # never receive a "this project doesn't exist" signal for a project
+    # outside their membership (existence-leak via 404-vs-403). Admins
+    # bypass access and get a clean 404 for genuinely-missing ids
+    # instead of an opaque FK-violation 500 on commit.
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project {project_id} not found — refresh the page or pick a different project.",
+        )
 
     source_type = payload["source_type"]
     if source_type not in VALID_SOURCE_TYPES:

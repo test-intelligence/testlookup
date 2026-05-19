@@ -61,16 +61,145 @@ import {
   useFailureCategories, useFlakyTests, useTopFailing, useTrendData,
 } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type {
   FailureCategoryItem, FlakyTestItem, TopFailingItem,
 } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
 // ── Window picker ──────────────────────────────────────────────────────────
-const WINDOWS = [7, 14, 30, 90] as const
+// 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
+// Overview/Runs/Live/Trends/Coverage so users get a single mental model.
+const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
-const WINDOW_KEY = 'tl.failures.window'
 
+// ── CSV export ────────────────────────────────────────────────────────────
+/** Wrap a CSV cell. Fields containing comma / quote / newline must be
+ *  quoted, and inner double-quotes must be escaped by doubling. */
+function csvCell(value: unknown): string {
+  if (value == null) return ''
+  const s = String(value)
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+interface ExportSources {
+  topFailing: TopFailingItem[]
+  flaky: FlakyTestItem[]
+  categories: FailureCategoryItem[]
+  meta: {
+    projectName: string
+    windowLabel: string
+    suiteName: string | null
+    generatedAt: string
+  }
+}
+
+/** Build the multi-section CSV that ``Export`` produces. Three sections:
+ *  metadata header, top failing tests, failure categories, flaky tests.
+ *  Sections are separated by a blank line and a ``# Section`` marker so
+ *  Excel/Sheets users can navigate without manual splitting. */
+export function buildFailuresCsv({
+  topFailing, flaky, categories, meta,
+}: ExportSources): string {
+  const lines: string[] = []
+
+  // Header / metadata block — explains the source of truth so a CSV
+  // pasted into a Slack channel still answers "what window / project".
+  lines.push('# TestLookup — Failure analysis export')
+  lines.push(`# Project,${csvCell(meta.projectName)}`)
+  lines.push(`# Window,${csvCell(meta.windowLabel)}`)
+  lines.push(`# Suite filter,${csvCell(meta.suiteName ?? 'All suites')}`)
+  lines.push(`# Generated,${csvCell(meta.generatedAt)}`)
+  lines.push('')
+
+  lines.push('# Top failing tests')
+  lines.push(['test_name', 'suite_name', 'class_name', 'failure_category', 'fail_count', 'last_failed'].join(','))
+  for (const t of topFailing) {
+    lines.push([
+      csvCell(t.test_name),
+      csvCell(t.suite_name ?? ''),
+      csvCell(t.class_name ?? ''),
+      csvCell(t.failure_category ?? ''),
+      csvCell(t.fail_count),
+      csvCell(t.last_failed ?? ''),
+    ].join(','))
+  }
+  lines.push('')
+
+  lines.push('# Failure categories')
+  lines.push(['category', 'count'].join(','))
+  for (const c of categories) {
+    lines.push([csvCell(c.category), csvCell(c.count)].join(','))
+  }
+  lines.push('')
+
+  lines.push('# Flaky tests')
+  lines.push(['test_name', 'suite_name', 'total_runs', 'fail_count', 'failure_rate_pct'].join(','))
+  for (const f of flaky) {
+    lines.push([
+      csvCell(f.test_name),
+      csvCell(f.suite_name ?? ''),
+      csvCell(f.total_runs),
+      csvCell(f.fail_count),
+      csvCell(f.failure_rate_pct),
+    ].join(','))
+  }
+  // Trailing newline so POSIX tooling (wc -l, awk) counts the last row.
+  return lines.join('\r\n') + '\r\n'
+}
+
+/** Build a filename slug from a project name. Lowercases, replaces any
+ *  non-alphanumeric run with a single dash, and trims edge dashes. */
+function slugifyProjectName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project'
+}
+
+/** Triggers a CSV download of the in-memory failure data. Pure DOM —
+ *  no backend round-trip — because the data the user wants is already
+ *  on the page; a server-side ``GET /export`` would just re-serialise
+ *  what we already have. */
+function handleExportCsv({
+  topFailing, flaky, categories, project, days, suiteFilter,
+}: {
+  topFailing: TopFailingItem[]
+  flaky: FlakyTestItem[]
+  categories: FailureCategoryItem[]
+  project: { id: string; name: string } | null
+  days: number
+  suiteFilter: string | null
+}): void {
+  const hasData = topFailing.length > 0 || flaky.length > 0 || categories.length > 0
+  if (!hasData) {
+    toast('No failure data to export in this window', { icon: '📭' })
+    return
+  }
+  const windowLabel = days === 1 ? '24h' : `${days}d`
+  const csv = buildFailuresCsv({
+    topFailing, flaky, categories,
+    meta: {
+      projectName: project?.name ?? 'All projects',
+      windowLabel,
+      suiteName: suiteFilter,
+      generatedAt: new Date().toISOString(),
+    },
+  })
+  // ﻿ BOM so Excel opens the file with UTF-8 encoding by default;
+  // without it, non-ASCII test names (German umlauts, Japanese
+  // characters in suite labels, etc.) render as mojibake.
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const projectSlug = project ? slugifyProjectName(project.name) : 'all-projects'
+  const suiteSlug = suiteFilter ? `-${slugifyProjectName(suiteFilter)}` : ''
+  a.download = `failures-${projectSlug}${suiteSlug}-${windowLabel}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  toast.success(`Exported ${topFailing.length} failing test${topFailing.length === 1 ? '' : 's'}`)
+}
 // ── Verdict ────────────────────────────────────────────────────────────────
 type Verdict = 'REPEAT_FAILURE' | 'FLAKY' | 'FIRST_TIME' | 'RECOVERING' | 'STABLE' | 'PENDING'
 
@@ -363,7 +492,7 @@ function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window
                 : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
             )}
           >
-            {w}d
+            {w === 1 ? '24h' : `${w}d`}
           </button>
         )
       })}
@@ -380,7 +509,7 @@ interface IssueRowSpec {
 }
 
 function VerdictCard({
-  model, verdict, summary, lede, issues, ctas,
+  model, verdict, summary, lede, issues, ctas, topFailing,
 }: {
   model: StabilityModel
   verdict: Verdict
@@ -388,6 +517,7 @@ function VerdictCard({
   lede: React.ReactNode
   issues: IssueRowSpec[]
   ctas: { primary?: IssueRowSpec['cta']; secondary: IssueRowSpec['cta'][] }
+  topFailing: TopFailingItem[]
 }) {
   const t = VERDICT_THEME[verdict]
   return (
@@ -445,6 +575,7 @@ function VerdictCard({
       <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
         <StabilityMeter model={model} verdict={verdict} />
         <DimensionGrid dimensions={model.dimensions} />
+        <SuiteFailureBreakdown topFailing={topFailing} />
       </div>
     </section>
   )
@@ -563,6 +694,82 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
           <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Suite-level failure breakdown ─────────────────────────────────────────
+// Surfaces which test suites are accumulating failures in the current
+// window so the verdict isn't just "X tests broken" without context. Bins
+// the topFailing list by ``suite_name`` (server returns it per row),
+// sorts by total failures, and shows the top 4 suites + an "Other" row.
+function SuiteFailureBreakdown({ topFailing }: { topFailing: TopFailingItem[] }) {
+  const rows = useMemo(() => {
+    const byBin = new Map<string, { suite: string; failures: number; tests: number }>()
+    for (const t of topFailing) {
+      const suite = (t.suite_name && t.suite_name.trim()) || 'Unknown Suite'
+      const cur = byBin.get(suite) ?? { suite, failures: 0, tests: 0 }
+      cur.failures += t.fail_count
+      cur.tests += 1
+      byBin.set(suite, cur)
+    }
+    return [...byBin.values()].sort((a, b) => b.failures - a.failures)
+  }, [topFailing])
+
+  if (rows.length === 0) return null
+
+  const totalFailures = rows.reduce((s, r) => s + r.failures, 0)
+  const head = rows.slice(0, 4)
+  const tail = rows.slice(4)
+  const tailRow = tail.length > 0
+    ? {
+        suite: `+${tail.length} more`,
+        failures: tail.reduce((s, r) => s + r.failures, 0),
+        tests: tail.reduce((s, r) => s + r.tests, 0),
+      }
+    : null
+
+  return (
+    <div
+      className="rounded-sm px-2.5 py-2 border"
+      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+    >
+      <div
+        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between mb-1.5"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        <span>Suites with failures</span>
+        <span className="text-[var(--color-text-faint)] font-medium">{rows.length}</span>
+      </div>
+      <ul className="m-0 p-0 list-none space-y-1">
+        {head.map(r => {
+          const pct = totalFailures > 0 ? Math.round((r.failures / totalFailures) * 100) : 0
+          return (
+            <li key={r.suite} className="flex items-center gap-2 text-[11.5px]">
+              <span className="truncate flex-1 text-[var(--color-text-secondary)]" title={r.suite}>
+                {r.suite}
+              </span>
+              <span className="tabular-nums text-[var(--color-text-muted)]">
+                {r.tests} test{r.tests === 1 ? '' : 's'}
+              </span>
+              <div className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
+                <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: '#ef4444' }} />
+              </div>
+              <span className="tabular-nums font-semibold text-[var(--color-text)] min-w-[28px] text-right">
+                {r.failures}
+              </span>
+            </li>
+          )
+        })}
+        {tailRow && (
+          <li className="flex items-center gap-2 text-[11.5px] text-[var(--color-text-faint)]">
+            <span className="flex-1 truncate italic">{tailRow.suite}</span>
+            <span className="tabular-nums">{tailRow.tests} tests</span>
+            <span className="w-12" aria-hidden />
+            <span className="tabular-nums min-w-[28px] text-right">{tailRow.failures}</span>
+          </li>
+        )}
+      </ul>
     </div>
   )
 }
@@ -764,6 +971,38 @@ function WhatsFailingCard({
   onBisect: () => void
   onMute: () => void
 }) {
+  // Aggregate failed-run count from trend (which reads test_runs.failed_tests
+  // directly). A suite can have failed run aggregates (pass rate < 100%)
+  // while test_cases rows haven't landed — the live-stream Redis-buffer gap
+  // from CLAUDE.md pitfall #15. Cross-check so we don't render the green
+  // "every recent run passed" all-clear while pass-rate / KPI tiles show
+  // the same suite is failing.
+  const failingExecutions = trend.reduce(
+    (s, p) => s + (p.failed || 0) + (p.broken || 0), 0,
+  )
+  const perTestRowsMissing = (
+    (!topFailingTest || topFailingTest.fail_count === 0) && failingExecutions > 0
+  )
+
+  if (perTestRowsMissing) {
+    return (
+      <CardShell
+        title="What's failing"
+        rightSlot={<Pill tone="warn">Per-test data pending</Pill>}
+      >
+        <div className="px-4 py-6 flex flex-col items-center text-center">
+          <TriangleAlert className="h-8 w-8 mb-2" style={{ color: '#fcd34d' }} />
+          <p className="text-[13px] text-[var(--color-text-secondary)] m-0 max-w-md">
+            <strong style={{ color: 'var(--color-text)' }}>{failingExecutions}</strong>{' '}
+            failing execution{failingExecutions === 1 ? '' : 's'} detected in this window,
+            but per-test rows haven&apos;t been persisted yet — common right after a
+            live-stream run finishes. Inspect the failed runs on the Runs page.
+          </p>
+        </div>
+      </CardShell>
+    )
+  }
+
   if (!topFailingTest || topFailingTest.fail_count === 0) {
     return (
       <CardShell title="What's failing" rightSlot={<Pill tone="good">No failures</Pill>}>
@@ -980,6 +1219,98 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct }: {
     </CardShell>
   )
 }
+
+// ── Comparison strip ──────────────────────────────────────────────────────
+// Renders the current-window vs prior-window deltas after the user clicks
+// "Compare to previous window" in verdictCtas. Designed to be cheap: three
+// metric rows (failures, total runs, pass rate), no charts. The label on
+// each delta is colourised the way a triager would expect — fewer failures
+// = green, more failures = red; pass rate inverted.
+type ComparisonStats = { failed: number; total: number; passRate: number; days: number }
+
+function ComparisonStrip({
+  current, prior, windowDays,
+}: { current: ComparisonStats; prior: ComparisonStats; windowDays: number }) {
+  const failedDelta = current.failed - prior.failed
+  const totalDelta  = current.total  - prior.total
+  const rateDelta   = current.passRate - prior.passRate
+
+  // ``deltaColour`` returns CSS values rather than Tailwind classes so the
+  // direction-vs-good logic stays explicit at each call site — a higher
+  // failure count is bad, a higher pass rate is good.
+  const RED   = '#fca5a5'
+  const GREEN = '#86efac'
+  const NEUTRAL = 'var(--color-text-muted)'
+  const colourForFailureDelta = (delta: number): string =>
+    delta === 0 ? NEUTRAL : (delta > 0 ? RED : GREEN)
+  const colourForRateDelta = (delta: number): string =>
+    Math.abs(delta) < 0.01 ? NEUTRAL : (delta > 0 ? GREEN : RED)
+
+  return (
+    <CardShell
+      title="Compare to previous window"
+      rightSlot={<span>last {windowDays}d vs prior {windowDays}d</span>}
+    >
+      <div className="px-4 py-3.5">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+          Aggregated from daily trends. Prior window = the {prior.days} days immediately before this window.
+        </p>
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          <ComparisonCell
+            label="Failures"
+            current={current.failed}
+            prior={prior.failed}
+            delta={failedDelta}
+            deltaColor={colourForFailureDelta(failedDelta)}
+            formatter={(n) => Intl.NumberFormat().format(n)}
+          />
+          <ComparisonCell
+            label="Total runs"
+            current={current.total}
+            prior={prior.total}
+            delta={totalDelta}
+            deltaColor={NEUTRAL}
+            formatter={(n) => Intl.NumberFormat().format(n)}
+          />
+          <ComparisonCell
+            label="Pass rate"
+            current={current.passRate}
+            prior={prior.passRate}
+            delta={rateDelta}
+            deltaColor={colourForRateDelta(rateDelta)}
+            formatter={(n) => `${n.toFixed(1)}%`}
+          />
+        </div>
+      </div>
+    </CardShell>
+  )
+}
+
+function ComparisonCell({
+  label, current, prior, delta, deltaColor, formatter,
+}: {
+  label: string
+  current: number
+  prior: number
+  delta: number
+  deltaColor: string
+  formatter: (n: number) => string
+}) {
+  const arrow = delta === 0 ? '—' : (delta > 0 ? '↑' : '↓')
+  return (
+    <div
+      className="rounded-md border"
+      style={{ padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+    >
+      <div className="text-[11px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</div>
+      <div className="mt-1 text-[18px] font-semibold text-[var(--color-text)]">{formatter(current)}</div>
+      <div className="mt-0.5 text-[11.5px]" style={{ color: deltaColor }}>
+        {arrow} {formatter(Math.abs(delta))} <span className="text-[var(--color-text-muted)]">vs prior {formatter(prior)}</span>
+      </div>
+    </div>
+  )
+}
+
 
 // ── Failure timeline ──────────────────────────────────────────────────────
 function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number }) {
@@ -1312,11 +1643,13 @@ export default function FailureAnalysisPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
-  const [days, setDays] = useState<Window>(() => {
-    const saved = Number(localStorage.getItem(WINDOW_KEY))
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 30
-  })
-  useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
+  // Global shared time-window preference — picking 24h here propagates
+  // to /reports/summary, /live, /coverage, /trends, /runs, /overview,
+  // /my-failures and vice versa. Snapped to this page's allowed set.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, WINDOWS) as Window
+  const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
   const [selectedSuite, setSelectedSuite] = useState('')
@@ -1324,10 +1657,28 @@ export default function FailureAnalysisPage() {
   const suiteFilter = selectedSuite || null
   const { options: suiteOptions } = useSuiteOptions(days)
 
+  // ── Compare-to-previous-window toggle ────────────────────────────────
+  // The "Compare to previous window" CTA flips this on, which triggers a
+  // second trend fetch covering twice the window. We split that into
+  // current + prior halves to compute deltas without a bespoke backend
+  // endpoint. The toggle stays page-local so a stale comparison can't
+  // leak across navigations.
+  const [comparing, setComparing] = useState(false)
+
   const { data: flakyData,    isLoading: flakyLoading    } = useFlakyTests(days, suiteFilter)
   const { data: categoryData, isLoading: categoryLoading } = useFailureCategories(days, suiteFilter)
   const { data: topData,      isLoading: topLoading      } = useTopFailing(days, suiteFilter)
   const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days, suiteFilter)
+  // Double-window trend used for prior-vs-current delta computation.
+  // When the user hasn't enabled comparison, this keys on ``days`` (the
+  // same key as the primary fetch above), so SWR dedupes and no second
+  // request is issued. When ``comparing`` is on, the hook re-keys on
+  // ``days * 2`` and fetches the extended window, which we split into
+  // halves to derive the prior-window stats.
+  const compareDays = comparing ? days * 2 : days
+  const { data: compareTrendsData, isLoading: compareLoading } = useTrendData(
+    compareDays, suiteFilter,
+  )
   // Surface the suite of the most-recent failing run in the header so a user
   // landing on this page can immediately see which test suite owns the
   // failures they're about to triage.
@@ -1338,6 +1689,35 @@ export default function FailureAnalysisPage() {
   const categories = useMemo<FailureCategoryItem[]>(() => normaliseList<FailureCategoryItem>(categoryData), [categoryData])
   const topFailing = useMemo<TopFailingItem[]>(() => normaliseList<TopFailingItem>(topData), [topData])
   const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
+
+  // Comparison stats — only computed when ``comparing`` is true. We
+  // split the double-window trend into "prior" (older half) and
+  // "current" (newer half) and aggregate each. Trend points are
+  // already date-sorted ascending by the backend; if the upstream
+  // ordering ever changes, the sort below makes this resilient.
+  const comparison = useMemo(() => {
+    if (!comparing) return null
+    const points = (compareTrendsData?.data ?? []).slice().sort(
+      (a, b) => a.date.localeCompare(b.date),
+    )
+    if (points.length < 2) return null
+    // Cut at the midpoint so prior == older half, current == newer half.
+    // Odd counts give the extra day to the current window — feels more
+    // honest when the user is looking at "is it getting worse right now".
+    const mid = Math.floor(points.length / 2)
+    const prior   = points.slice(0, mid)
+    const current = points.slice(mid)
+    const summarise = (pts: TrendPoint[]) => {
+      const failed = pts.reduce((s, p) => s + (p.failed || 0), 0)
+      const passed = pts.reduce((s, p) => s + (p.passed || 0), 0)
+      const broken = pts.reduce((s, p) => s + (p.broken || 0), 0)
+      const total  = pts.reduce((s, p) => s + (p.total ?? (p.passed + p.failed + p.skipped + p.broken)), 0)
+      const denom  = passed + failed + broken
+      const passRate = denom > 0 ? (passed / denom) * 100 : 0
+      return { failed, total, passRate, days: pts.length }
+    }
+    return { prior: summarise(prior), current: summarise(current) }
+  }, [comparing, compareTrendsData])
 
   const model = useMemo(
     () => computeStabilityModel({ flaky, categories, topFailing, trend }),
@@ -1395,6 +1775,46 @@ export default function FailureAnalysisPage() {
       toast.error(detail)
     } finally {
       setNotifyingOwner(false)
+    }
+  }
+
+  // Classify modal — opened by the "Category unknown" issue row CTA. Lets
+  // the user bulk-assign a category (Flaky / Product Bug / Infrastructure /
+  // Test Data / Automation Defect) to every uncategorised failure in the
+  // current project + window. The selection persists via the
+  // ``/analytics/classify-uncategorized`` endpoint.
+  const [classifyOpen, setClassifyOpen] = useState(false)
+  const [classifying, setClassifying] = useState(false)
+
+  async function handleClassify(category: 'FLAKY' | 'PRODUCT_BUG' | 'INFRASTRUCTURE' | 'TEST_DATA' | 'AUTOMATION_DEFECT') {
+    if (!project?.id) {
+      toast.error('Pick a specific project to classify failures.')
+      return
+    }
+    if (classifying) return
+    setClassifying(true)
+    try {
+      type Resp = { updated: number; category: string }
+      const resp = await postData<Resp>('/api/v1/analytics/classify-uncategorized', {
+        project_id: project.id,
+        category,
+        days,
+        ...(selectedSuite ? { suite_name: selectedSuite } : {}),
+      })
+      toast.success(
+        resp.updated > 0
+          ? `Tagged ${resp.updated} failure${resp.updated === 1 ? '' : 's'} as ${category.replace('_', ' ').toLowerCase()}.`
+          : 'No uncategorised failures in this window.',
+      )
+      setClassifyOpen(false)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to classify failures'
+      toast.error(detail)
+    } finally {
+      setClassifying(false)
     }
   }
 
@@ -1468,15 +1888,45 @@ export default function FailureAnalysisPage() {
   const issues: IssueRowSpec[] = []
   if (model.topFailingTest && model.topFailingTest.fail_count > 0) {
     const t = model.topFailingTest
-    const failurePct = model.totalRuns > 0
-      ? Math.round((t.fail_count / model.totalRuns) * 100)
-      : 100
+    // Prefer the flaky-list entry for this exact test (if it exists)
+    // since that carries the test's OWN ``total_runs`` — the only
+    // denominator that makes "failure rate" honest. Falling back to
+    // ``model.totalRuns`` (executions across every test in the window)
+    // produced the user-reported "0% failure rate on test X — failed
+    // 8 of 2773" bug: 8/2773 rounds to 0%, and the denominator was
+    // comparing one test's failures to the entire suite's executions.
+    const flakyMatch = flaky.find(f => f.test_name === t.test_name)
+    const perTestRatePct = flakyMatch && flakyMatch.total_runs > 0
+      ? (flakyMatch.fail_count / flakyMatch.total_runs) * 100
+      : null
+    // Share of failures in the current window — meaningful when the
+    // per-test rate isn't available. Tells the user "this single test
+    // accounts for X% of the failures you're looking at."
+    const failureSharePct = model.failedRuns > 0
+      ? (t.fail_count / model.failedRuns) * 100
+      : null
+
+    // Format a percentage so values under 1% show one decimal instead
+    // of collapsing to "0%". 8/2773 now reads as "0.3%", not "0%".
+    const fmtPct = (n: number): string => (
+      n > 0 && n < 1 ? `${n.toFixed(1)}%` : `${Math.round(n)}%`
+    )
+
+    const headline = perTestRatePct !== null
+      ? <><strong>{fmtPct(perTestRatePct)} failure rate</strong> on <code>{t.test_name}</code> — failed {t.fail_count} of {flakyMatch!.total_runs} executions.</>
+      // Drop the misleading denominator when we don't actually know this
+      // test's run count. Lead with the count + share so the user gets
+      // an actionable signal rather than a fake-precise rate.
+      : (
+          <><code>{t.test_name}</code> failed <strong>{t.fail_count}</strong> time{t.fail_count === 1 ? '' : 's'} in this window{failureSharePct !== null ? <> — <strong>{fmtPct(failureSharePct)}</strong> of failures here</> : null}.</>
+        )
+
     issues.push({
       tone: 'bad',
       Icon: XCircle,
       body: (
         <>
-          <strong>{failurePct}% failure rate</strong> on <code>{t.test_name}</code> — failed {t.fail_count} of {model.totalRuns || t.fail_count} executions.
+          {headline}
           {model.repeatFailures.length > 1 && <> <span className="dim">+{model.repeatFailures.length - 1} other repeat{model.repeatFailures.length - 1 === 1 ? '' : 's'}.</span></>}
         </>
       ),
@@ -1493,25 +1943,31 @@ export default function FailureAnalysisPage() {
     })
   }
   if (model.uncategorizedPct >= 50) {
+    // Re-worded from the previous "clustering ran but 100% of failures
+    // couldn't be matched to a known pattern. No owner auto-routed; no
+    // playbook attached." That phrasing implied (a) the cluster stage
+    // was the categorisation source (it isn't — categories come from
+    // the AI triage path), and (b) something concrete failed during
+    // owner routing (the routing simply doesn't fire without a
+    // category). The new wording is shorter, accurate, and points the
+    // user at the actionable next step.
+    const pct = Math.round(model.uncategorizedPct)
     issues.push({
       tone: 'warn',
       Icon: AlertTriangle,
       body: (
         <>
-          <strong>Category unknown</strong> — clustering ran but {Math.round(model.uncategorizedPct)}% of failures couldn't be matched to a known pattern.
-          {' '}<span className="dim">No owner auto-routed; no playbook attached.</span>
+          <strong>{pct}% of failures aren&apos;t categorised yet.</strong>
+          {' '}<span className="dim">Classify them so owners can be auto-routed and a playbook applied.</span>
         </>
       ),
       cta: {
         label: 'Classify',
-        // High uncategorized share means the classifier — whichever mode is
-        // active — didn't match the failure pattern. The actionable surface
-        // is the Analysis Engine config on /settings/ai, where the user can
-        // switch modes (rules → ml/llm/auto), tune the confidence threshold,
-        // or train ML against existing labeled data. Non-admins land there
-        // read-only (the form disables inputs), which is still strictly more
-        // useful than the prior placeholder toast.
-        onClick: () => navigate('/settings/ai'),
+        // Opens the inline category picker (FLAKY / PRODUCT_BUG /
+        // INFRASTRUCTURE / TEST_DATA / AUTOMATION_DEFECT) — the user can
+        // bulk-label every uncategorised failure in the current project +
+        // window. Persists via /api/v1/analytics/classify-uncategorized.
+        onClick: () => setClassifyOpen(true),
       },
     })
   }
@@ -1535,11 +1991,14 @@ export default function FailureAnalysisPage() {
       model.topFailingTest
         ? { label: 'Notify owner', onClick: () => handleNotifyOwner() } as IssueRowSpec['cta']
         : null,
-      // Trends already renders the full window's failure trend; using the
-      // same `days` value lets the user eyeball the current vs prior segment
-      // without a bespoke comparison endpoint. Cleaner than a numeric diff
-      // toast and gets the user closer to drilling into the regression.
-      { label: 'Compare to previous window', onClick: () => navigate(`/trends?days=${days}`) } as IssueRowSpec['cta'],
+      // Toggle an inline comparison panel that shows current-window vs
+      // prior-window deltas (failures, runs, pass rate). Cheap client-
+      // side compute on a double-window trend fetch — no bespoke
+      // backend endpoint needed.
+      {
+        label: comparing ? 'Hide comparison' : 'Compare to previous window',
+        onClick: () => setComparing(c => !c),
+      } as IssueRowSpec['cta'],
     ].filter((c): c is IssueRowSpec['cta'] => c !== null),
   }
 
@@ -1587,8 +2046,10 @@ export default function FailureAnalysisPage() {
             allLabel="All suites"
           />
           <GhostBtn
-            onClick={() => toast('Export failure CSV — coming in Phase 2', { icon: '📦' })}
-            title="Export failure data"
+            onClick={() => handleExportCsv({
+              topFailing, flaky, categories, project, days, suiteFilter,
+            })}
+            title="Export failure data as CSV"
           >
             <Download className="h-3.5 w-3.5" />
             Export
@@ -1606,6 +2067,7 @@ export default function FailureAnalysisPage() {
         lede={lede}
         issues={issues}
         ctas={verdictCtas}
+        topFailing={topFailing}
       />
 
       <CoverageRibbon stages={ribbonStages} />
@@ -1677,6 +2139,23 @@ export default function FailureAnalysisPage() {
             totalFailures={model.failedRuns}
             uncategorizedPct={model.uncategorizedPct}
           />
+          {comparing && (
+            comparison ? (
+              <ComparisonStrip
+                current={comparison.current}
+                prior={comparison.prior}
+                windowDays={days}
+              />
+            ) : (
+              <CardShell title="Compare to previous window" rightSlot={<span>last {days}d vs prior {days}d</span>}>
+                <div className="px-4 py-3.5 text-[12.5px] text-[var(--color-text-muted)]">
+                  {compareLoading
+                    ? 'Loading prior-window data…'
+                    : 'Not enough trend data to compare against the prior window yet.'}
+                </div>
+              </CardShell>
+            )
+          )}
           <FailureTimeline trend={trend} days={days} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
@@ -1699,6 +2178,62 @@ export default function FailureAnalysisPage() {
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
+
+      {classifyOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Classify uncategorised failures"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !classifying && setClassifyOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
+              Classify uncategorised failures
+            </h2>
+            <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+              Every failing test in the last <strong>{days}</strong> day{days === 1 ? '' : 's'}
+              {selectedSuite && <> in <code className="font-mono">{selectedSuite}</code></>} that
+              has no category yet will be tagged with the selected category.
+            </p>
+
+            <div className="mt-4 space-y-2">
+              {([
+                { id: 'FLAKY',             label: 'Flaky',              desc: 'Intermittent — passes on retry; race or fixture issue.' },
+                { id: 'PRODUCT_BUG',       label: 'Product Bug',        desc: 'Regression in the product under test.' },
+                { id: 'INFRASTRUCTURE',    label: 'Infrastructure',     desc: 'Environment / network / platform failure.' },
+                { id: 'TEST_DATA',         label: 'Test Data',          desc: 'Bad fixture, missing seed, stale snapshot.' },
+                { id: 'AUTOMATION_DEFECT', label: 'Automation Defect',  desc: 'Test code is broken, not the product.' },
+              ] as const).map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  disabled={classifying}
+                  onClick={() => handleClassify(c.id)}
+                  className="w-full text-left px-3 py-2.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]/40 transition-colors disabled:opacity-50"
+                >
+                  <div className="text-[13px] font-medium text-[var(--color-text)]">{c.label}</div>
+                  <div className="text-[11.5px] text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setClassifyOpen(false)}
+                disabled={classifying}
+                className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

@@ -115,12 +115,16 @@ async def recall_similar_memories(
         SimilarMemoryResponse(
             memory=AgentMemoryEntryResponse.model_validate(m["memory"]),
             similarity=m["similarity"],
+            retrieval_audit=m.get("retrieval_audit"),
+            memory_reference=m.get("memory_reference"),
         )
         for m in matches
     ]
+    retrieval_audit = matches[0].get("retrieval_audit") if matches else None
 
     return SimilarMemoryRecallResponse(
         query_signature=body.error_signature[:200],
         results=results,
         total_found=len(results),
+        retrieval_audit=retrieval_audit,
     )

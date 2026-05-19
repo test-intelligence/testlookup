@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import FlakySentinelAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase, TestCaseHistory, TestRun, TestStatus
 from app.tools.fetch_build_changes import fetch_build_changes
 
@@ -38,7 +39,13 @@ class FlakySentinelAgent(BaseAgent):
 
         if not flaky_test_ids:
             await self.mark_stage_done(pipeline_run_id, result_data={"flaky_investigated": 0})
-            return {"flaky_findings": []}
+            return validate_agent_contract(
+                FlakySentinelAgentOutput,
+                {"flaky_findings": []},
+                agent_name=self.stage_name,
+                confidence=100,
+                decision_reason="no_flaky_tests_detected",
+            )
 
         findings = []
         capped_ids = flaky_test_ids[:10]  # Cap at 10 to avoid excessive processing
@@ -64,7 +71,17 @@ class FlakySentinelAgent(BaseAgent):
             "message": f"Flaky sentinel investigated {len(findings)} tests",
         })
 
-        return {"flaky_findings": findings}
+        return validate_agent_contract(
+            FlakySentinelAgentOutput,
+            {"flaky_findings": findings},
+            agent_name=self.stage_name,
+            confidence=85 if findings else 70,
+            evidence_refs=[
+                {"type": "flaky_finding", "id": finding.get("test_case_id", "unknown")}
+                for finding in findings
+            ],
+            decision_reason="flaky_lifecycle_investigation_completed",
+        )
 
     async def _investigate_flaky_test(
         self, db, tc: TestCase, tc_id: str, project_id: str

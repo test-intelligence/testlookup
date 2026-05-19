@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Project, Release, ReleaseTestRunLink, TestCase, TestRun
@@ -26,6 +26,7 @@ def enrich_runs_with_release(
     runs: list[TestRun],
     release_map: dict[str, dict[str, str | None]],
     project_map: dict[str, str] | None = None,
+    run_seq_map: dict[str, int] | None = None,
 ) -> list[dict]:
     enriched = []
     for run in runs:
@@ -35,8 +36,78 @@ def enrich_runs_with_release(
         item["release_id"] = release.get("id")
         if project_map is not None:
             item["project_name"] = project_map.get(str(run.project_id)) if run.project_id else None
+        if run_seq_map is not None:
+            item["run_seq"] = run_seq_map.get(str(run.id))
         enriched.append(item)
     return enriched
+
+
+# Suite normalisation expression used by ``fetch_run_seq_map``. NULL +
+# empty-string + whitespace-only suite names all collapse to a single
+# "unnamed" partition so a run that never had ``primary_suite_name`` set
+# still gets a stable sequence number within its project.
+_SUITE_NORM = func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "")))
+
+
+async def fetch_run_seq_map(
+    db: AsyncSession, run_ids: list[uuid.UUID],
+) -> dict[str, int]:
+    """Per-(project, primary_suite_name) incremental run number, starting at 1.
+
+    The sequence is computed across the **entire** history of the
+    partitions involved — not just the requested ``run_ids`` — so a run's
+    number is stable as the user paginates, filters, or revisits the
+    page weeks later. Filtering to only the page rows would shift the
+    sequence per request, which would defeat the whole point of a
+    human-readable identifier.
+
+    Strategy:
+      1. Look up each requested run's ``(project_id, suite_key)`` pair.
+      2. Run a single window-function pass over EVERY run in those
+         partitions, with stable tie-breaker ``ORDER BY created_at ASC,
+         id ASC`` so equal-timestamp inserts don't swap numbers.
+      3. Return ``{run_id: rn}`` for the originally requested ids.
+
+    Empty input → empty result, no queries fired. Used by ``/runs``,
+    ``/live``, and ``/my-failures`` so a given run's "Run #N" label
+    matches everywhere it appears.
+    """
+    if not run_ids:
+        return {}
+
+    # 1. Pairs in scope.
+    pair_q = select(
+        TestRun.project_id,
+        _SUITE_NORM.label("suite_key"),
+    ).where(TestRun.id.in_(run_ids)).distinct()
+    pairs = list((await db.execute(pair_q)).all())
+    if not pairs:
+        return {}
+
+    # 2. Build the per-pair filter as an OR of AND-pairs. SQLAlchemy
+    # supports ``tuple_(a, b).in_(...)`` but its asyncpg compilation
+    # path is finicky with mixed-type tuples — explicit ORs are
+    # uglier but bulletproof. Partition count is bounded by the page
+    # size (one project + a handful of suites in practice).
+    # Attribute access (not unpacking) so mock rows that aren't
+    # tuple-iterable still work in unit tests.
+    pair_filters = [
+        and_(TestRun.project_id == p.project_id, _SUITE_NORM == p.suite_key)
+        for p in pairs
+    ]
+    ranked = (
+        select(
+            TestRun.id,
+            func.row_number().over(
+                partition_by=(TestRun.project_id, _SUITE_NORM),
+                order_by=(TestRun.created_at.asc(), TestRun.id.asc()),
+            ).label("rn"),
+        )
+        .where(or_(*pair_filters))
+        .subquery()
+    )
+    final_q = select(ranked.c.id, ranked.c.rn).where(ranked.c.id.in_(run_ids))
+    return {str(rid): int(rn) for rid, rn in (await db.execute(final_q)).all()}
 
 
 async def fetch_project_name_map(db: AsyncSession, project_ids: list[uuid.UUID]) -> dict[str, str]:
@@ -168,19 +239,77 @@ async def list_project_runs(
         if row[0].project_id and row.project_name
     }
 
-    release_map = await fetch_release_map(db, [run.id for run in runs])
+    run_ids = [run.id for run in runs]
+    release_map = await fetch_release_map(db, run_ids)
+    run_seq_map = await fetch_run_seq_map(db, run_ids)
     pages = -(-total // size)
-    return enrich_runs_with_release(runs, release_map, project_map), total, pages
+    return (
+        enrich_runs_with_release(runs, release_map, project_map, run_seq_map=run_seq_map),
+        total,
+        pages,
+    )
 
 
 async def get_run_with_release(db: AsyncSession, run_id: uuid.UUID):
     run = (await db.execute(select(TestRun).where(TestRun.id == run_id))).scalar_one_or_none()
     if not run:
-        return None
+        # Live-session fallback: a brand-new live session that hasn't
+        # drained any events yet has a LiveSession row but no TestRun
+        # row — the drainer only creates the TestRun on first non-empty
+        # drain (every 30s) and ``persist_live_session`` creates it on
+        # session-complete. Without this fallback, clicking the row
+        # from /live during the first 30s 404s. (Bug 2026-05-19.)
+        #
+        # ``LiveSession.id`` == the ``run_id`` returned to the SDK in the
+        # modern flow (``create_live_session``: ``session_id =
+        # str(uuid.uuid4())`` then ``run_id = session_id``). For the
+        # SDK-supplied slug flow, ``LiveSession.run_id`` is the slug; we
+        # don't match on that here — the user-facing /live page emits
+        # the canonical UUID so clicking always hits this branch.
+        from app.models.postgres import LiveSession
+        live = (
+            await db.execute(select(LiveSession).where(LiveSession.id == run_id))
+        ).scalar_one_or_none()
+        if live is None:
+            return None
+        run = _synthesize_run_from_live_session(live)
     release_map = await fetch_release_map(db, [run_id])
     project_ids = [run.project_id] if run.project_id else []
     project_map = await fetch_project_name_map(db, project_ids)
-    return enrich_runs_with_release([run], release_map, project_map)[0]
+    run_seq_map = await fetch_run_seq_map(db, [run_id])
+    return enrich_runs_with_release(
+        [run], release_map, project_map, run_seq_map=run_seq_map,
+    )[0]
+
+
+def _synthesize_run_from_live_session(live) -> "TestRun":
+    """Build a TestRun-shaped object from a still-active LiveSession.
+
+    Detached from the session — never added to ``db``. Caller renders
+    it via ``enrich_runs_with_release`` exactly like a real row, so the
+    page handlers don't need a separate code path for in-flight runs.
+    The aggregates are zero because no events have been drained yet;
+    once the 30s drainer fires (or the SDK sends ``run_complete``) the
+    real TestRun row materialises and this fallback stops firing.
+    """
+    from app.models.postgres import LaunchStatus
+    run = TestRun(
+        id=live.id,
+        project_id=live.project_id,
+        build_number=live.build_number or str(live.id)[:8],
+        trigger_source="live_stream",
+        status=LaunchStatus.IN_PROGRESS,
+        total_tests=int(getattr(live, "total_tests", 0) or 0),
+        passed_tests=0,
+        failed_tests=0,
+        skipped_tests=0,
+        broken_tests=0,
+        primary_suite_name=getattr(live, "suite_name", None),
+        start_time=live.started_at,
+        end_time=live.started_at,
+        created_at=live.started_at,
+    )
+    return run
 
 
 async def list_run_test_cases(

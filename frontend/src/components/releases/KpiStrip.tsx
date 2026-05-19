@@ -115,6 +115,7 @@ interface KpiStripProps {
  * between renders.
  */
 function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
+  const planning = releases.filter(r => r.stage === 'planning')
   const inProgress = releases.filter(r => r.stage === 'in_progress')
   const readyToShip = inProgress.filter(r => r.gate.decision === 'go')
   const blocked = inProgress.filter(r => r.gate.decision === 'no_go' || r.blockers.some(b => b.severity === 'red'))
@@ -125,12 +126,20 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
       new Date(r.source.released_at).getTime() >= cutoff,
     ).length
   })()
+  // When the project has releases but they're all stuck at Planning,
+  // the KPI strip used to render four zeros — accurate but useless.
+  // Surface the Planning count as the In Progress sub-line so the
+  // user can see "N at Planning · promote to In Progress" instead of
+  // wondering whether the page is broken.
+  const inProgressSub = inProgress.length === 0 && planning.length > 0
+    ? `<strong>${planning.length}</strong> at Planning · promote one to start tracking`
+    : 'from last week'
   return [
     {
       label: 'In progress',
       value: inProgress.length,
       tone: 'neutral',
-      sub: 'from last week',
+      sub: inProgressSub,
       sparkline: [4, 5, 4, 6, 7, 6, 7, inProgress.length || 6],
     },
     {

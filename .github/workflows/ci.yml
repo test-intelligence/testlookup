@@ -16,6 +16,63 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────────
+  # JOB 0: Guard against floating image tags in k8s manifests
+  # ─────────────────────────────────────────────────────────────
+  k8s-image-pin-check:
+    name: K8s — Forbid :latest image tags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on :latest image tags in k8s/**
+        run: |
+          set -euo pipefail
+          # Match two patterns:
+          #   image: foo/bar:latest             (any image: line ending in :latest)
+          #   newTag: latest                    (any kustomize override pinning :latest)
+          # The BUILD_TAG_PLACEHOLDER literal in homelab/kustomization.yaml is
+          # intentional: it's substituted in-place by deploy-homelab.sh and is
+          # designed to fail at ImagePull if anyone bypasses the deploy script.
+          violations=$(grep -rnE '(image:[[:space:]]*[^[:space:]]+:latest$|^[[:space:]]*newTag:[[:space:]]*latest$)' \
+            k8s/ || true)
+          if [ -n "$violations" ]; then
+            echo "::error::Floating :latest tags found in k8s manifests:"
+            echo "$violations"
+            echo
+            echo "Pin to an exact version, or use the BUILD_TAG mechanism in"
+            echo "homelabsetup/deploy-homelab.sh."
+            exit 1
+          fi
+          echo "All k8s image tags pinned. ✓"
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 0b: Cross-cutting invariant guards
+  # Runs scripts/quality_gate.py which codifies the rules from
+  # CLAUDE.md as a ratchet: existing violations are baselined in
+  # scripts/quality-gate-baselines/, only NEW violations fail.
+  # No backend / frontend / DB deps required — pure file IO.
+  # ─────────────────────────────────────────────────────────────
+  quality-gate:
+    name: Quality Gates — Cross-cutting invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Run cross-cutting quality gates
+        run: python scripts/quality_gate.py
+
+      - name: Self-test the quality-gate script
+        # Pins the ratchet semantics so a careless edit to quality_gate.py
+        # can't accidentally turn the gate into a no-op.
+        run: |
+          cd scripts
+          python -m pytest test_quality_gate.py -v
+
+  # ─────────────────────────────────────────────────────────────
   # JOB 1: Backend tests and linting
   # ─────────────────────────────────────────────────────────────
   backend-test:
@@ -224,7 +281,7 @@ jobs:
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [backend-test, frontend-test, mcp-test]
+    needs: [quality-gate, backend-test, frontend-test, mcp-test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     permissions:
@@ -277,6 +334,38 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
+
+      # Stage client SDKs into the backend build context so the production
+      # Dockerfile can bake them into the image at /app/client_sdks (the
+      # ``/api/v1/sdk/{lang}`` download endpoint reads from there). Mirrors
+      # the staging step in homelabsetup/deploy-homelab.sh — without it the
+      # `COPY --from=builder /app/__client_sdks_staged ./client_sdks` line
+      # in backend/Dockerfile fails with "/app/__client_sdks_staged: not
+      # found" during the production build.
+      - name: Stage client SDKs into backend context
+        run: |
+          set -euo pipefail
+          STAGED_SDK="./backend/__client_sdks_staged"
+          rm -rf "$STAGED_SDK"
+          mkdir -p "$STAGED_SDK"
+          rsync -a \
+            --exclude='.pytest_cache' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            --exclude='node_modules' \
+            --exclude='.tox' \
+            --exclude='.mypy_cache' \
+            --exclude='.ruff_cache' \
+            --exclude='target' \
+            --exclude='build' \
+            --exclude='*.egg-info' \
+            --exclude='.coverage' \
+            --exclude='htmlcov' \
+            --exclude='.DS_Store' \
+            ./client/ "$STAGED_SDK/"
+          ls -la "$STAGED_SDK" | head -20
 
       - name: Build & push backend
         uses: docker/build-push-action@v7

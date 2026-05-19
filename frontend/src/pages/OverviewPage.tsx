@@ -12,6 +12,7 @@ import { useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
 import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import type { TrendPoint } from '@/types/metrics'
@@ -20,9 +21,13 @@ import type { TestRun } from '@/types/runs'
 
 // `1` = last 24 hours. Label is rendered as "24h" (the only sub-day option);
 // all other values render as `${d}d`.
-const TIME_OPTIONS = [1, 7, 14, 30, 90]
+const TIME_OPTIONS = [1, 7, 14, 30, 90] as const
 
-type Verdict = 'GO' | 'CONDITIONAL' | 'NO_GO' | 'PENDING'
+// 5-state verdict layered over the backend's 4-band pass-rate classification
+// (red/orange/yellow/green) plus the legacy "no data → PENDING" sentinel.
+// ``WATCH`` is the yellow band — pass-rate is healthy but inside the project's
+// caution zone (e.g. 95-99%). Still GO, just flagged for review.
+type Verdict = 'GO' | 'WATCH' | 'CONDITIONAL' | 'NO_GO' | 'PENDING'
 
 const VERDICT_THEME: Record<Verdict, {
   barColor: string
@@ -50,16 +55,34 @@ const VERDICT_THEME: Record<Verdict, {
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'ship cleared',
   },
+  WATCH: {
+    // Yellow band — healthy but flagged. Uses a lemon/yellow palette to keep
+    // it visually distinct from CONDITIONAL (which is amber/orange) and GO
+    // (which is green).
+    barColor: '#facc15',
+    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(250,204,21,0.08), transparent 55%)',
+    border: 'rgba(250,204,21,0.35)',
+    eyebrowDot: '#facc15',
+    eyebrowText: '#fde68a',
+    gateText: '#fde68a',
+    meterValue: '#fde68a',
+    meterTrack: 'rgba(250,204,21,0.18)',
+    meterFill: 'linear-gradient(90deg, #eab308, #facc15)',
+    eyebrowLabel: 'RELEASE READINESS',
+    headlineSuffix: 'go with watch',
+  },
   CONDITIONAL: {
+    // Orange band — softer warning than NO_GO. Uses a true amber/orange,
+    // visually distinct from WATCH.
     barColor: 'var(--gate-conditional)',
-    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(234,179,8,0.10), transparent 55%)',
-    border: 'rgba(234,179,8,0.35)',
+    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(249,115,22,0.10), transparent 55%)',
+    border: 'rgba(249,115,22,0.35)',
     eyebrowDot: 'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText: '#fcd34d',
-    meterValue: '#fcd34d',
-    meterTrack: 'rgba(234,179,8,0.18)',
-    meterFill: 'linear-gradient(90deg, #eab308, #fbbf24)',
+    eyebrowText: '#fdba74',
+    gateText: '#fdba74',
+    meterValue: '#fdba74',
+    meterTrack: 'rgba(249,115,22,0.18)',
+    meterFill: 'linear-gradient(90deg, #f97316, #fb923c)',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'review before shipping',
   },
@@ -91,8 +114,19 @@ const VERDICT_THEME: Record<Verdict, {
   },
 }
 
-function mapReadinessToVerdict(readiness: DashboardSummary['release_readiness'], totalExecutions: number): Verdict {
-  if (totalExecutions <= 0 || readiness == null) return 'PENDING'
+function mapReadinessToVerdict(
+  band: DashboardSummary['release_readiness_band'],
+  readiness: DashboardSummary['release_readiness'],
+  totalExecutions: number,
+): Verdict {
+  if (totalExecutions <= 0) return 'PENDING'
+  // Prefer the 4-band classification when the backend returned one.
+  if (band === 'green')  return 'GO'
+  if (band === 'yellow') return 'WATCH'
+  if (band === 'orange') return 'CONDITIONAL'
+  if (band === 'red')    return 'NO_GO'
+  // Legacy 3-state fallback for projects without an active policy.
+  if (readiness == null) return 'PENDING'
   if (readiness === 'GREEN') return 'GO'
   if (readiness === 'AMBER') return 'CONDITIONAL'
   return 'NO_GO'
@@ -100,6 +134,7 @@ function mapReadinessToVerdict(readiness: DashboardSummary['release_readiness'],
 
 function gateLabel(v: Verdict): string {
   return v === 'GO' ? 'Go'
+    : v === 'WATCH' ? 'Go (watch)'
     : v === 'CONDITIONAL' ? 'Conditional'
     : v === 'NO_GO' ? 'No-Go'
     : 'Pending'
@@ -111,7 +146,8 @@ function readinessConfidence(v: Verdict, passRate: number): { pct: number; label
   if (v === 'PENDING') return { pct: 0, label: 'no data' }
   if (v === 'NO_GO')   return { pct: Math.max(20, Math.min(45, Math.round(passRate))), label: 'low' }
   if (v === 'CONDITIONAL') return { pct: Math.max(50, Math.min(75, Math.round(passRate))), label: 'moderate' }
-  return { pct: Math.max(80, Math.min(99, Math.round(passRate))), label: 'high' }
+  if (v === 'WATCH')   return { pct: Math.max(75, Math.min(92, Math.round(passRate))), label: 'good' }
+  return { pct: Math.max(92, Math.min(100, Math.round(passRate))), label: 'high' }
 }
 
 function timeAgo(iso: string | undefined | null): string {
@@ -434,6 +470,13 @@ interface RibbonStage {
   pillText: string
   pillTone: 'accent' | 'red'
   duration: string
+  /**
+   * Route the card navigates to when clicked. The cards were styled as
+   * ``cursor-pointer`` + ``tabIndex={0}`` for months but had no handler —
+   * users reported the panels "show nothing." Each stage now drills into
+   * the page that owns the underlying evidence.
+   */
+  linkTo: string
 }
 
 function buildRibbonStages(
@@ -441,7 +484,7 @@ function buildRibbonStages(
   totalExecutions: number,
   days: number,
 ): RibbonStage[] {
-  const verdict = mapReadinessToVerdict(summary?.release_readiness, totalExecutions)
+  const verdict = mapReadinessToVerdict(summary?.release_readiness_band, summary?.release_readiness, totalExecutions)
   const passRateRaw = (summary?.avg_pass_rate_7d?.value as number | undefined) ?? 0
   const conf = readinessConfidence(verdict, passRateRaw)
   const newFailures = (summary?.new_failures_24h?.value as number | undefined) ?? 0
@@ -450,10 +493,10 @@ function buildRibbonStages(
 
   if (totalExecutions <= 0) {
     return [
-      { name: 'Quality Snapshot', state: 'pending', desc: `No runs captured in ${days} days`, pillText: 'awaiting data', pillTone: 'accent', duration: '—' },
-      { name: 'Readiness Check',  state: 'pending', desc: 'Need ≥ 1 run to assess',           pillText: 'pending',       pillTone: 'accent', duration: '—' },
-      { name: 'Trend Analysis',   state: 'pending', desc: 'No baseline yet',                   pillText: 'pending',       pillTone: 'accent', duration: '—' },
-      { name: 'Action Focus',     state: 'pending', desc: 'No actions queued',                 pillText: 'pending',       pillTone: 'accent', duration: '—' },
+      { name: 'Quality Snapshot', state: 'pending', desc: `No runs captured in ${days} days`, pillText: 'awaiting data', pillTone: 'accent', duration: '—', linkTo: '/runs' },
+      { name: 'Readiness Check',  state: 'pending', desc: 'Need ≥ 1 run to assess',           pillText: 'pending',       pillTone: 'accent', duration: '—', linkTo: '/release-gate' },
+      { name: 'Trend Analysis',   state: 'pending', desc: 'No baseline yet',                   pillText: 'pending',       pillTone: 'accent', duration: '—', linkTo: '/trends' },
+      { name: 'Action Focus',     state: 'pending', desc: 'No actions queued',                 pillText: 'pending',       pillTone: 'accent', duration: '—', linkTo: '/failures' },
     ]
   }
 
@@ -466,6 +509,7 @@ function buildRibbonStages(
       pillText: '1 evidence',
       pillTone: 'accent',
       duration: '1.2s',
+      linkTo: '/runs',
     },
     {
       name: 'Readiness Check',
@@ -474,6 +518,7 @@ function buildRibbonStages(
       pillText: '1 evidence',
       pillTone: verdict === 'GO' ? 'accent' : 'red',
       duration: '3.4s',
+      linkTo: '/release-gate',
     },
     {
       name: 'Trend Analysis',
@@ -484,6 +529,7 @@ function buildRibbonStages(
       pillText: '1 evidence',
       pillTone: 'accent',
       duration: '0.8s',
+      linkTo: '/trends',
     },
     {
       name: 'Action Focus',
@@ -497,6 +543,7 @@ function buildRibbonStages(
       pillText: `${Math.max(actionCount, 1)} evidence`,
       pillTone: 'accent',
       duration: '1.6s',
+      linkTo: '/failures',
     },
   ]
 }
@@ -530,9 +577,10 @@ function StageCard({ stage }: { stage: RibbonStage }) {
     : { bg: 'rgba(68,147,248,0.10)', fg: 'var(--color-accent)' }
 
   return (
-    <div
-      tabIndex={0}
-      className="flex flex-col gap-1.5 rounded-md px-3 py-2.5 transition-all duration-150 cursor-pointer hover:-translate-y-px focus:-translate-y-px focus:outline-none"
+    <Link
+      to={stage.linkTo}
+      aria-label={`Open ${stage.name}`}
+      className="flex flex-col gap-1.5 rounded-md px-3 py-2.5 transition-all duration-150 cursor-pointer hover:-translate-y-px focus:-translate-y-px focus:outline-none no-underline"
       style={{
         background: 'var(--color-bg)',
         border: '1px solid var(--color-border)',
@@ -563,7 +611,7 @@ function StageCard({ stage }: { stage: RibbonStage }) {
         </span>
         <span className="tabular-nums">{stage.duration}</span>
       </div>
-    </div>
+    </Link>
   )
 }
 
@@ -608,7 +656,12 @@ function ExecutionTrendChart({ trends, days }: { trends: TrendPoint[]; days: num
   const data = useMemo(
     () =>
       trends.map((p) => ({
-        date: p.date.length > 10 ? p.date.slice(5, 10) : p.date,
+        // ``p.date`` is ISO ``yyyy-mm-dd`` from the backend; chart x-axis
+        // wants the short ``mm-dd`` for compactness. Slice 5..10. The
+        // legacy ``"May 16"`` format (length 6) is no longer produced;
+        // the ``length >= 10`` guard keeps any stray short value usable
+        // rather than crashing if a caller injects one.
+        date: p.date.length >= 10 ? p.date.slice(5, 10) : p.date,
         passed: p.passed,
         failed: p.failed,
         skipped: p.skipped,
@@ -835,9 +888,14 @@ function runHasSuite(run: TestRun, suiteName: string): boolean {
 export default function OverviewPage() {
   // Default window is last 24h (days=1) across Overview/Runs/Live/Trends/
   // Coverage so users land on the freshest picture by default. They can
-  // widen via the picker; on pages with localStorage persistence (Runs,
-  // Trends, Coverage) any previously-saved choice still wins.
-  const [days, setDays] = useState(1)
+  // Window is a global user-level preference (shared with Runs / Trends
+  // / Coverage / Failures / Live / Summary / My Failures). Picking 24h
+  // here propagates everywhere and vice versa. Snapped to this page's
+  // allowed set.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, TIME_OPTIONS)
+  const setDays = setStoredDays
   const [showPicker, setShowPicker] = useState(false)
   const [selectedSuite, setSelectedSuite] = useState('')
   const project = useProjectStore((s) => s.activeProject)
@@ -868,7 +926,7 @@ export default function OverviewPage() {
   const newFailuresDelta = summary?.new_failures_24h?.trend ?? 0
   const avgDurationMs = summary?.avg_duration_ms?.value as number | undefined
 
-  const verdict = mapReadinessToVerdict(summary?.release_readiness, totalExecutions)
+  const verdict = mapReadinessToVerdict(summary?.release_readiness_band, summary?.release_readiness, totalExecutions)
   const generatedLabel = totalExecutions > 0 ? 'just now' : `awaiting data · last ${days} days`
   const lastRunLabel = trendData.length > 0
     ? timeAgo(`${trendData[trendData.length - 1].date}T00:00:00Z`)

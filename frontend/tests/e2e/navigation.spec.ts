@@ -20,7 +20,15 @@ test.describe('Sidebar Navigation', () => {
     test(`Navigate to ${route.name}`, async ({ page }) => {
       // Click the sidebar NavLink — this is a client-side React Router navigation
       // that does NOT cause a full-page reload, so no re-authentication is needed.
-      await page.locator(`aside a[href="${route.path}"]`).click();
+      const link = page.locator(`aside a[href="${route.path}"]`).first();
+      if (!(await link.isVisible().catch(() => false))) {
+        await page
+          .locator('aside a[href="/runs"]')
+          .locator('..')
+          .getByRole('button', { name: /expand/i })
+          .click();
+      }
+      await link.click();
       await expect(page).toHaveURL(new RegExp(`.*${route.path}`));
 
       // Give sufficient timeout for live backend loading

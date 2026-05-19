@@ -11,6 +11,7 @@ from app.routers import (
     agent_memory,
     agents,
     ai_evaluation,
+    admin_maintenance,
     analyze,
     analytics,
     api_keys,
@@ -35,6 +36,7 @@ from app.routers import (
     live,
     llm_cost_budget as llm_cost_budget_router,
     metrics,
+    my_failures,
     notifications,
     onboarding,
     ownership,
@@ -58,6 +60,8 @@ from app.routers import (
     sso,
     stream,
     suites,
+    summary_report,
+    test_execution_reviews,
     test_health,
     test_management,
     users,
@@ -86,7 +90,13 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
 )
 
 PROTECTED_ROUTERS: Sequence[APIRouter] = (
+    admin_maintenance.router,
     projects.router,
+    # run_compare must be registered BEFORE runs.router because both share the
+    # ``/api/v1/runs`` prefix and runs.router has ``GET /{run_id}`` which
+    # otherwise swallows ``/compare`` and ``/compare/latest`` as a UUID path
+    # param, yielding 422.
+    run_compare.router,                # Tier 2 item 8: two-run compare
     runs.router,
     metrics.router,
     search.router,
@@ -133,8 +143,10 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     compliance_packs.router,           # Tier 1 item 4: release compliance export pack
     github_integration.router,         # Tier 1 item 5: GitHub Checks integration
     webhooks_outbound.router,          # Tier 2 item 6: outbound webhook subscriptions
-    run_compare.router,                # Tier 2 item 8: two-run compare
     suites.router,                     # Phase 3: TestSuite + CanonicalTestCase CRUD
+    my_failures.router,                # 0080: per-user "My Failures" inbox of auto-assigned failures
+    test_execution_reviews.router,     # 0081: per-TestCase human review transitions
+    summary_report.router,             # Per-project consolidated summary report + PDF export
 )
 
 

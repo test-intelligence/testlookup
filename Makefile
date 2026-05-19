@@ -166,6 +166,18 @@ type-check: ## Run type checking (mypy + tsc)
 	$(DOCKER_COMPOSE) exec backend mypy app/
 	$(DOCKER_COMPOSE) exec frontend npm run type-check
 
+quality-gate: ## Run cross-cutting invariant guards (backend / frontend / database / agents)
+	python scripts/quality_gate.py
+
+quality-gate-list: ## List every quality-gate guard with a one-line description
+	python scripts/quality_gate.py --list
+
+quality-gate-update-baseline: ## Re-snapshot the ratchet baseline (review the diff before commit)
+	python scripts/quality_gate.py --update-baseline
+
+quality-gate-test: ## Run the unit tests for the quality-gate script itself
+	cd scripts && python -m pytest test_quality_gate.py -v
+
 # ── Build ─────────────────────────────────────────────────────
 
 build: ## Build production Docker images
@@ -213,6 +225,12 @@ k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS,
 
 k8s-deploy-homelab-update: ## Rebuild images and redeploy to homelab (skip registry + models)
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh --skip-registry --skip-models $(ARGS)
+
+k8s-stop-homelab: ## Graceful pause: drain testlookup workloads + stop K3s on every node (PVCs preserved)
+	$(BASH_CMD) homelabsetup/stop-homelab.sh $(ARGS)
+
+k8s-restart-homelab: ## Resume from k8s-stop-homelab: start K3s + scale workloads back to their pre-shutdown replicas
+	$(BASH_CMD) homelabsetup/restart-homelab.sh $(ARGS)
 
 k8s-status: ## Show Kubernetes deployment status
 	kubectl get pods,svc,ing -n testlookup

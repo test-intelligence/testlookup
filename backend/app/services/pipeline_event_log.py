@@ -16,6 +16,7 @@ This enables:
 Events are append-only (insert, never update or delete).
 """
 import logging
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -24,6 +25,29 @@ from app.db.mongo import get_mongo_db
 logger = logging.getLogger("services.pipeline_event_log")
 
 _COLLECTION = "pipeline_event_log"
+_MAX_WRITE_ATTEMPTS = 2
+_DEAD_LETTER_LIMIT = 200
+_WRITE_FAILURE_COUNT = 0
+_DEAD_LETTER_EVENTS: list[dict[str, Any]] = []
+
+
+def _record_dead_letter(event: dict[str, Any], error: Exception) -> None:
+    """Keep bounded accounting for audit writes that could not reach Mongo."""
+    global _WRITE_FAILURE_COUNT
+    _WRITE_FAILURE_COUNT += 1
+    _DEAD_LETTER_EVENTS.append({
+        "failed_at": datetime.now(timezone.utc).isoformat(),
+        "error": str(error)[:500],
+        "event": {
+            "pipeline_run_id": event.get("pipeline_run_id"),
+            "event_type": event.get("event_type"),
+            "stage_name": event.get("stage_name"),
+            "test_case_id": event.get("test_case_id"),
+            "detail": event.get("detail", {}),
+        },
+    })
+    if len(_DEAD_LETTER_EVENTS) > _DEAD_LETTER_LIMIT:
+        del _DEAD_LETTER_EVENTS[: len(_DEAD_LETTER_EVENTS) - _DEAD_LETTER_LIMIT]
 
 
 async def emit_event(
@@ -46,20 +70,34 @@ async def emit_event(
         test_case_id: The test case ID (optional, for per-test events).
         detail: Additional event-specific data.
     """
-    try:
-        db = get_mongo_db()
-        event = {
-            "pipeline_run_id": pipeline_run_id,
-            "event_type": event_type,
-            "timestamp": datetime.now(timezone.utc),
-            "stage_name": stage_name,
-            "test_case_id": test_case_id,
-            "detail": detail or {},
-        }
-        await db[_COLLECTION].insert_one(event)
-    except Exception as exc:
-        # Event logging is best-effort — never fail the pipeline
-        logger.debug("Pipeline event log write failed: %s", exc)
+    event = {
+        "pipeline_run_id": pipeline_run_id,
+        "event_type": event_type,
+        "timestamp": datetime.now(timezone.utc),
+        "stage_name": stage_name,
+        "test_case_id": test_case_id,
+        "detail": detail or {},
+    }
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_WRITE_ATTEMPTS + 1):
+        try:
+            db = get_mongo_db()
+            await db[_COLLECTION].insert_one(event)
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt < _MAX_WRITE_ATTEMPTS:
+                await asyncio.sleep(0)
+
+    # Event logging is best-effort — never fail the pipeline — but failed
+    # writes are now counted and retained so operators can audit gaps.
+    if last_error is not None:
+        _record_dead_letter(event, last_error)
+        logger.warning(
+            "Pipeline event log write failed after %s attempts: %s",
+            _MAX_WRITE_ATTEMPTS,
+            last_error,
+        )
 
 
 async def get_pipeline_timeline(pipeline_run_id: str) -> list[dict]:
@@ -99,3 +137,13 @@ async def get_pipeline_event_stats(pipeline_run_id: str) -> dict:
     except Exception as exc:
         logger.warning("Pipeline event stats query failed: %s", exc)
         return {}
+
+
+def get_event_log_health() -> dict[str, Any]:
+    """Expose bounded write-failure accounting for audit observability."""
+    return {
+        "write_failure_count": _WRITE_FAILURE_COUNT,
+        "dead_letter_count": len(_DEAD_LETTER_EVENTS),
+        "dead_letter_limit": _DEAD_LETTER_LIMIT,
+        "recent_dead_letters": list(_DEAD_LETTER_EVENTS),
+    }

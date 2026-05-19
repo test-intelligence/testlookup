@@ -67,6 +67,43 @@ class ActionPlan(BaseModel):
     owner_hints: dict[str, str] = Field(default_factory=dict)
 
 
+# ── Root-Cause Analysis Schema ──────────────────────────────────────────────
+
+
+class RootCauseAnalysis(BaseModel):
+    """Structured output from the ReAct root-cause triage agent."""
+    root_cause_summary: str = ""
+    failure_category: str = "UNKNOWN"
+    backend_error_found: bool = False
+    pod_issue_found: bool = False
+    is_flaky: bool = False
+    confidence_score: int = Field(default=0, ge=0, le=100)
+    recommended_actions: list[str] = Field(default_factory=list)
+    role_actions: dict[str, str] = Field(default_factory=dict)
+    evidence_references: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("failure_category", mode="before")
+    @classmethod
+    def normalize_failure_category(cls, v: Any) -> str:
+        allowed = {
+            "PRODUCT_BUG",
+            "INFRASTRUCTURE",
+            "TEST_DATA",
+            "AUTOMATION_DEFECT",
+            "FLAKY",
+            "UNKNOWN",
+        }
+        val = str(v or "UNKNOWN").strip().upper().replace(" ", "_")
+        return val if val in allowed else "UNKNOWN"
+
+    @field_validator("recommended_actions", mode="before")
+    @classmethod
+    def normalize_actions(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [str(item).strip() for item in v if str(item).strip()][:10]
+
+
 # ── Executive Panel Schemas ────────────────────────────────────────────────
 
 
@@ -172,3 +209,23 @@ def validate_llm_output(
         defaults = schema.model_construct().model_dump()
         merged = {**defaults, **{k: v for k, v in raw_dict.items() if v is not None}}
         return merged
+
+
+def validate_llm_output_with_error(
+    schema: type[BaseModel],
+    raw_dict: dict[str, Any],
+    context: str = "",
+) -> tuple[dict[str, Any], str | None]:
+    """Validate parsed LLM output and return a structured failure reason."""
+    try:
+        validated = schema.model_validate(raw_dict)
+        return validated.model_dump(), None
+    except Exception as exc:
+        logger.warning(
+            "LLM output validation failed — using defaults for missing fields",
+            context=context,
+            error=str(exc),
+        )
+        defaults = schema.model_construct().model_dump()
+        merged = {**defaults, **{k: v for k, v in raw_dict.items() if v is not None}}
+        return merged, str(exc)

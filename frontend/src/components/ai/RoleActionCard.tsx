@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { clsx } from 'clsx'
 import { Copy, Check, User, Code, Server, Shield } from 'lucide-react'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 const ROLE_CONFIG: Record<string, { label: string; icon: React.ElementType; colour: string }> = {
   qa:              { label: 'QA',              icon: User,   colour: 'text-[var(--color-text)]' },
@@ -28,9 +29,10 @@ export default function RoleActionCard({ roleActions, filterRoles, compact }: Ro
   if (roles.length === 0) return null
 
   const handleCopy = (role: string, text: string) => {
-    navigator.clipboard.writeText(text)
-    setCopiedRole(role)
-    setTimeout(() => setCopiedRole(null), 1500)
+    void copyTextToClipboard(text).then(() => {
+      setCopiedRole(role)
+      setTimeout(() => setCopiedRole(null), 1500)
+    })
   }
 
   const showFilterChips = !filterRoles  // only show filter chips if no preset filter

@@ -646,35 +646,162 @@ async def list_test_suites(
             return []
     from sqlalchemy import text as sa_text
 
-    # Automation test cases. ``last_run_id`` resolves to the test_run row
-    # whose ``created_at`` matched MAX(tr.created_at) — used by the
-    # human-in-the-loop review action to target the latest run.
+    # Automation test cases — catalog view, not execution view.
+    #
+    # Bug history: the prior implementation counted ``COUNT(*)`` over the
+    # join of ``test_cases × test_runs``. ``test_cases`` has one row per
+    # (logical test, run), so a suite of 10 unique tests run 3 times
+    # surfaced as ``test_count=30`` and ``passed_count=27`` — the page
+    # label "test suites" implies unique tests, not per-execution counts.
+    # Fix: use ``DISTINCT ON (test_fingerprint)`` ordered by
+    # ``tr.created_at DESC`` so each logical test contributes exactly
+    # one row (its most recent execution). ``passed_count`` /
+    # ``failed_count`` then read as "of the N unique tests in this
+    # suite, how many last ran green/red" — which is the snapshot the
+    # Test Management page actually wants.
+    #
+    # ``last_run_id`` keeps its original semantic (latest run row that
+    # has this suite_name) — used by the per-suite review action to
+    # target the most recent run regardless of which logical test was in
+    # it.
     auto_where = "AND tr.project_id = :project_id" if project_id else ""
     sub_where = "AND tr2.project_id = :project_id" if project_id else ""
     auto_params: dict = {"project_id": project_id} if project_id else {}
+    # A test_case row legitimately belongs to TWO suite buckets when its
+    # per-row ``tc.suite_name`` (often the Java class name from a TestNG
+    # SDK) differs from its run-level ``tr.primary_suite_name`` (the
+    # ``testlookup.suite`` the SDK stamps once at session create). User-
+    # facing list: clicking either bucket should surface the same case.
+    # A COALESCE picks ONE name; a UNION ALL emits the row under BOTH
+    # (deduped by DISTINCT ON when names happen to match). See
+    # ``feedback_live_stream_suite_name_nulls`` for the SDK behaviour
+    # this addresses.
+    #
+    # Path A: run-level suite (``primary_suite_name`` not NULL).
+    # Path B: per-row suite (``tc.suite_name`` not NULL and DISTINCT
+    #         FROM the run-level value to avoid double-counting when
+    #         they happen to match).
     auto_query = sa_text(f"""
+        WITH effective AS (
+            SELECT
+                NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
+                tc.test_fingerprint,
+                tc.status,
+                tr.created_at AS run_created_at
+            FROM test_cases tc
+            JOIN test_runs tr ON tc.test_run_id = tr.id
+            WHERE tc.test_fingerprint IS NOT NULL
+              AND NULLIF(TRIM(tr.primary_suite_name), '') IS NOT NULL
+              {auto_where}
+            UNION ALL
+            SELECT
+                NULLIF(TRIM(tc.suite_name), '') AS suite_name,
+                tc.test_fingerprint,
+                tc.status,
+                tr.created_at AS run_created_at
+            FROM test_cases tc
+            JOIN test_runs tr ON tc.test_run_id = tr.id
+            WHERE tc.test_fingerprint IS NOT NULL
+              AND NULLIF(TRIM(tc.suite_name), '') IS NOT NULL
+              AND NULLIF(TRIM(tr.primary_suite_name), '')
+                  IS DISTINCT FROM NULLIF(TRIM(tc.suite_name), '')
+              {auto_where}
+        ),
+        latest_per_test AS (
+            SELECT DISTINCT ON (test_fingerprint, suite_name)
+                suite_name,
+                test_fingerprint,
+                status,
+                run_created_at
+            FROM effective
+            WHERE suite_name IS NOT NULL
+            ORDER BY test_fingerprint, suite_name, run_created_at DESC
+        )
         SELECT
-            tc.suite_name,
+            suite_name,
             COUNT(*) AS test_count,
-            COUNT(*) FILTER (WHERE tc.status = 'PASSED') AS passed_count,
-            COUNT(*) FILTER (WHERE tc.status = 'FAILED') AS failed_count,
-            MAX(tr.created_at) AS last_run_at,
+            COUNT(*) FILTER (WHERE status = 'PASSED') AS passed_count,
+            COUNT(*) FILTER (WHERE status = 'FAILED') AS failed_count,
+            MAX(run_created_at) AS last_run_at,
             (
                 SELECT tr2.id
-                FROM test_cases tc2
-                JOIN test_runs tr2 ON tc2.test_run_id = tr2.id
-                WHERE tc2.suite_name = tc.suite_name
+                FROM test_runs tr2
+                WHERE (
+                    NULLIF(TRIM(tr2.primary_suite_name), '') = latest_per_test.suite_name
+                    OR EXISTS (
+                        SELECT 1 FROM test_cases tc2
+                        WHERE tc2.test_run_id = tr2.id
+                          AND tc2.suite_name = latest_per_test.suite_name
+                    )
+                )
                   {sub_where}
                 ORDER BY tr2.created_at DESC
                 LIMIT 1
             ) AS last_run_id
-        FROM test_cases tc
-        JOIN test_runs tr ON tc.test_run_id = tr.id
-        WHERE tc.suite_name IS NOT NULL AND tc.suite_name != ''
-          {auto_where}
-        GROUP BY tc.suite_name
+        FROM latest_per_test
+        GROUP BY suite_name
     """)
     auto_rows = (await db.execute(auto_query, auto_params)).fetchall()
+
+    # Live-stream gap fallback: surface suites that exist in ``test_runs``
+    # via ``primary_suite_name`` but whose per-test rows didn't land in
+    # ``test_cases``. Without this, a user-reported bug recurs where a
+    # suite (e.g. "Realistic TestNG client examples") is visible on /runs
+    # and /coverage but invisible on /test-management because the catalog
+    # SQL above only reads from test_cases. Same root cause as the
+    # ingestion_pipeline.finalize_run skip documented in CLAUDE.md
+    # pitfall #15 — and the same union-fallback pattern used in
+    # services/summary_report_service._per_suite_breakdown_window.
+    run_aggregate_where = "AND tr.project_id = :project_id" if project_id else ""
+    # Pick the latest run per (project, suite_key) inline with
+    # ``array_agg(... ORDER BY ...)[1]`` instead of a correlated subquery.
+    # The previous shape — ``(SELECT tr3.id ... WHERE tr3.suite_key =
+    # tr.primary_suite_name)`` — referenced the raw ungrouped column
+    # ``tr.primary_suite_name`` from the outer GROUP BY's expression
+    # ``NULLIF(TRIM(tr.primary_suite_name), '')``. Postgres rejected
+    # that with ``GroupingError: subquery uses ungrouped column``,
+    # and because the failure poisoned the surrounding transaction,
+    # every later query in this handler ALSO 500'd with
+    # ``InFailedSQLTransactionError`` — including ``list_suite_owners``
+    # which is the one users saw fail in the trace.
+    run_aggregate_query = sa_text(f"""
+        SELECT
+            NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
+            COALESCE(SUM(tr.total_tests),  0) AS test_count,
+            COALESCE(SUM(tr.passed_tests), 0) AS passed_count,
+            COALESCE(SUM(tr.failed_tests), 0) AS failed_count,
+            MAX(tr.created_at) AS last_run_at,
+            (array_agg(tr.id ORDER BY tr.created_at DESC))[1] AS last_run_id
+        FROM test_runs tr
+        WHERE tr.primary_suite_name IS NOT NULL
+          AND TRIM(tr.primary_suite_name) <> ''
+          AND NOT EXISTS (
+              SELECT 1 FROM test_cases tc2
+              WHERE tc2.test_run_id = tr.id
+          )
+          {run_aggregate_where}
+        GROUP BY NULLIF(TRIM(tr.primary_suite_name), '')
+        HAVING NULLIF(TRIM(tr.primary_suite_name), '') IS NOT NULL
+    """)
+    # Wrap in a SAVEPOINT so any future SQL failure (older deployment
+    # missing a column, dialect quirk, etc.) is isolated from the outer
+    # transaction. Without this, a thrown query leaves the session in
+    # ``InFailedSQLTransactionError`` for every subsequent statement in
+    # the handler. ``db.begin_nested()`` issues ``SAVEPOINT``;
+    # SQLAlchemy auto-rollbacks the savepoint on exception. The outer
+    # transaction (owned by ``get_db``) stays clean. Reference pattern:
+    # ``services/release_linker.py``.
+    try:
+        async with db.begin_nested():
+            run_aggregate_rows = (await db.execute(
+                run_aggregate_query, auto_params,
+            )).fetchall()
+    except Exception as exc:
+        logger.warning(
+            "test_runs.primary_suite_name fallback failed, skipping",
+            error=str(exc),
+        )
+        run_aggregate_rows = []
 
     # Manual managed test cases (suite_name added in migration 0013)
     manual_where = "AND project_id = :project_id" if project_id else ""
@@ -692,13 +819,19 @@ async def list_test_suites(
         GROUP BY suite_name
     """)
     try:
-        manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
+        async with db.begin_nested():
+            manual_rows = (await db.execute(manual_query, manual_params)).fetchall()
     except Exception as exc:
+        # SAVEPOINT-scoped, see comment on the run_aggregate try-block.
+        # Without the savepoint, an error here (e.g. older deployment
+        # without the suite_name column) would poison the outer
+        # transaction and cascade into a 500 on the next query.
         logger.warning("managed_test_cases.suite_name not available, skipping manual suites", error=str(exc))
-        await db.rollback()
         manual_rows = []
 
-    # Merge both sources by suite_name
+    # Merge sources by suite_name. Order matters only for first-write
+    # semantics — auto + manual + run-aggregate all use the same merge
+    # rules (sum counts, keep newest last_run_at).
     merged: dict[str, dict] = {}
     for row in auto_rows:
         merged[row.suite_name] = {
@@ -706,6 +839,20 @@ async def list_test_suites(
             "test_count": row.test_count,
             "passed_count": row.passed_count,
             "failed_count": row.failed_count,
+            "last_run_at": row.last_run_at,
+            "last_run_id": row.last_run_id,
+        }
+    # Run-aggregate fallback rows. Skip suites already covered by
+    # ``auto_rows`` — those have authoritative per-test data and a
+    # double-count from the run-level sum would be wrong.
+    for row in run_aggregate_rows:
+        if not row.suite_name or row.suite_name in merged:
+            continue
+        merged[row.suite_name] = {
+            "suite_name": row.suite_name,
+            "test_count": int(row.test_count or 0),
+            "passed_count": int(row.passed_count or 0),
+            "failed_count": int(row.failed_count or 0),
             "last_run_at": row.last_run_at,
             "last_run_id": row.last_run_id,
         }
@@ -737,6 +884,19 @@ async def list_test_suites(
             db, project_id, [s["suite_name"] for s in merged.values()]
         )
 
+    # Cumulative history (run_count + total_passed/failed/skipped/broken)
+    # comes from the shared service so every suite-bearing page reads the
+    # same shape. The snapshot fields above (test_count, passed_count,
+    # failed_count) keep their original "of the unique tests in this suite,
+    # how many last ran red/green" semantics — additive, not a replacement.
+    from app.services.suite_history_service import compute_suite_history
+    history_map = await compute_suite_history(
+        db,
+        project_id=project_id,
+        suite_names=[s["suite_name"] for s in merged.values()] or None,
+        days=None,
+    )
+
     result = sorted(merged.values(), key=lambda x: x["test_count"], reverse=True)
     logger.info("listing_test_suites", count=len(result), project_id=str(project_id) if project_id else None)
 
@@ -749,6 +909,13 @@ async def list_test_suites(
             "last_run_at": s["last_run_at"].isoformat() if s["last_run_at"] else None,
             "last_run_id": str(s["last_run_id"]) if s["last_run_id"] else None,
             "pass_rate": round(s["passed_count"] / s["test_count"] * 100, 1) if s["test_count"] > 0 else None,
+            # Cumulative aggregates (lifetime, all runs).
+            "run_count": history_map.get(s["suite_name"], {}).get("run_count", 0),
+            "total_executions": history_map.get(s["suite_name"], {}).get("total_tests", 0),
+            "total_passed": history_map.get(s["suite_name"], {}).get("passed_count", 0),
+            "total_failed": history_map.get(s["suite_name"], {}).get("failed_count", 0),
+            "total_skipped": history_map.get(s["suite_name"], {}).get("skipped_count", 0),
+            "total_broken": history_map.get(s["suite_name"], {}).get("broken_count", 0),
             "owner_user_id": owner_map.get(s["suite_name"], {}).get("owner_user_id"),
             "owner_email": owner_map.get(s["suite_name"], {}).get("owner_email"),
             "owner_full_name": owner_map.get(s["suite_name"], {}).get("owner_full_name"),
@@ -758,27 +925,96 @@ async def list_test_suites(
     ]
 
 
+@router.get("/suites/{suite_name}/trend")
+async def get_suite_trend(
+    suite_name: str,
+    project_id: Optional[uuid.UUID] = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Per-day trend points for one suite over the time window.
+
+    Returns ``{suite_name, days, points: [{date, run_count, total_tests,
+    passed_count, failed_count, skipped_count, broken_count}]}``. Empty
+    days are emitted with all-zero counts so the chart x-axis stays
+    continuous.
+
+    Powers the trend chart on /coverage/suite and the sparkline on
+    /test-management Test Suites. Single source of truth lives in
+    ``services/suite_history_service.compute_suite_trend`` so /suites
+    /reports/summary can adopt the same shape later.
+    """
+    if not project_id:
+        from app.core.deps import get_accessible_project_ids
+        accessible = await get_accessible_project_ids(db, current_user)
+        # Cross-project trend is meaningless — a suite name can collide
+        # across projects, so we 200 with an empty trend rather than
+        # surface a misleading cross-tenant aggregate.
+        if accessible is not None:
+            return {"suite_name": suite_name, "days": days, "points": []}
+
+    from app.services.suite_history_service import compute_suite_trend
+    points = await compute_suite_trend(
+        db,
+        project_id=project_id,
+        suite_name=suite_name,
+        days=days,
+    )
+    return {
+        "suite_name": suite_name,
+        "days": days,
+        "points": points,
+    }
+
+
 @router.get("/suites/{suite_name}/cases")
 async def get_suite_test_cases(
     suite_name: str,
     project_id: Optional[uuid.UUID] = Query(None),
-    limit: int = Query(100, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    size: int = Query(25, ge=1, le=500),
+    # ``limit`` kept for one release as a back-compat shim: clients on
+    # the old single-list shape still passed ``limit=100``. When
+    # present and > 0 we honour it as the page size; new callers
+    # should send ``page`` + ``size`` instead.
+    limit: Optional[int] = Query(None, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Return test cases for a given suite_name from both automation runs and managed test cases."""
+    """Paginated test cases for a suite, merging automation runs +
+    managed cases. Returns ``{items, total, page, pages, size}``.
+
+    Suite-match semantics: per-row ``tc.suite_name`` OR run-level
+    ``tr.primary_suite_name`` — both contribute, so a SDK that stamps
+    the Java class as the per-row name but ``testlookup.suite`` at the
+    run level still surfaces the case under the run-level suite.
+    """
+    if limit is not None:
+        size = limit
+    empty_page = {"items": [], "total": 0, "page": page, "pages": 0, "size": size}
     if not project_id:
         from app.core.deps import get_accessible_project_ids
         accessible = await get_accessible_project_ids(db, current_user)
         if accessible is not None:
-            return []
-    from sqlalchemy import func
+            return empty_page
+    from sqlalchemy import func, or_
 
     from app.models.postgres import TestCase, TestRun
 
     # Automation test cases — aggregate by fingerprint so each unique test
     # collapses to one row carrying its execution count and most-recent run
     # date. Latest-run row wins for status/duration/class via DISTINCT ON.
+    #
+    # Suite-match WHERE clause: per-row OR run-level. The SDK only stamps
+    # ``testlookup.suite`` once at session create — it lands on
+    # ``TestRun.primary_suite_name`` while every ``TestCase.suite_name``
+    # of a live-stream run stays NULL. A strict ``TestCase.suite_name =
+    # X`` filter then returns zero rows even though the run is correctly
+    # tagged. The list endpoint's resolver already unions both columns
+    # (see ``feedback_live_stream_suite_name_nulls``); this filter
+    # mirrors it so the cases UI agrees with the suite-card counts.
+    suite_key = (suite_name or "").strip().lower()
     base = (
         select(
             TestCase.id,
@@ -789,10 +1025,19 @@ async def get_suite_test_cases(
             TestCase.duration_ms,
             TestCase.class_name,
             TestCase.package_name,
+            # Carry the run id through to the response so the
+            # frontend can deep-link each row to
+            # ``/runs/<run_id>/tests/<test_case_id>``.
+            TestCase.test_run_id.label("test_run_id"),
             TestRun.created_at.label("run_created_at"),
         )
         .join(TestRun, TestCase.test_run_id == TestRun.id)
-        .where(TestCase.suite_name == suite_name)
+        .where(
+            or_(
+                func.lower(func.trim(TestCase.suite_name)) == suite_key,
+                func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, ""))) == suite_key,
+            )
+        )
     )
     if project_id:
         base = base.where(TestRun.project_id == project_id)
@@ -813,6 +1058,12 @@ async def get_suite_test_cases(
         .group_by(base_sq.c.test_fingerprint)
         .subquery()
     )
+    # Total before pagination — counts unique fingerprints in scope.
+    auto_total_q = select(func.count()).select_from(
+        select(counts_sq.c.fp).subquery()
+    )
+    auto_total = int((await db.execute(auto_total_q)).scalar() or 0)
+
     aggregated = (
         select(
             latest_sq.c.id,
@@ -822,24 +1073,38 @@ async def get_suite_test_cases(
             latest_sq.c.duration_ms,
             latest_sq.c.class_name,
             latest_sq.c.package_name,
+            latest_sq.c.test_run_id,
             counts_sq.c.execution_count,
             counts_sq.c.last_execution_at,
         )
         .join(counts_sq, latest_sq.c.test_fingerprint == counts_sq.c.fp)
         .order_by(counts_sq.c.last_execution_at.desc().nulls_last())
-        .limit(limit)
+        .offset((page - 1) * size)
+        .limit(size)
     )
     auto_rows = (await db.execute(aggregated)).all()
 
-    # Manual managed test cases
-    manual_stmt = (
+    # Manual managed test cases — same case-insensitive trim match as
+    # the suites list endpoint so a suite typed as "Smoke" matches a
+    # managed-case row stored as " smoke" (trailing space, user typo)
+    # without forcing the operator to fix the data.
+    manual_base = (
         select(ManagedTestCase)
-        .where(ManagedTestCase.suite_name == suite_name)
-        .order_by(ManagedTestCase.created_at.desc())
-        .limit(limit)
+        .where(func.lower(func.trim(ManagedTestCase.suite_name)) == suite_key)
     )
     if project_id:
-        manual_stmt = manual_stmt.where(ManagedTestCase.project_id == project_id)
+        manual_base = manual_base.where(ManagedTestCase.project_id == project_id)
+    manual_total = int(
+        (await db.execute(
+            select(func.count()).select_from(manual_base.subquery())
+        )).scalar() or 0
+    )
+    manual_stmt = (
+        manual_base
+        .order_by(ManagedTestCase.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
 
     manual_cases = (await db.execute(manual_stmt)).scalars().all()
 
@@ -854,6 +1119,7 @@ async def get_suite_test_cases(
             "duration_ms": row.duration_ms,
             "class_name": row.class_name,
             "package_name": row.package_name,
+            "test_run_id": str(row.test_run_id) if row.test_run_id else None,
             "created_at": last_exec.isoformat() if last_exec else None,
             "execution_count": int(row.execution_count or 0),
             "last_execution_at": last_exec.isoformat() if last_exec else None,
@@ -875,9 +1141,20 @@ async def get_suite_test_cases(
             "source": "manual",
         })
 
-    # Sort combined by last_execution_at desc (falls back to created_at)
+    # Sort combined by last_execution_at desc (falls back to created_at).
+    # Auto + manual page-slices were taken independently so the combined
+    # list can have up to ``2 * size`` rows; trim post-sort to honour
+    # the requested page size. ``total`` is the sum across both sources.
     result.sort(key=lambda x: x["last_execution_at"] or x["created_at"] or "", reverse=True)
-    return result[:limit]
+    total = auto_total + manual_total
+    pages = -(-total // size) if size > 0 else 0
+    return {
+        "items": result[:size],
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "size": size,
+    }
 
 
 # ── Suite Membership Traceability (TS-5) ──────────────────────────────────────

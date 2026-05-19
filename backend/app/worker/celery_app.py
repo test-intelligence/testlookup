@@ -1,4 +1,6 @@
 """Celery application configuration."""
+from datetime import timedelta
+
 from celery import Celery
 from celery.schedules import crontab
 from kombu import Exchange, Queue
@@ -20,12 +22,28 @@ celery_app = Celery(
 
 _default_exchange = Exchange("default", type="direct")
 
-celery_app.conf.task_queues = (
-    Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
-    Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
-    Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
-    Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
-)
+# Phase 2.4 — declare every ingestion shard queue at boot so workers can
+# subscribe without re-deriving the list. The legacy ``ingestion`` queue
+# stays declared for non-shardable tasks (``ingest_test_run`` etc.) and
+# for tests / deployments where ``LIVE_INGEST_SHARD_COUNT=0``. Build the
+# tuple imperatively so the shard count is read from settings at startup,
+# not frozen at module-import time.
+def _build_task_queues() -> tuple[Queue, ...]:
+    base = [
+        Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
+        Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
+        Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
+        Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
+    ]
+    # Lazy import to avoid the ``app.core.config`` → ``Celery`` import
+    # cycle that bites if we put this at module top.
+    from app.worker.ingestion_routing import all_shard_queues
+    for q in all_shard_queues():
+        base.append(Queue(q, _default_exchange, routing_key=q, queue_arguments={"x-max-priority": 10}))
+    return tuple(base)
+
+
+celery_app.conf.task_queues = _build_task_queues()
 
 celery_app.conf.update(
     task_serializer="json",
@@ -80,6 +98,16 @@ celery_app.conf.update(
             "task": "app.worker.tasks.run_integration_health_probes",
             "schedule": crontab(minute="*/15"),
         },
+        # Phase 3 — AI pipeline debouncer flush (every 2 minutes).
+        # Drains the per-project SortedSet built by
+        # services.ai_pipeline_debouncer.enqueue_pipeline_for_run,
+        # applies the daily LLM cost-budget cap, then fans out
+        # run_agent_pipeline tasks. See
+        # docs/SCALABLE_INGESTION_DESIGN.md § Phase 3.
+        "flush-ai-pipeline-queue": {
+            "task": "app.worker.tasks.flush_ai_pipeline_queue",
+            "schedule": crontab(minute="*/2"),
+        },
         # RAG-6: Knowledge source freshness re-sync (every 4 hours)
         "knowledge-source-resync": {
             "task": "app.worker.tasks.resync_stale_knowledge_sources",
@@ -88,10 +116,39 @@ celery_app.conf.update(
         # Safety net for live sessions whose clients forgot to send
         # run_complete — without this the runs only show in Live Execution
         # and never propagate to Runs / Overview / Coverage / Failures /
-        # Trends. Idle threshold is 15 minutes; the task is idempotent.
+        # Trends. The task is idempotent.
+        #
+        # 5-minute idle threshold (lowered from 10 on 2026-05-16 after a
+        # homelab repro showed 5 ``running`` sessions in the API when
+        # only 2 were emitting telemetry — the Live page now flags stale
+        # rows immediately at the 60s mark via ``utils/liveSessionFreshness``
+        # but the DB still owned the lie for up to 15 minutes). Sweep
+        # every 2 minutes so worst-case staleness is ~7 minutes total
+        # (5 min threshold + 2 min between sweeps).
+        #
+        # Tuning note: most test frameworks emit start/end events per
+        # test, so legitimate inter-event gaps are well under a minute.
+        # Workloads with single tests that take >5 min between events
+        # (load tests, long e2e flows) should bump this back to 10 or
+        # add SDK-side heartbeats. The Redis ``last_event_at`` hash is
+        # the truth source for staleness — see the task body for the
+        # NULL-last_event handling.
         "close-stale-live-sessions": {
             "task": "app.worker.tasks.close_stale_live_sessions",
-            "schedule": crontab(minute="*/5"),
+            "schedule": crontab(minute="*/2"),
+            "kwargs": {"idle_minutes": 5},
+        },
+        # Safety net for agent_pipeline_runs that got stuck in
+        # status='running' — typically because a stage crashed mid-task
+        # (OOM-kill, SIGKILL, asyncpg connection drop) before the outer
+        # ``_mark_pipeline_done`` had a chance to record the failure.
+        # The reaper marks any pipeline that has a failed stage OR has
+        # been running past the task time_limit as ``failed``. The
+        # /agents read-time derivation already shows the correct badge,
+        # but this updates the DB so historical filters work cleanly.
+        "reap-stuck-agent-pipelines": {
+            "task": "app.worker.tasks.reap_stuck_agent_pipelines",
+            "schedule": crontab(minute="*/10"),
         },
         # Tier 1 item 3: flaky-test quarantine maintenance (nightly at 04:00 UTC).
         # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.
@@ -113,6 +170,66 @@ celery_app.conf.update(
         "monday-weekly-retro-digests": {
             "task": "app.worker.tasks.dispatch_scheduled_digests",
             "schedule": crontab(hour=7, minute=5, day_of_week="monday"),
+        },
+        # P2-3 (DB audit 2026-05-16): nightly check for orphan TestSuite
+        # rows left behind by finalize_run's per-step isolation. Emits a
+        # structured WARNING + Prometheus counter per orphan so ops can
+        # decide whether to reassign / delete; the task never mutates
+        # data itself. Scheduled at 05:00 UTC, AFTER the perf-baseline
+        # refresh at 04:30 — ingestion typically lands earlier in the
+        # night and any suite_sync/canonical_sync split is well past
+        # the 60-minute "still mid-ingest" cooldown by 05:00.
+        "nightly-orphan-test-suite-flag": {
+            "task": "app.worker.tasks.flag_orphan_test_suites",
+            "schedule": crontab(hour=5, minute=0),
+        },
+        # Phase I follow-up: project-wide canonical-deletion reconcile.
+        # finalize_run already calls the same service per-run; this beat
+        # is the safety net for (a) ingest-time isolated-session failures
+        # and (b) quiet projects with no new runs. 05:30 UTC keeps it
+        # downstream of orphan-suite flagging so we don't race the
+        # late-night ingestion tail.
+        "nightly-canonical-deletion-reconcile": {
+            "task": "app.worker.tasks.reconcile_canonical_deletions",
+            "schedule": crontab(hour=5, minute=30),
+        },
+        # Backfill /my-failures inbox: any FAILED/BROKEN TestCase still
+        # unassigned (project had no owner config at ingest time, or a
+        # finalize_run step failed in isolation) gets re-resolved here.
+        # The assignment service is idempotent — only NULL rows are
+        # touched — so running every 15 minutes is safe and catches new
+        # rows fast enough that QA leads aren't waiting for the next
+        # ingest to see their queue populate.
+        "backfill-unassigned-failures": {
+            "task": "app.worker.tasks.backfill_unassigned_failures",
+            "schedule": crontab(minute="*/15"),
+        },
+        # Phase 4.5: incremental drain of live-stream event buffers.
+        # Without this, the 50K LTRIM cap on long-running sessions
+        # silently drops the oldest per-test rows; HINCRBY aggregates
+        # stay accurate so TestRun.total_tests reports a number the
+        # test_cases table can't back up. The 30s cadence keeps the
+        # window of at-risk events bounded; the per-run SET-NX lock
+        # in the drainer makes overlapping ticks safe.
+        # ``timedelta`` (not ``crontab``) — celery beat supports both,
+        # and 30s isn't expressible with crontab granularity.
+        "drain-active-live-sessions": {
+            "task": "app.worker.tasks.drain_active_live_sessions",
+            "schedule": timedelta(seconds=30),
+        },
+        # Retroactive placeholder synthesis for historical TestRuns
+        # whose failure counters are populated but whose test_cases
+        # table is empty (live-stream buffer was evicted or the SDK
+        # never sent test_result events). Inserts the same placeholder
+        # rows that ``persist_live_session`` now creates at write
+        # time, so old runs flow into /my-failures + /test-management
+        # alongside new ones. Hourly cadence — idempotent, and the
+        # 15-min ``backfill-unassigned-failures`` beat then assigns
+        # them within minutes. First run after deploy backfills the
+        # entire history (capped at 500 runs/project).
+        "backfill-placeholder-test-cases": {
+            "task": "app.worker.tasks.backfill_placeholder_test_cases",
+            "schedule": crontab(minute=10),  # once per hour at :10
         },
     },
     # Prevent memory bloat from stale results

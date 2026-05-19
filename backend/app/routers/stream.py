@@ -33,6 +33,8 @@ from app.models.schemas import (
     LiveStreamIngestRequest,
 )
 from app.services import stream_service
+from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
+from app.services.ingestion_rate_limit import enforce_ingest_rate_limit
 
 router = APIRouter(prefix="/api/v1/stream", tags=["Live Stream"])
 
@@ -94,6 +96,21 @@ async def ingest_event_batch(
     batch: LiveEventBatch,
     x_session_token: str = Header(..., alias="X-Session-Token"),
 ):
+    # Two-layer admission gate. Order matters: backpressure first so a
+    # red-line Redis short-circuits the rate-limit Redis op too. The
+    # rate-limit Redis op itself is bounded but stacking it after the
+    # backpressure check makes the failure path strictly cheaper.
+    await enforce_redis_memory_backpressure()
+    # ``batch`` doesn't carry project_id (the SDK only sends session_id +
+    # run_id; the project is resolved server-side from the session token).
+    # We resolve it once here so the rate-limit charge lands on the right
+    # bucket — otherwise a noisy session's project escapes the per-project
+    # gate.
+    project_id = await stream_service.resolve_project_id_for_session(
+        batch.session_id, x_session_token,
+    )
+    if project_id is not None:
+        await enforce_ingest_rate_limit(str(project_id))
     return await stream_service.ingest_event_batch(batch, x_session_token)
 
 
@@ -110,6 +127,11 @@ async def ingest_via_api_key(
     The first call for a given ``run_id`` auto-creates a live session;
     subsequent calls reuse it.
     """
+    # See the ``/events/batch`` handler — same two-layer gate, but the
+    # API-key path already has the project_id from auth so the rate-limit
+    # call doesn't need a separate resolution.
+    await enforce_redis_memory_backpressure()
+    await enforce_ingest_rate_limit(str(auth.project_id))
     response = await stream_service.ingest_via_api_key(
         db=db,
         project_id=auth.project_id,

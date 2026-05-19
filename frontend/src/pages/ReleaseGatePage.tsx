@@ -20,6 +20,7 @@ import { useRuns } from '@/hooks/useRuns'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildReleaseGateWorkflow } from '@/components/workflow/workflowPresets'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO' | 'PENDING'
 
@@ -284,8 +285,9 @@ export default function ReleaseGatePage() {
                 try {
                   if (!runId) return
                   const link = await createShareLink(runId, 'executive')
-                  await navigator.clipboard.writeText(link.share_url)
-                  toast.success('Share link copied to clipboard')
+                  const ok = await copyTextToClipboard(link.share_url)
+                  if (ok) toast.success('Share link copied to clipboard')
+                  else toast.error('Clipboard access denied — copy manually')
                 } catch { toast.error('Share failed') }
               }}
               className="btn-secondary text-xs flex items-center gap-1.5"
@@ -302,6 +304,34 @@ export default function ReleaseGatePage() {
           </div>
         }
       />
+
+      {decision.synthesized && (
+        // Quick-look notice — the backend synthesised this view from
+        // the run's aggregates because no persisted ReleaseDecision
+        // exists yet (deep investigation has not run). The page is
+        // still useful at a glance, but cluster insights / defect
+        // breakdown / LLM narrative are blank, so we surface a CTA.
+        <div
+          role="status"
+          className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3"
+        >
+          <div className="flex items-start gap-2 text-sm text-amber-200">
+            <Shield className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+            <div>
+              <strong className="font-semibold">Quick-look decision.</strong>{' '}
+              Derived from this run&apos;s aggregates because deep investigation
+              has not run yet. Cluster insights, defect breakdown, and AI
+              narrative require a deep investigation pass.
+            </div>
+          </div>
+          <button
+            onClick={() => navigate(`/deep-investigate/${runId}`)}
+            className="btn-secondary flex-shrink-0 text-xs"
+          >
+            Run deep investigation
+          </button>
+        </div>
+      )}
 
       <WorkflowTimeline
         title="Release decision flow"

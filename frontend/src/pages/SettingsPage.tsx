@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, UserCircle2, Webhook } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -102,6 +102,12 @@ const sections = [
     title: 'API Keys',
     desc: 'Generate project-scoped streaming keys for CI to ingest test results live without a session token',
     href: '/settings/api-keys',
+  },
+  {
+    icon: Trash2,
+    title: 'Project Data',
+    desc: 'Reset a project to a clean state — delete test runs only, or wipe everything except the project shell. ADMIN only, two-step confirmation required.',
+    href: '/settings/project-data',
   },
   ...(isDev
     ? [

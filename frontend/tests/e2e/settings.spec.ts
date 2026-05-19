@@ -73,20 +73,14 @@ test.describe('Profile page interactions', () => {
     // We use the global match because the field could be in an input or a
     // read-only display row depending on the implementation.
     const bodyText = await page.locator('main, body').first().innerText();
-    expect.soft(bodyText.toLowerCase()).toMatch(/email|username|full name/);
+    expect.soft(bodyText.toLowerCase()).toMatch(/email|username|full name|admin@testlookup/);
   });
 
   test('exposes change-password controls', async ({ page }) => {
     await expect(page.locator('aside')).toBeVisible();
 
-    // The page should expose at least one password input or a "change
-    // password" affordance. We use a forgiving locator chain.
-    const pwdInput = page.locator('input[type="password"]').first();
-    const changePwdBtn = page.getByRole('button', { name: /change.*password|update.*password/i }).first();
-    const visible =
-      (await pwdInput.isVisible().catch(() => false)) ||
-      (await changePwdBtn.isVisible().catch(() => false));
-    expect(visible).toBe(true);
+    await expect(page.getByRole('heading', { name: /change password/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: /update password/i })).toBeVisible();
   });
 });
 
@@ -100,15 +94,8 @@ test.describe('User Management', () => {
     await expect(page).toHaveURL(/.*\/users/);
     await expect(page.locator('aside')).toBeVisible();
 
-    // Either the table renders, or an EmptyState appears, or an error
-    // banner appears — but the page must not be blank.
-    const haveContent = await page
-      .locator('table, [role="table"], text=/no users|empty|create user|invite/i')
-      .first()
-      .waitFor({ state: 'visible', timeout: 10000 })
-      .then(() => true)
-      .catch(() => false);
-    expect(haveContent).toBe(true);
+    await expect(page.getByRole('heading', { name: /user management/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: /add user|invite user/i }).first()).toBeVisible();
   });
 
   test('exposes invite or create user affordance for admins', async ({ page }) => {

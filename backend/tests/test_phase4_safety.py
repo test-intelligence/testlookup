@@ -22,6 +22,7 @@ from app.services.action_policy import (
     ActionStatus,
     ActionType,
     check_defect_promotion_policy,
+    check_jira_ticket_creation_policy,
     check_release_override_policy,
     requires_approval,
 )
@@ -295,6 +296,19 @@ class TestDefectPromotionPolicy:
         )
         assert result["requires_approval"] is True
         assert any("confidence" in r.lower() for r in result["policy_reasons"])
+
+    async def test_agent_jira_ticket_creation_is_staged_for_review(self):
+        result = await check_jira_ticket_creation_policy(
+            project_id="proj-1",
+            confidence_score=95,
+            failure_category="PRODUCT_BUG",
+            source="defect_triage_agent",
+        )
+
+        assert result["requires_approval"] is True
+        assert result["initial_status"] == ActionStatus.PENDING_REVIEW
+        assert result["action_type"] == ActionType.JIRA_TICKET_CREATION
+        assert any("Jira ticket creation" in r for r in result["policy_reasons"])
 
 
 @pytest.mark.asyncio

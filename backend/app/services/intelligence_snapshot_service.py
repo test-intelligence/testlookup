@@ -20,6 +20,9 @@ Cache strategy:
 """
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -28,11 +31,117 @@ from typing import Optional
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import RunIntelligenceSnapshot
+from app.models.postgres import AgentMemoryEntry, RunIntelligenceSnapshot
+from app.services.agent_memory_service import build_memory_reference
 
 logger = logging.getLogger("services.intelligence_snapshot")
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
+
+
+def _hash_json(value: object) -> str:
+    canonical = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _reference_sort_key(reference: dict) -> tuple[str, str, str]:
+    return (
+        str(reference.get("entity_type") or ""),
+        str(reference.get("entity_id") or ""),
+        str(reference.get("memory_entry_id") or ""),
+    )
+
+
+def _memory_reference_id(reference: dict) -> str:
+    return _hash_json({
+        "memory_entry_id": reference.get("memory_entry_id"),
+        "entity_type": reference.get("entity_type"),
+        "entity_id": reference.get("entity_id"),
+        "payload_sha256": reference.get("payload_sha256"),
+    })
+
+
+def build_snapshot_memory_reference_manifest(
+    *,
+    snapshot_id: uuid.UUID,
+    run_id: uuid.UUID,
+    memory_entries: list[AgentMemoryEntry],
+) -> dict:
+    """Build deterministic memory references attached to a run snapshot."""
+    references = []
+    for entry in sorted(
+        memory_entries,
+        key=lambda item: (
+            str(item.entity_type or ""),
+            str(item.entity_id or ""),
+            str(item.id),
+        ),
+    ):
+        reference = build_memory_reference(entry)
+        reference["source_snapshot_id"] = str(snapshot_id)
+        reference["memory_reference_id"] = _memory_reference_id(reference)
+        references.append(reference)
+
+    references = sorted(references, key=_reference_sort_key)
+    return {
+        "schema_version": 1,
+        "snapshot_id": str(snapshot_id),
+        "run_id": str(run_id),
+        "memory_reference_count": len(references),
+        "memory_reference_ids": [
+            reference["memory_reference_id"] for reference in references
+        ],
+        "memory_graph_checksum_sha256": _hash_json(references),
+        "memory_references": references,
+    }
+
+
+async def _load_snapshot_memory_entries(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+) -> list[AgentMemoryEntry]:
+    result = await db.execute(
+        select(AgentMemoryEntry)
+        .where(AgentMemoryEntry.run_id == run_id)
+        .order_by(
+            AgentMemoryEntry.entity_type,
+            AgentMemoryEntry.entity_id,
+            AgentMemoryEntry.id,
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def attach_memory_reference_manifest(
+    db: AsyncSession,
+    *,
+    snapshot_id: uuid.UUID,
+    run_id: uuid.UUID,
+    payload: dict,
+) -> dict:
+    """Return a snapshot payload linked to the current memory graph."""
+    enriched = copy.deepcopy(payload)
+    memory_entries = await _load_snapshot_memory_entries(db, run_id)
+    manifest = build_snapshot_memory_reference_manifest(
+        snapshot_id=snapshot_id,
+        run_id=run_id,
+        memory_entries=memory_entries,
+    )
+    enriched["memory_reference_manifest"] = manifest
+    enriched.setdefault("provenance", {})
+    if isinstance(enriched["provenance"], dict):
+        enriched["provenance"]["memory_graph_checksum_sha256"] = manifest[
+            "memory_graph_checksum_sha256"
+        ]
+        enriched["provenance"]["memory_reference_count"] = manifest[
+            "memory_reference_count"
+        ]
+    return enriched
 
 
 async def get_cached_snapshot(
@@ -85,6 +194,13 @@ async def save_snapshot(
         )
     )
     existing = result.scalar_one_or_none()
+    snapshot_id = existing.id if existing else uuid.uuid4()
+    payload = await attach_memory_reference_manifest(
+        db,
+        snapshot_id=snapshot_id,
+        run_id=run_id,
+        payload=payload,
+    )
 
     if existing:
         existing.payload = payload
@@ -94,6 +210,7 @@ async def save_snapshot(
         existing.generated_at = datetime.now(timezone.utc)
     else:
         db.add(RunIntelligenceSnapshot(
+            id=snapshot_id,
             run_id=run_id,
             schema_version=CURRENT_SCHEMA_VERSION,
             payload=payload,

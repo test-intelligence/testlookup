@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AgentStatusPage from './AgentStatusPage'
 
@@ -19,6 +19,28 @@ vi.mock('@/hooks/useAgentRuns', () => ({
   useActiveLiveRuns: vi.fn(),
 }))
 
+vi.mock('@/hooks/useAIConfig', () => ({
+  useAIConfig: vi.fn(() => ({
+    data: {
+      analysis_mode: 'auto',
+      deep_investigation_enabled: true,
+    },
+  })),
+}))
+
+vi.mock('@/hooks/useRuns', () => ({
+  useRuns: vi.fn(() => ({
+    data: { items: [] },
+    isLoading: false,
+  })),
+}))
+
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: vi.fn(() => ({
+    isQaEngineer: false,
+  })),
+}))
+
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: typeof mockProjectState) => unknown) =>
@@ -33,6 +55,12 @@ vi.mock('react-hot-toast', () => ({
 }))
 
 describe('AgentStatusPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockProjectState.activeProjectId = 'proj-1'
+    mockProjectState.activeProject = { id: 'proj-1', name: 'Project One' }
+  })
+
   it('renders the AI report for the selected pipeline run', async () => {
     const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } = await import('@/hooks/useAgentRuns')
 
@@ -349,6 +377,135 @@ describe('AgentStatusPage', () => {
     expect(screen.getByText(/workflow progress/i)).toBeInTheDocument()
     expect(screen.getByText(/workflow event feed/i)).toBeInTheDocument()
     expect(screen.getByText(/summary started/i)).toBeInTheDocument()
+  })
+
+  it('surfaces observability cost signals and alert routing for a selected pipeline', async () => {
+    const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } = await import('@/hooks/useAgentRuns')
+
+    ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
+    ;(usePipelines as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: [
+        {
+          id: 'pipe-obs',
+          test_run_id: 'run-obs',
+          workflow_type: 'offline',
+          status: 'completed',
+          started_at: '2026-03-31T10:00:00Z',
+          completed_at: '2026-03-31T10:01:00Z',
+          error: null,
+          created_at: '2026-03-31T10:00:00Z',
+        },
+      ],
+      isLoading: false,
+    })
+    ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false })
+    ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        schema_version: 2,
+        pipeline_run_id: 'pipe-obs',
+        workflow_type: 'offline',
+        status: 'completed',
+        started_at: '2026-03-31T10:00:00Z',
+        completed_at: '2026-03-31T10:01:00Z',
+        duration_seconds: 60,
+        summary: {
+          total_stages: 2,
+          completed_stages: 1,
+          running_stages: 0,
+          failed_stages: 1,
+          skipped_stages: 0,
+          pending_stages: 0,
+          progress_percent: 100,
+        },
+        cost_summary: {
+          total_cost_usd: 5.25,
+          total_input_tokens: 1000,
+          total_output_tokens: 500,
+          total_tokens: 1500,
+          total_llm_calls: 4,
+          stages: [],
+        },
+        agent_observability: {
+          schema_version: 1,
+          stage_count: 2,
+          status_counts: { completed: 1, failed: 1 },
+          latency: {
+            total_stage_duration_seconds: 15,
+            max_stage_duration_seconds: 10,
+            avg_stage_duration_seconds: 7.5,
+          },
+          tokens: {
+            input: 1000,
+            output: 500,
+            total: 1500,
+            llm_calls: 4,
+          },
+          cost: {
+            total_usd: 5.25,
+            budget_usd: 5,
+          },
+          fallback: {
+            count: 1,
+            rate: 0.5,
+            stages: ['summary'],
+          },
+          errors: {
+            count: 1,
+            by_category: { timeout: 1 },
+          },
+          quality: {
+            avg_confidence_score: 82,
+            total_evidence_count: 6,
+          },
+          alerts: {
+            count: 1,
+            by_type: { repeated_failure: 1 },
+          },
+          per_agent: [],
+        },
+        stages: [],
+        events: [],
+        alerts: [
+          {
+            type: 'repeated_failure',
+            severity: 'warning',
+            message: "Stage 'summary' has failed 3 times in the last 24h",
+            detail: { stage_name: 'summary', failure_count: 3 },
+            routing: {
+              primary_owner: 'qa_lead',
+              escalation_owner: 'stage_owner',
+              priority: 'p2',
+              recommended_action: 'Review the failed agent stage and recent decision trail.',
+            },
+          },
+        ],
+      },
+      isLoading: false,
+    })
+    ;(useRunSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: undefined,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <Routes>
+          <Route path="/agents" element={<AgentStatusPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
+
+    expect(screen.getByText('Pipeline Observability')).toBeInTheDocument()
+    expect(screen.getByText('$5.25')).toBeInTheDocument()
+    expect(screen.getByText('1,500')).toBeInTheDocument()
+    expect(screen.getByText('7.5s')).toBeInTheDocument()
+    expect(screen.getByText(/owner: qa_lead/i)).toBeInTheDocument()
+    expect(screen.getByText(/escalate: stage_owner/i)).toBeInTheDocument()
+    expect(screen.getByText('p2')).toBeInTheDocument()
+    expect(screen.getByText(/Review the failed agent stage/i)).toBeInTheDocument()
   })
 
   it('clears the selected pipeline when the project changes', async () => {

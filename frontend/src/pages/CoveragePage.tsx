@@ -55,6 +55,7 @@ import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useCoverage, useTrendData } from '@/hooks/useMetrics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { CoverageSuite, CoverageSummary } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
@@ -62,7 +63,6 @@ import type { TrendPoint } from '@/types/metrics'
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
 const WINDOWS = [1, 7, 14, 30, 90] as const
 type Window = (typeof WINDOWS)[number]
-const WINDOW_KEY = 'tl.coverage.window'
 
 // ── Verdict thresholds ────────────────────────────────────────────────────
 type Verdict = 'HEALTHY' | 'AT_RISK' | 'BLOCKED' | 'PENDING'
@@ -164,6 +164,164 @@ interface DimensionScore {
 function isUntaggedRow(s: CoverageSuite): boolean {
   const name = (s.suite_name ?? '').trim().toLowerCase()
   return !name || name === 'unknown suite' || name === 'unknown' || name === 'untagged'
+}
+
+// ── CSV export ────────────────────────────────────────────────────────────
+/** Wrap a CSV cell. Fields containing comma / quote / newline must be
+ *  quoted, and inner double-quotes must be escaped by doubling. Same
+ *  helper shape as ``FailureAnalysisPage.csvCell`` so the two exports
+ *  stay consistent. */
+function csvCell(value: unknown): string {
+  if (value == null) return ''
+  const s = String(value)
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+interface CoverageExportSources {
+  summary: Partial<CoverageSummary>
+  suites: CoverageSuite[]
+  trend: TrendPoint[]
+  meta: {
+    projectName: string
+    windowLabel: string
+    suiteFilter: string | null
+    generatedAt: string
+    healthScore: number
+    verdict: string
+  }
+}
+
+/** Build the multi-section CSV that the Coverage Export button produces.
+ *
+ * Four sections, separated by a blank line and a ``# Section`` marker
+ * (the same pattern Excel / Sheets users navigate to via Ctrl+G or
+ * filter-pivot):
+ *
+ *   1. Metadata header — project, window, suite filter, generated_at,
+ *      health score + verdict. Pasted into a Slack channel, this block
+ *      still answers "what window / project / health" without context.
+ *   2. Summary KPIs — single row of the headline numbers
+ *      (``unique_tests``, ``suite_count``, ``total_executions``,
+ *      ``avg_pass_rate``, ``days_with_runs``).
+ *   3. Per-suite breakdown — one row per suite with the same columns
+ *      the on-page table renders. Suite name is first so tools like
+ *      ``sort`` work without column flags.
+ *   4. Daily cadence — one row per trend day so consumers can build
+ *      their own charts off the same data the cadence heatmap reads.
+ */
+export function buildCoverageCsv({
+  summary, suites, trend, meta,
+}: CoverageExportSources): string {
+  const lines: string[] = []
+
+  lines.push('# TestLookup — Coverage export')
+  lines.push(`# Project,${csvCell(meta.projectName)}`)
+  lines.push(`# Window,${csvCell(meta.windowLabel)}`)
+  lines.push(`# Suite filter,${csvCell(meta.suiteFilter ?? 'All suites')}`)
+  lines.push(`# Generated,${csvCell(meta.generatedAt)}`)
+  lines.push(`# Health score,${csvCell(meta.healthScore)}`)
+  lines.push(`# Verdict,${csvCell(meta.verdict)}`)
+  lines.push('')
+
+  lines.push('# Summary')
+  lines.push(
+    ['unique_tests', 'suite_count', 'total_executions', 'avg_pass_rate', 'days_with_runs'].join(','),
+  )
+  lines.push([
+    csvCell(summary.unique_tests ?? 0),
+    csvCell(summary.suite_count ?? 0),
+    csvCell(summary.total_executions ?? 0),
+    csvCell(summary.avg_pass_rate ?? 0),
+    csvCell(summary.days_with_runs ?? 0),
+  ].join(','))
+  lines.push('')
+
+  lines.push('# Per-suite breakdown')
+  lines.push(['suite_name', 'unique_tests', 'passed', 'failed', 'skipped', 'pass_rate'].join(','))
+  for (const s of suites) {
+    lines.push([
+      csvCell(s.suite_name),
+      csvCell(s.unique_tests),
+      csvCell(s.passed),
+      csvCell(s.failed),
+      csvCell(s.skipped),
+      csvCell(s.pass_rate),
+    ].join(','))
+  }
+  lines.push('')
+
+  lines.push('# Daily cadence')
+  lines.push(['date', 'passed', 'failed', 'skipped', 'broken', 'total', 'pass_rate'].join(','))
+  for (const p of trend) {
+    lines.push([
+      csvCell(p.date),
+      csvCell(p.passed),
+      csvCell(p.failed),
+      csvCell(p.skipped),
+      csvCell(p.broken ?? 0),
+      csvCell(p.total ?? (p.passed + p.failed + p.skipped + (p.broken ?? 0))),
+      csvCell(p.pass_rate),
+    ].join(','))
+  }
+  // Trailing newline so POSIX tooling (wc -l, awk) counts the last row.
+  return lines.join('\r\n') + '\r\n'
+}
+
+/** Build a filename slug from a project name. */
+function slugifyProjectName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project'
+}
+
+/** Triggers a CSV download of the in-memory coverage data. Pure DOM —
+ *  no backend round-trip — because the data the user wants is already
+ *  on the page; a server-side ``GET /coverage/export`` would just
+ *  re-serialise what we already have. Mirrors
+ *  ``FailureAnalysisPage.handleExportCsv``. */
+function handleCoverageExportCsv({
+  summary, suites, trend, project, days, suiteFilter, healthScore, verdict,
+}: {
+  summary: Partial<CoverageSummary>
+  suites: CoverageSuite[]
+  trend: TrendPoint[]
+  project: { id: string; name: string } | null
+  days: number
+  suiteFilter: string | null
+  healthScore: number
+  verdict: string
+}): void {
+  const hasData = (summary.suite_count ?? 0) > 0 || suites.length > 0 || trend.length > 0
+  if (!hasData) {
+    toast('No coverage data to export in this window', { icon: '📭' })
+    return
+  }
+  const windowLabel = days === 1 ? '24h' : `${days}d`
+  const csv = buildCoverageCsv({
+    summary, suites, trend,
+    meta: {
+      projectName: project?.name ?? 'All projects',
+      windowLabel,
+      suiteFilter,
+      generatedAt: new Date().toISOString(),
+      healthScore,
+      verdict,
+    },
+  })
+  // BOM so Excel opens the file in UTF-8.
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const projectSlug = project ? slugifyProjectName(project.name) : 'all-projects'
+  const suiteSlug = suiteFilter ? `-${slugifyProjectName(suiteFilter)}` : ''
+  a.download = `coverage-${projectSlug}${suiteSlug}-${windowLabel}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  toast.success(
+    `Exported ${suites.length} suite${suites.length === 1 ? '' : 's'} + ${trend.length} day${trend.length === 1 ? '' : 's'} of cadence`,
+  )
 }
 
 function computeHealthModel(summary: Partial<CoverageSummary>, suites: CoverageSuite[], days: number) {
@@ -352,7 +510,7 @@ function WindowPicker({ value, onChange }: { value: Window; onChange: (w: Window
 
 // ── Verdict card ──────────────────────────────────────────────────────────
 function VerdictCard({
-  model, verdict, lede, issues, onOpenTriage, onCompare, onSchedule,
+  model, verdict, lede, issues, onOpenTriage, onCompare, comparing, onSchedule,
 }: {
   model: ReturnType<typeof computeHealthModel>
   verdict: Verdict
@@ -360,6 +518,11 @@ function VerdictCard({
   issues: Issue[]
   onOpenTriage: () => void
   onCompare: () => void
+  /** When true, the CTA flips to "Hide comparison" — same toggle pattern
+   *  as ``FailureAnalysisPage``. The inline strip is rendered by the
+   *  page, not by this card, so swapping branches doesn't reflow the
+   *  verdict body. */
+  comparing: boolean
   onSchedule: () => void
 }) {
   const t = VERDICT_THEME[verdict]
@@ -411,7 +574,9 @@ function VerdictCard({
 
         <div className="flex flex-wrap gap-2 mt-3.5">
           <PrimaryBtn onClick={onOpenTriage}>Open triage queue</PrimaryBtn>
-          <GhostBtn onClick={onCompare}>Compare to previous window</GhostBtn>
+          <GhostBtn onClick={onCompare}>
+            {comparing ? 'Hide comparison' : 'Compare to previous window'}
+          </GhostBtn>
           <GhostBtn onClick={onSchedule}>Configure schedule</GhostBtn>
         </div>
       </div>
@@ -430,6 +595,115 @@ function verdictAction(v: Verdict, model: ReturnType<typeof computeHealthModel>)
   const failing = model.dimensions.filter(d => d.tone === 'bad').length
   if (v === 'BLOCKED') return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} below threshold` : 'critical issues blocking'
   return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} need attention` : 'review the issues below'
+}
+
+// ── Coverage comparison strip ─────────────────────────────────────────────
+/** Inline panel rendered below the verdict card when the user clicks
+ *  "Compare to previous window". Pulls prior-vs-current deltas from the
+ *  same double-window trend the FailureAnalysisPage uses (no bespoke
+ *  backend endpoint). Cells: total executions, pass rate, days with
+ *  runs — the three metrics that map cleanly onto Coverage's headline.
+ *  Mirrors ``FailureAnalysisPage.ComparisonStrip`` so the two pages
+ *  look like one product. */
+type CoverageCompareStats = {
+  passed: number; failed: number; skipped: number; total: number;
+  passRate: number; days: number; daysWithRuns: number
+}
+
+export function CoverageComparisonStrip({
+  current, prior, windowDays,
+}: {
+  current: CoverageCompareStats
+  prior: CoverageCompareStats
+  windowDays: number
+}) {
+  const totalDelta        = current.total - prior.total
+  const passRateDelta     = current.passRate - prior.passRate
+  const daysWithRunsDelta = current.daysWithRuns - prior.daysWithRuns
+
+  // ``deltaColour`` returns CSS values rather than Tailwind classes so the
+  // direction-vs-good logic stays explicit at each call site.
+  const RED   = '#fca5a5'
+  const GREEN = '#86efac'
+  const NEUTRAL = 'var(--color-text-muted)'
+  const colourForRateDelta = (delta: number): string =>
+    Math.abs(delta) < 0.01 ? NEUTRAL : (delta > 0 ? GREEN : RED)
+  const colourForCadenceDelta = (delta: number): string =>
+    delta === 0 ? NEUTRAL : (delta > 0 ? GREEN : RED)
+
+  const fmtInt = (n: number) => Intl.NumberFormat().format(Math.round(n))
+  const arrow = (delta: number) => delta === 0 ? '—' : (delta > 0 ? '↑' : '↓')
+
+  return (
+    <section
+      aria-label="Coverage comparison"
+      className="rounded-xl border"
+      style={{
+        background: 'var(--color-bg-card)',
+        borderColor: 'var(--color-border)',
+        padding: '14px 16px',
+        marginBottom: 14,
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
+          Compare to previous window
+        </h3>
+        <span className="text-[11px] text-[var(--color-text-muted)]">
+          last {windowDays}d vs prior {windowDays}d
+        </span>
+      </div>
+      <p className="m-0 mb-3 text-[12px] text-[var(--color-text-muted)]" style={{ lineHeight: 1.5 }}>
+        Aggregated from daily trends. Prior window = the {prior.days} days immediately before this window.
+      </p>
+      <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+        <CoverageCompareCell
+          label="Total executions"
+          currentText={fmtInt(current.total)}
+          deltaText={`${arrow(totalDelta)} ${fmtInt(Math.abs(totalDelta))}`}
+          priorText={`vs prior ${fmtInt(prior.total)}`}
+          deltaColor={NEUTRAL}
+        />
+        <CoverageCompareCell
+          label="Pass rate"
+          currentText={`${current.passRate.toFixed(1)}%`}
+          deltaText={`${arrow(passRateDelta)} ${Math.abs(passRateDelta).toFixed(1)}%`}
+          priorText={`vs prior ${prior.passRate.toFixed(1)}%`}
+          deltaColor={colourForRateDelta(passRateDelta)}
+        />
+        <CoverageCompareCell
+          label="Days with runs"
+          currentText={String(current.daysWithRuns)}
+          deltaText={`${arrow(daysWithRunsDelta)} ${Math.abs(daysWithRunsDelta)}`}
+          priorText={`vs prior ${prior.daysWithRuns}`}
+          deltaColor={colourForCadenceDelta(daysWithRunsDelta)}
+        />
+      </div>
+    </section>
+  )
+}
+
+function CoverageCompareCell({
+  label, currentText, deltaText, priorText, deltaColor,
+}: {
+  label: string
+  currentText: string
+  deltaText: string
+  priorText: string
+  deltaColor: string
+}) {
+  return (
+    <div
+      className="rounded-md border"
+      style={{ padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+    >
+      <div className="text-[11px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</div>
+      <div className="mt-1 text-[18px] font-semibold text-[var(--color-text)]">{currentText}</div>
+      <div className="mt-0.5 text-[11.5px]" style={{ color: deltaColor }}>
+        {deltaText} <span className="text-[var(--color-text-muted)]">{priorText}</span>
+      </div>
+    </div>
+  )
 }
 
 function IssueRow({ issue }: { issue: Issue }) {
@@ -1214,12 +1488,13 @@ export default function CoveragePage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
-  const [days, setDays] = useState<Window>(() => {
-    const saved = Number(localStorage.getItem(WINDOW_KEY))
-    // Default: last 24h. Saved choice wins so existing users keep theirs.
-    return WINDOWS.includes(saved as Window) ? (saved as Window) : 1
-  })
-  useEffect(() => { localStorage.setItem(WINDOW_KEY, String(days)) }, [days])
+  // Window is a global user preference (shared with Live / Trends /
+  // Runs / Failures / Summary / Overview / My Failures). Snap to this
+  // page's allowed set when the stored value isn't supported here.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, WINDOWS) as Window
+  const setDays = setStoredDays as (w: Window) => void
 
   const [showPicker, setShowPicker] = useState(false)
   const [selectedSuite, setSelectedSuite] = useState('')
@@ -1233,6 +1508,48 @@ export default function CoveragePage() {
   const summary: Partial<CoverageSummary> = useMemo(() => coverageData?.summary ?? {}, [coverageData])
   const suites: CoverageSuite[] = useMemo(() => coverageData?.suites ?? [], [coverageData])
   const trend: TrendPoint[] = trendData?.data ?? []
+
+  // ── Compare-to-previous-window toggle ────────────────────────────────
+  // Reuses the FailureAnalysisPage approach: a second trend fetch with
+  // 2× the window, split at the midpoint into prior vs current halves.
+  // When ``comparing`` is off, the second fetch keys on the same ``days``
+  // as the primary trend above, so SWR dedupes and no extra request fires.
+  const [comparing, setComparing] = useState(false)
+  const compareDays = comparing ? days * 2 : days
+  const { data: compareTrendData } = useTrendData(compareDays, suiteFilter)
+
+  const comparison = useMemo(() => {
+    if (!comparing) return null
+    const points = (compareTrendData?.data ?? []).slice().sort(
+      (a, b) => a.date.localeCompare(b.date),
+    )
+    if (points.length < 2) return null
+    // Split at the midpoint. Odd counts give the extra day to the
+    // current window — feels more honest when the user is asking
+    // "is coverage trending right now".
+    const mid = Math.floor(points.length / 2)
+    const prior   = points.slice(0, mid)
+    const current = points.slice(mid)
+    const summarise = (pts: TrendPoint[]) => {
+      const passed   = pts.reduce((s, p) => s + (p.passed || 0), 0)
+      const failed   = pts.reduce((s, p) => s + (p.failed || 0), 0)
+      const broken   = pts.reduce((s, p) => s + (p.broken || 0), 0)
+      const skipped  = pts.reduce((s, p) => s + (p.skipped || 0), 0)
+      const total    = pts.reduce(
+        (s, p) => s + (p.total ?? (p.passed + p.failed + p.skipped + (p.broken ?? 0))),
+        0,
+      )
+      const denom    = passed + failed + broken
+      const passRate = denom > 0 ? (passed / denom) * 100 : 0
+      // ``days with runs`` is what /coverage's KPI strip surfaces — the
+      // count of days that have ANY run activity, prior vs current.
+      const daysWithRuns = pts.filter(
+        p => (p.passed || 0) + (p.failed || 0) + (p.skipped || 0) + (p.broken || 0) > 0,
+      ).length
+      return { passed, failed, skipped, total, passRate, days: pts.length, daysWithRuns }
+    }
+    return { prior: summarise(prior), current: summarise(current) }
+  }, [comparing, compareTrendData])
 
   const model = useMemo(() => computeHealthModel(summary, suites, days), [summary, suites, days])
   const verdict: Verdict = verdictForScore(model.composite)
@@ -1338,8 +1655,12 @@ export default function CoveragePage() {
             allLabel="All suites"
           />
           <GhostBtn
-            onClick={() => toast('Export coverage CSV — coming in Phase 2', { icon: '📦' })}
-            title="Export coverage data"
+            onClick={() => handleCoverageExportCsv({
+              summary, suites, trend, project, days, suiteFilter,
+              healthScore: model.composite,
+              verdict,
+            })}
+            title="Export coverage data as CSV"
           >
             <Download className="h-3.5 w-3.5" />
             Export
@@ -1372,9 +1693,38 @@ export default function CoveragePage() {
             lede={lede}
             issues={issues}
             onOpenTriage={() => navigate(`/failures?days=${days}`)}
-            onCompare={() => toast('Window comparison — coming in Phase 2', { icon: '⇆' })}
+            onCompare={() => setComparing(c => !c)}
+            comparing={comparing}
             onSchedule={() => toast('Schedule editor — coming in Phase 2', { icon: '⏱️' })}
           />
+
+          {comparing && (
+            comparison ? (
+              <CoverageComparisonStrip
+                current={comparison.current}
+                prior={comparison.prior}
+                windowDays={days}
+              />
+            ) : (
+              <section
+                className="rounded-xl border"
+                style={{
+                  background: 'var(--color-bg-card)',
+                  borderColor: 'var(--color-border)',
+                  padding: '14px 16px',
+                  marginBottom: 14,
+                }}
+              >
+                <div className="flex items-center justify-between text-[12.5px] text-[var(--color-text-muted)]">
+                  <span>Compare to previous window</span>
+                  <span>last {days}d vs prior {days}d</span>
+                </div>
+                <p className="m-0 mt-2 text-[12.5px] text-[var(--color-text-muted)]">
+                  Not enough trend data to compare against the prior window yet.
+                </p>
+              </section>
+            )
+          )}
 
           <CoverageRibbon totalEvidence={totalEvidence} confidencePct={confidencePct} />
 

@@ -240,11 +240,36 @@ async def _load_test_rows(
     Same-fingerprint duplicates inside a single run (e.g. retries) are
     resolved by keeping the last-observed row — matches how the release
     dashboards render the run.
+
+    Suite scoping mirrors ``resolve_latest_suite_pair``'s union semantics
+    so the compare path doesn't reject runs the resolver accepted. The
+    SDK sends ``testlookup.suite`` once at session-create — it lands on
+    ``TestRun.primary_suite_name`` but per-event ``TestCase.suite_name``
+    stays NULL for live-stream runs. A pure ``TestCase.suite_name == X``
+    filter then matches zero rows even though the run is correctly
+    tagged at the run level. See ``feedback_live_stream_suite_name_nulls``.
     """
     stmt = select(TestCase).where(TestCase.test_run_id == run_id)
     suite_key = normalize_suite_name(suite_name)
     if suite_key:
-        stmt = stmt.where(func.lower(func.trim(TestCase.suite_name)) == suite_key)
+        # Run-level match: if this run's ``primary_suite_name`` matches,
+        # ALL test cases for the run belong to that suite regardless of
+        # the per-row column. Embedded as a correlated EXISTS so the
+        # whole filter stays a single query.
+        run_level_match = (
+            select(TestRun.id)
+            .where(
+                TestRun.id == run_id,
+                func.lower(func.trim(TestRun.primary_suite_name)) == suite_key,
+            )
+            .exists()
+        )
+        stmt = stmt.where(
+            or_(
+                func.lower(func.trim(TestCase.suite_name)) == suite_key,
+                run_level_match,
+            )
+        )
     result = await db.execute(stmt)
     rows: dict[str, TestCase] = {}
     for tc in result.scalars().all():
@@ -432,15 +457,40 @@ async def compare_runs(
     left_tests = await _load_test_rows(db, left_id, suite_name=suite_name)
     right_tests = await _load_test_rows(db, right_id, suite_name=suite_name)
 
+    # Soft-fail mode: when a suite name is supplied but the requested
+    # runs have no per-test rows for it (very common for live-stream
+    # PASSED runs that finalised before placeholder synthesis kicked
+    # in, or for runs that lost their per-test buffer to the 50K LTRIM
+    # cap before the drainer fired), we used to raise LookupError and
+    # the UI rendered "Suite was not found in the left and right run"
+    # — confusing because the resolver had already proved the suite
+    # IS tagged on both runs via ``primary_suite_name``.
+    #
+    # Bug 2026-05-19: 47 runs available via the resolver, "Compare
+    # latest" raised the lookup error anyway. Fix: when both runs
+    # carry the suite at the RUN level but lack per-test detail, fall
+    # through with an empty delta set + a ``data_gap`` warning. The
+    # frontend now renders aggregate-only diff with a banner instead
+    # of a generic error.
     if suite_name and (not left_tests or not right_tests):
-        missing = []
-        if not left_tests:
-            missing.append("left")
-        if not right_tests:
-            missing.append("right")
-        raise LookupError(
-            f"Suite {suite_name} was not found in the {' and '.join(missing)} run"
+        suite_key = normalize_suite_name(suite_name)
+        both_runs_tagged = (
+            normalize_suite_name(getattr(left_run, "primary_suite_name", None)) == suite_key
+            and normalize_suite_name(getattr(right_run, "primary_suite_name", None)) == suite_key
         )
+        if not both_runs_tagged:
+            missing = []
+            if not left_tests:
+                missing.append("left")
+            if not right_tests:
+                missing.append("right")
+            raise LookupError(
+                f"Suite {suite_name} was not found in the {' and '.join(missing)} run"
+            )
+        # Empty per-test sets on both/either side, but the runs ARE
+        # tagged with this suite. Continue with empty maps so the
+        # downstream code emits an empty delta list + aggregate
+        # summary instead of failing the request.
 
     all_fingerprints = set(left_tests.keys()) | set(right_tests.keys())
 
@@ -609,6 +659,16 @@ async def compare_runs(
     if left_summary["duration_ms"] is not None and right_summary["duration_ms"] is not None:
         delta_duration_ms = int(right_summary["duration_ms"]) - int(left_summary["duration_ms"])
 
+    # Surface a data-gap flag so the UI can show "Aggregate-only diff —
+    # per-test detail unavailable for this suite" instead of an empty
+    # delta list with no explanation. Fires when the run carries the
+    # suite via ``primary_suite_name`` but ``test_cases`` is empty for
+    # one or both sides (Phase 4.5 buffer-eviction / passing live runs
+    # that skipped placeholder synthesis).
+    data_gap = bool(
+        suite_name and (not left_tests or not right_tests)
+    )
+
     return {
         "left": left_summary,
         "right": right_summary,
@@ -634,4 +694,5 @@ async def compare_runs(
         "renamed": counts["renamed"],
         "test_deltas": deltas,
         "truncated": truncated,
+        "data_gap": data_gap,
     }

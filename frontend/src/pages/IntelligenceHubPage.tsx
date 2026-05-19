@@ -155,7 +155,10 @@ export default function IntelligenceHubPage() {
   const projectId = useProjectStore(s => s.activeProjectId)
   const isAll = projectId === ALL_PROJECTS_ID
 
-  const range  = (params.get('range') ?? '24h') as RangeId
+  // Default range is 7d (was 24h prior to 2026-05-15). Most CI workloads
+  // don't ship a fresh run every day; the 24h default left first-time users
+  // staring at "0 runs". The URL param still overrides for deep-links.
+  const range  = (params.get('range') ?? '7d') as RangeId
   const branch = params.get('branch') ?? ''
   const status = params.get('status') ?? 'all'
   const query  = params.get('q') ?? ''
@@ -723,8 +726,13 @@ function RunRow({
     >
       <td className="px-3.5 py-2.5 min-w-[260px]">
         <div className="flex items-baseline gap-2">
+          {/* Prefer the per-(project, suite) human-readable Run #N — server-
+              computed via ROW_NUMBER() so the same value appears on
+              /runs, /live, /my-failures, and here. Falls back to the
+              raw SDK build_number for rows that pre-date the run_seq
+              field (legacy ingests). */}
           <span className="font-mono text-[13px] font-semibold text-[var(--color-text)] whitespace-nowrap">
-            #{String(run.build_number)}
+            {run.run_seq != null ? `Run #${run.run_seq}` : `#${String(run.build_number)}`}
           </span>
           <span className="text-[13px] font-medium text-[var(--color-text)] truncate max-w-[300px]">
             {run.jenkins_job || ''}
@@ -912,13 +920,17 @@ function ActivityPanel({ runs }: { runs: TestRun[] }) {
               {fromNow(r.created_at).replace(' ago', '')}
             </span>
             <span className="text-[12.5px] text-[var(--color-text-secondary)] min-w-0">
-              {isFailed(r) ? (
-                <><Zap className="inline h-3 w-3 mr-1 text-red-400" />Run <code className="text-[11.5px] px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">#{r.build_number}</code> failed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span> — {r.failed_tests} test{r.failed_tests === 1 ? '' : 's'}</>
-              ) : isFlaky(r) ? (
-                <><Activity className="inline h-3 w-3 mr-1 text-purple-400" />Run <code className="text-[11.5px] px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">#{r.build_number}</code> recovered after {r.broken_tests} retr{r.broken_tests === 1 ? 'y' : 'ies'}</>
-              ) : (
-                <><Sparkles className="inline h-3 w-3 mr-1 text-emerald-400" />Run <code className="text-[11.5px] px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">#{r.build_number}</code> passed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span></>
-              )}
+              {/* Per-(project, suite) Run #N is the canonical handle now;
+                  legacy rows without run_seq fall back to the raw
+                  SDK build_number prefixed with "#" so the copy still
+                  reads naturally ("Run #1234 failed on main"). */}
+              {(() => {
+                const label = r.run_seq != null ? `#${r.run_seq}` : `#${r.build_number}`
+                const code = <code className="text-[11.5px] px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">{label}</code>
+                if (isFailed(r)) return <><Zap className="inline h-3 w-3 mr-1 text-red-400" />Run {code} failed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span> — {r.failed_tests} test{r.failed_tests === 1 ? '' : 's'}</>
+                if (isFlaky(r))  return <><Activity className="inline h-3 w-3 mr-1 text-purple-400" />Run {code} recovered after {r.broken_tests} retr{r.broken_tests === 1 ? 'y' : 'ies'}</>
+                return <><Sparkles className="inline h-3 w-3 mr-1 text-emerald-400" />Run {code} passed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span></>
+              })()}
             </span>
           </li>
         ))}

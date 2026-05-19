@@ -31,6 +31,7 @@ frontend/.vite/
 
 # Playwright auth state (contains JWT — never commit)
 frontend/tests/e2e/.auth/
+.ms-playwright/
 
 # Java SDK build artifacts
 client/java/target/
@@ -66,6 +67,11 @@ docs/
 BuildFailures/
 CSS_Samples/
 backend/celerybeat-schedule
+
+# Build-time SDK staging dir (created by deploy-homelab.sh and the CI
+# "Stage client SDKs" workflow step before ``docker build``; cleaned up
+# afterwards). Should never be committed.
+backend/__client_sdks_staged/
 
 # Local virtual environments (any variant beyond the already-ignored .venv/)
 .venv_local/

@@ -54,6 +54,9 @@ import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
+import { isActivelyRunning, isStaleRunning } from '@/utils/liveSessionFreshness'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -136,10 +139,43 @@ function LiveWindowPicker({ value, onChange }: { value: LiveWindow; onChange: (w
 
 // ── Sort helpers ───────────────────────────────────────────────────────────
 
-type SortField = 'pass_rate' | 'total' | 'failed' | 'started_at'
+type SortField = 'pass_rate' | 'total' | 'failed' | 'started_at' | 'build' | 'suite'
 type SortDir   = 'asc' | 'desc'
 
 function sortSessions(sessions: LiveSessionState[], field: SortField, dir: SortDir) {
+  // String sorts (Build, Suite) compare via localeCompare; numeric/date
+  // sorts use subtraction. Wrapping in a single sign-flipped multiplier
+  // keeps the asc/desc switch trivial.
+  const mult = dir === 'asc' ? 1 : -1
+
+  if (field === 'build') {
+    return [...sessions].sort((a, b) => {
+      // Prefer the human-readable run_seq when available — same value
+      // the Build column renders. Fall back to ``build_number`` so
+      // legacy rows without run_seq still sort sensibly. Both branches
+      // sort by run_seq ASC first when populated; build_number is
+      // alpha-compared as a tie-breaker.
+      const aSeq = a.run_seq ?? null
+      const bSeq = b.run_seq ?? null
+      if (aSeq != null && bSeq != null) return (aSeq - bSeq) * mult
+      if (aSeq != null) return -1 * mult  // populated < missing
+      if (bSeq != null) return 1 * mult
+      return (a.build_number || '').localeCompare(b.build_number || '') * mult
+    })
+  }
+
+  if (field === 'suite') {
+    return [...sessions].sort((a, b) => {
+      const av = (a.suite_name || '').trim()
+      const bv = (b.suite_name || '').trim()
+      // Empty suite names always sink to the bottom regardless of dir
+      // so the user can scan named suites first.
+      if (!av && bv) return 1
+      if (av && !bv) return -1
+      return av.localeCompare(bv) * mult
+    })
+  }
+
   return [...sessions].sort((a, b) => {
     let va: number
     let vb: number
@@ -150,7 +186,7 @@ function sortSessions(sessions: LiveSessionState[], field: SortField, dir: SortD
       va = (a[field] as number) ?? 0
       vb = (b[field] as number) ?? 0
     }
-    return dir === 'asc' ? va - vb : vb - va
+    return (va - vb) * mult
   })
 }
 
@@ -384,9 +420,10 @@ session.Record(ctx, "test_cart", testlookup.Failed, 340,
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    void copyTextToClipboard(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
   }, [text])
   return (
     <button
@@ -531,9 +568,13 @@ export default function LiveExecutionPage() {
   const projectId = isAllProjects ? undefined : selectedProject?.id?.toString()
   const [selectedSuite, setSelectedSuite] = useState('')
   // Cutoff (in days) for completed sessions shown alongside the always-current
-  // active set. 1 = last 24 hours; 0 = no cutoff. Default 1 (last 24h) for
-  // parity with Overview/Runs/Trends/Coverage — widen via the picker.
-  const [days, setDays] = useState<LiveWindow>(1)
+  // active set. 1 = last 24 hours; 0 = no cutoff. Sourced from the
+  // shared user-level preference so selecting "24h" here propagates to
+  // Overview/Runs/Trends/Coverage/Summary/My Failures and vice versa.
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, LIVE_WINDOWS) as LiveWindow
+  const setDays = setStoredDays
 
   const {
     sessions,
@@ -568,8 +609,18 @@ export default function LiveExecutionPage() {
     if (!selectedSuite) return sessions
     return sessions.filter(s => suiteMatchesValue(s.suite_name, selectedSuite))
   }, [sessions, selectedSuite])
+  // A run is "active" only when it's still emitting telemetry. A run that
+  // stops sending events stays as ``status='running'`` in the DB until the
+  // 10-min reaper picks it up — those sessions are kept visible (with an
+  // "Idle" badge in the table) but excluded from the hero count so the
+  // page doesn't claim "5 active runs" when 3 of them are silently stuck.
+  // See ``utils/liveSessionFreshness.ts``.
   const suiteScopedRunningSessions = useMemo(
-    () => suiteScopedSessions.filter(s => s.status === 'running'),
+    () => suiteScopedSessions.filter(s => isActivelyRunning(s)),
+    [suiteScopedSessions],
+  )
+  const suiteScopedStaleSessions = useMemo(
+    () => suiteScopedSessions.filter(s => isStaleRunning(s)),
     [suiteScopedSessions],
   )
 
@@ -591,7 +642,9 @@ export default function LiveExecutionPage() {
 
   const visibleSessions = useMemo(() => {
     let list = suiteScopedSessions
-    if (filter === 'running')  list = list.filter(s => s.status === 'running')
+    // "Running" filter chip matches the hero definition — actually-active
+    // sessions only, not stale rows awaiting the reaper.
+    if (filter === 'running')  list = list.filter(s => isActivelyRunning(s))
     if (filter === 'failures') list = list.filter(s => (s.failed ?? 0) > 0)
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -695,19 +748,32 @@ export default function LiveExecutionPage() {
     }
   }, [wsStatus, suiteScopedRunningSessions.length, recentEvents, suiteScopedSessions.length, visibleSessions.length, visibleStats.overallPassRate])
 
-  // Group sessions by build_number, keep most recent per build. The legacy
-  // ingestion path reported each run twice (slug + UUID) so we dedupe to
-  // present one row per build with the canonical UUID underneath.
+  // Dedup by ``run_id`` so each LiveSession gets exactly one row in the
+  // table. The earlier implementation deduped by ``build_number``, which
+  // existed to collapse a legacy ingestion duplicate (one logical run
+  // produced two LiveSession rows — slug + UUID — sharing a single
+  // build_number). That duplication is gone: the modern SDK creates one
+  // LiveSession per run with a server-generated UUID, and parallel
+  // TestNG / pytest runs that share a build label (e.g.
+  // ``testng-<timestamp>``) are GENUINELY distinct runs that should
+  // each get their own row. Incident 2026-05-18: 4 active runs showed
+  // ``4 running`` in the hero but only 1 in the table because all four
+  // shared the same SDK-supplied build_number.
+  //
+  // Keeping the dedup function (rather than dropping it entirely) so a
+  // future double-emit bug would still collapse identical run_ids
+  // instead of rendering ghost rows. ``run_id`` is the LiveSession PK,
+  // so this is effectively a no-op for normal traffic.
   const dedupedSessions = useMemo(() => {
-    const byBuild = new Map<string, LiveSessionState>()
+    const byRunId = new Map<string, LiveSessionState>()
     for (const s of visibleSessions) {
-      const key = s.build_number || s.run_id
-      const existing = byBuild.get(key)
+      const key = s.run_id
+      const existing = byRunId.get(key)
       const ts = s.last_event_at || s.started_at || ''
       const existingTs = existing ? (existing.last_event_at || existing.started_at || '') : ''
-      if (!existing || ts > existingTs) byBuild.set(key, s)
+      if (!existing || ts > existingTs) byRunId.set(key, s)
     }
-    return [...byBuild.values()]
+    return [...byRunId.values()]
   }, [visibleSessions])
 
   // Client-side pagination of the sessions table. KPIs and the workflow
@@ -786,15 +852,27 @@ export default function LiveExecutionPage() {
   // Anchor everything on whether anything is happening RIGHT NOW. Drives the
   // hero-state copy in the status strip and the LIVE badge animation.
   const liveSummary = (() => {
+    const idleCount = suiteScopedStaleSessions.length
+    const idleSuffix = idleCount > 0
+      ? ` · ${idleCount} idle waiting on reaper`
+      : ''
     if (suiteScopedRunningSessions.length > 0) {
       const totalActive = suiteScopedRunningSessions.reduce((a, s) => a + (s.total || 0), 0)
-      return { hero: `${suiteScopedRunningSessions.length} active run${suiteScopedRunningSessions.length > 1 ? 's' : ''}`, sub: `${totalActive.toLocaleString()} tests in flight`, isLive: true }
+      return {
+        hero: `${suiteScopedRunningSessions.length} active run${suiteScopedRunningSessions.length > 1 ? 's' : ''}`,
+        sub: `${totalActive.toLocaleString()} tests in flight${idleSuffix}`,
+        isLive: true,
+      }
     }
     if (suiteScopedSessions.length > 0) {
       const last = suiteScopedSessions.find(s => s.completed_at) ?? suiteScopedSessions[0]
       const lastTs = last?.completed_at || last?.last_event_at
       const ago = lastTs ? relativeTime(new Date(lastTs).getTime()) : '—'
-      return { hero: 'No active runs', sub: `Last completed ${ago}`, isLive: false }
+      return {
+        hero: 'No active runs',
+        sub: `Last completed ${ago}${idleSuffix}`,
+        isLive: false,
+      }
     }
     return { hero: 'No active runs', sub: 'Stream is connected — waiting for the first run', isLive: false }
   })()
@@ -911,6 +989,243 @@ export default function LiveExecutionPage() {
               ) : null}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ════ Sessions table (deduped) ════ */}
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--color-border)] flex-wrap">
+          <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">Sessions</h2>
+          <div className="flex items-center gap-1 bg-[var(--color-bg-card)] rounded-md p-0.5">
+            {(['all', 'running', 'failures'] as const).map(f => {
+              const count =
+                f === 'all' ? suiteScopedSessions.length :
+                // Match the hero's "active" definition so the chip badge
+                // doesn't disagree with the headline KPI.
+                f === 'running' ? suiteScopedSessions.filter(s => isActivelyRunning(s)).length :
+                suiteScopedSessions.filter(s => (s.failed ?? 0) > 0).length
+              return (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFilter(f)}
+                  className={clsx(
+                    'px-2.5 py-1 rounded text-xs font-medium',
+                    filter === f
+                      ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                  )}
+                >
+                  {f === 'failures' ? 'Has failures' : f.charAt(0).toUpperCase() + f.slice(1)}
+                  <span className="ml-1 text-[var(--color-text-muted)]">{count}</span>
+                </button>
+              )
+            })}
+          </div>
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search runs…"
+              className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded pl-8 pr-2 py-1 text-xs w-44 text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)]"
+            />
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-[var(--color-text-muted)] text-[10px] uppercase tracking-wider">
+              <tr className="border-b border-[var(--color-border)]">
+                <th
+                  className="px-5 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('build')}
+                >
+                  <span className="flex items-center gap-1">Build <SortIcon field="build" /></span>
+                </th>
+                <th
+                  className="px-3 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('suite')}
+                >
+                  <span className="flex items-center gap-1">Suite <SortIcon field="suite" /></span>
+                </th>
+                <th className="px-3 py-2.5 text-left font-medium">Status</th>
+                <th
+                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('total')}
+                >
+                  <span className="flex items-center justify-end gap-1">Tests <SortIcon field="total" /></span>
+                </th>
+                <th className="px-3 py-2.5 text-right font-medium">Pass</th>
+                <th
+                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('failed')}
+                >
+                  <span className="flex items-center justify-end gap-1">Failed <SortIcon field="failed" /></span>
+                </th>
+                <th className="px-3 py-2.5 text-left font-medium" style={{ width: 200 }}>Outcome</th>
+                <th className="px-3 py-2.5 text-left font-medium">Release</th>
+                <th
+                  className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
+                  onClick={() => handleSort('started_at')}
+                >
+                  <span className="flex items-center justify-end gap-1">Started <SortIcon field="started_at" /></span>
+                </th>
+                <th className="px-5 py-2.5 text-right font-medium">End</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(showRawSessions ? visibleSessions : dedupedSessions).length === 0 && (
+                <tr>
+                  <td colSpan={10} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
+                    {suiteScopedSessions.length === 0
+                      ? 'No active execution sessions. Start a test run with the client SDK.'
+                      : 'No sessions match the current filter.'}
+                  </td>
+                </tr>
+              )}
+              {pagedSessions.map(s => {
+                const passW = s.total > 0 ? (s.passed / s.total) * 100 : 0
+                const failW = s.total > 0 ? (s.failed / s.total) * 100 : 0
+                return (
+                  <tr key={s.run_id} className="border-b border-[var(--color-border)] hover:bg-[rgba(68,147,248,.04)] last:border-b-0">
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className={clsx('h-2 w-2 rounded-full flex-shrink-0', statusDot(s.status))} />
+                        <div>
+                          {/* Use the canonical TestRun.id for navigation — SDK
+                              run_ids are often slugs (e.g. `local-abc12345`)
+                              that 422 against the UUID-typed /runs/{id} path.
+                              Fall back to the slug only if the backend hasn't
+                              populated test_run_id (older response shape). */}
+                          <Link
+                            to={`/runs/${s.test_run_id || s.run_id}`}
+                            className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-2)]"
+                          >
+                            {/* Prefer the per-suite incremental Run #N
+                                identifier (1-based) — backed by a
+                                server-side ROW_NUMBER() over the
+                                (project, suite) partition. Falls back
+                                to the raw SDK build_number, then to a
+                                short run_id slice. */}
+                            {s.run_seq != null
+                              ? `Run #${s.run_seq}`
+                              : s.build_number || s.run_id.slice(0, 8)}
+                          </Link>
+                          <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
+                            {s.build_number || s.run_id.slice(0, 8)}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <SuiteBadge
+                        primary={(s as unknown as { suite_name?: string | null }).suite_name}
+                        all={null}
+                        linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      {(() => {
+                        // A ``running`` row that hasn't emitted in ~60s is
+                        // probably dead-and-waiting-for-the-reaper. Surface
+                        // that explicitly so the user doesn't think it's
+                        // still in flight.
+                        const stale = isStaleRunning(s)
+                        return (
+                          <span className={clsx(
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border',
+                            stale
+                              ? 'bg-amber-900/30 text-amber-300 border-amber-700/30'
+                              : s.status === 'running'
+                                ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
+                                : 'bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]',
+                          )}
+                          title={stale ? 'No telemetry for over a minute — pending reaper cleanup' : undefined}
+                          >
+                            {stale ? 'idle' : s.status}
+                          </span>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.total}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.passed}</td>
+                    <td className="px-3 py-3 text-right tabular-nums text-red-400 font-medium">
+                      {s.failed > 0 ? s.failed : <span className="text-[var(--color-text-faint)]">0</span>}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="bg-[var(--color-bg-hover)] rounded-full h-1.5 overflow-hidden flex w-24">
+                          <span className="bg-emerald-500 h-full" style={{ width: `${passW}%` }} />
+                          <span className="bg-red-500 h-full" style={{ width: `${failW}%` }} />
+                        </div>
+                        <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
+                          {s.pass_rate.toFixed(1)}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      {s.release_name ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-violet-900/30 text-violet-300 border-violet-700/30">
+                          <Package className="w-2.5 h-2.5" />
+                          {s.release_name}
+                        </span>
+                      ) : (
+                        <span className="text-[var(--color-text-faint)]">—</span>
+                      )}
+                    </td>
+                    {/* Started — kept sortable via the same column that previously
+                        held the (now misleadingly labelled) "Completed" cell. */}
+                    <td className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums">
+                      {s.started_at ? new Date(s.started_at).toLocaleString() : '—'}
+                    </td>
+                    {/* End — completed_at when the session has closed; otherwise
+                        last_event_at gives the "still running, last seen" hint. */}
+                    <td
+                      className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums"
+                      title={!s.completed_at && s.last_event_at ? `Still running · last event ${new Date(s.last_event_at).toLocaleString()}` : undefined}
+                    >
+                      {s.completed_at
+                        ? new Date(s.completed_at).toLocaleString()
+                        : s.last_event_at
+                          ? `${new Date(s.last_event_at).toLocaleString()} (live)`
+                          : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          page={tablePage}
+          pages={tableTotalPages}
+          total={sessionsForTable.length}
+          onChange={setTablePage}
+        />
+        <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
+          <span>
+            {dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
+            {visibleSessions.length > dedupedSessions.length && (
+              // Reach this branch only if a future double-emit produces
+              // two LiveSession rows with the SAME ``run_id`` — at which
+              // point telling the user "duplicate run_id collapsed" is
+              // the right copy. The legacy slug-vs-UUID pattern is gone
+              // (the dedup is now keyed by run_id; see comment at
+              // ``dedupedSessions`` above).
+              <> · {visibleSessions.length - dedupedSessions.length} duplicate run_id row{visibleSessions.length - dedupedSessions.length === 1 ? '' : 's'} collapsed</>
+            )}
+          </span>
+          {visibleSessions.length > dedupedSessions.length && (
+            <button
+              type="button"
+              onClick={() => setShowRawSessions(v => !v)}
+              className="text-[var(--color-accent-2)] hover:underline flex items-center gap-1"
+            >
+              <List className="w-3 h-3" />
+              {showRawSessions ? 'Hide raw rows' : `Show ${visibleSessions.length} raw rows`}
+            </button>
+          )}
         </div>
       </section>
 
@@ -1159,204 +1474,6 @@ export default function LiveExecutionPage() {
             <span className="font-mono">{recentEvents.length} buffered</span>
           </div>
         </aside>
-      </section>
-
-      {/* ════ Sessions table (deduped) ════ */}
-      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--color-border)] flex-wrap">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] flex-1">Sessions</h2>
-          <div className="flex items-center gap-1 bg-[var(--color-bg-card)] rounded-md p-0.5">
-            {(['all', 'running', 'failures'] as const).map(f => {
-              const count =
-                f === 'all' ? suiteScopedSessions.length :
-                f === 'running' ? suiteScopedSessions.filter(s => s.status === 'running').length :
-                suiteScopedSessions.filter(s => (s.failed ?? 0) > 0).length
-              return (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFilter(f)}
-                  className={clsx(
-                    'px-2.5 py-1 rounded text-xs font-medium',
-                    filter === f
-                      ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                  )}
-                >
-                  {f === 'failures' ? 'Has failures' : f.charAt(0).toUpperCase() + f.slice(1)}
-                  <span className="ml-1 text-[var(--color-text-muted)]">{count}</span>
-                </button>
-              )
-            })}
-          </div>
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search runs…"
-              className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded pl-8 pr-2 py-1 text-xs w-44 text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent)]"
-            />
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="text-[var(--color-text-muted)] text-[10px] uppercase tracking-wider">
-              <tr className="border-b border-[var(--color-border)]">
-                <th className="px-5 py-2.5 text-left font-medium">Build</th>
-                <th className="px-3 py-2.5 text-left font-medium">Suite</th>
-                <th className="px-3 py-2.5 text-left font-medium">Status</th>
-                <th
-                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('total')}
-                >
-                  <span className="flex items-center justify-end gap-1">Tests <SortIcon field="total" /></span>
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">Pass</th>
-                <th
-                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('failed')}
-                >
-                  <span className="flex items-center justify-end gap-1">Failed <SortIcon field="failed" /></span>
-                </th>
-                <th className="px-3 py-2.5 text-left font-medium" style={{ width: 200 }}>Outcome</th>
-                <th className="px-3 py-2.5 text-left font-medium">Release</th>
-                <th
-                  className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('started_at')}
-                >
-                  <span className="flex items-center justify-end gap-1">Started <SortIcon field="started_at" /></span>
-                </th>
-                <th className="px-5 py-2.5 text-right font-medium">End</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(showRawSessions ? visibleSessions : dedupedSessions).length === 0 && (
-                <tr>
-                  <td colSpan={10} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
-                    {suiteScopedSessions.length === 0
-                      ? 'No active execution sessions. Start a test run with the client SDK.'
-                      : 'No sessions match the current filter.'}
-                  </td>
-                </tr>
-              )}
-              {pagedSessions.map(s => {
-                const passW = s.total > 0 ? (s.passed / s.total) * 100 : 0
-                const failW = s.total > 0 ? (s.failed / s.total) * 100 : 0
-                return (
-                  <tr key={s.run_id} className="border-b border-[var(--color-border)] hover:bg-[rgba(68,147,248,.04)] last:border-b-0">
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={clsx('h-2 w-2 rounded-full flex-shrink-0', statusDot(s.status))} />
-                        <div>
-                          {/* Use the canonical TestRun.id for navigation — SDK
-                              run_ids are often slugs (e.g. `local-abc12345`)
-                              that 422 against the UUID-typed /runs/{id} path.
-                              Fall back to the slug only if the backend hasn't
-                              populated test_run_id (older response shape). */}
-                          <Link
-                            to={`/runs/${s.test_run_id || s.run_id}`}
-                            className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-2)]"
-                          >
-                            {s.build_number || s.run_id.slice(0, 8)}
-                          </Link>
-                          <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
-                            {s.run_id.slice(0, 8)}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <SuiteBadge
-                        primary={(s as unknown as { suite_name?: string | null }).suite_name}
-                        all={null}
-                        linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
-                      />
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={clsx(
-                        'inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border',
-                        s.status === 'running'
-                          ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
-                          : 'bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]',
-                      )}>
-                        {s.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.total}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.passed}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-red-400 font-medium">
-                      {s.failed > 0 ? s.failed : <span className="text-[var(--color-text-faint)]">0</span>}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="bg-[var(--color-bg-hover)] rounded-full h-1.5 overflow-hidden flex w-24">
-                          <span className="bg-emerald-500 h-full" style={{ width: `${passW}%` }} />
-                          <span className="bg-red-500 h-full" style={{ width: `${failW}%` }} />
-                        </div>
-                        <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
-                          {s.pass_rate.toFixed(1)}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      {s.release_name ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-violet-900/30 text-violet-300 border-violet-700/30">
-                          <Package className="w-2.5 h-2.5" />
-                          {s.release_name}
-                        </span>
-                      ) : (
-                        <span className="text-[var(--color-text-faint)]">—</span>
-                      )}
-                    </td>
-                    {/* Started — kept sortable via the same column that previously
-                        held the (now misleadingly labelled) "Completed" cell. */}
-                    <td className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums">
-                      {s.started_at ? new Date(s.started_at).toLocaleString() : '—'}
-                    </td>
-                    {/* End — completed_at when the session has closed; otherwise
-                        last_event_at gives the "still running, last seen" hint. */}
-                    <td
-                      className="px-5 py-3 text-right text-[var(--color-text-muted)] font-mono text-[11px] whitespace-nowrap tabular-nums"
-                      title={!s.completed_at && s.last_event_at ? `Still running · last event ${new Date(s.last_event_at).toLocaleString()}` : undefined}
-                    >
-                      {s.completed_at
-                        ? new Date(s.completed_at).toLocaleString()
-                        : s.last_event_at
-                          ? `${new Date(s.last_event_at).toLocaleString()} (live)`
-                          : '—'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          page={tablePage}
-          pages={tableTotalPages}
-          total={sessionsForTable.length}
-          onChange={setTablePage}
-        />
-        <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
-          <span>
-            {dedupedSessions.length} build{dedupedSessions.length === 1 ? '' : 's'}
-            {visibleSessions.length > dedupedSessions.length && (
-              <> · deduplicated by canonical UUID (each run was reported {Math.round(visibleSessions.length / Math.max(dedupedSessions.length, 1))}× — slug + UUID)</>
-            )}
-          </span>
-          {visibleSessions.length > dedupedSessions.length && (
-            <button
-              type="button"
-              onClick={() => setShowRawSessions(v => !v)}
-              className="text-[var(--color-accent-2)] hover:underline flex items-center gap-1"
-            >
-              <List className="w-3 h-3" />
-              {showRawSessions ? 'Hide raw rows' : `Show ${visibleSessions.length} raw rows`}
-            </button>
-          )}
-        </div>
       </section>
 
       {/* ════ Connect a runner (collapsed) ════ */}

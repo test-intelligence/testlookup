@@ -53,7 +53,9 @@ class DefectCommander(BaseAgent):
         try:
             result = await self._promote(state)
         except Exception as exc:
-            logger.error("DefectCommander failed: %s", exc, exc_info=True)
+            logger.error(
+                "defect_commander_failed", error=str(exc), exc_info=True,
+            )
             await self.mark_stage_done(pipeline_run_id, error=str(exc))
             return {
                 "defect_promotion": None,

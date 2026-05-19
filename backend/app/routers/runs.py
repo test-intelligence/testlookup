@@ -1,7 +1,7 @@
 """Test run and test case list endpoints."""
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -205,13 +205,39 @@ async def get_regression_diff(
     """
     Return a "What changed since last good run?" diff for the given test run.
     P3-9: Business logic extracted to regression_diff_service.
+
+    In-flight live runs (no TestRun row yet — only a LiveSession) get a
+    graceful in-progress payload instead of a 404. The frontend renders
+    "Diff will be available once the run completes" rather than a
+    broken error toast. (Bug 2026-05-19 — Run Detail page hit 404s for
+    sessions clicked during the first ~30s before the drainer
+    materialised the TestRun row.)
     """
     from app.services.regression_diff_service import compute_regression_diff
 
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
     run = run_result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="Test run not found")
+        from app.models.postgres import LiveSession
+        live = (
+            await db.execute(select(LiveSession).where(LiveSession.id == run_id))
+        ).scalar_one_or_none()
+        if live is None:
+            raise HTTPException(status_code=404, detail="Test run not found")
+        return {
+            "run_id": str(run_id),
+            "status": "in_progress",
+            "diff_available": False,
+            "reason": "live_run_in_progress",
+            "message": (
+                "This run is still streaming. The regression diff "
+                "becomes available once the run finalises."
+            ),
+            "added": [],
+            "removed": [],
+            "flipped_to_failing": [],
+            "flipped_to_passing": [],
+        }
 
     return await compute_regression_diff(run, db)
 
@@ -246,4 +272,135 @@ async def set_run_release(
         "release_name": release.name,
         "release_status": release.status,
         "auto_created": created,
+    }
+
+
+@router.post("/{run_id}/recover-live", status_code=202)
+async def recover_live_run_from_buffer(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Re-enqueue ``persist_live_session`` for a live-stream run whose
+    per-test rows never landed in PostgreSQL.
+
+    Looks up the run, checks that it's a ``live_stream`` run with zero
+    ``test_cases`` rows, then fires the persistence task with the buffered
+    events still sitting in Redis (TTL 25h). Idempotent — the task itself
+    re-checks whether work is already done before inserting.
+
+    Returns 422 when the run isn't recoverable (already populated / not a
+    live run / no buffer left in Redis).
+    """
+    from sqlalchemy import func
+    from app.streams import LIVE_TESTCASES_KEY
+    from app.db.redis_client import get_redis
+    from app.models.postgres import TestCase
+    from app.worker.tasks import persist_live_session
+
+    run = (await db.execute(select(TestRun).where(TestRun.id == run_id))).scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    if run.trigger_source != "live_stream":
+        raise HTTPException(
+            status_code=422,
+            detail="Recovery is only available for live-stream runs.",
+        )
+
+    tc_count = (
+        await db.execute(
+            select(func.count(TestCase.id)).where(TestCase.test_run_id == run_id)
+        )
+    ).scalar() or 0
+    if tc_count > 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Run already has {tc_count} test case rows — nothing to recover.",
+        )
+
+    # Recovery sources, in preference order:
+    #   1. Live Redis buffer (25-hour TTL). Fresh path; what
+    #      persist_live_session would normally read from.
+    #   2. ``TestRun.event_archive`` (migration 0086) — durable copy
+    #      written at close_session time, retained for 15 days. Lets
+    #      users recover per-test rows on day 2+ of a run, well past
+    #      the Redis TTL.
+    # Either source produces the same event payload, so the existing
+    # persist_live_session task does the actual materialisation — we
+    # just stage the payload back into Redis when source 2 wins so the
+    # task can keep its single read path.
+    redis = get_redis()
+    list_key = LIVE_TESTCASES_KEY.format(run_id=str(run_id))
+    buffer_len = await redis.llen(list_key)
+    source = "redis"
+
+    if not buffer_len:
+        # Try the durable archive. The 15-day window is enforced here so
+        # an expired archive surfaces a clear "expired" error rather than
+        # a silent "succeeded but produced nothing".
+        archive = list(run.event_archive or [])
+        archived_at = run.event_archive_at
+        age_days: Optional[float] = None
+        if archived_at is not None:
+            from datetime import datetime as _dt, timezone as _tz
+            now = _dt.now(_tz.utc)
+            age_days = (now - archived_at).total_seconds() / 86400.0
+
+        if not archive or age_days is None or age_days > 15:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No buffered events found. The 25-hour Redis buffer has "
+                    "expired and either no durable archive was written or it "
+                    "is older than the 15-day recovery window. Re-run the "
+                    "suite, or re-ingest the results as a file upload."
+                ),
+            )
+
+        # Stage archived events back into Redis so persist_live_session can
+        # read from its usual location. Use a short TTL so the staging keys
+        # don't pile up; the task drains them quickly and deletes the key
+        # itself on success.
+        import json as _json
+        # Push events one at a time to preserve the JSON-encoded shape
+        # that the original SDK writes (and that persist_live_session
+        # ``json.loads()``-decodes).
+        for ev in archive:
+            await redis.rpush(list_key, _json.dumps(ev))
+        await redis.expire(list_key, 3600)  # 1h is plenty for the worker
+        buffer_len = len(archive)
+        source = "archive"
+
+    # Phase 2.4 — same per-project shard routing the close_session path
+    # uses, so a manual recovery from the dashboard doesn't bypass the
+    # fairness queue.
+    from app.worker.ingestion_routing import queue_for_project
+    persist_live_session.apply_async(
+        kwargs={
+            "run_id": str(run_id),
+            "project_id": str(run.project_id),
+            "build_number": run.build_number or str(run_id),
+            "branch": run.branch or "",
+            "commit_hash": run.commit_hash or "",
+            "final_state": {
+                "passed": run.passed_tests or 0,
+                "failed": run.failed_tests or 0,
+                "skipped": run.skipped_tests or 0,
+                "broken": run.broken_tests or 0,
+                "total": run.total_tests or 0,
+            },
+            "suite_name": run.primary_suite_name or None,
+        },
+        queue=queue_for_project(str(run.project_id)),
+        priority=7,
+    )
+    return {
+        "queued": True,
+        "run_id": str(run_id),
+        "buffered_events": buffer_len,
+        "source": source,
+        "message": (
+            f"Persistence task queued. {buffer_len} buffered events will be "
+            "materialised into TestCase rows."
+        ),
     }

@@ -70,6 +70,8 @@ make type-check           # mypy + tsc
 make shell-backend        # bash in backend container
 make build-java-sdk       # Build Java SDK fat JAR
 # Kubernetes deploys: make k8s-deploy-{dev,staging,prod,openshift,homelab} — see k8s/ overlays
+make k8s-stop-homelab     # Graceful pause: drain pods + stop K3s on every node (PVCs preserved)
+make k8s-restart-homelab  # Resume from k8s-stop-homelab; rescales workloads to their pre-shutdown replicas
 
 # Single backend test:
 docker compose exec backend pytest tests/test_agent.py::test_name -v
@@ -108,6 +110,8 @@ docker compose exec backend pytest tests/test_agent.py::test_name -v
     - `privacy_service.py`, `redaction_service.py` — PII scrubbing
     - `connectors/`, `knowledge_*_service.py`, `rag_*_service.py` — RAG
     - `ai_config_resolver.py` — single source of truth for AI config
+    - `resilience.py` — `async_retry` + `with_fallback` primitives. Use `with_fallback(primary, fallback, name, is_empty=...)` for any external-dep call that must degrade-but-show-data when the dep is unhealthy.
+    - `project_reset_service.py` — backs the danger-zone `POST /api/v1/projects/{id}/reset`. Two modes: `runs` (drops test_runs + cascades) and `full` (runs deletes + project-scoped catalog/RAG/baseline tables). Typed-name confirmation enforced.
   - `agents/` — LangGraph multi-agent pipelines
   - `tools/` — 11 LangChain agent tools
   - `middleware/` — request middleware (PII redaction, request ID, rate limiting)
@@ -118,6 +122,9 @@ docker compose exec backend pytest tests/test_agent.py::test_name -v
   - `pages/`, `components/`, `services/`, `hooks/`, `store/`
   - `components/analytics/` — customizable widget system
   - `components/rag/` — RAG generation components
+  - `components/layout/DegradedBanner.tsx` — top-of-page yellow strip rendered when `/health/details` reports any dep `!= "ok"`. Mount once in `AppLayout`; every page reads from `useSystemHealth`.
+  - `hooks/useSystemHealth.ts` — SWR poll of `/health/details` every 60s; returns `{data, unavailable, isDegraded}` for the banner + per-page degraded modes.
+  - `utils/clipboard.ts` — `copyTextToClipboard(value)`: prefers `navigator.clipboard.writeText` in secure contexts, falls back to `document.execCommand('copy')` via a hidden textarea so copy works on HTTP-only homelab origins. Use this everywhere instead of calling `navigator.clipboard` directly.
 - `cli/testlookup_cli/` — Typer + Rich + httpx CLI (commands under `commands/`)
 - `mcp/` — MCP Server (stdio + SSE)
 - `client/` — Python + Java client SDKs
@@ -186,6 +193,12 @@ Cross-cutting gotchas — backend-internal and frontend-internal pitfalls live i
 12. **Release gate policy fallback** — When no `ReleaseGatePolicy` row exists, falls back to hardcoded thresholds in `config.py`. Precedence: project → system default → hardcoded. `dimension_weights` must sum to 1.0 (±0.01).
 13. **Report composition reads from cache** — `RunIntelligenceSnapshot.payload`, not individual tables. Stale snapshots will show stale reports.
 14. **Suite membership sync** — must run after ingestion aggregates are computed. Tests removed from a suite move to `<suite>-deleted` bucket with `needs_review`.
+15. **Live-stream runs must call `finalize_run`.** After `persist_live_session` commits the TestCase rows, it MUST call `services/ingestion_pipeline.finalize_run` so test_suites, canonical_test_cases, suite_memberships, auto-tagging, and the AI-pipeline trigger all fire. Skipping it produces "ingested runs visible on /runs but /suites empty" — see `backend/app/worker/tasks.py:persist_live_session` for the wiring.
+16. **`/agents` panel status is derived, not raw.** Pipelines stuck at `status='running'` with a failed stage (worker crashed before `_mark_pipeline_done` fired) are downgraded to `failed` by the router's `_apply_effective_status` in `routers/agents.py`. The DB row is fixed by the `reap_stuck_agent_pipelines` Celery beat job (every 10 min). Don't assume `status='running'` returned from the API matches the row; for filtering use the stored status.
+17. **API-key streaming endpoint is `POST /api/v1/stream/ingest`.** SDKs default to this path: auth via `X-API-Key`, body `{run_id, events[], meta{...}}`, send an `event_type: "run_complete"` event in the final batch to trigger `close_session` (which queues `persist_live_session`). No `/sessions` ceremony.
+18. **Image-tag hygiene** — `:latest` is forbidden in `k8s/**/*.yaml` (CI guard `k8s-image-pin-check` greps for it). For `testlookup/{backend,frontend,mcp}` images the homelab overlay holds `newTag: BUILD_TAG_PLACEHOLDER`; `homelabsetup/deploy-homelab.sh` substitutes this with a timestamped build tag before `kubectl apply -k`, restoring the placeholder on exit.
+19. **Workers must wait for Redis.** All 5 worker/beat deployments have a `wait-for-redis` initContainer (`k8s/base/worker-deployments.yaml`). Without it, a worker that comes up before Redis enters a zombie state — pod stays `1/1 Running` but the Celery consumer loop never re-establishes, and tasks queue up unprocessed.
+20. **Destructive project resets need a typed name match.** `POST /api/v1/projects/{id}/reset` validates `confirmation_name == project.name` (case-sensitive) before any DELETE runs; ADMIN-only; audit row written to `settings_audit_log` with key `project_reset.<mode>`.
 
 ---
 

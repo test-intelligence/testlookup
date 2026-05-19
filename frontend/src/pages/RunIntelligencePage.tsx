@@ -61,12 +61,37 @@ import type {
   ReleaseDecisionIntel,
   RunIntelligence,
 } from '@/services/runIntelligenceService'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type Persona = 'executive' | 'developer' | 'manager'
 type Gate = 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'PENDING'
 
 const PERSONA_KEY = 'tl.runIntel.persona'
+
+// User-recorded decisions live under ``tl.runIntel.decision.<runId>`` so a
+// refresh / re-navigate keeps the panel in sync until the backend gate-
+// decision endpoint lands. Per-run key avoids one run's decision leaking
+// into another. Cleared on Undo.
+const DECISION_KEY_PREFIX = 'tl.runIntel.decision.'
+
+type DecisionAction = 'HOLD' | 'OVERRIDE' | 'APPROVE_CONDITIONS'
+
+interface UserDecision {
+  action: DecisionAction
+  /** Gate that the action implies — what the panel renders. */
+  gate: Gate
+  /** Short label used in the "Decision recorded" lede line. */
+  label: string
+  /** ISO timestamp when the decision was recorded locally. */
+  at: string
+}
+
+const ACTION_TO_GATE: Record<DecisionAction, { gate: Gate; label: string }> = {
+  HOLD:               { gate: 'NO_GO',          label: 'Held by you' },
+  OVERRIDE:           { gate: 'GO',             label: 'Override applied by you' },
+  APPROVE_CONDITIONS: { gate: 'CONDITIONAL_GO', label: 'Approved with conditions by you' },
+}
 
 // ── Verdict theming ─────────────────────────────────────────────────────────
 const GATE_THEME: Record<Gate, {
@@ -481,11 +506,16 @@ function PipelineRibbon({
   confidencePct,
   evidenceCount,
   toolCount,
+  hasPerTestGap,
 }: {
   stages: PipelineStage[]
   confidencePct: number
   evidenceCount: number
   toolCount: number
+  /** When the run-level aggregate reports failures but per-test rows
+   *  weren't persisted, every pipeline stage renders as a placeholder
+   *  (—). Render a banner so the user understands why. */
+  hasPerTestGap?: boolean
 }) {
   const aligned = useMemo(() => alignStages(stages), [stages])
   const completedCount = aligned.filter(s => s && stageStatus(s) === 'done').length
@@ -539,6 +569,25 @@ function PipelineRibbon({
         </div>
       </div>
 
+      {hasPerTestGap && completedCount === 0 && (
+        <div
+          className="rounded-md mb-3 px-3 py-2 text-[12px] leading-relaxed"
+          style={{
+            background: 'rgba(245,158,11,0.06)',
+            borderLeft: '3px solid rgba(245,158,11,0.40)',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          <strong className="text-[var(--color-text)]">Per-test detail is being recovered.</strong>
+          {' '}
+          The run reports failure counters but per-test rows weren't persisted during ingestion (live-stream
+          buffer was evicted before persist). A retroactive backfill task synthesises placeholder rows for
+          affected runs on an hourly cadence — once it fires, this run's failures will appear on{' '}
+          <a href="/my-failures" className="text-[var(--color-accent)] hover:underline">/my-failures</a>{' '}
+          and below. Aggregate counters stay accurate in the meantime; re-running the build will produce a
+          fresh run with full per-test detail.
+        </div>
+      )}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(9, minmax(0, 1fr))' }}>
         {aligned.map((s, i) => (
           <StageCell key={i} num={i + 1} slot={PIPELINE_ORDER[i]} stage={s} isLast={i === aligned.length - 1} />
@@ -754,13 +803,57 @@ function WhatFailedCard({
   runId,
   onPromote,
   onDecisionTrail,
+  aggregateFailedTests,
+  aggregateTotalTests,
 }: {
   clusters: FailureClusterIntel[]
   runId: string
   onPromote: (cluster: FailureClusterIntel) => void
   onDecisionTrail: () => void
+  /** ``test_runs.failed_tests`` aggregate (set by ingest even when per-test
+   *  rows are missing). When > 0 with zero clusters, surface the data gap. */
+  aggregateFailedTests: number
+  /** ``test_runs.total_tests`` aggregate — used to detect runs that
+   *  legitimately had zero tests at all (vs runs that lost per-test detail). */
+  aggregateTotalTests: number
 }) {
   if (clusters.length === 0) {
+    // Distinguish two zero-cluster states:
+    //   (a) The run genuinely had no failures (total_tests > 0, failed = 0)
+    //       or no tests at all (total = 0). Render the standard empty state.
+    //   (b) The run-level aggregate reports failures (failed > 0) but no
+    //       FailureCluster rows / per-test rows exist. This happens when the
+    //       live-stream Redis event buffer expired before persist_live_session
+    //       could read the per-test events (see worker/tasks.py:213-231 —
+    //       "Live persist: event buffer empty"). The run aggregates ARE
+    //       reliable; the per-test detail just wasn't captured. Explain so
+    //       the user doesn't think the page is broken (2026-05-15 report).
+    const hasPerTestGap = aggregateFailedTests > 0
+    if (hasPerTestGap) {
+      return (
+        <CardShell
+          title="What failed"
+          rightSlot={
+            <span>{aggregateFailedTests} failure{aggregateFailedTests === 1 ? '' : 's'} · per-test detail missing</span>
+          }
+        >
+          <div className="px-4 py-4 text-[13px] space-y-2">
+            <p className="m-0 text-[var(--color-text-secondary)]">
+              The run aggregate reports <strong className="text-[var(--color-text)]">{aggregateFailedTests} failure{aggregateFailedTests === 1 ? '' : 's'}</strong>
+              {aggregateTotalTests > 0 ? <> out of {aggregateTotalTests} tests</> : null}, but the
+              per-test rows aren't available for this run — so AI clustering, root-cause analysis,
+              and the failure breakdown can't be shown.
+            </p>
+            <p className="m-0 text-[12px] text-[var(--color-text-muted)]">
+              This typically happens when a live-stream ingest's Redis event buffer expired
+              before the per-test persistence task ran. The run-level pass / fail counts
+              shown elsewhere are still accurate; just the per-test detail is missing.
+              Re-running the build will produce a fresh run with complete data.
+            </p>
+          </div>
+        </CardShell>
+      )
+    }
     return (
       <CardShell title="What failed" rightSlot={<span>0 failures</span>}>
         <div className="px-4 py-6 text-[13px] text-[var(--color-text-secondary)]">
@@ -928,10 +1021,10 @@ function RecommendedActionsCard({
   }
 
   const copyText = (text: string) => {
-    void navigator.clipboard.writeText(text).then(
-      () => toast.success('Action copied'),
-      () => toast.error('Copy failed'),
-    )
+    void copyTextToClipboard(text).then((ok) => {
+      if (ok) toast.success('Action copied')
+      else toast.error('Copy failed')
+    })
   }
 
   return (
@@ -1228,6 +1321,38 @@ export default function RunIntelligencePage() {
   const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
   const [promoteCluster, setPromoteCluster] = useState<FailureClusterIntel | null>(null)
 
+  // User decision (Approve with conditions / Hold / Override) — held
+  // locally until the gate-decision backend endpoint lands. Persists per-
+  // run so a refresh keeps the panel in sync; clears on Undo.
+  const [userDecision, setUserDecision] = useState<UserDecision | null>(null)
+  useEffect(() => {
+    if (!runId) {
+      setUserDecision(null)
+      return
+    }
+    try {
+      const raw = localStorage.getItem(DECISION_KEY_PREFIX + runId)
+      setUserDecision(raw ? (JSON.parse(raw) as UserDecision) : null)
+    } catch {
+      setUserDecision(null)
+    }
+  }, [runId])
+
+  function recordUserDecision(action: DecisionAction): void {
+    if (!runId) return
+    const { gate, label } = ACTION_TO_GATE[action]
+    const next: UserDecision = { action, gate, label, at: new Date().toISOString() }
+    setUserDecision(next)
+    try { localStorage.setItem(DECISION_KEY_PREFIX + runId, JSON.stringify(next)) } catch { /* ignore */ }
+    toast.success(`${label} — recorded on this run`)
+  }
+  function clearUserDecision(): void {
+    if (!runId) return
+    setUserDecision(null)
+    try { localStorage.removeItem(DECISION_KEY_PREFIX + runId) } catch { /* ignore */ }
+    toast('Decision cleared', { icon: '↩' })
+  }
+
   // Fetch the persona-specific summary when not in Executive mode — drives
   // the lede override in the verdict card. Hook is null for Executive so
   // SWR doesn't fire.
@@ -1332,9 +1457,11 @@ export default function RunIntelligencePage() {
         ledeOverride={ledeForPersona}
         affectedSuite={affected_suites[0]?.suite}
         dimensions={runDimensionScores}
-        onHold={() => toast('Hold release — wire to gate-decision endpoint', { icon: '⏸' })}
-        onOverride={() => toast('Override gate — opens sign-off flow', { icon: '🔓' })}
-        onApprove={() => toast('Approve with conditions — opens conditions form', { icon: '✓' })}
+        userDecision={userDecision}
+        onHold={() => recordUserDecision('HOLD')}
+        onOverride={() => recordUserDecision('OVERRIDE')}
+        onApprove={() => recordUserDecision('APPROVE_CONDITIONS')}
+        onUndoDecision={clearUserDecision}
       />
 
       <PipelineRibbon
@@ -1342,6 +1469,10 @@ export default function RunIntelligencePage() {
         confidencePct={confidencePct}
         evidenceCount={evidenceCount}
         toolCount={toolCount}
+        hasPerTestGap={
+          ((run.failed_tests ?? 0) + (run.broken_tests ?? 0)) > 0
+          && failure_clusters.length === 0
+        }
       />
 
       <section
@@ -1360,6 +1491,8 @@ export default function RunIntelligencePage() {
             runId={run.id}
             onPromote={(c) => setPromoteCluster(c)}
             onDecisionTrail={() => setDecisionTrailOpen(true)}
+            aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
+            aggregateTotalTests={run.total_tests ?? 0}
           />
           <RecommendedActionsCard
             roleActions={role_actions}
@@ -1416,21 +1549,36 @@ export default function RunIntelligencePage() {
 
 // ── Verdict + Dimensions composed (so the meter and grid share gate state) ─
 function VerdictCardWithDimensions({
-  decision, ledeOverride, affectedSuite, dimensions, onHold, onOverride, onApprove,
+  decision, ledeOverride, affectedSuite, dimensions, userDecision,
+  onHold, onOverride, onApprove, onUndoDecision,
 }: {
   decision: ReleaseDecisionIntel | null
   ledeOverride?: string
   affectedSuite?: string
   dimensions: DimensionScore[]
+  /** When set, the user has recorded a local decision via one of the
+   *  action buttons. We render the panel as if the gate were the
+   *  decision's gate, and surface an "Undo" affordance. */
+  userDecision: UserDecision | null
   onHold: () => void
   onOverride: () => void
   onApprove: () => void
+  onUndoDecision: () => void
 }) {
-  const gate = gateOf(decision)
+  // When the user has recorded a decision, that wins for display purposes.
+  // The underlying ``decision`` (model-computed gate) still feeds blocker
+  // count + risk score so the user sees what the system said *before* they
+  // overrode it.
+  const baseGate = gateOf(decision)
+  const gate: Gate = userDecision?.gate ?? baseGate
   const t = GATE_THEME[gate]
   const score = Math.round(decision?.composite_risk ?? decision?.risk_score ?? 0)
   const blockerCount = decision?.blocking_issues?.length ?? 0
-  const lede = ledeOverride
+  const userLede = userDecision
+    ? `${userDecision.label} on ${new Date(userDecision.at).toLocaleString()}.`
+    : null
+  const lede = userLede
+    ?? ledeOverride
     ?? decision?.reasoning
     ?? (gate === 'PENDING' ? 'Awaiting analysis — no release decision available yet.' : '')
 
@@ -1516,6 +1664,14 @@ function VerdictCardWithDimensions({
             <GhostBtn onClick={onApprove} title="Approve and ship with documented conditions">
               Approve with conditions
             </GhostBtn>
+            {userDecision && (
+              <GhostBtn
+                onClick={onUndoDecision}
+                title="Clear the recorded decision and revert to the system-computed gate"
+              >
+                Undo decision
+              </GhostBtn>
+            )}
           </div>
         </div>
 

@@ -52,6 +52,11 @@ export interface ReleaseCouncilDecision {
   policy_version: number | null
   policy_level: string | null
   rule_evaluations: RuleEvaluationEntry[]
+  // True when the backend synthesised this view from the run's
+  // aggregates because no persisted ReleaseDecision row exists yet.
+  // The page surfaces a "quick-look" note + a CTA to run deep
+  // investigation for cluster / defect / narrative context.
+  synthesized?: boolean
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────

@@ -27,11 +27,29 @@ export interface PolicyRule {
   params: Record<string, unknown>;
 }
 
+export interface PolicyPassRateBands {
+  orange_min: number;  // below this → red
+  yellow_min: number;  // [orange_min, yellow_min) → orange
+  green_min: number;   // [yellow_min, green_min) → yellow; ≥ green_min → green
+}
+
+export interface PolicyHardCaps {
+  /** Active P0 defects allowed before the band is downgraded one step. */
+  max_p0_defects: number;
+  /** Flaky-test count allowed before the band is downgraded one step. */
+  max_flaky_count: number;
+  /** New failures in the last 24h allowed before downgrade. */
+  max_new_failures_24h: number;
+}
+
 export interface PolicyDocument {
   schema_version: number;
   thresholds: PolicyThresholds;
   dimension_weights: PolicyDimensionWeights;
   rules: PolicyRule[];
+  /** Optional on read — older rows omit it; the backend fills defaults on write. */
+  pass_rate_bands?: PolicyPassRateBands;
+  hard_caps?: PolicyHardCaps;
 }
 
 export interface PolicySummary {
@@ -87,6 +105,18 @@ export const DEFAULT_WEIGHTS: PolicyDimensionWeights = {
   hist_recurrence: 0.10,
   blast_radius: 0.15,
   diagnosis_conf: 0.05,
+};
+
+export const DEFAULT_PASS_RATE_BANDS: PolicyPassRateBands = {
+  orange_min: 90,
+  yellow_min: 95,
+  green_min: 99,
+};
+
+export const DEFAULT_HARD_CAPS: PolicyHardCaps = {
+  max_p0_defects: 0,
+  max_flaky_count: 10,
+  max_new_failures_24h: 20,
 };
 
 // ── API ─────────────────────────────────────────────────────────────────────

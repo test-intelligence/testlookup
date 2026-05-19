@@ -92,16 +92,42 @@ def _beat_span(task_name: str):
 
 # ── Deduplication helper ──────────────────────────────────────────────────────
 
-async def _is_duplicate(key: str, ttl: int = 3600) -> bool:
+async def _is_duplicate(key: str, ttl: int = 3600, owner: str | None = None) -> bool:
     """
     Return True if `key` already exists in Redis (task already running/done).
     Otherwise, set the key with TTL and return False.
+
+    When owner is provided, the same owner can reacquire the lock. Celery
+    retries keep the task id stable, so a real retry should not be treated as
+    a duplicate of its own failed attempt.
     """
     from app.db.redis_client import get_redis
     redis = get_redis()
     # SET NX — only sets if key does not exist; returns True on first write
-    was_set = await redis.set(key, "1", ex=ttl, nx=True)
-    return not bool(was_set)
+    lock_value = owner or "1"
+    was_set = await redis.set(key, lock_value, ex=ttl, nx=True)
+    if was_set:
+        return False
+    if not owner:
+        return True
+    existing = await redis.get(key)
+    if isinstance(existing, bytes):
+        existing = existing.decode("utf-8", errors="ignore")
+    if existing == owner:
+        await redis.expire(key, ttl)
+        return False
+    return True
+
+
+async def _release_duplicate_lock(key: str, owner: str) -> None:
+    """Release a dedup lock only if it is still owned by this task."""
+    from app.db.redis_client import get_redis
+    redis = get_redis()
+    existing = await redis.get(key)
+    if isinstance(existing, bytes):
+        existing = existing.decode("utf-8", errors="ignore")
+    if existing == owner:
+        await redis.delete(key)
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -122,6 +148,7 @@ def persist_live_session(
     branch: str = "",
     commit_hash: str = "",
     final_state: dict | None = None,
+    suite_name: str | None = None,
 ):
     """
     Persist a completed live execution session to PostgreSQL.
@@ -138,20 +165,26 @@ def persist_live_session(
     import uuid as _uuid_mod
     from datetime import datetime, timezone
 
-    dedup_key = f"testlookup:dedup:live_persist:{run_id}"
     final_state = final_state or {}
 
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=3600):
-            logger.info("[Task %s] Skipping duplicate live persist for %s", self.request.id, run_id)
-            return
+        # Idempotency rule: skip only when persistence has actually completed
+        # — i.e., TestCase rows already exist for this run's canonical UUID.
+        # Determined by a single COUNT(*) query, **on the same session as
+        # the writes below**. A previous version opened a separate
+        # AsyncSessionLocal() for the count, which under asyncpg's
+        # connection pool raced with the main session's writes and raised
+        # "asyncpg.InterfaceError: cannot perform operation: another
+        # operation is in progress" — silently dropping retries.
+        from sqlalchemy import select as _sel, func as _func
 
+        from app.db.postgres import AsyncSessionLocal
         from app.db.redis_client import get_redis
         from app.streams import LIVE_TESTCASES_KEY
-        from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import (
             LaunchStatus, TestCase, TestRun, TestStatus,
         )
+        from app.services.stream_service import canonical_test_run_uuid
 
         redis = get_redis()
         list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
@@ -171,32 +204,40 @@ def persist_live_session(
         )
 
         # ── Compute aggregate counts ──────────────────────────────────────────
-        passed  = sum(1 for e in events if (e.get("status") or "").upper() == "PASSED")
-        failed  = sum(1 for e in events if (e.get("status") or "").upper() == "FAILED")
-        skipped = sum(1 for e in events if (e.get("status") or "").upper() == "SKIPPED")
-        broken  = sum(1 for e in events if (e.get("status") or "").upper() == "BROKEN")
-        total   = len(events) or final_state.get("total", 0)
+        # ``final_state`` comes from the authoritative HINCRBY counters
+        # (LIVE_STATE_KEY hash). It's accurate even when the per-test
+        # buffer hit its LTRIM cap mid-run or got partially drained by
+        # the Phase 4.5 incremental-drain task. Prefer it whenever a
+        # ``total`` was reported; only fall back to event-derived counts
+        # for legacy paths that never populated final_state (e.g.
+        # ``recover_live_run_from_buffer``).
+        fs_total = final_state.get("total")
+        if fs_total is not None and int(fs_total) > 0:
+            passed  = int(final_state.get("passed",  0) or 0)
+            failed  = int(final_state.get("failed",  0) or 0)
+            skipped = int(final_state.get("skipped", 0) or 0)
+            broken  = int(final_state.get("broken",  0) or 0)
+            total   = int(fs_total)
+        else:
+            passed  = sum(1 for e in events if (e.get("status") or "").upper() == "PASSED")
+            failed  = sum(1 for e in events if (e.get("status") or "").upper() == "FAILED")
+            skipped = sum(1 for e in events if (e.get("status") or "").upper() == "SKIPPED")
+            broken  = sum(1 for e in events if (e.get("status") or "").upper() == "BROKEN")
+            total   = len(events) or final_state.get("total", 0)
 
-        # Fall back to Redis final_state if events are missing (e.g. buffer expired)
-        if not events:
-            passed  = final_state.get("passed",  0)
-            failed  = final_state.get("failed",  0)
-            skipped = final_state.get("skipped", 0)
-            broken  = final_state.get("broken",  0)
-            total   = final_state.get("total",   0)
-            # Aggregate counters say tests ran but per-test buffer is empty
-            # — TestRun will be created but the run-detail page won't have
-            # per-test rows. Surface this loudly so the empty Run Detail
-            # table on the UI is traceable to a real root cause (buffer TTL,
-            # dedup-skipped retry, or rpush failure in publish_event_batch).
-            if (passed + failed + skipped + broken) > 0:
-                logger.warning(
-                    "[Task %s] Live persist: event buffer empty for run=%s but "
-                    "final_state reports passed=%d failed=%d skipped=%d broken=%d. "
-                    "TestRun aggregates will be written; per-test TestCase rows "
-                    "cannot be reconstructed without the buffered events.",
-                    self.request.id, run_id, passed, failed, skipped, broken,
-                )
+        # Empty buffer at close — surface loudly so the empty Run
+        # Detail table on the UI is traceable to a real root cause
+        # (buffer TTL, dedup-skipped retry, or rpush failure in
+        # publish_event_batch). Aggregates above already reflect the
+        # truth regardless.
+        if not events and (passed + failed + skipped + broken) > 0:
+            logger.warning(
+                "[Task %s] Live persist: event buffer empty for run=%s but "
+                "final_state reports passed=%d failed=%d skipped=%d broken=%d. "
+                "TestRun aggregates will be written; per-test TestCase rows "
+                "cannot be reconstructed without the buffered events.",
+                self.request.id, run_id, passed, failed, skipped, broken,
+            )
 
         # If total wasn't tracked explicitly, derive it from component counts
         total = total or (passed + failed + skipped + broken)
@@ -215,7 +256,6 @@ def persist_live_session(
         # Keeps slug→UUID derivation in lockstep with stream_service.upsert_test_run
         # and the LiveSessionState response, so the frontend's /runs/<id> link
         # always resolves to the same row this task writes.
-        from app.services.stream_service import canonical_test_run_uuid
         run_uuid = canonical_test_run_uuid(run_id)
 
         now = datetime.now(timezone.utc)
@@ -223,10 +263,36 @@ def persist_live_session(
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
 
+            # Idempotency check. Phase 4.5 incremental drain means a run
+            # can legitimately have BOTH existing TestCase rows AND a
+            # non-empty buffer (the tail of events that landed between
+            # the last drain tick and close_session). So we only skip
+            # when there's truly nothing left to do: buffer empty AND
+            # rows already present. The "buffer empty + rows present"
+            # path covers Celery retries firing this task twice for the
+            # same close, plus the legacy manual-recovery flow.
+            existing_tc_count = (
+                await db.execute(
+                    _sel(_func.count(TestCase.id)).where(TestCase.test_run_id == run_uuid)
+                )
+            ).scalar() or 0
+            if existing_tc_count > 0 and not events:
+                logger.info(
+                    "[Task %s] Skipping persist for run=%s — %d TestCase rows already "
+                    "present and buffer is empty (incremental drain or earlier retry)",
+                    self.request.id, run_id, existing_tc_count,
+                )
+                # Genuine no-op — a previous tick already drained
+                # everything OR this is a duplicate close_session
+                # retry. Skip finalize_run too; running it a second
+                # time double-fires auto-tagging + suite_sync.
+                return
+
             # Upsert TestRun — skip if already exists (idempotent)
             existing = await db.execute(select(TestRun).where(TestRun.id == run_uuid))
             run = existing.scalar_one_or_none()
 
+            session_suite = (suite_name or "").strip() or None
             if run is None:
                 run = TestRun(
                     id=run_uuid,
@@ -242,6 +308,8 @@ def persist_live_session(
                     skipped_tests=skipped,
                     broken_tests=broken,
                     pass_rate=pass_rate,
+                    primary_suite_name=session_suite,
+                    suite_names=[session_suite] if session_suite else None,
                     start_time=now,
                     end_time=now,
                 )
@@ -257,9 +325,63 @@ def persist_live_session(
                 run.broken_tests  = broken
                 run.pass_rate     = pass_rate
                 run.end_time      = now
+                # Stamp primary_suite_name if upsert_test_run never ran
+                # for this session (race window: session opens + closes
+                # without the periodic upsert firing).
+                if session_suite and not run.primary_suite_name:
+                    run.primary_suite_name = session_suite
+                    run.suite_names = [session_suite]
 
             # ── Insert TestCase rows ──────────────────────────────────────────
-            for event in events:
+            # Phase 2.2 — bulk-insert via SQLAlchemy Core ``insert(...)``
+            # with chunked ``execute_many``. Replaces a per-row ``db.add()``
+            # loop that issued one INSERT per event (= one round-trip per
+            # event). For a 5K-event run that's 5K round-trips serial on
+            # one connection; here it's 5 chunked round-trips. Memory
+            # footprint stays bounded by ``PERSIST_LIVE_BULK_INSERT_CHUNK``
+            # (default 1000 rows × ~500 B/row ≈ 500 KB per chunk).
+            from app.core.config import settings as _settings
+            chunk_size = max(1, _settings.PERSIST_LIVE_BULK_INSERT_CHUNK)
+            # Phase 4.2 — high-volume sampling. When the detector has
+            # flagged this project, drop to 1-of-N persistence so the
+            # bulk-insert stays well under the round-trip budget at
+            # 500-concurrent-run scale. Aggregates remain accurate
+            # because they come from ``test_runs.passed_tests`` /
+            # ``failed_tests`` (HINCRBY-sourced), not from a count of
+            # persisted ``test_cases`` rows. Logged so support can
+            # spot the sampling effect when comparing live-state
+            # counts against on-disk row counts.
+            sampled_events = events
+            sample_n = max(1, _settings.HIGH_VOLUME_SAMPLE_EVERY_N)
+            if sample_n > 1:
+                try:
+                    from app.services.high_volume_detector import is_high_volume
+                    if await is_high_volume(project_id):
+                        sampled_events = events[::sample_n]
+                        if len(sampled_events) < len(events):
+                            logger.info(
+                                "[Task %s] high_volume sampling run=%s "
+                                "kept=%d of %d (1-of-%d)",
+                                self.request.id, run_id,
+                                len(sampled_events), len(events), sample_n,
+                            )
+                except Exception as exc:  # pragma: no cover - fail-OPEN
+                    logger.warning(
+                        "[Task %s] high_volume sampling check failed: %s",
+                        self.request.id, exc,
+                    )
+            # Fall back to the session-level suite_name when the per-event
+            # field is missing. SDKs send testlookup.suite once at session
+            # create (stamped on TestRun.primary_suite_name) and typically
+            # don't repeat it on every event — so persisted TestCase rows
+            # ended up with NULL suite_name, invisible to every page that
+            # groups by tc.suite_name (test-management Test Suites tab,
+            # /reports/summary's cases_agg path, /coverage/suite).
+            session_suite_default = (suite_name or "").strip() or None
+            run_suite_default = getattr(run, "primary_suite_name", None) or None
+            default_suite = session_suite_default or run_suite_default
+            rows: list[dict] = []
+            for event in sampled_events:
                 test_name  = event.get("test_name") or ""
                 class_name = event.get("class_name") or ""
                 raw_status = (event.get("status") or "UNKNOWN").upper()
@@ -273,24 +395,112 @@ def persist_live_session(
                     f"{test_name}:{class_name}".encode()
                 ).hexdigest()
 
-                tc = TestCase(
-                    id=_uuid_mod.uuid4(),
-                    test_run_id=run.id,
-                    test_fingerprint=fingerprint,
-                    test_name=test_name[:1000],
-                    suite_name=(event.get("suite_name") or "")[:500] or None,
-                    class_name=class_name[:500] or None,
-                    status=tc_status,
-                    duration_ms=event.get("duration_ms"),
-                    error_message=event.get("error_message"),
-                    tags=event.get("tags"),
-                )
-                db.add(tc)
+                event_suite = (event.get("suite_name") or "").strip()
+                resolved_suite = (event_suite or default_suite or "")[:500] or None
+
+                rows.append({
+                    "id": _uuid_mod.uuid4(),
+                    "test_run_id": run.id,
+                    "test_fingerprint": fingerprint,
+                    "test_name": test_name[:1000],
+                    "suite_name": resolved_suite,
+                    "class_name": class_name[:500] or None,
+                    "status": tc_status.value if hasattr(tc_status, "value") else tc_status,
+                    "duration_ms": event.get("duration_ms"),
+                    "error_message": event.get("error_message"),
+                    "tags": event.get("tags"),
+                })
+            if rows:
+                from sqlalchemy import insert as _sa_insert
+                stmt = _sa_insert(TestCase)
+                for offset in range(0, len(rows), chunk_size):
+                    chunk = rows[offset:offset + chunk_size]
+                    await db.execute(stmt, chunk)
+            else:
+                # Buffer was empty but final_state reports tests ran.
+                # This happens when the SDK only sends a ``run_complete``
+                # event without per-test ``test_result`` events, or when
+                # the Phase 4.5 drain couldn't fire because the session
+                # lifetime was shorter than its 30s tick. Without a
+                # placeholder, the failure aggregates surface on /runs +
+                # /coverage but the action queue (/my-failures) and the
+                # per-suite case table stay empty, and the user can't
+                # triage anything.
+                #
+                # Synthesize ONE placeholder TestCase per missing
+                # failure so the failure is visible and triagable. The
+                # row is clearly labelled "[ingestion gap]" so an
+                # operator immediately knows the per-test detail
+                # wasn't captured. fingerprint includes the run id to
+                # keep placeholders unique per-run (re-running the test
+                # won't duplicate against the same run).
+                placeholder_count = int(failed) + int(broken)
+                if placeholder_count > 0:
+                    from sqlalchemy import insert as _sa_insert
+                    placeholder_rows = []
+                    for i in range(placeholder_count):
+                        ph_status = (
+                            TestStatus.FAILED.value if i < int(failed)
+                            else TestStatus.BROKEN.value
+                        )
+                        ph_fp = hashlib.md5(
+                            f"placeholder:{run.id}:{i}".encode()
+                        ).hexdigest()
+                        placeholder_rows.append({
+                            "id": _uuid_mod.uuid4(),
+                            "test_run_id": run.id,
+                            "test_fingerprint": ph_fp,
+                            "test_name": f"[ingestion gap — per-test detail unavailable] #{i + 1}",
+                            "suite_name": default_suite,
+                            "class_name": None,
+                            "status": ph_status,
+                            "duration_ms": None,
+                            "error_message": (
+                                "Per-test events were lost during ingestion. "
+                                f"Run reported {int(failed)} failure(s) and "
+                                f"{int(broken)} broken test(s); re-run the "
+                                "suite to capture per-test detail."
+                            ),
+                            "tags": None,
+                        })
+                    stmt = _sa_insert(TestCase)
+                    await db.execute(stmt, placeholder_rows)
+                    logger.warning(
+                        "[Task %s] Synthesized %d placeholder TestCase row(s) "
+                        "for run=%s because the event buffer was empty but "
+                        "final_state reported failures.",
+                        self.request.id, placeholder_count, run_id,
+                    )
 
             await db.commit()
             logger.info(
                 "[Task %s] Persisted run=%s tests=%d passed=%d failed=%d",
                 self.request.id, run_id, total, passed, failed,
+            )
+
+        # ── Post-ingestion pipeline ──────────────────────────────────────────
+        # Live-stream ingestion has historically stopped here, after the
+        # TestCase rows committed. The API-ingest paths (ingest_uploaded_*)
+        # call finalize_run at this point to materialise test_suites,
+        # canonical_test_cases, suite_memberships, auto-tags, release link,
+        # and notifications. Skipping finalize_run for live-stream runs is
+        # why /suites was empty even with test_cases populated. Mirror the
+        # API path here so live runs participate in the full pipeline.
+        try:
+            from app.services.ingestion_pipeline import finalize_run
+            await finalize_run(
+                run_id=str(run_uuid),
+                project_id=str(proj_uuid),
+                build_number=build_number,
+            )
+        except Exception as exc:
+            # finalize_run runs each step inside an isolated session and
+            # logs its own failures; an outer failure here is unexpected.
+            # Don't fail the task — TestCase rows are already committed and
+            # the next persist retry will short-circuit on the dedup check.
+            logger.warning(
+                "[Task %s] finalize_run failed after live persist run=%s: %s",
+                self.request.id, run_id, exc,
             )
 
         # ── Clean up Redis buffer ─────────────────────────────────────────────
@@ -300,7 +510,31 @@ def persist_live_session(
         _run_async(_run())
     except Exception as exc:
         logger.error("[Task %s] persist_live_session failed: %s", self.request.id, exc)
-        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+        # Phase 4.3 — when retries are exhausted, write a structured
+        # dead-letter record so operators can inspect what blew up
+        # without grepping logs. ``self.retry`` raises ``MaxRetriesExceededError``
+        # when the retry budget is exhausted; we catch that to write
+        # the DLQ entry, then re-raise so Celery marks the task FAILED.
+        try:
+            raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+        except Exception as final_exc:
+            from celery.exceptions import MaxRetriesExceededError
+            if isinstance(final_exc, MaxRetriesExceededError):
+                try:
+                    from app.services.ingestion_dlq import record_persist_failure
+                    _run_async(record_persist_failure(
+                        run_id=run_id,
+                        project_id=project_id,
+                        task_id=self.request.id,
+                        retry_count=self.request.retries,
+                        error=str(exc),
+                    ))
+                except Exception as dlq_exc:  # pragma: no cover - DLQ is best-effort
+                    logger.error(
+                        "[Task %s] DLQ write failed for run=%s: %s",
+                        self.request.id, run_id, dlq_exc,
+                    )
+            raise
 
 
 @celery_app.task(
@@ -399,6 +633,10 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
     logger.info("[Task %s] Processing uploaded batch: run=%s", self.request.id, run_id)
     try:
         _run_async(_run())
+        try:
+            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+        except Exception:
+            pass
     except Exception as exc:
         logger.error("[Task %s] Batch ingest failed: %s", self.request.id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
@@ -470,6 +708,10 @@ def ingest_uploaded_file(
     logger.info("[Task %s] Processing uploaded file: %s (%s)", self.request.id, file_name, file_format)
     try:
         _run_async(_run())
+        try:
+            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+        except Exception:
+            pass
     except Exception as exc:
         logger.error("[Task %s] File ingest failed: %s", self.request.id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
@@ -692,9 +934,10 @@ def run_agent_pipeline(
 
     # Include workflow_type in dedup key so a deep run isn't blocked by a prior offline run
     dedup_key = f"testlookup:dedup:pipeline:{test_run_id}:{workflow_type}"
+    dedup_owner = str(self.request.id)
 
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=7200):
+        if await _is_duplicate(dedup_key, ttl=7200, owner=dedup_owner):
             logger.info(
                 "[Task %s] Skipping duplicate pipeline for run=%s type=%s",
                 self.request.id, test_run_id, workflow_type,
@@ -755,6 +998,14 @@ def run_agent_pipeline(
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
         logger.error("[Task %s] Pipeline failed: %s", self.request.id, exc, exc_info=True)
+        try:
+            _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
+        except Exception as release_exc:
+            logger.warning(
+                "[Task %s] Failed to release pipeline dedup lock after error: %s",
+                self.request.id,
+                release_exc,
+            )
         if self.request.retries >= self.max_retries:
             # Move to DLQ before the final exception propagates
             _run_async(_send_to_dlq(
@@ -1868,6 +2119,25 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                         except Exception:
                             # Malformed timestamp — treat as stale and close.
                             is_idle = True
+                    else:
+                        # No Redis state / no last_event_at field means
+                        # either the Redis state hash expired (24h TTL —
+                        # definitely abandoned) OR the session never
+                        # received an event after registration. Fall back
+                        # to comparing ``started_at`` against the cutoff
+                        # so sessions that opened and were never used
+                        # don't sit ``active`` forever. 2026-05-15: this
+                        # branch added after finding 7 sessions on the
+                        # homelab stuck idle 50-65 min with NULL
+                        # last_event_at — they were registered by the
+                        # SDK but the first event never arrived, and the
+                        # prior reaper treated ``is_idle=True`` then
+                        # skipped them via ``not is_idle`` being false.
+                        # Result: sessions accumulated indefinitely.
+                        started_at = session.started_at
+                        if started_at and started_at.tzinfo is None:
+                            started_at = started_at.replace(tzinfo=timezone.utc)
+                        is_idle = bool(started_at and started_at < cutoff)
 
                     if not is_idle:
                         skipped_recent += 1
@@ -1900,6 +2170,471 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
     result = cast(dict[str, Any], _run_async(_sweep()))
     logger.info("[Task %s] close_stale_live_sessions done: %s",
                 self.request.id, result)
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.reap_stuck_agent_pipelines",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
+    """Periodic cleanup for agent_pipeline_runs that got stuck in
+    ``status='running'`` because a stage crashed before the outer
+    ``_mark_pipeline_done`` could record the failure.
+
+    The /agents read-time derivation already shows the right status to
+    end users; this task updates the DB rows so historical filters
+    (``?status=failed``) and metrics queries don't have to special-case
+    the running-but-actually-failed state.
+
+    A pipeline is reaped if EITHER:
+      * Any of its stage rows is ``status='failed'`` (downstream stages
+        couldn't continue, so the run is definitionally done).
+      * It has been ``running`` for longer than ``stale_minutes`` with
+        no ``completed_at`` (matches the Celery task time_limit on
+        ``run_agent_pipeline``).
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select, exists
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import AgentPipelineRun, AgentStageResult
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+        failed_due_to_stage = 0
+        failed_due_to_age = 0
+        errors = 0
+
+        async with AsyncSessionLocal() as db:
+            running = (
+                await db.execute(
+                    select(AgentPipelineRun).where(
+                        AgentPipelineRun.status == "running"
+                    )
+                )
+            ).scalars().all()
+
+            for pipeline in running:
+                try:
+                    has_failed_stage = (
+                        await db.execute(
+                            select(
+                                exists().where(
+                                    AgentStageResult.pipeline_run_id == pipeline.id,
+                                    AgentStageResult.status == "failed",
+                                )
+                            )
+                        )
+                    ).scalar()
+
+                    is_age_stale = (
+                        pipeline.started_at is not None
+                        and pipeline.completed_at is None
+                        and pipeline.started_at < cutoff
+                    )
+
+                    if not has_failed_stage and not is_age_stale:
+                        continue
+
+                    pipeline.status = "failed"
+                    pipeline.completed_at = datetime.now(timezone.utc)
+                    if not pipeline.error:
+                        pipeline.error = (
+                            "Stage failure detected by reaper" if has_failed_stage
+                            else f"Pipeline exceeded {stale_minutes}m without completion"
+                        )
+
+                    if has_failed_stage:
+                        failed_due_to_stage += 1
+                    else:
+                        failed_due_to_age += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "reap_stuck_agent_pipelines: failed for %s: %s",
+                        pipeline.id, exc,
+                    )
+
+            try:
+                await db.commit()
+            except Exception as exc:
+                logger.error("reap_stuck_agent_pipelines: commit failed: %s", exc)
+                await db.rollback()
+                errors += 1
+
+        return {
+            "checked": len(running),
+            "failed_due_to_stage": failed_due_to_stage,
+            "failed_due_to_age": failed_due_to_age,
+            "errors": errors,
+            "stale_minutes": stale_minutes,
+        }
+
+    logger.info(
+        "[Task %s] reap_stuck_agent_pipelines starting (stale>%dm)",
+        self.request.id, stale_minutes,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] reap_stuck_agent_pipelines done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.flag_orphan_test_suites",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def flag_orphan_test_suites(self, min_age_minutes: int = 60) -> dict:
+    """Detect and structured-log orphan ``TestSuite`` rows for ops review.
+
+    The ingestion pipeline's ``finalize_run`` commits each step in its own
+    session via ``_run_isolated`` (resilience pattern: a failing canonical
+    sync shouldn't roll back the suite sync that already succeeded). The
+    trade-off is that suite_sync may create a TestSuite row, then
+    canonical_sync fails before linking any CanonicalTestCase rows to it
+    — leaving an empty suite dangling.
+
+    This task runs nightly, finds non-default TestSuite rows that:
+
+    * Have no ``CanonicalTestCase`` children, AND
+    * Are older than ``min_age_minutes`` (default 60 — recent suites are
+      still mid-ingest and not yet orphaned).
+
+    For each orphan it emits a structured WARNING (greppable by
+    ``event=orphan_test_suite``) and bumps the ``orphan_test_suites_total``
+    Prometheus counter. The suite row is NOT deleted automatically — an
+    operator decides whether to reassign / delete / wait for the next
+    ingest to repopulate it.
+
+    See docs/DATABASE_AUDIT_2026-05-16.md (P2-3).
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import exists, select, and_
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import CanonicalTestCase, TestSuite
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)
+        orphans: list[dict] = []
+
+        async with AsyncSessionLocal() as db:
+            # Find TestSuite rows that are NOT default AND have no
+            # canonical_test_cases children AND were created before the
+            # cutoff. Use NOT EXISTS so we don't materialise the full
+            # canonical_test_cases table.
+            stmt = (
+                select(TestSuite)
+                .where(TestSuite.is_default.is_(False))
+                .where(TestSuite.created_at < cutoff)
+                .where(
+                    ~exists().where(
+                        and_(
+                            CanonicalTestCase.test_suite_id == TestSuite.id,
+                        )
+                    )
+                )
+            )
+            rows = (await db.execute(stmt)).scalars().all()
+
+            for suite in rows:
+                logger.warning(
+                    "orphan_test_suite",
+                    extra={
+                        "event": "orphan_test_suite",
+                        "test_suite_id": str(suite.id),
+                        "project_id": str(suite.project_id),
+                        "suite_name": suite.name,
+                        "created_at": suite.created_at.isoformat() if suite.created_at else None,
+                    },
+                )
+                orphans.append({
+                    "test_suite_id": str(suite.id),
+                    "project_id": str(suite.project_id),
+                    "suite_name": suite.name,
+                })
+
+        try:
+            from app.core.metrics import orphan_test_suites_total
+            orphan_test_suites_total.inc(len(orphans))
+        except (ImportError, AttributeError):  # pragma: no cover
+            # Metrics module may not have the counter declared yet —
+            # tolerate that gracefully so the reaper still runs.
+            pass
+
+        return {
+            "min_age_minutes": min_age_minutes,
+            "orphan_count": len(orphans),
+            "orphans": orphans,
+        }
+
+    logger.info(
+        "[Task %s] flag_orphan_test_suites starting (min_age=%dm)",
+        self.request.id, min_age_minutes,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] flag_orphan_test_suites done: %d orphan(s) flagged",
+        self.request.id, result["orphan_count"],
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.reconcile_canonical_deletions",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def reconcile_canonical_deletions(self) -> dict:
+    """Nightly safety net for canonical-deletion detection (Phase I follow-up).
+
+    ``finalize_run`` already calls ``test_suite_service.reconcile_canonical_deletions``
+    in an isolated session for every completed run, which is the primary
+    write path. This beat task exists for two failure modes that primary
+    path can't catch:
+
+      1. A run finalizes but the isolated reconcile step itself raises
+         (transient DB blip, lock conflict). Without this safety net the
+         canonical stays ``active`` until the next run for that project.
+      2. A project that's gone quiet — no new runs for days — needs
+         its catalog kept honest. Otherwise stale ``active`` rows
+         persist indefinitely after the underlying tests were removed.
+
+    Iterates every project and runs the same service function. Per-project
+    failures are logged but never abort the sweep so one bad project
+    doesn't starve the rest.
+    """
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services.test_suite_service import (
+        reconcile_canonical_deletions as _reconcile,
+    )
+
+    async def _sweep() -> dict:
+        totals = {"projects_scanned": 0, "deleted": 0, "errors": 0}
+
+        async with AsyncSessionLocal() as db:
+            projects = (await db.execute(select(Project.id))).all()
+            project_ids = [row[0] for row in projects]
+
+        for project_id in project_ids:
+            async with AsyncSessionLocal() as project_db:
+                try:
+                    result = await _reconcile(project_db, project_id)
+                    await project_db.commit()
+                    totals["projects_scanned"] += 1
+                    totals["deleted"] += int(result.get("deleted", 0))
+                except Exception as exc:
+                    await project_db.rollback()
+                    totals["errors"] += 1
+                    logger.warning(
+                        "reconcile_canonical_deletions project failed",
+                        extra={
+                            "event": "canonical_deletion_reconcile_failed",
+                            "project_id": str(project_id),
+                            "error": str(exc),
+                        },
+                    )
+
+        return totals
+
+    logger.info(
+        "[Task %s] reconcile_canonical_deletions starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] reconcile_canonical_deletions done: scanned=%d deleted=%d errors=%d",
+        self.request.id,
+        result["projects_scanned"], result["deleted"], result["errors"],
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.drain_active_live_sessions",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def drain_active_live_sessions(self) -> dict:
+    """Phase 4.5 — drain every active live session's Redis event buffer
+    into Postgres ``test_cases`` rows.
+
+    Runs on a 30-second beat schedule (``drain-active-live-sessions``)
+    so a long-running session that exceeds the ``LTRIM`` cap doesn't
+    lose its oldest per-test rows. The drain task is idempotent
+    (per-run SET-NX lock + LRANGE/LTRIM atomicity under append-only
+    writers) so overlapping ticks degrade gracefully.
+
+    The terminal ``persist_live_session`` + ``finalize_run`` chain at
+    ``close_session`` time is unchanged — this task only writes per-
+    test rows progressively so close-time has less to do.
+    """
+    from app.services.live_session_drainer import drain_all_active_runs
+
+    logger.info("[Task %s] drain_active_live_sessions starting", self.request.id)
+    result = cast(dict[str, Any], _run_async(drain_all_active_runs()))
+    logger.info(
+        "[Task %s] drain_active_live_sessions done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_placeholder_test_cases",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> dict:
+    """Retroactively synthesize placeholder TestCase rows.
+
+    For every TestRun where ``failed_tests + broken_tests > 0`` but
+    no ``test_cases`` rows exist (the live-stream-buffer-eviction or
+    SDK-no-test_result-events scenario), this task inserts the same
+    placeholder rows that ``persist_live_session`` now creates at
+    write time for new runs. The follow-on
+    ``backfill_unassigned_failures`` beat task (every 15 min) then
+    picks them up via ``failed_test_assignment_service`` so the
+    placeholders appear on ``/my-failures``.
+
+    Idempotent — the candidate query filters to runs with zero
+    test_cases, so a second tick after the first one's commit
+    produces zero new rows.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.placeholder_backfill_service import (
+        backfill_placeholders_all_projects,
+    )
+
+    async def _run() -> dict:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await backfill_placeholders_all_projects(
+                    db, max_runs_per_project=max_runs_per_project,
+                )
+                await db.commit()
+                return result
+            except Exception:
+                await db.rollback()
+                raise
+
+    logger.info(
+        "[Task %s] backfill_placeholder_test_cases starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_run()))
+    logger.info(
+        "[Task %s] backfill_placeholder_test_cases done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_unassigned_failures",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def backfill_unassigned_failures(self, max_runs_per_project: int = 200) -> dict:
+    """Retroactively assign FAILED/BROKEN TestCases left unassigned.
+
+    Drives two related backfills:
+
+    * ``default_qa_lead_service.backfill_default_qa_lead_for_all_projects``
+      to provision the synthetic QA-lead user on projects created before
+      this feature shipped.
+    * ``failed_test_assignment_service.backfill_unassigned_failures`` for
+      every project so already-ingested failures pick up the new owner.
+
+    Both resolvers are idempotent (default-lead provisioning is a no-op
+    when the FK is already set; per-run assignment only touches NULL
+    rows), so this can run on a tight cadence without risking write
+    storms. One project is processed per session so a stuck project
+    doesn't starve the others.
+    """
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services.default_qa_lead_service import (
+        backfill_default_qa_lead_for_all_projects,
+    )
+    from app.services.failed_test_assignment_service import (
+        backfill_unassigned_failures as _backfill,
+    )
+
+    async def _sweep() -> dict:
+        totals = {
+            "projects_scanned": 0,
+            "default_leads_provisioned": 0,
+            "runs": 0,
+            "assigned": 0,
+            "unassigned": 0,
+            "errors": 0,
+        }
+
+        # Pass 1: make sure every project has a default QA-lead user. The
+        # per-run assignment in pass 2 reads ``default_qa_lead_user_id`` so
+        # provisioning MUST land first.
+        async with AsyncSessionLocal() as lead_db:
+            try:
+                lead_counts = await backfill_default_qa_lead_for_all_projects(lead_db)
+                await lead_db.commit()
+                totals["default_leads_provisioned"] = int(
+                    lead_counts.get("provisioned", 0)
+                )
+            except Exception as exc:
+                await lead_db.rollback()
+                totals["errors"] += 1
+                logger.warning(
+                    "default_qa_lead_backfill failed: error=%s", exc,
+                )
+
+        async with AsyncSessionLocal() as db:
+            project_ids = [
+                row[0] for row in (await db.execute(select(Project.id))).all()
+            ]
+
+        for project_id in project_ids:
+            async with AsyncSessionLocal() as project_db:
+                try:
+                    result = await _backfill(
+                        project_db, project_id, max_runs=max_runs_per_project
+                    )
+                    await project_db.commit()
+                    totals["projects_scanned"] += 1
+                    totals["runs"] += int(result.get("runs", 0))
+                    totals["assigned"] += int(result.get("assigned", 0))
+                    totals["unassigned"] += int(result.get("unassigned", 0))
+                except Exception as exc:
+                    await project_db.rollback()
+                    totals["errors"] += 1
+                    logger.warning(
+                        "backfill_unassigned_failures project failed: project=%s error=%s",
+                        str(project_id), exc,
+                    )
+
+        return totals
+
+    logger.info(
+        "[Task %s] backfill_unassigned_failures starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] backfill_unassigned_failures done: %s",
+        self.request.id, result,
+    )
     return result
 
 
@@ -1997,3 +2732,34 @@ def notify_test_suite_owner(
     except Exception as exc:
         # Let Celery retry with backoff; max_retries=3 caps it.
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.flush_ai_pipeline_queue",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def flush_ai_pipeline_queue(self) -> dict:
+    """Drain the AI-pipeline debouncer (Phase 3).
+
+    Scheduled every 2 minutes by Celery beat (see ``celery_app.py``).
+    Pulls runs older than ``AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS`` from
+    the SortedSet, groups them by project, applies the per-project
+    LLM cost-budget cap, and fans out one ``run_agent_pipeline`` per
+    surviving run.
+
+    Returns the flush-summary dict for log inspection. Errors are
+    caught + logged inside ``flush_pending`` — this task body just
+    schedules the async call and surfaces the result.
+    """
+    from app.services.ai_pipeline_debouncer import flush_pending
+
+    try:
+        return _run_async(flush_pending())
+    except Exception as exc:
+        logger.warning(
+            "flush_ai_pipeline_queue_failed task=%s error=%s",
+            self.request.id, exc,
+        )
+        return {"drained": 0, "error": str(exc)}

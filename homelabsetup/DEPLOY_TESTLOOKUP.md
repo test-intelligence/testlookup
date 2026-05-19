@@ -858,7 +858,60 @@ The homelab overlay is at `k8s/overlays/homelab/` and contains:
 
 ---
 
+## Pause / Resume the Homelab
+
+When the homelab needs to be idle (vacation, power maintenance, debugging
+a cold start) but not torn down, use the pair below instead of
+`cleanup-homelab.sh`. Both preserve every PVC — Postgres, Mongo, MinIO,
+ChromaDB, Ollama models all keep their state across the pause.
+
+```bash
+# Graceful pause — drains workloads, then stops K3s on every node.
+# Adds an annotation per Deployment so the restart script can scale
+# them back to the same replica count.
+./homelabsetup/stop-homelab.sh
+
+# Resume — starts K3s (control node first, then workers), waits for
+# every node Ready, then scales the workloads back to their pre-pause
+# values. Probes /health/details at the end.
+./homelabsetup/restart-homelab.sh
+```
+
+Useful flags (both scripts):
+
+- `--apps-only` — pause/resume the TestLookup workloads but leave the
+  K3s cluster running. Fastest pause/resume; pair the two flags.
+- `--dry-run` — print every `kubectl scale` + `ssh` command without
+  running it. Use this to preview before the first real run.
+- `--no-ssh` — skip the K3s start/stop steps. Use when you'll stop
+  or start K3s by hand on each node (the scripts still scale the
+  workloads correctly).
+
+`stop-homelab.sh` extras:
+
+- `--skip-scale` — go straight to stopping K3s without draining
+  pods. Faster but in-flight DB writes / Celery tasks aren't
+  drained cleanly.
+- `--drain-timeout N` — seconds to wait for pods to terminate after
+  `scale --replicas=0` (default 90).
+
+`restart-homelab.sh` extras:
+
+- `--api-timeout N` (default 180) — how long to wait for the K3s
+  API server on the control node to respond after `systemctl start`.
+- `--ready-timeout N` (default 240) — how long to wait for every
+  node to report `Ready`.
+- `--workload-timeout N` (default 240) — how long to wait for
+  `kubectl rollout status` on backend + frontend after the scale-up.
+
+The scripts share the same node list (`NODES=`) and SSH user
+(`NODE_USER=labadmin`) as `deploy-homelab.sh` and
+`cleanup-homelab.sh`, so updating one entry stays consistent.
+
 ## Tear Down
+
+`cleanup-homelab.sh` reverses `deploy-homelab.sh` and reclaims disk; for
+short pauses use `stop-homelab.sh` / `restart-homelab.sh` (above).
 
 ```bash
 # Delete the application (keeps PVCs and data)

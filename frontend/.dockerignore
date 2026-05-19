@@ -1,0 +1,47 @@
+# Build-context exclusions for the frontend image.
+#
+# Build context is ``frontend/`` (see homelabsetup/deploy-homelab.sh:357).
+# The biggest exclusions here are ``node_modules`` (rebuilt inside the
+# image via ``npm ci``) and ``dist`` (rebuilt by ``npm run build``);
+# leaving them in the context pushes hundreds of MB across the docker
+# socket and busts every cached layer when ``npm install`` runs on any
+# developer's machine.
+
+# ── Node / build outputs ─────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.cache/
+.vite/
+.next/
+
+# ── Test artifacts ───────────────────────────────────────────────────
+coverage/
+playwright-report/
+test-results/
+tests/e2e/.auth/
+tests/.tmp/
+
+# ── Secrets / per-developer config ───────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── IDE / OS clutter ─────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ── Logs ─────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Documentation ────────────────────────────────────────────────────
+README.md
+*.md

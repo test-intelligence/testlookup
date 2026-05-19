@@ -1,0 +1,45 @@
+
+
+
+
+  URL:      http://testlookup.local
+║  Username: admin
+║  Password: Admin@2026!
+║  Email:    admin@testlookup.local
+
+
+ PostgreSQL password: gt2PJM2QfdKGIsn0nsjWw
+║  MinIO access key:    testlookup_minio
+║  MinIO secret key:    XvuD6xvwmrTQlsgy4eGLGw
+║  MCP username:        mcp_service
+║  MCP password:        P53FSWVTA8nzIZi
+
+
+# testlookup.properties — drop into src/test/resources/ (Java/TestNG/JUnit)
+# or the project root (pytest, jest, mocha, go). All SDKs honour these keys.
+testlookup.endpoint=http://testlookup.local
+testlookup.api.key=qai_ShQgzOyBG7MKfVlvZVulwBbR0-TobYBne7G0Ul9GmkE
+testlookup.project=GoogleProject
+testlookup.launch=Smoke suite
+# Optional CI metadata — usually injected by your CI runner:
+# testlookup.build=${CI_BUILD_NUMBER}
+# testlookup.branch=${CI_BRANCH}
+# testlookup.commit=${CI_COMMIT_SHA}
+
+# Send test results AND a final run_complete event so the run finalises
+# (creates the TestRun row + triggers AI analysis). Without run_complete
+# the session stays active and the run won't appear in Runs / Overview.
+curl -X POST http://testlookup.local/api/v1/stream/ingest \
+  -H "X-API-Key: qai_ShQgzOyBG7MKfVlvZVulwBbR0-TobYBne7G0Ul9GmkE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_id": "ci-build-1",
+    "meta": {"launch_name": "Smoke suite"},
+    "events": [
+      {"event_type":"test_result","test_name":"smoke","status":"PASSED","duration_ms":15},
+      {"event_type":"run_complete"}
+    ]
+  }'
+  
+  
+  qalead: yzxopDxOTONiTaaE

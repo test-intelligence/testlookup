@@ -229,3 +229,156 @@ async def health_details():
             "chromadb": chroma,
         },
     }
+
+
+@router.get(
+    "/ingestion",
+    summary="Live-stream ingestion health — gate + queue + memory",
+)
+async def health_ingestion() -> dict:
+    """Surface the load + backpressure signals used by the live-stream
+    admission gates.
+
+    The output is consumed by the future Grafana panel (Phase 1 of the
+    scalable-ingestion plan in ``docs/SCALABLE_INGESTION_DESIGN.md``)
+    and by support / on-call humans when a customer reports "my runs
+    are slow / 429ing". A single GET answers:
+
+    * Is Redis approaching the memory threshold that triggers 503?
+    * What's the per-minute ingest vs reject rate?
+    * How many live sessions are active right now?
+    * How deep are the Celery queues backing ingestion + AI analysis?
+    * What thresholds is the gate using today (env-tuned, useful for
+      verifying the deployment matches the docs)?
+
+    Everything is best-effort — a degraded Redis returns partial data
+    rather than 500'ing the health endpoint itself.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    from app.db.redis_client import get_redis
+    from app.services.ingestion_backpressure import get_redis_memory_snapshot
+
+    redis = get_redis()
+    snapshot = await get_redis_memory_snapshot(force_refresh=True)
+
+    bucket = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M")
+
+    # Per-bucket ingest counter: sum across every project's bucket key.
+    # This is O(K) where K = number of projects with ingest in the last
+    # minute. Bounded by project count, fine.
+    ingest_count = 0
+    project_count = 0
+    try:
+        async for key in redis.scan_iter(match=f"testlookup:rate:ingest:*:{bucket}", count=200):
+            project_count += 1
+            try:
+                val = await redis.get(key)
+                ingest_count += int(val or 0)
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.warning("health_ingestion_scan_failed: %s", exc)
+
+    # Global reject counter for this minute.
+    reject_count = 0
+    try:
+        val = await redis.get(f"testlookup:rate:reject:{bucket}")
+        reject_count = int(val or 0)
+    except Exception:
+        pass
+
+    # Celery queue depths. Each queue lives as a Redis List under its
+    # routing key — ``LLEN`` is O(1). Falls back to None on error so
+    # the rest of the payload still renders. Phase 2.4 adds the
+    # ingestion shards; the base queues stay so monitoring tools that
+    # alert on the legacy names still work.
+    from app.worker.ingestion_routing import all_shard_queues
+
+    queue_depths: dict[str, int | None] = {}
+    base_queues = ("critical", "ingestion", "ai_analysis", "default")
+    for queue in (*base_queues, *all_shard_queues()):
+        try:
+            queue_depths[queue] = int(await redis.llen(queue))
+        except Exception:
+            queue_depths[queue] = None
+
+    # Active live sessions — count of state-key hashes. Same pattern as
+    # the per-project scan; bounded by live-run count.
+    active_sessions = 0
+    try:
+        async for _ in redis.scan_iter(match="testlookup:live:state:*", count=200):
+            active_sessions += 1
+    except Exception:
+        active_sessions = -1  # surface "unknown"
+
+    # Phase 3 — AI pipeline debouncer state. ``pending`` = runs waiting
+    # in the SortedSet; ``degraded_projects`` = projects currently
+    # over their daily LLM-cost budget (rules+ML fallback in effect).
+    debouncer_pending: int | None = None
+    try:
+        debouncer_pending = int(await redis.zcard("testlookup:ai_pipeline_debounce"))
+    except Exception:
+        debouncer_pending = None
+    from app.services.ai_pipeline_debouncer import get_degraded_project_count
+    degraded_projects = await get_degraded_project_count()
+
+    # Phase 4.3 — DLQ depth for permanently-failed persist_live_session
+    # tasks. Surfaces "N tasks failed after exhausting retries in the
+    # last 7 days" without an operator having to LRANGE the Redis list.
+    from app.services.ingestion_dlq import get_dlq_count
+    dlq_persist_count = await get_dlq_count("persist_live_session")
+
+    # Status flag for the dashboard. ``overload`` when backpressure is
+    # actively rejecting; ``degraded`` when the reject rate is non-zero
+    # but we're not over the memory threshold (i.e. one project is
+    # being rate-limited, but global memory is fine).
+    over_threshold = False
+    used_pct = 0.0
+    if snapshot is not None:
+        used_pct = round(snapshot.used_pct, 1)
+        if snapshot.max_bytes > 0 and snapshot.used_pct >= settings.INGEST_REDIS_MEMORY_THRESHOLD_PCT:
+            over_threshold = True
+        elif (
+            settings.INGEST_REDIS_MEMORY_ABSOLUTE_BYTES > 0
+            and snapshot.used_bytes >= settings.INGEST_REDIS_MEMORY_ABSOLUTE_BYTES
+        ):
+            over_threshold = True
+
+    if over_threshold:
+        status_flag = "overload"
+    elif reject_count > 0:
+        status_flag = "degraded"
+    else:
+        status_flag = "ok"
+
+    return {
+        "status": status_flag,
+        "redis": {
+            "used_bytes": snapshot.used_bytes if snapshot else None,
+            "max_bytes": snapshot.max_bytes if snapshot else None,
+            "used_pct": used_pct,
+        },
+        "queues": queue_depths,
+        "live_sessions": {"active": active_sessions},
+        "ai_pipeline": {
+            "pending_in_debouncer": debouncer_pending,
+            "degraded_projects": degraded_projects,
+            "debounce_window_seconds": settings.AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS,
+            "debouncer_enabled": settings.AI_PIPELINE_DEBOUNCE_ENABLED,
+        },
+        "dlq": {
+            "persist_live_session": dlq_persist_count,
+        },
+        "recent": {
+            "ingest_count_this_minute": ingest_count,
+            "reject_count_this_minute": reject_count,
+            "active_projects_this_minute": project_count,
+        },
+        "thresholds": {
+            "rate_limit_per_minute": settings.INGEST_RATE_LIMIT_PER_MINUTE,
+            "redis_memory_threshold_pct": settings.INGEST_REDIS_MEMORY_THRESHOLD_PCT,
+            "redis_memory_absolute_bytes": settings.INGEST_REDIS_MEMORY_ABSOLUTE_BYTES,
+        },
+        "timestamp": _dt.now(_tz.utc).isoformat(),
+    }

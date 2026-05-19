@@ -87,6 +87,7 @@ class WorkflowState(TypedDict):
     executive_summary: Optional[str]    # Layer 1: 3-sentence executive summary
     summary_markdown: Optional[str]     # Full markdown report (built from all 4 layers)
     structured_summary: Optional[dict]  # All 4 layers: layer1..layer4 keys
+    summary_provenance: Optional[dict]  # Hashes, prompt versions, and model config for summary replay
 
     # ── Stage 5: Defect Triage Agent ─────────────────────────────
     triage_results: list[dict]          # [{test_case_id, ticket_key, action: created|updated|skipped}]
@@ -123,6 +124,13 @@ class WorkflowState(TypedDict):
     execution_path: Annotated[str, _last_str]    # ExecutionPath enum value for the overall run
     fallback_used: Annotated[bool, _last_bool]   # any stage used deterministic fallback instead of LLM
     tools_used: Annotated[list[str], _concat_lists]      # LangChain tools invoked (parallel-safe)
+    analysis_mode_requested: str  # configured value at pipeline start (env/UI)
+    analysis_mode_resolved: str   # effective engine frozen for this pipeline
+    analysis_mode_resolution: dict  # probe/config snapshot for audit replay
+    _workflow_route_decisions: list[dict]  # sync router decisions persisted in pipeline metadata
+    workflow_plan: dict  # deterministic planner output for expected stage path
+    workflow_verification: dict  # verifier checks comparing final state to plan
+    agent_contracts: Annotated[dict[str, dict], _merge_dicts]  # agent_name -> versioned output contract metadata
     schema_version: int            # pipeline state schema version (increment on breaking changes)
 
     # ── Phase 6: Per-Stage Observability ─────────────────────────

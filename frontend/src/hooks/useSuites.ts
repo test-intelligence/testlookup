@@ -32,6 +32,13 @@ export function useCanonicalRuns(canonicalId?: string) {
   )
 }
 
+export function useCanonicalCase(canonicalId?: string) {
+  return useSWR(
+    canonicalId ? ['canonical', canonicalId] : null,
+    () => suitesService.getCanonicalCase(canonicalId!),
+  )
+}
+
 /** Invalidate every suite-keyed SWR entry — call after any mutation. */
 export function refreshSuites() {
   return mutate(

@@ -53,6 +53,34 @@ All modes produce identical output shapes (same `AIAnalysis` schema, same 4-laye
 
 ---
 
+## Known gaps in the agent pipeline (audit 2026-05-13)
+
+Reference list — full task descriptions, file:line anchors, and acceptance
+criteria are in `docs/BACKLOG.md` § "Phase J". This callout lives here so
+anyone reading the agent spec sees the gaps before extending it.
+
+**Correctness / audit bugs (do these first):**
+- Pipeline dedup-vs-retry collision: `run_agent_pipeline` SET-NXes a Redis key before execution, so Celery retries of a failed pipeline are silently skipped (`worker/tasks.py:751`).
+- Checkpoint resume isn't auditable: restored stages return a state delta but the new run's stage rows still show `pending` → `completed` instead of a `restored` status (`agents/workflow.py:558`).
+- Single-test triage events emit with empty `pipeline_run_id`, so per-test `cache_hit` / `llm_called` rows never join the pipeline timeline (`services/agent.py:140, 149, 240`).
+- Route-decision audit log is fire-and-forget (`asyncio.create_task` in `agents/workflow.py:180`) and the Mongo writer swallows write failures (`pipeline_event_log.py:44`) — decisions can be silently lost.
+
+**Determinism tightening:**
+- Cluster + summary inputs sample from unordered dicts (`cluster_agent.py:50`, `summary_agent.py:260`); sort by `(severity_desc, confidence_desc, test_id)` before sampling.
+- Summary agent asks the LLM for executive panel + narrative in one call — split deterministic facts from LLM-rewritten narrative, persist a `context_hash` (`summary_agent.py:309`).
+- Triage output parsed via ad-hoc regex (`services/agent.py:366`) — route through the shared `parse_llm_json` + Pydantic schema path the summary and release-risk agents use; reject unknown categories.
+- Low-confidence retry triggers a second LLM call (`analysis_agent.py:270`) — prefer deterministic confidence repair (evidence count, flakiness history, category rules) before retry; only re-call on provider/parsing errors.
+
+**Provenance:**
+- `AIAnalysis.routing_metadata` is good but missing input hash, prompt template version, model config snapshot, cache source, and evidence URI (`analysis_agent.py:872`).
+- `auto` analysis mode caches probe state in process globals (`services/analysis_router.py:73`) — resolve once at pipeline start, persist on the pipeline row, thread through `WorkflowState`.
+
+**Patterns to preserve while closing these:**
+- Release-risk agent is the reference target: deterministic score, LLM can't override the recommendation, `input_snapshot` persisted (`agents/release_risk_agent.py:129`).
+- Analysis agent's per-test routing metadata + confidence caps + category normalization are correct and should stay.
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |

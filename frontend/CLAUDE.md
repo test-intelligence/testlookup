@@ -264,6 +264,32 @@ const { sortKey, sortDir, handleSort, sortedData } = useTableSort(data, 'name')
 - `errorReporting.ts` installs `window.onerror` + `unhandledrejection` handlers — with PII sanitization (strips file paths, redacts emails, Bearer tokens, API keys)
 - Toast notifications via `react-hot-toast`: `toast.success(...)`, `toast.error(...)`
 
+### Clipboard copy (HTTP-safe)
+
+`navigator.clipboard.writeText` is gated to **secure contexts** (HTTPS or localhost). The homelab runs on HTTP, so calling it directly fails with a TypeError and looks like "Clipboard access denied" to the user. Use the shared utility:
+
+```typescript
+import { copyTextToClipboard } from '@/utils/clipboard'
+
+const ok = await copyTextToClipboard(value)
+if (ok) toast.success('Copied!')
+else toast.error('Clipboard access denied — copy manually')
+```
+
+It tries `navigator.clipboard.writeText` first, falls back to a hidden-textarea `document.execCommand('copy')` on non-secure origins. Apply this everywhere — `navigator.clipboard` direct calls are a regression risk.
+
+### Cross-page degraded mode
+
+`useSystemHealth` (SWR poll of `/health/details` every 60s) returns `{data, unavailable: string[], isDegraded}`. `DegradedBanner.tsx` is mounted once in `AppLayout` between `<TopBar />` and `<main>` — it renders a yellow strip listing the unavailable dependencies (`ChromaDB`, `MongoDB`, …) when any one is `!= "ok"`. Pages that have a per-feature degraded path (Search, Run Intelligence) can read `useSystemHealth` themselves to render scoped notes, but the global banner already covers the cross-page case.
+
+### Destructive controls — typed-name confirmation
+
+`ProjectDataPage.tsx` is the reference. Two-step modal flow:
+1. Click a red button in the "Danger zone" card.
+2. A confirm modal opens listing what will be deleted vs kept. The Delete button stays disabled until the user types the project name **exactly** (case-sensitive). Backend re-validates the typed name; the frontend gate is a forcing function against autopilot clicks, not a security check.
+
+Use this pattern for any future ADMIN destructive action.
+
 ## Critical Rules
 
 - **TypeScript strict mode is ON.** Avoid `any`; use `unknown` + type guards.
@@ -277,6 +303,9 @@ const { sortKey, sortDir, handleSort, sortedData } = useTableSort(data, 'name')
 - **Dev-only pages check `APP_ENV`.** Pages like `SeedDataPage.tsx` must render nothing in staging/production.
 - **Client-side PII sanitization.** `errorReporting.ts` redacts sensitive data before sending to backend. Never skip this for error reports.
 - **Avatar color palette.** 12 colors defined in `AVATAR_BG` map (slate, red, orange, amber, lime, emerald, teal, cyan, blue, violet, fuchsia, pink). Display via `TopBar.tsx` using the user's `avatar_color` from auth store.
+- **Clipboard via `copyTextToClipboard`.** Never call `navigator.clipboard.writeText` directly — it fails on HTTP origins like the homelab. Use `@/utils/clipboard`. Tests `frontend/src/pages/SearchPage.test.tsx`-style mocks should mock the util.
+- **Search chip counts have a no-query fallback.** `SearchPage` reads chip + Index Health counts from `response?.entity_counts ?? totalCounts` where `totalCounts` comes from `searchService.getEntityCounts(projectId)` fetched on mount. Without the fallback the chips render 0 before the user types anything; that's the regression `SearchPage.test.tsx` now pins.
+- **`/agents` panels can show `failed` for stale runs.** The backend `routers/agents._apply_effective_status` overrides `running → failed` when a stage has failed or the pipeline is past 30 min with no completion. Don't add UI logic that re-overrides — trust what the API returns.
 
 ## SWR Refresh Intervals
 
@@ -316,7 +345,9 @@ The `pages/settings/AIConfigPage.tsx` page allows ADMIN users to configure the a
 |------|------|---------|
 | AI Configuration | `/settings/ai` | Analysis mode, ML status, RAG toggle (ADMIN) |
 | Profile | `/settings/profile` | Full name, avatar color, password change |
-| Seed Data | `/settings/seed` | Dev-only: load/reset/delete seed data (ADMIN) |
+| API Keys | `/settings/api-keys` | Project-scoped API key generation + revoke |
+| Project Data | `/settings/project-data` | Danger zone — reset the active project (delete test runs only, or full reset). ADMIN; typed-name confirmation |
+| Seed Data | `/settings/seed-data` | Dev-only: load/reset/delete seed data (ADMIN) |
 
 ## Build & Deploy
 

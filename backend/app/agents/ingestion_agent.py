@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import IngestionAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase, TestRun, TestStatus
 
 logger = structlog.get_logger("agents.ingestion")
@@ -43,7 +44,7 @@ class IngestionAgent(BaseAgent):
                     "message": f"Ingestion validated: {run_data['total_tests']} tests, {len(failed_ids)} failures",
                 },
             )
-            return {
+            output = {
                 "test_run_data": run_data,
                 "branch": run_data.get("branch"),
                 "failed_test_ids": failed_ids,
@@ -54,11 +55,18 @@ class IngestionAgent(BaseAgent):
                 "errors": [],
                 "current_stage": "anomaly_detection",
             }
+            return validate_agent_contract(
+                IngestionAgentOutput,
+                output,
+                agent_name=self.stage_name,
+                confidence=100,
+                decision_reason="Validated persisted test run facts and failed test IDs",
+            )
         except Exception as exc:
             error_msg = f"Ingestion agent error: {exc}"
             logger.error(error_msg, exc_info=True)
             await self.mark_stage_done(pipeline_run_id, error=error_msg)
-            return {
+            output = {
                 "ingestion_enriched": False,
                 "branch": None,
                 "failed_test_ids": [],
@@ -68,6 +76,14 @@ class IngestionAgent(BaseAgent):
                 "completed_stages": ["ingestion"],
                 "current_stage": "anomaly_detection",
             }
+            return validate_agent_contract(
+                IngestionAgentOutput,
+                output,
+                agent_name=self.stage_name,
+                fallback_used=True,
+                confidence=0,
+                decision_reason=error_msg,
+            )
 
     async def _extract_run_data(self, test_run_id: str) -> tuple[dict, list[str]]:
         """Fetch test run metadata and IDs of all failed/broken tests."""

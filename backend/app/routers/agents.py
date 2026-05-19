@@ -7,11 +7,12 @@ import asyncio
 import inspect
 import logging
 import uuid
-from typing import Any, List, Literal, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterable, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_role, require_run_access
@@ -20,6 +21,8 @@ from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun, Use
 from app.models.schemas import (
     AgentPipelineResponse,
     AgentRunSummaryResponse,
+    PipelineEventLogHealthResponse,
+    PipelineReplayResponse,
     PipelineTimelineResponse,
     PipelineTimelineSummary,
     PipelineTimelineEventResponse,
@@ -30,6 +33,83 @@ from app.services.run_summary_service import build_fallback_summary, normalize_s
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
+
+# Pipelines with status='running' for longer than this without ever
+# transitioning to completed/failed are treated as failed by the
+# user-facing endpoints. Matches the Celery task time_limit (1800s)
+# in worker/tasks.py — anything past that window the worker would
+# have aborted anyway, but ``_mark_pipeline_done`` may have been
+# missed (SIGKILL, segfault, oom-kill). The reaper job updates the
+# rows themselves on a schedule; this constant is the display-side
+# safety net.
+RUNNING_STALE_THRESHOLD = timedelta(minutes=30)
+
+
+async def _failed_stage_pipeline_ids(
+    db: AsyncSession, pipeline_ids: Iterable[uuid.UUID],
+) -> set[uuid.UUID]:
+    """Return the subset of ``pipeline_ids`` that have at least one stage
+    in ``failed`` status. One round trip, regardless of how many pipelines.
+    """
+    ids = list(pipeline_ids)
+    if not ids:
+        return set()
+    rows = await db.execute(
+        select(AgentStageResult.pipeline_run_id)
+        .where(
+            AgentStageResult.pipeline_run_id.in_(ids),
+            AgentStageResult.status == "failed",
+        )
+        .distinct()
+    )
+    return {row[0] for row in rows.all()}
+
+
+def _is_stale_running(pipeline: AgentPipelineRun, *, now: datetime) -> bool:
+    """A 'running' pipeline whose start age exceeds the stale threshold
+    and which has never recorded a completion timestamp is treated as
+    failed. The worker task that owns it has either crashed or been
+    killed; further status updates won't arrive."""
+    if pipeline.status != "running":
+        return False
+    if pipeline.completed_at is not None:
+        return False
+    started = pipeline.started_at
+    if started is None:
+        return False
+    return (now - started) > RUNNING_STALE_THRESHOLD
+
+
+def _apply_effective_status(
+    pipelines: list[AgentPipelineRun],
+    failed_stage_ids: set[uuid.UUID],
+    *,
+    now: datetime,
+) -> None:
+    """Mutate each pipeline.status in place when the underlying state
+    contradicts the stored status. We mutate in place because the
+    response serialiser reads ``status`` straight off the ORM row;
+    rewriting the row this way is cheap and confined to this read
+    path — the DB row is not committed.
+
+    Reasons to override ``running`` -> ``failed``:
+      * Any associated stage is in ``failed`` status (downstream stages
+        never run after a hard failure, so the workflow can't recover).
+      * The pipeline has been running past RUNNING_STALE_THRESHOLD
+        without a completion timestamp.
+
+    Why not also override ``running`` -> ``partial``? The ``partial``
+    status is reserved for ``_mark_pipeline_done`` to indicate a
+    pipeline that finished its full graph but had some failed stages
+    in between. A still-``running`` row with a failed stage is, from
+    the user's perspective on /agents, a failed run — they want a red
+    badge and an actionable error, not a yellow "in progress".
+    """
+    for p in pipelines:
+        if p.status != "running":
+            continue
+        if p.id in failed_stage_ids or _is_stale_running(p, now=now):
+            p.status = "failed"
 
 
 async def _resolve_maybe_awaitable(value: Any) -> Any:
@@ -56,12 +136,30 @@ async def list_pipelines(
         q = q.join(TestRun, AgentPipelineRun.test_run_id == TestRun.id).where(
             TestRun.project_id == project_id
         )
+    # NOTE: the ``status`` filter intentionally applies to the *stored*
+    # status, not the derived one. If a caller asks for ``status=running``
+    # we return the rows currently stored as running — and then derive the
+    # effective status below, which may downgrade some of those rows to
+    # ``failed`` in the response. The alternative (filtering after
+    # derivation) would silently hide rows from a paginated query;
+    # callers that want every-derived-failed should poll without a status
+    # filter and look at the response.
     if status:
         q = q.where(AgentPipelineRun.status == status)
     q = q.order_by(AgentPipelineRun.created_at.desc()).limit(limit)
 
     result = await db.execute(q)
-    return result.scalars().all()
+    pipelines = list(result.scalars().all())
+
+    # Override ``status`` to ``failed`` on rows whose underlying state
+    # (failed stage, or stale-running past the worker time_limit) says
+    # the user should be seeing a red badge, not a spinning one.
+    running_ids = [p.id for p in pipelines if p.status == "running"]
+    failed_stage_ids = await _failed_stage_pipeline_ids(db, running_ids)
+    _apply_effective_status(
+        pipelines, failed_stage_ids, now=datetime.now(timezone.utc),
+    )
+    return pipelines
 
 
 @router.get("/pipelines/{pipeline_id}", response_model=AgentPipelineResponse)
@@ -77,6 +175,11 @@ async def get_pipeline(
     pipeline = result.scalar_one_or_none()
     if not pipeline:
         raise HTTPException(404, detail="Pipeline run not found")
+
+    failed_stage_ids = await _failed_stage_pipeline_ids(db, [pipeline.id])
+    _apply_effective_status(
+        [pipeline], failed_stage_ids, now=datetime.now(timezone.utc),
+    )
     return pipeline
 
 
@@ -236,7 +339,11 @@ async def get_pipeline_timeline(
     tokens, cost, latency, confidence, evidence count, route rationale,
     error taxonomy, fallback status, and alerts.
     """
-    from app.services.agent_cost_service import check_alerts, get_pipeline_cost_summary
+    from app.services.agent_cost_service import (
+        build_agent_observability_summary,
+        check_alerts,
+        get_pipeline_cost_summary,
+    )
     from app.services.pipeline_event_log import get_pipeline_timeline as get_pipeline_events
 
     # Verify pipeline exists
@@ -259,6 +366,14 @@ async def get_pipeline_timeline(
     )
     stages = stage_result.scalars().all()
     events = await _resolve_maybe_awaitable(get_pipeline_events(str(pipeline_id)))
+    from app.services.pipeline_replay_service import build_replay_integrity_summary
+
+    replay_integrity = build_replay_integrity_summary(pipeline, list(stages), list(events))
+    agent_observability = build_agent_observability_summary(
+        list(stages),
+        cost_summary=cost_summary,
+        alerts=alerts,
+    )
 
     # Pipeline-level timing
     pipeline_duration = None
@@ -283,6 +398,7 @@ async def get_pipeline_timeline(
         "completed_at": pipeline.completed_at.isoformat() if pipeline.completed_at else None,
         "duration_seconds": pipeline_duration,
         "cost_summary": cost_summary,
+        "agent_observability": agent_observability,
         "alerts": alerts,
         "stages": [
             {
@@ -326,14 +442,79 @@ async def get_pipeline_timeline(
             pending_stages=pending,
             progress_percent=progress,
         ).model_dump(mode="json"),
+        "replay_integrity": replay_integrity,
     }
 
 
+@router.get("/event-log/health", response_model=PipelineEventLogHealthResponse)
+async def get_pipeline_event_log_health(
+    _: Any = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """Return write-health details for the pipeline audit event log."""
+    from app.services.pipeline_event_log import get_event_log_health
+
+    health = get_event_log_health()
+    status = "degraded" if health.get("write_failure_count", 0) else "healthy"
+    return {
+        "status": status,
+        **health,
+    }
+
+
+@router.get("/pipelines/{pipeline_id}/replay", response_model=PipelineReplayResponse)
+async def get_pipeline_replay(
+    pipeline_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_active_user),
+):
+    """Return a deterministic replay document for audit reconstruction."""
+    from app.services.pipeline_replay_service import build_pipeline_replay
+
+    replay = await build_pipeline_replay(db, pipeline_id)
+    if replay is None:
+        raise HTTPException(404, detail="Pipeline run not found")
+    return replay
+
+
 @router.get("/active-runs")
-async def get_active_live_runs(_: Any = Depends(get_current_active_user)):
-    """Get all currently monitored live test runs."""
+async def get_active_live_runs(
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_active_user),
+):
+    """Get all currently monitored live test runs.
+
+    Enriches each Redis-state row with ``run_seq`` (per-(project,
+    primary_suite_name) human-readable run number) by resolving each
+    run's canonical TestRun.id. ``run_seq`` is null when the run's
+    TestRun row doesn't exist yet — the Phase 4.5 incremental drain
+    creates it within ~30s of the first event, so very-new active
+    sessions fall through to the SDK ``build_number`` on the UI.
+    """
+    import uuid as _uuid
     from app.streams.live_run_state import RedisLiveRunState
-    return {"active_runs": await RedisLiveRunState.get_all_active()}
+    from app.services.stream_service import canonical_test_run_uuid
+    from app.services.runs_service import fetch_run_seq_map
+
+    active = await RedisLiveRunState.get_all_active()
+    if active:
+        run_uuids: list[_uuid.UUID] = []
+        slug_to_uuid: dict[str, str] = {}
+        for r in active:
+            slug = r.get("run_id")
+            if not slug:
+                continue
+            try:
+                u = canonical_test_run_uuid(slug)
+                run_uuids.append(u)
+                slug_to_uuid[slug] = str(u)
+            except Exception:
+                continue
+        seq_map = await fetch_run_seq_map(db, run_uuids) if run_uuids else {}
+        for r in active:
+            slug = r.get("run_id") or ""
+            canonical = slug_to_uuid.get(slug)
+            r["run_seq"] = seq_map.get(canonical) if canonical else None
+    return {"active_runs": active}
 
 
 @router.get("/active-runs/{run_id}")

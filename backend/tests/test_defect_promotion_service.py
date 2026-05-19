@@ -166,6 +166,31 @@ def test_build_evidence_bundle_no_finding():
 # ── Tests for _find_duplicate_semantic ────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_find_duplicate_uses_canonical_memory_first():
+    from app.services.defect_promotion_service import _find_duplicate_semantic
+
+    mock_db = AsyncMock()
+    memory_match = {
+        "found": True,
+        "duplicate_defect_id": "00000000-0000-0000-0000-000000000099",
+    }
+    with patch(
+        "app.services.agent_memory_service.find_duplicate_defect_memory",
+        new_callable=AsyncMock,
+    ) as find_memory:
+        find_memory.return_value = memory_match
+        dup_id, found = await _find_duplicate_semantic(
+            project_id="00000000-0000-0000-0000-000000000001",
+            duplicate_hint="Login page timeout",
+            db=mock_db,
+        )
+
+    assert found is True
+    assert dup_id == "00000000-0000-0000-0000-000000000099"
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_find_duplicate_empty_open_defects():
     from app.services.defect_promotion_service import _find_duplicate_semantic
 

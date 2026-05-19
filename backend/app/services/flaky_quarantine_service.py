@@ -89,31 +89,77 @@ async def _audit(
     before: Optional[dict[str, Any]] = None,
     after: Optional[dict[str, Any]] = None,
 ) -> None:
-    """Write a SettingsAuditLog row — never raises."""
-    try:
-        from app.models.postgres import SettingsAuditLog
-        if action in ("update", "approve", "reject") and before and after:
-            changed = sorted(
-                k for k in set(before) | set(after)
-                if before.get(k) != after.get(k)
-            )
-        elif after is not None:
-            changed = sorted(after.keys())
-        elif before is not None:
-            changed = sorted(before.keys())
-        else:
-            changed = []
-        entry = SettingsAuditLog(
-            setting_key=f"flaky_quarantine:{project_id}:{request_id}",
-            action=action,
-            actor_id=actor.id if actor else None,
-            actor_name=(
-                getattr(actor, "username", None) or getattr(actor, "email", None)
-            ) if actor else None,
-            changed_fields=changed,
+    """Write a SettingsAuditLog row — never raises.
+
+    Uses a fresh ``AsyncSessionLocal`` (NOT the caller's ``db``) so:
+
+    * Transient DB faults can be retried without poisoning the caller's
+      session (a rolled-back asyncpg session needs an explicit
+      ``rollback()`` before reuse, which the caller doesn't know to do
+      from inside this swallowed-exception path).
+    * The audit row is durable across the primary mutation's transaction
+      boundary. Every caller in this module already commits the primary
+      mutation BEFORE calling ``_audit`` (see e.g. line 304-313), so
+      this matches the de-facto behaviour while making the isolation
+      explicit. P2-6 (attempt-vs-outcome split) covers the broader
+      design question across all services.
+    * Final failures emit a structured WARNING with the action,
+      request_id, project_id, and exception type — operators querying
+      the log for missing audit rows can pin them to the original event.
+
+    ``db`` is still accepted in the signature for backwards-compat with
+    callers (and to keep the unused parameter from being a footgun if
+    callers expect the audit to share a session in the future).
+    """
+    # `db` parameter retained for API compatibility — see docstring above.
+    del db
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import SettingsAuditLog
+    from app.services.resilience import DB_RETRYABLE_EXCEPTIONS, async_retry
+
+    if action in ("update", "approve", "reject") and before and after:
+        changed = sorted(
+            k for k in set(before) | set(after)
+            if before.get(k) != after.get(k)
         )
-        db.add(entry)
-        await db.commit()
+    elif after is not None:
+        changed = sorted(after.keys())
+    elif before is not None:
+        changed = sorted(before.keys())
+    else:
+        changed = []
+
+    entry_kwargs = dict(
+        setting_key=f"flaky_quarantine:{project_id}:{request_id}",
+        action=action,
+        actor_id=actor.id if actor else None,
+        actor_name=(
+            getattr(actor, "username", None) or getattr(actor, "email", None)
+        ) if actor else None,
+        changed_fields=changed,
+    )
+
+    async def _do_write() -> None:
+        # Fresh session per attempt — a previous failure rolled back this
+        # session implicitly when the context manager exited, so each
+        # retry starts clean.
+        async with AsyncSessionLocal() as audit_db:
+            try:
+                audit_db.add(SettingsAuditLog(**entry_kwargs))
+                await audit_db.commit()
+            except Exception:
+                await audit_db.rollback()
+                raise
+
+    try:
+        await async_retry(
+            _do_write,
+            max_retries=2,
+            base_delay=0.1,
+            max_delay=2.0,
+            retryable_exceptions=DB_RETRYABLE_EXCEPTIONS,
+            operation_name="flaky_quarantine_audit",
+        )
         logger.info(
             "flaky_quarantine_change",
             request_id=str(request_id),
@@ -122,7 +168,17 @@ async def _audit(
             actor_id=str(actor.id) if actor else None,
         )
     except Exception as exc:
-        logger.warning("flaky_quarantine audit write failed", error=str(exc))
+        # Structured WARNING so operators can grep "audit_dropped action=..."
+        # against the request id / project id when reconciling missing rows.
+        logger.warning(
+            "flaky_quarantine_audit_dropped",
+            action=action,
+            request_id=str(request_id),
+            project_id=str(project_id),
+            actor_id=str(actor.id) if actor else None,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
 
 
 def _snapshot(row: FlakyQuarantineRequest) -> dict[str, Any]:

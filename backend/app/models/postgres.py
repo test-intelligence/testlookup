@@ -5,13 +5,14 @@ from enum import Enum as PyEnum
 from typing import Any, Optional
 
 from sqlalchemy import (
-    JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -76,6 +77,22 @@ class UserRole(str, PyEnum):
     ADMIN = "ADMIN"
 
 
+class TriageStatus(str, PyEnum):
+    """Per-failure triage workflow state (migration 0088).
+
+    Distinct from ``TestStatus`` (which is the test's execution outcome).
+    Every auto-assigned FAILED/BROKEN TestCase starts at ``PENDING_REVIEW``
+    and is moved off the ``/my-failures`` inbox once the assignee or a
+    QA Lead picks one of the resolved states.
+    """
+    PENDING_REVIEW         = "PENDING_REVIEW"         # default — appears on /my-failures
+    REVIEWED_APPROVED      = "REVIEWED_APPROVED"      # no action — accepted as-is after review
+    DEFECT_CREATED         = "DEFECT_CREATED"         # defect/bug logged; notes hold the link
+    WONT_FIX               = "WONT_FIX"               # deprecated test / accepted failure
+    AUTOMATION_SCRIPT_ISSUE = "AUTOMATION_SCRIPT_ISSUE"  # test code bug, not a product bug
+    FLAKY_TEST             = "FLAKY_TEST"             # nondeterministic — quarantine candidate
+
+
 class NotificationChannel(str, PyEnum):
     EMAIL = "email"
     SLACK = "slack"
@@ -128,6 +145,18 @@ class Project(Base):
     tags: Mapped[Optional[list]] = mapped_column(JSON)                                # added migration 0022
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     manager_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(                     # added migration 0076
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Default QA lead — every new TestSuite materialised during ingest gets a
+    # TestSuiteOwner row pointing here (migration 0079). When set, this is the
+    # first fallback in the owner-resolution chain (TestSuiteOwner row →
+    # default_qa_lead_user_id → manager_user_id). Enforced as QA_LEAD on this
+    # project (or ADMIN) at the application layer — no CHECK constraint here
+    # because ProjectMember.role is the source of truth.
+    default_qa_lead_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(             # added migration 0079
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -192,6 +221,14 @@ class TestRun(Base):
     primary_suite_name: Mapped[Optional[str]] = mapped_column(String(500), index=True)
     suite_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
+    # 15-day durable archive of the raw SDK events for live-stream runs.
+    # Written at session-close time so /runs/{id}/recover-live can replay
+    # test_case rows long after the 25-hour Redis buffer TTL has lapsed
+    # (migration 0086, 2026-05-16). Null for non-live runs and for live
+    # runs whose archive has been purged after the 15-day window.
+    event_archive: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    event_archive_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -210,6 +247,13 @@ class TestCase(Base):
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
         Index("ix_test_cases_search", "search_vector", postgresql_using="gin"),
         Index("ix_test_cases_canonical", "canonical_test_case_id"),
+        # Hot path: ``/my-failures`` filters by ``assigned_to_user_id +
+        # triage_status = 'PENDING_REVIEW'``. Composite index keeps the
+        # inbox query a single index scan (added migration 0088).
+        Index(
+            "ix_test_cases_assignee_triage",
+            "assigned_to_user_id", "triage_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -241,6 +285,46 @@ class TestCase(Base):
     # Failure info
     failure_category: Mapped[Optional[FailureCategory]] = mapped_column(String(30))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Per-execution assignee — set by ``finalize_run`` for every FAILED/BROKEN
+    # TestCase in the run (migration 0080). Resolution order at assignment
+    # time: TestSuiteOwner row for the suite → Project.default_qa_lead_user_id
+    # → Project.manager_user_id → NULL. Historical rows retain the owner they
+    # were assigned to at ingest time; reassigning a suite owner later does
+    # NOT retroactively rewrite past assignments — preserve the action ledger.
+    assigned_to_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(            # added migration 0080
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # ── Triage workflow (migration 0088) ────────────────────────────
+    # Every auto-assigned FAILED/BROKEN row starts at PENDING_REVIEW.
+    # The /my-failures inbox filters to PENDING_REVIEW only; moving to
+    # any other status removes the row from the assignee's queue. PASSED
+    # / SKIPPED rows carry PENDING_REVIEW too but no UI surfaces them —
+    # the default keeps the column NOT NULL without a per-status branch
+    # in the assigner.
+    triage_status: Mapped[TriageStatus] = mapped_column(
+        String(30),
+        nullable=False,
+        default=TriageStatus.PENDING_REVIEW.value,
+        server_default=TriageStatus.PENDING_REVIEW.value,
+    )
+    # Free-form notes set when the assignee moves status off PENDING_REVIEW —
+    # typically a Jira link for DEFECT_CREATED or a rationale for
+    # WONT_FIX / REVIEWED_APPROVED. Cap is 2k chars to keep the row
+    # bounded; longer write-ups belong on the linked defect.
+    triage_notes: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    triage_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    triage_updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # S3 reference
     minio_s3_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
@@ -363,6 +447,82 @@ class SuiteRunReview(Base):
 SUITE_REVIEW_STATES = ("pending", "confirmed", "acknowledged", "review_later")
 
 
+class TestExecutionReview(Base):
+    """Per-TestCase human review overlay for AI-flagged failures (migration 0081).
+
+    When the AI analysis pipeline flags a failure as ``requires_human_review``
+    (model missing, low confidence, fallback path), the UI shows a "Pending
+    Human Review" tag. This row records the human's verdict once they look:
+    ``reviewed`` (AI was right), ``defect_filed`` (ticket created;
+    ``defect_link`` captures the URL), ``false_positive`` (flake or test bug;
+    downstream un-tags), or ``reproducible`` (failure confirmed locally,
+    awaiting fix).
+
+    Naming note: the older ``test_case_reviews`` table belongs to the
+    managed-test-AUTHORING workflow (review of an authored test definition
+    before it's published). This table is keyed on ``test_cases.id`` —
+    the execution row — and is unrelated.
+
+    One row per test_case_id (UNIQUE). Transitions mutate the row in-place;
+    cross-test audit lives in ``test_case_audit_logs`` for cases that need a
+    timeline. Keep this table small and queryable for the inbox + dashboards.
+    """
+    __tablename__ = "test_execution_reviews"
+    __table_args__ = (
+        UniqueConstraint("test_case_id", name="uq_ter_test_case_id"),
+        CheckConstraint(
+            "state IN ('pending_review', 'reviewed', 'defect_filed', "
+            "'false_positive', 'reproducible')",
+            name="ck_ter_state_valid",
+        ),
+        CheckConstraint(
+            "state <> 'defect_filed' OR NULLIF(BTRIM(defect_link), '') IS NOT NULL",
+            name="ck_ter_defect_link_required",
+        ),
+        Index("ix_ter_project_state", "project_id", "state"),
+        Index("ix_ter_reviewed_by", "reviewed_by_user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending_review",
+        server_default=text("'pending_review'"),
+    )
+    reviewed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    defect_link: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transitioned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now(),
+    )
+
+
+# State machine for TestExecutionReview. Transitions are validated in the
+# application layer (test_execution_review_service). pending_review is the
+# implicit initial state — rows are auto-inserted when the user first
+# transitions an AI-flagged failure.
+TEST_EXECUTION_REVIEW_STATES = (
+    "pending_review",
+    "reviewed",
+    "defect_filed",
+    "false_positive",
+    "reproducible",
+)
+
+
 class CanonicalTestCase(Base):
     """Project-scoped test case identity.
 
@@ -431,6 +591,10 @@ class TestCaseHistory(Base):
     __tablename__ = "test_case_history"
     __table_args__ = (
         Index("ix_history_fingerprint_date", "test_fingerprint", "created_at"),
+        # FK indexes added in migration 0082 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        Index("ix_history_test_case_id", "test_case_id"),
+        Index("ix_history_test_run_id",  "test_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -492,6 +656,9 @@ class Defect(Base):
             unique=True,
             postgresql_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
         ),
+        # FK index added in migration 0082 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        Index("ix_defects_project_id", "project_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -564,6 +731,11 @@ class DefectCandidate(Base):
 class QualityGate(Base):
     """Quality gate rule configuration per project."""
     __tablename__ = "quality_gates"
+    # FK index added in migration 0082 — see
+    # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+    __table_args__ = (
+        Index("ix_quality_gates_project", "project_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
@@ -605,8 +777,11 @@ class NotificationPreference(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     channel: Mapped[NotificationChannel] = mapped_column(String(20), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    # JSON list of NotificationEventType values the user subscribed to
-    events: Mapped[list] = mapped_column(JSON, default=list)
+    # JSONB list of NotificationEventType values the user subscribed to.
+    # Type promoted from JSON → JSONB in migration 0083 for consistency
+    # with ``WebhookSubscription.events`` and so future "list users
+    # subscribed to event X" queries can use a GIN index.
+    events: Mapped[list] = mapped_column(JSONB, default=list)
     # Alert only when pass_rate falls below this percentage
     failure_rate_threshold: Mapped[Optional[float]] = mapped_column(Float, default=80.0)
     # Channel-specific overrides (if None, falls back to global settings)
@@ -934,7 +1109,13 @@ class ManagedTestCase(Base):
     priority: Mapped[str] = mapped_column(String(20), default="medium")       # critical|high|medium|low
     severity: Mapped[str] = mapped_column(String(20), default="major")        # blocker|critical|major|minor|trivial
     feature_area: Mapped[Optional[str]] = mapped_column(String(500))
-    suite_name: Mapped[Optional[str]] = mapped_column(String(500))            # Optional suite grouping
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))            # Legacy free-text suite label; superseded by test_suite_id when set.
+    # Migration 0087 — structured anchor to the canonical suite entity.
+    # Nullable so historical rows + create-without-suite paths keep working;
+    # SET NULL on delete so a suite drop doesn't cascade authored cases away.
+    test_suite_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="SET NULL"), nullable=True
+    )
     tags: Mapped[Optional[list]] = mapped_column(JSON)              # list[str]
 
     # Lifecycle state machine
@@ -1400,6 +1581,14 @@ class LiveSession(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # NOT a FK to ``test_runs.id`` despite the name. This is the
+    # SDK-supplied build/run identifier (slug, e.g. "build-1042" or a
+    # Jenkins-job-name+number string) that the client sends in the
+    # ``X-Run-ID`` header on the streaming endpoints. The canonical
+    # ``test_runs.id`` UUID is resolved from this slug via
+    # ``canonical_test_run_uuid()`` in worker/tasks.py before any FK
+    # write — see memory ``feedback_live_session_slug_vs_uuid.md`` for
+    # the production incident that made this distinction expensive.
     run_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)
     machine_id: Mapped[Optional[str]] = mapped_column(String(255))
@@ -1800,6 +1989,11 @@ class RunDiff(Base):
     __tablename__ = "run_diffs"
     __table_args__ = (
         Index("ix_run_diffs_run_id", "run_id", unique=True),
+        # FK index added in migration 0085 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P3-4). Used by "show every
+        # run diffed against baseline X" queries. RunBaseline.baseline_run_id
+        # already has a matching index (``ix_run_baselines_baseline``).
+        Index("ix_run_diffs_baseline_run_id", "baseline_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -2366,7 +2560,12 @@ class AIEvalRun(Base):
     accuracy: Mapped[Optional[float]] = mapped_column(Float)
     agreement_rate: Mapped[Optional[float]] = mapped_column(Float)  # human-AI agreement
     # Detailed per-item results
-    item_results: Mapped[Optional[list]] = mapped_column(JSON)  # [{input, expected, actual, correct}]
+    # Promoted JSON → JSONB in migration 0084 for consistency with the
+    # sibling ``AIEvalGateRun.manifest`` (and the rest of the eval gate
+    # schema), unlocking GIN-indexed predicates like
+    # ``item_results @> '[{"correct": false}]'::jsonb`` if/when the
+    # eval-drift dashboards need them.
+    item_results: Mapped[Optional[list]] = mapped_column(JSONB)  # [{input, expected, actual, correct}]
     total_items: Mapped[int] = mapped_column(Integer, default=0)
     correct_items: Mapped[int] = mapped_column(Integer, default=0)
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -2406,6 +2605,28 @@ class AIEvalBaseline(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class AIEvalGateRun(Base):
+    """Historical record of an agent-stack release gate decision."""
+    __tablename__ = "ai_eval_gate_runs"
+    __table_args__ = (
+        Index("ix_aeg_change_id", "change_id"),
+        Index("ix_aeg_status", "status"),
+        Index("ix_aeg_manifest_checksum", "manifest_checksum_sha256"),
+        Index("ix_aeg_evaluated_at", "evaluated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    change_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    manifest_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    gate_results: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    blocking_gates: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    version_changes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    evaluated_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 # ── Agent Memory (P3 — Unified Memory & Retrieval) ──────────────────────────

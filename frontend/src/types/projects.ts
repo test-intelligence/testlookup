@@ -14,6 +14,15 @@ export interface Project {
   is_active: boolean
   created_at: string
   updated_at?: string
+  /** Program manager (migration 0076). Legacy fallback for suite ownership. */
+  manager_user_id?: string | null
+  /**
+   * Default QA lead (migration 0079). Every new TestSuite materialised
+   * during ingest gets a TestSuiteOwner row pointing here. Must be a
+   * ProjectMember with role=QA_LEAD on this project (backend rejects
+   * with 400 otherwise).
+   */
+  default_qa_lead_user_id?: string | null
 }
 
 export interface ProjectUpdate {
@@ -26,4 +35,6 @@ export interface ProjectUpdate {
   start_date?: string | null
   end_date?: string | null
   tags?: string[]
+  manager_user_id?: string
+  default_qa_lead_user_id?: string
 }

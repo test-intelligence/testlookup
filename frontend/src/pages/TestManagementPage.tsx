@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
   Star, Clock, User, CheckCircle2, XCircle, AlertCircle,
@@ -26,6 +26,7 @@ import {
   testManagementService,
 } from '@/services/testManagementService'
 import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
+import { deriveTestManagementTotals } from '@/utils/testManagementTotals'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import type {
   AIReviewResult,
@@ -404,6 +405,14 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
   }
 
   const handleRequestReview = async () => {
+    // Defensive guard mirroring the render-time gate: automation rows
+    // carry a per-run test_cases.id, which is not a managed_test_cases
+    // row and would 404. Surface a clear toast instead of the generic
+    // "Failed to request review" if this path is ever reached.
+    if (caseItem.source === 'automation') {
+      toast.error('Automation rows must be promoted to a managed test case before a review can be requested.')
+      return
+    }
     setRequestingReview(true)
     try {
       await testManagementService.requestReview(caseItem.id)
@@ -536,7 +545,21 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                   </div>
                 </div>
               )}
-              {caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
+              {/*
+                Automation-source rows are synthesised from per-run
+                test_cases — they don't yet exist in managed_test_cases,
+                so the review endpoint would 404 on caseItem.id. Hide
+                the button rather than show a broken control; an
+                explanatory note makes the gap visible to QA leads
+                evaluating whether to author a managed test case from
+                this automation result.
+              */}
+              {caseItem.source === 'automation' ? (
+                <div className="pt-2 text-xs text-[var(--color-text-muted)]">
+                  Review requests are only available on managed test cases.
+                  Automation rows must be promoted to managed before they can be reviewed.
+                </div>
+              ) : caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' ? (
                 <div className="pt-2">
                   <button
                     onClick={handleRequestReview}
@@ -547,7 +570,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                     Request Review
                   </button>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
 
@@ -877,6 +900,18 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   const [showCreate, setShowCreate] = useState(false)
   const [showAiGen, setShowAiGen] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
+  // Default ON so users land on a populated list — the managed_test_cases
+  // table is often empty in fresh deployments, and the "Test Cases tab
+  // shows nothing while runs are full of tests" surprise was the top
+  // complaint pre-rollout. Persist the toggle so power users who only
+  // care about authored cases can keep it off.
+  const [includeAutomation, setIncludeAutomation] = useState<boolean>(() => {
+    const saved = localStorage.getItem('tl.tm.includeAutomation')
+    return saved === null ? true : saved === '1'
+  })
+  useEffect(() => {
+    localStorage.setItem('tl.tm.includeAutomation', includeAutomation ? '1' : '0')
+  }, [includeAutomation])
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // `/` shortcut focuses search per README §6.
@@ -902,8 +937,9 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
     if (search) p.search = search
     if (ownerFilter) p.assignee_id = ownerFilter
     if (suiteFilter) p.suite_name = suiteFilter
+    if (includeAutomation) p.include_automation = true
     return p
-  }, [page, status, testType, priority, search, ownerFilter, suiteFilter])
+  }, [page, status, testType, priority, search, ownerFilter, suiteFilter, includeAutomation])
 
   const { data, isLoading, mutate: mutateCases } = useTestCases(params)
   // Wider read used to power Library Verdict + right-rail synthesis (review
@@ -946,7 +982,14 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
 
   // ── Library health model (synthesised) ─────────────────────────────
   const fullList: ManagedTestCase[] = healthRoll?.items ?? casesRaw
-  const totalCases = healthRoll?.total ?? data?.total ?? fullList.length
+  // Two distinct totals — both surfaced separately to fix the recurring
+  // "Cases 25 of 0" misread (third regression 2026-05-16). See
+  // ``utils/testManagementTotals.ts`` for the helper + unit tests.
+  const { authoredTotal, casesTotal } = deriveTestManagementTotals({
+    healthRoll,
+    data,
+    casesLength: cases.length,
+  })
   const activeCount       = fullList.filter(c => c.status === 'active').length
   const automatedCount    = fullList.filter(c => c.is_automated).length
   const automatedPct      = fullList.length > 0 ? Math.round((automatedCount / fullList.length) * 100) : 0
@@ -1043,7 +1086,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         healthScore={healthScore}
         healthTag={healthTag}
         healthTone={healthTone}
-        totalCases={totalCases}
+        totalCases={authoredTotal}
         reviewCount={reviewCount}
         staleCount={staleCount}
         deprecatedInActive={deprecatedInActive}
@@ -1075,6 +1118,8 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         savedViews={SAVED_VIEWS}
         onSavedView={(v) => applySavedView(v.id)}
         onSaveCurrent={() => toast('Save view — coming in Phase 2', { icon: '⭐' })}
+        includeAutomation={includeAutomation}
+        onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
       />
 
       {/* Body grid */}
@@ -1087,7 +1132,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
               style={{ borderBottom: '1px solid var(--color-border)' }}
             >
               <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
-                Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {totalCases} · sorted by {sortLabel}</span>
+                Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
               </h3>
               <div className="flex items-center gap-2 flex-wrap">
                 <button
@@ -1246,11 +1291,23 @@ interface LibraryVerdictProps {
 }
 
 function LibraryVerdictRibbon(p: LibraryVerdictProps) {
-  const t = p.healthTag === 'Healthy'
-    ? { border: 'rgba(34,197,94,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)', bar: 'var(--gate-go)', eyebrow: '#86efac' }
-    : p.healthTag === 'Needs attention'
-      ? { border: 'rgba(245,158,11,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)', bar: 'var(--gate-conditional)', eyebrow: '#fcd34d' }
-      : { border: 'rgba(239,68,68,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)', bar: 'var(--gate-no-go)', eyebrow: '#fca5a5' }
+  // Empty-catalog state. The Library health panel aggregates the authored
+  // test-case catalog (ManagedTestCase rows from the Test Cases tab). When
+  // the catalog is empty, every derived metric collapses to 0 — which
+  // looks identical to "data load failed" or "everything is broken."
+  // Render a clear explanation instead so the user understands the panel
+  // reflects an empty *authored* catalog, NOT empty execution data.
+  // Background: the user reported "invalid data" on 2026-05-15 because
+  // the same project has 97 executed test cases (in /search) but 0
+  // authored cases, and the panel's zeros looked wrong without context.
+  const isEmptyCatalog = p.totalCases === 0
+  const t = isEmptyCatalog
+    ? { border: 'var(--color-border)', glow: 'transparent', bar: 'var(--color-border-light)', eyebrow: 'var(--color-text-muted)' }
+    : p.healthTag === 'Healthy'
+      ? { border: 'rgba(34,197,94,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)', bar: 'var(--gate-go)', eyebrow: '#86efac' }
+      : p.healthTag === 'Needs attention'
+        ? { border: 'rgba(245,158,11,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)', bar: 'var(--gate-conditional)', eyebrow: '#fcd34d' }
+        : { border: 'rgba(239,68,68,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)', bar: 'var(--gate-no-go)', eyebrow: '#fca5a5' }
 
   const blockers: { tone: 'critical' | 'warn'; text: React.ReactNode }[] = []
   if (p.deprecatedInActive > 0) {
@@ -1285,31 +1342,48 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
             className="h-1.5 w-1.5 rounded-full"
             style={{
               background: t.bar,
-              animation: p.healthTag === 'At risk' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
+              animation: !isEmptyCatalog && p.healthTag === 'At risk' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
             }}
             aria-hidden
           />
           Library health
         </span>
-        <div className="flex items-baseline gap-3 mt-1.5 mb-1.5">
-          <span className="font-bold tabular-nums leading-none" style={{ fontSize: 34, color: p.healthTone, letterSpacing: '-0.02em' }}>
-            {p.healthScore}
-          </span>
-          <span className="text-[14px] text-[var(--color-text-muted)] font-medium">/ 100</span>
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ml-1"
-            style={{
-              background: p.healthTag === 'Healthy' ? 'rgba(34,197,94,0.12)' : p.healthTag === 'Needs attention' ? 'var(--gate-conditional-bg)' : 'rgba(239,68,68,0.12)',
-              border: `1px solid ${t.border}`,
-              color: p.healthTone,
-            }}
-          >
-            {p.healthTag}
-          </span>
-        </div>
-        <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
-          <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> cases · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
-        </p>
+        {isEmptyCatalog ? (
+          <>
+            <div className="text-[20px] font-semibold mt-1.5 mb-1.5 text-[var(--color-text)]">
+              No authored test cases yet
+            </div>
+            <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+              This panel summarises the <strong>authored</strong> test-case catalog
+              (Test Cases tab) — not the execution rows ingested from CI runs.
+              Library health only renders once you have at least one authored case.
+              Until then, see the <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">Test Suites</code>
+              tab for the executions that have already streamed in.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="flex items-baseline gap-3 mt-1.5 mb-1.5">
+              <span className="font-bold tabular-nums leading-none" style={{ fontSize: 34, color: p.healthTone, letterSpacing: '-0.02em' }}>
+                {p.healthScore}
+              </span>
+              <span className="text-[14px] text-[var(--color-text-muted)] font-medium">/ 100</span>
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ml-1"
+                style={{
+                  background: p.healthTag === 'Healthy' ? 'rgba(34,197,94,0.12)' : p.healthTag === 'Needs attention' ? 'var(--gate-conditional-bg)' : 'rgba(239,68,68,0.12)',
+                  border: `1px solid ${t.border}`,
+                  color: p.healthTone,
+                }}
+              >
+                {p.healthTag}
+              </span>
+            </div>
+            <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+              <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> cases · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
+            </p>
+          </>
+        )}
         {blockers.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-3">
             {blockers.map((b, i) => (
@@ -1330,15 +1404,34 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
         )}
       </div>
 
-      <div
-        className="grid items-stretch"
-        style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}
-      >
-        <VerdictStat label="Active"        value={p.activeCount}                  sub={null} isFirst />
-        <VerdictStat label="Automated"     value={`${p.automatedPct}%`}            sub="target 60%" />
-        <VerdictStat label="Req coverage"  value={`${p.coveragePct}%`}             sub="of tracked" />
-        <VerdictStat label="Avg age"       value={`${p.avgAgeDays}d`}              sub={`${p.olderThan180Pct}% >180d`} isLast />
-      </div>
+      {isEmptyCatalog ? (
+        // Empty stats grid would just show "0 / 0% / 0% / 0d" four times,
+        // which reads exactly like a broken data fetch. Replace with a
+        // single helper card pointing the user to where they can author
+        // a case so the panel does something useful.
+        <div
+          className="flex flex-col items-start justify-center gap-1.5"
+          style={{ padding: '14px 16px' }}
+        >
+          <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+            Get started
+          </div>
+          <div className="text-[13px] text-[var(--color-text-secondary)] leading-snug">
+            Author your first case under <strong className="text-[var(--color-text)]">Test Cases</strong> tab,
+            or import a batch via the API to populate this dashboard.
+          </div>
+        </div>
+      ) : (
+        <div
+          className="grid items-stretch"
+          style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}
+        >
+          <VerdictStat label="Active"        value={p.activeCount}                  sub={null} isFirst />
+          <VerdictStat label="Automated"     value={`${p.automatedPct}%`}            sub="target 60%" />
+          <VerdictStat label="Req coverage"  value={`${p.coveragePct}%`}             sub="of tracked" />
+          <VerdictStat label="Avg age"       value={`${p.avgAgeDays}d`}              sub={`${p.olderThan180Pct}% >180d`} isLast />
+        </div>
+      )}
     </section>
   )
 }
@@ -1384,6 +1477,10 @@ interface CasesFilterBarProps {
   savedViews: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }[]
   onSavedView: (v: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }) => void
   onSaveCurrent: () => void
+  // "Show automation-ingested tests too" toggle — merges per-run TestCase
+  // rows (dedup'd by fingerprint) into the listing alongside ManagedTestCase.
+  includeAutomation: boolean
+  onToggleAutomation: (v: boolean) => void
 }
 
 function CasesFilterBar(p: CasesFilterBarProps) {
@@ -1417,6 +1514,22 @@ function CasesFilterBar(p: CasesFilterBarProps) {
           /
         </kbd>
       </div>
+
+      {/* Include automation-ingested tests — merges synthesised rows from
+          per-run test_cases into the listing alongside ManagedTestCase. */}
+      <label
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-[var(--color-text-secondary)] cursor-pointer select-none"
+        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', height: 32 }}
+        title="Include test cases discovered via automation runs (dedup'd by fingerprint)"
+      >
+        <input
+          type="checkbox"
+          checked={p.includeAutomation}
+          onChange={(e) => p.onToggleAutomation(e.target.checked)}
+          className="accent-[var(--color-accent)]"
+        />
+        Automation tests
+      </label>
 
       <SelectChip label="Status" value={p.status} options={[
         { value: '', label: 'All' },
@@ -1611,6 +1724,15 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate">{tc.title}</span>
           {tc.ai_generated && <Sparkles className="h-3 w-3 text-[#c4b5fd] flex-shrink-0" aria-label="AI generated" />}
+          {tc.source === 'automation' && (
+            <span
+              title="Discovered via an automation run — not authored in the test catalog"
+              className="inline-flex items-center px-1.5 py-0 rounded-full text-[9.5px] font-semibold uppercase tracking-wider flex-shrink-0"
+              style={{ background: 'rgba(68,147,248,0.10)', border: '1px solid rgba(68,147,248,0.30)', color: '#93c5fd', letterSpacing: '0.06em' }}
+            >
+              Auto
+            </span>
+          )}
         </div>
         <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
           {(tc.test_type ?? '').replace(/_/g, ' ')}
@@ -2284,8 +2406,14 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
     if (!selectedSuite) { toast.error('Select a suite'); return }
     setLinking(true)
     try {
-      // Get all managed test cases from this suite
-      const cases = await testManagementService.getSuiteCases(selectedSuite, projectId)
+      // Get all managed test cases from this suite. Bulk-link wants
+      // the FULL list — request the server cap (500) and warn the user
+      // if their suite has more cases than that fit on one page.
+      const casesResp = await testManagementService.getSuiteCases(selectedSuite, projectId, { size: 500 })
+      const cases = casesResp.items
+      if (casesResp.total > casesResp.items.length) {
+        toast('Note: this suite has more cases than the bulk-link cap (500). Some may need to be added manually.', { icon: '⚠' })
+      }
       const managedCases = cases.filter(c => (c as unknown as { source?: string }).source === 'manual' || !('source' in c))
       if (managedCases.length === 0) {
         toast.error('No managed test cases found in this suite to link')
@@ -2820,6 +2948,15 @@ interface SuiteItem {
   last_run_at: string | null
   last_run_id: string | null
   pass_rate: number | null
+  // Cumulative aggregates surfaced as the new "# Runs / Pass / Fail /
+  // Skip" cells. Optional so older API responses without these fields
+  // render zero rather than NaN.
+  run_count?: number
+  total_executions?: number
+  total_passed?: number
+  total_failed?: number
+  total_skipped?: number
+  total_broken?: number
   owner_user_id?: string | null
   owner_email?: string | null
   owner_full_name?: string | null
@@ -2834,9 +2971,14 @@ interface SuiteCase {
   duration_ms: number | null
   class_name: string | null
   package_name: string | null
+  /** TestRun.id of the latest execution. Present on automation rows;
+   *  manual managed cases don't carry one. Used to deep-link the
+   *  test-name cell to ``/runs/<run_id>/tests/<id>``. */
+  test_run_id?: string | null
   created_at: string | null
   execution_count?: number
   last_execution_at?: string | null
+  source?: 'automation' | 'manual'
 }
 
 interface TestSuitesTabProps { projectId: string | null }
@@ -2852,12 +2994,58 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   const { isQaLead } = usePermissions()
   const { data: users } = useUsers()
   const userList = (users ?? []) as UserSummary[]
+
+  // Suite-owner candidates must match the backend rule in
+  // ``assert_user_is_qa_lead_on_project``: a user is eligible if they're an
+  // instance ADMIN OR have ``ProjectMember.role=QA_LEAD`` on this project.
+  // Surfacing anyone else in the picker just produces 400s. ``UserSummary``
+  // doesn't carry the global role, so we cross-reference with the project
+  // members API (which gives the per-project role) when a project is set.
+  const [projectMembers, setProjectMembers] = useState<{
+    user_id: string; role: string; full_name: string | null; username: string; email: string;
+  }[]>([])
+  useEffect(() => {
+    if (!projectId) { setProjectMembers([]); return }
+    let alive = true
+    import('@/services/userManagementService').then(({ userManagementService }) =>
+      userManagementService.listProjectMembers(projectId)
+        .then(rows => { if (alive) setProjectMembers(rows) })
+        .catch(() => { if (alive) setProjectMembers([]) })
+    )
+    return () => { alive = false }
+  }, [projectId])
+  const ownerCandidates: UserSummary[] = useMemo(() => {
+    const qaLeadIds = new Set(
+      projectMembers.filter(m => m.role === 'QA_LEAD').map(m => m.user_id),
+    )
+    // Map QA_LEAD project members straight onto UserSummary shape. Falling
+    // back to the project-member row's own fields means the picker still
+    // works even if the global users list hasn't loaded.
+    const byId = new Map(userList.map(u => [u.id, u]))
+    const qaLeads: UserSummary[] = projectMembers
+      .filter(m => qaLeadIds.has(m.user_id))
+      .map(m => byId.get(m.user_id) ?? {
+        id: m.user_id,
+        username: m.username,
+        full_name: m.full_name ?? undefined,
+        email: m.email,
+      })
+    return qaLeads.sort((a, b) =>
+      (a.full_name || a.username).localeCompare(b.full_name || b.username),
+    )
+  }, [projectMembers, userList])
   const [searchParams] = useSearchParams()
   const deepLinkSuite = searchParams.get('suite')
   const [suites, setSuites] = useState<SuiteItem[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedSuite, setExpandedSuite] = useState<string | null>(deepLinkSuite)
   const [suiteCases, setSuiteCases] = useState<Record<string, SuiteCase[]>>({})
+  // Per-suite pagination state for the cases inline-expand. Keyed by
+  // suite_name so each open suite tracks its own page independently.
+  const [suiteCasesPage, setSuiteCasesPage] = useState<Record<string, number>>({})
+  const [suiteCasesPages, setSuiteCasesPages] = useState<Record<string, number>>({})
+  const [suiteCasesTotal, setSuiteCasesTotal] = useState<Record<string, number>>({})
+  const SUITE_CASES_PAGE_SIZE = 25
   const [loadingCases, setLoadingCases] = useState<string | null>(null)
   const [suiteDeleted, setSuiteDeleted] = useState<Record<string, Array<{ id: string; test_name: string; class_name: string | null; review_tag: string | null; deleted_at_run_id: string | null }>>>({})
   const [suiteChanges, setSuiteChanges] = useState<Record<string, Array<{ event_type: string; test_name: string; details: string | null }>>>({})
@@ -2865,6 +3053,11 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   const [editingOwnerFor, setEditingOwnerFor] = useState<string | null>(null)
   const [savingReview, setSavingReview] = useState<string | null>(null)
   const deepLinkAppliedRef = useRef(false)
+  // "Add test suite" modal state. Opens when isQaEngineer+ user clicks the
+  // header button. Persists name/description/owner during edit so an
+  // accidental close-and-reopen doesn't lose the user's typing — we reset
+  // on a successful create.
+  const [showAddSuite, setShowAddSuite] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -2958,18 +3151,34 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     }
   }
 
-  async function loadSuiteData(suiteName: string) {
-    if (suiteCases[suiteName]) return
+  async function loadSuiteData(suiteName: string, page: number = 1) {
+    // Page-1 only seeds deleted + changes (those don't paginate). Later
+    // pages skip the side queries — we already have them cached.
+    const seedSideData = page === 1 && !suiteCases[suiteName]
     setLoadingCases(suiteName)
     try {
-      const [cases, deleted, changes] = await Promise.all([
-        testManagementService.getSuiteCases(suiteName, projectId),
-        testManagementService.getSuiteDeleted(suiteName, projectId).catch(() => []),
-        testManagementService.getSuiteChanges(suiteName, projectId).catch(() => []),
-      ])
-      setSuiteCases(prev => ({ ...prev, [suiteName]: cases }))
-      setSuiteDeleted(prev => ({ ...prev, [suiteName]: deleted }))
-      setSuiteChanges(prev => ({ ...prev, [suiteName]: changes }))
+      if (seedSideData) {
+        const [casesResp, deleted, changes] = await Promise.all([
+          testManagementService.getSuiteCases(suiteName, projectId, { page, size: SUITE_CASES_PAGE_SIZE }),
+          testManagementService.getSuiteDeleted(suiteName, projectId).catch(() => []),
+          testManagementService.getSuiteChanges(suiteName, projectId).catch(() => []),
+        ])
+        setSuiteCases(prev => ({ ...prev, [suiteName]: casesResp.items }))
+        setSuiteCasesPage(prev => ({ ...prev, [suiteName]: casesResp.page }))
+        setSuiteCasesPages(prev => ({ ...prev, [suiteName]: casesResp.pages }))
+        setSuiteCasesTotal(prev => ({ ...prev, [suiteName]: casesResp.total }))
+        setSuiteDeleted(prev => ({ ...prev, [suiteName]: deleted }))
+        setSuiteChanges(prev => ({ ...prev, [suiteName]: changes }))
+      } else {
+        // Subsequent page changes — just refresh the cases slice.
+        const casesResp = await testManagementService.getSuiteCases(
+          suiteName, projectId, { page, size: SUITE_CASES_PAGE_SIZE },
+        )
+        setSuiteCases(prev => ({ ...prev, [suiteName]: casesResp.items }))
+        setSuiteCasesPage(prev => ({ ...prev, [suiteName]: casesResp.page }))
+        setSuiteCasesPages(prev => ({ ...prev, [suiteName]: casesResp.pages }))
+        setSuiteCasesTotal(prev => ({ ...prev, [suiteName]: casesResp.total }))
+      }
     } catch {
       toast.error('Failed to load suite cases')
     } finally {
@@ -2983,7 +3192,16 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
       return
     }
     setExpandedSuite(suiteName)
-    await loadSuiteData(suiteName)
+    // Skip the network call when this suite's first page is already
+    // cached — pagination only re-fetches when the user changes pages
+    // via ``handleSuiteCasesPageChange``.
+    if (!suiteCases[suiteName]) {
+      await loadSuiteData(suiteName, 1)
+    }
+  }
+
+  async function handleSuiteCasesPageChange(suiteName: string, page: number) {
+    await loadSuiteData(suiteName, page)
   }
 
   const CASE_STATUS_COLORS: Record<string, string> = {
@@ -2994,19 +3212,86 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     pending: 'text-amber-400',
   }
 
+  // Add-suite handler. Refreshes the list on success so the user sees their
+  // new suite immediately (the legacy aggregated listSuites endpoint still
+  // groups by suite_name — first-class TestSuite rows show up once any test
+  // case is ingested for that name, OR you can extend listSuites to merge
+  // first-class rows; that's a follow-up).
+  async function handleCreateSuite(payload: {
+    name: string; description: string; owner_user_id: string | null; tags: string[]
+  }) {
+    if (!projectId) throw new Error('No active project')
+    const { suitesService } = await import('@/services/suitesService')
+    await suitesService.create({
+      project_id: projectId,
+      name: payload.name,
+      description: payload.description || null,
+      owner_user_id: payload.owner_user_id,
+      tags: payload.tags.length > 0 ? payload.tags : null,
+    })
+    // Refetch suites so the new one (if it has test cases yet) shows up.
+    const fresh = await testManagementService.listSuites(projectId)
+    setSuites(fresh)
+  }
+
   if (loading) return <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
+
+  // Header bar with the "Add test suite" affordance. Lives above both the
+  // empty-state and the populated list so a fresh project can still author
+  // a suite before any ingest has happened.
+  const suitesHeader = (
+    <div className="flex items-center justify-between gap-3 mb-3">
+      <div className="text-[12.5px] text-[var(--color-text-muted)]">
+        {suites.length === 0 ? 'No test suites yet' : `${suites.length} suite${suites.length === 1 ? '' : 's'}`}
+        {projectId ? null : ' · pick a project to add a new suite'}
+      </div>
+      {isQaLead && projectId && (
+        <button
+          type="button"
+          onClick={() => setShowAddSuite(true)}
+          className="inline-flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add test suite
+        </button>
+      )}
+    </div>
+  )
 
   if (suites.length === 0) {
     return (
-      <EmptyState
-        icon={<Layers className="h-10 w-10" />}
-        title="No test suites found"
-        description={projectId ? 'Test suites appear here when automation runs ingest test results grouped by suite, or when manual test cases are assigned a suite name.' : 'No test suites found across all projects'}
-      />
+      <>
+        {suitesHeader}
+        <EmptyState
+          icon={<Layers className="h-10 w-10" />}
+          title="No test suites found"
+          description={projectId ? 'Test suites appear here when automation runs ingest test results grouped by suite, or when manual test cases are assigned a suite name.' : 'No test suites found across all projects'}
+        />
+        {showAddSuite && projectId && (
+          <AddTestSuiteModal
+            projectId={projectId}
+            ownerCandidates={ownerCandidates}
+            existingNames={new Set(suites.map(s => s.suite_name))}
+            onClose={() => setShowAddSuite(false)}
+            onCreate={handleCreateSuite}
+          />
+        )}
+      </>
     )
   }
 
   return (
+    <>
+      {suitesHeader}
+      {showAddSuite && projectId && (
+        <AddTestSuiteModal
+          projectId={projectId}
+          ownerCandidates={ownerCandidates}
+          existingNames={new Set(suites.map(s => s.suite_name))}
+          onClose={() => setShowAddSuite(false)}
+          onCreate={handleCreateSuite}
+        />
+      )}
     <div className="space-y-3">
       {suites.map(suite => {
         const review = reviewForSuite(suite)
@@ -3044,26 +3329,61 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       {suite.pass_rate.toFixed(1)}% pass rate
                     </span>
                   )}
+                  {/* Cumulative run history — total runs that included this
+                      suite plus per-status totals across those runs. Skipped
+                      when run_count is zero so the row stays compact for
+                      manual-only suites. */}
+                  {(suite.run_count ?? 0) > 0 && (
+                    <span
+                      className="text-[var(--color-text-faint)]"
+                      title={`${suite.run_count} runs · ${suite.total_executions ?? 0} executions`}
+                    >
+                      {suite.run_count} run{suite.run_count === 1 ? '' : 's'}
+                      {(suite.total_skipped ?? 0) > 0 && (
+                        <span className="text-amber-300/80 ml-2">{suite.total_skipped} skipped</span>
+                      )}
+                      {(suite.total_broken ?? 0) > 0 && (
+                        <span className="text-orange-300/80 ml-2">{suite.total_broken} broken</span>
+                      )}
+                    </span>
+                  )}
+                  <Link
+                    to={`/coverage/suite?name=${encodeURIComponent(suite.suite_name)}&days=30`}
+                    className="text-[var(--color-accent)] hover:underline text-[11px]"
+                    onClick={e => e.stopPropagation()}
+                    title="View per-day trend"
+                  >
+                    Trend →
+                  </Link>
                   <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                     <User className="h-3 w-3" />
                     {isEditingOwner ? (
-                      <select
-                        autoFocus
-                        className="input h-6 py-0 text-[11px]"
-                        defaultValue={suite.owner_user_id ?? ''}
-                        onChange={e => handleAssignOwner(suite, e.target.value || null)}
-                        onBlur={() => setEditingOwnerFor(null)}
-                      >
-                        <option value="">— Unassigned —</option>
-                        {userList.map(u => (
-                          <option key={u.id} value={u.id}>{u.full_name || u.username} ({u.email})</option>
-                        ))}
-                      </select>
+                      ownerCandidates.length === 0 ? (
+                        <span
+                          className="text-[10.5px] italic text-amber-300"
+                          title="Add a project member with role QA_LEAD before assigning."
+                        >
+                          No QA_LEAD members on this project
+                        </span>
+                      ) : (
+                        <select
+                          autoFocus
+                          className="input h-6 py-0 text-[11px]"
+                          defaultValue={suite.owner_user_id ?? ''}
+                          onChange={e => handleAssignOwner(suite, e.target.value || null)}
+                          onBlur={() => setEditingOwnerFor(null)}
+                        >
+                          <option value="">— Unassigned (use default) —</option>
+                          {ownerCandidates.map(u => (
+                            <option key={u.id} value={u.id}>{u.full_name || u.username} ({u.email})</option>
+                          ))}
+                        </select>
+                      )
                     ) : (
                       <>
                         <span className={suite.owner_is_fallback ? 'italic text-[var(--color-text-faint)]' : ''}>
                           {suite.owner_full_name || suite.owner_email || 'Unassigned'}
-                          {suite.owner_is_fallback && ' (project manager)'}
+                          {suite.owner_is_fallback && ' (default)'}
                         </span>
                         {isQaLead && (
                           <button
@@ -3132,7 +3452,24 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     <tbody className="divide-y divide-[var(--color-border)]/60">
                       {(suiteCases[suite.suite_name] ?? []).map(tc => (
                         <tr key={tc.id} className="hover:bg-[var(--color-bg-secondary)]/40 transition-colors">
-                          <td className="px-4 py-2.5 text-[var(--color-text)] font-medium text-xs truncate max-w-xs">{tc.test_name}</td>
+                          <td className="px-4 py-2.5 text-[var(--color-text)] font-medium text-xs truncate max-w-xs">
+                            {/* Automation rows link to the per-test
+                                detail page; manual managed cases
+                                aren't run-scoped so they stay plain
+                                text (their canonical detail surface
+                                is the Test Cases tab, not the per-run
+                                drawer). */}
+                            {tc.test_run_id ? (
+                              <Link
+                                to={`/runs/${tc.test_run_id}/tests/${tc.id}`}
+                                className="hover:text-[var(--color-accent)] hover:underline"
+                              >
+                                {tc.test_name}
+                              </Link>
+                            ) : (
+                              tc.test_name
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 text-[var(--color-text-muted)] text-xs">
                             {tc.class_name && <span>{tc.class_name}</span>}
                             {tc.package_name && <span className="text-[var(--color-text-faint)]"> · {tc.package_name}</span>}
@@ -3156,11 +3493,70 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       ))}
                       {(suiteCases[suite.suite_name] ?? []).length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">No test cases in this suite</td>
+                          <td colSpan={6} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
+                            {suite.test_count > 0 ? (
+                              // Suite-card aggregate counted ``test_count``
+                              // tests from a TestRun.total_tests fallback
+                              // (HINCRBY counters at session close), but
+                              // the per-test rows never persisted —
+                              // typically because the live-stream SDK
+                              // didn't send ``test_result`` events or
+                              // the Redis buffer was already evicted by
+                              // the time persist_live_session ran. The
+                              // count is real; the per-test data isn't
+                              // recoverable for this run.
+                              <>
+                                {suite.test_count} test{suite.test_count === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
+                                <br />
+                                <span className="text-[var(--color-text-faint)]">
+                                  This happens when the SDK doesn't emit
+                                  ``test_result`` events or the buffer evicts
+                                  before persistence. Re-run the suite to
+                                  populate detail rows.
+                                </span>
+                              </>
+                            ) : (
+                              'No test cases in this suite'
+                            )}
+                          </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
+                  {/* Pagination — visible only when there's more than
+                      one page of cases. The total / range banner sits
+                      below the controls for a quick "showing N of M"
+                      confirmation. */}
+                  {(suiteCasesPages[suite.suite_name] ?? 1) > 1 && (
+                    <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                        Page {suiteCasesPage[suite.suite_name] ?? 1} of {suiteCasesPages[suite.suite_name] ?? 1}
+                        {' · '}
+                        {suiteCasesTotal[suite.suite_name] ?? 0} test case{(suiteCasesTotal[suite.suite_name] ?? 0) === 1 ? '' : 's'} total
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={(suiteCasesPage[suite.suite_name] ?? 1) <= 1 || loadingCases === suite.suite_name}
+                          onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) - 1)}
+                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                        >
+                          Prev
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            (suiteCasesPage[suite.suite_name] ?? 1) >= (suiteCasesPages[suite.suite_name] ?? 1)
+                            || loadingCases === suite.suite_name
+                          }
+                          onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) + 1)}
+                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {/* Recent Changes */}
@@ -3208,6 +3604,162 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
         </div>
         )
       })}
+    </div>
+    </>
+  )
+}
+
+// ─── Add Test Suite modal ─────────────────────────────────────────────────────
+
+interface AddTestSuiteModalProps {
+  projectId: string
+  ownerCandidates: UserSummary[]
+  existingNames: Set<string>
+  onClose: () => void
+  onCreate: (payload: {
+    name: string; description: string; owner_user_id: string | null; tags: string[]
+  }) => Promise<void>
+}
+
+function AddTestSuiteModal({
+  projectId: _projectId, ownerCandidates, existingNames, onClose, onCreate,
+}: AddTestSuiteModalProps) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [ownerUserId, setOwnerUserId] = useState<string>('')
+  const [tagsText, setTagsText] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const trimmedName = name.trim()
+  const isDuplicate = trimmedName.length > 0 && existingNames.has(trimmedName)
+  const canSubmit = !saving && trimmedName.length >= 2 && !isDuplicate
+
+  async function handleSubmit() {
+    if (!canSubmit) return
+    setSaving(true)
+    try {
+      // Tags as comma-separated, trimmed, deduped, non-empty.
+      const tags = Array.from(new Set(
+        tagsText.split(',').map(t => t.trim()).filter(Boolean),
+      ))
+      await onCreate({
+        name: trimmedName,
+        description: description.trim(),
+        owner_user_id: ownerUserId || null,
+        tags,
+      })
+      toast.success(`Test suite "${trimmedName}" created`)
+      onClose()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to create test suite')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-base font-semibold text-[var(--color-text)] mb-1">Add test suite</h2>
+        <p className="text-xs text-[var(--color-text-muted)] mb-4">
+          Author a new suite definition. The suite name must be unique within the project.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+              Suite name <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. com.example.SmokeTests"
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+              autoFocus
+              maxLength={500}
+            />
+            {isDuplicate && (
+              <p className="text-[11px] text-red-400 mt-1">
+                A suite named “{trimmedName}” already exists in this project.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Optional. What does this suite cover?"
+              rows={3}
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+              maxLength={2000}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
+            {ownerCandidates.length === 0 ? (
+              <p className="text-[11px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-2 py-1.5">
+                No project members have the QA_LEAD role yet. Leave unset to inherit the project's default QA lead, or add a QA_LEAD member first.
+              </p>
+            ) : (
+              <select
+                value={ownerUserId}
+                onChange={e => setOwnerUserId(e.target.value)}
+                className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+              >
+                <option value="">— Use project default QA Lead —</option>
+                {ownerCandidates.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name || u.username} ({u.email})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+              Tags <span className="text-[var(--color-text-faint)]">(comma-separated)</span>
+            </label>
+            <input
+              type="text"
+              value={tagsText}
+              onChange={e => setTagsText(e.target.value)}
+              placeholder="smoke, api, regression"
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-3 justify-end mt-5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+          >
+            {saving ? <LoadingSpinner size="sm" /> : <Plus className="h-4 w-4" />}
+            {saving ? 'Creating…' : 'Create suite'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

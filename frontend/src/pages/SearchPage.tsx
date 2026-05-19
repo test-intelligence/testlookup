@@ -45,7 +45,8 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useProjectStore } from '@/store/projectStore'
+import Pagination from '@/components/ui/Pagination'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { searchService } from '@/services/searchService'
 import type { SearchType } from '@/services/searchService'
 import type {
@@ -1024,7 +1025,18 @@ export default function SearchPage() {
   })
   const [isSearching, setIsSearching] = useState(false)
   const [response, setResponse] = useState<GlobalSearchResponse | null>(null)
+  // 2026-05-15: the Results card previously sliced response.items down
+  // to 12 rows and the global_search adapters capped at 50 each, so a
+  // user with 84 tests had no way to see anything beyond the first
+  // batch. Pagination now flows through runSearch(...,page) and the
+  // adapters bump their per-type cap when narrowed.
+  const RESULTS_PAGE_SIZE = 25
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
+  // Project-scoped totals from /api/v1/search/entity-counts — the
+  // fallback for the chip + Index Health counts when no query is
+  // active. Without this the chips and rows showed 0 forever even
+  // though the data was sitting in Postgres.
+  const [totalCounts, setTotalCounts] = useState<Record<SearchEntityType, number> | null>(null)
   const [recents, setRecents] = useState<RecentSearch[]>(() => readRecents())
   const [saved, setSaved] = useState<SavedSearch[]>(() => readSaved())
 
@@ -1039,8 +1051,26 @@ export default function SearchPage() {
     return () => { alive = false }
   }, [])
 
-  // ── Run a search (or no-op when the query is empty) ──────────────────
-  const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope) => {
+  // ── Fetch project-scoped entity totals on mount + on project change ──
+  // ALL_PROJECTS_ID is a frontend sentinel — convert to undefined so the
+  // request omits the param and the backend scopes by accessible projects.
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  useEffect(() => {
+    let alive = true
+    const scoped = activeProjectId && activeProjectId !== ALL_PROJECTS_ID
+      ? activeProjectId
+      : undefined
+    searchService.getEntityCounts(scoped)
+      .then(c => { if (alive) setTotalCounts(c) })
+      .catch(() => { if (alive) setTotalCounts(null) })
+    return () => { alive = false }
+  }, [activeProjectId])
+
+  // ── Run a search (or browse the scope when the query is empty) ───────
+  // ``page`` is optional so callers that change the query/mode/scope can
+  // omit it (they want page 1); the pagination control passes the new
+  // page explicitly so a user clicking "page 2" doesn't reset back to 1.
+  const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope, page: number = 1) => {
     const trimmed = q.trim()
     setSearchParams(prev => {
       const np = new URLSearchParams(prev)
@@ -1050,10 +1080,12 @@ export default function SearchPage() {
       return np
     }, { replace: true })
 
-    if (!trimmed) {
-      setResponse(null)
-      return
-    }
+    // Empty query: hit the API in browse mode regardless of scope. The
+    // backend adapters fall back to "most-recent N" rows when ``q`` is
+    // empty, so landing at /search?scope=all with no query shows real
+    // data instead of an empty page. (Pre-2026-05-16 this short-circuited
+    // for scope='all', producing the asymmetric behaviour the user
+    // reported: Tests/Suites populated but All was blank.)
 
     setIsSearching(true)
     try {
@@ -1066,19 +1098,22 @@ export default function SearchPage() {
       const data = await searchService.globalSearch({
         q: trimmed,
         entity_types: entityKey ? [entityKey] : undefined,
-        page: 1,
-        size: 25,
+        page,
+        size: RESULTS_PAGE_SIZE,
       })
       setResponse(data)
-      // Record the search in localStorage history.
-      setRecents(prev => {
-        const next: RecentSearch[] = [
-          { id: `${Date.now()}`, query: trimmed, mode: m, scope: s, resultCount: data.total, ts: Date.now() },
-          ...prev.filter(r => r.query !== trimmed || r.scope !== s),
-        ].slice(0, MAX_RECENT)
-        writeRecents(next)
-        return next
-      })
+      // Only persist real queries to history — browse views (empty q)
+      // shouldn't pollute Recent searches.
+      if (trimmed) {
+        setRecents(prev => {
+          const next: RecentSearch[] = [
+            { id: `${Date.now()}`, query: trimmed, mode: m, scope: s, resultCount: data.total, ts: Date.now() },
+            ...prev.filter(r => r.query !== trimmed || r.scope !== s),
+          ].slice(0, MAX_RECENT)
+          writeRecents(next)
+          return next
+        })
+      }
     } catch {
       toast.error('Search failed')
       setResponse(null)
@@ -1087,16 +1122,15 @@ export default function SearchPage() {
     }
   }, [setSearchParams])
 
-  // ── Auto-run search when URL state lands with a query ────────────────
+  // ── Auto-run on mount ────────────────────────────────────────────────
+  // Always fire on first mount — empty queries browse the most-recent
+  // rows so a freshly loaded /search page (any scope, including ``all``)
+  // shows real data instead of a blank slate.
   const initialRanRef = useRef(false)
   useEffect(() => {
     if (initialRanRef.current) return
-    if (query.trim()) {
-      initialRanRef.current = true
-      void runSearch(query, mode, scope)
-    } else {
-      initialRanRef.current = true   // mark so we don't auto-fire on later renders
-    }
+    initialRanRef.current = true
+    void runSearch(query, mode, scope)
   }, [query, mode, scope, runSearch])
 
   // ── ⌘K shortcut: focus input (unless user is already typing in another input) ──
@@ -1157,27 +1191,63 @@ export default function SearchPage() {
   }
 
   // ── Scope counts ────────────────────────────────────────────────────
+  // Chip-count contract (revised 2026-05-15 to fix the "counts jump
+  // when I click around" report):
+  //
+  //   * When scope === 'all' AND there's an active query, chips show
+  //     the per-type match count from the response. This is the only
+  //     case where match-count chips help — they tell the user
+  //     "narrow to Tests to see those 3 hits" vs "0 in Runs".
+  //
+  //   * Otherwise (scope is narrowed, OR no query), chips show
+  //     project-scoped totals from /api/v1/search/entity-counts.
+  //     This keeps the chip's meaning stable: it's a navigation cue
+  //     ("you have 84 tests in this project"), not a result counter.
+  //
+  // The previous implementation mixed both semantics on one screen —
+  // the scoped type's chip used the (capped) match count while the
+  // others used totals — so the Tests chip jumped 50 ↔ 84 as the
+  // user clicked between Tests and Runs. Confusing and the count
+  // wouldn't match the table either since the browse adapters cap
+  // their LIMIT below the real project total.
   const entityCounts: Record<SearchEntityType, number> = useMemo(() => {
-    const ec = response?.entity_counts ?? {}
-    return {
-      test_case: Number(ec.test_case ?? 0),
-      test_run:  Number(ec.test_run ?? 0),
-      suite:     Number(ec.suite ?? 0),
-      defect:    Number(ec.defect ?? 0),
-      flaky_test:Number(ec.flaky_test ?? 0),
-      release:   Number(ec.release ?? 0),
+    const responseCounts = (response?.entity_counts ?? {}) as Partial<Record<SearchEntityType, number>>
+    const fallback = (totalCounts ?? {}) as Partial<Record<SearchEntityType, number>>
+    const useResponseCounts = !!response && scope === 'all' && query.trim() !== ''
+    const pick = (type: SearchEntityType): number => {
+      if (useResponseCounts) return Number(responseCounts[type] ?? 0)
+      return Number(fallback[type] ?? 0)
     }
-  }, [response])
+    return {
+      test_case:  pick('test_case'),
+      test_run:   pick('test_run'),
+      suite:      pick('suite'),
+      defect:     pick('defect'),
+      flaky_test: pick('flaky_test'),
+      release:    pick('release'),
+    }
+  }, [response, totalCounts, scope, query])
 
-  // Scope chip counts — show entity counts when we have a response, otherwise
-  // show the per-entity index counts from `getIndexStatus` (aggregate split
-  // evenly is a no-op since the backend only returns one count today, so we
-  // fall back to "—" when no per-entity number exists).
-  const totalIndexed = indexStatus?.document_count ?? 0
+  // ``indexStatus.document_count`` reflects what's actually in the
+  // BM25/embedding index. On a fresh deploy (or before the reindex
+  // task fires for the first time) this is 0 even though the database
+  // is full of data. Falling back to the entity-counts sum keeps the
+  // headline honest about what the user can search across, since the
+  // database read paths still work even when the vector index is
+  // cold. Once reindex catches up, the indexStatus value wins.
+  const databaseTotal = useMemo(
+    () => Object.values(totalCounts ?? {}).reduce((s, n) => s + (n as number), 0),
+    [totalCounts],
+  )
+  const totalIndexed = indexStatus?.document_count
+    ? indexStatus.document_count
+    : databaseTotal
   const scopeCounts: Record<EntityScope, number> = useMemo(() => {
     const summed = Object.values(entityCounts).reduce((s, n) => s + n, 0)
     return {
-      all:      response ? summed : totalIndexed,
+      // "All" chip: sum of the entity counts. Same source as the
+      // individual chips so the numbers tally.
+      all:      summed || totalIndexed,
       tests:    entityCounts.test_case,
       runs:     entityCounts.test_run,
       suites:   entityCounts.suite,
@@ -1185,7 +1255,7 @@ export default function SearchPage() {
       flaky:    entityCounts.flaky_test,
       releases: entityCounts.release,
     }
-  }, [entityCounts, response, totalIndexed])
+  }, [entityCounts, totalIndexed])
 
   const indexHealthRows = useMemo(
     () => buildEntityHealth(indexStatus, entityCounts),
@@ -1250,9 +1320,9 @@ export default function SearchPage() {
         onChange={setQuery}
         onSubmit={() => runSearch(query, mode, scope)}
         mode={mode}
-        onModeChange={(m) => { setMode(m); if (query.trim()) void runSearch(query, m, scope) }}
+        onModeChange={(m) => { setMode(m); void runSearch(query, m, scope) }}
         scope={scope}
-        onScopeChange={(s) => { setScope(s); if (query.trim()) void runSearch(query, mode, s) }}
+        onScopeChange={(s) => { setScope(s); void runSearch(query, mode, s) }}
         scopeCounts={scopeCounts}
         inputRef={inputRef}
       />
@@ -1271,39 +1341,75 @@ export default function SearchPage() {
 
       {/* Live results — only when a query has been run */}
       {response && response.items.length > 0 && (
-        <CardShell
-          title={
-            <>
-              Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
-                <strong>{Intl.NumberFormat().format(response.total)}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
+        <>
+          <CardShell
+            title={
+              <>
+                Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
+                  <strong>{Intl.NumberFormat().format(response.total)}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
+                </span>
+              </>
+            }
+            rightSlot={
+              <span className="font-mono">
+                <code className="text-[11px]">{response.search_type}</code>
+                {' · '}
+                showing {((response.page - 1) * response.size) + 1}–{((response.page - 1) * response.size) + response.items.length} of {response.total}
               </span>
-            </>
-          }
-          rightSlot={
-            <span className="font-mono">
-              <code className="text-[11px]">{response.search_type}</code> · {response.items.length} shown
-            </span>
-          }
-        >
-          <div className="flex flex-col">
-            {response.items.slice(0, 12).map(r => <ResultRow key={`${r.entity_type}-${r.entity_id}`} row={r} onOpen={() => navigate(r.navigation_url)} />)}
-          </div>
-        </CardShell>
+            }
+          >
+            <div className="flex flex-col">
+              {response.items.map(r => <ResultRow key={`${r.entity_type}-${r.entity_id}`} row={r} onOpen={() => navigate(r.navigation_url)} />)}
+            </div>
+          </CardShell>
+          {response.pages > 1 && (
+            <div className="mt-3">
+              <Pagination
+                page={response.page}
+                pages={response.pages}
+                total={response.total}
+                onChange={(p) => {
+                  // Rerun the same query with the new page. Scroll to top
+                  // of the Results card so the user sees the first row
+                  // of the new page rather than the last one of the old.
+                  void runSearch(query, mode, scope, p)
+                  if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+              />
+            </div>
+          )}
+        </>
       )}
 
       {response && response.items.length === 0 && (
         <CardShell title="No results" rightSlot={<span>0 matches</span>}>
           <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-secondary)]">
-            <p className="m-0 mb-2">Nothing matched <code className="font-mono text-[12px]">{query}</code>.</p>
-            <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
-              Try a different mode (Hybrid casts the widest net), broaden the scope, or check the syntax guide on the right.
-            </p>
+            {query.trim() ? (
+              <>
+                <p className="m-0 mb-2">Nothing matched <code className="font-mono text-[12px]">{query}</code>.</p>
+                <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
+                  Try a different mode (Hybrid casts the widest net), broaden the scope, or check the syntax guide on the right.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="m-0 mb-2">Nothing to browse in <code className="font-mono text-[12px]">{projectLabel}</code> yet.</p>
+                <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
+                  Ingest a test run or pick a different project from the top bar to populate the index.
+                </p>
+              </>
+            )}
           </div>
         </CardShell>
       )}
 
-      {/* Empty-state body grid (only when no results) */}
-      {!response && (
+      {/* Browse-mode helper grid — recent/saved/suggested + index health.
+          Visible whenever no query is active, so a user landing at
+          /search with scope=all (browse mode) still sees the syntax
+          guide and Index Health alongside the auto-loaded results.
+          Hidden once the user types a query so the screen focuses on
+          their search results. */}
+      {query.trim() === '' && (
         <div className="grid gap-3.5 mt-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
           <div className="flex flex-col gap-3.5 min-w-0">
             <RecentList

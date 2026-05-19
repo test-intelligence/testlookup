@@ -175,7 +175,11 @@ class ConversationAgent:
 
         # 1. Classify intent (fast — no LLM call)
         intent = classify_intent(user_message)
-        logger.debug("Session %s intent=%s query=%r", session_id, intent.value, user_message[:80])
+        # structlog kwargs (BoundLogger doesn't accept positional %s args).
+        logger.debug(
+            "chat_intent_classified",
+            session_id=session_id, intent=intent.value, query=user_message[:80],
+        )
 
         # 2. Load history BEFORE saving user message — prevents duplicate in LLM context
         history, summary_ctx = await self._load_history(session_id)
@@ -387,7 +391,7 @@ class ConversationAgent:
                 _RUN_CONTEXT_CACHE[cache_key] = (time.monotonic(), result_text, src)
                 return result_text, src
         except Exception as exc:
-            logger.debug("Run context fetch error: %s", exc)
+            logger.debug("run_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_analysis_context(
@@ -439,7 +443,7 @@ class ConversationAgent:
 
                 return "\n".join(lines), src
         except Exception as exc:
-            logger.debug("Analysis context fetch error: %s", exc)
+            logger.debug("analysis_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_flaky_context(
@@ -472,7 +476,7 @@ class ConversationAgent:
                 src = [{"type": "flaky_test", "test_name": r.test_name} for r in rows]
                 return "\n".join(lines), src
         except Exception as exc:
-            logger.debug("Flaky context fetch error: %s", exc)
+            logger.debug("flaky_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_perf_context(
@@ -526,7 +530,7 @@ class ConversationAgent:
                         )
                 return "\n".join(lines) if lines else "No anomalies above 1.5× threshold.", []
         except Exception as exc:
-            logger.debug("Perf context fetch error: %s", exc)
+            logger.debug("perf_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_triage_context(
@@ -566,7 +570,7 @@ class ConversationAgent:
                     src.append({"type": "defect", "id": str(r.id)})
                 return "\n".join(lines), src
         except Exception as exc:
-            logger.debug("Triage context fetch error: %s", exc)
+            logger.debug("triage_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_run_summaries(self, project_id: Optional[str]) -> str:
@@ -582,7 +586,7 @@ class ConversationAgent:
             if doc:
                 return str(doc.get("executive_summary", ""))
         except Exception as exc:
-            logger.debug("Run summary fetch error: %s", exc)
+            logger.debug("run_summary_fetch_error", error=str(exc))
         return ""
 
     async def _semantic_search(self, query: str, project_id: Optional[str]) -> str:

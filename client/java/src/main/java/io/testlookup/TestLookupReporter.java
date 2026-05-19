@@ -85,8 +85,28 @@ public class TestLookupReporter {
     private static final int BATCH_INTERVAL_MS   = 100;
     private static final int MAX_RETRIES         = 5;
     private static final long RETRY_BASE_DELAY_MS = 500L;
+    /**
+     * Hard cap on the wall-clock time a single batch can spend retrying.
+     * Matches the Python SDK's {@code MAX_RETRY_TOTAL_SECONDS}; 5 min lets
+     * one server-side rate-limit window (1 min fixed bucket) be ridden out
+     * without infinitely buffering during a sustained outage. A
+     * misconfigured project surfaces a hard failure instead of silently
+     * holding state for hours.
+     */
+    static final long MAX_RETRY_TOTAL_MS = 300_000L;
     private static final int CONNECT_TIMEOUT_SEC = 10;
     private static final int REQUEST_TIMEOUT_SEC = 30;
+
+    /**
+     * Heartbeat interval — emit a ``live_heartbeat`` event whenever the
+     * SDK has been silent this long. The server uses Redis
+     * ``last_event_at`` to drive its idle-session reaper (5-minute
+     * threshold by default); without the heartbeat a legitimate run with
+     * a single long test would be falsely closed mid-flight. The
+     * interval is well under the server's reaper threshold so the
+     * reaper still fires promptly when the client genuinely dies.
+     */
+    private static final long HEARTBEAT_INTERVAL_MS = 30_000L;
 
     // ── Builder ──────────────────────────────────────────────────────────────
 
@@ -310,9 +330,17 @@ public class TestLookupReporter {
             .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
             .build();
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() == 401) throw new TestLookupAuthException("Session token rejected");
-        if (resp.statusCode() < 200 || resp.statusCode() >= 300)
-            throw new RuntimeException("HTTP " + resp.statusCode() + ": " + resp.body());
+        int status = resp.statusCode();
+        if (status == 401) throw new TestLookupAuthException("Session token rejected");
+        if (RetryPolicy.isRetryableStatus(status)) {
+            // Surface the Retry-After header to the caller so the retry
+            // loop can honour the server's backoff hint exactly.
+            String retryAfter = resp.headers().firstValue("Retry-After").orElse(null);
+            throw new RetryableHttpException(status, retryAfter,
+                "HTTP " + status + ": " + resp.body());
+        }
+        if (status < 200 || status >= 300)
+            throw new RuntimeException("HTTP " + status + ": " + resp.body());
         return resp.body();
     }
 
@@ -331,7 +359,15 @@ public class TestLookupReporter {
         } catch (TestLookupException e) {
             throw e;
         } catch (Exception e) {
-            throw new TestLookupException("Request failed: " + url, e);
+            // Surface the underlying cause in the message so listeners that
+            // log only ``e.getMessage()`` still see *why* the request failed
+            // (timeout vs connect-refused vs unknown-host). The previous
+            // "Request failed: <url>" stripped the actual diagnostic, which
+            // left users with a half-disabled SDK and no way to self-recover
+            // without attaching a debugger — see 2026-05-15 regression report.
+            String cause = e.getClass().getSimpleName()
+                + (e.getMessage() != null ? ": " + e.getMessage() : "");
+            throw new TestLookupException("Request failed (" + cause + "): " + url, e);
         }
     }
 
@@ -471,6 +507,9 @@ public class TestLookupReporter {
         private final ScheduledExecutorService    scheduler;
         private final AtomicLong                  statSent    = new AtomicLong();
         private final AtomicLong                  statFailed  = new AtomicLong();
+        /** Wall-clock epoch ms of the most recent real (non-heartbeat) event we
+         *  enqueued — used to suppress heartbeats while the session is busy. */
+        private final AtomicLong                  lastRealEnqueueMs = new AtomicLong(Instant.now().toEpochMilli());
         private volatile boolean                  closed      = false;
 
         LiveSession(String sessionId, String sessionToken, String runId,
@@ -492,6 +531,17 @@ public class TestLookupReporter {
                 this::flushOnce,
                 reporter.getBatchIntervalMs(),
                 reporter.getBatchIntervalMs(),
+                TimeUnit.MILLISECONDS
+            );
+
+            // Heartbeat task — keeps the server-side last_event_at fresh
+            // during long inter-test gaps so the idle-session reaper
+            // doesn't kill a legitimately-running session. Runs on the
+            // same scheduler so it shuts down with the session.
+            scheduler.scheduleAtFixedRate(
+                this::heartbeatTick,
+                HEARTBEAT_INTERVAL_MS,
+                HEARTBEAT_INTERVAL_MS,
                 TimeUnit.MILLISECONDS
             );
             LOG.info("TestLookup: session started: " + sessionId + " run=" + runId);
@@ -591,11 +641,36 @@ public class TestLookupReporter {
         // ── Internal ─────────────────────────────────────────────────────────
 
         private void enqueue(ObjectNode event) {
+            lastRealEnqueueMs.set(Instant.now().toEpochMilli());
             if (!queue.offer(event)) {
                 LOG.warning("TestLookup: event queue full — dropping event");
             }
             if (queue.size() >= reporter.getBatchSize()) {
                 scheduler.execute(this::flushOnce);
+            }
+        }
+
+        /**
+         * Emit a ``live_heartbeat`` event if no real event has been
+         * enqueued in {@link #HEARTBEAT_INTERVAL_MS}. The heartbeat
+         * carries no test payload — its only job is to bump the
+         * server-side ``last_event_at`` so the reaper doesn't classify
+         * the session as idle. We don't update
+         * {@code lastRealEnqueueMs} for heartbeats so the suppression
+         * check stays based on real activity only.
+         */
+        void heartbeatTick() {
+            if (closed) return;
+            long sinceLast = Instant.now().toEpochMilli() - lastRealEnqueueMs.get();
+            if (sinceLast < HEARTBEAT_INTERVAL_MS) return;
+            ObjectNode event = MAPPER.createObjectNode();
+            event.put("event_type",   "live_heartbeat");
+            event.put("timestamp_ms", Instant.now().toEpochMilli());
+            // NB: skip enqueue()'s lastRealEnqueueMs.set — heartbeat is
+            // not a "real" event, so we don't want it to suppress the
+            // next heartbeat tick.
+            if (!queue.offer(event)) {
+                LOG.fine("TestLookup: heartbeat dropped, queue full");
             }
         }
 
@@ -623,7 +698,9 @@ public class TestLookupReporter {
                 events.forEach(arr::add);
                 String body = MAPPER.writeValueAsString(payload);
 
+                long startMs = System.currentTimeMillis();
                 for (int attempt = 1; attempt <= reporter.getMaxRetries(); attempt++) {
+                    long elapsedMs = System.currentTimeMillis() - startMs;
                     try {
                         String resp = reporter.postBatch(sessionToken, body);
                         int accepted = MAPPER.readTree(resp).path("accepted").asInt(events.size());
@@ -633,15 +710,42 @@ public class TestLookupReporter {
                         LOG.severe("TestLookup: session token rejected — stopping flush");
                         statFailed.addAndGet(events.size());
                         return;
-                    } catch (Exception e) {
-                        long delay = reporter.getRetryBaseDelayMs() * (1L << (attempt - 1));
-                        if (attempt == reporter.getMaxRetries()) {
-                            LOG.severe("TestLookup: batch POST failed after " + attempt
-                                + " attempts (" + events.size() + " events lost): " + e.getMessage());
+                    } catch (RetryableHttpException e) {
+                        long delay = RetryPolicy.computeNextDelayMs(
+                            e.retryAfter, attempt, elapsedMs,
+                            reporter.getRetryBaseDelayMs(), MAX_RETRY_TOTAL_MS);
+                        if (delay < 0 || attempt == reporter.getMaxRetries()) {
+                            LOG.severe("TestLookup: giving up after HTTP " + e.statusCode
+                                + " (attempt=" + attempt + " events=" + events.size()
+                                + " elapsedMs=" + elapsedMs + " capMs=" + MAX_RETRY_TOTAL_MS
+                                + " runId=" + runId + ")");
                             statFailed.addAndGet(events.size());
                             return;
                         }
-                        LOG.warning("TestLookup: batch attempt " + attempt + " failed, retrying in " + delay + "ms");
+                        LOG.warning("TestLookup: batch throttled: status=" + e.statusCode
+                            + " attempt=" + attempt + " delayMs=" + delay
+                            + " retryAfter=" + e.retryAfter + " elapsedMs=" + elapsedMs
+                            + " runId=" + runId + " events=" + events.size());
+                        try { Thread.sleep(delay); } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    } catch (Exception e) {
+                        long delay = RetryPolicy.computeNextDelayMs(
+                            null, attempt, elapsedMs,
+                            reporter.getRetryBaseDelayMs(), MAX_RETRY_TOTAL_MS);
+                        if (delay < 0 || attempt == reporter.getMaxRetries()) {
+                            LOG.severe("TestLookup: batch POST failed after " + attempt
+                                + " attempts (events=" + events.size()
+                                + " elapsedMs=" + elapsedMs + " capMs=" + MAX_RETRY_TOTAL_MS
+                                + " runId=" + runId + "): " + e.getMessage());
+                            statFailed.addAndGet(events.size());
+                            return;
+                        }
+                        LOG.warning("TestLookup: batch transport error: attempt=" + attempt
+                            + " delayMs=" + delay + " elapsedMs=" + elapsedMs
+                            + " runId=" + runId + " events=" + events.size()
+                            + " error=" + e.getClass().getSimpleName() + ": " + e.getMessage());
                         try { Thread.sleep(delay); } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             return;
@@ -655,6 +759,80 @@ public class TestLookupReporter {
         }
     }
 
+    // ── Retry policy ──────────────────────────────────────────────────────────
+
+    /**
+     * Pure-function helpers for the batch retry contract. Mirrors the Python
+     * SDK's {@code _compute_next_retry_delay} so both clients honour
+     * {@code Retry-After} the same way and cap cumulative retry time at the
+     * same wall-clock budget.
+     *
+     * <p>Why a separate class: the retry decision is testable without HTTP,
+     * which means we don't need a MockWebServer dependency just to pin the
+     * 429/503/Retry-After/total-cap rules.
+     */
+    static final class RetryPolicy {
+
+        /** Status codes the SDK treats as transient server-side back-pressure. */
+        static boolean isRetryableStatus(int status) {
+            return status == 429 || status == 503;
+        }
+
+        /**
+         * Parse an HTTP ``Retry-After`` header value into milliseconds.
+         * Accepts either a delta-seconds integer (e.g. ``"30"``) or an
+         * HTTP-date (RFC 9110 §10.2.3). Returns ``-1`` when the header is
+         * absent or unparseable so the caller falls back to backoff.
+         */
+        static long parseRetryAfterMs(String headerValue) {
+            if (headerValue == null) return -1L;
+            String value = headerValue.trim();
+            if (value.isEmpty()) return -1L;
+            try {
+                double seconds = Double.parseDouble(value);
+                return Math.max(0L, (long) (seconds * 1000.0));
+            } catch (NumberFormatException ignored) {
+                // fall through to HTTP-date parsing
+            }
+            try {
+                java.time.ZonedDateTime target =
+                    java.time.ZonedDateTime.parse(value, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME);
+                long deltaMs = java.time.Duration.between(
+                    java.time.ZonedDateTime.now(target.getZone()), target).toMillis();
+                return Math.max(0L, deltaMs);
+            } catch (Exception ignored) {
+                return -1L;
+            }
+        }
+
+        /**
+         * Returns the milliseconds to wait before the next retry, or ``-1``
+         * when the cumulative retry budget would be blown.
+         *
+         * <p>Precedence: an explicit ``Retry-After`` header wins absolutely
+         * (no doubling, no halving — we honour exactly what the server
+         * said). Without one we fall back to the exponential schedule
+         * {@code baseDelayMs * 2^(attempt-1)}. In either case, if the
+         * resulting delay would push total elapsed past {@code capMs}, we
+         * return ``-1`` so the caller surfaces a hard failure.
+         */
+        static long computeNextDelayMs(
+                String retryAfterHeader,
+                int attempt,
+                long elapsedMs,
+                long baseDelayMs,
+                long capMs) {
+            if (elapsedMs >= capMs) return -1L;
+            long parsed = parseRetryAfterMs(retryAfterHeader);
+            long delay = parsed >= 0
+                ? parsed
+                : baseDelayMs * (1L << Math.max(0, attempt - 1));
+            long remaining = capMs - elapsedMs;
+            if (delay > remaining) return -1L;
+            return delay;
+        }
+    }
+
     // ── Exception types ───────────────────────────────────────────────────────
 
     public static class TestLookupException extends Exception {
@@ -664,5 +842,21 @@ public class TestLookupReporter {
 
     static class TestLookupAuthException extends Exception {
         public TestLookupAuthException(String msg) { super(msg); }
+    }
+
+    /**
+     * Thrown by {@link #postBatch} when the server returns a retryable
+     * HTTP status (429/503). Carries the status code and the raw
+     * {@code Retry-After} header so the calling retry loop can honour
+     * the server's backoff hint exactly.
+     */
+    static class RetryableHttpException extends Exception {
+        final int statusCode;
+        final String retryAfter;
+        RetryableHttpException(int statusCode, String retryAfter, String msg) {
+            super(msg);
+            this.statusCode = statusCode;
+            this.retryAfter = retryAfter;
+        }
     }
 }

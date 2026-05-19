@@ -25,6 +25,7 @@ from app.models.postgres import (
     TestHealthRecommendation,
     TestRun,
     TestStatus,
+    TriageStatus,
 )
 from app.models.schemas import (
     FlakyCoachEntry,
@@ -300,6 +301,42 @@ async def get_flaky_coach(
             status_history=row.status_history or [],
         ))
 
+    # Augment with tests humans have manually triaged as ``FLAKY_TEST``
+    # via /my-failures. The auto-detector only fires when a fingerprint
+    # has BOTH passes and failures in the window (>=3 runs) — manual
+    # triage covers the long tail where the engineer recognises a flake
+    # before the auto-detector has enough signal. Deduped by fingerprint
+    # so a test that's BOTH auto-detected AND manually triaged appears
+    # exactly once.
+    seen_fingerprints = {e.test_fingerprint for e in entries}
+    manual_rows = await _load_manual_flaky_triage(db, project_id, days=days)
+    for row in manual_rows:
+        if not row.test_fingerprint or row.test_fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(row.test_fingerprint)
+        entries.append(FlakyCoachEntry(
+            test_fingerprint=row.test_fingerprint,
+            test_name=row.test_name or row.test_fingerprint[:12],
+            suite_name=row.suite_name,
+            # The auto-detector computes a ratio; manual triage doesn't
+            # have one. Use 1.0 to signal "human-flagged" — the UI can
+            # render an icon or different copy when this is the marker.
+            failure_rate=1.0,
+            total_runs=int(row.failed_count or 0),
+            failed_runs=int(row.failed_count or 0),
+            flaky_since=row.first_marked_at.isoformat() if row.first_marked_at else None,
+            last_failure_at=row.last_marked_at.isoformat() if row.last_marked_at else None,
+            # A human triaged this specifically — it lands in INVESTIGATE
+            # so it shows up under the same KPI as auto-detected
+            # 25-50%-failure-rate flakes. Auto-detected matches with
+            # higher failure_rate still take precedence via the
+            # dedup-by-fingerprint loop above.
+            quarantine_recommendation="INVESTIGATE",
+            stabilization_actions=["Manually triaged as flaky on /my-failures"],
+            impact_score=0.0,
+            status_history=["FLAKY (manual triage)"],
+        ))
+
     quarantine_count = sum(1 for e in entries if e.quarantine_recommendation == "QUARANTINE")
 
     return FlakyCoachResponse(
@@ -308,6 +345,38 @@ async def get_flaky_coach(
         quarantine_candidates=quarantine_count,
         entries=entries,
     )
+
+
+async def _load_manual_flaky_triage(
+    db: AsyncSession, project_id: uuid.UUID, days: int,
+) -> list:
+    """Return aggregate rows for test_cases manually triaged as
+    ``FLAKY_TEST`` within the window.
+
+    Aggregates per fingerprint (one entry per distinct test) so a test
+    flagged across multiple runs collapses to a single leaderboard
+    row. ``last_marked_at`` is the most recent triage event;
+    ``first_marked_at`` is the earliest.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = (
+        select(
+            TestCase.test_fingerprint,
+            sa_func.max(TestCase.test_name).label("test_name"),
+            sa_func.max(TestCase.suite_name).label("suite_name"),
+            sa_func.count(TestCase.id).label("failed_count"),
+            sa_func.min(TestCase.triage_updated_at).label("first_marked_at"),
+            sa_func.max(TestCase.triage_updated_at).label("last_marked_at"),
+        )
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .where(TestRun.project_id == project_id)
+        .where(TestCase.triage_status == TriageStatus.FLAKY_TEST.value)
+        .where(TestCase.triage_updated_at >= cutoff)
+        .where(TestCase.test_fingerprint.isnot(None))
+        .group_by(TestCase.test_fingerprint)
+        .order_by(sa_func.max(TestCase.triage_updated_at).desc())
+    )
+    return list((await db.execute(stmt)).all())
 
 
 async def refresh_flaky_coach(

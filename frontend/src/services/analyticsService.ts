@@ -1,12 +1,14 @@
 import type {
   CoverageResponse,
+  DefectIntakePayload,
+  DefectIntakeResponse,
   DefectResponse,
   FailureCategoryItem,
   FlakyTestItem,
   SuiteDetailResponse,
   TopFailingItem,
 } from '@/types/analytics'
-import { getData } from './http'
+import { getData, postData } from './http'
 
 function projectParam(projectId: string | null): Record<string, string> {
   return projectId ? { project_id: projectId } : {}
@@ -37,6 +39,9 @@ export const analyticsService = {
     getData<DefectResponse>('/api/v1/analytics/defects', {
       params: { ...projectParam(projectId), ...params },
     }),
+
+  createDefect: (payload: DefectIntakePayload) =>
+    postData<DefectIntakeResponse, DefectIntakePayload>('/api/v1/analytics/defects', payload),
 
   getAiSummary: (projectId: string | null, days = 30) =>
     getData('/api/v1/analytics/ai-summary', {

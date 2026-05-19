@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Loader2, Package, PencilLine, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, GitCompare, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
@@ -8,7 +8,9 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useRun, useTestCases } from '@/hooks/useRuns'
+import { useRun, useRuns, useTestCases } from '@/hooks/useRuns'
+import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
+import type { TestRun } from '@/types/runs'
 import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
@@ -233,6 +235,40 @@ export default function RunDetailPage() {
   useProjectChangeRedirect('/runs', Boolean(runId))
 
   const { data: run } = useRun(runId)
+
+  // Fetch a small page of recent runs for THIS run's suite so the
+  // "Compare with previous run" CTA can pick the chronologically
+  // immediately preceding run. We fetch only when we know the suite
+  // (i.e. ``run.primary_suite_name`` is populated); the conditional
+  // ``suite_name`` param leaves the hook idle for runs without suite
+  // attribution. 50 results is plenty — the previous run is almost
+  // always one or two slots away from the current one.
+  const suiteForCompare = run?.primary_suite_name ?? null
+  const { data: suiteRunsData } = useRuns(
+    suiteForCompare
+      ? { page: 1, size: 50, days: 0, suite_name: suiteForCompare }
+      : undefined,
+  )
+  const suiteRuns = (suiteRunsData?.items ?? []) as TestRun[]
+
+  function handleCompareWithPrevious() {
+    if (!run) return
+    if (!run.primary_suite_name) {
+      toast('This run has no suite attribution — cannot pick a previous-of-same-suite.', { icon: '⚠️' })
+      return
+    }
+    const previous = findPreviousRunOfSuite(run, suiteRuns)
+    const href = buildCompareWithPreviousHref(run, previous)
+    if (!href) {
+      toast(
+        `No earlier run of "${run.primary_suite_name}" found — this may be the first ingested run for the suite.`,
+        { icon: '⚠️' },
+      )
+      return
+    }
+    navigate(href)
+  }
+
   const { data, isLoading, error } = useTestCases(runId, {
     page, size: 25,
     ...(statusFilter && { status: statusFilter }),
@@ -244,6 +280,33 @@ export default function RunDetailPage() {
   const { isQaEngineer } = usePermissions()
   const [triggeringPipeline, setTriggeringPipeline] = useState(false)
   const [triggeringDeep, setTriggeringDeep] = useState(false)
+  const [recoveringLive, setRecoveringLive] = useState(false)
+
+  async function handleRecoverLive() {
+    if (!runId || recoveringLive) return
+    setRecoveringLive(true)
+    try {
+      const resp = await api.post<{ queued: boolean; buffered_events: number }>(
+        `/api/v1/runs/${runId}/recover-live`,
+      )
+      toast.success(
+        `Replaying ${resp.data.buffered_events} buffered events. Refreshing shortly…`,
+        { icon: '↻', duration: 5000 },
+      )
+      // Persist task runs async on the ingestion worker. Give it a moment
+      // then revalidate the SWR test-cases cache so the table populates
+      // without a full page reload.
+      setTimeout(() => { mutate(['test-cases', runId, { page, size: 25 }]) }, 2500)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to queue recovery'
+      toast.error(detail)
+    } finally {
+      setRecoveringLive(false)
+    }
+  }
 
   async function handleSetRelease(name: string) {
     if (!runId) return
@@ -336,6 +399,20 @@ export default function RunDetailPage() {
                   </button>
                 </>
               )}
+              <button
+                type="button"
+                onClick={handleCompareWithPrevious}
+                disabled={!run.primary_suite_name}
+                title={
+                  run.primary_suite_name
+                    ? `Compare this run to the previous run of "${run.primary_suite_name}"`
+                    : 'No suite attribution on this run — cannot pick a previous-of-same-suite'
+                }
+                className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+              >
+                <GitCompare className="h-3.5 w-3.5" />
+                Compare to previous
+              </button>
               <Link
                 to={`/runs/${runId}/intelligence`}
                 className="btn-primary text-xs flex items-center gap-1.5 py-1"
@@ -410,9 +487,15 @@ export default function RunDetailPage() {
               if (isLive && hasAggregates) {
                 // The run record carries aggregate counts from the live state
                 // hash (HINCRBY) but persist_live_session didn't materialise
-                // per-test rows — usually the Redis event buffer was empty
-                // by the time it ran, or the task hit an error after a retry.
-                // Tell the user honestly so they don't keep hitting refresh.
+                // per-test rows — usually the persistence task crashed after
+                // setting its dedup key (so retries silently skipped) while
+                // the Redis event buffer (25h TTL) still has the data. The
+                // ``Recover from buffer`` button below triggers a fresh
+                // persist task that idempotency-checks based on actual
+                // TestCase row count rather than a stuck dedup flag.
+                // Migration 0086 also archives the events on the TestRun
+                // row at session-close time so the 15-day fallback path
+                // works even after the 25-hour Redis TTL has lapsed.
                 return (
                   <>
                     <p className="text-[var(--color-text)]">
@@ -420,17 +503,37 @@ export default function RunDetailPage() {
                       {' '}({run?.passed_tests ?? 0} passed, {run?.failed_tests ?? 0} failed
                       {(run?.skipped_tests ?? 0) > 0 && `, ${run?.skipped_tests} skipped`}
                       {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}),
-                      but per-test details weren't persisted.
+                      but per-test details aren't loaded yet.
                     </p>
                     <p className="text-xs">
-                      The SDK's event buffer was cleared before the persistence task ran
-                      (or the task didn't complete). Aggregate counts above are accurate;
-                      individual test names and statuses are not recoverable for this run.
+                      Buffered events are held in Redis for 25 hours after a run
+                      closes, and a durable copy is archived on the run for{' '}
+                      <strong>up to 15 days</strong>. If persistence didn&apos;t
+                      finish on the first try (worker crash, transient error),
+                      use the button below to replay from whichever source is
+                      still available. After 15 days, re-run the suite or
+                      re-ingest the results as a file upload.
                     </p>
-                    <p className="text-xs">
-                      Re-run the suite, or re-ingest the results as a file upload to get
-                      per-test data.
-                    </p>
+                    <div className="flex items-center gap-3 mt-1">
+                      <button
+                        type="button"
+                        disabled={recoveringLive || !runId}
+                        onClick={() => handleRecoverLive()}
+                        className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {recoveringLive
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <RotateCcw className="h-3.5 w-3.5" />}
+                        {recoveringLive ? 'Replaying…' : 'Recover from buffer'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs underline"
+                      >
+                        Refresh
+                      </button>
+                    </div>
                   </>
                 )
               }

@@ -11,21 +11,24 @@ Generates a 4-layer structured report from anomaly-detection and root-cause-anal
 All 4 layers are stored in MongoDB[run_summaries] under their own keys.
 """
 import asyncio
+import hashlib
 import json
 import structlog
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.mongo import Collections, get_mongo_db
-from app.services.llm_factory import get_llm
+from app.models.agent_contracts import SummaryAgentOutput, validate_agent_contract
 from app.models.llm_schemas import (
     ActionPlan,
     EvidencePack,
     IncidentView,
-    validate_llm_output,
+    validate_llm_output_with_error,
 )
+from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.redaction_service import redact_text
 from app.services.resilience import truncate_to_token_budget
@@ -36,6 +39,16 @@ logger = structlog.get_logger("agents.summary")
 _MAX_CONTEXT_TOKENS = max(512, settings.LLM_MAX_TOKENS - 1500)
 # Timeout for individual LLM layer calls
 _LAYER_TIMEOUT_SECONDS = min(120, settings.AI_TIMEOUT_SECONDS)
+# Semantic enrichment is useful but non-critical; keep summary generation moving
+# if vector search or embedding infrastructure is slow.
+_SIMILAR_FAILURES_TIMEOUT_SECONDS = min(10, max(2, settings.AI_TIMEOUT_SECONDS // 30))
+_SUMMARY_PROMPT_VERSIONS = {
+    "system": "agents.summary_agent.SYSTEM_PROMPT:v1",
+    "executive_summary": "agents.summary_agent.EXEC_SUMMARY_PROMPT:v1",
+    "incident_view": "agents.summary_agent.INCIDENT_VIEW_PROMPT:v1",
+    "evidence_pack": "agents.summary_agent.EVIDENCE_PACK_PROMPT:v1",
+    "action_plan": "agents.summary_agent.ACTION_PLAN_PROMPT:v1",
+}
 
 
 _SYSTEM_PROMPT = """\
@@ -133,6 +146,20 @@ Data:
 {context}"""
 
 
+def _hash_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if not text:
+        return None
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _hash_json(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
+
+
 class SummaryAgent(BaseAgent):
     stage_name = "summary"
 
@@ -161,6 +188,15 @@ class SummaryAgent(BaseAgent):
                 analyses=analyses,
                 state=state,
             )
+            summary_provenance = self._build_summary_provenance(
+                run_data=run_data,
+                anomaly_summary=anomaly_summary,
+                anomalies=anomalies,
+                analyses=analyses,
+                similar_failures=similar_failures,
+                stage_quality=stage_quality,
+                stage_errors=stage_errors,
+            )
 
             fallback_reason: str | None = None
             try:
@@ -172,6 +208,7 @@ class SummaryAgent(BaseAgent):
                     similar_failures=similar_failures,
                     stage_quality=stage_quality,
                     stage_errors=stage_errors,
+                    pipeline_run_id=pipeline_run_id,
                 )
             except Exception as exc:
                 fallback_reason = str(exc)
@@ -187,6 +224,9 @@ class SummaryAgent(BaseAgent):
                     error_message=fallback_reason,
                     similar_failures=similar_failures,
                 )
+            summary_provenance["fallback_used"] = bool(fallback_reason)
+            summary_provenance["fallback_reason_sha256"] = _hash_text(fallback_reason)
+            structured["_provenance"] = summary_provenance
 
             # Persist all 4 layers to MongoDB
             await self._store_summary(test_run_id, structured, state)
@@ -202,6 +242,7 @@ class SummaryAgent(BaseAgent):
                     "layers": 4,
                     "fallback_used": bool(fallback_reason),
                     "fallback_reason": fallback_reason,
+                    "summary_provenance": summary_provenance,
                 },
             )
             await self.broadcast_progress(
@@ -216,29 +257,71 @@ class SummaryAgent(BaseAgent):
                 },
             )
 
-            return {
-                "executive_summary": executive_summary,
-                "summary_markdown": markdown_report,
-                "structured_summary": structured,
-                "completed_stages": ["summary"],
-                "errors": [],
-                "current_stage": "triage",
-            }
+            return validate_agent_contract(
+                SummaryAgentOutput,
+                {
+                    "executive_summary": executive_summary,
+                    "summary_markdown": markdown_report,
+                    "structured_summary": structured,
+                    "summary_provenance": summary_provenance,
+                    "completed_stages": ["summary"],
+                    "errors": [],
+                    "current_stage": "triage",
+                },
+                agent_name=self.stage_name,
+                fallback_used=bool(fallback_reason),
+                confidence=70 if fallback_reason else 90,
+                evidence_refs=[
+                    {
+                        "type": "summary_provenance",
+                        "id": summary_provenance.get("context_sha256"),
+                    },
+                    {
+                        "type": "ordered_analysis_ids",
+                        "id": summary_provenance.get("ordered_analysis_ids_sha256"),
+                    },
+                ],
+                decision_reason=(
+                    "deterministic_summary_fallback"
+                    if fallback_reason else "structured_summary_generated"
+                ),
+            )
 
         except Exception as exc:
             error_msg = f"Summary agent error: {exc}"
             logger.error(error_msg, exc_info=True)
             await self.mark_stage_done(pipeline_run_id, error=error_msg)
-            return {
-                "executive_summary": None,
-                "summary_markdown": None,
-                "structured_summary": None,
-                "errors": [error_msg],
-                "completed_stages": ["summary"],
-                "current_stage": "triage",
-            }
+            return validate_agent_contract(
+                SummaryAgentOutput,
+                {
+                    "executive_summary": None,
+                    "summary_markdown": None,
+                    "structured_summary": None,
+                    "errors": [error_msg],
+                    "completed_stages": ["summary"],
+                    "current_stage": "triage",
+                },
+                agent_name=self.stage_name,
+                fallback_used=True,
+                confidence=0,
+                decision_reason="summary_agent_exception",
+            )
 
     # ── Context builder ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _sorted_analyses(analyses: dict[str, dict]) -> list[tuple[str, dict]]:
+        """Return analyses in a stable, high-signal order for prompts/reports."""
+        def sort_key(item: tuple[str, dict]) -> tuple[int, str, str]:
+            test_id, analysis = item
+            try:
+                confidence = int(analysis.get("confidence_score") or 0)
+            except (TypeError, ValueError):
+                confidence = 0
+            category = str(analysis.get("failure_category") or "UNKNOWN")
+            return (-confidence, category, str(test_id))
+
+        return sorted(analyses.items(), key=sort_key)
 
     def _build_context(
         self,
@@ -257,7 +340,8 @@ class SummaryAgent(BaseAgent):
         branch = run_data.get("branch", "?")
 
         analysis_bullets = []
-        for tc_id, analysis in list(analyses.items())[:15]:
+        sorted_analyses = self._sorted_analyses(analyses)
+        for _tc_id, analysis in sorted_analyses[:15]:
             if analysis.get("confidence_score", 0) >= 50:
                 cat = analysis.get("failure_category", "UNKNOWN")
                 conf = analysis.get("confidence_score", 0)
@@ -266,7 +350,7 @@ class SummaryAgent(BaseAgent):
                 analysis_bullets.append(f"- [{cat}]{is_flaky} conf={conf}%: {summary}")
 
         evidence_excerpts = []
-        for tc_id, analysis in list(analyses.items())[:5]:
+        for _tc_id, analysis in sorted_analyses[:5]:
             for ev in analysis.get("evidence_references", [])[:2]:
                 evidence_excerpts.append(
                     f"  [{ev.get('source', '?')}] {ev.get('excerpt', '')[:150]}"
@@ -304,6 +388,65 @@ class SummaryAgent(BaseAgent):
         )
         return redact_text(raw_context)
 
+    def _build_summary_provenance(
+        self,
+        run_data: dict,
+        anomaly_summary: str,
+        anomalies: list[dict],
+        analyses: dict[str, dict],
+        similar_failures: list[dict] | None = None,
+        stage_quality: str = "normal",
+        stage_errors: dict[str, list[str]] | None = None,
+    ) -> dict[str, Any]:
+        """Build deterministic fingerprints for replaying summary generation."""
+        context = self._build_context(
+            run_data,
+            anomaly_summary,
+            anomalies,
+            analyses,
+            similar_failures=similar_failures or [],
+            stage_quality=stage_quality,
+            stage_errors=stage_errors or {},
+        )
+        safe_context = truncate_to_token_budget(context, _MAX_CONTEXT_TOKENS)
+        sorted_analysis_ids = [test_id for test_id, _analysis in self._sorted_analyses(analyses)]
+        prompt_templates = {
+            "system": _SYSTEM_PROMPT,
+            "executive_summary": _EXEC_SUMMARY_PROMPT,
+            "incident_view": _INCIDENT_VIEW_PROMPT,
+            "evidence_pack": _EVIDENCE_PACK_PROMPT,
+            "action_plan": _ACTION_PLAN_PROMPT,
+        }
+        return {
+            "schema_version": 1,
+            "generated_by": "agents.summary_agent",
+            "context_sha256": _hash_text(context),
+            "safe_context_sha256": _hash_text(safe_context),
+            "input_fingerprints": {
+                "run_data_sha256": _hash_json(run_data),
+                "anomaly_summary_sha256": _hash_text(anomaly_summary),
+                "anomalies_sha256": _hash_json(anomalies),
+                "analyses_sha256": _hash_json(analyses),
+                "similar_failures_sha256": _hash_json(similar_failures or []),
+                "ordered_analysis_ids_sha256": _hash_json(sorted_analysis_ids),
+            },
+            "prompt_versions": dict(_SUMMARY_PROMPT_VERSIONS),
+            "prompt_template_hashes": {
+                key: _hash_text(template) for key, template in prompt_templates.items()
+            },
+            "model_config_snapshot": {
+                "provider": settings.LLM_PROVIDER,
+                "model": settings.LLM_MODEL,
+                "temperature": settings.LLM_TEMPERATURE,
+                "max_tokens": settings.LLM_MAX_TOKENS,
+                "context_token_budget": _MAX_CONTEXT_TOKENS,
+                "layer_timeout_seconds": _LAYER_TIMEOUT_SECONDS,
+                "similar_failures_timeout_seconds": _SIMILAR_FAILURES_TIMEOUT_SECONDS,
+            },
+            "stage_quality": stage_quality,
+            "stage_errors_sha256": _hash_json(stage_errors or {}),
+        }
+
     # ── LLM calls ─────────────────────────────────────────────────────────────
 
     async def _generate_structured_report(
@@ -315,6 +458,7 @@ class SummaryAgent(BaseAgent):
         similar_failures: list[dict] | None = None,
         stage_quality: str = "normal",
         stage_errors: dict[str, list[str]] | None = None,
+        pipeline_run_id: str | None = None,
     ) -> dict:
         context = self._build_context(
             run_data, anomaly_summary, anomalies, analyses,
@@ -346,16 +490,19 @@ class SummaryAgent(BaseAgent):
             llm, _INCIDENT_VIEW_PROMPT, context,
             expected_keys=["what_failed", "likely_cause", "criticality", "release_impact"],
             layer_name="incident_view",
+            pipeline_run_id=pipeline_run_id,
         )
         layer3 = await self._call_json_layer(
             llm, _EVIDENCE_PACK_PROMPT, context,
             expected_keys=["top_stack_traces", "log_anomalies", "data_sources_used"],
             layer_name="evidence_pack",
+            pipeline_run_id=pipeline_run_id,
         )
         layer4 = await self._call_json_layer(
             llm, _ACTION_PLAN_PROMPT, context,
             expected_keys=["immediate_mitigation", "fix_recommendations", "validation_steps"],
             layer_name="action_plan",
+            pipeline_run_id=pipeline_run_id,
         )
 
         # Post-processing: attach similar_failures to layer3 and extract citations
@@ -367,7 +514,7 @@ class SummaryAgent(BaseAgent):
             # Extract citations from evidence snippets
             from app.services.summary_assembler import extract_citations  # noqa: PLC0415
             evidence_snippets: list[dict] = []
-            for tc_id, analysis in list(analyses.items())[:10]:
+            for tc_id, analysis in self._sorted_analyses(analyses)[:10]:
                 for ev in (analysis.get("evidence_references") or [])[:2]:
                     evidence_snippets.append({
                         "source": str(ev.get("source") or ""),
@@ -383,7 +530,7 @@ class SummaryAgent(BaseAgent):
         category_counts: dict[str, int] = {}
         flaky_count = 0
         ep_actions: list[str] = []
-        for _tc_id, analysis in analyses.items():
+        for _tc_id, analysis in self._sorted_analyses(analyses):
             cat = self._stringify_value(analysis.get("failure_category")) or "UNKNOWN"
             category_counts[cat] = category_counts.get(cat, 0) + 1
             if analysis.get("is_flaky"):
@@ -429,6 +576,7 @@ class SummaryAgent(BaseAgent):
         context: str,
         expected_keys: list[str] | None = None,
         layer_name: str = "unknown",
+        pipeline_run_id: str | None = None,
     ) -> dict:
         """Call LLM with a JSON-requesting prompt. Returns parsed dict or error stub."""
         # Truncate context to token budget
@@ -448,10 +596,37 @@ class SummaryAgent(BaseAgent):
             )
             if error:
                 logger.warning("JSON layer parse issue", layer=layer_name, reason=error)
+                if pipeline_run_id:
+                    await self.log_decision(
+                        pipeline_run_id,
+                        decision_point="summary_schema_validation",
+                        chosen="parse_fallback",
+                        rationale=error,
+                        context={
+                            "layer": layer_name,
+                            "schema": self._LAYER_SCHEMAS.get(layer_name).__name__
+                            if self._LAYER_SCHEMAS.get(layer_name) else None,
+                            "expected_keys": expected_keys or [],
+                        },
+                    )
             # Validate through Pydantic schema if available
             schema = self._LAYER_SCHEMAS.get(layer_name)
             if schema:
-                parsed = validate_llm_output(schema, parsed, context=f"summary_{layer_name}")
+                parsed, validation_error = validate_llm_output_with_error(
+                    schema, parsed, context=f"summary_{layer_name}"
+                )
+                if validation_error and pipeline_run_id:
+                    await self.log_decision(
+                        pipeline_run_id,
+                        decision_point="summary_schema_validation",
+                        chosen="schema_defaults",
+                        rationale=validation_error,
+                        context={
+                            "layer": layer_name,
+                            "schema": schema.__name__,
+                            "expected_keys": expected_keys or [],
+                        },
+                    )
             return parsed
         except asyncio.TimeoutError:
             logger.warning("JSON layer call timed out", layer=layer_name, timeout=_LAYER_TIMEOUT_SECONDS)
@@ -468,7 +643,7 @@ class SummaryAgent(BaseAgent):
     ) -> list[dict]:
         """Retrieve similar historical failures via semantic search (blocks before LLM)."""
         top_error = ""
-        for tc_id, analysis in list(analyses.items())[:5]:
+        for _tc_id, analysis in self._sorted_analyses(analyses)[:5]:
             root_cause = str(analysis.get("root_cause_summary") or "").strip()
             if root_cause and len(root_cause) > 20:
                 top_error = root_cause[:200]
@@ -480,23 +655,80 @@ class SummaryAgent(BaseAgent):
         try:
             from app.db.postgres import AsyncSessionLocal  # noqa: PLC0415
             from app.models.postgres import TestStatus  # noqa: PLC0415
+            from app.services.agent_memory_service import recall_similar  # noqa: PLC0415
             from app.services.semantic_search import semantic_search  # noqa: PLC0415
 
             async with AsyncSessionLocal() as db:
-                items, _total, _pages = await semantic_search(
-                    db=db,
-                    q=top_error,
-                    page=1,
-                    size=5,
-                    project_id=state.get("project_id"),
-                    status=TestStatus.FAILED.value,
+                project_id = state.get("project_id")
+                if project_id:
+                    try:
+                        memory_matches = await asyncio.wait_for(
+                            recall_similar(
+                                db=db,
+                                project_id=uuid.UUID(str(project_id)),
+                                error_signature=top_error,
+                                entity_type="analysis",
+                                limit=5,
+                            ),
+                            timeout=_SIMILAR_FAILURES_TIMEOUT_SECONDS,
+                        )
+                    except (TypeError, ValueError):
+                        memory_matches = []
+                    if memory_matches:
+                        return self._format_memory_recall_items(memory_matches)
+
+                items, _total, _pages = await asyncio.wait_for(
+                    semantic_search(
+                        db=db,
+                        q=top_error,
+                        page=1,
+                        size=5,
+                        project_id=state.get("project_id"),
+                        status=TestStatus.FAILED.value,
+                    ),
+                    timeout=_SIMILAR_FAILURES_TIMEOUT_SECONDS,
                 )
             return items
+        except asyncio.TimeoutError:
+            logger.debug(
+                "Similar failures retrieval timed out after %ss",
+                _SIMILAR_FAILURES_TIMEOUT_SECONDS,
+            )
+            return []
         except Exception as exc:
             logger.debug(
                 "Similar failures retrieval failed (non-blocking): %s", exc
             )
             return []
+
+    @staticmethod
+    def _format_memory_recall_items(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert audited memory recall results into summary-context items."""
+        items: list[dict[str, Any]] = []
+        for match in sorted(
+            matches,
+            key=lambda item: (
+                -float(item.get("similarity") or 0),
+                str(getattr(item.get("memory"), "id", "")),
+            ),
+        ):
+            memory = match.get("memory")
+            if not memory:
+                continue
+            payload = getattr(memory, "payload", None) or {}
+            items.append({
+                "test_case_id": str(getattr(memory, "entity_id", "")),
+                "test_name": (
+                    str(payload.get("test_name") or getattr(memory, "entity_id", ""))
+                ),
+                "failure_category": getattr(memory, "failure_category", None),
+                "root_cause_summary": getattr(memory, "root_cause_summary", None),
+                "relevance_score": match.get("similarity"),
+                "source_mode_used": "agent_memory",
+                "retrieval_audit": match.get("retrieval_audit"),
+                "memory_reference": match.get("memory_reference"),
+            })
+        return items[:5]
 
     def _build_fallback_structured_report(
         self,
@@ -519,7 +751,7 @@ class SummaryAgent(BaseAgent):
         flaky_test_ids: list[str] = []
         data_sources: set[str] = set()
 
-        for test_id, analysis in analyses.items():
+        for test_id, analysis in self._sorted_analyses(analyses):
             category = self._stringify_value(analysis.get("failure_category")) or "UNKNOWN"
             category_counts[category] = category_counts.get(category, 0) + 1
 
@@ -715,6 +947,7 @@ class SummaryAgent(BaseAgent):
         data_sources = (
             layer3.get("data_sources_used", []) if isinstance(layer3, dict) else []
         )
+        summary_provenance = structured.get("_provenance") or {}
 
         await db[Collections.RUN_SUMMARIES].update_one(
             {"test_run_id": test_run_id},
@@ -743,11 +976,13 @@ class SummaryAgent(BaseAgent):
                     # Epic 6 additions
                     "fallback_used": fallback_used,
                     "citations": citations,
+                    "summary_provenance": summary_provenance,
                     "provenance": {
                         "schema_version": 4,
                         "data_sources_used": data_sources,
                         "fallback_used": fallback_used,
                         "generated_at": now.isoformat(),
+                        "summary_provenance": summary_provenance,
                     },
                 }
             },

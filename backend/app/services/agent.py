@@ -109,6 +109,7 @@ async def run_triage_agent(
     ocp_namespace: Optional[str] = None,
     error_message: Optional[str] = None,
     stack_trace: Optional[str] = None,
+    pipeline_run_id: Optional[str] = None,
 ) -> dict:
     """
     Execute the LangChain ReAct triage agent for a failed test case.
@@ -137,7 +138,12 @@ async def run_triage_agent(
         logger.info("Cache hit for test '%s' — returning cached analysis", test_name)
         cached["cache_hit"] = True
         await _store_audit_trail(test_case_id, f"cache_hit:{test_name}", cached, [])
-        await _emit_event("", "cache_hit", test_case_id=test_case_id, detail={"type": "redis_exact", "test_name": test_name[:100]})
+        await _emit_event(
+            pipeline_run_id or "",
+            "cache_hit",
+            test_case_id=test_case_id,
+            detail={"type": "redis_exact", "test_name": test_name[:100]},
+        )
         return cached
 
     # ── Semantic cache: skip LLM for similar failures ────────────────────
@@ -146,11 +152,16 @@ async def run_triage_agent(
         sem_cached = await semantic_cache_lookup(test_name, error_message or "", stack_trace or "")
         if sem_cached is not None:
             await _store_audit_trail(test_case_id, f"semantic_cache_hit:{test_name}", sem_cached, [])
-            await _emit_event("", "cache_hit", test_case_id=test_case_id, detail={
-                "type": "semantic_chromadb",
-                "test_name": test_name[:100],
-                "similarity": sem_cached.get("semantic_similarity", 0),
-            })
+            await _emit_event(
+                pipeline_run_id or "",
+                "cache_hit",
+                test_case_id=test_case_id,
+                detail={
+                    "type": "semantic_chromadb",
+                    "test_name": test_name[:100],
+                    "similarity": sem_cached.get("semantic_similarity", 0),
+                },
+            )
             return sem_cached
     except Exception as sem_exc:
         logger.debug("Semantic cache skipped: %s", sem_exc)
@@ -228,6 +239,17 @@ async def run_triage_agent(
 
             # Parse JSON from agent output
             analysis = _parse_agent_output(raw_output)
+            if analysis.get("schema_validated") is False:
+                await _emit_event(
+                    pipeline_run_id or "",
+                    "schema_validation_failed",
+                    test_case_id=test_case_id,
+                    detail={
+                        "agent": "react_triage",
+                        "schema": "RootCauseAnalysis",
+                        "error": str(analysis.get("schema_validation_error") or "")[:500],
+                    },
+                )
             analysis["llm_provider"] = settings.LLM_PROVIDER
             analysis["llm_model"] = settings.LLM_MODEL
             analysis["requires_human_review"] = analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD
@@ -237,14 +259,19 @@ async def run_triage_agent(
 
             # Record tool call details as OTEL span events and pipeline events
             _record_tool_spans(triage_span, intermediate_steps)
-            await _emit_event("", "llm_called", test_case_id=test_case_id, detail={
-                "provider": settings.LLM_PROVIDER,
-                "model": settings.LLM_MODEL,
-                "tools_used": tools_used,
-                "iterations": len(intermediate_steps),
-                "confidence": analysis.get("confidence_score", 0),
-                "category": analysis.get("failure_category", "UNKNOWN"),
-            })
+            await _emit_event(
+                pipeline_run_id or "",
+                "llm_called",
+                test_case_id=test_case_id,
+                detail={
+                    "provider": settings.LLM_PROVIDER,
+                    "model": settings.LLM_MODEL,
+                    "tools_used": tools_used,
+                    "iterations": len(intermediate_steps),
+                    "confidence": analysis.get("confidence_score", 0),
+                    "category": analysis.get("failure_category", "UNKNOWN"),
+                },
+            )
 
             triage_span.set_attribute("agent.tools_used", ",".join(tools_used))
             triage_span.set_attribute("agent.confidence_score", analysis.get("confidence_score", 0))
@@ -287,16 +314,10 @@ async def run_triage_agent(
                     analysis["llm_provider"] = settings.LLM_PROVIDER
                     analysis["llm_model"] = settings.LLM_MODEL
                     analysis["analysis_engine"] = "rules"
-                    analysis["llm_unavailable_reason"] = (
-                        f"Model '{settings.LLM_MODEL}' is not installed. "
-                        f"Run: docker compose exec ollama ollama pull {settings.LLM_MODEL}"
-                    )
+                    analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
                 except Exception as rules_exc:
                     logger.error("Rules engine fallback also failed: %s", rules_exc)
-                    analysis = _fallback_analysis(
-                        f"Model '{settings.LLM_MODEL}' not installed. "
-                        f"Pull it with: docker compose exec ollama ollama pull {settings.LLM_MODEL}"
-                    )
+                    analysis = _fallback_analysis(_model_missing_hint(settings.LLM_MODEL))
 
             # ── Token limit ───────────────────────────────────────────────────
             elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
@@ -365,24 +386,67 @@ def _record_tool_spans(parent_span: Any, intermediate_steps: list) -> None:
 
 def _parse_agent_output(raw: str) -> dict:
     """Extract and parse JSON from agent final answer."""
-    # Try to extract JSON block from output
-    raw = raw.strip()
-    if raw.startswith("{"):
-        try:
-            return cast(dict[Any, Any], json.loads(raw))
-        except json.JSONDecodeError:
-            pass
+    from app.models.llm_schemas import RootCauseAnalysis, validate_llm_output_with_error
+    from app.services.llm_json_parser import parse_llm_json
 
-    # Try to find JSON within the output
-    import re
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        try:
-            return cast(dict[Any, Any], json.loads(match.group()))
-        except json.JSONDecodeError:
-            pass
+    expected_keys = [
+        "root_cause_summary",
+        "failure_category",
+        "backend_error_found",
+        "pod_issue_found",
+        "is_flaky",
+        "confidence_score",
+        "recommended_actions",
+        "role_actions",
+        "evidence_references",
+    ]
+    parsed, error = parse_llm_json(
+        raw,
+        expected_keys=expected_keys,
+        context="react_triage_root_cause",
+    )
+    if error:
+        fallback = _fallback_analysis(
+            f"Could not parse structured output from agent ({error})"
+        )
+        fallback["schema_validation_error"] = error
+        fallback["schema_validated"] = False
+        return fallback
 
-    return _fallback_analysis("Could not parse structured output from agent")
+    validated, validation_error = validate_llm_output_with_error(
+        RootCauseAnalysis,
+        parsed,
+        context="react_triage_root_cause",
+    )
+    validated["schema_validated"] = validation_error is None
+    if validation_error:
+        validated["schema_validation_error"] = validation_error
+    return validated
+
+
+def _model_missing_hint(model: str) -> str:
+    """Build a runtime-aware "model not installed" hint.
+
+    The previous hardcoded ``docker compose exec ollama ollama pull ...``
+    message was wrong for K8s deployments — users on K3s / OpenShift saw
+    a Docker Compose command and (correctly) wondered why it didn't work.
+    Detect the runtime via the standard K8s service-account file and emit
+    the matching ``pull`` recipe. Falls back to a generic hint when the
+    runtime can't be detected.
+    """
+    import os
+    on_k8s = os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token")
+    if on_k8s:
+        namespace = os.environ.get("KUBERNETES_NAMESPACE", "testlookup")
+        pull_cmd = f"kubectl -n {namespace} exec deploy/testlookup-ollama -- ollama pull {model}"
+    else:
+        pull_cmd = f"docker compose exec ollama ollama pull {model}"
+    return (
+        f"Model '{model}' not installed on the Ollama instance. "
+        f"Ask your admin to pull it: {pull_cmd}. "
+        "If the Ollama pod has no internet egress (NordVPN / firewall blocking "
+        "registry.ollama.ai), the pull will fail until that's resolved."
+    )
 
 
 def _fallback_analysis(error_msg: str) -> dict:

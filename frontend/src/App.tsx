@@ -1,4 +1,4 @@
-import { type ComponentType, lazy, Suspense } from 'react'
+import { type ComponentType, lazy as reactLazy, Suspense, type LazyExoticComponent } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AppLayout from '@/components/layout/AppLayout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
@@ -9,6 +9,57 @@ import { usePermissions } from '@/hooks/usePermissions'
 import LoginPage from '@/pages/LoginPage'
 import ResetPasswordPage from '@/pages/ResetPasswordPage'
 
+/**
+ * Wrap React.lazy so a stale-chunk failure auto-reloads the page.
+ *
+ * After a deploy, the user's open tab still has the OLD index.html in
+ * memory which references chunk filenames like ``DefectsPage-urxoen35.js``.
+ * Vite generates fresh content-hashed names on every build, so when the
+ * user navigates to a not-yet-loaded route, the chunk 404s with
+ * "Failed to fetch dynamically imported module". Without this wrapper
+ * the user sees an "ErrorBoundary" page on every cross-deploy navigation.
+ *
+ * Strategy: on the first import failure of the session, reload
+ * ``window.location`` so the browser fetches a fresh index.html with
+ * the current chunk hashes. The sessionStorage flag guards against an
+ * infinite reload loop in case the failure isn't deploy-related (e.g.
+ * permanent network issue).
+ */
+const CHUNK_RELOAD_FLAG = '__testlookup_chunk_reload_attempted'
+
+function lazyWithRetry<T extends ComponentType<unknown>>(
+  importFn: () => Promise<{ default: T }>,
+): LazyExoticComponent<T> {
+  return reactLazy(async () => {
+    try {
+      const mod = await importFn()
+      // Successful load — clear the flag so a future stale-chunk
+      // error gets its own one-shot reload chance.
+      try { sessionStorage.removeItem(CHUNK_RELOAD_FLAG) } catch { /* noop */ }
+      return mod
+    } catch (err) {
+      const alreadyTried = (() => {
+        try { return sessionStorage.getItem(CHUNK_RELOAD_FLAG) === '1' } catch { return false }
+      })()
+      if (!alreadyTried) {
+        try { sessionStorage.setItem(CHUNK_RELOAD_FLAG, '1') } catch { /* noop */ }
+        // ``location.reload()`` fetches a fresh index.html — which is
+        // served with ``Cache-Control: no-cache`` so the browser gets
+        // the new chunk hashes immediately.
+        window.location.reload()
+        // Halt the promise chain — the reload will replace the page
+        // before this never-resolving promise settles.
+        return await new Promise<never>(() => undefined)
+      }
+      throw err
+    }
+  })
+}
+
+// Re-export under the original name so the existing ``lazy(() => import(...))``
+// call sites below pick up the retry behaviour without per-site edits.
+const lazy = lazyWithRetry as typeof reactLazy
+
 const OverviewPage = lazy(() => import('@/pages/OverviewPage'))
 const RunsPage = lazy(() => import('@/pages/RunsPage'))
 const RunDetailPage = lazy(() => import('@/pages/RunDetailPage'))
@@ -17,6 +68,7 @@ const CoveragePage = lazy(() => import('@/pages/CoveragePage'))
 const SuiteDetailPage = lazy(() => import('@/pages/SuiteDetailPage'))
 const SuitesPage = lazy(() => import('@/pages/SuitesPage'))
 const SuiteCasesPage = lazy(() => import('@/pages/SuiteCasesPage'))
+const CanonicalDetailPage = lazy(() => import('@/pages/CanonicalDetailPage'))
 const FailureAnalysisPage = lazy(() => import('@/pages/FailureAnalysisPage'))
 const TrendsPage = lazy(() => import('@/pages/TrendsPage'))
 const DefectsPage = lazy(() => import('@/pages/DefectsPage'))
@@ -60,7 +112,10 @@ const QuarantinePage = lazy(() => import('@/pages/QuarantinePage'))
 const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrationPage'))
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
 const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
+const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
+const MyFailuresPage = lazy(() => import('@/pages/MyFailuresPage'))
+const SummaryReportPage = lazy(() => import('@/pages/SummaryReportPage'))
 
 type AppRoute = {
   path: string
@@ -81,11 +136,13 @@ const appRoutes: AppRoute[] = [
   { path: 'coverage/suite', component: SuiteDetailPage },
   { path: 'suites', component: SuitesPage },
   { path: 'suites/:suiteId', component: SuiteCasesPage },
+  { path: 'canonical-test-cases/:canonicalId', component: CanonicalDetailPage },
   { path: 'failures', component: FailureAnalysisPage },
   { path: 'trends', component: TrendsPage },
   { path: 'defects', component: DefectsPage },
   { path: 'search', component: SearchPage },
-  { path: 'chat', component: ChatPage },
+  // Chat feature temporarily disabled — re-enable by uncommenting this route and the Sidebar entry.
+  // { path: 'chat', component: ChatPage },
   { path: 'agents', component: AgentStatusPage },
   { path: 'agents/run/:runId', component: AgentStatusPage },
   { path: 'deep-investigate', component: DeepInvestigationPage },
@@ -96,6 +153,8 @@ const appRoutes: AppRoute[] = [
   { path: 'quarantine', component: QuarantinePage },
   { path: 'test-management', component: TestManagementPage },
   { path: 'live', component: LiveExecutionPage },
+  { path: 'my-failures', component: MyFailuresPage },
+  { path: 'reports/summary', component: SummaryReportPage },
   // Profile is accessible to ALL authenticated roles
   { path: 'settings/profile', component: ProfilePage },
 ]
@@ -122,6 +181,7 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/github', component: GitHubIntegrationPage },
   { path: 'settings/webhooks', component: OutboundWebhooksPage },
   { path: 'settings/api-keys', component: ApiKeysPage },
+  { path: 'settings/project-data', component: ProjectDataPage },
   { path: 'policies', component: PolicyEditorPage },
   { path: 'policies/new', component: PolicyEditorPage },
   { path: 'policies/:policyId', component: PolicyEditorPage },
@@ -137,17 +197,44 @@ function RouteFallback() {
 }
 
 function RouteErrorFallback({ error }: { error: Error }) {
+  // Detect the "stale chunk after deploy" case so we render a clear
+  // explanation instead of the generic message. The ``lazyWithRetry``
+  // wrapper above already auto-reloads on first occurrence; if we
+  // reach this fallback it means the reload already fired and the
+  // chunk is STILL missing — usually a network blip, not a deploy.
+  const isStaleChunk = (() => {
+    const msg = error.message || ''
+    return (
+      msg.includes('Failed to fetch dynamically imported module') ||
+      msg.includes('Loading chunk') ||
+      msg.includes('Loading CSS chunk') ||
+      /import\(\)/i.test(msg)
+    )
+  })()
   return (
     <div className="mx-auto max-w-2xl p-8">
       <h2 className="mb-2 text-lg font-semibold text-[var(--color-text)]">
-        Something went wrong loading this page.
+        {isStaleChunk ? 'This page is out of date.' : 'Something went wrong loading this page.'}
       </h2>
       <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
-        {error.message || 'An unexpected error occurred. Try navigating back or refreshing.'}
+        {isStaleChunk ? (
+          <>
+            The site was redeployed while your tab was open and one of the
+            page modules couldn’t be fetched. Reloading will pick up the
+            latest version.
+          </>
+        ) : (
+          error.message || 'An unexpected error occurred. Try navigating back or refreshing.'
+        )}
       </p>
       <button
         type="button"
-        onClick={() => window.location.reload()}
+        onClick={() => {
+          // Clear the chunk-reload guard so the reload is treated as
+          // a fresh chance, not a retry against the same broken state.
+          try { sessionStorage.removeItem(CHUNK_RELOAD_FLAG) } catch { /* noop */ }
+          window.location.reload()
+        }}
         className="rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-sm hover:bg-[var(--color-bg-hover)]"
       >
         Reload
@@ -190,7 +277,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/reset-password" element={<ResetPasswordPage />} />
-        <Route path="/" element={<AppLayout />}>
+        <Route path="/*" element={<AppLayout />}>
           <Route index element={<Navigate to="/overview" replace />} />
           {appRoutes.map(({ path, component }) => (
             <Route key={path} path={path} element={renderLazyRoute(component)} />
@@ -206,7 +293,9 @@ export default function App() {
               }
             />
           ))}
+          <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
+        <Route path="*" element={<Navigate to="/overview" replace />} />
       </Route>
     </Routes>
   )

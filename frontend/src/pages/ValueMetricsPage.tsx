@@ -10,17 +10,24 @@ import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildValueMetricsWorkflow } from '@/components/workflow/workflowPresets'
 import { valueMetricsService, type ValueMetrics } from '@/services/valueMetricsService'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 
 function MetricCard({ icon: Icon, label, value, sub, color }: {
   icon: React.ElementType; label: string; value: string | number; sub?: string; color: string
 }) {
+  // Render "—" instead of a stark "0" so an empty metric reads as
+  // "no data yet" rather than "shipped exactly zero of these." Same
+  // muted tone as the rest of the card so it doesn't draw the eye.
+  const isZero = typeof value === 'number' ? value === 0 : value === '0'
+  const display = isZero ? '—' : value
+  const valueColor = isZero ? 'text-[var(--color-text-faint)]' : color
   return (
     <div className="card space-y-1">
       <div className="flex items-center gap-2">
-        <Icon className={clsx('h-4 w-4', color)} />
+        <Icon className={clsx('h-4 w-4', isZero ? 'text-[var(--color-text-faint)]' : color)} />
         <span className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider">{label}</span>
       </div>
-      <p className={clsx('text-2xl font-bold tabular-nums', color)}>{value}</p>
+      <p className={clsx('text-2xl font-bold tabular-nums', valueColor)}>{display}</p>
       {sub && <p className="text-xs text-[var(--color-text-faint)]">{sub}</p>}
     </div>
   )
@@ -32,7 +39,15 @@ export default function ValueMetricsPage() {
   const projectId = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined)
   const [metrics, setMetrics] = useState<ValueMetrics | null>(null)
   const [loading, setLoading] = useState(true)
-  const [days, setDays] = useState(30)
+  // Global shared time window — Value Metrics' options diverge from
+  // most other pages (no 24h, includes 1y), so we snap the shared value
+  // to the nearest supported option here. Picking a value here also
+  // propagates to other pages that may snap to a different nearest.
+  const VALUE_OPTIONS = [7, 30, 90, 365] as const
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const days = snapToAllowed(storedDays, VALUE_OPTIONS)
+  const setDays = setStoredDays
 
   useEffect(() => {
     setLoading(true)
@@ -45,6 +60,24 @@ export default function ValueMetricsPage() {
   if (loading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
   if (!metrics) return null
   const workflow = buildValueMetricsWorkflow(metrics, days, project?.name ?? 'All Projects')
+
+  // Detect the "barely any signal" state: nothing has driven a measurable
+  // outcome other than (maybe) AI intelligence reports. This is the most
+  // common confusing state on a fresh project — the hero shows time saved
+  // but every card is zero, making it look like a data bug. Banner below
+  // explains what each pipeline needs to fire so the user can act.
+  const nonIntelSignalsAllZero = (
+    metrics.defects_auto_grouped === 0 &&
+    metrics.duplicate_tickets_avoided === 0 &&
+    metrics.defects_promoted === 0 &&
+    metrics.flaky_tests_identified === 0 &&
+    metrics.risky_releases_blocked === 0 &&
+    metrics.releases_conditional === 0 &&
+    metrics.release_overrides === 0
+  )
+  // If even the hero number is essentially "from N intel reports * 20min",
+  // qualify it so users don't think it's an aggregate of everything.
+  const heroIsFromIntelOnly = nonIntelSignalsAllZero && metrics.intelligence_reports_generated > 0
 
   return (
     <div className="space-y-6">
@@ -94,8 +127,44 @@ export default function ValueMetricsPage() {
         </p>
         <p className="text-sm text-[var(--color-text-muted)] mt-1">
           {metrics.triage_time_saved_minutes} minutes saved over the last {days} days
+          {heroIsFromIntelOnly && (
+            <>
+              {' '}
+              <span className="text-[var(--color-text-faint)]">
+                — entirely from {metrics.intelligence_reports_generated} intelligence report
+                {metrics.intelligence_reports_generated === 1 ? '' : 's'}; no clustering,
+                defect, flaky, or release-gate signal yet.
+              </span>
+            </>
+          )}
         </p>
       </div>
+
+      {nonIntelSignalsAllZero && (
+        // Empty-state banner: data IS accurate but the project hasn't
+        // generated any of the signals these cards track. Surface this
+        // explicitly so users don't read the zeros as a data bug.
+        <div
+          className="rounded-xl border p-4 text-sm"
+          style={{
+            background: 'rgba(245,158,11,0.06)',
+            borderColor: 'rgba(245,158,11,0.30)',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          <p className="font-semibold text-[var(--color-text)] mb-1">No value-generating activity yet for this window.</p>
+          <p className="text-[12.5px] leading-relaxed">
+            Each card below tracks a specific pipeline. They'll populate as those pipelines fire on your runs:
+          </p>
+          <ul className="text-[12.5px] mt-1.5 space-y-0.5 list-disc list-inside text-[var(--color-text-muted)]">
+            <li><strong className="text-[var(--color-text-secondary)]">Defects auto-grouped</strong> · run deep investigation on failing builds to cluster failures.</li>
+            <li><strong className="text-[var(--color-text-secondary)]">Duplicates avoided</strong> · file a defect from a cluster and the system detects duplicates of prior ones.</li>
+            <li><strong className="text-[var(--color-text-secondary)]">Flaky tests found</strong> · the Flaky Coach scans history; needs ≥ 5 runs per fingerprint to flag.</li>
+            <li><strong className="text-[var(--color-text-secondary)]">Risky releases blocked</strong> · publish a Release Gate Policy and run release-gate evaluation on a build.</li>
+            <li><strong className="text-[var(--color-text-secondary)]">Defects promoted</strong> · promote a cluster to a tracked defect from the Failure Analysis page.</li>
+          </ul>
+        </div>
+      )}
 
       {/* Metric cards grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">

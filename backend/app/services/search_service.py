@@ -76,7 +76,16 @@ async def search_test_cases_query(
     )
 
     filters = build_search_filters(q, project_id, status, days, allowed_project_ids)
-    query = (
+
+    # Dedupe: one row per logical test case (test_fingerprint within a
+    # project). Without this, the same test that ran across N builds shows
+    # up N times in search results — the user reported seeing 3 copies of
+    # a single test because it had executed in 3 runs. ``DISTINCT ON
+    # (project, fingerprint)`` keeps the most recent execution thanks to
+    # the matching ORDER BY clause. The page/limit/offset is then applied
+    # over the distinct set.
+    distinct_keys = [TestRun.project_id, TestCase.test_fingerprint]
+    inner = (
         select(
             TestCase.id.label("test_case_id"),
             TestCase.test_run_id,
@@ -84,19 +93,46 @@ async def search_test_cases_query(
             TestCase.suite_name,
             TestCase.status,
             TestCase.created_at.label("last_run_date"),
+            TestCase.test_fingerprint.label("_fp"),
+            TestRun.project_id.label("_pid"),
             failure_count_subq.label("failure_count"),
         )
         .join(TestRun, TestRun.id == TestCase.test_run_id)
         .where(*filters)
-        .order_by(TestCase.created_at.desc())
+        .distinct(*distinct_keys)
+        # DISTINCT ON requires the leading ORDER BY columns to match the
+        # distinct columns; recency is the tiebreaker we actually want.
+        .order_by(
+            TestRun.project_id,
+            TestCase.test_fingerprint,
+            TestCase.created_at.desc(),
+        )
+        .subquery()
+    )
+    query = (
+        select(
+            inner.c.test_case_id,
+            inner.c.test_run_id,
+            inner.c.test_name,
+            inner.c.suite_name,
+            inner.c.status,
+            inner.c.last_run_date,
+            inner.c.failure_count,
+        )
+        .order_by(inner.c.last_run_date.desc())
         .offset((page - 1) * size)
         .limit(size)
     )
-    count_query = (
-        select(func.count(func.distinct(TestCase.id)))
+    # Count distinct logical tests (one per (project, fingerprint)), not raw
+    # rows, so the pagination total matches what the user actually sees.
+    distinct_pairs = (
+        select(TestRun.project_id, TestCase.test_fingerprint)
         .join(TestRun, TestRun.id == TestCase.test_run_id)
         .where(*filters)
+        .distinct()
+        .subquery()
     )
+    count_query = select(func.count()).select_from(distinct_pairs)
     rows = (await db.execute(query)).all()
     total = (await db.execute(count_query)).scalar() or 0
     items = []

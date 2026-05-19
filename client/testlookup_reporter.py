@@ -67,8 +67,93 @@ MAX_BATCH_SIZE     = 1_000     # hard cap per HTTP call
 MAX_QUEUE_SIZE     = 50_000    # back-pressure: block producer if queue grows this large
 MAX_RETRIES        = 5         # retries per flush on transient errors
 RETRY_BASE_DELAY   = 0.5       # seconds
+# Hard cap on the wall-clock time a single batch can spend retrying.
+# When a misconfigured project or a sustained server-side outage keeps
+# returning 429/503, the SDK eventually surfaces a hard failure instead
+# of buffering forever. 5 min matches the server-side fixed-bucket
+# refresh window so a single bucket-empty stretch can still be ridden
+# out, but two back-to-back outages cannot silently hide.
+MAX_RETRY_TOTAL_SECONDS = 300.0
+# HTTP status codes that count as transient server-side back-pressure.
+# 429 → admission-gate bucket exhausted; 503 → Redis/backpressure rejection.
+RETRYABLE_STATUS_CODES = frozenset({429, 503})
 CONNECT_TIMEOUT    = 10.0
 READ_TIMEOUT       = 30.0
+# Emit a ``live_heartbeat`` event whenever the SDK has been silent this long.
+# The server uses Redis ``last_event_at`` to drive its 5-minute idle-session
+# reaper; without the heartbeat a legitimate run with a single long test
+# would be falsely closed mid-flight. 30s is well under the reaper threshold
+# so genuinely-dead clients still get reaped promptly.
+HEARTBEAT_INTERVAL = 30.0      # seconds
+
+
+# ── Retry policy helpers ──────────────────────────────────────────────────────
+#
+# The two ``_post_batch`` paths (``LiveSession`` and ``LiveStream``) share an
+# identical retry contract: transport errors AND HTTP 429 / 503 retry,
+# honouring ``Retry-After`` exactly when the server sends one, falling back
+# to exponential backoff otherwise, capped at ``MAX_RETRY_TOTAL_SECONDS``.
+# Centralising the decision here lets the test suite pin the rules without
+# fakes around httpx.
+
+def _parse_retry_after(header_value: Optional[str]) -> Optional[float]:
+    """Parse an HTTP ``Retry-After`` header value into seconds.
+
+    RFC 9110 §10.2.3 allows either a delta-seconds integer (e.g. ``"30"``)
+    or an HTTP-date. We accept the integer form natively and try
+    ``email.utils.parsedate_to_datetime`` for the date form so a server
+    answering ``Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`` is still
+    honoured. Returns ``None`` when the header is missing or unparseable
+    so the caller can fall back to its backoff schedule.
+    """
+    if not header_value:
+        return None
+    value = header_value.strip()
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+        return max(0.0, seconds)
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        target = parsedate_to_datetime(value)
+        if target is None:
+            return None
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc) if target.tzinfo else datetime.now()
+        delta = (target - now).total_seconds()
+        return max(0.0, delta)
+    except Exception:
+        return None
+
+
+def _compute_next_retry_delay(
+    *,
+    retry_after_header: Optional[str],
+    attempt: int,
+    total_elapsed_s: float,
+    base_delay_s: float = RETRY_BASE_DELAY,
+    cap_total_s: float = MAX_RETRY_TOTAL_SECONDS,
+) -> Optional[float]:
+    """Return the seconds to wait before the next retry, or ``None``
+    when the cumulative retry budget would be blown.
+
+    Precedence: an explicit ``Retry-After`` header wins absolutely (we
+    honour it exactly, no doubling/halving). Without one we fall back
+    to the existing exponential schedule.
+    """
+    if total_elapsed_s >= cap_total_s:
+        return None
+    parsed = _parse_retry_after(retry_after_header)
+    delay = parsed if parsed is not None else base_delay_s * (2 ** max(0, attempt - 1))
+    remaining = cap_total_s - total_elapsed_s
+    if delay > remaining:
+        # The header (or backoff) would push us past the wall — surface
+        # the hard failure instead of stretching forever.
+        return None
+    return delay
 
 
 # ── Configuration Loader ──────────────────────────────────────────────────────
@@ -617,15 +702,25 @@ class LiveSession:
                 await self._post_batch(batch)
 
     async def _post_batch(self, events: list[dict]) -> None:
-        """POST a batch to the server with exponential back-off on failure."""
+        """POST a batch to the server with retry on transient errors.
+
+        Retryable conditions: connect/read transport errors, HTTP 429
+        (admission-gate rate-limit), HTTP 503 (Redis backpressure). On
+        429/503 the server's ``Retry-After`` header is honoured exactly;
+        otherwise we fall back to exponential backoff. Cumulative retry
+        time is capped at ``MAX_RETRY_TOTAL_SECONDS`` so a misconfigured
+        project surfaces a hard failure instead of buffering forever.
+        """
         payload = {
             "session_id": self.session_id,
             "run_id": self.run_id,
             "events": events,
         }
         headers = {"X-Session-Token": self.session_token}
+        deadline_started = time.monotonic()
 
         for attempt in range(1, MAX_RETRIES + 1):
+            elapsed = time.monotonic() - deadline_started
             try:
                 resp = await self._http.post(
                     "/api/v1/stream/events/batch",
@@ -636,6 +731,30 @@ class LiveSession:
                     logger.error("Session token rejected — stopping flush")
                     self._stats["failed"] += len(events)
                     return
+                if resp.status_code in RETRYABLE_STATUS_CODES:
+                    retry_after = resp.headers.get("Retry-After") if hasattr(resp, "headers") else None
+                    delay = _compute_next_retry_delay(
+                        retry_after_header=retry_after,
+                        attempt=attempt,
+                        total_elapsed_s=elapsed,
+                    )
+                    if delay is None or attempt == MAX_RETRIES:
+                        logger.error(
+                            "Batch POST giving up after HTTP %d "
+                            "(attempt=%d events=%d elapsed=%.1fs cap=%.1fs run_id=%s)",
+                            resp.status_code, attempt, len(events),
+                            elapsed, MAX_RETRY_TOTAL_SECONDS, self.run_id,
+                        )
+                        self._stats["failed"] += len(events)
+                        return
+                    logger.warning(
+                        "Batch POST throttled: status=%d attempt=%d delay=%.2fs "
+                        "retry_after=%r elapsed=%.1fs run_id=%s events=%d",
+                        resp.status_code, attempt, delay, retry_after,
+                        elapsed, self.run_id, len(events),
+                    )
+                    await asyncio.sleep(delay)
+                    continue
 
                 resp.raise_for_status()
                 data = resp.json()
@@ -643,17 +762,24 @@ class LiveSession:
                 return
 
             except (httpx.TransportError, httpx.TimeoutException) as exc:
-                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                if attempt == MAX_RETRIES:
+                delay = _compute_next_retry_delay(
+                    retry_after_header=None,
+                    attempt=attempt,
+                    total_elapsed_s=elapsed,
+                )
+                if delay is None or attempt == MAX_RETRIES:
                     logger.error(
-                        "Batch POST failed after %d attempts (%d events lost): %s",
-                        attempt, len(events), exc,
+                        "Batch POST failed after %d attempts "
+                        "(events=%d elapsed=%.1fs cap=%.1fs run_id=%s): %s",
+                        attempt, len(events), elapsed,
+                        MAX_RETRY_TOTAL_SECONDS, self.run_id, exc,
                     )
                     self._stats["failed"] += len(events)
                     return
                 logger.warning(
-                    "Batch POST attempt %d failed, retrying in %.1fs: %s",
-                    attempt, delay, exc,
+                    "Batch POST transport error: attempt=%d delay=%.2fs "
+                    "elapsed=%.1fs run_id=%s events=%d error=%s",
+                    attempt, delay, elapsed, self.run_id, len(events), exc,
                 )
                 await asyncio.sleep(delay)
 
@@ -828,14 +954,22 @@ class LiveStream:
 
         self._queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
         self._flusher_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
         self._stats = {"sent": 0, "failed": 0}
         self._session_id: Optional[str] = None  # set by the server on first batch
+        # Wall-clock ms of the most recent real (non-heartbeat) event we
+        # enqueued. Used to suppress heartbeats while the session is busy
+        # so we don't add noise to a healthy stream.
+        self._last_real_enqueue_ms: float = time.time() * 1_000
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     async def __aenter__(self) -> "LiveStream":
         self._flusher_task = asyncio.create_task(
             self._flusher_loop(), name=f"testlookup-livestream-{self._run_id[:24]}"
+        )
+        self._heartbeat_task = asyncio.create_task(
+            self._heartbeat_loop(), name=f"testlookup-heartbeat-{self._run_id[:24]}"
         )
         return self
 
@@ -854,6 +988,12 @@ class LiveStream:
             self._flusher_task.cancel()
             try:
                 await self._flusher_task
+            except asyncio.CancelledError:
+                pass
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
         await self._flush_all()
@@ -906,11 +1046,13 @@ class LiveStream:
         if tags:          event["tags"] = tags
         if metadata:      event["metadata"] = metadata
 
+        self._last_real_enqueue_ms = time.time() * 1_000
         await self._queue.put(event)
         if self._queue.qsize() >= self._batch_size:
             await self._flush_once()
 
     async def log(self, message: str, level: str = "INFO", metadata: Optional[dict] = None) -> None:
+        self._last_real_enqueue_ms = time.time() * 1_000
         await self._queue.put({
             "event_type": "log",
             "test_name": None,
@@ -920,6 +1062,7 @@ class LiveStream:
         })
 
     async def metric(self, name: str, value: float, unit: str = "", metadata: Optional[dict] = None) -> None:
+        self._last_real_enqueue_ms = time.time() * 1_000
         await self._queue.put({
             "event_type": "metric",
             "test_name": name,
@@ -943,6 +1086,43 @@ class LiveStream:
                 raise
             except Exception as exc:
                 logger.debug("LiveStream flusher loop error (non-fatal): %s", exc)
+
+    async def _heartbeat_loop(self) -> None:
+        """Periodic driver — wakes every ``HEARTBEAT_INTERVAL`` and asks
+        the helper whether to emit. Kept tiny so the testable decision
+        logic lives in ``_maybe_emit_heartbeat`` instead of being trapped
+        behind ``asyncio.sleep``.
+        """
+        while True:
+            try:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                await self._maybe_emit_heartbeat()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("LiveStream heartbeat loop error (non-fatal): %s", exc)
+
+    async def _maybe_emit_heartbeat(self) -> bool:
+        """Enqueue a ``live_heartbeat`` event if the SDK has been silent
+        for at least ``HEARTBEAT_INTERVAL`` seconds. Returns ``True``
+        when a heartbeat was actually enqueued, ``False`` when
+        suppressed (the session is busy).
+
+        Mirrors the Java SDK's behaviour: bumps the server's Redis
+        ``last_event_at`` so the idle-session reaper doesn't kill a
+        legitimately-running session during a long inter-test gap.
+        We intentionally do NOT update ``_last_real_enqueue_ms`` for
+        heartbeats — that timer tracks *real* activity, so heartbeats
+        suppressing themselves would defeat the point.
+        """
+        idle_s = time.time() - (self._last_real_enqueue_ms / 1_000.0)
+        if idle_s < HEARTBEAT_INTERVAL:
+            return False
+        await self._queue.put({
+            "event_type": "live_heartbeat",
+            "timestamp_ms": int(time.time() * 1_000),
+        })
+        return True
 
     async def _flush_once(self) -> None:
         if self._queue.empty():
@@ -968,11 +1148,20 @@ class LiveStream:
                 await self._post_batch(batch)
 
     async def _post_batch(self, events: list[dict]) -> None:
+        """POST a batch to the API-key ingest endpoint with retry policy.
+
+        Same retry contract as ``LiveSession._post_batch``: 429/503 are
+        retryable with exact ``Retry-After`` honouring, transport errors
+        retry with exponential backoff, cumulative retry time capped at
+        ``MAX_RETRY_TOTAL_SECONDS``.
+        """
         payload: dict[str, Any] = {"run_id": self._run_id, "events": events}
         if self._meta:
             payload["meta"] = self._meta
+        deadline_started = time.monotonic()
 
         for attempt in range(1, MAX_RETRIES + 1):
+            elapsed = time.monotonic() - deadline_started
             try:
                 resp = await self._http.post("/api/v1/stream/ingest", json=payload)
                 if resp.status_code in (401, 403):
@@ -982,6 +1171,31 @@ class LiveStream:
                     )
                     self._stats["failed"] += len(events)
                     return
+                if resp.status_code in RETRYABLE_STATUS_CODES:
+                    retry_after = resp.headers.get("Retry-After") if hasattr(resp, "headers") else None
+                    delay = _compute_next_retry_delay(
+                        retry_after_header=retry_after,
+                        attempt=attempt,
+                        total_elapsed_s=elapsed,
+                    )
+                    if delay is None or attempt == MAX_RETRIES:
+                        logger.error(
+                            "LiveStream giving up after HTTP %d "
+                            "(attempt=%d events=%d elapsed=%.1fs cap=%.1fs run_id=%s)",
+                            resp.status_code, attempt, len(events),
+                            elapsed, MAX_RETRY_TOTAL_SECONDS, self._run_id,
+                        )
+                        self._stats["failed"] += len(events)
+                        return
+                    logger.warning(
+                        "LiveStream throttled: status=%d attempt=%d delay=%.2fs "
+                        "retry_after=%r elapsed=%.1fs run_id=%s events=%d",
+                        resp.status_code, attempt, delay, retry_after,
+                        elapsed, self._run_id, len(events),
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
                 resp.raise_for_status()
                 data = resp.json()
                 self._stats["sent"] += data.get("accepted", len(events))
@@ -989,17 +1203,24 @@ class LiveStream:
                     self._session_id = data.get("session_id")
                 return
             except (httpx.TransportError, httpx.TimeoutException) as exc:
-                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                if attempt == MAX_RETRIES:
+                delay = _compute_next_retry_delay(
+                    retry_after_header=None,
+                    attempt=attempt,
+                    total_elapsed_s=elapsed,
+                )
+                if delay is None or attempt == MAX_RETRIES:
                     logger.error(
-                        "LiveStream POST failed after %d attempts (%d events lost): %s",
-                        attempt, len(events), exc,
+                        "LiveStream POST failed after %d attempts "
+                        "(events=%d elapsed=%.1fs cap=%.1fs run_id=%s): %s",
+                        attempt, len(events), elapsed,
+                        MAX_RETRY_TOTAL_SECONDS, self._run_id, exc,
                     )
                     self._stats["failed"] += len(events)
                     return
                 logger.warning(
-                    "LiveStream POST attempt %d failed, retrying in %.1fs: %s",
-                    attempt, delay, exc,
+                    "LiveStream transport error: attempt=%d delay=%.2fs "
+                    "elapsed=%.1fs run_id=%s events=%d error=%s",
+                    attempt, delay, elapsed, self._run_id, len(events), exc,
                 )
                 await asyncio.sleep(delay)
             except Exception as exc:
