@@ -1510,8 +1510,24 @@ export default function TrendsPage() {
   // Global shared time-window preference — picking 24h here propagates
   // to every other window-filtered page (and vice versa). Snapped to
   // this page's allowed set.
+  //
+  // /trends has its own opinionated default of 14d (trend analysis
+  // wants a meaningful baseline window; 1d or 7d hides the regression
+  // signal). On every mount we reset the shared store to 14 so
+  // navigating here always lands on the trend-friendly window
+  // regardless of what the user last picked on /runs or /coverage.
+  // In-page chips still update the shared store so the user can pick
+  // 30d / 90d for a wider lens and that propagates downstream. (User
+  // request 2026-05-19.)
   const storedDays = useTimeWindowStore(s => s.days)
   const setStoredDays = useTimeWindowStore(s => s.setDays)
+  useEffect(() => {
+    setStoredDays(14)
+    // Intentional one-shot on mount — the in-page chip handler still
+    // updates ``setStoredDays`` reactively, so this doesn't re-fire on
+    // every render and clobber the user's chip selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const days = snapToAllowed(storedDays, WINDOWS) as Window
   const setDays = setStoredDays as (w: Window) => void
 

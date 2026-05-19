@@ -31,7 +31,22 @@ def _normalise_suite_name(suite_name: str | None) -> str:
 
 
 def _suite_filter_sql() -> str:
-    return "AND LOWER(TRIM(COALESCE(tc.suite_name, 'Unknown Suite'))) = :suite_name"
+    # Suite filtering must match by EITHER the per-event ``tc.suite_name``
+    # OR the run-level ``tr.primary_suite_name``. Live-stream SDKs that
+    # don't resolve a session suite stamp the test class name on every
+    # event, which means a strict ``tc.suite_name = …`` filter misses
+    # every test of those runs — even though the user clearly labelled
+    # the run with the session-level suite. This mirrors the bipolar
+    # match the ``suite_detail`` query already does (see
+    # ``analytics_service.suite_detail`` and the ``feedback_live_stream_suite_name_nulls``
+    # memory entry). Case-insensitive trim so trailing spaces / casing
+    # drift between the SDK fields don't drop matches.
+    return (
+        "AND ("
+        "LOWER(TRIM(COALESCE(tc.suite_name, ''))) = :suite_name "
+        "OR LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_name"
+        ")"
+    )
 
 
 def _add_suite_param(params: dict, suite_name: str | None) -> str:
@@ -218,10 +233,27 @@ async def coverage_stats(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
     suite_filter = _add_suite_param(params, suite_name)
+    # Effective suite — preferred over raw ``tc.suite_name`` for
+    # GROUP BY so live_stream runs whose SDK stamped the test class
+    # name on every event still bucket under their session-level
+    # ``primary_suite_name`` (e.g. "API Regression Multi-Class")
+    # instead of splitting into per-class buckets that the user
+    # never asked for. File uploads keep their per-event grouping
+    # because ``primary_suite_name`` for those is the dominant
+    # per-event suite anyway, so the COALESCE picks the same value.
+    effective_suite = (
+        "COALESCE("
+        "CASE WHEN tr.trigger_source = 'live_stream' "
+        "THEN NULLIF(TRIM(tr.primary_suite_name), '') "
+        "ELSE NULL END, "
+        "NULLIF(TRIM(tc.suite_name), ''), "
+        "'Unknown Suite'"
+        ")"
+    )
     suite_query = text(
         f"""
         SELECT
-            COALESCE(tc.suite_name, 'Unknown Suite') AS suite_name,
+            {effective_suite} AS suite_name,
             MAX(p.name)                              AS project_name,
             COUNT(DISTINCT tc.test_fingerprint)      AS unique_tests,
             COUNT(*) FILTER (WHERE tc.status = 'PASSED') AS passed,
@@ -236,7 +268,7 @@ async def coverage_stats(
         WHERE tc.created_at >= :period_start
           {project_filter}
           {suite_filter}
-        GROUP BY tc.suite_name
+        GROUP BY {effective_suite}
         ORDER BY unique_tests DESC
         LIMIT 50
         """
@@ -245,8 +277,8 @@ async def coverage_stats(
         f"""
         SELECT
             COUNT(DISTINCT tc.test_fingerprint)  AS unique_tests,
-            COUNT(DISTINCT tc.suite_name)        AS suite_count,
-            COUNT(*)                            AS total_executions,
+            COUNT(DISTINCT {effective_suite})    AS suite_count,
+            COUNT(*)                             AS total_executions,
             ROUND(
                 COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
                 / NULLIF(COUNT(*), 0), 1
