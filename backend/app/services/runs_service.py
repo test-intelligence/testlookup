@@ -326,4 +326,127 @@ async def list_run_test_cases(
     if suite:
         from app.services.sql_utils import like_contains
         query = query.where(TestCase.suite_name.ilike(like_contains(suite), escape="\\"))
-    return await paginate_query(db, query.order_by(TestCase.status, TestCase.test_name), page, size)
+    items, total, pages = await paginate_query(
+        db, query.order_by(TestCase.status, TestCase.test_name), page, size
+    )
+
+    # Live-buffer fallback. While a live-stream run is in progress, its
+    # per-test rows live in the Redis event buffer (LIVE_TESTCASES_KEY)
+    # and are only materialised into ``test_cases`` by the Phase 4.5
+    # drainer (every 30s) or at close_session. If the drainer hasn't
+    # ticked yet — or Celery delivery is degraded — the run-detail page
+    # and the summary report show an empty table even though /live shows
+    # live counts (those read the HINCRBY hash directly). Bridge the gap
+    # by reading the buffer here so /runs/{id}/tests reflects the same
+    # real-time per-test data the /live page does. Only fires when
+    # Postgres has nothing yet; once the drainer/persist lands real rows
+    # this branch is skipped. (Bug 2026-05-20.)
+    if total == 0:
+        live = await _live_buffer_test_cases(run_id, page, size, status, suite)
+        if live is not None:
+            return live
+
+    return items, total, pages
+
+
+async def _live_buffer_test_cases(
+    run_id: uuid.UUID,
+    page: int,
+    size: int,
+    status: str | None = None,
+    suite: str | None = None,
+) -> tuple[list[dict], int, int] | None:
+    """Return per-test rows synthesised from the Redis live buffer for an
+    in-progress live-stream run, or ``None`` when there's no buffer.
+
+    The shape mirrors ``schemas.TestCaseSummary`` so the response model
+    serialises it the same as DB-backed rows. ``id`` is a deterministic
+    uuid5 of (run_id, fingerprint) so React keys stay stable across the
+    page's 5s polling and rows don't flicker as new events arrive.
+    """
+    import hashlib
+    import json as _json
+
+    try:
+        from app.db.redis_client import get_redis
+        from app.streams import LIVE_TESTCASES_KEY
+    except Exception:
+        return None
+
+    try:
+        redis = get_redis()
+        list_key = LIVE_TESTCASES_KEY.format(run_id=str(run_id))
+        raw_entries = await redis.lrange(list_key, 0, -1)
+    except Exception:
+        # Redis unavailable — fall back to the empty DB result rather than 500.
+        return None
+
+    if not raw_entries:
+        return None
+
+    status_filter = status.upper() if status else None
+    suite_lower = suite.strip().lower() if suite else None
+
+    rows: list[dict] = []
+    for raw in raw_entries:
+        try:
+            ev = _json.loads(raw)
+        except Exception:
+            continue
+        if ev.get("event_type") and ev.get("event_type") != "test_result":
+            # Skip heartbeats / logs / metrics — only test_result rows
+            # belong in the per-test table.
+            continue
+        ev_status = (ev.get("status") or "UNKNOWN").upper()
+        if status_filter and ev_status != status_filter:
+            continue
+        ev_suite = ev.get("suite_name")
+        if suite_lower and (ev_suite or "").strip().lower() != suite_lower:
+            continue
+        test_name = ev.get("test_name") or ""
+        class_name = ev.get("class_name") or ""
+        fp = hashlib.md5(f"{test_name}:{class_name}".encode()).hexdigest()
+        ts_ms = ev.get("timestamp_ms")
+        try:
+            created = (
+                datetime.fromtimestamp(int(ts_ms) / 1000.0, tz=timezone.utc)
+                if ts_ms else datetime.now(timezone.utc)
+            )
+        except Exception:
+            created = datetime.now(timezone.utc)
+        dur = ev.get("duration_ms")
+        rows.append({
+            "id": uuid.uuid5(uuid.NAMESPACE_URL, f"{run_id}:{fp}"),
+            "test_run_id": run_id,
+            "test_name": test_name,
+            "suite_name": ev_suite,
+            "class_name": class_name or None,
+            "status": ev_status,
+            "duration_ms": int(dur) if isinstance(dur, (int, float)) else None,
+            "severity": None,
+            "feature": None,
+            "failure_category": None,
+            "has_attachments": False,
+            "created_at": created,
+            "assigned_to_user_id": None,
+        })
+
+    if not rows:
+        return None
+
+    # Dedup by fingerprint — the buffer holds one entry per execution, but
+    # the per-test table is keyed by logical test. Keep the most recent
+    # execution per fingerprint (later entries in the append-only list win).
+    by_fp: dict = {}
+    for r in rows:
+        by_fp[r["id"]] = r
+    deduped = list(by_fp.values())
+
+    # Stable ordering matches the DB path (status, then name).
+    deduped.sort(key=lambda r: (str(r["status"]), r["test_name"]))
+
+    total = len(deduped)
+    pages = -(-total // size) if size else 1
+    start = (page - 1) * size
+    page_items = deduped[start:start + size]
+    return page_items, total, pages

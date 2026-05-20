@@ -3321,14 +3321,52 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                   </span>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)] flex-wrap">
-                  <span>{suite.test_count} tests</span>
-                  <span className="text-green-400">{suite.passed_count} passed</span>
-                  <span className="text-red-400">{suite.failed_count} failed</span>
-                  {suite.pass_rate != null && (
-                    <span className={suite.pass_rate >= 80 ? 'text-green-400 font-medium' : suite.pass_rate >= 60 ? 'text-amber-400 font-medium' : 'text-red-400 font-medium'}>
-                      {suite.pass_rate.toFixed(1)}% pass rate
-                    </span>
-                  )}
+                {(() => {
+                  // Headline counts. The snapshot columns
+                  // (``test_count``/``passed_count``/``failed_count``) are
+                  // DISTINCT-fingerprint with the *latest* status, which
+                  // collapses a parametrised test run 139× into "1 test,
+                  // last passed" and hides every failure (a suite with 12
+                  // real failures rendered "0 failed, 100% pass rate").
+                  // When cumulative run history exists, show the
+                  // execution-based totals instead — they match /runs and
+                  // /live (what users compare against) and never hide
+                  // failures. Unique-test count is surfaced as a secondary
+                  // annotation so the "test catalog" size is still visible.
+                  const hasExecHistory =
+                    (suite.run_count ?? 0) > 0 && (suite.total_executions ?? 0) > 0
+                  const displayTotal = hasExecHistory
+                    ? (suite.total_executions ?? 0)
+                    : suite.test_count
+                  const displayPassed = hasExecHistory
+                    ? (suite.total_passed ?? 0)
+                    : suite.passed_count
+                  const displayFailed = hasExecHistory
+                    ? (suite.total_failed ?? 0)
+                    : suite.failed_count
+                  const evaluated = displayPassed + displayFailed + (suite.total_broken ?? 0)
+                  const displayPassRate = hasExecHistory
+                    ? (evaluated > 0 ? (displayPassed / evaluated) * 100 : null)
+                    : suite.pass_rate
+                  const uniqueCount = suite.test_count
+                  return (
+                    <>
+                      <span>
+                        {displayTotal} {hasExecHistory ? 'executions' : 'tests'}
+                        {hasExecHistory && uniqueCount > 0 && uniqueCount !== displayTotal && (
+                          <span className="text-[var(--color-text-faint)]"> · {uniqueCount} unique</span>
+                        )}
+                      </span>
+                      <span className="text-green-400">{displayPassed} passed</span>
+                      <span className="text-red-400">{displayFailed} failed</span>
+                      {displayPassRate != null && (
+                        <span className={displayPassRate >= 80 ? 'text-green-400 font-medium' : displayPassRate >= 60 ? 'text-amber-400 font-medium' : 'text-red-400 font-medium'}>
+                          {displayPassRate.toFixed(1)}% pass rate
+                        </span>
+                      )}
+                    </>
+                  )
+                })()}
                   {/* Cumulative run history — total runs that included this
                       suite plus per-status totals across those runs. Skipped
                       when run_count is zero so the row stays compact for
