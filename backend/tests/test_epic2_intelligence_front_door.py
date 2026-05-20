@@ -304,6 +304,11 @@ class TestAgentTimelineRoute:
             status="completed",
             started_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
             completed_at=datetime(2026, 4, 1, 10, 1, tzinfo=timezone.utc),
+            # ``build_replay_integrity_summary`` → ``_workflow_route_decisions``
+            # reads ``pipeline.execution_metadata`` to synthesise route-decision
+            # events. Real ORM rows always carry the column (nullable JSONB);
+            # the mock must mirror it or the timeline route AttributeErrors.
+            execution_metadata=None,
         )
         stage = types.SimpleNamespace(
             stage_name="summary",
@@ -315,6 +320,9 @@ class TestAgentTimelineRoute:
             skipped_reason=None,
             execution_path="executed",
             fallback_used=False,
+            # build_agent_observability_summary (called by get_pipeline_timeline)
+            # reads stage.fallback_reason alongside fallback_used.
+            fallback_reason=None,
             input_tokens=10,
             output_tokens=20,
             total_tokens=30,
@@ -324,6 +332,11 @@ class TestAgentTimelineRoute:
             confidence_score=92,
             evidence_count=3,
             route_rationale="Summary generated from collected evidence",
+            # Replay-integrity scan (build_replay_integrity_summary →
+            # _integrity_report) reads ``stage.checkpoint_data`` to flag
+            # completed stages with no checkpoint. Real ORM rows carry the
+            # column (nullable JSONB); mirror it on the mock.
+            checkpoint_data=None,
         )
 
         class _StageResult:

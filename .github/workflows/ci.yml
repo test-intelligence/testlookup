@@ -65,6 +65,12 @@ jobs:
       - name: Run cross-cutting quality gates
         run: python scripts/quality_gate.py
 
+      - name: Install pytest for the self-test
+        # The gate itself is pure stdlib file IO, but scripts/test_quality_gate.py
+        # is a pytest module. This job installs nothing else, so pytest must be
+        # added explicitly here (the backend test job has its own deps).
+        run: pip install pytest
+
       - name: Self-test the quality-gate script
         # Pins the ratchet semantics so a careless edit to quality_gate.py
         # can't accidentally turn the gate into a no-op.

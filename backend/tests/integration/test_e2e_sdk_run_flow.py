@@ -330,7 +330,6 @@ def test_sdk_run_lights_up_all_features():
         live = r.json()
         sessions = live.get("sessions") if isinstance(live, dict) else live
         if isinstance(sessions, list):
-            matches = [s for s in sessions if s.get("run_id") == run_id or s.get("test_run_id") == run_id]
             # Completed sessions may or may not appear depending on the
             # endpoint's filter — don't hard-assert membership here, but
             # confirm the endpoint at least returns a sane shape.

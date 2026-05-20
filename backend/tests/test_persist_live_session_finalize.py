@@ -13,8 +13,7 @@ visible symptom is "/suites and /search show no data from SDK runs".
 from __future__ import annotations
 
 import uuid
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

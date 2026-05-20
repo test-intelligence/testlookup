@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
-  FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard, MessageSquare,
+  FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
 } from 'lucide-react'

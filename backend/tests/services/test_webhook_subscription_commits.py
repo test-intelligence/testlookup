@@ -108,7 +108,7 @@ async def test_create_subscription_flushes_but_does_not_commit(_stub_audit_sessi
     actor = _fake_actor()
     project_id = uuid.uuid4()
 
-    row = await create_subscription(
+    await create_subscription(
         db,
         project_id=project_id,
         actor=actor,

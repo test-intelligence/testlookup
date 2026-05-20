@@ -37,7 +37,7 @@
  * data are wired as TODO toasts pending the README §"Data & State"
  * endpoints landing.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Clock, Code as CodeIcon,

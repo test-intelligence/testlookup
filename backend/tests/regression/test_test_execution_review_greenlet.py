@@ -26,7 +26,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -45,7 +45,6 @@ async def test_upsert_review_refreshes_after_insert():
     test_case_id = uuid.uuid4()
     project_id = uuid.uuid4()
     reviewer = uuid.uuid4()
-    now = datetime.now(timezone.utc)
 
     refresh_calls: list = []
 

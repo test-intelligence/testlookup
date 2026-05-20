@@ -10,12 +10,31 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def _read_doc(relative: str) -> str:
+    """Read a doc file that lives under the gitignored ``docs/`` tree.
+
+    ``docs/`` is intentionally gitignored in this repo (local working
+    notes — PROGRESS.md / BACKLOG.md / the agent-hardening PLAN), so the
+    file is absent in a fresh CI checkout. These documentation-content
+    assertions can only run where the doc is present; skip cleanly
+    otherwise instead of FileNotFoundError-ing the whole pytest job
+    (mirrors the suite's ``pytest.importorskip`` convention for
+    environment-dependent prerequisites).
+    """
+    path = ROOT / relative
+    if not path.exists():
+        pytest.skip(f"{relative} not present (docs/ is gitignored — local-only)")
+    return path.read_text(encoding="utf-8")
 
 
 def _function_source(relative: str, name: str) -> str:
@@ -158,7 +177,7 @@ def test_deterministic_ordering_for_clusters_and_summary_context():
 
 
 def test_hardening_plan_tracks_remaining_phases():
-    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     for heading in [
         "Phase 1: Correctness And Audit Correlation",
@@ -189,7 +208,12 @@ def test_low_confidence_retry_skips_deterministic_and_cached_results():
     assert 'result.get("cache_hit")' in retry_gate
     assert 'result.get("fallback_tier")' in retry_gate
     assert 'result.get("schema_validated") is False' in retry_gate
-    assert 'return analysis_mode in {"llm", ""}' in retry_gate
+    # ``auto`` (the default mode) is retryable here too: by the time the
+    # final return is reached, every deterministic / cached / fallback
+    # path has already returned False, so an ``auto`` result is an LLM
+    # answer worth retrying. Excluding it disabled low-confidence retry
+    # for the default configuration.
+    assert 'return analysis_mode in {"llm", "auto", ""}' in retry_gate
 
 
 def test_analysis_agent_uses_adaptive_concurrency_policy():
@@ -289,7 +313,6 @@ def test_summary_stage_persists_context_hashes_and_prompt_versions():
 
 
 def test_workflow_route_decisions_have_durable_metadata_mirror():
-    workflow = _read("app/agents/workflow.py")
     state = _read("app/agents/state.py")
     emit_route = _function_source("app/agents/workflow.py", "_emit_route_decision")
     append_route = _function_source("app/agents/workflow.py", "_append_route_decision")
@@ -526,7 +549,7 @@ def test_next_agents_validate_outputs_against_contracts():
 
 
 def test_r1_contract_coverage_rule_is_documented():
-    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "Contract coverage rule" in plan
     assert "no LangGraph pipeline agent should return an" in plan
@@ -575,7 +598,7 @@ def test_r2_verifier_checks_evidence_and_policy_alignment():
         "app/services/agent_planner.py",
         "_check_release_decision_policy_trace",
     )
-    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     for check_name in [
         "_check_contract_evidence_support(final_state)",
@@ -624,7 +647,6 @@ def test_workflow_persists_r2_plan_and_verification():
 
 
 def test_replay_exposes_r2_plan_and_verification_contract():
-    replay = _read("app/services/pipeline_replay_service.py")
     schemas = _class_source("app/models/schemas.py", "PipelineReplayResponse")
     build_replay = _function_source("app/services/pipeline_replay_service.py", "build_pipeline_replay")
 
@@ -674,7 +696,7 @@ def test_r3_memory_retrieval_is_deterministic_and_auditable():
     )
     schemas = _read("app/models/schemas.py")
     router = _read("app/routers/agent_memory.py")
-    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "_MEMORY_RETRIEVAL_VERSION = \"agent_memory.recall:v1\"" in memory
     assert "retrieval_version" in retrieval_manifest
@@ -786,7 +808,7 @@ def test_r4_manual_jira_endpoint_stages_pending_review_before_mutation():
     endpoint = _function_source("app/routers/integrations.py", "create_jira_defect")
     stage = _function_source("app/routers/integrations.py", "_stage_pending_jira_defect")
     schemas = _class_source("app/models/schemas.py", "JiraIssueResponse")
-    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "check_jira_ticket_creation_policy" in router
     assert "_stage_pending_jira_defect" in endpoint
@@ -831,7 +853,7 @@ def test_r5_agent_stack_release_gate_runs_are_persisted_for_audit():
     schemas = _class_source("app/models/schemas.py", "AIEvalGateRunResponse")
     model = _class_source("app/models/postgres.py", "AIEvalGateRun")
     migration = _read("migrations/versions/0078_ai_eval_gate_runs.py")
-    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "AIEvalGateRun" in service
     assert "db.add(row)" in persist
@@ -877,7 +899,7 @@ def test_r6_timeline_exposes_agent_observability_summary():
     frontend_page = _read("../frontend/src/pages/AgentStatusPage.tsx")
     frontend_types = _read("../frontend/src/types/agent.ts")
     frontend_test = _read("../frontend/src/pages/AgentStatusPage.test.tsx")
-    plan = _read("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
+    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "build_agent_observability_summary" in service
     for key in [

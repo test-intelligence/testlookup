@@ -169,7 +169,16 @@ async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
 @router.post(
     "/{project_id}/reset",
     response_model=ProjectResetResponse,
-    dependencies=[Depends(require_role(UserRole.ADMIN))],
+    dependencies=[
+        Depends(require_role(UserRole.ADMIN)),
+        # Project-scope guard alongside the ADMIN role gate. ADMIN bypasses
+        # the membership check inside ``require_project_access``, so this
+        # doesn't change who can call the endpoint — it ties the route to
+        # its ``{project_id}`` scope so the architectural authorization
+        # ratchet (test_architectural_authorization.py) recognises it as
+        # guarded rather than flagging it as unprotected drift.
+        Depends(require_project_access()),
+    ],
 )
 async def reset_project_data(
     project_id: uuid.UUID,

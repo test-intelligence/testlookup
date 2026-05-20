@@ -71,6 +71,11 @@ class FakeAsyncDB:
         self.delete = AsyncMock()
         self.flush = AsyncMock()
         self.refresh = AsyncMock()
+        # Default identity-load for project-existence guards (e.g.
+        # ``create_manual_defect`` does ``db.get(Project, project_id)``
+        # before staging). Returns a truthy stub so the guard passes;
+        # tests that need a 404 path override ``db.get`` after construction.
+        self.get = AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))
 
     async def execute(self, _stmt, _params=None):
         return self._execute_results.pop(0)

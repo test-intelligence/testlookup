@@ -11,6 +11,9 @@ vi.mock('@/hooks/useDeepInvestigation', () => ({
 
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
+  // The page added a ``useRun`` fallback fetch (run-detail KPIs populate
+  // even when the run isn't in the recent list). Mock must export it.
+  useRun: vi.fn(),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -25,10 +28,14 @@ vi.mock('@/store/projectStore', () => ({
 describe('DeepInvestigationPage', () => {
   it('renders the investigation workflow strip above the cluster view', async () => {
     const { useFailureClusters, useDeepFindings } = await import('@/hooks/useDeepInvestigation')
-    const { useRuns } = await import('@/hooks/useRuns')
+    const { useRuns, useRun } = await import('@/hooks/useRuns')
 
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [{ id: 'run-1' }] },
+    })
+    ;(useRun as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: undefined,
+      isLoading: false,
     })
     ;(useFailureClusters as ReturnType<typeof vi.fn>).mockReturnValue({
       data: [

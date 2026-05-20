@@ -13,6 +13,9 @@ const { mockProjectState } = vi.hoisted(() => ({
 
 vi.mock('@/hooks/useRuns', () => ({
   useRun: vi.fn(),
+  // The page added a sibling-runs fetch (``useRuns``) to power the
+  // suite-aware run comparison strip. Mock must export it.
+  useRuns: vi.fn(),
   useTestCases: vi.fn(),
 }))
 
@@ -39,8 +42,13 @@ vi.mock('swr', () => ({
 
 describe('RunDetailPage', () => {
   it('returns to the runs list when the project changes', async () => {
-    const { useRun, useTestCases } = await import('@/hooks/useRuns')
+    const { useRun, useRuns, useTestCases } = await import('@/hooks/useRuns')
     const useSWR = (await import('swr')).default as ReturnType<typeof vi.fn>
+
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [] },
+      isLoading: false,
+    })
 
     ;(useRun as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {

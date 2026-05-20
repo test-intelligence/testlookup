@@ -47,7 +47,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
-from sqlalchemy import func as _func
 from sqlalchemy import insert as _sa_insert
 from sqlalchemy import select as _sel
 

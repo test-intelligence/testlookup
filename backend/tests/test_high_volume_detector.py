@@ -19,7 +19,7 @@ focused tests that don't need a worker pool. Pins:
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

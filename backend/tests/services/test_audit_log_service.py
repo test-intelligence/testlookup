@@ -16,7 +16,6 @@ Pins:
 from __future__ import annotations
 
 import uuid
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -117,13 +116,15 @@ async def test_record_outcome_adds_to_caller_session_without_committing():
 
 
 @pytest.mark.asyncio
-async def test_record_outcome_swallows_build_errors_and_warns(capsys):
+async def test_record_outcome_swallows_build_errors_and_warns(capfd):
     """If SettingsAuditLog construction fails for some reason (e.g. a
     field type bug), record_outcome must NOT raise into the caller —
     the audit is best-effort. The caller's primary mutation continues.
 
-    structlog writes directly to stdout, so we capture via ``capsys``
-    instead of ``caplog``."""
+    structlog's stdout handler binds the real ``sys.stdout`` stream at
+    logging-config time (before pytest swaps it), so ``capsys``
+    (Python-level) misses the line. ``capfd`` captures at the file-
+    descriptor level and sees it."""
     from app.services.audit_log_service import record_outcome
 
     # A db that throws on .add() simulates "row build failed" — easier
@@ -138,7 +139,7 @@ async def test_record_outcome_swallows_build_errors_and_warns(capsys):
         actor_id=uuid.uuid4(),
     )
 
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert "audit_log_outcome_dropped" in (captured.out + captured.err)
 
 
@@ -205,11 +206,13 @@ async def test_record_attempt_does_not_retry_integrity_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_record_attempt_emits_warning_on_terminal_failure(monkeypatch, capsys):
+async def test_record_attempt_emits_warning_on_terminal_failure(monkeypatch, capfd):
     """When retries are exhausted, a single structured WARNING lands
     and the function returns normally (never raises).
 
-    structlog writes directly to stdout, so we capture via ``capsys``."""
+    structlog's stdout handler binds the real ``sys.stdout`` stream at
+    logging-config time, so ``capfd`` (file-descriptor level) is needed
+    to capture the line — ``capsys`` (Python-level) misses it."""
     from app.services.audit_log_service import record_attempt
 
     _patch_fresh_session(
@@ -223,5 +226,5 @@ async def test_record_attempt_emits_warning_on_terminal_failure(monkeypatch, cap
         max_retries=2,
     )
 
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert "audit_log_attempt_dropped" in (captured.out + captured.err)
