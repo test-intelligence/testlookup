@@ -105,7 +105,6 @@ async def test_test_run_stub_save_failure_does_not_break_session_create():
     """SAVEPOINT contains a duplicate-key race so the LiveSession still
     commits even if the stub write trips an exception."""
     from app.services.stream_service import create_session
-    from app.models.postgres import LaunchStatus, TestRun
 
     added_rows: list = []
 

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json as _json
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import structlog
 from sqlalchemy import String, cast, select, update

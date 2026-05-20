@@ -22,7 +22,6 @@ to ``sys.path`` so the test runs without a separate install step.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime

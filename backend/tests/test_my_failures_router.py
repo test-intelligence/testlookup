@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 
 # The list endpoint now calls ``runs_service.fetch_run_seq_map`` to
 # decorate each row with its per-(project, suite) run number. The helper
@@ -34,8 +36,6 @@ def _patch_run_seq_map():
         "app.services.runs_service.fetch_run_seq_map",
         AsyncMock(return_value={}),
     )
-
-import pytest
 
 
 def _count_result(value: int):

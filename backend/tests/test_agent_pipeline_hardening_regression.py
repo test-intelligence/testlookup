@@ -289,7 +289,6 @@ def test_summary_stage_persists_context_hashes_and_prompt_versions():
 
 
 def test_workflow_route_decisions_have_durable_metadata_mirror():
-    workflow = _read("app/agents/workflow.py")
     state = _read("app/agents/state.py")
     emit_route = _function_source("app/agents/workflow.py", "_emit_route_decision")
     append_route = _function_source("app/agents/workflow.py", "_append_route_decision")
@@ -624,7 +623,6 @@ def test_workflow_persists_r2_plan_and_verification():
 
 
 def test_replay_exposes_r2_plan_and_verification_contract():
-    replay = _read("app/services/pipeline_replay_service.py")
     schemas = _class_source("app/models/schemas.py", "PipelineReplayResponse")
     build_replay = _function_source("app/services/pipeline_replay_service.py", "build_pipeline_replay")
 

@@ -33,7 +33,6 @@ from __future__ import annotations
 import hashlib
 import inspect
 
-import pytest
 
 
 def _source():

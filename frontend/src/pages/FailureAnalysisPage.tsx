@@ -39,7 +39,7 @@
  * MTTF / lastGreenSha placeholders. CTAs that need new endpoints
  * (mute, bisect, classifier hint) emit toast placeholders.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Clock, Code as CodeIcon,
@@ -184,7 +184,7 @@ function handleExportCsv({
       generatedAt: new Date().toISOString(),
     },
   })
-  // ﻿ BOM so Excel opens the file with UTF-8 encoding by default;
+  // BOM so Excel opens the file with UTF-8 encoding by default;
   // without it, non-ASCII test names (German umlauts, Japanese
   // characters in suite labels, etc.) render as mojibake.
   const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' })

@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import uuid as _uuid_mod
-from datetime import datetime, timezone
-from typing import Optional
 
 import structlog
 from sqlalchemy import func, insert as sa_insert, select

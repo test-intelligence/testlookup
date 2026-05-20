@@ -85,7 +85,6 @@ const AuditDashboardPage = lazy(() => import('@/pages/settings/AuditDashboardPag
 const AIEvalDashboardPage = lazy(() => import('@/pages/settings/AIEvalDashboardPage'))
 const PerformancePage = lazy(() => import('@/pages/settings/PerformancePage'))
 const SSOSettingsPage = lazy(() => import('@/pages/settings/SSOSettingsPage'))
-const ChatPage = lazy(() => import('@/pages/ChatPage'))
 // /agents loads the Direction-C compute graph (see AgentStatusPage.tsx +
 // components/agents/computeGraph/*). The Subway-style AgentWorkflowPage.tsx
 // stays on disk as reference for Direction A; flipping this import is the

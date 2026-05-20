@@ -9,7 +9,7 @@ import hashlib
 import json
 import logging
 import random
-from typing import Any, Callable, Optional, Sequence, Type, cast
+from typing import Any, Awaitable, Callable, Optional, Sequence, Type, TypeVar, cast
 
 import httpx
 
@@ -215,8 +215,6 @@ def compute_analysis_cache_key(
 # source-of-truth data is still in PostgreSQL. ``with_fallback`` makes the
 # "show data from Postgres when X is down" pattern a one-liner instead of
 # an inline try/except that every contributor copy-pastes inconsistently.
-
-from typing import Awaitable, TypeVar
 
 T = TypeVar("T")
 

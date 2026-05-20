@@ -24,7 +24,7 @@ pytest.importorskip("httpx")
 pytest.importorskip("jose")
 pytest.importorskip("asyncpg")
 
-from fastapi import HTTPException, status  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
 
 from app.models.postgres import UserRole  # noqa: E402
 
