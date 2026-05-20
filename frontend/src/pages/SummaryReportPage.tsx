@@ -51,11 +51,11 @@ function loadStoredMode(): SummaryReportMode {
 const MODE_LABELS: Record<SummaryReportMode, { label: string; hint: string }> = {
   window: {
     label: 'All runs in window',
-    hint: 'Aggregates every execution in the selected window. Counts are volume-weighted.',
+    hint: 'Unique tests across every run in the window — the same count the Coverage page shows. Pass rate is volume-weighted across executions.',
   },
   latest: {
     label: 'Latest run per suite',
-    hint: 'One snapshot per suite — only the most recent run in the window counts.',
+    hint: 'Only each suite’s most recent run counts — expect fewer tests than the Coverage page, which spans the whole window.',
   },
 }
 

@@ -1,0 +1,43 @@
+# Redis 7 — in-cluster for the air-gapped OpenShift deploy (ephemeral cache).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-redis
+  namespace: testlookup
+  labels:
+    app: testlookup-redis
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: testlookup-redis
+  template:
+    metadata:
+      labels:
+        app: testlookup-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 30

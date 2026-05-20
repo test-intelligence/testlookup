@@ -1,0 +1,8 @@
+# Delete the base nginx Ingress — OpenShift exposes the app via Routes
+# (route.yaml) instead. Strategic-merge $patch: delete.
+$patch: delete
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testlookup-ingress
+  namespace: testlookup

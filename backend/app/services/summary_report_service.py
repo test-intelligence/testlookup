@@ -465,9 +465,22 @@ async def _per_suite_breakdown_window(
             GROUP BY suite_name
         ),
         merged AS (
+            -- ``cases_agg`` is the DISTINCT-fingerprint (unique-test) count
+            -- per suite — the SAME definition /coverage and /coverage/suite
+            -- use, so the two pages agree. ``runs_agg`` (run-level execution
+            -- aggregates for live-stream runs whose per-test rows never
+            -- landed) is a FALLBACK only for suites that have no test_cases
+            -- at all in the window. Previously it was UNION-ed unconditionally
+            -- and SUM-ed on top of cases_agg, which double-counted suites that
+            -- had both: e.g. RealisticTestNGSuite read 7570 (2423 unique +
+            -- ~5147 missing-run executions) instead of the 2423 unique tests
+            -- /coverage reports. The NOT IN guard makes a suite counted by
+            -- EITHER distinct fingerprints OR run aggregates, never both.
+            -- (Bug 2026-05-20.)
             SELECT * FROM cases_agg
             UNION ALL
             SELECT * FROM runs_agg
+            WHERE suite_name NOT IN (SELECT suite_name FROM cases_agg)
         )
         SELECT
             suite_name,
