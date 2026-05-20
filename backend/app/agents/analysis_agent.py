@@ -488,7 +488,14 @@ class AnalysisAgent(BaseAgent):
         # are the cases where a second provider call can produce better evidence.
         if result.get("schema_validated") is False or result.get("schema_validation_error"):
             return True
-        return analysis_mode in {"llm", ""}
+        # ``auto`` is the DEFAULT mode — when it reaches here every
+        # deterministic / cached / fallback path has already returned
+        # False above, so an ``auto`` result this far down was produced
+        # by the LLM and is just as retryable as an explicit ``llm`` one.
+        # Excluding it silently disabled low-confidence retry for the
+        # default configuration. (Empty string = mode not recorded ⇒
+        # treat as LLM, the historical default.)
+        return analysis_mode in {"llm", "auto", ""}
 
     async def _analyse_one(
         self,

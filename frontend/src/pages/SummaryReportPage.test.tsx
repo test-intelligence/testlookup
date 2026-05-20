@@ -128,19 +128,24 @@ describe('SummaryReportPage', () => {
     useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
   })
 
-  it('defaults to 24h window + latest-per-suite aggregation on first visit', async () => {
+  it('defaults to the shared window + latest-per-suite aggregation on first visit', async () => {
     // Regression for 2026-05-18 bug report: fresh users were landing on
     // the window-mode view and seeing Suite totals scaled by run count
     // (5 runs × 100 tests = 500), which reads as duplicate rows. Latest
     // mode shows one snapshot per suite — what users actually expect on
-    // "show me where things stand right now".
+    // "show me where things stand right now". The window itself comes
+    // from the shared store default (``DEFAULT_TIME_WINDOW_DAYS``, 7d as
+    // of the v2 migration), not the old hardcoded 24h.
     mockGet.mockResolvedValue(makeReport({ mode: 'latest' }))
 
     renderPage()
 
     await waitFor(() => {
       expect(mockGet).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 1, mode: 'latest' as SummaryReportMode }),
+        expect.objectContaining({
+          days: DEFAULT_TIME_WINDOW_DAYS,
+          mode: 'latest' as SummaryReportMode,
+        }),
       )
     })
   })
@@ -313,13 +318,15 @@ describe('SummaryReportPage', () => {
     fireEvent.click(button)
 
     await waitFor(() => {
-      // Default window is 24h (days=1) and default aggregation mode is
-      // ``latest`` post-2026-05-18 (bug fix: ``window`` mode produces
-      // run-count-scaled totals that read as duplicates). Pin both so a
-      // future bump of either default doesn't silently regress.
+      // Default window comes from the shared store
+      // (``DEFAULT_TIME_WINDOW_DAYS``, 7d as of the v2 migration) and the
+      // default aggregation mode is ``latest`` post-2026-05-18 (bug fix:
+      // ``window`` mode produces run-count-scaled totals that read as
+      // duplicates). Pin both so a future bump of either default doesn't
+      // silently regress.
       expect(mockDownloadPdf).toHaveBeenCalledWith({
         project_id: 'p1',
-        days: 1,
+        days: DEFAULT_TIME_WINDOW_DAYS,
         mode: 'latest',
       })
     })

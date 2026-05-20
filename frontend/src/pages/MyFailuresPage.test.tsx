@@ -79,12 +79,15 @@ describe('MyFailuresPage', () => {
     useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
   })
 
-  it('defaults to 24h when the shared store has no prior selection', async () => {
+  it('defaults to the shared time-window default on first visit', async () => {
+    // The shared time-window default is now ``DEFAULT_TIME_WINDOW_DAYS``
+    // (7d as of the v2 store migration), not 24h. ``beforeEach`` resets
+    // the store to that default, so the first fetch uses it.
     mockList.mockResolvedValue(makeResponse([]))
     renderPage()
     await waitFor(() => {
       expect(mockList).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 1, page: 1, size: 25 }),
+        expect.objectContaining({ days: DEFAULT_TIME_WINDOW_DAYS, page: 1, size: 25 }),
       )
     })
   })
@@ -142,9 +145,13 @@ describe('MyFailuresPage', () => {
     renderPage()
 
     expect(await screen.findByText('test_login_failed')).toBeInTheDocument()
-    // Project + build context renders alongside the test name.
-    expect(screen.getByText('GoogleProject')).toBeInTheDocument()
-    expect(screen.getByText(/Build 42/)).toBeInTheDocument()
+    // Suite context renders alongside the test name. Project name is
+    // intentionally omitted per-row (it's chosen in the global project
+    // dropdown — see the row comment in MyFailuresPage.tsx), and the run
+    // identifier shows the raw build_number ("42") / "Run #N", not a
+    // "Build N" label.
+    expect(screen.getByText('AuthSuite')).toBeInTheDocument()
+    expect(screen.getByText('42')).toBeInTheDocument()
   })
 
   it('re-fetches when the user picks a different days window', async () => {
@@ -155,13 +162,15 @@ describe('MyFailuresPage', () => {
     await waitFor(() => expect(mockList).toHaveBeenCalled())
     const initialCalls = mockList.mock.calls.length
 
-    // Click the 7-day chip.
-    fireEvent.click(screen.getByText('7d'))
+    // Click a window DIFFERENT from the default (now 7d) so the change
+    // actually re-runs the fetch. Clicking 7d would be a no-op since 7d
+    // is the shared default the page already mounted with.
+    fireEvent.click(screen.getByText('30d'))
 
     await waitFor(() => {
-      // The hook should re-run with days=7.
+      // The hook should re-run with days=30.
       expect(mockList).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 7, page: 1, size: 25 }),
+        expect.objectContaining({ days: 30, page: 1, size: 25 }),
       )
       expect(mockList.mock.calls.length).toBeGreaterThan(initialCalls)
     })

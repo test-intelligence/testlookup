@@ -154,8 +154,27 @@ async def test_global_search_non_member_rejected(client, auth_as):
     assert resp.status_code == 403
 
 
-async def test_global_search_q_required(client, auth_as):
+async def test_global_search_empty_q_browses_not_422(client, auth_as):
+    """``q`` is optional now — an empty query BROWSES the most-recent
+    items in scope (the /search page chips with no query typed) rather
+    than 422'ing. The endpoint signature changed from
+    ``Query(..., min_length=1)`` to ``Query("")`` with browse semantics,
+    so an empty query must return 200, not 422. Dedicated browse
+    behaviour is covered in ``test_global_search_browse.py``."""
     auth_as(role=UserRole.ADMIN)
-    resp = await client.get("/api/v1/search/global", params={})
-    # Pydantic Query(..., min_length=1)
-    assert resp.status_code == 422
+    fake_response = {
+        "items": [],
+        "total": 0,
+        "query": "",
+        "search_type": "keyword",
+        "entity_counts": {},
+        "page": 1,
+        "size": 20,
+        "pages": 0,
+    }
+    with patch(
+        "app.services.global_search_service.global_search",
+        AsyncMock(return_value=fake_response),
+    ):
+        resp = await client.get("/api/v1/search/global", params={})
+    assert resp.status_code == 200

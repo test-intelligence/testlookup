@@ -203,10 +203,15 @@ describe('FailureAnalysisPage', () => {
     fireEvent.click(await screen.findByText(/Compare to previous window/i))
 
     // The strip's right-slot label is unique on the page — use it as
-    // the "strip is rendered" signal. The toggle CTA also flips its
-    // text to "Hide comparison" when on, which is the other unique
-    // signal we can rely on without coupling to the strip's internals.
-    expect(await screen.findByText(/last 30d vs prior 30d/i)).toBeInTheDocument()
+    // the "strip is rendered" signal. With only 4 trend points (2 per
+    // half) inside a 30d window, the label now shows the ACTUAL data
+    // span — "last 2d (of 30d) vs prior 2d" — rather than the old
+    // unconditional "last 30d vs prior 30d" (which misled users into
+    // reading single-day totals as 30-day totals; see the comment on
+    // ``actualLabel`` in FailureAnalysisPage.tsx).
+    expect(
+      await screen.findByText(/last 2d \(of 30d\) vs prior 2d/i),
+    ).toBeInTheDocument()
     // Prior failures = 1+1 = 2; current failures = 3+2 = 5; delta = +3.
     // The failures cell renders the up-arrow with "3" — pin that one
     // delta value as the proof the math ran. Use a word-boundary so it

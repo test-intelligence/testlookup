@@ -228,6 +228,31 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "generation Celery pipeline. No router-facing mutation path to "
         "convert.",
     ),
+    # ── Fresh-session / worker / atomic-operation owners (2026-05) ─────
+    "audit_log_service.py": (
+        1,
+        "Fresh-session by design: ``record_attempt`` opens its own "
+        "AsyncSessionLocal so the audit row commits independently and "
+        "SURVIVES a caller rollback (see backend/CLAUDE.md 'Audit-log "
+        "writes — attempt vs outcome'). ``record_outcome`` writes to the "
+        "caller's session and does NOT commit. The single commit here is "
+        "the intentional independent-durability path.",
+    ),
+    "live_session_drainer.py": (
+        1,
+        "Celery-beat-owned: ``drain_run_buffer`` opens its own "
+        "AsyncSessionLocal (the ``drain-active-live-sessions`` beat task "
+        "has no request session to hand off to) and commits the "
+        "incrementally-drained per-test rows. Phase 4.5 incremental drain.",
+    ),
+    "project_reset_service.py": (
+        1,
+        "Outermost atomic operation: ``reset_project`` is a destructive "
+        "danger-zone reset that must delete project-scoped data + write "
+        "the audit row in ONE transaction (FOR UPDATE serialises "
+        "concurrent resets) so a mid-way failure leaves no orphans. The "
+        "service owns the unit of work; the router just dispatches.",
+    ),
 }
 
 SERVICES_DIR = Path(__file__).resolve().parent.parent / "app" / "services"

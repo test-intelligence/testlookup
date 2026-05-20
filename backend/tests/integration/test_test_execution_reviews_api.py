@@ -68,9 +68,18 @@ async def test_get_review_returns_hydrated_reviewer(
     assert body["note"] == "verified locally"
 
 
-async def test_get_review_returns_404_for_implicit_pending_review(
+async def test_get_review_returns_200_null_for_implicit_pending_review(
     client, auth_as, fake_db
 ):
+    """No review row yet ⇒ 200 with a ``null`` body, NOT 404.
+
+    Contract changed in the 2026-05-19 regression initiative: the GET
+    endpoint returns ``200/null`` for the implicit ``pending_review``
+    initial state so the UI doesn't log a console error every time the
+    review tab opens on an un-reviewed case. The frontend
+    ``testExecutionReviewService.get()`` maps null/404 identically.
+    A genuine 404 is reserved for an unknown / inaccessible test case.
+    See ``test_runs_404_during_live_session.py``."""
     auth_as(role=UserRole.QA_ENGINEER)
     project_id = uuid.uuid4()
     test_case_id = uuid.uuid4()
@@ -85,8 +94,8 @@ async def test_get_review_returns_404_for_implicit_pending_review(
     ):
         resp = await client.get(f"/api/v1/test-cases/{test_case_id}/review")
 
-    assert resp.status_code == 404
-    assert "No review recorded" in resp.json()["detail"]
+    assert resp.status_code == 200, resp.text
+    assert resp.json() is None
 
 
 async def test_put_review_creates_transition_row(
