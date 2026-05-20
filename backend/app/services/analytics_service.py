@@ -30,23 +30,37 @@ def _normalise_suite_name(suite_name: str | None) -> str:
     return (suite_name or "").strip().lower()
 
 
-def _suite_filter_sql() -> str:
-    # Suite filtering must match by EITHER the per-event ``tc.suite_name``
-    # OR the run-level ``tr.primary_suite_name``. Live-stream SDKs that
-    # don't resolve a session suite stamp the test class name on every
-    # event, which means a strict ``tc.suite_name = …`` filter misses
-    # every test of those runs — even though the user clearly labelled
-    # the run with the session-level suite. This mirrors the bipolar
-    # match the ``suite_detail`` query already does (see
-    # ``analytics_service.suite_detail`` and the ``feedback_live_stream_suite_name_nulls``
-    # memory entry). Case-insensitive trim so trailing spaces / casing
-    # drift between the SDK fields don't drop matches.
+def _effective_suite_sql() -> str:
+    """SQL expression for a test_case row's *effective* suite name.
+
+    For ``live_stream`` runs we trust the run-level
+    ``tr.primary_suite_name`` (the session label the SDK supplied —
+    e.g. "API Regression Multi-Class"), because those SDKs commonly
+    stamp the test class name on every per-event ``tc.suite_name``.
+    For everything else (file uploads) the per-event ``tc.suite_name``
+    is authoritative — multi-``<testsuite>`` XML inputs need each test
+    bucketed by its own suite. Shared by the filter + grouping helpers
+    so "which suite does this test belong to" is answered identically
+    everywhere.
+    """
     return (
-        "AND ("
-        "LOWER(TRIM(COALESCE(tc.suite_name, ''))) = :suite_name "
-        "OR LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_name"
+        "COALESCE("
+        "CASE WHEN tr.trigger_source = 'live_stream' "
+        "THEN NULLIF(TRIM(tr.primary_suite_name), '') ELSE NULL END, "
+        "NULLIF(TRIM(tc.suite_name), '')"
         ")"
     )
+
+
+def _suite_filter_sql() -> str:
+    # Match by the *effective* suite, not a loose OR. An earlier OR-based
+    # filter (``tc.suite_name = :s OR tr.primary_suite_name = :s``)
+    # over-returned: a multi-suite run whose ``primary_suite_name``
+    # matched leaked EVERY test of that run, so e.g. an Order test
+    # surfaced under "Smoke suite". Equality on the effective suite
+    # attributes each test to exactly one suite — the session label for
+    # live_stream rows, the per-event suite otherwise. (Bug 2026-05-20.)
+    return f"AND LOWER({_effective_suite_sql()}) = :suite_name"
 
 
 def _add_suite_param(params: dict, suite_name: str | None) -> str:
@@ -238,18 +252,11 @@ async def coverage_stats(
     # name on every event still bucket under their session-level
     # ``primary_suite_name`` (e.g. "API Regression Multi-Class")
     # instead of splitting into per-class buckets that the user
-    # never asked for. File uploads keep their per-event grouping
-    # because ``primary_suite_name`` for those is the dominant
-    # per-event suite anyway, so the COALESCE picks the same value.
-    effective_suite = (
-        "COALESCE("
-        "CASE WHEN tr.trigger_source = 'live_stream' "
-        "THEN NULLIF(TRIM(tr.primary_suite_name), '') "
-        "ELSE NULL END, "
-        "NULLIF(TRIM(tc.suite_name), ''), "
-        "'Unknown Suite'"
-        ")"
-    )
+    # never asked for. Shares ``_effective_suite_sql`` with the filter
+    # helper so grouping and filtering can never drift; the extra
+    # 'Unknown Suite' fallback keeps NULL-suite rows in one labelled
+    # bucket rather than dropping them.
+    effective_suite = f"COALESCE({_effective_suite_sql()}, 'Unknown Suite')"
     suite_query = text(
         f"""
         SELECT

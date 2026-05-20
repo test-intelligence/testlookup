@@ -1,0 +1,82 @@
+# ============================================================================
+# OpenShift Routes — HTTPS (edge TLS termination + forced HTTP->HTTPS redirect)
+# ============================================================================
+# ROUTE_HOST_*_PLACEHOLDER tokens are substituted by
+# openshiftsetup/deploy-openshift-artifactory.sh from APPS_DOMAIN (or explicit
+# ROUTE_HOST_* config).
+#
+# termination: edge        -> the OpenShift router terminates TLS; pods receive
+#                             plain HTTP on their Service ports. No TLS material
+#                             needs to live in the pods.
+# insecureEdgeTerminationPolicy: Redirect -> any plain http:// request is 301'd
+#                             to https://, so the app is HTTPS-only end to end
+#                             for external clients.
+#
+# By default the router serves its cluster wildcard cert for *.<apps domain>
+# (standard on OpenShift). To pin a custom cert, set ROUTE_TLS_CERT/KEY[/CA]
+# in the config — the deploy script injects them into each Route's tls block
+# after apply (oc patch). Nothing here needs editing for that path.
+# ============================================================================
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/component: frontend
+spec:
+  host: ROUTE_HOST_FRONTEND_PLACEHOLDER
+  to:
+    kind: Service
+    name: testlookup-frontend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/component: backend
+spec:
+  host: ROUTE_HOST_API_PLACEHOLDER
+  to:
+    kind: Service
+    name: testlookup-backend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-mcp
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/component: mcp
+spec:
+  host: ROUTE_HOST_MCP_PLACEHOLDER
+  path: /sse
+  to:
+    kind: Service
+    name: testlookup-mcp
+    weight: 100
+  port:
+    targetPort: sse
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

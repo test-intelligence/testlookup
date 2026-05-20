@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset demo benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset demo benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 # Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
 # breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
@@ -225,6 +225,15 @@ k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS,
 
 k8s-deploy-homelab-update: ## Rebuild images and redeploy to homelab (skip registry + models)
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh --skip-registry --skip-models $(ARGS)
+
+k8s-deploy-openshift-artifactory: ## Air-gapped OpenShift deploy over HTTPS, all images from one Artifactory (config: openshiftsetup/artifactory.env; flags via ARGS)
+	$(BASH_CMD) openshiftsetup/deploy-openshift-artifactory.sh $(ARGS)
+
+k8s-deploy-openshift-artifactory-update: ## Rebuild app images + redeploy to OpenShift, reuse already-mirrored infra images
+	$(BASH_CMD) openshiftsetup/deploy-openshift-artifactory.sh --skip-mirror $(ARGS)
+
+k8s-mirror-images-openshift: ## Pre-seed the configured Artifactory with all third-party infra images (run on an internet-connected host)
+	$(BASH_CMD) openshiftsetup/mirror-images.sh $(ARGS)
 
 k8s-stop-homelab: ## Graceful pause: drain testlookup workloads + stop K3s on every node (PVCs preserved)
 	$(BASH_CMD) homelabsetup/stop-homelab.sh $(ARGS)
