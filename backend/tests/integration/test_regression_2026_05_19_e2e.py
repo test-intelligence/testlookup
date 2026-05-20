@@ -150,7 +150,12 @@ async def test_recover_live_falls_back_to_synthesis_when_buffer_and_archive_empt
     from tests.integration.conftest import fake_execute_result
     from app.models.postgres import LaunchStatus
 
-    auth_as(role=UserRole.QA_ENGINEER)
+    # ADMIN bypasses ``require_run_access`` (the recover endpoint's guard)
+    # so this test exercises the synthesis-fallback logic, not authz.
+    # A non-admin would 403 here because the guard does its own run→project
+    # + ProjectMember lookups against the random fake run before the body
+    # ever runs (and the fake_db is only seeded for the body's queries).
+    auth_as(role=UserRole.ADMIN)
     run_id = uuid.uuid4()
 
     fake_run = SimpleNamespace(
@@ -220,7 +225,12 @@ async def test_recover_live_still_422s_when_nothing_to_recover(
     from tests.integration.conftest import fake_execute_result
     from app.models.postgres import LaunchStatus
 
-    auth_as(role=UserRole.QA_ENGINEER)
+    # ADMIN bypasses ``require_run_access`` (the recover endpoint's guard)
+    # so this test exercises the synthesis-fallback logic, not authz.
+    # A non-admin would 403 here because the guard does its own run→project
+    # + ProjectMember lookups against the random fake run before the body
+    # ever runs (and the fake_db is only seeded for the body's queries).
+    auth_as(role=UserRole.ADMIN)
     run_id = uuid.uuid4()
 
     fake_run = SimpleNamespace(

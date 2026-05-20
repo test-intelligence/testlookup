@@ -208,7 +208,12 @@ def test_low_confidence_retry_skips_deterministic_and_cached_results():
     assert 'result.get("cache_hit")' in retry_gate
     assert 'result.get("fallback_tier")' in retry_gate
     assert 'result.get("schema_validated") is False' in retry_gate
-    assert 'return analysis_mode in {"llm", ""}' in retry_gate
+    # ``auto`` (the default mode) is retryable here too: by the time the
+    # final return is reached, every deterministic / cached / fallback
+    # path has already returned False, so an ``auto`` result is an LLM
+    # answer worth retrying. Excluding it disabled low-confidence retry
+    # for the default configuration.
+    assert 'return analysis_mode in {"llm", "auto", ""}' in retry_gate
 
 
 def test_analysis_agent_uses_adaptive_concurrency_policy():
