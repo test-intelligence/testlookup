@@ -8,11 +8,13 @@ FROM python:3.11-slim AS base
 WORKDIR /app
 
 # Install system dependencies
+# procps provides `pgrep`, used by the Celery beat liveness probe (k8s/base/worker-deployments.yaml)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gcc \
     g++ \
     libpq-dev \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -55,9 +57,11 @@ FROM python:3.11-slim AS production
 
 WORKDIR /app
 
+# procps provides `pgrep`, used by the Celery beat liveness probe (k8s/base/worker-deployments.yaml)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq-dev \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r testlookup && useradd -r -g testlookup testlookup

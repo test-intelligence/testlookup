@@ -400,6 +400,10 @@ spec:
             - app.worker.celery_app
             - beat
             - --loglevel=info
+            # Write schedule/pid to a writable path: the pod runs as UID 1000 but
+            # /app is owned by the image's build user, so the default cwd write fails.
+            - --schedule=/tmp/celerybeat-schedule
+            - --pidfile=/tmp/celerybeat.pid
           envFrom:
             - configMapRef:
                 name: testlookup-config

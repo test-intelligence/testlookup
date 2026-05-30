@@ -7,15 +7,12 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # TLS is opt-in per environment via overlays (see k8s/overlays/prod/kustomization.yaml),
+    # which add the ssl-redirect + cert-manager annotations and the spec.tls block.
+    # Base stays HTTP-friendly so dev/staging/homelab don't require cert-manager + public DNS.
     # OpenShift Route alternative: use Route resource instead of Ingress
 spec:
   ingressClassName: nginx
-  tls:
-    - hosts:
-        - testlookup.yourdomain.com
-      secretName: testlookup-tls-cert
   rules:
     - host: testlookup.yourdomain.com    # Change to your actual hostname
       http:
