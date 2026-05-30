@@ -8,15 +8,18 @@ FROM python:3.11-slim AS base
 WORKDIR /app
 
 # Install system dependencies
+# procps provides `pgrep`, used by the Celery beat liveness probe (k8s/base/worker-deployments.yaml)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gcc \
     g++ \
     libpq-dev \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN groupadd -r testlookup && useradd -r -g testlookup testlookup
+# Create non-root user at UID 1000 to match the k8s securityContext (runAsUser: 1000),
+# so file ownership of /app lines up with the runtime user in-cluster.
+RUN groupadd -r -g 1000 testlookup && useradd -r -u 1000 -g testlookup testlookup
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -79,12 +82,14 @@ FROM python:3.11-slim AS production
 
 WORKDIR /app
 
+# procps provides `pgrep`, used by the Celery beat liveness probe (k8s/base/worker-deployments.yaml)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq-dev \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r testlookup && useradd -r -g testlookup testlookup
+RUN groupadd -r -g 1000 testlookup && useradd -r -u 1000 -g testlookup testlookup
 
 # Copy only production dependencies
 COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages

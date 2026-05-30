@@ -25,6 +25,11 @@ __pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
+
+# Celery beat runtime state (regenerated at startup — not source)
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid
 .mypy_cache/
 .ruff_cache/
 *.egg-info/

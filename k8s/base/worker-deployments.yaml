@@ -83,17 +83,17 @@ spec:
               cpu: 1000m
               memory: 2Gi
           livenessProbe:
+            # Liveness only proves the process is alive — a lightweight pgrep avoids
+            # the broker round-trip of `inspect ping`, which can exceed the timeout
+            # under load and kill a worker mid-task. Readiness keeps the ping check.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - sh
+                - -c
+                - "pgrep -f 'celery.*worker' > /dev/null"
             initialDelaySeconds: 30
             periodSeconds: 60
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             exec:
@@ -206,17 +206,17 @@ spec:
               cpu: 1000m
               memory: 2Gi
           livenessProbe:
+            # Liveness only proves the process is alive — a lightweight pgrep avoids
+            # the broker round-trip of `inspect ping`, which can exceed the timeout
+            # under load and kill a worker mid-task. Readiness keeps the ping check.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - sh
+                - -c
+                - "pgrep -f 'celery.*worker' > /dev/null"
             initialDelaySeconds: 30
             periodSeconds: 60
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             exec:
@@ -315,17 +315,17 @@ spec:
               cpu: 2000m
               memory: 4Gi
           livenessProbe:
+            # Liveness only proves the process is alive — a lightweight pgrep avoids
+            # the broker round-trip of `inspect ping`, which can exceed the timeout
+            # under load and kill a worker mid-task. Readiness keeps the ping check.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - sh
+                - -c
+                - "pgrep -f 'celery.*worker' > /dev/null"
             initialDelaySeconds: 30
             periodSeconds: 60
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             exec:
@@ -424,17 +424,17 @@ spec:
               cpu: 500m
               memory: 1Gi
           livenessProbe:
+            # Liveness only proves the process is alive — a lightweight pgrep avoids
+            # the broker round-trip of `inspect ping`, which can exceed the timeout
+            # under load and kill a worker mid-task. Readiness keeps the ping check.
             exec:
               command:
-                - celery
-                - -A
-                - app.worker.celery_app
-                - inspect
-                - ping
-                - --timeout=10
+                - sh
+                - -c
+                - "pgrep -f 'celery.*worker' > /dev/null"
             initialDelaySeconds: 30
             periodSeconds: 60
-            timeoutSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             exec:
@@ -506,6 +506,10 @@ spec:
             - app.worker.celery_app
             - beat
             - --loglevel=info
+            # Write schedule/pid to a writable path: the pod runs as UID 1000 but
+            # /app is owned by the image's build user, so the default cwd write fails.
+            - --schedule=/tmp/celerybeat-schedule
+            - --pidfile=/tmp/celerybeat.pid
           envFrom:
             - configMapRef:
                 name: testlookup-config
