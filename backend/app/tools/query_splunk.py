@@ -7,6 +7,7 @@ import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.http_client import get_http_client
 from app.services.input_sanitizer import sanitize_query_param, sanitize_service_name
 from app.services.resilience import async_retry
 
@@ -60,14 +61,15 @@ async def query_splunk_logs(service_name: str, timestamp_utc: str) -> str:
     headers = {"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"}
 
     async def _do_splunk_query() -> list:
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:  # noqa: S501
-            create_resp = await client.post(
-                f"{settings.SPLUNK_BASE_URL}/services/search/jobs",
-                headers=headers,
-                data={"search": spl_query, "output_mode": "json", "exec_mode": "oneshot"},
-            )
-            create_resp.raise_for_status()
-            return cast(list[Any], create_resp.json().get("results", []))
+        client = get_http_client()
+        create_resp = await client.post(
+            f"{settings.SPLUNK_BASE_URL}/services/search/jobs",
+            headers=headers,
+            data={"search": spl_query, "output_mode": "json", "exec_mode": "oneshot"},
+            timeout=30.0,
+        )
+        create_resp.raise_for_status()
+        return cast(list[Any], create_resp.json().get("results", []))
 
     try:
         results = await async_retry(

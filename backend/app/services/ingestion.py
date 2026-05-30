@@ -6,7 +6,7 @@ to PostgreSQL (structured metrics) and MongoDB (raw payloads).
 import asyncio
 import hashlib
 import json
-import logging
+import structlog
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, cast
@@ -29,7 +29,7 @@ from app.services.allure_parser import parse_allure_result
 from app.services.testng_parser import parse_testng_xml
 from app.services.ocp_client import get_pod_metadata
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger("services.ingestion")
 
 # Import WebSocket manager lazily to avoid circular imports at module load time
 def _get_ws_manager():
@@ -142,23 +142,46 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             # ── Update run aggregates ──────────────────────
             await _update_run_aggregates(db, run.id)
 
-            # ── Link to release (auto-create if new) ───────
-            if sentinel.release_name and sentinel.release_name.strip():
-                try:
-                    from app.services.release_linker import auto_link_release
-                    _release, _created = await auto_link_release(
-                        db=db,
-                        project_id=run.project_id,
-                        release_name=sentinel.release_name.strip(),
-                        test_run_id=run.id,
+            # ── Sync suite membership traceability (TS-2) ──
+            # NOTE: this module binds a STRUCTLOG logger (line 32).
+            # structlog's BoundLogger.warning is ``(event, **kwargs)`` —
+            # positional %s args raise TypeError mid-call, which would
+            # escape the except and 500 the ingest. Every log inside an
+            # except block on this hot post-ingest path uses kwargs.
+            try:
+                from app.services.suite_sync_service import sync_suite_membership
+                await sync_suite_membership(db, run.project_id, run.id)
+            except Exception as sync_err:
+                logger.warning("suite_membership_sync_failed", error=str(sync_err))
+
+            # ── Auto-tag test cases and run (TG-5/6) ─────
+            try:
+                from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
+                await auto_tag_test_cases(db, run.id)
+                await auto_tag_test_run(db, run.id)
+            except Exception as tag_err:
+                logger.warning("auto_tagging_failed", error=str(tag_err))
+
+            # ── Link to release (explicit name wins; falls back to the
+            # project's default release — migration 0077) ────────────────
+            try:
+                from app.services.release_linker import link_run_or_default
+                result = await link_run_or_default(
+                    db=db,
+                    project_id=run.project_id,
+                    release_name=sentinel.release_name,
+                    test_run_id=run.id,
+                )
+                if result and result[1]:
+                    logger.info(
+                        "auto_release_created",
+                        release_name=result[0].name, run_id=str(run.id),
                     )
-                    if _created:
-                        logger.info(
-                            "Auto-created release '%s' for run %s",
-                            sentinel.release_name, run.id,
-                        )
-                except Exception as rel_err:
-                    logger.warning("Release linking failed for run %s: %s", run.id, rel_err)
+            except Exception as rel_err:
+                logger.warning(
+                    "release_linking_failed",
+                    run_id=str(run.id), error=str(rel_err),
+                )
 
             await db.commit()
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")
@@ -200,7 +223,9 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     project_name=_project_name,
                 )
             except Exception as notify_err:
-                logger.warning("Failed to enqueue run notifications: %s", notify_err)
+                logger.warning(
+                    "run_notifications_enqueue_failed", error=str(notify_err),
+                )
 
             # Trigger the multi-agent analysis pipeline
             try:
@@ -211,9 +236,11 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     build_number=run.build_number,
                     workflow_type="offline",
                 )
-                logger.info("Agent pipeline queued for run %s", run.id)
+                logger.info("agent_pipeline_queued", run_id=str(run.id))
             except Exception as pipeline_err:
-                logger.warning("Failed to queue agent pipeline: %s", pipeline_err)
+                logger.warning(
+                    "agent_pipeline_queue_failed", error=str(pipeline_err),
+                )
 
         except Exception as e:
             await db.rollback()
@@ -265,20 +292,36 @@ async def _upsert_test_run(db, sentinel: SentinelFile, minio_prefix: str) -> Tes
     return cast(TestRun, run)
 
 
-async def _upsert_test_case(db, case_data: dict, run: TestRun) -> TestCase:
-    """Upsert a test case — idempotent on (run_id, test_fingerprint)."""
-    fingerprint = make_test_fingerprint(
-        case_data.get("test_name", ""),
-        case_data.get("class_name"),
-    )
+async def _upsert_test_case(
+    db,
+    case_data: dict,
+    run: TestRun,
+    *,
+    existing: Optional[TestCase] = None,
+    fingerprint: Optional[str] = None,
+) -> TestCase:
+    """Upsert a test case — idempotent on (run_id, test_fingerprint).
 
-    result = await db.execute(
-        select(TestCase).where(
-            TestCase.test_run_id == run.id,
-            TestCase.test_fingerprint == fingerprint,
+    ``existing`` and ``fingerprint`` may be supplied by the caller to
+    skip the per-row SELECT — the prefetch path in ``ingest_test_results``
+    fetches every row's existing TestCase in one query and passes the
+    match (or None) here. The unguarded call site still queries inline,
+    so this stays a drop-in replacement.
+    """
+    if fingerprint is None:
+        fingerprint = make_test_fingerprint(
+            case_data.get("test_name", ""),
+            case_data.get("class_name"),
         )
-    )
-    existing = result.scalar_one_or_none()
+
+    if existing is None:
+        result = await db.execute(
+            select(TestCase).where(
+                TestCase.test_run_id == run.id,
+                TestCase.test_fingerprint == fingerprint,
+            )
+        )
+        existing = result.scalar_one_or_none()
 
     status_map = {
         "passed": TestStatus.PASSED,
@@ -289,10 +332,14 @@ async def _upsert_test_case(db, case_data: dict, run: TestRun) -> TestCase:
     }
     status = status_map.get(case_data.get("status", "unknown").lower(), TestStatus.UNKNOWN)
 
+    # PR-3: Sanitize error_message before persistence
+    from app.services.privacy_service import sanitize_for_persistence as _sanitize  # noqa: PLC0415
+    _safe_error = _sanitize(case_data.get("error_message") or "")
+
     if existing:
         existing.status = status
         existing.duration_ms = case_data.get("duration_ms")
-        existing.error_message = case_data.get("error_message")
+        existing.error_message = _safe_error
         tc = existing
     else:
         tc = TestCase(
@@ -311,7 +358,7 @@ async def _upsert_test_case(db, case_data: dict, run: TestRun) -> TestCase:
             epic=case_data.get("epic"),
             owner=case_data.get("owner"),
             tags=case_data.get("tags", []),
-            error_message=case_data.get("error_message"),
+            error_message=_safe_error,
             minio_s3_prefix=case_data.get("minio_s3_prefix"),
             has_attachments=bool(case_data.get("attachments")),
         )
@@ -370,9 +417,26 @@ async def _store_raw_allure_batch(docs: list[tuple[dict, dict]]) -> None:
     try:
         await db[Collections.RAW_ALLURE_JSON].bulk_write(operations, ordered=False)
     except Exception as e:
-        logger.warning("MongoDB bulk_write failed, falling back to individual writes: %s", e)
+        logger.warning("mongo_bulk_write_fallback", error=str(e))
         for case_data, raw_json in docs:
             await _store_raw_allure(case_data, raw_json)
+
+
+def compute_suite_attribution(
+    suite_counts: list[tuple[str | None, int]],
+) -> tuple[str | None, list[str] | None]:
+    """Given (suite_name, count) rows, return (primary_suite, sorted_distinct_suites).
+
+    - NULL/empty suite names are dropped.
+    - primary = highest count; alphabetical tiebreak.
+    - Returns (None, None) when nothing usable remains.
+    """
+    rows = [(name, int(n)) for name, n in suite_counts if name]
+    if not rows:
+        return None, None
+    sorted_names = sorted({name for name, _ in rows})
+    primary = sorted(rows, key=lambda x: (-x[1], x[0]))[0][0]
+    return primary, sorted_names
 
 
 async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
@@ -392,17 +456,57 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     passed = counts.passed or 0
     pass_rate = round((passed / total * 100), 2) if total > 0 else 0.0
 
+    # Suite attribution — distinct suite_name values + dominant suite.
+    suite_q = await db.execute(
+        select(TestCase.suite_name, func.count(TestCase.id).label("n"))
+        .where(
+            TestCase.test_run_id == run_id,
+            TestCase.suite_name.is_not(None),
+            TestCase.suite_name != "",
+        )
+        .group_by(TestCase.suite_name)
+    )
+    primary_suite, suite_names_sorted = compute_suite_attribution(
+        [(row.suite_name, int(row.n)) for row in suite_q.all()],
+    )
+
+    # Don't clobber a primary_suite_name supplied at session/upload time
+    # by recomputing it from per-event ``suite_name`` values. The live-
+    # stream path stamps it from the SDK-supplied session ``suite_name``
+    # (authoritative — that's the user's chosen run label, e.g. the
+    # testng.xml ``<suite name="…">`` value). Earlier this function
+    # overwrote it with the dominant per-event suite, which surfaced as
+    # the "API Regression Multi-Class" label being replaced by a test
+    # class name like ``com.example.OrderApiRegressionTests`` after
+    # finalize_run ran. File uploads still get a value because the
+    # initial create leaves ``primary_suite_name`` NULL and the IS NULL
+    # branch fills it on first pass. (Bug 2026-05-19.)
+    existing_psn_q = await db.execute(
+        select(TestRun.primary_suite_name).where(TestRun.id == run_id)
+    )
+    existing_psn = (existing_psn_q.scalar_one_or_none() or "").strip() or None
+
+    values_to_update: dict = {
+        "total_tests":   total,
+        "passed_tests":  passed,
+        "failed_tests":  counts.failed or 0,
+        "skipped_tests": counts.skipped or 0,
+        "broken_tests":  counts.broken or 0,
+        "pass_rate":     pass_rate,
+        "status":        LaunchStatus.PASSED if pass_rate == 100 else LaunchStatus.FAILED,
+        "end_time":      datetime.now(timezone.utc),
+        # ``suite_names`` is the full set actually present in the
+        # events — always refresh it (its purpose is to mirror the
+        # current per-event reality, not to encode a user-chosen
+        # label). ``primary_suite_name`` is what users see in the UI;
+        # see the IS NULL guard above.
+        "suite_names":   suite_names_sorted,
+    }
+    if existing_psn is None:
+        values_to_update["primary_suite_name"] = primary_suite
+
     await db.execute(
         update(TestRun)
         .where(TestRun.id == run_id)
-        .values(
-            total_tests=total,
-            passed_tests=passed,
-            failed_tests=counts.failed or 0,
-            skipped_tests=counts.skipped or 0,
-            broken_tests=counts.broken or 0,
-            pass_rate=pass_rate,
-            status=LaunchStatus.PASSED if pass_rate == 100 else LaunchStatus.FAILED,
-            end_time=datetime.now(timezone.utc),
-        )
+        .values(**values_to_update)
     )

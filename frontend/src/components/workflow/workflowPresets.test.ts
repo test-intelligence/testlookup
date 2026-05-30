@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import {
   buildAIEvalWorkflow,
   buildAuditWorkflow,
@@ -9,14 +10,13 @@ import {
   buildIntegrationHealthWorkflow,
   buildOnboardingWorkflow,
   buildReleaseGateWorkflow,
-  buildReleaseWorkflow,
   buildTrendsWorkflow,
   buildValueMetricsWorkflow,
 } from './workflowPresets'
 
 describe('workflowPresets', () => {
   it('builds a release gate workflow with explicit policy and decision stages', () => {
-    const workflow = buildReleaseGateWorkflow({
+    const decision: ReleaseCouncilDecision = {
       run_id: 'run-1',
       recommendation: 'CONDITIONAL_GO',
       risk_score: 42,
@@ -41,7 +41,8 @@ describe('workflowPresets', () => {
       policy_version: 3,
       policy_level: 'project',
       rule_evaluations: [{ rule_id: 'r1', rule_name: 'Block on no-go', rule_type: 'threshold', passed: true, action: 'ALLOW', message: 'Within threshold', actual_value: 20, threshold_value: 30 }],
-    } as any)
+    }
+    const workflow = buildReleaseGateWorkflow(decision)
 
     expect(workflow.stages.map(stage => stage.stage_name)).toEqual([
       'policy_evaluation',
@@ -73,7 +74,7 @@ describe('workflowPresets', () => {
 
   it('builds a digest workflow and uses preview data when available', () => {
     const workflow = buildDigestWorkflow(
-      [{ id: 'sub-1', user_id: 'u1', project_id: 'p1', saved_view_id: null, name: 'Weekly', schedule: 'WEEKLY', channel: 'email', is_active: true, is_paused: false, last_delivered_at: null, next_delivery_at: null, delivery_count: 2, created_at: '2026-04-03T15:00:00Z', updated_at: null }],
+      [{ id: 'sub-1', user_id: 'u1', project_id: 'p1', saved_view_id: null, name: 'Weekly', schedule: 'WEEKLY', channel: 'email', is_active: true, is_paused: false, scope_type: 'project', scope_value: null, trigger_filter: 'all', last_delivered_at: null, next_delivery_at: null, delivery_count: 2, created_at: '2026-04-03T15:00:00Z', updated_at: null }],
       [{ id: 'view-1', name: 'QA view', is_default: true, is_shared: true }],
       {
         project_name: 'Project A',

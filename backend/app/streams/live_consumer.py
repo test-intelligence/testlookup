@@ -129,6 +129,13 @@ class LiveEventStreamConsumer:
             await self._on_test_result(run_id, payload)
         elif event_type == "run_complete":
             await self._on_run_complete(run_id, payload)
+        elif event_type == "live_heartbeat":
+            # No-op — the synchronous ingest handler already refreshed the
+            # Redis ``last_event_at`` field before the message hit this
+            # stream, which is the only thing the reaper cares about. We
+            # also intentionally do NOT broadcast heartbeats to the
+            # WebSocket so the page's event feed stays signal-only.
+            return
         else:
             logger.debug("Unknown live event type=%s run=%s — ignoring", event_type, run_id)
 
@@ -152,15 +159,13 @@ class LiveEventStreamConsumer:
     async def _on_test_result(self, run_id: str, payload: dict) -> None:
         status     = payload.get("status", "UNKNOWN").upper()
         test_name  = payload.get("test_name", "")
-        total      = int(payload.get("total_tests", 0))
 
-        state = await RedisLiveRunState.record_test_event(run_id, status, test_name, total)
+        # Counter increments (HINCRBY) and event buffering are done synchronously
+        # in stream_service.ingest_event_batch() to keep the live state immediately
+        # accurate.  Here we only read the already-updated state and broadcast it.
+        state = await RedisLiveRunState.get(run_id)
         if state is None:
             return  # Unknown run — ignore
-
-        # Buffer this test event in Redis List for later DB persistence.
-        # The persist_live_session Celery task drains this list when the session completes.
-        await self._buffer_test_event(run_id, payload)
 
         # Broadcast incremental update
         await _broadcast(state["project_id"], {
@@ -204,21 +209,10 @@ class LiveEventStreamConsumer:
             **state,
         })
 
-        # Trigger offline analysis pipeline
-        try:
-            from app.worker.tasks import run_agent_pipeline
-            run_agent_pipeline.apply_async(
-                kwargs={
-                    "test_run_id":   run_id,
-                    "project_id":    state["project_id"],
-                    "build_number":  state["build_number"],
-                    "workflow_type": "live",
-                },
-                queue="ai_analysis",
-                priority=7,
-            )
-        except Exception as exc:
-            logger.error("Failed to trigger offline pipeline after live run: %s", exc)
+        # NOTE: The full AI analysis pipeline is triggered by close_session()
+        # in stream_service.py (workflow_type="offline", countdown=45s) which
+        # waits for persist_live_session to finish creating TestCase rows.
+        # No duplicate trigger needed here.
 
     # ── Stream operations ─────────────────────────────────────────────────────
 
@@ -388,7 +382,20 @@ async def _finalise_run_in_db(run_id: str, state: dict) -> None:
             run = result.scalar_one_or_none()
             if run and run.status == LaunchStatus.IN_PROGRESS:
                 from datetime import datetime, timezone
-                run.status = LaunchStatus.FAILED if state.get("failed", 0) > 0 else LaunchStatus.PASSED
+
+                passed = int(state.get("passed", 0))
+                failed = int(state.get("failed", 0))
+                skipped = int(state.get("skipped", 0))
+                broken = int(state.get("broken", 0))
+                total = int(state.get("total", 0)) or (passed + failed + skipped + broken)
+
+                run.status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
+                run.total_tests = total
+                run.passed_tests = passed
+                run.failed_tests = failed
+                run.skipped_tests = skipped
+                run.broken_tests = broken
+                run.pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
                 run.end_time = datetime.now(timezone.utc)
                 await db.commit()
     except Exception as exc:

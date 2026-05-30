@@ -14,6 +14,7 @@ import {
   listCategories,
 } from '../../services/auditDashboardService';
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
+import { snapToAllowed, useTimeWindowStore } from '../../store/timeWindowStore';
 
 type Tab = 'events' | 'observability';
 
@@ -37,7 +38,14 @@ export default function AuditDashboardPage() {
   const [total, setTotal] = useState(0);
   const [categories, setCategories] = useState<AuditCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('');
-  const [days, setDays] = useState(30);
+  // Global shared time window — Audit only offers 7/30/90 in its
+  // dropdown but participates in the shared preference so the user
+  // doesn't keep flipping the window every time they navigate.
+  const AUDIT_OPTIONS = [7, 30, 90] as const;
+  const storedDays = useTimeWindowStore(s => s.days);
+  const setStoredDays = useTimeWindowStore(s => s.setDays);
+  const days = snapToAllowed(storedDays, AUDIT_OPTIONS);
+  const setDays = setStoredDays;
   const [loading, setLoading] = useState(false);
 
   // Observability tab

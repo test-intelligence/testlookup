@@ -9,7 +9,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import (
+    get_current_active_user,
+    require_project_access,
+    require_role,
+    require_run_access,
+)
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import Project, TestRun, User, UserRole
 from app.models.schemas import FlakyCoachResponse, TestHealthResponse
@@ -27,7 +32,7 @@ router = APIRouter(prefix="/api/v1", tags=["Test Health"])
 @router.get("/runs/{run_id}/test-health", response_model=TestHealthResponse)
 async def get_test_health(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
 ):
     """
     Get test health findings for a specific run.
@@ -51,6 +56,7 @@ async def get_project_flaky_coach(
     days: int = Query(default=30, ge=1, le=365),
     limit: int = Query(default=50, ge=1, le=200),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
     """
     Get project-level flaky test leaderboard with quarantine recommendations.
@@ -72,6 +78,7 @@ async def refresh_project_flaky_coach(
     project_id: uuid.UUID,
     days: int = Query(default=30, ge=1, le=365),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_project_access()),
 ):
     """
     Trigger a refresh of the flaky coach data for a project.
@@ -85,5 +92,6 @@ async def refresh_project_flaky_coach(
                 detail="Project not found.",
             )
         count = await refresh_flaky_coach(project_id, db, days=days)
+        await db.commit()
 
     return {"status": "completed", "flaky_tests_found": count}

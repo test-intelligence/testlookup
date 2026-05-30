@@ -13,7 +13,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def get_llm(
+async def get_llm(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     temperature: Optional[float] = None,
@@ -32,16 +32,28 @@ def get_llm(
     Returns:
         A LangChain BaseChatModel compatible with ReAct agents
     """
-    _provider = (provider or settings.LLM_PROVIDER).lower()
-    _temperature = temperature if temperature is not None else settings.LLM_TEMPERATURE
+    # LP-1: Use runtime config resolver instead of static env-only settings
+    _effective: dict = {}
+    if provider is None:
+        from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+        try:
+            _effective = await get_effective_ai_config()
+        except Exception:
+            pass  # Fall through to env defaults
 
-    # Resolve model name: explicit override > fine-tuned registry > config default
+    _provider = (provider or _effective.get("provider") or settings.LLM_PROVIDER).lower()
+    _temperature = temperature if temperature is not None else _effective.get("temperature", settings.LLM_TEMPERATURE)
+    _max_tokens = _effective.get("max_tokens", settings.LLM_MAX_TOKENS)
+    _base_url = _effective.get("base_url")
+    _offline = _effective.get("offline_mode", settings.AI_OFFLINE_MODE)
+
+    # Resolve model name: explicit override > fine-tuned registry > effective config > env default
     if model:
         _model = model
     elif track:
-        _model = _get_active_model_sync(track) or settings.LLM_MODEL
+        _model = await _async_get_active_model(track) or _effective.get("model", settings.LLM_MODEL)
     else:
-        _model = settings.LLM_MODEL
+        _model = _effective.get("model", settings.LLM_MODEL)
 
     if track:
         logger.info("Initialising LLM: provider=%s model=%s track=%s", _provider, _model, track)
@@ -52,65 +64,82 @@ def get_llm(
         from langchain_ollama import ChatOllama
         return ChatOllama(
             model=_model,
-            base_url=settings.OLLAMA_BASE_URL,
+            base_url=_base_url or settings.OLLAMA_BASE_URL,
             temperature=_temperature,
-            num_predict=settings.LLM_MAX_TOKENS,
+            num_predict=_max_tokens,
         )
 
     elif _provider == "lmstudio":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(  # type: ignore
             model=_model,
-            base_url=settings.LMSTUDIO_BASE_URL,
+            base_url=_base_url or settings.LMSTUDIO_BASE_URL,
             api_key="lm-studio",  # type: ignore
             temperature=_temperature,
-            max_tokens=settings.LLM_MAX_TOKENS,
+            max_tokens=_max_tokens,
         )
 
     elif _provider == "localai":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(  # type: ignore
             model=_model,
-            base_url=settings.LOCALAI_BASE_URL,
+            base_url=_base_url or settings.LOCALAI_BASE_URL,
             api_key="localai",  # type: ignore
             temperature=_temperature,
-            max_tokens=settings.LLM_MAX_TOKENS,
+            max_tokens=_max_tokens,
         )
 
     elif _provider == "vllm":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(  # type: ignore
             model=_model,
-            base_url=settings.VLLM_BASE_URL,
+            base_url=_base_url or settings.VLLM_BASE_URL,
             api_key="vllm",  # type: ignore
             temperature=_temperature,
-            max_tokens=settings.LLM_MAX_TOKENS,
+            max_tokens=_max_tokens,
         )
 
     elif _provider == "openai":
-        if settings.AI_OFFLINE_MODE:
+        if _offline:
             raise ValueError("AI_OFFLINE_MODE=true but LLM_PROVIDER=openai — refusing to call external API")
+        _api_key = _effective.get("openai_api_key") or settings.OPENAI_API_KEY
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(  # type: ignore
             model=_model,
-            api_key=settings.OPENAI_API_KEY,  # type: ignore
+            api_key=_api_key,  # type: ignore
+            **({"base_url": _base_url} if _base_url else {}),
             temperature=_temperature,
-            max_tokens=settings.LLM_MAX_TOKENS,
+            max_tokens=_max_tokens,
         )
 
     elif _provider == "gemini":
-        if settings.AI_OFFLINE_MODE:
+        if _offline:
             raise ValueError("AI_OFFLINE_MODE=true but LLM_PROVIDER=gemini — refusing to call external API")
+        _api_key = _effective.get("google_api_key") or settings.GOOGLE_API_KEY
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(  # type: ignore
             model=_model,
-            google_api_key=settings.GOOGLE_API_KEY,
+            google_api_key=_api_key,
             temperature=_temperature,
+        )
+
+    elif _provider == "anthropic":
+        if _offline:
+            raise ValueError("AI_OFFLINE_MODE=true but LLM_PROVIDER=anthropic — refusing to call external API")
+        _api_key = _effective.get("anthropic_api_key") or getattr(settings, "ANTHROPIC_API_KEY", None)
+        if not _api_key:
+            raise ValueError("Anthropic API key not configured. Set it in Settings > AI Configuration.")
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(  # type: ignore
+            model=_model,
+            api_key=_api_key,
+            temperature=_temperature,
+            max_tokens=_max_tokens,
         )
 
     else:
         raise ValueError(f"Unknown LLM provider: '{_provider}'. "
-                         f"Supported: ollama, lmstudio, localai, vllm, openai, gemini")
+                         f"Supported: ollama, lmstudio, localai, vllm, openai, gemini, anthropic")
 
 
 def get_embedding_model():
@@ -137,28 +166,13 @@ def get_embedding_model():
         return OllamaEmbeddings(model="nomic-embed-text", base_url=settings.OLLAMA_BASE_URL)
 
 
-def _get_active_model_sync(track: str) -> Optional[str]:
-    """
-    Synchronous wrapper around ModelRegistry.get_active_model() for use in get_llm().
-    Returns None if no fine-tuned model is active for the given track.
+async def _async_get_active_model(track: str) -> Optional[str]:
+    """Check ModelRegistry for a promoted fine-tuned model.
+
+    Returns None (best-effort) if the registry is unreachable.
     """
     try:
-        import asyncio
-        # Use the sync Redis client path if an event loop is already running
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Cannot await inside sync function — use create_task or return None
-            # (caller is synchronous; model registry is best-effort)
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, _async_get_model(track))
-                return future.result(timeout=1.0)
-        else:
-            return loop.run_until_complete(_async_get_model(track))
+        from app.services.model_registry import ModelRegistry
+        return await ModelRegistry.get_active_model(track)
     except Exception:
         return None
-
-
-async def _async_get_model(track: str) -> Optional[str]:
-    from app.services.model_registry import ModelRegistry
-    return await ModelRegistry.get_active_model(track)

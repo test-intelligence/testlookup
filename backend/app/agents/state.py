@@ -16,6 +16,47 @@ def _concat_lists(a: list, b: list) -> list:
     return a + b
 
 
+def _dedup_concat_lists(a: list, b: list) -> list:
+    """Reducer: concatenate lists, then deduplicate preserving order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in a + b:
+        key = str(item)
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+
+def _merge_error_dicts(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Reducer: merge stage_errors dicts (stage_name -> list of error strings)."""
+    merged = dict(a)
+    for key, errors in b.items():
+        merged.setdefault(key, [])
+        merged[key].extend(errors)
+    return merged
+
+
+def _last_str(a: str, b: str) -> str:
+    """Reducer: last writer wins (for scalar fields updated by parallel nodes)."""
+    return b
+
+
+def _last_bool(a: bool, b: bool) -> bool:
+    """Reducer: last writer wins for booleans (True wins over False via OR)."""
+    return a or b
+
+
+def _last_int(a: int, b: int) -> int:
+    """Reducer: sum integers from parallel nodes."""
+    return a + b
+
+
+def _last_optional_str(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """Reducer: last non-None writer wins."""
+    return b if b is not None else a
+
+
 class WorkflowState(TypedDict):
     # ── Required Inputs ───────────────────────────────────────────
     pipeline_run_id: str        # AgentPipelineRun.id (UUID string)
@@ -26,6 +67,7 @@ class WorkflowState(TypedDict):
 
     # ── Stage 1: Ingestion Agent ──────────────────────────────────
     test_run_data: Optional[dict]        # Serialized TestRun summary
+    branch: Optional[str]                # Current run branch, duplicated for branch-aware agents
     failed_test_ids: list[str]           # IDs of FAILED / BROKEN tests
     total_tests: int
     pass_rate: float
@@ -45,6 +87,7 @@ class WorkflowState(TypedDict):
     executive_summary: Optional[str]    # Layer 1: 3-sentence executive summary
     summary_markdown: Optional[str]     # Full markdown report (built from all 4 layers)
     structured_summary: Optional[dict]  # All 4 layers: layer1..layer4 keys
+    summary_provenance: Optional[dict]  # Hashes, prompt versions, and model config for summary replay
 
     # ── Stage 5: Defect Triage Agent ─────────────────────────────
     triage_results: list[dict]          # [{test_case_id, ticket_key, action: created|updated|skipped}]
@@ -67,15 +110,27 @@ class WorkflowState(TypedDict):
 
     # ── Error / Progress Tracking ─────────────────────────────────
     errors: Annotated[list[str], _concat_lists]
-    completed_stages: Annotated[list[str], _concat_lists]
-    current_stage: str
+    completed_stages: Annotated[list[str], _dedup_concat_lists]
+    current_stage: Annotated[str, _last_str]
+    # Per-stage structured errors for downstream agents to inspect
+    stage_errors: Annotated[dict[str, list[str]], _merge_error_dicts]
+    # Quality indicator set by analysis agent when >30% of analyses fail
+    stage_quality: Annotated[Optional[str], _last_optional_str]  # "normal" | "degraded"
+    low_confidence_count: Annotated[int, _last_int]              # count of analyses below confidence threshold
 
     # ── Provenance / Execution Tracking ──────────────────────────
     # Annotated with _concat_lists so parallel nodes (analysis + cluster) can both append
     skipped_stages: Annotated[list[str], _concat_lists]  # stages bypassed and why
-    execution_path: str            # ExecutionPath enum value for the overall run
-    fallback_used: bool            # any stage used deterministic fallback instead of LLM
+    execution_path: Annotated[str, _last_str]    # ExecutionPath enum value for the overall run
+    fallback_used: Annotated[bool, _last_bool]   # any stage used deterministic fallback instead of LLM
     tools_used: Annotated[list[str], _concat_lists]      # LangChain tools invoked (parallel-safe)
+    analysis_mode_requested: str  # configured value at pipeline start (env/UI)
+    analysis_mode_resolved: str   # effective engine frozen for this pipeline
+    analysis_mode_resolution: dict  # probe/config snapshot for audit replay
+    _workflow_route_decisions: list[dict]  # sync router decisions persisted in pipeline metadata
+    workflow_plan: dict  # deterministic planner output for expected stage path
+    workflow_verification: dict  # verifier checks comparing final state to plan
+    agent_contracts: Annotated[dict[str, dict], _merge_dicts]  # agent_name -> versioned output contract metadata
     schema_version: int            # pipeline state schema version (increment on breaking changes)
 
     # ── Phase 6: Per-Stage Observability ─────────────────────────

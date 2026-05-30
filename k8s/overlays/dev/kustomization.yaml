@@ -78,6 +78,15 @@ patches:
     target:
       kind: HorizontalPodAutoscaler
 
+  # ── Dev uses mutable tags (dev-latest); force fresh pulls ───────────────
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+    target:
+      kind: Deployment
+      labelSelector: "app.kubernetes.io/component in (api,worker,frontend)"
+
   # ── Environment configuration ─────────────────────────────────────────────
   - patch: |-
       apiVersion: v1

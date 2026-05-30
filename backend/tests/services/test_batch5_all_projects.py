@@ -43,6 +43,12 @@ def test_list_project_runs_no_filter_builds_correct_query():
             id=None,
             status=None,
             created_at=None,
+            # New module-level expression in runs_service evaluates
+            # ``func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "")))``
+            # at IMPORT time for the run-sequence helper. Must exist on
+            # the stub or the module-level expression raises AttributeError
+            # before the test body runs.
+            primary_suite_name=None,
         ),
         Project=SimpleNamespace(
             __table__=SimpleNamespace(columns=[]),

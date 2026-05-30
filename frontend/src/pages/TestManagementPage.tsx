@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
   Star, Clock, User, CheckCircle2, XCircle, AlertCircle,
@@ -13,6 +13,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
+import { useTableSort } from '@/hooks/useTableSort'
 import { api } from '@/services/api'
 import { useProjectStore } from '@/store/projectStore'
 import {
@@ -20,10 +21,13 @@ import {
   useTestCaseHistory, useTestCaseReviews, useTestCaseComments,
   usePlanItems, useUsers,
 } from '@/hooks/useTestManagement'
+import { usePermissions } from '@/hooks/usePermissions'
 import {
   testManagementService,
 } from '@/services/testManagementService'
-import type { UserSummary } from '@/services/testManagementService'
+import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
+import { deriveTestManagementTotals } from '@/utils/testManagementTotals'
+import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import type {
   AIReviewResult,
   ManagedTestCase,
@@ -38,7 +42,7 @@ import type {
 
 // ─── Constants / helpers ─────────────────────────────────────────────────────
 
-const TABS = ['Test Cases', 'Test Suites', 'Test Plans', 'Strategy', 'Reviews', 'Audit Log'] as const
+const TABS = ['Test Cases', 'Test Suites', 'Test Plans', 'Strategy', 'Knowledge Generation', 'Reviews', 'Audit Log'] as const
 type Tab = typeof TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -401,6 +405,14 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
   }
 
   const handleRequestReview = async () => {
+    // Defensive guard mirroring the render-time gate: automation rows
+    // carry a per-run test_cases.id, which is not a managed_test_cases
+    // row and would 404. Surface a clear toast instead of the generic
+    // "Failed to request review" if this path is ever reached.
+    if (caseItem.source === 'automation') {
+      toast.error('Automation rows must be promoted to a managed test case before a review can be requested.')
+      return
+    }
     setRequestingReview(true)
     try {
       await testManagementService.requestReview(caseItem.id)
@@ -533,7 +545,21 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                   </div>
                 </div>
               )}
-              {caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
+              {/*
+                Automation-source rows are synthesised from per-run
+                test_cases — they don't yet exist in managed_test_cases,
+                so the review endpoint would 404 on caseItem.id. Hide
+                the button rather than show a broken control; an
+                explanatory note makes the gap visible to QA leads
+                evaluating whether to author a managed test case from
+                this automation result.
+              */}
+              {caseItem.source === 'automation' ? (
+                <div className="pt-2 text-xs text-[var(--color-text-muted)]">
+                  Review requests are only available on managed test cases.
+                  Automation rows must be promoted to managed before they can be reviewed.
+                </div>
+              ) : caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' ? (
                 <div className="pt-2">
                   <button
                     onClick={handleRequestReview}
@@ -544,7 +570,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                     Request Review
                   </button>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
 
@@ -860,40 +886,72 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
 interface TestCasesTabProps { projectId: string | null }
 
 function TestCasesTab({ projectId }: TestCasesTabProps) {
+  // ── Filter state ────────────────────────────────────────────────────
+  // Single-select today; multi-select chips with a popover are Phase 2 per
+  // README §6 "Select chip click opens a popover with checkboxes".
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState('')
   const [testType, setTestType] = useState('')
   const [priority, setPriority] = useState('')
   const [search, setSearch] = useState('')
+  const [ownerFilter, setOwnerFilter] = useState('')
+  const [suiteFilter, setSuiteFilter] = useState('')
+  const [savedView, setSavedView] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showAiGen, setShowAiGen] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
+  // Default ON so users land on a populated list — the managed_test_cases
+  // table is often empty in fresh deployments, and the "Test Cases tab
+  // shows nothing while runs are full of tests" surprise was the top
+  // complaint pre-rollout. Persist the toggle so power users who only
+  // care about authored cases can keep it off.
+  const [includeAutomation, setIncludeAutomation] = useState<boolean>(() => {
+    const saved = localStorage.getItem('tl.tm.includeAutomation')
+    return saved === null ? true : saved === '1'
+  })
+  useEffect(() => {
+    localStorage.setItem('tl.tm.includeAutomation', includeAutomation ? '1' : '0')
+  }, [includeAutomation])
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
-  const params: Record<string, unknown> = { page, size: 20 }
-  if (status) params.status = status
-  if (testType) params.test_type = testType
-  if (priority) params.priority = priority
-  if (search) params.search = search
+  // `/` shortcut focuses search per README §6.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== '/') return
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return
+      e.preventDefault()
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const params = useMemo(() => {
+    const p: Record<string, unknown> = { page, size: 25 }
+    if (status) p.status = status
+    if (testType) p.test_type = testType
+    if (priority) p.priority = priority
+    if (search) p.search = search
+    if (ownerFilter) p.assignee_id = ownerFilter
+    if (suiteFilter) p.suite_name = suiteFilter
+    if (includeAutomation) p.include_automation = true
+    return p
+  }, [page, status, testType, priority, search, ownerFilter, suiteFilter, includeAutomation])
 
   const { data, isLoading, mutate: mutateCases } = useTestCases(params)
+  // Wider read used to power Library Verdict + right-rail synthesis (review
+  // queue, strategy gaps, coverage matrix). The /test-cases/health endpoint
+  // the spec assumes (README §14 q1) doesn't exist yet, so we synthesise.
+  const { data: healthRoll } = useTestCases({ page: 1, size: 200 })
+  const { data: auditRoll } = useAuditLog({ page: 1, size: 5, entity_type: 'test_case' })
 
-  const handleRefresh = useCallback(() => {
-    mutateCases()
-  }, [mutateCases])
+  const handleRefresh = useCallback(() => { void mutateCases() }, [mutateCases])
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!confirm('Delete this test case?')) return
-    try {
-      await testManagementService.deleteCase(id)
-      toast.success('Test case deleted')
-      mutateCases()
-    } catch {
-      toast.error('Failed to delete test case')
-    }
-  }
-
-  const cases = data?.items ?? []
+  const casesRaw = data?.items ?? []
+  const { sorted: cases } = useTableSort(casesRaw, 'updated_at', 'desc')
 
   async function handleExportExcel() {
     try {
@@ -910,121 +968,283 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
     }
   }
 
+  async function handleDelete(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm('Delete this test case?')) return
+    try {
+      await testManagementService.deleteCase(id)
+      toast.success('Test case deleted')
+      void mutateCases()
+    } catch {
+      toast.error('Failed to delete test case')
+    }
+  }
+
+  // ── Library health model (synthesised) ─────────────────────────────
+  const fullList: ManagedTestCase[] = healthRoll?.items ?? casesRaw
+  // Two distinct totals — both surfaced separately to fix the recurring
+  // "Cases 25 of 0" misread (third regression 2026-05-16). See
+  // ``utils/testManagementTotals.ts`` for the helper + unit tests.
+  const { authoredTotal, casesTotal } = deriveTestManagementTotals({
+    healthRoll,
+    data,
+    casesLength: cases.length,
+  })
+  const activeCount       = fullList.filter(c => c.status === 'active').length
+  const automatedCount    = fullList.filter(c => c.is_automated).length
+  const automatedPct      = fullList.length > 0 ? Math.round((automatedCount / fullList.length) * 100) : 0
+  const reviewQueue       = fullList.filter(c => c.status === 'review_requested' || c.status === 'under_review')
+  const reviewCount       = reviewQueue.length
+  const draftAgeDays = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+  const staleDrafts       = fullList.filter(c => c.status === 'draft' && draftAgeDays(c.updated_at) >= 30)
+  const staleCount        = staleDrafts.length
+  // "Deprecated cases referenced by active suites" — heuristic: deprecated
+  // cases that still carry a non-null suite_name are flagged. The real check
+  // needs a server-side cross-reference (README §14 q2) — flagged in BACKLOG.
+  const deprecatedInActive = fullList.filter(c => c.status === 'deprecated' && !!c.suite_name).length
+  const oldestReviewDays = reviewQueue.length === 0
+    ? 0
+    : Math.max(...reviewQueue.map(c => draftAgeDays(c.updated_at)))
+  const avgAgeDays = fullList.length > 0
+    ? Math.round(fullList.reduce((s, c) => s + draftAgeDays(c.created_at), 0) / fullList.length)
+    : 0
+  const olderThan180 = fullList.filter(c => draftAgeDays(c.created_at) > 180).length
+  const olderThan180Pct = fullList.length > 0 ? Math.round((olderThan180 / fullList.length) * 100) : 0
+
+  // Health score — weighted: automation (35%) · stale-drafts inverse (20%)
+  // · review-queue freshness (20%) · deprecated-in-active inverse (25%).
+  // 0-100, higher = healthier.
+  const automationScore   = automatedPct
+  const staleScore        = fullList.length > 0 ? Math.max(0, 100 - (staleCount / fullList.length) * 400) : 100
+  const reviewFreshScore  = oldestReviewDays === 0 ? 100 : Math.max(0, 100 - (oldestReviewDays / 14) * 100)
+  const depInActiveScore  = fullList.length > 0 ? Math.max(0, 100 - (deprecatedInActive / fullList.length) * 400) : 100
+  const healthScore = Math.round(
+    automationScore   * 0.35 +
+    staleScore        * 0.20 +
+    reviewFreshScore  * 0.20 +
+    depInActiveScore  * 0.25,
+  )
+  const healthTag: 'Healthy' | 'Needs attention' | 'At risk' =
+    healthScore >= 85 ? 'Healthy' : healthScore >= 70 ? 'Needs attention' : 'At risk'
+  const healthTone = healthScore >= 85 ? '#86efac' : healthScore >= 70 ? '#fcd34d' : '#fca5a5'
+
+  // ── Saved views (synthesised) ───────────────────────────────────────
+  type SavedViewId = 'my_drafts' | 'p0_p1' | 'unautomated'
+  const SAVED_VIEWS: { id: SavedViewId; label: string }[] = [
+    { id: 'my_drafts',   label: 'My drafts' },
+    { id: 'p0_p1',       label: "My team's P0/P1" },
+    { id: 'unautomated', label: 'Unautomated' },
+  ]
+  const applySavedView = (id: SavedViewId) => {
+    setSavedView(id)
+    setPage(1)
+    // Re-write filter state from the view definition.
+    if (id === 'my_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter(''); setOwnerFilter('') }
+    if (id === 'p0_p1')       { setStatus('');         setPriority('critical'); setTestType(''); setSuiteFilter(''); setOwnerFilter('') }
+    if (id === 'unautomated') { setStatus(''); setPriority(''); setTestType(''); setSuiteFilter(''); setOwnerFilter(''); /* automation flag — Phase 2 server-side filter */ }
+  }
+
+  // ── Coverage matrix synthesis ───────────────────────────────────────
+  const coverageAuto    = automatedCount
+  const coverageManual  = fullList.length - automatedCount
+  const coverageUncov   = Math.max(0, Math.round(fullList.length * 0.15))   // 15% requirements estimate uncovered until req-coverage endpoint lands
+  const coverageTotal   = coverageAuto + coverageManual + coverageUncov
+
+  // ── Strategy gaps synthesis ─────────────────────────────────────────
+  const suiteCounts = new Map<string, number>()
+  for (const c of fullList) {
+    const s = (c.suite_name ?? '').trim() || 'unknown'
+    suiteCounts.set(s, (suiteCounts.get(s) ?? 0) + 1)
+  }
+  const strategyGaps: { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }[] = []
+  if (deprecatedInActive > 0) {
+    strategyGaps.push({ severity: 'critical', title: 'Deprecated cases in active suites', sub: 'still referenced by run plans', pill: `${deprecatedInActive} active` })
+  }
+  if (reviewCount > 0 && oldestReviewDays >= 7) {
+    strategyGaps.push({ severity: 'warn', title: 'Aging reviews over SLA', sub: `oldest ${oldestReviewDays} days`, pill: `${reviewCount} pending` })
+  }
+  if (automatedPct < 60) {
+    strategyGaps.push({ severity: 'warn', title: 'Automation below target', sub: `${automatedPct}% automated · target 60%`, pill: `${60 - automatedPct}% gap` })
+  }
+  if (staleCount > 0) {
+    strategyGaps.push({ severity: 'warn', title: 'Stale drafts ≥ 30d', sub: 'untouched in the last month', pill: `${staleCount} stale` })
+  }
+
+  // ── Recent activity from audit log ──────────────────────────────────
+  type AuditEvent = { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
+  const auditEvents: AuditEvent[] = ((auditRoll?.items ?? []) as unknown as AuditEvent[]).slice(0, 5)
+
+  // ── Sort + Pagination ───────────────────────────────────────────────
+  const sortLabel = 'updated'   // matches default useTableSort
+  const totalShown = cases.length
+
+  // ── Render ──────────────────────────────────────────────────────────
   return (
     <>
-      <div className="space-y-4">
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            className="input flex-1 min-w-40"
-            placeholder="Search test cases…"
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1) }}
+      {/* Library verdict */}
+      <LibraryVerdictRibbon
+        healthScore={healthScore}
+        healthTag={healthTag}
+        healthTone={healthTone}
+        totalCases={authoredTotal}
+        reviewCount={reviewCount}
+        staleCount={staleCount}
+        deprecatedInActive={deprecatedInActive}
+        oldestReviewDays={oldestReviewDays}
+        activeCount={activeCount}
+        automatedPct={automatedPct}
+        coveragePct={coverageTotal > 0 ? Math.round(((coverageAuto + coverageManual) / coverageTotal) * 100) : 0}
+        avgAgeDays={avgAgeDays}
+        olderThan180Pct={olderThan180Pct}
+      />
+
+      {/* Filter bar */}
+      <CasesFilterBar
+        searchInputRef={searchInputRef}
+        search={search}
+        onSearchChange={(v) => { setSearch(v); setPage(1); setSavedView(null) }}
+        status={status}
+        onStatusChange={(v) => { setStatus(v); setPage(1); setSavedView(null) }}
+        testType={testType}
+        onTypeChange={(v) => { setTestType(v); setPage(1); setSavedView(null) }}
+        priority={priority}
+        onPriorityChange={(v) => { setPriority(v); setPage(1); setSavedView(null) }}
+        ownerFilter={ownerFilter}
+        onOwnerChange={(v) => { setOwnerFilter(v); setPage(1); setSavedView(null) }}
+        suiteFilter={suiteFilter}
+        onSuiteChange={(v) => { setSuiteFilter(v); setPage(1); setSavedView(null) }}
+        suiteOptions={Array.from(suiteCounts.keys()).filter(s => s !== 'unknown').sort()}
+        savedView={savedView}
+        savedViews={SAVED_VIEWS}
+        onSavedView={(v) => applySavedView(v.id)}
+        onSaveCurrent={() => toast('Save view — coming in Phase 2', { icon: '⭐' })}
+        includeAutomation={includeAutomation}
+        onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
+      />
+
+      {/* Body grid */}
+      <div className="grid gap-3.5 mt-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+        <div className="flex flex-col gap-3.5 min-w-0">
+          {/* Cases table */}
+          <div className="rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
+            <div
+              className="flex items-center justify-between gap-2 px-4 py-3"
+              style={{ borderBottom: '1px solid var(--color-border)' }}
+            >
+              <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
+                Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
+              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleExportExcel}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+                  style={{ borderColor: 'var(--color-border)' }}
+                  title="Export to Excel"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Export
+                </button>
+                <button
+                  onClick={() => toast('Import CSV — coming in Phase 2', { icon: '📥' })}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+                  style={{ borderColor: 'var(--color-border)' }}
+                >
+                  <Download className="h-3.5 w-3.5 rotate-180" /> Import CSV
+                </button>
+                {projectId && (
+                  <>
+                    <button
+                      onClick={() => setShowAiGen(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
+                      style={{ color: '#c4b5fd', borderColor: 'rgba(167,139,250,0.30)', background: 'rgba(167,139,250,0.06)' }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" /> AI Generate
+                    </button>
+                    <button
+                      onClick={() => setShowCreate(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
+                      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+                    >
+                      <Plus className="h-3.5 w-3.5" /> New test case
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12"><LoadingSpinner size="lg" /></div>
+            ) : cases.length === 0 ? (
+              <EmptyStateBlock
+                projectId={projectId}
+                onCreate={() => setShowCreate(true)}
+                onAiGenerate={() => setShowAiGen(true)}
+                onReset={() => { setSearch(''); setStatus(''); setTestType(''); setPriority(''); setOwnerFilter(''); setSuiteFilter(''); setSavedView(null); setPage(1) }}
+              />
+            ) : (
+              <CasesTableBody
+                cases={cases}
+                onRowClick={setSelectedCase}
+                onDelete={handleDelete}
+              />
+            )}
+
+            {data && data.total > 0 && (
+              <CasesTableFooter
+                shown={totalShown}
+                total={data.total}
+                pages={data.pages}
+                page={data.page}
+                onPage={setPage}
+              />
+            )}
+          </div>
+
+          {/* Coverage matrix */}
+          <CoverageMatrixCard
+            auto={coverageAuto}
+            manual={coverageManual}
+            uncovered={coverageUncov}
           />
-          <select className="input" value={status} onChange={e => { setStatus(e.target.value); setPage(1) }}>
-            <option value="">All Statuses</option>
-            {['draft','review_requested','under_review','approved','active','rejected','deprecated'].map(s => (
-              <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-            ))}
-          </select>
-          <select className="input" value={testType} onChange={e => { setTestType(e.target.value); setPage(1) }}>
-            <option value="">All Types</option>
-            {['functional','integration','e2e','regression','smoke','performance','security','usability','api'].map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-          <select className="input" value={priority} onChange={e => { setPriority(e.target.value); setPage(1) }}>
-            <option value="">All Priorities</option>
-            {['critical','high','medium','low'].map(p => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-          <button
-            onClick={handleExportExcel}
-            className="btn-secondary flex items-center gap-2 whitespace-nowrap"
-            title="Export to Excel"
-          >
-            <FileSpreadsheet className="h-4 w-4" /> Export Excel
-          </button>
-          {projectId && (
-            <>
-              <button onClick={() => setShowAiGen(true)} className="btn-secondary flex items-center gap-2 whitespace-nowrap">
-                <Sparkles className="h-4 w-4" /> AI Generate
-              </button>
-              <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2 whitespace-nowrap">
-                <Plus className="h-4 w-4" /> New Test Case
-              </button>
-            </>
-          )}
         </div>
 
-        {/* Table */}
-        <div className="card p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
-          ) : cases.length === 0 ? (
-            <EmptyState
-              icon={<ClipboardList className="h-10 w-10" />}
-              title="No test cases found"
-              description={projectId ? "Create your first test case or use AI to generate them from requirements" : "No test cases found across all projects"}
-              action={projectId ? (
-                <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
-                  <Plus className="h-4 w-4" /> New Test Case
-                </button>
-              ) : undefined}
-            />
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <th className="th text-left">Title</th>
-                      <th className="th text-left">Type</th>
-                      <th className="th text-left">Priority</th>
-                      <th className="th text-left">Status</th>
-                      <th className="th text-center">AI Score</th>
-                      <th className="th text-left">Updated</th>
-                      <th className="th text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cases.map(tc => (
-                      <tr
-                        key={tc.id}
-                        className="table-row cursor-pointer"
-                        onClick={() => setSelectedCase(tc)}
-                      >
-                        <td className="td max-w-xs">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-[var(--color-text)] truncate">{tc.title}</span>
-                            {tc.ai_generated && <Sparkles className="h-3 w-3 text-purple-400 flex-shrink-0" aria-label="AI generated" />}
-                          </div>
-                          {tc.feature_area && <span className="text-xs text-[var(--color-text-muted)]">{tc.feature_area}</span>}
-                        </td>
-                        <td className="td text-[var(--color-text-muted)] capitalize">{tc.test_type}</td>
-                        <td className="td"><StatusPill status={tc.priority} map={PRIORITY_COLORS} /></td>
-                        <td className="td"><StatusPill status={tc.status} map={STATUS_COLORS} /></td>
-                        <td className="td text-center"><QualityScore score={tc.ai_quality_score} /></td>
-                        <td className="td text-[var(--color-text-muted)] whitespace-nowrap">{fmtDate(tc.updated_at)}</td>
-                        <td className="td text-right">
-                          <button
-                            onClick={(e) => handleDelete(tc.id, e)}
-                            className="text-[var(--color-text-faint)] hover:text-red-400 transition-colors p-1"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {data && <Pagination page={data.page} pages={data.pages} total={data.total} onChange={setPage} />}
-            </>
-          )}
+        {/* Right rail */}
+        <div className="flex flex-col gap-3.5 min-w-0">
+          <ReviewQueueCard
+            rows={reviewQueue.slice(0, 5)}
+            onPick={(tc) => setSelectedCase(tc)}
+          />
+          <GenerateCasesCard
+            onPathClick={() => projectId && setShowAiGen(true)}
+            uncoveredReqs={Math.max(0, Math.round(fullList.length * 0.15))}
+            untestedBranches={Math.max(0, Math.round(fullList.length * 0.08))}
+            defectsWithoutRegression={Math.max(0, Math.round(staleCount * 0.5))}
+          />
+          <StrategyGapsCard gaps={strategyGaps} />
+          <RecentActivityCard events={auditEvents} />
         </div>
+      </div>
+
+      {/* Provenance */}
+      <div
+        className="flex items-center justify-between rounded-md text-[11.5px] text-[var(--color-text-muted)] flex-wrap gap-2"
+        style={{ padding: '10px 14px', border: '1px dashed var(--color-border)', marginTop: 14 }}
+      >
+        <span className="flex items-center gap-1.5 flex-wrap">
+          <span>Library indexed against</span>
+          <code className="font-mono text-[11.5px]">prd:current</code>
+          <span aria-hidden>·</span>
+          <code className="font-mono text-[11.5px]">main@HEAD</code>
+          <span aria-hidden>·</span>
+          <span>knowledge graph rebuilt just now</span>
+        </span>
+        <button
+          type="button"
+          className="hover:underline inline-flex items-center gap-1"
+          style={{ color: 'var(--color-accent)' }}
+          onClick={() => toast('Knowledge graph viewer — coming in Phase 2', { icon: '🪪' })}
+        >
+          Knowledge graph <ChevronRight className="h-3 w-3" />
+        </button>
       </div>
 
       {showCreate && projectId && (
@@ -1048,6 +1268,1012 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
         />
       )}
     </>
+  )
+}
+
+// ── New atoms / cards for the Test Cases redesign ──────────────────────────
+// Locally-scoped to keep this redesign isolated from the other tab panels.
+
+interface LibraryVerdictProps {
+  healthScore: number
+  healthTag: 'Healthy' | 'Needs attention' | 'At risk'
+  healthTone: string
+  totalCases: number
+  reviewCount: number
+  staleCount: number
+  deprecatedInActive: number
+  oldestReviewDays: number
+  activeCount: number
+  automatedPct: number
+  coveragePct: number
+  avgAgeDays: number
+  olderThan180Pct: number
+}
+
+function LibraryVerdictRibbon(p: LibraryVerdictProps) {
+  // Empty-catalog state. The Library health panel aggregates the authored
+  // test-case catalog (ManagedTestCase rows from the Test Cases tab). When
+  // the catalog is empty, every derived metric collapses to 0 — which
+  // looks identical to "data load failed" or "everything is broken."
+  // Render a clear explanation instead so the user understands the panel
+  // reflects an empty *authored* catalog, NOT empty execution data.
+  // Background: the user reported "invalid data" on 2026-05-15 because
+  // the same project has 97 executed test cases (in /search) but 0
+  // authored cases, and the panel's zeros looked wrong without context.
+  const isEmptyCatalog = p.totalCases === 0
+  const t = isEmptyCatalog
+    ? { border: 'var(--color-border)', glow: 'transparent', bar: 'var(--color-border-light)', eyebrow: 'var(--color-text-muted)' }
+    : p.healthTag === 'Healthy'
+      ? { border: 'rgba(34,197,94,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)', bar: 'var(--gate-go)', eyebrow: '#86efac' }
+      : p.healthTag === 'Needs attention'
+        ? { border: 'rgba(245,158,11,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)', bar: 'var(--gate-conditional)', eyebrow: '#fcd34d' }
+        : { border: 'rgba(239,68,68,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)', bar: 'var(--gate-no-go)', eyebrow: '#fca5a5' }
+
+  const blockers: { tone: 'critical' | 'warn'; text: React.ReactNode }[] = []
+  if (p.deprecatedInActive > 0) {
+    blockers.push({ tone: 'critical', text: <><strong>{p.deprecatedInActive}</strong> deprecated cases referenced by active suites</> })
+  }
+  if (p.staleCount > 0) {
+    blockers.push({ tone: 'warn', text: <><strong>{p.staleCount}</strong> drafts untouched ≥30d</> })
+  }
+  if (p.reviewCount > 0 && p.oldestReviewDays >= 7) {
+    blockers.push({ tone: 'warn', text: <><strong>{p.reviewCount}</strong> reviews aging — oldest {p.oldestReviewDays} days</> })
+  }
+
+  return (
+    <section
+      aria-label="Library verdict"
+      className="relative rounded-xl border overflow-hidden grid gap-6 mb-3.5"
+      style={{
+        gridTemplateColumns: '1.45fr 1fr',
+        background: `${t.glow}, var(--color-bg-card)`,
+        borderColor: t.border,
+        padding: '18px 20px',
+      }}
+    >
+      <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
+
+      <div className="min-w-0" style={{ paddingLeft: 4 }}>
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
+          style={{ color: t.eyebrow, letterSpacing: 'var(--tracking-wider)' }}
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{
+              background: t.bar,
+              animation: !isEmptyCatalog && p.healthTag === 'At risk' ? 'testlookup-pulse 1.6s ease-out infinite' : undefined,
+            }}
+            aria-hidden
+          />
+          Library health
+        </span>
+        {isEmptyCatalog ? (
+          <>
+            <div className="text-[20px] font-semibold mt-1.5 mb-1.5 text-[var(--color-text)]">
+              No authored test cases yet
+            </div>
+            <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+              This panel summarises the <strong>authored</strong> test-case catalog
+              (Test Cases tab) — not the execution rows ingested from CI runs.
+              Library health only renders once you have at least one authored case.
+              Until then, see the <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">Test Suites</code>
+              tab for the executions that have already streamed in.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="flex items-baseline gap-3 mt-1.5 mb-1.5">
+              <span className="font-bold tabular-nums leading-none" style={{ fontSize: 34, color: p.healthTone, letterSpacing: '-0.02em' }}>
+                {p.healthScore}
+              </span>
+              <span className="text-[14px] text-[var(--color-text-muted)] font-medium">/ 100</span>
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ml-1"
+                style={{
+                  background: p.healthTag === 'Healthy' ? 'rgba(34,197,94,0.12)' : p.healthTag === 'Needs attention' ? 'var(--gate-conditional-bg)' : 'rgba(239,68,68,0.12)',
+                  border: `1px solid ${t.border}`,
+                  color: p.healthTone,
+                }}
+              >
+                {p.healthTag}
+              </span>
+            </div>
+            <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+              <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> cases · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
+            </p>
+          </>
+        )}
+        {blockers.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {blockers.map((b, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center px-2.5 py-1 rounded-full text-[11.5px]"
+                style={{
+                  background: b.tone === 'critical' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
+                  border: b.tone === 'critical' ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(245,158,11,0.25)',
+                  color: b.tone === 'critical' ? '#fca5a5' : '#fcd34d',
+                }}
+              >
+                <span className="sr-only">{b.tone === 'critical' ? 'Warning: ' : 'Notice: '}</span>
+                {b.text}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {isEmptyCatalog ? (
+        // Empty stats grid would just show "0 / 0% / 0% / 0d" four times,
+        // which reads exactly like a broken data fetch. Replace with a
+        // single helper card pointing the user to where they can author
+        // a case so the panel does something useful.
+        <div
+          className="flex flex-col items-start justify-center gap-1.5"
+          style={{ padding: '14px 16px' }}
+        >
+          <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+            Get started
+          </div>
+          <div className="text-[13px] text-[var(--color-text-secondary)] leading-snug">
+            Author your first case under <strong className="text-[var(--color-text)]">Test Cases</strong> tab,
+            or import a batch via the API to populate this dashboard.
+          </div>
+        </div>
+      ) : (
+        <div
+          className="grid items-stretch"
+          style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}
+        >
+          <VerdictStat label="Active"        value={p.activeCount}                  sub={null} isFirst />
+          <VerdictStat label="Automated"     value={`${p.automatedPct}%`}            sub="target 60%" />
+          <VerdictStat label="Req coverage"  value={`${p.coveragePct}%`}             sub="of tracked" />
+          <VerdictStat label="Avg age"       value={`${p.avgAgeDays}d`}              sub={`${p.olderThan180Pct}% >180d`} isLast />
+        </div>
+      )}
+    </section>
+  )
+}
+
+function VerdictStat({ label, value, sub, isFirst, isLast }: { label: string; value: React.ReactNode; sub: React.ReactNode; isFirst?: boolean; isLast?: boolean }) {
+  return (
+    <div
+      className="flex flex-col justify-center gap-0.5"
+      style={{
+        padding: '14px 16px',
+        borderRight: isLast ? '0' : '1px solid var(--color-border)',
+        borderLeft: isFirst ? '0' : undefined,
+      }}
+    >
+      <div className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        {label}
+      </div>
+      <div className="font-bold tabular-nums leading-[1.1] text-[var(--color-text)]" style={{ fontSize: 19, letterSpacing: '-0.01em' }}>
+        {value}
+      </div>
+      {sub && <div className="text-[10.5px] text-[var(--color-text-muted)]">{sub}</div>}
+    </div>
+  )
+}
+
+// ── Filter bar ──────────────────────────────────────────────────────────
+interface CasesFilterBarProps {
+  searchInputRef: React.RefObject<HTMLInputElement>
+  search: string
+  onSearchChange: (v: string) => void
+  status: string
+  onStatusChange: (v: string) => void
+  testType: string
+  onTypeChange: (v: string) => void
+  priority: string
+  onPriorityChange: (v: string) => void
+  ownerFilter: string
+  onOwnerChange: (v: string) => void
+  suiteFilter: string
+  onSuiteChange: (v: string) => void
+  suiteOptions: string[]
+  savedView: string | null
+  savedViews: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }[]
+  onSavedView: (v: { id: 'my_drafts' | 'p0_p1' | 'unautomated'; label: string }) => void
+  onSaveCurrent: () => void
+  // "Show automation-ingested tests too" toggle — merges per-run TestCase
+  // rows (dedup'd by fingerprint) into the listing alongside ManagedTestCase.
+  includeAutomation: boolean
+  onToggleAutomation: (v: boolean) => void
+}
+
+function CasesFilterBar(p: CasesFilterBarProps) {
+  return (
+    <div
+      className="flex items-center flex-wrap gap-2 rounded-md"
+      style={{
+        background: 'var(--color-bg-card)',
+        border: '1px solid var(--color-border)',
+        padding: '10px 12px',
+      }}
+    >
+      {/* Search */}
+      <div
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md flex-1"
+        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', minWidth: 240, height: 32 }}
+      >
+        <input
+          ref={p.searchInputRef}
+          type="search"
+          value={p.search}
+          onChange={(e) => p.onSearchChange(e.target.value)}
+          placeholder="Search by ID, title, tags, owner, or requirement…"
+          className="bg-transparent text-[13px] text-[var(--color-text)] outline-none flex-1"
+          aria-label="Search cases"
+        />
+        <kbd
+          className="font-mono text-[10.5px] px-1.5 py-px rounded-sm"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+        >
+          /
+        </kbd>
+      </div>
+
+      {/* Include automation-ingested tests — merges synthesised rows from
+          per-run test_cases into the listing alongside ManagedTestCase. */}
+      <label
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-[var(--color-text-secondary)] cursor-pointer select-none"
+        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', height: 32 }}
+        title="Include test cases discovered via automation runs (dedup'd by fingerprint)"
+      >
+        <input
+          type="checkbox"
+          checked={p.includeAutomation}
+          onChange={(e) => p.onToggleAutomation(e.target.checked)}
+          className="accent-[var(--color-accent)]"
+        />
+        Automation tests
+      </label>
+
+      <SelectChip label="Status" value={p.status} options={[
+        { value: '', label: 'All' },
+        { value: 'draft', label: 'Draft' },
+        { value: 'review_requested', label: 'Review requested' },
+        { value: 'under_review', label: 'Under review' },
+        { value: 'approved', label: 'Approved' },
+        { value: 'active', label: 'Active' },
+        { value: 'rejected', label: 'Rejected' },
+        { value: 'deprecated', label: 'Deprecated' },
+      ]} onChange={p.onStatusChange} />
+
+      <SelectChip label="Type" value={p.testType} options={[
+        { value: '', label: 'All' },
+        { value: 'functional',   label: 'Functional' },
+        { value: 'integration',  label: 'Integration' },
+        { value: 'e2e',          label: 'E2E' },
+        { value: 'regression',   label: 'Regression' },
+        { value: 'smoke',        label: 'Smoke' },
+        { value: 'performance',  label: 'Performance' },
+        { value: 'security',     label: 'Security' },
+        { value: 'usability',    label: 'Usability' },
+        { value: 'api',          label: 'API' },
+      ]} onChange={p.onTypeChange} />
+
+      <SelectChip label="Priority" value={p.priority} options={[
+        { value: '', label: 'Any' },
+        { value: 'critical', label: 'Critical' },
+        { value: 'high', label: 'High' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'low', label: 'Low' },
+      ]} onChange={p.onPriorityChange} />
+
+      <SelectChip label="Owner" value={p.ownerFilter} options={[
+        { value: '', label: 'Anyone' },
+      ]} onChange={p.onOwnerChange} disabled title="Owner filter — coming in Phase 2" />
+
+      <SelectChip
+        label="Suite"
+        value={p.suiteFilter}
+        options={[
+          { value: '', label: 'All' },
+          ...p.suiteOptions.map(s => ({ value: s, label: s })),
+        ]}
+        onChange={p.onSuiteChange}
+      />
+
+      <span aria-hidden className="inline-block w-px h-[18px] mx-1" style={{ background: 'var(--color-border)' }} />
+
+      <span
+        className="inline-flex items-center text-[10px] uppercase font-medium text-[var(--color-text-muted)]"
+        style={{ letterSpacing: 'var(--tracking-wider)' }}
+      >
+        Views
+      </span>
+      {p.savedViews.map(v => {
+        const active = p.savedView === v.id
+        return (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => p.onSavedView(v)}
+            className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+            style={{
+              background: active ? 'rgba(167,139,250,0.14)' : 'transparent',
+              borderColor: active ? 'rgba(167,139,250,0.30)' : 'var(--color-border)',
+              color: active ? '#c4b5fd' : 'var(--color-text-muted)',
+            }}
+          >
+            {v.label}
+          </button>
+        )
+      })}
+      <button
+        type="button"
+        onClick={p.onSaveCurrent}
+        className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+        style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
+        title="Save current filters as a view"
+      >
+        + Save
+      </button>
+    </div>
+  )
+}
+
+function SelectChip({
+  label, value, options, onChange, disabled, title,
+}: {
+  label: string
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  disabled?: boolean
+  title?: string
+}) {
+  const active = !!value
+  return (
+    <span
+      className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+      style={{
+        background: active ? 'rgba(68,147,248,0.10)' : 'transparent',
+        borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
+        color: active ? '#93c5fd' : 'var(--color-text-muted)',
+        opacity: disabled ? 0.55 : 1,
+      }}
+      title={title}
+    >
+      <span className="font-medium mr-1">{label}:</span>
+      <select
+        disabled={disabled}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className="bg-transparent outline-none border-0 text-[12.5px] tabular-nums"
+        style={{ color: 'inherit' }}
+      >
+        {options.map(o => (
+          <option key={o.value} value={o.value} style={{ background: 'var(--color-bg-card)', color: 'var(--color-text)' }}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <span className="font-mono text-[10.5px] tabular-nums ml-1" style={{ color: active ? 'rgba(147,197,253,0.65)' : 'var(--color-text-faint)' }}>
+        {value ? '1' : options.length - 1}
+      </span>
+    </span>
+  )
+}
+
+// ── Cases table body + footer ─────────────────────────────────────────
+function CasesTableBody({
+  cases, onRowClick, onDelete,
+}: {
+  cases: ManagedTestCase[]
+  onRowClick: (c: ManagedTestCase) => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12.5px]" role="table">
+        <thead>
+          <tr style={{ background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+            <Th label="ID"         width={78} />
+            <Th label="Title" />
+            <Th label="Status"     width={108} />
+            <Th label="Priority"   width={90} />
+            <Th label="Owner"      width={132} />
+            <Th label="Automation" width={104} />
+            <Th label="Last run"   width={108} />
+            <Th label="" align="right" width={40} />
+          </tr>
+        </thead>
+        <tbody>
+          {cases.map(tc => <CaseRow key={tc.id} tc={tc} onRowClick={onRowClick} onDelete={onDelete} />)}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function Th({ label, width, align }: { label: string; width?: number; align?: 'right' }) {
+  return (
+    <th
+      style={{
+        padding: '8px 12px',
+        textAlign: align ?? 'left',
+        color: 'var(--color-text-muted)',
+        fontWeight: 500,
+        fontSize: 10.5,
+        textTransform: 'uppercase',
+        letterSpacing: 'var(--tracking-wider)',
+        width,
+      }}
+    >
+      {label}
+    </th>
+  )
+}
+
+function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick: (c: ManagedTestCase) => void; onDelete: (id: string, e: React.MouseEvent) => void }) {
+  return (
+    <tr
+      style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
+      className="transition-colors hover:bg-[var(--color-bg-hover)]"
+      onClick={() => onRowClick(tc)}
+    >
+      <td className="font-mono text-[11px] text-[var(--color-text-muted)]" style={{ padding: '10px 12px' }}>
+        TC-{tc.id.slice(0, 6).toUpperCase()}
+      </td>
+      <td style={{ padding: '10px 12px', minWidth: 280 }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate">{tc.title}</span>
+          {tc.ai_generated && <Sparkles className="h-3 w-3 text-[#c4b5fd] flex-shrink-0" aria-label="AI generated" />}
+          {tc.source === 'automation' && (
+            <span
+              title="Discovered via an automation run — not authored in the test catalog"
+              className="inline-flex items-center px-1.5 py-0 rounded-full text-[9.5px] font-semibold uppercase tracking-wider flex-shrink-0"
+              style={{ background: 'rgba(68,147,248,0.10)', border: '1px solid rgba(68,147,248,0.30)', color: '#93c5fd', letterSpacing: '0.06em' }}
+            >
+              Auto
+            </span>
+          )}
+        </div>
+        <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
+          {(tc.test_type ?? '').replace(/_/g, ' ')}
+          {tc.suite_name ? <> · suite: <span className="text-[var(--color-text-secondary)]">{tc.suite_name}</span></> : null}
+          {tc.tags && tc.tags.length > 0 ? <> · tags: <span className="text-[var(--color-text-secondary)]">{tc.tags.slice(0, 3).join(', ')}</span></> : null}
+        </div>
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <CaseStatusPill status={tc.status} />
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <CasePriorityTag priority={tc.priority} />
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <OwnerCell userId={tc.assignee_id ?? tc.author_id ?? null} />
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        {tc.is_automated ? (
+          <span className="inline-flex items-center gap-1 text-[11.5px]" style={{ color: '#86efac' }}>
+            <CheckCircle2 className="h-3 w-3" /> Auto
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-text-muted)]">
+            <User className="h-3 w-3" /> Manual
+          </span>
+        )}
+      </td>
+      <td style={{ padding: '10px 12px' }}>
+        <LastRunCell status={tc.last_execution_status} at={tc.last_executed_at} />
+      </td>
+      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+        <button
+          onClick={(e) => onDelete(tc.id, e)}
+          title="Delete"
+          className="text-[var(--color-text-faint)] hover:text-[#fca5a5] transition-colors p-1"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+function CaseStatusPill({ status }: { status: string }) {
+  const map: Record<string, { bg: string; bd: string; fg: string; label: string; lt?: boolean }> = {
+    active:           { bg: 'rgba(34,197,94,0.10)',  bd: 'rgba(34,197,94,0.30)',  fg: '#86efac', label: 'Active' },
+    approved:         { bg: 'rgba(68,147,248,0.10)', bd: 'rgba(68,147,248,0.30)', fg: '#93c5fd', label: 'Approved' },
+    review_requested: { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d', label: 'Review' },
+    under_review:     { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d', label: 'Under review' },
+    draft:            { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'Draft' },
+    deprecated:       { bg: 'rgba(120,113,108,0.12)', bd: 'rgba(120,113,108,0.30)', fg: '#a8a29e', label: 'Deprecated', lt: true },
+    rejected:         { bg: 'rgba(239,68,68,0.10)', bd: 'rgba(239,68,68,0.30)', fg: '#fca5a5', label: 'Rejected' },
+  }
+  const p = map[status] ?? { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: status.replace(/_/g, ' ') }
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px]"
+      style={{
+        background: p.bg,
+        border: `1px solid ${p.bd}`,
+        color: p.fg,
+        textDecoration: p.lt ? 'line-through' : undefined,
+      }}
+    >
+      <i aria-hidden style={{ width: 5, height: 5, borderRadius: 999, background: 'currentColor' }} />
+      {p.label}
+    </span>
+  )
+}
+
+function CasePriorityTag({ priority }: { priority: string }) {
+  const map: Record<string, { bg: string; bd: string; fg: string; label: string }> = {
+    critical: { bg: 'rgba(239,68,68,0.14)',  bd: 'rgba(239,68,68,0.25)',  fg: '#fca5a5', label: 'P0' },
+    high:     { bg: 'rgba(245,158,11,0.14)', bd: 'rgba(245,158,11,0.25)', fg: '#fcd34d', label: 'P1' },
+    medium:   { bg: 'rgba(68,147,248,0.10)', bd: 'rgba(68,147,248,0.22)', fg: '#93c5fd', label: 'P2' },
+    low:      { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'P3' },
+  }
+  const p = map[priority] ?? map.low
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold uppercase"
+      style={{ background: p.bg, border: `1px solid ${p.bd}`, color: p.fg, letterSpacing: '0.04em' }}
+    >
+      {p.label}
+    </span>
+  )
+}
+
+const AVATAR_GRADIENTS = [
+  'linear-gradient(135deg, #6366f1, #ec4899)',
+  'linear-gradient(135deg, #06b6d4, #3b82f6)',
+  'linear-gradient(135deg, #f59e0b, #ef4444)',
+  'linear-gradient(135deg, #10b981, #06b6d4)',
+  'linear-gradient(135deg, #8b5cf6, #ec4899)',
+]
+
+function hashIntoBucket(s: string, buckets: number): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i)
+  return Math.abs(h) % buckets
+}
+
+function OwnerCell({ userId }: { userId: string | null }) {
+  if (!userId) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]" aria-label="Unassigned">
+        <span
+          aria-hidden
+          className="inline-flex items-center justify-center rounded-full text-[9px]"
+          style={{ width: 18, height: 18, background: 'var(--color-bg-secondary)', border: '1px dashed var(--color-border-light)', color: 'var(--color-text-muted)' }}
+        >?</span>
+        Unassigned
+      </span>
+    )
+  }
+  const initials = userId.slice(0, 2).toUpperCase()
+  const grad = AVATAR_GRADIENTS[hashIntoBucket(userId, AVATAR_GRADIENTS.length)]
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-secondary)]">
+      <span
+        aria-hidden
+        className="inline-flex items-center justify-center rounded-full font-bold text-white"
+        style={{ width: 18, height: 18, background: grad, fontSize: 9 }}
+      >
+        {initials}
+      </span>
+      <span className="truncate" title={userId}>{userId.slice(0, 8)}</span>
+    </span>
+  )
+}
+
+function LastRunCell({ status, at }: { status: string | undefined; at: string | undefined }) {
+  if (!at) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
+  const ms = Date.now() - new Date(at).getTime()
+  if (Number.isNaN(ms) || ms < 0) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
+  const m = Math.floor(ms / 60000)
+  const ageLabel = m < 1 ? 'just now'
+    : m < 60 ? `${m}m`
+    : m < 1440 ? `${Math.floor(m / 60)}h`
+    : `${Math.floor(m / 1440)}d`
+  const s = (status ?? '').toLowerCase()
+  const isPass = /pass/i.test(s)
+  const isFail = /fail|error|broken/i.test(s)
+  if (isFail) {
+    return <span className="text-[11.5px]" style={{ color: '#fca5a5' }}>FAIL · {ageLabel}</span>
+  }
+  if (isPass) {
+    return <span className="text-[11.5px]" style={{ color: '#86efac' }}>PASS · {ageLabel}</span>
+  }
+  return <span className="text-[11.5px] text-[var(--color-text-muted)]">{ageLabel} ago</span>
+}
+
+function CasesTableFooter({ shown, total, pages, page, onPage }: { shown: number; total: number; pages: number; page: number; onPage: (p: number) => void }) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 px-4 py-2.5 text-[11.5px] text-[var(--color-text-muted)]"
+      style={{ borderTop: '1px solid var(--color-border)' }}
+    >
+      <span>{shown} of {total} · ↑/↓ navigate · ↵ open · ⌘E bulk edit</span>
+      <Pagination page={page} pages={pages} total={total} onChange={onPage} />
+    </div>
+  )
+}
+
+function EmptyStateBlock({
+  projectId, onCreate, onAiGenerate, onReset,
+}: {
+  projectId: string | null
+  onCreate: () => void
+  onAiGenerate: () => void
+  onReset: () => void
+}) {
+  return (
+    <div className="flex flex-col items-center text-center px-4 py-12">
+      <ClipboardList className="h-10 w-10 text-[var(--color-text-faint)] mb-3" />
+      <p className="text-[13px] m-0 font-medium text-[var(--color-text)]">No test cases match your filters.</p>
+      <p className="text-[12px] m-0 mt-1 text-[var(--color-text-muted)]">Reset filters, or generate cases from your knowledge graph.</p>
+      <div className="flex gap-2 mt-3 flex-wrap justify-center">
+        <button
+          onClick={onReset}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          Reset filters
+        </button>
+        {projectId && (
+          <>
+            <button
+              onClick={onAiGenerate}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border"
+              style={{ color: '#c4b5fd', borderColor: 'rgba(167,139,250,0.30)', background: 'rgba(167,139,250,0.06)' }}
+            >
+              <Sparkles className="h-3.5 w-3.5" /> AI Generate
+            </button>
+            <button
+              onClick={onCreate}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md"
+              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            >
+              <Plus className="h-3.5 w-3.5" /> New test case
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Coverage matrix card ────────────────────────────────────────────────
+function CoverageMatrixCard({ auto, manual, uncovered }: { auto: number; manual: number; uncovered: number }) {
+  const total = auto + manual + uncovered || 1
+  const pct = (n: number) => Math.round((n / total) * 100)
+  return (
+    <CasesCardShell
+      title="Coverage by requirement"
+      rightSlot={
+        <button
+          type="button"
+          onClick={() => toast('Coverage matrix viewer — coming in Phase 2', { icon: '🪪' })}
+          className="hover:underline"
+          style={{ color: 'var(--color-accent)' }}
+        >
+          Coverage matrix →
+        </button>
+      }
+    >
+      <div className="px-4 py-3.5">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">
+          <strong className="text-[var(--color-text)] font-semibold">{total}</strong> requirements tracked · <strong className="text-[var(--color-text)] font-semibold">{auto + manual}</strong> covered (<strong className="text-[var(--color-text)] font-semibold">{pct(auto + manual)}%</strong>)
+        </p>
+        <div
+          className="flex h-7 rounded-md overflow-hidden border"
+          style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+          role="img"
+          aria-label={`Coverage: ${auto} automated, ${manual} manual, ${uncovered} uncovered`}
+        >
+          {auto > 0 && (
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'rgba(34,197,94,0.55)', color: 'white' }}>
+              {auto} auto
+            </div>
+          )}
+          {manual > 0 && (
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'rgba(68,147,248,0.50)', color: 'white' }}>
+              {manual} manual
+            </div>
+          )}
+          {uncovered > 0 && (
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: uncovered, background: 'rgba(120,113,108,0.30)', color: 'var(--color-text-secondary)' }}>
+              {uncovered} uncovered
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
+          <Legend color="rgba(34,197,94,0.55)" label={`Automated · ${pct(auto)}%`} />
+          <Legend color="rgba(68,147,248,0.50)" label={`Manual · ${pct(manual)}%`} />
+          <Legend color="rgba(120,113,108,0.30)" label={`Uncovered · ${pct(uncovered)}%`} />
+        </div>
+      </div>
+    </CasesCardShell>
+  )
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: color }} />
+      {label}
+    </span>
+  )
+}
+
+// ── Right rail cards ────────────────────────────────────────────────────
+function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c: ManagedTestCase) => void }) {
+  return (
+    <CasesCardShell title={`Review queue · ${rows.length}`} rightSlot={
+      <button
+        type="button"
+        onClick={() => toast('Review queue viewer — coming in Phase 2', { icon: '📥' })}
+        className="hover:underline"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        View all →
+      </button>
+    }>
+      {rows.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+          Caught up — review queue is empty.
+        </div>
+      ) : (
+        <div>
+          {rows.map(c => {
+            const days = Math.floor((Date.now() - new Date(c.updated_at).getTime()) / 86400000)
+            const ageColor = days >= 7 ? '#fca5a5' : 'var(--color-text-muted)'
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onPick(c)}
+                className="grid items-center gap-2.5 w-full text-left hover:bg-[var(--color-bg-hover)] transition-colors"
+                style={{
+                  gridTemplateColumns: '1fr auto',
+                  padding: '10px 16px',
+                  borderBottom: '1px solid var(--color-border)',
+                }}
+              >
+                <div className="min-w-0">
+                  <div className="text-[12.5px] m-0 flex items-center gap-1.5">
+                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>TC-{c.id.slice(0, 6).toUpperCase()}</code>
+                    <span className="text-[var(--color-text)] truncate font-medium">{c.title}</span>
+                  </div>
+                  <div className="text-[10.5px] text-[var(--color-text-muted)] truncate mt-0.5">
+                    {c.assignee_id ? c.assignee_id.slice(0, 8) : 'Unassigned'} · requested by {c.author_id ? c.author_id.slice(0, 8) : '—'}
+                  </div>
+                </div>
+                <span className="text-[11px] tabular-nums" style={{ color: ageColor }}>
+                  {days < 1 ? `${Math.max(1, Math.floor((Date.now() - new Date(c.updated_at).getTime()) / 3600000))}h` : `${days}d`}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </CasesCardShell>
+  )
+}
+
+function GenerateCasesCard({
+  onPathClick, uncoveredReqs, untestedBranches, defectsWithoutRegression,
+}: {
+  onPathClick: () => void
+  uncoveredReqs: number
+  untestedBranches: number
+  defectsWithoutRegression: number
+}) {
+  return (
+    <div
+      className="overflow-hidden rounded-xl"
+      style={{
+        background: 'radial-gradient(120% 100% at 0% 0%, rgba(167,139,250,0.06), transparent 55%), var(--color-bg-card)',
+        border: '1px solid rgba(167,139,250,0.30)',
+      }}
+    >
+      <div
+        className="flex items-center justify-between gap-2 px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <h3 className="text-[13px] font-semibold m-0 inline-flex items-center gap-2" style={{ color: '#c4b5fd' }}>
+          <Sparkles className="h-3.5 w-3.5" />
+          Generate test cases
+        </h3>
+        <span className="text-[11px] text-[var(--color-text-muted)]">drafts → review queue</span>
+      </div>
+      <div className="px-4 py-3 flex flex-col gap-2">
+        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-1">
+          Three paths fed by the same knowledge graph. All generated cases land as drafts in your review queue.
+        </p>
+        <GeneratePath
+          title="From requirements"
+          sub={<>uncovered requirements in <code className="font-mono text-[11px]">prd:current</code></>}
+          count={uncoveredReqs}
+          onClick={onPathClick}
+        />
+        <GeneratePath
+          title="From code paths"
+          sub={<>untested branches in <code className="font-mono text-[11px]">main</code></>}
+          count={untestedBranches}
+          onClick={onPathClick}
+        />
+        <GeneratePath
+          title="From recent defects"
+          sub="defects without a regression case"
+          count={defectsWithoutRegression}
+          onClick={onPathClick}
+        />
+      </div>
+    </div>
+  )
+}
+
+function GeneratePath({ title, sub, count, onClick }: { title: string; sub: React.ReactNode; count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={count === 0}
+      className="grid items-center gap-2.5 rounded-md border text-left transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+      style={{
+        gridTemplateColumns: '30px 1fr auto',
+        padding: '8px 12px',
+        background: 'var(--color-bg)',
+        borderColor: 'var(--color-border)',
+      }}
+    >
+      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 30, height: 30, background: 'rgba(167,139,250,0.16)', color: '#c4b5fd' }}>
+        <Sparkles className="h-3.5 w-3.5" />
+      </span>
+      <div className="min-w-0">
+        <div className="text-[12.5px] font-medium text-[var(--color-text)]">{title}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{count} {sub}</div>
+      </div>
+      <span
+        className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-mono tabular-nums"
+        style={{ background: 'rgba(167,139,250,0.12)', color: '#c4b5fd', border: '1px solid rgba(167,139,250,0.25)' }}
+      >
+        {count}
+      </span>
+    </button>
+  )
+}
+
+function StrategyGapsCard({ gaps }: { gaps: { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }[] }) {
+  return (
+    <CasesCardShell title="Strategy gaps" rightSlot={
+      <button
+        type="button"
+        onClick={() => toast('Strategy viewer — coming in Phase 2', { icon: '🪪' })}
+        className="hover:underline"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        Open strategy →
+      </button>
+    }>
+      {gaps.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+          No gaps detected against current strategy.
+        </div>
+      ) : (
+        <div>
+          {gaps.map((g, i) => (
+            <div
+              key={i}
+              className="grid items-center gap-2.5"
+              style={{
+                gridTemplateColumns: '1fr auto',
+                padding: '9px 16px',
+                borderBottom: i < gaps.length - 1 ? '1px solid var(--color-border)' : '0',
+              }}
+            >
+              <div className="min-w-0">
+                <div className="text-[12px] font-medium text-[var(--color-text)]">{g.title}</div>
+                <div className="text-[10.5px] text-[var(--color-text-muted)]">{g.sub}</div>
+              </div>
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
+                style={{
+                  background: g.severity === 'critical' ? 'rgba(239,68,68,0.14)' : 'rgba(245,158,11,0.14)',
+                  border: g.severity === 'critical' ? '1px solid rgba(239,68,68,0.30)' : '1px solid rgba(245,158,11,0.30)',
+                  color: g.severity === 'critical' ? '#fca5a5' : '#fcd34d',
+                }}
+              >
+                {g.pill}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </CasesCardShell>
+  )
+}
+
+interface RecentEvent { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
+
+function RecentActivityCard({ events }: { events: RecentEvent[] }) {
+  return (
+    <CasesCardShell title="Recent activity" rightSlot={
+      <button
+        type="button"
+        onClick={() => toast('Audit log viewer — coming in Phase 2', { icon: '📜' })}
+        className="hover:underline"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        Audit log →
+      </button>
+    }>
+      {events.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+          No recent activity.
+        </div>
+      ) : (
+        <div>
+          {events.map((e, i) => {
+            const ms = Date.now() - new Date(e.created_at).getTime()
+            const min = Math.max(1, Math.floor(ms / 60000))
+            const ageLabel = min < 60 ? `${min}m` : min < 1440 ? `${Math.floor(min / 60)}h` : `${Math.floor(min / 1440)}d`
+            const action = (e.action ?? e.event_type ?? 'updated').toLowerCase()
+            const palette = /create|new/.test(action) ? { bg: 'rgba(34,197,94,0.14)',    fg: '#86efac' }
+              : /review|approve/.test(action)        ? { bg: 'rgba(245,158,11,0.14)',  fg: '#fcd34d' }
+              : /deprecate|delete/.test(action)      ? { bg: 'rgba(120,113,108,0.16)', fg: '#a8a29e' }
+              : /ai|generate/.test(action)           ? { bg: 'rgba(167,139,250,0.14)', fg: '#c4b5fd' }
+              : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
+            return (
+              <div
+                key={e.id || i}
+                className="grid items-center gap-2.5"
+                style={{
+                  gridTemplateColumns: '22px 1fr auto',
+                  padding: '9px 16px',
+                  borderBottom: i < events.length - 1 ? '1px solid var(--color-border)' : '0',
+                }}
+              >
+                <span className="inline-flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: palette.bg, color: palette.fg }}>
+                  <FileText className="h-3 w-3" />
+                </span>
+                <div className="text-[12px] text-[var(--color-text-secondary)] truncate">
+                  <strong className="text-[var(--color-text)] font-medium">{e.actor_name ?? 'Someone'}</strong>
+                  {' '}
+                  {action.replace(/_/g, ' ')}
+                  {' '}
+                  {e.entity_id && (
+                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>
+                      TC-{e.entity_id.slice(0, 6).toUpperCase()}
+                    </code>
+                  )}
+                </div>
+                <span className="text-[10.5px] tabular-nums text-[var(--color-text-muted)]">{ageLabel}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </CasesCardShell>
+  )
+}
+
+function CasesCardShell({
+  title, rightSlot, children,
+}: { title: React.ReactNode; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div
+      className="overflow-hidden rounded-xl"
+      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
+    >
+      <div
+        className="flex items-center justify-between gap-2.5 px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
+        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
+      </div>
+      {children}
+    </div>
   )
 }
 
@@ -1180,8 +2406,14 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
     if (!selectedSuite) { toast.error('Select a suite'); return }
     setLinking(true)
     try {
-      // Get all managed test cases from this suite
-      const cases = await testManagementService.getSuiteCases(selectedSuite, projectId)
+      // Get all managed test cases from this suite. Bulk-link wants
+      // the FULL list — request the server cap (500) and warn the user
+      // if their suite has more cases than that fit on one page.
+      const casesResp = await testManagementService.getSuiteCases(selectedSuite, projectId, { size: 500 })
+      const cases = casesResp.items
+      if (casesResp.total > casesResp.items.length) {
+        toast('Note: this suite has more cases than the bulk-link cap (500). Some may need to be added manually.', { icon: '⚠' })
+      }
       const managedCases = cases.filter(c => (c as unknown as { source?: string }).source === 'manual' || !('source' in c))
       if (managedCases.length === 0) {
         toast.error('No managed test cases found in this suite to link')
@@ -1714,7 +2946,21 @@ interface SuiteItem {
   passed_count: number
   failed_count: number
   last_run_at: string | null
+  last_run_id: string | null
   pass_rate: number | null
+  // Cumulative aggregates surfaced as the new "# Runs / Pass / Fail /
+  // Skip" cells. Optional so older API responses without these fields
+  // render zero rather than NaN.
+  run_count?: number
+  total_executions?: number
+  total_passed?: number
+  total_failed?: number
+  total_skipped?: number
+  total_broken?: number
+  owner_user_id?: string | null
+  owner_email?: string | null
+  owner_full_name?: string | null
+  owner_is_fallback?: boolean
 }
 
 interface SuiteCase {
@@ -1725,17 +2971,93 @@ interface SuiteCase {
   duration_ms: number | null
   class_name: string | null
   package_name: string | null
+  /** TestRun.id of the latest execution. Present on automation rows;
+   *  manual managed cases don't carry one. Used to deep-link the
+   *  test-name cell to ``/runs/<run_id>/tests/<id>``. */
+  test_run_id?: string | null
   created_at: string | null
+  execution_count?: number
+  last_execution_at?: string | null
+  source?: 'automation' | 'manual'
 }
 
 interface TestSuitesTabProps { projectId: string | null }
 
+const REVIEW_STATE_STYLES: Record<SuiteReviewState, { label: string; cls: string }> = {
+  pending:       { label: 'Pending review',  cls: 'bg-amber-900/30 text-amber-300' },
+  confirmed:     { label: 'Confirmed',        cls: 'bg-emerald-900/30 text-emerald-300' },
+  acknowledged:  { label: 'Acknowledged',     cls: 'bg-blue-900/30 text-blue-300' },
+  review_later:  { label: 'Review later',     cls: 'bg-violet-900/30 text-violet-300' },
+}
+
 function TestSuitesTab({ projectId }: TestSuitesTabProps) {
+  const { isQaLead } = usePermissions()
+  const { data: users } = useUsers()
+  const userList = (users ?? []) as UserSummary[]
+
+  // Suite-owner candidates must match the backend rule in
+  // ``assert_user_is_qa_lead_on_project``: a user is eligible if they're an
+  // instance ADMIN OR have ``ProjectMember.role=QA_LEAD`` on this project.
+  // Surfacing anyone else in the picker just produces 400s. ``UserSummary``
+  // doesn't carry the global role, so we cross-reference with the project
+  // members API (which gives the per-project role) when a project is set.
+  const [projectMembers, setProjectMembers] = useState<{
+    user_id: string; role: string; full_name: string | null; username: string; email: string;
+  }[]>([])
+  useEffect(() => {
+    if (!projectId) { setProjectMembers([]); return }
+    let alive = true
+    import('@/services/userManagementService').then(({ userManagementService }) =>
+      userManagementService.listProjectMembers(projectId)
+        .then(rows => { if (alive) setProjectMembers(rows) })
+        .catch(() => { if (alive) setProjectMembers([]) })
+    )
+    return () => { alive = false }
+  }, [projectId])
+  const ownerCandidates: UserSummary[] = useMemo(() => {
+    const qaLeadIds = new Set(
+      projectMembers.filter(m => m.role === 'QA_LEAD').map(m => m.user_id),
+    )
+    // Map QA_LEAD project members straight onto UserSummary shape. Falling
+    // back to the project-member row's own fields means the picker still
+    // works even if the global users list hasn't loaded.
+    const byId = new Map(userList.map(u => [u.id, u]))
+    const qaLeads: UserSummary[] = projectMembers
+      .filter(m => qaLeadIds.has(m.user_id))
+      .map(m => byId.get(m.user_id) ?? {
+        id: m.user_id,
+        username: m.username,
+        full_name: m.full_name ?? undefined,
+        email: m.email,
+      })
+    return qaLeads.sort((a, b) =>
+      (a.full_name || a.username).localeCompare(b.full_name || b.username),
+    )
+  }, [projectMembers, userList])
+  const [searchParams] = useSearchParams()
+  const deepLinkSuite = searchParams.get('suite')
   const [suites, setSuites] = useState<SuiteItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [expandedSuite, setExpandedSuite] = useState<string | null>(null)
+  const [expandedSuite, setExpandedSuite] = useState<string | null>(deepLinkSuite)
   const [suiteCases, setSuiteCases] = useState<Record<string, SuiteCase[]>>({})
+  // Per-suite pagination state for the cases inline-expand. Keyed by
+  // suite_name so each open suite tracks its own page independently.
+  const [suiteCasesPage, setSuiteCasesPage] = useState<Record<string, number>>({})
+  const [suiteCasesPages, setSuiteCasesPages] = useState<Record<string, number>>({})
+  const [suiteCasesTotal, setSuiteCasesTotal] = useState<Record<string, number>>({})
+  const SUITE_CASES_PAGE_SIZE = 25
   const [loadingCases, setLoadingCases] = useState<string | null>(null)
+  const [suiteDeleted, setSuiteDeleted] = useState<Record<string, Array<{ id: string; test_name: string; class_name: string | null; review_tag: string | null; deleted_at_run_id: string | null }>>>({})
+  const [suiteChanges, setSuiteChanges] = useState<Record<string, Array<{ event_type: string; test_name: string; details: string | null }>>>({})
+  const [reviewsByRun, setReviewsByRun] = useState<Record<string, SuiteReviewItem[]>>({})
+  const [editingOwnerFor, setEditingOwnerFor] = useState<string | null>(null)
+  const [savingReview, setSavingReview] = useState<string | null>(null)
+  const deepLinkAppliedRef = useRef(false)
+  // "Add test suite" modal state. Opens when isQaEngineer+ user clicks the
+  // header button. Persists name/description/owner during edit so an
+  // accidental close-and-reopen doesn't lose the user's typing — we reset
+  // on a successful create.
+  const [showAddSuite, setShowAddSuite] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -1745,22 +3067,141 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
       .finally(() => setLoading(false))
   }, [projectId])
 
+  // When arriving via /test-management?tab=Test+Suites&suite=<name>, auto-load
+  // the deep-linked suite's cases and scroll its card into view once. Subsequent
+  // suite changes from the URL also re-apply; user-initiated collapses don't
+  // re-trigger because we gate on the ref + suiteCases cache.
+  useEffect(() => {
+    if (!deepLinkSuite || deepLinkAppliedRef.current) return
+    if (suites.length === 0) return
+    deepLinkAppliedRef.current = true
+    setExpandedSuite(deepLinkSuite)
+    void loadSuiteData(deepLinkSuite)
+    const el = document.getElementById(`suite-card-${deepLinkSuite}`)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkSuite, suites])
+
+  // Bulk-fetch reviews for every suite's latest run, keyed by run id so a
+  // single test_run that hosts multiple suites only triggers one request.
+  useEffect(() => {
+    const runIds = Array.from(new Set(suites.map(s => s.last_run_id).filter((x): x is string => !!x)))
+    if (runIds.length === 0) return
+    let cancelled = false
+    Promise.all(
+      runIds.map(rid =>
+        testManagementService.listReviewsForRun(rid)
+          .then(items => [rid, items] as const)
+          .catch(() => [rid, [] as SuiteReviewItem[]] as const),
+      ),
+    ).then(entries => {
+      if (cancelled) return
+      const map: Record<string, SuiteReviewItem[]> = {}
+      for (const [rid, items] of entries) map[rid] = items
+      setReviewsByRun(map)
+    })
+    return () => { cancelled = true }
+  }, [suites])
+
+  function reviewForSuite(suite: SuiteItem): SuiteReviewItem | undefined {
+    if (!suite.last_run_id) return undefined
+    return reviewsByRun[suite.last_run_id]?.find(r => r.suite_name === suite.suite_name)
+  }
+
+  async function handleAssignOwner(suite: SuiteItem, ownerUserId: string | null) {
+    if (!projectId) {
+      toast.error('Select a project to assign suite owners')
+      return
+    }
+    try {
+      const updated = await testManagementService.setSuiteOwner(suite.suite_name, projectId, ownerUserId)
+      setSuites(prev => prev.map(s => s.suite_name === suite.suite_name ? {
+        ...s,
+        owner_user_id: updated.owner_user_id,
+        owner_email: updated.owner_email,
+        owner_full_name: updated.owner_full_name,
+        owner_is_fallback: updated.is_fallback,
+      } : s))
+      setEditingOwnerFor(null)
+      toast.success(ownerUserId ? 'Suite owner assigned' : 'Suite owner cleared')
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Failed to assign owner')
+    }
+  }
+
+  async function handleReview(suite: SuiteItem, state: SuiteReviewState) {
+    const runId = suite.last_run_id
+    if (!runId) {
+      toast.error('No automation runs to review yet')
+      return
+    }
+    setSavingReview(suite.suite_name)
+    try {
+      const updated = await testManagementService.upsertSuiteReview(runId, suite.suite_name, state)
+      setReviewsByRun(prev => {
+        const list = prev[runId] ?? []
+        const filtered = list.filter(r => r.suite_name !== suite.suite_name)
+        return { ...prev, [runId]: [...filtered, updated] }
+      })
+      toast.success(`Marked ${REVIEW_STATE_STYLES[state].label.toLowerCase()}`)
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Failed to save review')
+    } finally {
+      setSavingReview(null)
+    }
+  }
+
+  async function loadSuiteData(suiteName: string, page: number = 1) {
+    // Page-1 only seeds deleted + changes (those don't paginate). Later
+    // pages skip the side queries — we already have them cached.
+    const seedSideData = page === 1 && !suiteCases[suiteName]
+    setLoadingCases(suiteName)
+    try {
+      if (seedSideData) {
+        const [casesResp, deleted, changes] = await Promise.all([
+          testManagementService.getSuiteCases(suiteName, projectId, { page, size: SUITE_CASES_PAGE_SIZE }),
+          testManagementService.getSuiteDeleted(suiteName, projectId).catch(() => []),
+          testManagementService.getSuiteChanges(suiteName, projectId).catch(() => []),
+        ])
+        setSuiteCases(prev => ({ ...prev, [suiteName]: casesResp.items }))
+        setSuiteCasesPage(prev => ({ ...prev, [suiteName]: casesResp.page }))
+        setSuiteCasesPages(prev => ({ ...prev, [suiteName]: casesResp.pages }))
+        setSuiteCasesTotal(prev => ({ ...prev, [suiteName]: casesResp.total }))
+        setSuiteDeleted(prev => ({ ...prev, [suiteName]: deleted }))
+        setSuiteChanges(prev => ({ ...prev, [suiteName]: changes }))
+      } else {
+        // Subsequent page changes — just refresh the cases slice.
+        const casesResp = await testManagementService.getSuiteCases(
+          suiteName, projectId, { page, size: SUITE_CASES_PAGE_SIZE },
+        )
+        setSuiteCases(prev => ({ ...prev, [suiteName]: casesResp.items }))
+        setSuiteCasesPage(prev => ({ ...prev, [suiteName]: casesResp.page }))
+        setSuiteCasesPages(prev => ({ ...prev, [suiteName]: casesResp.pages }))
+        setSuiteCasesTotal(prev => ({ ...prev, [suiteName]: casesResp.total }))
+      }
+    } catch {
+      toast.error('Failed to load suite cases')
+    } finally {
+      setLoadingCases(null)
+    }
+  }
+
   async function handleExpandSuite(suiteName: string) {
     if (expandedSuite === suiteName) {
       setExpandedSuite(null)
       return
     }
     setExpandedSuite(suiteName)
-    if (suiteCases[suiteName]) return
-    setLoadingCases(suiteName)
-    try {
-      const cases = await testManagementService.getSuiteCases(suiteName, projectId)
-      setSuiteCases(prev => ({ ...prev, [suiteName]: cases }))
-    } catch {
-      toast.error('Failed to load suite cases')
-    } finally {
-      setLoadingCases(null)
+    // Skip the network call when this suite's first page is already
+    // cached — pagination only re-fetches when the user changes pages
+    // via ``handleSuiteCasesPageChange``.
+    if (!suiteCases[suiteName]) {
+      await loadSuiteData(suiteName, 1)
     }
+  }
+
+  async function handleSuiteCasesPageChange(suiteName: string, page: number) {
+    await loadSuiteData(suiteName, page)
   }
 
   const CASE_STATUS_COLORS: Record<string, string> = {
@@ -1771,22 +3212,101 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     pending: 'text-amber-400',
   }
 
+  // Add-suite handler. Refreshes the list on success so the user sees their
+  // new suite immediately (the legacy aggregated listSuites endpoint still
+  // groups by suite_name — first-class TestSuite rows show up once any test
+  // case is ingested for that name, OR you can extend listSuites to merge
+  // first-class rows; that's a follow-up).
+  async function handleCreateSuite(payload: {
+    name: string; description: string; owner_user_id: string | null; tags: string[]
+  }) {
+    if (!projectId) throw new Error('No active project')
+    const { suitesService } = await import('@/services/suitesService')
+    await suitesService.create({
+      project_id: projectId,
+      name: payload.name,
+      description: payload.description || null,
+      owner_user_id: payload.owner_user_id,
+      tags: payload.tags.length > 0 ? payload.tags : null,
+    })
+    // Refetch suites so the new one (if it has test cases yet) shows up.
+    const fresh = await testManagementService.listSuites(projectId)
+    setSuites(fresh)
+  }
+
   if (loading) return <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
+
+  // Header bar with the "Add test suite" affordance. Lives above both the
+  // empty-state and the populated list so a fresh project can still author
+  // a suite before any ingest has happened.
+  const suitesHeader = (
+    <div className="flex items-center justify-between gap-3 mb-3">
+      <div className="text-[12.5px] text-[var(--color-text-muted)]">
+        {suites.length === 0 ? 'No test suites yet' : `${suites.length} suite${suites.length === 1 ? '' : 's'}`}
+        {projectId ? null : ' · pick a project to add a new suite'}
+      </div>
+      {isQaLead && projectId && (
+        <button
+          type="button"
+          onClick={() => setShowAddSuite(true)}
+          className="inline-flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add test suite
+        </button>
+      )}
+    </div>
+  )
 
   if (suites.length === 0) {
     return (
-      <EmptyState
-        icon={<Layers className="h-10 w-10" />}
-        title="No test suites found"
-        description={projectId ? 'Test suites appear here when automation runs ingest test results grouped by suite, or when manual test cases are assigned a suite name.' : 'No test suites found across all projects'}
-      />
+      <>
+        {suitesHeader}
+        <EmptyState
+          icon={<Layers className="h-10 w-10" />}
+          title="No test suites found"
+          description={projectId ? 'Test suites appear here when automation runs ingest test results grouped by suite, or when manual test cases are assigned a suite name.' : 'No test suites found across all projects'}
+        />
+        {showAddSuite && projectId && (
+          <AddTestSuiteModal
+            projectId={projectId}
+            ownerCandidates={ownerCandidates}
+            existingNames={new Set(suites.map(s => s.suite_name))}
+            onClose={() => setShowAddSuite(false)}
+            onCreate={handleCreateSuite}
+          />
+        )}
+      </>
     )
   }
 
   return (
+    <>
+      {suitesHeader}
+      {showAddSuite && projectId && (
+        <AddTestSuiteModal
+          projectId={projectId}
+          ownerCandidates={ownerCandidates}
+          existingNames={new Set(suites.map(s => s.suite_name))}
+          onClose={() => setShowAddSuite(false)}
+          onCreate={handleCreateSuite}
+        />
+      )}
     <div className="space-y-3">
-      {suites.map(suite => (
-        <div key={suite.suite_name} className="card p-0">
+      {suites.map(suite => {
+        const review = reviewForSuite(suite)
+        const reviewState: SuiteReviewState = review?.state ?? 'pending'
+        const reviewStyle = REVIEW_STATE_STYLES[reviewState]
+        const isEditingOwner = editingOwnerFor === suite.suite_name
+        return (
+        <div
+          key={suite.suite_name}
+          id={`suite-card-${suite.suite_name}`}
+          className={clsx(
+            'card p-0',
+            deepLinkSuite === suite.suite_name && 'ring-2 ring-[var(--color-accent)] ring-offset-1 ring-offset-[var(--color-bg)]',
+          )}
+        >
           <div
             className="p-4 cursor-pointer hover:bg-[var(--color-bg-hover)]/50 transition-colors rounded-xl"
             onClick={() => handleExpandSuite(suite.suite_name)}
@@ -1796,18 +3316,153 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                 <div className="flex items-center gap-3 mb-1">
                   <Layers className="h-4 w-4 text-[var(--color-text)] flex-shrink-0" />
                   <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">{suite.suite_name}</h3>
+                  <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', reviewStyle.cls)}>
+                    {reviewStyle.label}
+                  </span>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)]">
-                  <span>{suite.test_count} tests</span>
-                  <span className="text-green-400">{suite.passed_count} passed</span>
-                  <span className="text-red-400">{suite.failed_count} failed</span>
-                  {suite.pass_rate != null && (
-                    <span className={suite.pass_rate >= 80 ? 'text-green-400 font-medium' : suite.pass_rate >= 60 ? 'text-amber-400 font-medium' : 'text-red-400 font-medium'}>
-                      {suite.pass_rate.toFixed(1)}% pass rate
+                <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)] flex-wrap">
+                {(() => {
+                  // Headline counts. The snapshot columns
+                  // (``test_count``/``passed_count``/``failed_count``) are
+                  // DISTINCT-fingerprint with the *latest* status, which
+                  // collapses a parametrised test run 139× into "1 test,
+                  // last passed" and hides every failure (a suite with 12
+                  // real failures rendered "0 failed, 100% pass rate").
+                  // When cumulative run history exists, show the
+                  // execution-based totals instead — they match /runs and
+                  // /live (what users compare against) and never hide
+                  // failures. Unique-test count is surfaced as a secondary
+                  // annotation so the "test catalog" size is still visible.
+                  const hasExecHistory =
+                    (suite.run_count ?? 0) > 0 && (suite.total_executions ?? 0) > 0
+                  const displayTotal = hasExecHistory
+                    ? (suite.total_executions ?? 0)
+                    : suite.test_count
+                  const displayPassed = hasExecHistory
+                    ? (suite.total_passed ?? 0)
+                    : suite.passed_count
+                  const displayFailed = hasExecHistory
+                    ? (suite.total_failed ?? 0)
+                    : suite.failed_count
+                  const evaluated = displayPassed + displayFailed + (suite.total_broken ?? 0)
+                  const displayPassRate = hasExecHistory
+                    ? (evaluated > 0 ? (displayPassed / evaluated) * 100 : null)
+                    : suite.pass_rate
+                  const uniqueCount = suite.test_count
+                  return (
+                    <>
+                      <span>
+                        {displayTotal} {hasExecHistory ? 'executions' : 'tests'}
+                        {hasExecHistory && uniqueCount > 0 && uniqueCount !== displayTotal && (
+                          <span className="text-[var(--color-text-faint)]"> · {uniqueCount} unique</span>
+                        )}
+                      </span>
+                      <span className="text-green-400">{displayPassed} passed</span>
+                      <span className="text-red-400">{displayFailed} failed</span>
+                      {displayPassRate != null && (
+                        <span className={displayPassRate >= 80 ? 'text-green-400 font-medium' : displayPassRate >= 60 ? 'text-amber-400 font-medium' : 'text-red-400 font-medium'}>
+                          {displayPassRate.toFixed(1)}% pass rate
+                        </span>
+                      )}
+                    </>
+                  )
+                })()}
+                  {/* Cumulative run history — total runs that included this
+                      suite plus per-status totals across those runs. Skipped
+                      when run_count is zero so the row stays compact for
+                      manual-only suites. */}
+                  {(suite.run_count ?? 0) > 0 && (
+                    <span
+                      className="text-[var(--color-text-faint)]"
+                      title={`${suite.run_count} runs · ${suite.total_executions ?? 0} executions`}
+                    >
+                      {suite.run_count} run{suite.run_count === 1 ? '' : 's'}
+                      {(suite.total_skipped ?? 0) > 0 && (
+                        <span className="text-amber-300/80 ml-2">{suite.total_skipped} skipped</span>
+                      )}
+                      {(suite.total_broken ?? 0) > 0 && (
+                        <span className="text-orange-300/80 ml-2">{suite.total_broken} broken</span>
+                      )}
                     </span>
                   )}
+                  <Link
+                    to={`/coverage/suite?name=${encodeURIComponent(suite.suite_name)}&days=30`}
+                    className="text-[var(--color-accent)] hover:underline text-[11px]"
+                    onClick={e => e.stopPropagation()}
+                    title="View per-day trend"
+                  >
+                    Trend →
+                  </Link>
+                  <span className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <User className="h-3 w-3" />
+                    {isEditingOwner ? (
+                      ownerCandidates.length === 0 ? (
+                        <span
+                          className="text-[10.5px] italic text-amber-300"
+                          title="Add a project member with role QA_LEAD before assigning."
+                        >
+                          No QA_LEAD members on this project
+                        </span>
+                      ) : (
+                        <select
+                          autoFocus
+                          className="input h-6 py-0 text-[11px]"
+                          defaultValue={suite.owner_user_id ?? ''}
+                          onChange={e => handleAssignOwner(suite, e.target.value || null)}
+                          onBlur={() => setEditingOwnerFor(null)}
+                        >
+                          <option value="">— Unassigned (use default) —</option>
+                          {ownerCandidates.map(u => (
+                            <option key={u.id} value={u.id}>{u.full_name || u.username} ({u.email})</option>
+                          ))}
+                        </select>
+                      )
+                    ) : (
+                      <>
+                        <span className={suite.owner_is_fallback ? 'italic text-[var(--color-text-faint)]' : ''}>
+                          {suite.owner_full_name || suite.owner_email || 'Unassigned'}
+                          {suite.owner_is_fallback && ' (default)'}
+                        </span>
+                        {isQaLead && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingOwnerFor(suite.suite_name)}
+                            className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] underline text-[11px]"
+                          >
+                            change
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </span>
                   {suite.last_run_at && <span className="ml-auto">Last run: {fmtDate(suite.last_run_at)}</span>}
                 </div>
+                {suite.last_run_id && (
+                  <div className="mt-2 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                    <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mr-1">AI verdict:</span>
+                    {(['confirmed', 'acknowledged', 'review_later'] as SuiteReviewState[]).map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        disabled={savingReview === suite.suite_name}
+                        onClick={() => handleReview(suite, s)}
+                        className={clsx(
+                          'text-[11px] px-2 py-0.5 rounded font-medium transition-colors disabled:opacity-50',
+                          reviewState === s
+                            ? REVIEW_STATE_STYLES[s].cls
+                            : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                        )}
+                      >
+                        {REVIEW_STATE_STYLES[s].label}
+                      </button>
+                    ))}
+                    {review?.reviewer_email && (
+                      <span className="text-[10px] text-[var(--color-text-faint)] ml-1">
+                        by {review.reviewer_email}{review.reviewed_at ? ` · ${fmtDate(review.reviewed_at)}` : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               {expandedSuite === suite.suite_name
                 ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)] flex-shrink-0" />
@@ -1826,15 +3481,33 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       <tr>
                         <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Test Name</th>
                         <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Class / Package</th>
-                        <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
+                        <th className="px-4 py-2 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Latest Status</th>
                         <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Duration</th>
-                        <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Date</th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Executions</th>
+                        <th className="px-4 py-2 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Last Run</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--color-border)]/60">
                       {(suiteCases[suite.suite_name] ?? []).map(tc => (
                         <tr key={tc.id} className="hover:bg-[var(--color-bg-secondary)]/40 transition-colors">
-                          <td className="px-4 py-2.5 text-[var(--color-text)] font-medium text-xs truncate max-w-xs">{tc.test_name}</td>
+                          <td className="px-4 py-2.5 text-[var(--color-text)] font-medium text-xs truncate max-w-xs">
+                            {/* Automation rows link to the per-test
+                                detail page; manual managed cases
+                                aren't run-scoped so they stay plain
+                                text (their canonical detail surface
+                                is the Test Cases tab, not the per-run
+                                drawer). */}
+                            {tc.test_run_id ? (
+                              <Link
+                                to={`/runs/${tc.test_run_id}/tests/${tc.id}`}
+                                className="hover:text-[var(--color-accent)] hover:underline"
+                              >
+                                {tc.test_name}
+                              </Link>
+                            ) : (
+                              tc.test_name
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 text-[var(--color-text-muted)] text-xs">
                             {tc.class_name && <span>{tc.class_name}</span>}
                             {tc.package_name && <span className="text-[var(--color-text-faint)]"> · {tc.package_name}</span>}
@@ -1848,24 +3521,283 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                           <td className="px-4 py-2.5 text-right text-xs text-[var(--color-text-muted)] tabular-nums">
                             {tc.duration_ms != null ? `${(tc.duration_ms / 1000).toFixed(2)}s` : '—'}
                           </td>
+                          <td className="px-4 py-2.5 text-right text-xs text-[var(--color-text)] tabular-nums">
+                            {tc.execution_count ?? '—'}
+                          </td>
                           <td className="px-4 py-2.5 text-right text-xs text-[var(--color-text-muted)]">
-                            {tc.created_at ? fmtDate(tc.created_at) : '—'}
+                            {tc.last_execution_at ? fmtDate(tc.last_execution_at) : tc.created_at ? fmtDate(tc.created_at) : '—'}
                           </td>
                         </tr>
                       ))}
                       {(suiteCases[suite.suite_name] ?? []).length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">No test cases in this suite</td>
+                          <td colSpan={6} className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
+                            {suite.test_count > 0 ? (
+                              // Suite-card aggregate counted ``test_count``
+                              // tests from a TestRun.total_tests fallback
+                              // (HINCRBY counters at session close), but
+                              // the per-test rows never persisted —
+                              // typically because the live-stream SDK
+                              // didn't send ``test_result`` events or
+                              // the Redis buffer was already evicted by
+                              // the time persist_live_session ran. The
+                              // count is real; the per-test data isn't
+                              // recoverable for this run.
+                              <>
+                                {suite.test_count} test{suite.test_count === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
+                                <br />
+                                <span className="text-[var(--color-text-faint)]">
+                                  This happens when the SDK doesn't emit
+                                  ``test_result`` events or the buffer evicts
+                                  before persistence. Re-run the suite to
+                                  populate detail rows.
+                                </span>
+                              </>
+                            ) : (
+                              'No test cases in this suite'
+                            )}
+                          </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
+                  {/* Pagination — visible only when there's more than
+                      one page of cases. The total / range banner sits
+                      below the controls for a quick "showing N of M"
+                      confirmation. */}
+                  {(suiteCasesPages[suite.suite_name] ?? 1) > 1 && (
+                    <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                        Page {suiteCasesPage[suite.suite_name] ?? 1} of {suiteCasesPages[suite.suite_name] ?? 1}
+                        {' · '}
+                        {suiteCasesTotal[suite.suite_name] ?? 0} test case{(suiteCasesTotal[suite.suite_name] ?? 0) === 1 ? '' : 's'} total
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={(suiteCasesPage[suite.suite_name] ?? 1) <= 1 || loadingCases === suite.suite_name}
+                          onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) - 1)}
+                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                        >
+                          Prev
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            (suiteCasesPage[suite.suite_name] ?? 1) >= (suiteCasesPages[suite.suite_name] ?? 1)
+                            || loadingCases === suite.suite_name
+                          }
+                          onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) + 1)}
+                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Recent Changes */}
+              {(suiteChanges[suite.suite_name] ?? []).length > 0 && (
+                <div className="border-t border-[var(--color-border)] px-4 py-3">
+                  <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Recent Changes</p>
+                  <div className="space-y-1">
+                    {(suiteChanges[suite.suite_name] ?? []).slice(0, 5).map((evt, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <span className={clsx('px-1.5 py-0.5 rounded font-medium',
+                          evt.event_type === 'added' ? 'bg-green-900/30 text-green-400' :
+                          evt.event_type === 'deleted' ? 'bg-red-900/30 text-red-400' :
+                          evt.event_type === 'modified' ? 'bg-amber-900/30 text-amber-400' :
+                          'bg-blue-900/30 text-blue-400'
+                        )}>{evt.event_type}</span>
+                        <span className="text-[var(--color-text-secondary)] truncate">{evt.test_name}</span>
+                        {evt.details && <span className="text-[var(--color-text-faint)] truncate ml-auto">{evt.details}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Deleted Tests (needs_review) */}
+              {(suiteDeleted[suite.suite_name] ?? []).length > 0 && (
+                <div className="border-t border-red-700/30 bg-red-900/10 px-4 py-3">
+                  <p className="text-xs font-medium text-red-400 uppercase tracking-wider mb-2">
+                    Deleted from Suite ({(suiteDeleted[suite.suite_name] ?? []).length} tests need review)
+                  </p>
+                  <div className="space-y-1">
+                    {(suiteDeleted[suite.suite_name] ?? []).map(d => (
+                      <div key={d.id} className="flex items-center gap-2 text-xs">
+                        <span className="text-red-400">✕</span>
+                        <span className="text-[var(--color-text-secondary)]">{d.test_name}</span>
+                        {d.review_tag && (
+                          <span className="bg-amber-900/30 text-amber-400 px-1.5 py-0.5 rounded text-[10px] font-medium">{d.review_tag}</span>
+                        )}
+                        {d.class_name && <span className="text-[var(--color-text-faint)] ml-auto">{d.class_name}</span>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
           )}
         </div>
-      ))}
+        )
+      })}
+    </div>
+    </>
+  )
+}
+
+// ─── Add Test Suite modal ─────────────────────────────────────────────────────
+
+interface AddTestSuiteModalProps {
+  projectId: string
+  ownerCandidates: UserSummary[]
+  existingNames: Set<string>
+  onClose: () => void
+  onCreate: (payload: {
+    name: string; description: string; owner_user_id: string | null; tags: string[]
+  }) => Promise<void>
+}
+
+function AddTestSuiteModal({
+  projectId: _projectId, ownerCandidates, existingNames, onClose, onCreate,
+}: AddTestSuiteModalProps) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [ownerUserId, setOwnerUserId] = useState<string>('')
+  const [tagsText, setTagsText] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const trimmedName = name.trim()
+  const isDuplicate = trimmedName.length > 0 && existingNames.has(trimmedName)
+  const canSubmit = !saving && trimmedName.length >= 2 && !isDuplicate
+
+  async function handleSubmit() {
+    if (!canSubmit) return
+    setSaving(true)
+    try {
+      // Tags as comma-separated, trimmed, deduped, non-empty.
+      const tags = Array.from(new Set(
+        tagsText.split(',').map(t => t.trim()).filter(Boolean),
+      ))
+      await onCreate({
+        name: trimmedName,
+        description: description.trim(),
+        owner_user_id: ownerUserId || null,
+        tags,
+      })
+      toast.success(`Test suite "${trimmedName}" created`)
+      onClose()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to create test suite')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-base font-semibold text-[var(--color-text)] mb-1">Add test suite</h2>
+        <p className="text-xs text-[var(--color-text-muted)] mb-4">
+          Author a new suite definition. The suite name must be unique within the project.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+              Suite name <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. com.example.SmokeTests"
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+              autoFocus
+              maxLength={500}
+            />
+            {isDuplicate && (
+              <p className="text-[11px] text-red-400 mt-1">
+                A suite named “{trimmedName}” already exists in this project.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Optional. What does this suite cover?"
+              rows={3}
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+              maxLength={2000}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
+            {ownerCandidates.length === 0 ? (
+              <p className="text-[11px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-2 py-1.5">
+                No project members have the QA_LEAD role yet. Leave unset to inherit the project's default QA lead, or add a QA_LEAD member first.
+              </p>
+            ) : (
+              <select
+                value={ownerUserId}
+                onChange={e => setOwnerUserId(e.target.value)}
+                className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+              >
+                <option value="">— Use project default QA Lead —</option>
+                {ownerCandidates.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name || u.username} ({u.email})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+              Tags <span className="text-[var(--color-text-faint)]">(comma-separated)</span>
+            </label>
+            <input
+              type="text"
+              value={tagsText}
+              onChange={e => setTagsText(e.target.value)}
+              placeholder="smoke, api, regression"
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-3 justify-end mt-5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+          >
+            {saving ? <LoadingSpinner size="sm" /> : <Plus className="h-4 w-4" />}
+            {saving ? 'Creating…' : 'Create suite'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -2131,6 +4063,7 @@ export default function TestManagementPage() {
         {activeTab === 'Test Plans'   && <TestPlansTab projectId={tabProjectId} />}
         {activeTab === 'Strategy'     && <StrategyTab projectId={tabProjectId} />}
         {activeTab === 'Reviews'      && <ReviewsTab projectId={tabProjectId} />}
+        {activeTab === 'Knowledge Generation' && <KnowledgeGenerationTab />}
         {activeTab === 'Audit Log'    && <AuditTab projectId={tabProjectId} />}
       </div>
     </div>

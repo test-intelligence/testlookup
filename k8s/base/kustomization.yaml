@@ -15,6 +15,7 @@ resources:
   - ollama-deployment.yaml
   - hpa.yaml                  # all HPAs consolidated here (not embedded in deployments)
   - pdb.yaml                  # PodDisruptionBudgets for graceful node drains
+  - networkpolicy.yaml        # default-deny + explicit allows for lateral-movement hardening
   - services.yaml
   - ingress.yaml
 

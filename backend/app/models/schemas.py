@@ -1,7 +1,7 @@
 """Pydantic v2 request/response schemas for all API endpoints."""
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -10,7 +10,6 @@ from app.models.postgres import (
     IdentityEventType,
     LaunchStatus,
     NotificationChannel,
-    Severity,
     SSOEnforcementMode,
     SSOProviderType,
     TestStatus,
@@ -42,8 +41,15 @@ class UserResponse(TimestampMixin):
     role: UserRole
     is_active: bool
     must_change_password: bool = False
+    avatar_color: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SelfUpdateProfileRequest(BaseModel):
+    """Fields a user can update about themselves (no role/status changes)."""
+    full_name: Optional[str] = Field(None, max_length=255)
+    avatar_color: Optional[str] = Field(None, max_length=20)
 
 
 class TokenResponse(BaseModel):
@@ -79,26 +85,32 @@ class FirstTimeResetRequest(BaseModel):
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
     slug: str = Field(..., min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
-    description: Optional[str] = None
-    jira_project_key: Optional[str] = None
-    splunk_index: Optional[str] = None
-    ocp_namespace: Optional[str] = None
-    jenkins_job_pattern: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    jira_project_key: Optional[str] = Field(None, max_length=50)
+    splunk_index: Optional[str] = Field(None, max_length=255)
+    ocp_namespace: Optional[str] = Field(None, max_length=255)
+    jenkins_job_pattern: Optional[str] = Field(None, max_length=500)
     component_owner_map: Optional[dict] = None
+    # Optional at create time — admin can set later. When set, the user must
+    # already have ProjectMember.role=QA_LEAD on this project (or be ADMIN).
+    # The router enforces the role check.
+    default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
 
 
 class ProjectUpdate(BaseModel):
     """Partial update for project attributes. None = keep existing."""
     name: Optional[str] = Field(None, min_length=2, max_length=255)
-    description: Optional[str] = None
-    jira_project_key: Optional[str] = None
-    splunk_index: Optional[str] = None
-    ocp_namespace: Optional[str] = None
-    jenkins_job_pattern: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=2000)
+    jira_project_key: Optional[str] = Field(None, max_length=50)
+    splunk_index: Optional[str] = Field(None, max_length=255)
+    ocp_namespace: Optional[str] = Field(None, max_length=255)
+    jenkins_job_pattern: Optional[str] = Field(None, max_length=500)
     component_owner_map: Optional[dict] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     tags: Optional[List[str]] = None
+    manager_user_id: Optional[uuid.UUID] = None  # migration 0076 — program manager
+    default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079 — default suite owner
 
 
 class ProjectResponse(TimestampMixin):
@@ -115,8 +127,26 @@ class ProjectResponse(TimestampMixin):
     end_date: Optional[datetime] = None
     tags: Optional[List[Any]] = None
     is_active: bool
+    manager_user_id: Optional[uuid.UUID] = None  # migration 0076
+    default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectResetRequest(BaseModel):
+    """Destructive reset payload. ``mode`` selects the wipe scope; the
+    backend rejects any request whose ``confirmation_name`` doesn't
+    exactly equal the project's ``name`` — a typed-confirmation guard
+    against autopilot clicks. See services/project_reset_service.py for
+    the table list per mode."""
+
+    mode: Literal["runs", "full"]
+    confirmation_name: str = Field(..., min_length=1, max_length=255)
+
+
+class ProjectResetResponse(BaseModel):
+    mode: Literal["runs", "full"]
+    deleted: dict[str, int]
 
 
 # ── Test Run Schemas ──────────────────────────────────────────
@@ -138,6 +168,8 @@ class TestRunSummary(BaseModel):
     duration_ms: Optional[int] = None
     ocp_pod_name: Optional[str] = None
     ocp_namespace: Optional[str] = None
+    primary_suite_name: Optional[str] = None
+    suite_names: Optional[List[str]] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     created_at: datetime
@@ -163,11 +195,23 @@ class TestCaseSummary(BaseModel):
     class_name: Optional[str] = None
     status: TestStatus
     duration_ms: Optional[int] = None
-    severity: Optional[Severity] = None
+    # severity / failure_category are stored as String(20) in Postgres, not as
+    # real enums. Historical rows (seeded mock data, raw Allure labels) can
+    # contain lowercase strings like "blocker"/"normal"/"minor" that don't
+    # match the strict Severity/FailureCategory enum values. With the old
+    # Optional[Severity] / Optional[FailureCategory] types, Pydantic v2 would
+    # 422 the entire list response and the run detail page would show an
+    # empty test case table. Falling back to plain strings lets the response
+    # surface what's actually in the database; the frontend already treats
+    # these columns as strings.
+    severity: Optional[str] = None
     feature: Optional[str] = None
-    failure_category: Optional[FailureCategory] = None
+    failure_category: Optional[str] = None
     has_attachments: bool = False
     created_at: datetime
+    # Auto-assigned at ingest for FAILED/BROKEN cases (migration 0080).
+    # Resolves to the suite owner → default QA lead → manager → NULL.
+    assigned_to_user_id: Optional[uuid.UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -191,6 +235,179 @@ class TestCaseListResponse(BaseModel):
     pages: int
 
 
+# ── Test Execution Review (migration 0081) ────────────────────────────────
+
+
+# Mirror of ``models.postgres.TEST_EXECUTION_REVIEW_STATES``. Kept in sync
+# with the ORM via the service-level validator.
+TestExecutionReviewState = Literal[
+    "pending_review",
+    "reviewed",
+    "defect_filed",
+    "false_positive",
+    "reproducible",
+]
+
+
+class TestExecutionReviewRead(BaseModel):
+    """Current review state for an AI-flagged failure."""
+    id: uuid.UUID
+    test_case_id: uuid.UUID
+    project_id: uuid.UUID
+    state: TestExecutionReviewState
+    reviewed_by_user_id: Optional[uuid.UUID] = None
+    reviewed_by_username: Optional[str] = None
+    reviewed_by_full_name: Optional[str] = None
+    defect_link: Optional[str] = None
+    note: Optional[str] = None
+    transitioned_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestExecutionReviewUpdate(BaseModel):
+    """Transition the review state. ``state`` is required; other fields are
+    optional context the reviewer can attach (e.g. defect URL on
+    ``defect_filed``, freeform note explaining the verdict)."""
+    state: TestExecutionReviewState
+    defect_link: Optional[str] = Field(None, max_length=2000)
+    note: Optional[str] = Field(None, max_length=4000)
+
+
+# ── Summary Report (per-project consolidated stats) ────────────────────────
+
+
+class SummaryTotals(BaseModel):
+    total_test_cases: int
+    passed: int
+    failed: int
+    skipped: int
+    broken: int
+    # ``evaluated`` = passed + failed + broken (skipped excluded from rate math).
+    evaluated: int
+    pass_rate_pct: float
+    fail_rate_pct: float
+    skip_rate_pct: float
+    broken_rate_pct: float
+    # Pass rate that ignores skipped tests — matches the /overview headline.
+    weighted_pass_rate_pct: float
+
+
+class SummarySuiteRow(BaseModel):
+    suite_name: str
+    total: int
+    passed: int
+    failed: int
+    skipped: int
+    broken: int
+    pass_rate_pct: float
+    weighted_pass_rate_pct: float
+    last_run_at: Optional[str] = None
+
+
+class SummaryTopFailingTest(BaseModel):
+    suite_name: Optional[str] = None
+    class_name: Optional[str] = None
+    test_name: str
+    failures: int
+
+
+class SummaryReportResponse(BaseModel):
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
+    mode: Literal["window", "latest"]
+    window_days: int
+    generated_at: str
+    period_start: str
+    period_end: str
+    totals: SummaryTotals
+    run_count: int
+    # Average runs per day. ``None`` in ``latest`` mode (where the
+    # denominator is meaningless — only the latest run per suite counts).
+    runs_per_day: Optional[float] = None
+    avg_duration_ms: int
+    latest_run_at: Optional[str] = None
+    flaky_test_count: int
+    flaky_rate_pct: float
+    suites: List[SummarySuiteRow]
+    top_failing_tests: List[SummaryTopFailingTest]
+
+
+# ── My Failures inbox (migration 0080) ─────────────────────────────────────
+
+class MyFailureItem(BaseModel):
+    """A single auto-assigned failure surfaced on the calling user's inbox.
+
+    Carries enough context to render a triage row without a follow-up fetch:
+    test name + suite + run identity + project label + relative age. The
+    ``navigation_url`` is the canonical deep link to the run-detail page's
+    test-case drawer.
+    """
+    id: uuid.UUID
+    test_name: str
+    suite_name: Optional[str] = None
+    class_name: Optional[str] = None
+    status: TestStatus
+    severity: Optional[str] = None
+    failure_category: Optional[str] = None
+    error_message: Optional[str] = None
+    duration_ms: Optional[int] = None
+    created_at: datetime
+    test_run_id: uuid.UUID
+    build_number: Optional[str] = None
+    project_id: uuid.UUID
+    project_name: Optional[str] = None
+    navigation_url: str
+    # Triage workflow state (migration 0088). The inbox endpoint filters
+    # to PENDING_REVIEW, but exposing the field lets callers like the
+    # run-detail page render the full status without a separate fetch.
+    triage_status: str = "PENDING_REVIEW"
+    triage_notes: Optional[str] = None
+    # Per-(project, primary_suite_name) human-readable run number. Starts
+    # at 1 and increments with each new run in the same partition.
+    # Optional because legacy clients of this schema may not populate it.
+    run_seq: Optional[int] = None
+    # Count of times THIS test (same project + suite + class + test name) has
+    # failed for this user inside the active time window. Lets the inbox row
+    # show "× 7 in 7 days" so repeat offenders are visible at a glance.
+    failure_count: int = 1
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TriageStatusUpdate(BaseModel):
+    """Body of ``PUT /api/v1/me/assigned-failures/{id}/triage``.
+
+    ``status`` is validated against the ``TriageStatus`` enum at the
+    service layer (the regex form here keeps the OpenAPI schema readable
+    while still rejecting arbitrary strings; we don't gain anything
+    from using a Pydantic Enum directly because the service maps to the
+    canonical enum anyway).
+    """
+    status: str = Field(
+        ...,
+        pattern=r"^(PENDING_REVIEW|REVIEWED_APPROVED|DEFECT_CREATED|WONT_FIX|AUTOMATION_SCRIPT_ISSUE|FLAKY_TEST)$",
+        description="New triage status. Any value other than PENDING_REVIEW drops the row from the assignee's /my-failures inbox.",
+    )
+    notes: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Free-form context. Typically a defect link for DEFECT_CREATED or a rationale for WONT_FIX / REVIEWED_APPROVED.",
+    )
+
+
+class MyFailureListResponse(BaseModel):
+    items: List[MyFailureItem]
+    total: int
+    page: int
+    size: int
+    pages: int
+    # Total across the same filter without pagination — used for the
+    # sidebar badge so the user sees "you have N waiting" even on page 2.
+    unresolved_total: int
+
+
 # ── Metrics Schemas ───────────────────────────────────────────
 
 class MetricCard(BaseModel):
@@ -208,6 +425,11 @@ class DashboardSummary(BaseModel):
     new_failures_24h: MetricCard
     coverage_pct: Optional[MetricCard] = None
     release_readiness: Optional[str] = None  # "GREEN" | "AMBER" | "RED"
+    # 4-band pass-rate verdict driven by the active ReleaseGatePolicy. ``None``
+    # when no policy is active or no runs exist. ``red`` / ``orange`` /
+    # ``yellow`` / ``green`` — see PolicyPassRateBands.
+    release_readiness_band: Optional[str] = None
+    release_readiness_downgrades: List[str] = Field(default_factory=list)
 
 
 class TrendDataPoint(BaseModel):
@@ -315,9 +537,14 @@ class JiraIssueRequest(BaseModel):
 
 
 class JiraIssueResponse(BaseModel):
-    ticket_id: str
-    ticket_key: str
-    ticket_url: str
+    ticket_id: Optional[str] = None
+    ticket_key: Optional[str] = None
+    ticket_url: Optional[str] = None
+    approval_status: Optional[str] = None
+    requires_approval: bool = False
+    policy_reasons: List[str] = Field(default_factory=list)
+    defect_id: Optional[uuid.UUID] = None
+    mutating_action: Optional[str] = None
 
 
 # ── Search Schemas ────────────────────────────────────────────
@@ -353,6 +580,34 @@ class SearchResponse(BaseModel):
     total: int
     query: str
     search_type: str  # "keyword" | "semantic" | "hybrid"
+
+
+# ── Global Search Schemas (GS-2) ─────────────────────────────
+
+class GlobalSearchResult(BaseModel):
+    """A single result from system-wide global search."""
+    entity_type: str                          # test_case | test_run | suite | defect | flaky_test | release
+    entity_id: str                            # UUID as string
+    title: str                                # display title
+    subtitle: str = ""                        # secondary context
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
+    navigation_url: str                       # frontend route
+    relevance_score: float = 0.0
+    match_reasons: List[str] = []
+    metadata: dict = Field(default_factory=dict)
+
+
+class GlobalSearchResponse(BaseModel):
+    """Response from the global search endpoint."""
+    items: List[GlobalSearchResult]
+    total: int
+    query: str
+    search_type: str = "keyword"
+    entity_counts: dict = Field(default_factory=dict)   # {"test_case": 5, "test_run": 3}
+    page: int = 1
+    size: int = 20
+    pages: int = 1
 
 
 # ── Quality Gate Schemas ──────────────────────────────────────
@@ -472,6 +727,7 @@ class AgentRunSummaryResponse(BaseModel):
     build_number: Optional[str] = None
     executive_summary: str
     markdown_report: str
+    executive_panel: Optional[dict] = None
     anomaly_count: int = 0
     is_regression: bool = False
     analysis_count: int = 0
@@ -498,6 +754,19 @@ class PipelineTimelineSummary(BaseModel):
     progress_percent: float = 0.0
 
 
+class PipelineReplayAuditGaps(BaseModel):
+    missing_start_events: List[str] = Field(default_factory=list)
+    missing_terminal_events: List[str] = Field(default_factory=list)
+    missing_replay_checksums: List[str] = Field(default_factory=list)
+    missing_checkpoints: List[str] = Field(default_factory=list)
+    missing_final_state_checksum: bool = False
+
+
+class PipelineReplayIntegritySummary(BaseModel):
+    replayable: bool = False
+    audit_gaps: PipelineReplayAuditGaps = Field(default_factory=PipelineReplayAuditGaps)
+
+
 class PipelineTimelineResponse(BaseModel):
     schema_version: int = 2
     pipeline_run_id: uuid.UUID
@@ -507,10 +776,79 @@ class PipelineTimelineResponse(BaseModel):
     completed_at: Optional[Any] = None
     duration_seconds: Optional[float] = None
     cost_summary: Dict[str, Any] = Field(default_factory=dict)
+    agent_observability: Dict[str, Any] = Field(default_factory=dict)
     alerts: List[Dict[str, Any]] = Field(default_factory=list)
     stages: List[Dict[str, Any]] = Field(default_factory=list)
     events: List[PipelineTimelineEventResponse] = Field(default_factory=list)
     summary: PipelineTimelineSummary = Field(default_factory=PipelineTimelineSummary)
+    replay_integrity: PipelineReplayIntegritySummary = Field(default_factory=PipelineReplayIntegritySummary)
+
+
+class PipelineReplayEventResponse(BaseModel):
+    event_type: str
+    stage_name: Optional[str] = None
+    test_case_id: Optional[str] = None
+    timestamp: Optional[Any] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    source: Optional[str] = None
+
+
+class PipelineReplayStageResponse(BaseModel):
+    stage_name: str
+    status: str
+    started_at: Optional[Any] = None
+    completed_at: Optional[Any] = None
+    input_checksum_sha256: Optional[str] = None
+    output_checksum_sha256: Optional[str] = None
+    runtime_versions: Dict[str, str] = Field(default_factory=dict)
+    checkpoint_available: bool = False
+    restored_from_checkpoint: bool = False
+    decision_count: int = 0
+
+
+class MemoryReference(BaseModel):
+    """Canonical pointer from generated output back to an auditable memory row."""
+    memory_entry_id: uuid.UUID
+    entity_type: str
+    entity_id: str
+    source_snapshot_id: Optional[uuid.UUID] = None
+    payload_sha256: str
+    retrieval_audit: Optional[Dict[str, Any]] = None
+    retrieval_audit_sha256: Optional[str] = None
+    memory_reference_id: Optional[str] = None
+    evidence_refs: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class PipelineReplayResponse(BaseModel):
+    schema_version: int = 1
+    pipeline_run_id: uuid.UUID
+    test_run_id: uuid.UUID
+    workflow_type: str
+    status: str
+    started_at: Optional[Any] = None
+    completed_at: Optional[Any] = None
+    analysis_mode_requested: Optional[str] = None
+    analysis_mode_resolved: Optional[str] = None
+    analysis_mode_resolution: Dict[str, Any] = Field(default_factory=dict)
+    final_state_checksum_sha256: Optional[str] = None
+    runtime_versions: Dict[str, str] = Field(default_factory=dict)
+    workflow_plan: Dict[str, Any] = Field(default_factory=dict)
+    workflow_verification: Dict[str, Any] = Field(default_factory=dict)
+    route_decisions: List[Dict[str, Any]] = Field(default_factory=list)
+    stage_replay: List[PipelineReplayStageResponse] = Field(default_factory=list)
+    memory_references: List[MemoryReference] = Field(default_factory=list)
+    events: List[PipelineReplayEventResponse] = Field(default_factory=list)
+    event_counts: Dict[str, int] = Field(default_factory=dict)
+    replayable: bool = False
+    audit_gaps: PipelineReplayAuditGaps = Field(default_factory=PipelineReplayAuditGaps)
+
+
+class PipelineEventLogHealthResponse(BaseModel):
+    status: str = "healthy"
+    write_failure_count: int = 0
+    dead_letter_count: int = 0
+    dead_letter_limit: int = 0
+    recent_dead_letters: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ── Run Intelligence Schemas ──────────────────────────────────
@@ -682,6 +1020,7 @@ class RunModeSummaryResponse(BaseModel):
     layer2_incident: Optional[Any] = None
     layer3_evidence: Optional[Any] = None
     layer4_action_plan: Optional[Any] = None
+    executive_panel: Optional[dict] = None
     fallback_used: bool = False
     generated_at: Optional[Any] = None
     citations: List[Citation] = []
@@ -749,6 +1088,10 @@ class ManagedTestCaseCreate(BaseModel):
     priority: str = "medium"
     severity: str = "major"
     feature_area: Optional[str] = None
+    # Free-text suite label (legacy). When set without ``test_suite_id``,
+    # the service resolves-or-creates a matching TestSuite and populates
+    # the FK so authored cases participate in the same catalog graph as
+    # executed ones (migration 0087).
     suite_name: Optional[str] = None
     tags: Optional[List[str]] = None
     estimated_duration_minutes: Optional[int] = None
@@ -777,6 +1120,12 @@ class ManagedTestCaseUpdate(BaseModel):
 
 
 class ManagedTestCaseResponse(BaseModel):
+    # Defaults to "managed" for rows backed by the ``managed_test_cases``
+    # table; ``"automation"`` for synthesised rows derived from per-run
+    # ``test_cases`` (returned by /cases when ``include_automation=true``).
+    # The frontend uses this to render an "Automation-ingested" badge and
+    # disable edit affordances on automation rows.
+    source: str = "managed"
     id: uuid.UUID
     project_id: uuid.UUID
     title: str
@@ -791,6 +1140,10 @@ class ManagedTestCaseResponse(BaseModel):
     severity: str
     feature_area: Optional[str] = None
     suite_name: Optional[str] = None
+    # Structured suite anchor (migration 0087). Null for legacy rows that
+    # haven't been backfilled; new rows created with a ``suite_name`` get
+    # this populated by the service create path.
+    test_suite_id: Optional[uuid.UUID] = None
     tags: Optional[List[Any]] = None
     status: str
     version: int
@@ -890,6 +1243,7 @@ class TestPlanCreate(BaseModel):
     planned_start_date: Optional[datetime] = None
     planned_end_date: Optional[datetime] = None
     assigned_to_id: Optional[uuid.UUID] = None
+    tags: Optional[List[str]] = None
 
 
 class TestPlanUpdate(BaseModel):
@@ -902,6 +1256,7 @@ class TestPlanUpdate(BaseModel):
     actual_start_date: Optional[datetime] = None
     actual_end_date: Optional[datetime] = None
     assigned_to_id: Optional[uuid.UUID] = None
+    tags: Optional[List[str]] = None
 
 
 class TestPlanResponse(BaseModel):
@@ -923,6 +1278,7 @@ class TestPlanResponse(BaseModel):
     passed_cases: int
     failed_cases: int
     blocked_cases: int
+    tags: Optional[List[str]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -1043,6 +1399,148 @@ class AuditLogListResponse(BaseModel):
     pages: int
 
 
+# ── Suite Membership Traceability Schemas (TS-1) ────────────────────────────
+
+
+class SuiteMembershipResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    suite_name: str
+    test_fingerprint: str
+    test_name: str
+    class_name: Optional[str] = None
+    managed_test_case_id: Optional[uuid.UUID] = None
+    source: str
+    status: str
+    last_seen_run_id: Optional[uuid.UUID] = None
+    first_seen_run_id: Optional[uuid.UUID] = None
+    deleted_at_run_id: Optional[uuid.UUID] = None
+    review_tag: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuiteMembershipEventResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    suite_name: str
+    test_fingerprint: str
+    test_name: str
+    event_type: str
+    run_id: Optional[uuid.UUID] = None
+    old_values: Optional[dict] = None
+    new_values: Optional[dict] = None
+    details: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuiteSyncSummary(BaseModel):
+    suite_name: str
+    run_id: uuid.UUID
+    added_count: int = 0
+    deleted_count: int = 0
+    modified_count: int = 0
+    restored_count: int = 0
+    unchanged_count: int = 0
+
+
+# ── Test Suite & Canonical Test Case Schemas (Phase 1, migration 0075) ──────
+
+
+class TestSuiteCreate(BaseModel):
+    project_id: uuid.UUID
+    name: str = Field(..., min_length=1, max_length=500)
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+    # Optional owner picked at creation. When provided, the suite-owner
+    # row is written immediately via ``set_suite_owner`` — which enforces
+    # the QA_LEAD role check (HTTP 400 if the user isn't eligible). Leave
+    # unset to let the project's default QA lead become the implicit
+    # owner via the read-time fallback chain.
+    owner_user_id: Optional[uuid.UUID] = None
+
+
+class TestSuiteUpdate(BaseModel):
+    """None = keep existing value."""
+    name: Optional[str] = Field(None, min_length=1, max_length=500)
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class TestSuiteResponse(TimestampMixin):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    is_default: bool
+    tags: Optional[List[str]] = None
+    test_case_count: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestSuiteListResponse(BaseModel):
+    items: List[TestSuiteResponse]
+    total: int
+
+
+class CanonicalTestCaseResponse(TimestampMixin):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    test_suite_id: uuid.UUID
+    test_suite_name: Optional[str] = None
+    test_fingerprint: str
+    test_name: str
+    class_name: Optional[str] = None
+    status: str
+    source: str
+    first_seen_run_id: Optional[uuid.UUID] = None
+    last_seen_run_id: Optional[uuid.UUID] = None
+    # Per-run TestCase.id matching this canonical's fingerprint in the
+    # last_seen_run. Surfaced so the suite-detail UI can deep-link to
+    # ``/runs/<run>/tests/<case>``. ``None`` when unresolved (e.g. the run was
+    # GC'd) — UI then falls back to the run detail page.
+    last_seen_test_case_id: Optional[uuid.UUID] = None
+    deleted_at_run_id: Optional[uuid.UUID] = None
+    managed_test_case_id: Optional[uuid.UUID] = None
+    review_tag: Optional[str] = None
+    tags: Optional[List[str]] = None
+    run_count: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CanonicalTestCaseListResponse(BaseModel):
+    items: List[CanonicalTestCaseResponse]
+    total: int
+
+
+class CanonicalTestCaseLinkRequest(BaseModel):
+    """Move a canonical test case to a different suite within the same project."""
+    test_suite_id: uuid.UUID
+
+
+class CanonicalTestCaseBulkLinkRequest(BaseModel):
+    """Move multiple canonical test cases to a different suite within the
+    same project. Pair with ``POST /api/v1/canonical-test-cases/bulk-link``."""
+    target_test_suite_id: uuid.UUID
+    # Hard ceiling matches the service-side ``BULK_LINK_MAX_IDS`` so the
+    # validation 422 happens before the handler runs. The minimum of 1
+    # rules out an empty-body request that does nothing — callers should
+    # not POST a no-op.
+    canonical_ids: List[uuid.UUID] = Field(..., min_length=1, max_length=200)
+
+
+class CanonicalTestCaseBulkLinkResponse(BaseModel):
+    """Outcome of a bulk-link request. ``moved`` and
+    ``skipped_already_in_target`` always sum to the number of ids that
+    actually resolved to a canonical row; ``missing_ids`` lists requested
+    ids that didn't resolve (stale UI selection, deleted in flight)."""
+    moved: int
+    skipped_already_in_target: int
+    missing_ids: List[uuid.UUID]
+
+
 class AIGenerateTestCasesRequest(BaseModel):
     project_id: uuid.UUID
     requirements: str = Field(..., min_length=3)
@@ -1123,9 +1621,16 @@ class AITaskStatusResponse(BaseModel):
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
 class LiveSessionCreate(BaseModel):
-    """Request body to register a new live execution session."""
-    project_id: uuid.UUID
-    run_id: Optional[str] = None           # auto-generated if omitted
+    """Request body to register a new live execution session.
+
+    ``project_id`` accepts either a project UUID *or* a human-readable project
+    name (case-insensitive exact match). The server resolves it to a real UUID
+    in ``stream_service.create_session``. Keeping the field name ``project_id``
+    preserves wire compatibility with SDK callers that already map their
+    ``testlookup.project`` config (conventionally a name, à la
+    ``rp.project``) onto this field.
+    """
+    project_id: str = Field(..., min_length=1, max_length=255)
     client_name: str = Field(..., min_length=1, max_length=255)
     machine_id: Optional[str] = Field(None, max_length=255)
     build_number: Optional[str] = Field(None, max_length=100)
@@ -1137,6 +1642,15 @@ class LiveSessionCreate(BaseModel):
     # Optional: name of the release this execution belongs to.
     # Auto-created in "planning" status if it does not exist in the project.
     release_name: Optional[str] = Field(None, max_length=255)
+    # Human-readable launch label (analogous to ReportPortal's rp.launch).
+    # When present this is what gets shown to humans in Live Execution and
+    # Runs columns; when null the UI falls back to build_number.
+    launch_name: Optional[str] = Field(None, max_length=255)
+    # Run-level suite identifier (testlookup.suite, falling back to
+    # testlookup.launch on the SDK side). Propagated to LiveSession.suite_name
+    # and TestRun.primary_suite_name so every page that links to the run
+    # shows a single, user-configured suite label.
+    suite_name: Optional[str] = Field(None, max_length=500)
 
 
 class LiveSessionResponse(BaseModel):
@@ -1153,7 +1667,12 @@ class LiveEvent(BaseModel):
     """A single test execution event from a client machine."""
     event_type: str = Field(
         ...,
-        description="run_start | test_start | test_result | log | metric | run_complete",
+        description=(
+            "run_start | test_start | test_result | log | metric | run_complete | live_heartbeat. "
+            "live_heartbeat is a no-op refresh emitted by SDK clients during long inter-test "
+            "gaps — it only bumps the Redis last_event_at field so the reaper doesn't close "
+            "the session as idle."
+        ),
     )
     test_name: Optional[str] = Field(None, max_length=1000)
     status: Optional[str] = Field(None, description="PASSED | FAILED | SKIPPED | BROKEN")
@@ -1184,9 +1703,87 @@ class LiveEventBatchResponse(BaseModel):
     session_id: str
 
 
+class LiveStreamMeta(BaseModel):
+    """Optional CI/run metadata that enriches the auto-created session.
+
+    All fields are optional — when omitted the server falls back to the API
+    key's name (for client_name) and the run_id (for build_number).
+    """
+    build_number: Optional[str] = Field(None, max_length=100)
+    branch: Optional[str] = Field(None, max_length=255)
+    commit_hash: Optional[str] = Field(None, max_length=64)
+    framework: Optional[str] = Field(None, max_length=50)
+    total_tests: Optional[int] = Field(None, ge=0)
+    machine_id: Optional[str] = Field(None, max_length=255)
+    release_name: Optional[str] = Field(None, max_length=255)
+    launch_name: Optional[str] = Field(None, max_length=255)
+    metadata: Optional[dict] = None
+
+
+class LiveStreamIngestRequest(BaseModel):
+    """API-key-authenticated streaming ingest. Server auto-manages the session.
+
+    A client-chosen ``run_id`` (any stable identifier — CI build id, UUID, etc.)
+    keys the live session along with the API key's bound project. The first
+    call for a given ``(project_id, run_id)`` pair auto-creates the session;
+    subsequent calls reuse it. Clients never call ``/sessions`` themselves.
+    """
+    run_id: str = Field(..., min_length=1, max_length=255)
+    events: List[LiveEvent] = Field(..., min_length=1, max_length=1000)
+    meta: Optional[LiveStreamMeta] = None
+
+
+class LiveStreamIngestResponse(BaseModel):
+    accepted: int
+    run_id: str
+    session_id: str
+    created_session: bool
+
+
+# ── Ingest Schemas (unified batch + file upload) ──────────────────────────────
+
+class IngestTestResult(BaseModel):
+    """A single test result in a JSON batch ingest."""
+    test_name: str = Field(..., min_length=1, max_length=1000)
+    status: str = Field(..., pattern=r"^(PASSED|FAILED|SKIPPED|BROKEN)$")
+    duration_ms: Optional[int] = Field(None, ge=0)
+    suite_name: Optional[str] = Field(None, max_length=500)
+    class_name: Optional[str] = Field(None, max_length=500)
+    error_message: Optional[str] = None
+    stack_trace: Optional[str] = None
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class IngestPayload(BaseModel):
+    """JSON batch ingest request body for POST /api/v1/ingest."""
+    project_id: str = Field(..., description="Project UUID")
+    build_number: str = Field(..., min_length=1, max_length=255)
+    results: List[IngestTestResult] = Field(..., min_length=1, max_length=50_000)
+    branch: Optional[str] = Field(None, max_length=255)
+    commit_hash: Optional[str] = Field(None, max_length=64)
+    framework: Optional[str] = Field(None, max_length=50)
+    trigger_source: Optional[str] = "api"
+    release_name: Optional[str] = Field(None, max_length=255)
+
+
+class IngestResponse(BaseModel):
+    """Response for accepted ingest request."""
+    status: str = "accepted"
+    run_id: str
+    task_id: str
+    total_results: int
+
+
 class LiveSessionState(BaseModel):
     """Live state of an active or recently completed session."""
     run_id: str
+    # Canonical TestRun.id this live session resolves to (deterministic when
+    # ``run_id`` is a non-UUID slug). The frontend uses this — not the raw
+    # ``run_id`` — for ``/runs/<id>`` navigation, since the latter 422's
+    # against the UUID-typed path validator on the GET /api/v1/runs/{run_id}
+    # endpoint.
+    test_run_id: Optional[str] = None
     project_id: str
     build_number: str
     status: str
@@ -1202,6 +1799,14 @@ class LiveSessionState(BaseModel):
     client_name: Optional[str] = None
     completed_at: Optional[str] = None
     release_name: Optional[str] = None
+    launch_name: Optional[str] = None
+    # Run-level suite identifier (testlookup.suite > testlookup.launch).
+    # Surfaced by /live's UI as a dedicated Suite column.
+    suite_name: Optional[str] = None
+    # Per-(project, primary_suite_name) human-readable run number, 1-based.
+    # The /live UI shows ``Run #N`` instead of the SDK-supplied
+    # build_number so users can correlate the same run across pages.
+    run_seq: Optional[int] = None
 
 
 class ActiveSessionsResponse(BaseModel):
@@ -1268,6 +1873,15 @@ class AIConfigRead(BaseModel):
     finetune_enabled: bool
     openai_key_set: bool
     google_key_set: bool
+    anthropic_key_set: bool = False                   # LP-3: Anthropic/Claude support
+    base_url: Optional[str] = None                    # LP-3: provider endpoint override
+    # Analysis mode — LLM-free operation
+    analysis_mode: str                               # "llm" | "ml" | "rules" | "auto"
+    ml_model_available: bool = False                  # True if a trained ML model exists
+    ml_model_accuracy: Optional[float] = None         # last known accuracy (0-1)
+    ml_training_sample_count: int = 0                 # total labeled samples available
+    # Knowledge RAG feature toggle
+    knowledge_rag_enabled: bool = False               # True if grounded test generation is active
 
 
 class AIConfigUpdate(BaseModel):
@@ -1285,6 +1899,10 @@ class AIConfigUpdate(BaseModel):
     finetune_enabled: Optional[bool] = None
     openai_api_key: Optional[str] = Field(None, max_length=500)
     google_api_key: Optional[str] = Field(None, max_length=500)
+    anthropic_api_key: Optional[str] = Field(None, max_length=500)  # LP-3
+    base_url: Optional[str] = Field(None, max_length=500)           # LP-3: endpoint override
+    analysis_mode: Optional[str] = Field(None, pattern=r"^(llm|ml|rules|auto)$")
+    knowledge_rag_enabled: Optional[bool] = None
 
 
 # ── Integrations Schemas ─────────────────────────────────────
@@ -1457,6 +2075,8 @@ class ApiKeyCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
     scopes: List[str] = Field(default_factory=list)
     expires_days: Optional[int] = Field(None, ge=1, le=365)
+    project_id: Optional[uuid.UUID] = Field(None, description="Bind key to a single project (ADMIN only)")
+    target_user_id: Optional[uuid.UUID] = Field(None, description="Create key for another user (ADMIN only)")
 
 
 class ApiKeyResponse(BaseModel):
@@ -1464,6 +2084,7 @@ class ApiKeyResponse(BaseModel):
     name: str
     key_hint: str
     scopes: List[str]
+    project_id: Optional[uuid.UUID] = None
     is_active: bool
     expires_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None
@@ -1522,6 +2143,19 @@ class ReleaseCouncilResponse(BaseModel):
     policy_version: Optional[int] = None
     policy_level: Optional[str] = None  # "project" | "system" | "hardcoded"
     rule_evaluations: List["RuleEvaluationResponse"] = []
+    # Synthesised quick-look response — when True, this council view was
+    # derived from the run's aggregates because no ReleaseDecision row
+    # exists yet (deep investigation has not run). The UI surfaces a
+    # note prompting the user to run deep investigation for richer
+    # context (clusters, defect breakdown, override audit, LLM narrative).
+    synthesized: bool = False
+    # Pass-rate band classification from the active ReleaseGatePolicy
+    # (migration 0079 + 2026-05-14 feature). When set, the band is what
+    # the /overview verdict colour also reads from — keeping the two pages
+    # in lockstep. ``band_downgrades`` enumerates which hard caps fired,
+    # e.g. ``["p0_defects:2>0"]``.
+    release_readiness_band: Optional[str] = None
+    band_downgrades: List[str] = []
 
 
 class ReleaseCouncilOverrideRequest(BaseModel):
@@ -1825,12 +2459,47 @@ class PolicyRule(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class PolicyPassRateBands(BaseModel):
+    """Project-level 4-band classification for the build colour and verdict.
+
+    Bands are defined by the *lower* edge of each colour and must be strictly
+    increasing: ``orange_min < yellow_min < green_min``. A pass rate below
+    ``orange_min`` is red; ``[orange_min, yellow_min)`` is orange;
+    ``[yellow_min, green_min)`` is yellow; ``>= green_min`` is green.
+
+    Defaults match the user-requested levels (red <90, orange 90-95,
+    yellow 95-99, green >=99). Verdict mapping is fixed: green = GO,
+    yellow = GO with watch, orange = CONDITIONAL, red = NO_GO. Hard caps
+    (PolicyHardCaps) can downgrade the resolved band by one or two steps.
+    """
+    orange_min: float = Field(default=90.0, ge=0, le=100)
+    yellow_min: float = Field(default=95.0, ge=0, le=100)
+    green_min: float = Field(default=99.0, ge=0, le=100)
+
+
+class PolicyHardCaps(BaseModel):
+    """Hard caps that downgrade the pass-rate band before the verdict map.
+
+    Each cap is a (count) threshold; exceeding it downgrades the resolved
+    band by one step (green → yellow → orange → red, no wrap). Multiple
+    breached caps stack, capped at red. ``None`` (or 0 where ``ge=0``)
+    disables the cap.
+    """
+    max_p0_defects: int = Field(default=0, ge=0, description="Active P0 defects allowed before downgrade")
+    max_flaky_count: int = Field(default=10, ge=0, description="Flaky tests allowed before downgrade")
+    max_new_failures_24h: int = Field(default=20, ge=0, description="New failures in last 24h allowed before downgrade")
+
+
 class PolicyDocument(BaseModel):
     """The full policy rule document stored as JSON in release_gate_policies.rules."""
     schema_version: int = 1
     thresholds: PolicyThresholds = Field(default_factory=PolicyThresholds)
     dimension_weights: PolicyDimensionWeights = Field(default_factory=PolicyDimensionWeights)
     rules: List[PolicyRule] = Field(default_factory=list)
+    # Tier-1 pass-rate gating — feature added 2026-05-14. Existing rows
+    # default these on read via Pydantic, so no migration is required.
+    pass_rate_bands: PolicyPassRateBands = Field(default_factory=PolicyPassRateBands)
+    hard_caps: PolicyHardCaps = Field(default_factory=PolicyHardCaps)
 
 
 class ReleaseGatePolicyCreate(BaseModel):
@@ -1969,6 +2638,7 @@ class SavedViewCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
     description: Optional[str] = None
+    page: Optional[str] = Field(None, max_length=50)  # dashboard | trends | coverage | defects
     filters: dict = Field(default_factory=dict)
     is_shared: bool = False
     is_default: bool = False
@@ -1977,6 +2647,7 @@ class SavedViewCreate(BaseModel):
 class SavedViewUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = None
+    page: Optional[str] = Field(None, max_length=50)
     filters: Optional[dict] = None
     is_shared: Optional[bool] = None
     is_default: Optional[bool] = None
@@ -1988,6 +2659,7 @@ class SavedViewResponse(BaseModel):
     project_id: Optional[uuid.UUID] = None
     name: str
     description: Optional[str] = None
+    page: Optional[str] = None
     filters: dict
     is_shared: bool
     is_default: bool
@@ -2000,8 +2672,11 @@ class DigestSubscriptionCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     saved_view_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
-    schedule: str = Field(default="WEEKLY", pattern="^(DAILY|WEEKLY)$")
+    schedule: str = Field(default="WEEKLY", pattern="^(DAILY|WEEKLY|PER_RUN|PER_RELEASE|PER_SUITE)$")
     channel: str = Field(default="email", pattern="^(email|slack|teams)$")
+    scope_type: Optional[str] = Field(default="project", pattern="^(project|release|suite|global)$")
+    scope_value: Optional[str] = Field(None, max_length=255)
+    trigger_filter: Optional[str] = Field(default="all", pattern="^(all|failed_only|degraded_only)$")
 
 
 class DigestSubscriptionUpdate(BaseModel):
@@ -2023,6 +2698,9 @@ class DigestSubscriptionResponse(BaseModel):
     channel: str
     is_active: bool
     is_paused: bool
+    scope_type: Optional[str] = "project"
+    scope_value: Optional[str] = None
+    trigger_filter: Optional[str] = "all"
     last_delivered_at: Optional[datetime] = None
     next_delivery_at: Optional[datetime] = None
     delivery_count: int = 0
@@ -2089,6 +2767,20 @@ class AIEvalRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AIEvalGateRunResponse(BaseModel):
+    id: uuid.UUID
+    change_id: str
+    status: str
+    manifest_checksum_sha256: str
+    manifest: Dict[str, Any]
+    gate_results: List[Dict[str, Any]]
+    blocking_gates: List[Dict[str, Any]]
+    version_changes: List[Dict[str, Any]]
+    evaluated_by: Optional[uuid.UUID] = None
+    evaluated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AIQualityDashboardResponse(BaseModel):
     """Combined dashboard data for AI quality metrics."""
     agreement: Optional[dict] = None  # agreement_rate, total_feedback, ...
@@ -2131,6 +2823,8 @@ class SimilarMemoryResponse(BaseModel):
     """A memory entry with a similarity score from vector recall."""
     memory: AgentMemoryEntryResponse
     similarity: float = Field(ge=0.0, le=1.0)
+    retrieval_audit: Optional[Dict[str, Any]] = None
+    memory_reference: Optional[MemoryReference] = None
 
 
 class SimilarMemoryRecallRequest(BaseModel):
@@ -2145,6 +2839,7 @@ class SimilarMemoryRecallResponse(BaseModel):
     query_signature: str
     results: List[SimilarMemoryResponse]
     total_found: int
+    retrieval_audit: Optional[Dict[str, Any]] = None
 
 
 class MemoryTimelineResponse(BaseModel):
@@ -2153,3 +2848,880 @@ class MemoryTimelineResponse(BaseModel):
     project_id: uuid.UUID
     entries_by_type: dict  # {entity_type: [AgentMemoryEntryResponse]}
     total_entries: int
+
+
+# ── Knowledge Source Schemas (RAG-1 / RAG-2 / RAG-3) ─────────────────────────
+
+
+class KnowledgeSourceCreate(BaseModel):
+    source_type: str = Field(..., max_length=30)
+    title: str = Field(..., min_length=1, max_length=500)
+    canonical_url: str = Field(..., min_length=1, max_length=2000)
+    external_id: Optional[str] = Field(None, max_length=500)
+    classification: str = "internal"
+
+
+class KnowledgeSourceUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=500)
+    classification: Optional[str] = None
+    is_archived: Optional[bool] = None
+
+
+class KnowledgeSourceResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    source_type: str
+    title: str
+    canonical_url: str
+    external_id: Optional[str] = None
+    owner_id: Optional[uuid.UUID] = None
+    sync_status: str
+    last_synced_at: Optional[datetime] = None
+    sync_error: Optional[str] = None
+    content_hash: Optional[str] = None
+    classification: str
+    is_archived: bool
+    storage_path: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgeSourceListResponse(BaseModel):
+    items: List[KnowledgeSourceResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class KnowledgeSourceSyncResponse(BaseModel):
+    source_id: uuid.UUID
+    task_id: str
+    sync_status: str
+
+
+class ConnectorTestResult(BaseModel):
+    success: bool
+    latency_ms: Optional[int] = None
+    error: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class ConnectorConfigTestRequest(BaseModel):
+    source_type: str
+    params: dict = Field(default_factory=dict)
+
+
+class KnowledgeDomainAllowlistUpdate(BaseModel):
+    domains: List[str] = Field(
+        ...,
+        description="FQDN list, e.g. ['confluence.corp.com', 'jira.corp.com']",
+    )
+
+
+# ── Knowledge Sync Events (RAG-4) ─────────────────────────────────────────────
+
+
+class KnowledgeSyncEventResponse(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    project_id: uuid.UUID
+    trigger: str
+    status: str
+    content_hash: Optional[str] = None
+    previous_hash: Optional[str] = None
+    content_changed: bool
+    chunk_count: Optional[int] = None
+    duration_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Knowledge Chunks (RAG-5) ──────────────────────────────────────────────────
+
+
+class KnowledgeChunkResponse(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    project_id: uuid.UUID
+    vector_id: str
+    section_heading: Optional[str] = None
+    requirement_id: Optional[str] = None
+    chunk_index: int
+    chunk_text_preview: Optional[str] = None
+    token_count: Optional[int] = None
+    sync_version: int
+    is_active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Source Freshness (RAG-6) ──────────────────────────────────────────────────
+
+
+class KnowledgeSourceFreshnessResponse(BaseModel):
+    source_id: uuid.UUID
+    is_stale: bool
+    stale_since: Optional[datetime] = None
+    hours_since_sync: Optional[float] = None
+    staleness_threshold_hours: int
+    content_changed_on_last_sync: bool
+    active_chunk_count: int
+    last_sync_status: Optional[str] = None
+    sync_event_count: int
+
+
+# ── RAG Retrieval (RAG-7) ─────────────────────────────────────────────────────
+
+
+class RagRetrieveRequest(BaseModel):
+    project_id: uuid.UUID
+    query_text: str = Field(..., min_length=1, max_length=5000)
+    source_ids: Optional[List[uuid.UUID]] = None
+    top_k: int = Field(10, ge=1, le=50)
+    min_score: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class RetrievedChunkSchema(BaseModel):
+    vector_id: str
+    source_id: uuid.UUID
+    source_title: str
+    section_heading: Optional[str] = None
+    chunk_text: str
+    relevance_score: float
+    requirement_id: Optional[str] = None
+
+
+class RagRetrieveResponse(BaseModel):
+    chunks: List[RetrievedChunkSchema]
+    total: int
+
+
+# ── RAG Generation (RAG-8) ────────────────────────────────────────────────────
+
+
+class RagGenerateRequest(BaseModel):
+    project_id: uuid.UUID
+    prompt_text: str = Field("", max_length=10000)
+    source_ids: List[uuid.UUID] = Field(default_factory=list)
+    persist: bool = False
+    generation_config: Optional[dict] = None
+
+
+class CitationSchema(BaseModel):
+    case_index: int
+    vector_id: str
+    source_id: uuid.UUID
+    source_title: str
+    section_heading: Optional[str] = None
+    chunk_text_preview: Optional[str] = None
+    relevance_score: Optional[float] = None
+
+
+class RagGenerateResponse(BaseModel):
+    batch_id: uuid.UUID
+    generation_mode: str
+    test_cases: List[dict]
+    citations: List[CitationSchema]
+    coverage_summary: Optional[str] = None
+    gaps_noted: List[str] = Field(default_factory=list)
+    created_ids: List[str] = Field(default_factory=list)
+
+
+# ── RAG Coverage (RAG-9) ──────────────────────────────────────────────────────
+
+
+class RequirementCoverageSchema(BaseModel):
+    id: uuid.UUID
+    batch_id: uuid.UUID
+    project_id: uuid.UUID
+    requirement_id: str
+    requirement_text: Optional[str] = None
+    coverage_status: str
+    covered_by_case_ids: Optional[List[str]] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── RAG Batch Review (RAG-10) ─────────────────────────────────────────────────
+
+
+class GenerationBatchResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_by_id: Optional[uuid.UUID] = None
+    generation_mode: str
+    cases_generated: int
+    cases_accepted: int
+    cases_rejected: int
+    coverage_score: Optional[int] = None
+    status: str
+    llm_model_used: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchAcceptRequest(BaseModel):
+    case_ids: List[uuid.UUID]
+    edits: Optional[dict] = None  # {str(case_id): {field: value}}
+
+
+class RejectCaseRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class AcceptCaseRequest(BaseModel):
+    edits: Optional[dict] = None
+
+
+# ── RAG Staleness (RAG-12) ────────────────────────────────────────────────────
+
+
+class StaleCaseDismissRequest(BaseModel):
+    pass  # empty body — just the POST acknowledges
+
+
+# ── RAG Status (RAG-14) ───────────────────────────────────────────────────────
+
+
+class RagStatusResponse(BaseModel):
+    enabled: bool
+    feature_flag: str = "KNOWLEDGE_RAG_ENABLED"
+    total_sources: int = 0
+    total_batches: int = 0
+    total_chunks: int = 0
+
+
+# ── Feature Flags (Tier 0A) ──────────────────────────────────────────────────
+
+
+class FeatureFlagCreate(BaseModel):
+    key: str = Field(..., min_length=2, max_length=80, pattern=r"^[a-z][a-z0-9_]*$")
+    description: Optional[str] = Field(None, max_length=2000)
+    enabled_global: bool = False
+    enabled_projects: Optional[List[uuid.UUID]] = None
+    enabled_roles: Optional[List[str]] = None
+    rollout_percent: int = Field(100, ge=0, le=100)
+
+
+class FeatureFlagUpdate(BaseModel):
+    """All fields optional — partial update. None means keep existing."""
+    description: Optional[str] = Field(None, max_length=2000)
+    enabled_global: Optional[bool] = None
+    enabled_projects: Optional[List[uuid.UUID]] = None
+    enabled_roles: Optional[List[str]] = None
+    rollout_percent: Optional[int] = Field(None, ge=0, le=100)
+
+
+class FeatureFlagResponse(BaseModel):
+    id: uuid.UUID
+    key: str
+    description: Optional[str] = None
+    enabled_global: bool
+    enabled_projects: Optional[List[uuid.UUID]] = None
+    enabled_roles: Optional[List[str]] = None
+    rollout_percent: int
+    created_at: datetime
+    updated_at: datetime
+    updated_by_user_id: Optional[uuid.UUID] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ── Decision Trail (Tier 0B) ─────────────────────────────────────────────────
+
+
+class DecisionLogEntry(BaseModel):
+    """A single structured decision made by an agent — mirror of
+    ``BaseAgent.log_decision`` output stored on AgentStageResult.decision_log."""
+    at: str                              # ISO timestamp
+    decision_point: str                  # e.g. "route_analysis_mode", "triage_skip"
+    chosen: str                          # option taken
+    rationale: str                       # why
+    alternatives: Optional[List[str]] = None
+    test_case_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+class StageDecisionSummary(BaseModel):
+    stage_name: str
+    status: str                          # pending|running|completed|failed|skipped
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    analysis_mode: Optional[str] = None  # llm|ml|rules|auto|mixed
+    fallback_used: Optional[bool] = None
+    fallback_reason: Optional[str] = None
+    route_rationale: Optional[str] = None
+    error_category: Optional[str] = None
+    skipped_reason: Optional[str] = None
+    execution_path: Optional[str] = None
+    confidence_score: Optional[int] = None
+    evidence_count: Optional[int] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    decision_log: List[DecisionLogEntry] = Field(default_factory=list)
+
+
+class PerTestRouting(BaseModel):
+    test_case_id: uuid.UUID
+    test_name: Optional[str] = None
+    analysis_mode: Optional[str] = None
+    mode_requested: Optional[str] = None
+    fallback_from: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    confidence_adjustments: Optional[List[Dict[str, Any]]] = None
+    retry_count: Optional[int] = None
+    duration_seconds: Optional[float] = None
+
+
+class WorkflowDecisionEvent(BaseModel):
+    at: str
+    decision_point: str
+    chosen: str
+    rationale: str
+    alternatives: Optional[List[str]] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+class DecisionTrailResponse(BaseModel):
+    """Full decision trail for a pipeline run — the user-facing audit surface."""
+    run_id: uuid.UUID
+    pipeline_run_id: Optional[uuid.UUID] = None
+    workflow_type: Optional[str] = None
+    pipeline_status: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    total_cost_usd: float = 0.0
+    total_tokens: int = 0
+    # Stage-level decisions, in execution order.
+    stages: List[StageDecisionSummary] = Field(default_factory=list)
+    # Workflow router decisions (fast-path skips, specialist-stage selection).
+    workflow_events: List[WorkflowDecisionEvent] = Field(default_factory=list)
+    # Per-test routing rollup — one entry per analysed test.
+    per_test: List[PerTestRouting] = Field(default_factory=list)
+    # Aggregate: how many tests used each engine and how many fell back.
+    mode_distribution: Dict[str, int] = Field(default_factory=dict)
+    fallback_count: int = 0
+
+
+# ── LLM Cost Budget (Tier 1 item 2) ──────────────────────────────────────────
+
+
+class LlmQuotaWrite(BaseModel):
+    """Admin-editable billing config for a project."""
+    enabled: bool = True
+    period_type: str = Field("MONTHLY", pattern=r"^(MONTHLY)$")
+    included_usd: float = Field(0.0, ge=0)
+    overage_rate_usd: float = Field(1.0, ge=0)
+    hard_cap_usd: float = Field(0.0, ge=0)
+    soft_warn_threshold_pct: int = Field(100, ge=1, le=100)
+    at_cap_action: str = Field(
+        "AUTO_DOWNGRADE_TO_ML",
+        pattern=r"^(SOFT_WARN|AUTO_DOWNGRADE_TO_ML|AUTO_DOWNGRADE_TO_RULES|HARD_BLOCK)$",
+    )
+
+
+class LlmQuotaRead(LlmQuotaWrite):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+    updated_by_user_id: Optional[uuid.UUID] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LlmUsageRead(BaseModel):
+    project_id: uuid.UUID
+    period_start: datetime
+    period_end: datetime
+    total_cost_usd: float
+    total_input_tokens: int
+    total_output_tokens: int
+    total_llm_calls: int
+    cap_hits: int
+    # Derived fields — populated by the service, not persisted:
+    included_usd: Optional[float] = None
+    hard_cap_usd: Optional[float] = None
+    utilization_pct: Optional[float] = None  # total_cost_usd / hard_cap_usd * 100
+    status: Optional[str] = None  # OK | SOFT_WARN | CAPPED
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LlmUsageHistoryEntry(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    total_cost_usd: float
+    total_llm_calls: int
+    cap_hits: int
+
+
+class BillingOverviewProject(BaseModel):
+    project_id: uuid.UUID
+    project_name: str
+    current_cost_usd: float
+    hard_cap_usd: Optional[float] = None
+    utilization_pct: Optional[float] = None
+    status: str  # OK | SOFT_WARN | CAPPED | UNLIMITED
+    cap_hits: int
+
+
+class BillingOverviewResponse(BaseModel):
+    period_start: datetime
+    period_end: datetime
+    total_cost_usd: float
+    total_llm_calls: int
+    projects: List[BillingOverviewProject]
+
+
+# ── Flaky Auto-Quarantine (Tier 1 item 3) ───────────────────────────────────
+
+
+class FlakyQuarantineRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    status: str
+    detection_method: str
+    flip_rate: Optional[float] = None
+    flip_window_size: Optional[int] = None
+    pass_count: Optional[int] = None
+    fail_count: Optional[int] = None
+    detected_at: datetime
+    last_failure_at: Optional[datetime] = None
+    proposed_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by_user_id: Optional[uuid.UUID] = None
+    rejected_at: Optional[datetime] = None
+    rejected_by_user_id: Optional[uuid.UUID] = None
+    quarantine_start: Optional[datetime] = None
+    quarantine_expires_at: Optional[datetime] = None
+    quarantine_duration_days: int
+    recheck_at: Optional[datetime] = None
+    rationale: Optional[Dict[str, Any]] = None
+    reviewer_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QuarantineDecisionRequest(BaseModel):
+    """Body for approve / reject / release endpoints."""
+    notes: Optional[str] = Field(None, max_length=2000)
+    quarantine_duration_days: Optional[int] = Field(None, ge=1, le=90)
+
+
+class QuarantineProposeRequest(BaseModel):
+    """Manual proposal — rarely used. Detection agent is the primary path."""
+    project_id: uuid.UUID
+    test_fingerprint: str = Field(..., min_length=1, max_length=64)
+    test_name: Optional[str] = Field(None, max_length=500)
+    suite_name: Optional[str] = Field(None, max_length=500)
+    detection_method: str = Field("manual", max_length=50)
+    flip_rate: Optional[float] = Field(None, ge=0, le=1)
+    flip_window_size: Optional[int] = Field(None, ge=1)
+    pass_count: Optional[int] = Field(None, ge=0)
+    fail_count: Optional[int] = Field(None, ge=0)
+    rationale: Optional[Dict[str, Any]] = None
+    quarantine_duration_days: int = Field(14, ge=1, le=90)
+
+
+class QuarantineStatsResponse(BaseModel):
+    """Counts per status for the /quarantine page header tiles."""
+    proposed: int = 0
+    approved: int = 0
+    quarantined: int = 0
+    recheck_scheduled: int = 0
+    released: int = 0
+    rejected: int = 0
+    expired: int = 0
+    re_quarantined: int = 0
+    detected: int = 0
+    total_live: int = 0
+
+
+# ── Release Compliance Pack (Tier 1 item 4) ─────────────────────────────────
+
+
+class CompliancePackGenerateRequest(BaseModel):
+    """Body for POST /api/v1/releases/{id}/compliance-pack."""
+    notes: Optional[str] = Field(None, max_length=2000)
+    retention_days: Optional[int] = Field(
+        None,
+        ge=1,
+        le=3650,
+        description="Override retention window (default 2557 = ~7 years)",
+    )
+
+
+class CompliancePackRead(BaseModel):
+    id: uuid.UUID
+    release_id: Optional[uuid.UUID] = None
+    project_id: uuid.UUID
+    test_run_id: Optional[uuid.UUID] = None
+    minio_key: str
+    manifest_sha256: str
+    file_count: int
+    bytes: int
+    retention_expires_at: datetime
+    generated_at: datetime
+    generated_by_user_id: Optional[uuid.UUID] = None
+    metadata_snapshot: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CompliancePackDownloadResponse(BaseModel):
+    """Response for the download endpoint — either a presigned URL or
+    a streaming hint."""
+    pack_id: uuid.UUID
+    download_url: Optional[str] = None
+    expires_in_seconds: Optional[int] = None
+    bytes: int
+    manifest_sha256: str
+
+
+# ── GitHub Integration (Tier 1 item 5) ──────────────────────────────────────
+
+
+class GitHubIntegrationWrite(BaseModel):
+    enabled: bool = True
+    repo_owner: str = Field(..., min_length=1, max_length=255, pattern=r"^[A-Za-z0-9._-]+$")
+    repo_name: str = Field(..., min_length=1, max_length=255, pattern=r"^[A-Za-z0-9._-]+$")
+    api_base_url: str = Field("https://api.github.com", max_length=500)
+    # When provided, the PAT is upserted into secret_service and the
+    # ``has_pat`` flag is flipped on. When null, the existing secret (if
+    # any) is left alone — send an empty string to clear it.
+    pat: Optional[str] = Field(None, max_length=200)
+
+
+class GitHubIntegrationRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    enabled: bool
+    repo_owner: str
+    repo_name: str
+    api_base_url: str
+    has_pat: bool
+    last_posted_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GitHubConnectionTestResponse(BaseModel):
+    success: bool
+    status_code: Optional[int] = None
+    message: str
+    repo_html_url: Optional[str] = None
+
+
+# ── Outbound Webhooks (Tier 2 item 6) ───────────────────────────────────────
+
+
+class WebhookSubscriptionWrite(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    target_url: str = Field(..., min_length=8, max_length=1000, pattern=r"^https?://")
+    events: List[str] = Field(..., min_length=1)
+    enabled: bool = True
+    max_retries: int = Field(5, ge=0, le=10)
+    # Null = leave existing secret alone; "" = clear; any value = upsert.
+    secret: Optional[str] = Field(None, max_length=200)
+
+
+class WebhookSubscriptionRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    target_url: str
+    events: List[str]
+    enabled: bool
+    has_secret: bool
+    max_retries: int
+    last_delivered_at: Optional[datetime] = None
+    last_failure_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    failure_count: int
+    total_delivered: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookDeliveryRead(BaseModel):
+    id: uuid.UUID
+    subscription_id: uuid.UUID
+    event_type: str
+    event_payload: Optional[Dict[str, Any]] = None
+    status: str
+    attempt_count: int
+    http_status: Optional[int] = None
+    response_preview: Optional[str] = None
+    error: Optional[str] = None
+    delivered_at: Optional[datetime] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookTestResponse(BaseModel):
+    success: bool
+    status_code: Optional[int] = None
+    message: str
+    latency_ms: Optional[int] = None
+
+
+class WebhookDeliveryReplayResponse(BaseModel):
+    """Result of POST /webhooks/{sub_id}/deliveries/{delivery_id}/replay."""
+    delivery_id: uuid.UUID
+    # The id of the *new* PENDING delivery row created by replay. The
+    # original row is left in place so delivery history remains
+    # auditable — a replay is never an in-place mutation.
+    status: str = "PENDING"
+
+
+class WebhookEventCatalogEntry(BaseModel):
+    event_type: str
+    description: str
+
+
+class WebhookEventCatalogResponse(BaseModel):
+    events: List[WebhookEventCatalogEntry]
+
+
+# ── Run Compare (Tier 2 item 8) ─────────────────────────────────────────────
+
+
+class RunCompareSummary(BaseModel):
+    """One side of the compare view — the subset of TestRun fields used
+    by the diff UI. Kept tiny so the JSON payload is fast even on big runs."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    build_number: Optional[str] = None
+    branch: Optional[str] = None
+    commit_hash: Optional[str] = None
+    status: Optional[str] = None
+    total_tests: int = 0
+    passed_tests: int = 0
+    failed_tests: int = 0
+    broken_tests: int = 0
+    skipped_tests: int = 0
+    pass_rate: Optional[float] = None
+    duration_ms: Optional[int] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    primary_suite_name: Optional[str] = None
+    suite_names: Optional[List[str]] = None
+
+
+class RunCompareSelection(BaseModel):
+    mode: Literal["latest_vs_previous", "explicit"] = "explicit"
+    scope: Literal["run", "suite"] = "run"
+    suite_name: Optional[str] = None
+    selection_reason: str = ""
+    project_id: uuid.UUID
+    branch: Optional[str] = None
+    branch_mismatch: bool = False
+    release_name: Optional[str] = None
+
+
+class RunCompareAIReport(BaseModel):
+    status: Literal["ready", "queued", "failed"] = "ready"
+    executive_summary: str = ""
+    markdown_report: str = ""
+    risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "LOW"
+    key_differences: List[str] = Field(default_factory=list)
+    new_risks: List[str] = Field(default_factory=list)
+    resolved_risks: List[str] = Field(default_factory=list)
+    duration_concerns: List[str] = Field(default_factory=list)
+    recommended_actions: List[str] = Field(default_factory=list)
+    confidence: int = 0
+    confidence_reason: str = ""
+    fallback_used: bool = False
+    message: Optional[str] = None
+
+
+class RunCompareTestDelta(BaseModel):
+    """A single test whose status or duration differed between the two runs."""
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    left_status: Optional[str] = None   # None = test did not exist in left run
+    right_status: Optional[str] = None
+    left_duration_ms: Optional[int] = None
+    right_duration_ms: Optional[int] = None
+    delta_duration_ms: Optional[int] = None
+    classification: str
+    # One of: new_failure | fixed | still_failing | regressed |
+    # improved | new_test | removed_test | duration_spike | renamed
+    paired_by: Optional[str] = None
+    # "fingerprint" (first-pass stable-hash match) or
+    # "fuzzy_name_match" (second-pass SequenceMatcher rename pairing).
+    # Legacy responses omit this field — frontend should default to
+    # "fingerprint" when absent.
+    previous_test_name: Optional[str] = None
+    previous_test_fingerprint: Optional[str] = None
+    # Set when ``paired_by == "fuzzy_name_match"``. Carries the
+    # pre-rename identity so the UI can render a "was: <old_name>"
+    # label next to the current name.
+
+
+class RunCompareResponse(BaseModel):
+    left: RunCompareSummary
+    right: RunCompareSummary
+    scope: Literal["run", "suite"] = "run"
+    suite_name: Optional[str] = None
+    selection: Optional[RunCompareSelection] = None
+    ai_report: Optional[RunCompareAIReport] = None
+    # Aggregate deltas (right - left).
+    delta_total: int = 0
+    delta_passed: int = 0
+    delta_failed: int = 0
+    delta_broken: int = 0
+    delta_skipped: int = 0
+    delta_pass_rate: Optional[float] = None
+    delta_duration_ms: Optional[int] = None
+    # Category counts from the per-test diff.
+    new_failures: int = 0
+    fixed: int = 0
+    still_failing: int = 0
+    regressed: int = 0
+    improved: int = 0
+    new_tests: int = 0
+    removed_tests: int = 0
+    duration_spikes: int = 0
+    renamed: int = 0
+    # ``renamed`` counts second-pass fuzzy-paired deltas whose base
+    # classification was None (same status, no duration spike). Tests
+    # paired by fuzzy match that also changed status are counted in
+    # their status-change bucket, not in ``renamed``.
+    # Detailed per-test diff — capped at 500 entries.
+    test_deltas: List[RunCompareTestDelta] = Field(default_factory=list)
+    truncated: bool = False
+
+
+# ── Suite Owners & Reviews (migration 0076) ─────────────────────────────────
+
+SuiteReviewStateLiteral = Literal["pending", "confirmed", "acknowledged", "review_later"]
+
+
+class SuiteOwnerUpdate(BaseModel):
+    """PUT body for setting/clearing a suite's explicit owner."""
+    owner_user_id: Optional[uuid.UUID] = None  # None clears the explicit owner
+
+
+class SuiteOwnerResponse(BaseModel):
+    project_id: uuid.UUID
+    suite_name: str
+    owner_user_id: Optional[uuid.UUID] = None
+    owner_email: Optional[str] = None
+    owner_full_name: Optional[str] = None
+    is_fallback: bool = False  # True when resolved owner is project.manager_user_id
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuiteReviewUpdate(BaseModel):
+    state: SuiteReviewStateLiteral
+    note: Optional[str] = Field(None, max_length=4000)
+
+
+class SuiteReviewResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    suite_name: str
+    test_run_id: uuid.UUID
+    state: str
+    note: Optional[str] = None
+    reviewer_user_id: Optional[uuid.UUID] = None
+    reviewer_email: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotifyTestOwnerRequest(BaseModel):
+    """POST body for /api/v1/analytics/notify-owner — fires an email at the
+    suite owner of the test that's been failing repeatedly."""
+    project_id: uuid.UUID
+    test_name: str = Field(..., min_length=1, max_length=1000)
+    days: int = Field(30, ge=1, le=365)
+    fail_count: Optional[int] = Field(None, ge=0, le=10_000)
+
+
+class NotifyTestOwnerResponse(BaseModel):
+    queued: bool
+    sent_to: Optional[str] = None
+    owner_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    is_fallback_owner: bool = False
+    # When ``queued=False`` this carries a user-readable reason
+    # ("Test not found in window", "Suite has no owner", etc.).
+    reason: Optional[str] = None
+
+
+class ClassifyUncategorizedRequest(BaseModel):
+    """POST body for /api/v1/analytics/classify-uncategorized — bulk-assign a
+    failure category to every test case currently labelled UNKNOWN (or
+    NULL) in the requested project + window."""
+    project_id: uuid.UUID
+    category: FailureCategory
+    days: int = Field(30, ge=1, le=365)
+    # Optional: restrict to a single suite (e.g. when the user is on the
+    # failures page filtered by a specific suite).
+    suite_name: Optional[str] = Field(None, max_length=500)
+
+
+class ClassifyUncategorizedResponse(BaseModel):
+    updated: int
+    category: str
+    project_id: uuid.UUID
+    days: int
+    suite_name: Optional[str] = None
+
+
+class DefectIntakeRequest(BaseModel):
+    """POST body for /api/v1/analytics/defects — manual defect intake.
+
+    Severity uses the P0–P3 vocabulary the Defects UI renders; it maps to the
+    `defects.severity` column's CRITICAL/HIGH/MEDIUM/LOW values server-side.
+    `test_name`/`suite_name` are optional — when both are supplied the service
+    will try to attach the new defect to the most-recent matching TestCase row,
+    otherwise the defect is created standalone (test_case_id NULL).
+    """
+    project_id: uuid.UUID
+    title: str = Field(..., min_length=3, max_length=255)
+    description: Optional[str] = Field(None, max_length=10_000)
+    severity: Literal["P0", "P1", "P2", "P3"]
+    failure_category: FailureCategory = FailureCategory.PRODUCT_BUG
+    component: Optional[str] = Field(None, max_length=255)
+    test_name: Optional[str] = Field(None, max_length=1000)
+    suite_name: Optional[str] = Field(None, max_length=500)
+    jira_ticket_url: Optional[str] = Field(None, max_length=1000)
+
+
+class DefectIntakeResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    severity: str
+    failure_category: Optional[str] = None
+    component: Optional[str] = None
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    jira_ticket_id: Optional[str] = None
+    jira_ticket_url: Optional[str] = None
+    resolution_status: str
+    ai_confidence_score: Optional[int] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)

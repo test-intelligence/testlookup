@@ -1,0 +1,14 @@
+# Google-managed TLS certificate. The DNS A record for the listed domains must
+# resolve to the global static IP referenced by the Ingress
+# (ingress.global-static-ip-name annotation) BEFORE the cert can provision.
+#
+# Reserve the static IP first:
+#   gcloud compute addresses create testlookup-ip --global
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: testlookup-cert
+  namespace: testlookup
+spec:
+  domains:
+    - testlookup.example.com   # REPLACE with your domain

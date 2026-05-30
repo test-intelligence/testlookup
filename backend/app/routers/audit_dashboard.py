@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, require_role
+from app.core.deps import get_accessible_project_ids, require_project_access, require_role
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 
@@ -72,15 +72,10 @@ async def get_project_observability(
     days: int = Query(default=7, ge=1, le=90),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
 ):
     """Get tenant-scoped observability metrics for a project (QA_LEAD+)."""
     from app.services.audit_dashboard_service import get_tenant_observability
-
-    # Tenant isolation
-    accessible = await get_accessible_project_ids(db, current_user)
-    if accessible is not None and project_id not in accessible:
-        from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return await get_tenant_observability(db, project_id, days)
 

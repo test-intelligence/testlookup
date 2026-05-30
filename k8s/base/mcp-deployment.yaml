@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: mcp
-          image: testlookup/mcp:latest
+          image: testlookup/mcp:0.0.1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002
               name: sse
@@ -45,9 +46,10 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "200m"
+          # /sse is a streaming endpoint that rejects plain HTTP GET probes
+          # with 421 — use a TCP probe to verify the server is listening.
           readinessProbe:
-            httpGet:
-              path: /sse
+            tcpSocket:
               port: 8002
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -55,11 +57,16 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           livenessProbe:
-            httpGet:
-              path: /sse
+            tcpSocket:
               port: 8002
             initialDelaySeconds: 15
             periodSeconds: 30

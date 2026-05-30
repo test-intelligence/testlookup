@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+const BACKEND_URL = process.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 test.describe('Authentication Flow', () => {
   // This suite tests the login flow from scratch, so it must not inherit the
   // pre-authenticated storageState set in playwright.config.ts.
@@ -10,6 +12,25 @@ test.describe('Authentication Flow', () => {
 
     await expect(page.locator('input[name="username"]')).toBeVisible();
 
+    const adminPassword = process.env['E2E_ADMIN_PASSWORD'] ?? '';
+    if (!adminPassword) {
+      const resp = await page.request.post(`${BACKEND_URL}/api/v1/auth/dev-login?role=admin`);
+      expect(resp.ok(), 'dev-login should be available when E2E_ADMIN_PASSWORD is unset').toBe(true);
+      const { access_token, refresh_token } = await resp.json();
+      await page.evaluate(
+        ({ at, rt }) => {
+          localStorage.setItem(
+            'auth-storage',
+            JSON.stringify({ state: { token: at, refreshToken: rt }, version: 0 }),
+          );
+        },
+        { at: access_token, rt: refresh_token },
+      );
+      await page.goto('/overview');
+      await expect(page.getByRole('navigation')).toBeVisible({ timeout: 10000 });
+      return;
+    }
+
     // Use the native HTMLInputElement prototype setter to set values, then
     // dispatch a synthetic 'input' event with bubbles:true. This is the only
     // cross-browser reliable way to trigger React's synthetic onChange on
@@ -18,7 +39,6 @@ test.describe('Authentication Flow', () => {
     // Chromium's cleared-storage context.
     // IMPORTANT: `process` does not exist in the browser context — pass env
     // values as arguments to page.evaluate().
-    const adminPassword = process.env['E2E_ADMIN_PASSWORD'] ?? '';
     await page.evaluate(({ password }) => {
       const nativeSetter = Object.getOwnPropertyDescriptor(
         window.HTMLInputElement.prototype,

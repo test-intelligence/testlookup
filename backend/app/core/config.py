@@ -23,6 +23,13 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://localhost:5173",
         alias="CORS_ORIGINS",
     )
+    # Externally-reachable base URL for the dashboard. Used to build links
+    # rendered in Jira tickets, Slack/Teams notifications, and emails. Should
+    # match the ingress hostname users actually open in their browser
+    # (e.g. https://testlookup.example.com or http://testlookup.local).
+    # When unset, falls back to the first CORS_ORIGINS entry, or localhost in
+    # development.
+    PUBLIC_BASE_URL: str = ""
 
     # ── Database (PostgreSQL) ────────────────────────────────
     POSTGRES_HOST: str = "localhost"
@@ -53,7 +60,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
-    CELERY_WORKER_CONCURRENCY: int = 4
+    CELERY_WORKER_CONCURRENCY: int = 4          # Set to 16-32 in production for 100+ concurrent users
 
     # ── Performance / Scalability tunables ────────────────────
     # PostgreSQL pool (None = auto-size by environment)
@@ -80,8 +87,102 @@ class Settings(BaseSettings):
     WS_MAX_TOTAL_CONNECTIONS: int = 5000
     WS_BROADCAST_TIMEOUT: float = 5.0           # seconds before dropping a dead connection
 
+    # ── Live-stream ingestion gate (Phase 1, 2026-05-16) ──────
+    # See docs/SCALABLE_INGESTION_DESIGN.md. Both limits operate per
+    # project, per minute. Set to 0 to disable.
+    INGEST_RATE_LIMIT_PER_MINUTE: int = 200       # batches per project per minute
+    # Adaptive Redis-memory backpressure. When ``maxmemory`` is set on
+    # Redis, the percentage gate fires; when it isn't, the absolute
+    # byte gate kicks in instead. Both 0 disables the check entirely.
+    INGEST_REDIS_MEMORY_THRESHOLD_PCT: float = 75.0   # of maxmemory
+    INGEST_REDIS_MEMORY_ABSOLUTE_BYTES: int = 0       # 0 = disabled
+
+    # ── Phase 2 buffer + worker fairness (2026-05-16) ─────────
+    # Per-run Redis-list cap. ``LTRIM`` keeps the newest N events;
+    # older events are evicted when the list exceeds the cap. 50K
+    # events × 500B/event = 25 MB max per run. 0 disables the cap
+    # (legacy behaviour — unbounded list growth).
+    LIVE_BUFFER_MAX_EVENTS_PER_RUN: int = 50_000
+    # Chunk size for the bulk-insert path in persist_live_session.
+    # Larger chunks = fewer round-trips but more memory per session
+    # transaction. 1000 is a healthy middle ground for the asyncpg
+    # driver — round-trip cost amortises while staying under the
+    # 1MB statement-size sweet spot.
+    PERSIST_LIVE_BULK_INSERT_CHUNK: int = 1_000
+    # Number of Celery shards for live-stream persist tasks. Workers
+    # subscribe to ``ingestion.shard.<i>`` queues; tasks route by
+    # ``hash(project_id) mod N``. Increase to widen horizontal worker
+    # capacity without touching the consumer code. Set to 0 to fall
+    # back to the legacy single-queue routing (used by tests).
+    LIVE_INGEST_SHARD_COUNT: int = 8
+
+    # ── Phase 4.5 incremental drain (2026-05-18) ──────────────
+    # Live sessions stream events to a per-run Redis LIST capped at
+    # ``LIVE_BUFFER_MAX_EVENTS_PER_RUN``. When the cap fires, the OLDEST
+    # events fall off; aggregates from the HINCRBY hash stay accurate
+    # but per-test rows are lost. The incremental drain task persists
+    # buffered events to ``test_cases`` mid-session so the LTRIM only
+    # ever evicts events that are already durable in Postgres. Default
+    # ON. Disable to fall back to the legacy "drain only at
+    # close_session" behaviour.
+    LIVE_SESSION_DRAIN_ENABLED: bool = True
+    # Max events drained per run per beat tick. The drain task runs
+    # every 30s (see Celery beat ``drain-active-live-sessions``); at
+    # 50K events/run × 30s window that's ~1667 events/sec sustained
+    # per run, well within asyncpg single-connection throughput. Raise
+    # for very-high-volume runs; the bulk-insert path scales linearly.
+    LIVE_SESSION_DRAIN_BATCH_SIZE: int = 5_000
+
+    # ── Phase 3 AI pipeline debouncer (2026-05-16) ────────────
+    # When True, ``stream_service.close_session`` no longer fires
+    # ``run_agent_pipeline`` directly; the run lands in a Redis
+    # SortedSet drained every 2 minutes by the beat task. Set to
+    # False to revert to the legacy per-run direct dispatch — used
+    # by tests + any deploy that hasn't enabled the beat schedule.
+    AI_PIPELINE_DEBOUNCE_ENABLED: bool = True
+    # Minimum age a run must reach before the debouncer flushes it.
+    # Shorter = lower per-run analysis latency but less burst-coalescing.
+    # The default matches a 2-minute beat cadence (debounce ≪ cadence).
+    AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS: int = 60
+
+    # ── Phase 4 high-volume sampling (2026-05-16) ─────────────
+    # Auto-flag a project as ``high_volume`` when it sustains
+    # ``HIGH_VOLUME_TESTS_PER_MINUTE`` test events per minute for
+    # ``HIGH_VOLUME_CONSECUTIVE_MINUTES`` consecutive minutes. The
+    # flag drives the sampler in ``persist_live_session`` to store
+    # only 1-of-N TestCase rows. Aggregates remain 100% accurate
+    # because they come from the live-state HINCRBY counters.
+    HIGH_VOLUME_AUTO_DETECT_ENABLED: bool = True
+    HIGH_VOLUME_TESTS_PER_MINUTE: int = 1_000
+    HIGH_VOLUME_CONSECUTIVE_MINUTES: int = 3
+    # Sample rate for flagged projects. ``N=2`` stores 1-of-2 rows
+    # (50% per the design doc § 5b). ``N=1`` disables sampling even
+    # when the flag is active (used to dial back if persistence
+    # becomes the bottleneck again).
+    HIGH_VOLUME_SAMPLE_EVERY_N: int = 2
+
+    # ── Phase 4.3 ingestion dead-letter queue (2026-05-16) ────
+    # When ``persist_live_session`` exhausts its retry budget, a
+    # structured failure record is written to the Redis-backed DLQ
+    # for operator inspection. Set to False to disable the writes
+    # (used by tests that don't want the DLQ side effect).
+    INGESTION_DLQ_ENABLED: bool = True
+
+    # ── Phase I — canonical-deletion detection (2026-05-17) ───
+    # A CanonicalTestCase is marked ``status='deleted'`` when its
+    # fingerprint hasn't appeared in any of the project's last
+    # ``CANONICAL_DELETION_WINDOW_RUNS`` runs. The window guards
+    # against false positives from a single run that was scoped to
+    # a tag filter or partial suite. The reconciler runs both
+    # synchronously at the tail of ``finalize_run`` and as a nightly
+    # beat safety net (``nightly-canonical-deletion-reconcile``).
+    # Set to 0 to disable deletion detection entirely (e.g. while
+    # comparing canonical vs legacy suite_memberships during the
+    # Phase 2b cutover window).
+    CANONICAL_DELETION_WINDOW_RUNS: int = 5
+
     # ── LLM Provider ─────────────────────────────────────────
-    LLM_PROVIDER: Literal["ollama", "lmstudio", "localai", "vllm", "openai", "gemini"] = "ollama"
+    LLM_PROVIDER: Literal["ollama", "lmstudio", "localai", "vllm", "openai", "gemini", "anthropic"] = "ollama"
     LLM_MODEL: str = "qwen2.5:7b"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 4096
@@ -91,6 +192,7 @@ class Settings(BaseSettings):
     VLLM_BASE_URL: str = "http://localhost:8000/v1"
     OPENAI_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
 
     # ── Embedding ─────────────────────────────────────────────
     EMBEDDING_PROVIDER: str = "ollama"
@@ -106,6 +208,10 @@ class Settings(BaseSettings):
     AI_CONFIDENCE_THRESHOLD: int = 80
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
+    AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results
+    SEMANTIC_SIMILARITY_THRESHOLD: float = 0.85      # min cosine similarity for semantic cache hit
+    PROMPT_OVERHEAD_TOKENS: int = 1500               # reserved tokens for system prompt + reasoning
+    SEMANTIC_CACHE_MAX_DOCUMENTS: int = 10000        # cap ChromaDB collection size
 
     # ── Jira ─────────────────────────────────────────────────
     JIRA_ENABLED: bool = False
@@ -113,6 +219,12 @@ class Settings(BaseSettings):
     JIRA_EMAIL: Optional[str] = None
     JIRA_API_TOKEN: Optional[str] = None
     JIRA_DEFAULT_PROJECT_KEY: str = "QA"
+
+    # ── Confluence (Knowledge RAG) ──────────────────────────────
+    CONFLUENCE_ENABLED: bool = False
+    CONFLUENCE_DOMAIN: Optional[str] = None
+    CONFLUENCE_EMAIL: Optional[str] = None
+    CONFLUENCE_API_TOKEN: Optional[str] = None
 
     # ── Splunk ────────────────────────────────────────────────
     SPLUNK_ENABLED: bool = False
@@ -161,7 +273,7 @@ class Settings(BaseSettings):
     # ── Authentication & JWT ──────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-jwt-secret"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # ── SSO / SAML / SCIM ───────────────────────────────────
@@ -192,6 +304,30 @@ class Settings(BaseSettings):
     RELEASE_PASS_RATE_THRESHOLD: float = 90.0     # minimum pass rate to consider GO
     DEEP_CLUSTER_THRESHOLD: float = 0.75          # Jaccard similarity threshold for clustering
     DEEP_MAX_CLUSTERS_PER_RUN: int = 20           # cap clusters to avoid overload
+
+    # ── Knowledge-Grounded Test Generation (RAG) ───────────────────────────────
+    KNOWLEDGE_RAG_ENABLED: bool = False
+    KNOWLEDGE_SYNC_TIMEOUT_SECONDS: int = 60
+    KNOWLEDGE_MAX_SOURCES_PER_PROJECT: int = 100
+    KNOWLEDGE_DOCS_BUCKET: str = "knowledge-docs"
+    KNOWLEDGE_STALE_THRESHOLD_JIRA_HOURS: int = 24
+    KNOWLEDGE_STALE_THRESHOLD_URL_HOURS: int = 168
+    KNOWLEDGE_CHUNK_TARGET_TOKENS: int = 400
+    KNOWLEDGE_CHUNK_MAX_TOKENS: int = 800
+    KNOWLEDGE_CHUNK_OVERLAP_TOKENS: int = 50
+    KNOWLEDGE_RESYNC_BATCH_CAP: int = 50
+
+    # ── Analysis Mode (LLM-free operation) ──────────────────────────────────────
+    # Controls which engine processes test results.
+    #   "llm"   — full LangChain ReAct agent (requires running LLM)
+    #   "ml"    — scikit-learn ML classifiers (no LLM needed, needs trained model)
+    #   "rules" — pattern matching + statistical heuristics (zero dependencies)
+    #   "auto"  — ML if trained model available, else LLM if reachable, else rules
+    ANALYSIS_MODE: str = "auto"
+    ML_MODEL_DIR: str = "models"                     # directory for trained .joblib artifacts
+    ML_MIN_TRAINING_SAMPLES: int = 200               # minimum labeled samples before ML activates
+    ML_RETRAIN_ENABLED: bool = True                  # enable nightly Celery-beat retraining
+    ML_ACCURACY_THRESHOLD: float = 0.80              # minimum accuracy to deploy a new model
 
     # ── Anomaly Detection Tunables ────────────────────────────────────────────────
     # Pass-rate regression
@@ -224,6 +360,14 @@ class Settings(BaseSettings):
     PROMETHEUS_URL: Optional[str] = None          # e.g. http://prometheus:9090
     GITHUB_TOKEN: Optional[str] = None            # GitHub PAT for build change lookup
     GITHUB_REPO: Optional[str] = None             # e.g. "org/repo"
+
+    # ── Outbound HTTP / TLS ───────────────────────────────────
+    # Default to strict certificate verification. Operators with self-signed
+    # internal CAs should set HTTP_CA_BUNDLE to the PEM path instead of
+    # disabling verification. HTTP_VERIFY_TLS=false is intended only for
+    # isolated lab environments and emits a warning at startup.
+    HTTP_VERIFY_TLS: bool = True
+    HTTP_CA_BUNDLE: Optional[str] = None
 
     # ── Webhook Security ──────────────────────────────────────
     WEBHOOK_SECRET: str = "change-me-webhook-secret"
@@ -286,6 +430,26 @@ class Settings(BaseSettings):
     @property
     def chroma_host_url(self) -> str:
         return f"http://{self.CHROMA_HOST}:{self.CHROMA_PORT}"
+
+    @property
+    def public_base_url(self) -> str:
+        """Externally-reachable dashboard URL for notification links.
+
+        Resolution order:
+          1. ``PUBLIC_BASE_URL`` env var (explicit, recommended in production).
+          2. First entry of ``CORS_ORIGINS`` (typically the ingress hostname).
+          3. ``http://localhost:3000`` (development fallback).
+
+        Always returned without a trailing slash so callers can append paths
+        directly: ``f"{settings.public_base_url}/runs/{run_id}"``.
+        """
+        explicit = (self.PUBLIC_BASE_URL or "").strip().rstrip("/")
+        if explicit:
+            return explicit
+        origins = self.CORS_ORIGINS
+        if origins:
+            return origins[0].rstrip("/")
+        return "http://localhost:3000"
 
 
     def validate_production_secrets(self) -> list[str]:

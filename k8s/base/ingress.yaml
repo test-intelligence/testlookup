@@ -7,14 +7,25 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
-    # TLS is opt-in per environment via overlays (see k8s/overlays/prod/kustomization.yaml),
-    # which add the ssl-redirect + cert-manager annotations and the spec.tls block.
-    # Base stays HTTP-friendly so dev/staging/homelab don't require cert-manager + public DNS.
-    # OpenShift Route alternative: use Route resource instead of Ingress
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # OpenShift Route alternative: use Route resource instead of Ingress.
+    # GKE GCE alternative: change ingressClassName to "gce" and remove
+    # nginx.ingress.kubernetes.io/* annotations.
+    # AWS ALB alternative: change ingressClassName to "alb" and add
+    # alb.ingress.kubernetes.io/* annotations.
 spec:
+  # Override `ingressClassName` per environment via overlay (nginx, traefik,
+  # gce, alb, etc.). Override the host below per environment as well.
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - testlookup.example.com
+      secretName: testlookup-tls-cert
   rules:
-    - host: testlookup.yourdomain.com    # Change to your actual hostname
+    # IMPORTANT: replace "testlookup.example.com" with your real hostname
+    # via a kustomize overlay patch (see k8s/overlays/homelab for an example).
+    - host: testlookup.example.com
       http:
         paths:
           - path: /api/
@@ -32,6 +43,27 @@ spec:
                 port:
                   number: 8000
           - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /ws/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /health/
+            pathType: Prefix
+            backend:
+              service:
+                name: testlookup-backend
+                port:
+                  number: 8000
+          - path: /metrics
             pathType: Prefix
             backend:
               service:

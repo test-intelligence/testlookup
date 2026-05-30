@@ -260,6 +260,77 @@ class TestSAMLParsing:
             validate_saml_issuer(parsed, config)
 
 
+# ── SAML signature verification (regression: prevents auth bypass) ──────────
+
+
+class TestSAMLSignatureVerification:
+    """
+    Locks in the fix for the SAML signature bypass. Previously,
+    ``parse_saml_response`` accepted any well-formed assertion and a
+    docstring claimed "signature validation relies on the IdP certificate
+    configured" — but no code actually verified signatures. An attacker
+    could forge an assertion for any user. The fix makes the production
+    path (cert provided) cryptographically verify the XML-DSig signature
+    before extracting any claim, and extract claims only from the
+    verified subtree.
+
+    Signing test XML requires signxml + cryptography, which are present
+    in the Docker test image but may be absent from bare local checkouts,
+    so the crypto tests importorskip cleanly.
+    """
+
+    def test_unsigned_assertion_with_cert_is_rejected(self):
+        """
+        The most important regression: an unsigned SAML Response MUST be
+        rejected when a cert is configured. This is the exact shape of
+        assertion that previously auth-bypassed.
+        """
+        # `pytest.importorskip` only catches ImportError. signxml < 4.0 raises
+        # AttributeError at import time when paired with `cryptography` >= 43
+        # (deprecated EC curves removed). Skip on any import-time failure so
+        # future cryptography/signxml drift surfaces as a skip, not a confusing
+        # AttributeError trace.
+        try:
+            import signxml  # noqa: F401, PLC0415
+            import cryptography  # noqa: F401, PLC0415
+        except (ImportError, AttributeError) as exc:
+            pytest.skip(f"signxml/cryptography not importable: {exc}")
+        from app.services.sso_service import parse_saml_response
+
+        b64 = _make_saml_response(name_id="attacker@evil.com")
+        cert = _make_test_cert()
+        with pytest.raises(ValueError, match="signature verification failed|signature"):
+            parse_saml_response(b64, idp_certificate_pem=cert)
+
+    def test_signxml_missing_fails_closed(self, monkeypatch):
+        """
+        If signxml is somehow unavailable in production (bad requirements
+        pin, partial install), the parser must fail CLOSED — refuse to
+        process — rather than silently skipping verification.
+        """
+        from app.services import sso_service
+
+        # Force the import inside _verify_xml_signature to fail by shadowing
+        # signxml in sys.modules with None.
+        monkeypatch.setitem(sys.modules, "signxml", None)
+
+        b64 = _make_saml_response()
+        with pytest.raises(ValueError, match="signature verification unavailable|not installed"):
+            sso_service.parse_saml_response(b64, idp_certificate_pem="-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----")
+
+    def test_no_cert_still_parses_for_unit_tests(self):
+        """
+        The None-cert test branch must still work so existing structural
+        unit tests in TestSAMLParsing keep passing. The router never takes
+        this path — it always passes ``config.idp_certificate``.
+        """
+        from app.services.sso_service import parse_saml_response
+
+        b64 = _make_saml_response(name_id="test@example.com")
+        result = parse_saml_response(b64, idp_certificate_pem=None)
+        assert result["name_id"] == "test@example.com"
+
+
 # ── Role mapping tests ───────────────────────────────────────────────────────
 
 

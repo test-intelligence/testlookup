@@ -10,6 +10,8 @@ import {
   type SimulateResponse,
   DEFAULT_THRESHOLDS,
   DEFAULT_WEIGHTS,
+  DEFAULT_PASS_RATE_BANDS,
+  DEFAULT_HARD_CAPS,
   createPolicy,
   deactivatePolicy,
   getPolicy,
@@ -42,6 +44,8 @@ function emptyDocument(): PolicyDocument {
     thresholds: { ...DEFAULT_THRESHOLDS },
     dimension_weights: { ...DEFAULT_WEIGHTS },
     rules: [],
+    pass_rate_bands: { ...DEFAULT_PASS_RATE_BANDS },
+    hard_caps: { ...DEFAULT_HARD_CAPS },
   };
 }
 
@@ -107,6 +111,11 @@ export default function PolicyEditorPage() {
     if (Math.abs(weightsSum - 1.0) > 0.01) { toast.error('Dimension weights must sum to 1.0'); return; }
     if (doc.thresholds.go_threshold >= doc.thresholds.no_go_threshold) {
       toast.error('GO threshold must be less than NO_GO threshold');
+      return;
+    }
+    const bands = doc.pass_rate_bands ?? DEFAULT_PASS_RATE_BANDS;
+    if (!(bands.orange_min < bands.yellow_min && bands.yellow_min < bands.green_min)) {
+      toast.error('Pass-rate bands must be strictly increasing (orange < yellow < green)');
       return;
     }
     setSaving(true);
@@ -316,6 +325,81 @@ export default function PolicyEditorPage() {
                 value={doc.thresholds[key as keyof typeof doc.thresholds]}
                 onChange={e => setDoc(d => ({ ...d, thresholds: { ...d.thresholds, [key]: parseFloat(e.target.value) || 0 } }))}
                 className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" disabled={!isDraft} />
+              <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Pass-Rate Bands (4-colour build verdict) */}
+      <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
+        <div className="flex justify-between items-center">
+          <h2 className="text-sm font-semibold text-neutral-200">Pass-Rate Bands</h2>
+          {(() => {
+            const b = doc.pass_rate_bands ?? DEFAULT_PASS_RATE_BANDS;
+            const valid = b.orange_min < b.yellow_min && b.yellow_min < b.green_min;
+            return (
+              <span className={clsx('text-xs', valid ? 'text-green-400' : 'text-red-400')}>
+                {valid ? 'Bands valid' : 'Bands must be strictly increasing (orange < yellow < green)'}
+              </span>
+            );
+          })()}
+        </div>
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          Build colour by pass rate. Verdict: green/yellow → GO · orange → CONDITIONAL · red → NO-GO.
+          Hard caps below can downgrade the band one step at a time.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {([
+            ['orange_min', 'Orange ≥ (%)', 'Below this → red'],
+            ['yellow_min', 'Yellow ≥ (%)', 'Range [orange, yellow) → orange'],
+            ['green_min',  'Green ≥ (%)',  'Range [yellow, green) → yellow; ≥ this → green'],
+          ] as const).map(([key, label, hint]) => (
+            <div key={key}>
+              <label className="text-xs text-[var(--color-text-muted)]">{label}</label>
+              <input type="number" step="0.1" min={0} max={100}
+                value={(doc.pass_rate_bands ?? DEFAULT_PASS_RATE_BANDS)[key]}
+                onChange={e => setDoc(d => ({
+                  ...d,
+                  pass_rate_bands: {
+                    ...(d.pass_rate_bands ?? DEFAULT_PASS_RATE_BANDS),
+                    [key]: parseFloat(e.target.value) || 0,
+                  },
+                }))}
+                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1"
+                disabled={!isDraft} />
+              <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Hard Caps (band downgrades) */}
+      <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
+        <h2 className="text-sm font-semibold text-neutral-200">Hard Caps</h2>
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          Each cap downgrades the resolved band one step when exceeded (green → yellow → orange → red).
+          Set to 0 to disable a cap, except the P0 cap where 0 means "no P0 defects allowed".
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {([
+            ['max_p0_defects', 'Max P0 defects', 'Active OPEN defects with severity=P0'],
+            ['max_flaky_count', 'Max flaky tests', 'Flaky-pattern tests in 10-run window'],
+            ['max_new_failures_24h', 'Max new failures (24h)', 'Failures created in the last 24h'],
+          ] as const).map(([key, label, hint]) => (
+            <div key={key}>
+              <label className="text-xs text-[var(--color-text-muted)]">{label}</label>
+              <input type="number" step="1" min={0}
+                value={(doc.hard_caps ?? DEFAULT_HARD_CAPS)[key]}
+                onChange={e => setDoc(d => ({
+                  ...d,
+                  hard_caps: {
+                    ...(d.hard_caps ?? DEFAULT_HARD_CAPS),
+                    [key]: parseInt(e.target.value, 10) || 0,
+                  },
+                }))}
+                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1"
+                disabled={!isDraft} />
               <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>
             </div>
           ))}

@@ -15,11 +15,21 @@ export interface TestRun {
   total_tests: number
   pass_rate: number
   duration_ms?: number
+  /** Run start timestamp (TestRun.start_time). Set by ingestion / live close. */
+  start_time?: string | null
+  /** Run completion timestamp (TestRun.end_time). May be null while a live run is still in flight. */
+  end_time?: string | null
   created_at: string
   ocp_pod_name?: string
   release_name?: string
   release_id?: string
   trigger_source?: string
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
+  /** Human-readable, per-(project, primary_suite_name) run number, 1-based.
+   *  Computed server-side via ROW_NUMBER() so it's stable across pages.
+   *  Optional for backward-compat with older API responses. */
+  run_seq?: number | null
 }
 
 export type TestRunListResponse = PaginatedResponse<TestRun>
@@ -41,6 +51,13 @@ export interface RunTestCase {
   error_message?: string
   has_attachments?: boolean
   ocp_pod_name?: string
+  /**
+   * User this failure was auto-assigned to at ingest time (migration 0080).
+   * NULL when the test passed, when the project has no resolvable owner,
+   * or when the row pre-dates the auto-assignment feature. Resolution at
+   * assignment time: TestSuiteOwner → default QA lead → manager → NULL.
+   */
+  assigned_to_user_id?: string | null
 }
 
 export type RunTestCaseListResponse = PaginatedResponse<RunTestCase>

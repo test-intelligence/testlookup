@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Optional
 
-from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,54 +92,53 @@ async def list_sessions(db: AsyncSession, current_user) -> list[ChatSession]:
 
 
 async def create_session(db: AsyncSession, payload, current_user) -> ChatSession:
+    """Stage a new session. Caller owns the transaction — this only flushes
+    so the generated primary key is available to the handler.
+    """
     session = ChatSession(
         user_id=current_user.id,
         project_id=payload.project_id,
         title=payload.title or "New conversation",
     )
     db.add(session)
-    await db.commit()
-    await db.refresh(session)
+    await db.flush()
     return session
 
 
-async def get_owned_session(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID) -> ChatSession:
-    session = (
-        await db.execute(select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id))
-    ).scalar_one_or_none()
-    if not session:
-        raise HTTPException(404, detail="Session not found")
-    return session
-
-
-async def delete_session(db: AsyncSession, session_id: uuid.UUID, current_user) -> None:
-    session = await get_owned_session(db, session_id, current_user.id)
+async def delete_session(db: AsyncSession, session: ChatSession) -> None:
+    """Stage deletion of an already-authorized session. The handler commits."""
     await db.delete(session)
-    await db.commit()
 
 
-async def get_messages(db: AsyncSession, session_id: uuid.UUID, limit: int, current_user) -> list[ChatMessage]:
-    await get_owned_session(db, session_id, current_user.id)
+async def get_messages(db: AsyncSession, session_id: uuid.UUID, limit: int) -> list[ChatMessage]:
+    """List messages for a session the caller has already been authorized for
+    (the ``require_session_access`` guard runs before this service is called)."""
     result = await db.execute(
         select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc()).limit(limit)
     )
     return list(result.scalars().all())
 
 
-async def send_message(db: AsyncSession, session_id: uuid.UUID, payload, current_user):
-    session = await get_owned_session(db, session_id, current_user.id)
+async def send_message(
+    db: AsyncSession,
+    session: ChatSession,
+    payload,
+    current_user,
+) -> dict:
+    """Handle a user turn against an already-authorized session.
 
+    Title updates are staged (no commit). The caller (handler) commits once.
+    """
     if not session.title or session.title == "New conversation":
         session.title = payload.message[:80]
-        await db.commit()
 
     from app.agents.conversation import ConversationAgent
 
     agent = ConversationAgent()
     result = await agent.chat(
-        session_id=str(session_id),
+        session_id=str(session.id),
         user_message=payload.message,
         user_id=str(current_user.id),
         project_id=str(session.project_id) if session.project_id else payload.project_id,
     )
-    return {"session_id": session_id, "reply": result["reply"], "sources": result["sources"]}
+    return {"session_id": session.id, "reply": result["reply"], "sources": result["sources"]}

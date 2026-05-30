@@ -1,0 +1,200 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# ============================================================================
+# OpenShift + single-Artifactory, air-gapped overlay
+# ============================================================================
+# Deploys the COMPLETE TestLookup stack (app + in-cluster infra) to an
+# OpenShift cluster that can ONLY reach one Artifactory registry — no public
+# internet. Every image (the 3 app images AND every third-party infra image)
+# is rewritten to that single registry by the ``images:`` block below, so the
+# cluster never tries to pull from docker.io / ghcr.io / quay.io.
+#
+# Driven by ``openshiftsetup/deploy-openshift-artifactory.sh``, which builds +
+# pushes the app images, mirrors the infra images, then sed-substitutes the
+# *_PLACEHOLDER tokens in a working copy of this file before ``oc apply -k``
+# and restores the committed placeholders afterwards (same trap-restore trick
+# as homelabsetup/deploy-homelab.sh). Running ``oc apply -k`` directly without
+# the script is expected to fail at ImagePull — the placeholders intentionally
+# don't resolve, which prevents an accidental mis-registry deploy.
+# ============================================================================
+
+resources:
+  - ../../base
+  # In-cluster infra. Self-contained copies (kustomize forbids referencing
+  # files outside this overlay dir, and an air-gapped overlay should be
+  # self-describing anyway). The PVCs carry STORAGE_CLASS_PLACEHOLDER, which
+  # the deploy script substitutes. Image registries are re-pointed by the
+  # images: block below. Shapes mirror k8s/overlays/homelab/infra-*.yaml.
+  - infra-postgres.yaml
+  - infra-mongo.yaml
+  - infra-redis.yaml
+  - infra-minio.yaml
+  - infra-chromadb.yaml
+  - frontend-nginx-configmap.yaml
+  # OpenShift Routes (HTTPS, edge-terminated, HTTP->HTTPS redirect).
+  - route.yaml
+
+namespace: testlookup
+
+patches:
+  # ── Remove the base nginx Ingress — OpenShift uses Routes ─────────────────
+  - path: remove-ingress.yaml
+
+  # ── Remove the base template Secret — the deploy script creates the real
+  #    Secret (random credentials) via ``oc create secret`` before apply. ────
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: testlookup-secrets
+    target:
+      kind: Secret
+      name: testlookup-secrets
+
+  # ── Re-point the base Ollama PVC at the cluster's storage class ───────────
+  # The 5 infra PVCs (postgres/mongo/minio/chromadb + redis is ephemeral)
+  # carry STORAGE_CLASS_PLACEHOLDER directly in their local manifests. The
+  # Ollama PVC comes from ../../base (hardcoded ``standard``), so it needs an
+  # explicit re-point here. The deploy script substitutes the placeholder in
+  # both places. OpenShift clusters use a CSI class — gp3-csi /
+  # ocs-storagecluster-ceph-rbd / thin-csi / etc.
+  - patch: |-
+      - op: replace
+        path: /spec/storageClassName
+        value: STORAGE_CLASS_PLACEHOLDER
+    target:
+      kind: PersistentVolumeClaim
+      name: ollama-models-pvc
+
+  # ── Frontend nginx: mount the pre-rendered config + run as root ───────────
+  # Identical to the homelab patch. nginx:alpine forks workers as uid 101 and
+  # needs CHOWN/SETUID/SETGID to write /var/cache/nginx; the deploy script
+  # grants the ``anyuid`` SCC to the namespace default ServiceAccount so this
+  # is permitted (a stock OpenShift image would otherwise need rebuilding to
+  # nginx-unprivileged). The ConfigMap subPath bypasses the entrypoint
+  # envsubst that mis-renders the upstream under the read-only mount.
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          runAsNonRoot: false
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: nginx-conf
+            configMap:
+              name: frontend-nginx-conf
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: nginx-conf
+            mountPath: /etc/nginx/conf.d/default.conf
+            subPath: default.conf
+      - op: add
+        path: /spec/template/spec/containers/0/command
+        value: [nginx, "-g", "daemon off;"]
+    target:
+      kind: Deployment
+      name: testlookup-frontend
+
+  # ── Beat: write its schedule under /tmp (writable by the assigned uid) ────
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/command
+        value:
+          - celery
+          - -A
+          - app.worker.celery_app
+          - beat
+          - --loglevel=info
+          - -s
+          - /tmp/celerybeat-schedule
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Cap HPAs so a fresh air-gapped cluster doesn't scale past its node
+  #    budget before the operator has tuned it. Raise in your own overlay. ──
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+    target:
+      kind: HorizontalPodAutoscaler
+
+  # ── Environment: HTTPS public URLs + offline AI gate ──────────────────────
+  # ROUTE_HOST_FRONTEND_PLACEHOLDER is substituted by the deploy script. The
+  # backend honours AI_OFFLINE_MODE=true so it never reaches for a hosted LLM
+  # (air-gapped — only the in-cluster Ollama is available). MINIO_USE_SSL stays
+  # false: MinIO traffic is cluster-internal (testlookup-minio:9000), TLS is
+  # terminated at the Route for external traffic only.
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        APP_ENV: "production"
+        LOG_LEVEL: "INFO"
+        AI_OFFLINE_MODE: "true"
+        STORAGE_BACKEND: "minio"
+        ANALYSIS_MODE: "auto"
+        DEEP_INVESTIGATION_ENABLED: "true"
+        DEV_AUTO_LOGIN_ENABLED: "false"
+        CORS_ORIGINS: "https://ROUTE_HOST_FRONTEND_PLACEHOLDER"
+        PUBLIC_BASE_URL: "https://ROUTE_HOST_FRONTEND_PLACEHOLDER"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
+images:
+  # ── App images (built locally, pushed to Artifactory) ─────────────────────
+  # ARTIFACTORY_REGISTRY_PLACEHOLDER = the single registry base, e.g.
+  #   artifactory.example.com/testlookup-docker
+  # APP_TAG_PLACEHOLDER = the immutable build tag (build-YYYYMMDD-HHMMSS).
+  - name: testlookup/backend
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/testlookup/backend
+    newTag: APP_TAG_PLACEHOLDER
+  - name: testlookup/frontend
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/testlookup/frontend
+    newTag: APP_TAG_PLACEHOLDER
+  - name: testlookup/mcp
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/testlookup/mcp
+    newTag: APP_TAG_PLACEHOLDER
+
+  # ── Third-party infra images (mirrored into the SAME Artifactory) ─────────
+  # Tags are pinned to the exact versions the homelab/base manifests use, so a
+  # ``docker pull <upstream>; docker tag …; docker push <artifactory>`` mirror
+  # round (see deploy script / mirror-images.sh) lands them at these paths.
+  - name: postgres
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/postgres
+    newTag: 16-alpine
+  - name: redis
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/redis
+    newTag: 7-alpine
+  - name: mongo
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/mongo
+    newTag: "7"
+  - name: minio/minio
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/minio/minio
+    newTag: RELEASE.2025-09-07T16-13-09Z
+  - name: chromadb/chroma
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/chromadb/chroma
+    newTag: 0.5.20
+  - name: ollama/ollama
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/ollama/ollama
+    newTag: 0.5.4
+  - name: busybox
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/busybox
+    newTag: "1.36"

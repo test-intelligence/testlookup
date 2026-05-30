@@ -9,6 +9,13 @@ import { usePermissions } from '@/hooks/usePermissions'
 
 const LLM_PROVIDERS = ['ollama', 'openai', 'gemini', 'lmstudio', 'localai', 'vllm']
 
+const ANALYSIS_MODES = [
+  { value: 'auto', label: 'Auto', desc: 'ML if trained, else LLM if available, else Rules' },
+  { value: 'llm', label: 'LLM (AI Agent)', desc: 'Full LangChain ReAct agent — requires running LLM' },
+  { value: 'ml', label: 'Machine Learning', desc: 'Trained ML classifier — no LLM needed' },
+  { value: 'rules', label: 'Rules-Based', desc: 'Pattern matching + statistics — zero dependencies' },
+] as const
+
 export default function AIConfigPage() {
   const { isAdmin } = usePermissions()
   const [config, setConfig] = useState<AIConfigRead | null>(null)
@@ -33,6 +40,8 @@ export default function AIConfigPage() {
           ai_timeout_seconds: cfg.ai_timeout_seconds,
           deep_investigation_enabled: cfg.deep_investigation_enabled,
           finetune_enabled: cfg.finetune_enabled,
+          analysis_mode: cfg.analysis_mode,
+          knowledge_rag_enabled: cfg.knowledge_rag_enabled,
         })
       })
       .catch(() => setError('Failed to load AI configuration'))
@@ -73,6 +82,61 @@ export default function AIConfigPage() {
         }
       />
       <form onSubmit={handleSave} className="space-y-6 max-w-2xl">
+        {/* Analysis Engine Mode */}
+        <div className="card space-y-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Analysis Engine</h3>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Choose how test failures are classified and summarized.
+            Non-LLM modes work without any external AI service.
+          </p>
+          <div className="space-y-2">
+            {ANALYSIS_MODES.map(mode => (
+              <label
+                key={mode.value}
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  form.analysis_mode === mode.value
+                    ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
+                    : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
+                } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="analysis_mode"
+                  value={mode.value}
+                  checked={form.analysis_mode === mode.value}
+                  onChange={() => upd('analysis_mode', mode.value)}
+                  disabled={!isAdmin}
+                  className="mt-0.5"
+                />
+                <div>
+                  <span className="text-sm font-medium text-[var(--color-text)]">{mode.label}</span>
+                  {mode.value === 'ml' && !config.ml_model_available && (
+                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                      Not Trained
+                    </span>
+                  )}
+                  {mode.value === 'ml' && config.ml_model_available && (
+                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                      Ready ({((config.ml_model_accuracy ?? 0) * 100).toFixed(0)}% accuracy)
+                    </span>
+                  )}
+                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{mode.desc}</p>
+                </div>
+              </label>
+            ))}
+          </div>
+          {/* ML Model Status Banner */}
+          {form.analysis_mode === 'ml' && !config.ml_model_available && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+              <span className="font-medium">ML model not yet trained.</span>
+              <span className="text-[var(--color-text-muted)]">
+                Need {config.ml_training_sample_count} / 200 labeled samples.
+                The system will use Rules mode as fallback until a model is trained.
+              </span>
+            </div>
+          )}
+        </div>
+
         {/* LLM Provider */}
         <div className="card space-y-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)]">LLM Provider</h3>
@@ -159,6 +223,39 @@ export default function AIConfigPage() {
               Fine-Tuning Pipeline
             </label>
           </div>
+        </div>
+
+        {/* Knowledge RAG */}
+        <div className="card space-y-4">
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Knowledge-Grounded Generation</h3>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Enable RAG-based test case generation from Jira stories, Confluence pages, uploaded documents, and approved URLs.
+          </p>
+          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+            form.knowledge_rag_enabled
+              ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
+              : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
+          } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}>
+            <input
+              type="checkbox"
+              checked={form.knowledge_rag_enabled ?? false}
+              onChange={e => upd('knowledge_rag_enabled', e.target.checked)}
+              disabled={!isAdmin}
+              className="mt-0.5 rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]"
+            />
+            <div>
+              <span className="text-sm font-medium text-[var(--color-text)]">Enable Knowledge RAG</span>
+              {config.knowledge_rag_enabled ? (
+                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">Active</span>
+              ) : (
+                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-400">Disabled</span>
+              )}
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                When enabled, the &quot;Knowledge Generation&quot; tab appears in Test Management,
+                allowing QA engineers to generate test cases grounded in synced requirement sources.
+              </p>
+            </div>
+          </label>
         </div>
 
         {/* API Keys */}

@@ -53,7 +53,9 @@ class DefectCommander(BaseAgent):
         try:
             result = await self._promote(state)
         except Exception as exc:
-            logger.error("DefectCommander failed: %s", exc, exc_info=True)
+            logger.error(
+                "defect_commander_failed", error=str(exc), exc_info=True,
+            )
             await self.mark_stage_done(pipeline_run_id, error=str(exc))
             return {
                 "defect_promotion": None,
@@ -259,7 +261,7 @@ async def run_defect_commander(
 class _StandaloneCommander(DefectCommander):
     """Variant that skips DB stage tracking."""
 
-    async def mark_stage_running(self, pipeline_run_id: str) -> None:
+    async def mark_stage_running(self, pipeline_run_id: str, **kwargs: Any) -> None:
         pass
 
     async def mark_stage_done(
@@ -267,6 +269,7 @@ class _StandaloneCommander(DefectCommander):
         pipeline_run_id: str,
         result_data: dict[Any, Any] | None = None,
         error: str | None = None,
+        **kwargs: Any,
     ) -> None:
         pass
 

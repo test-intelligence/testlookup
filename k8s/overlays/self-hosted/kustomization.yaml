@@ -1,0 +1,60 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Self-hosted / private-cloud K8s overlay — works on:
+#   - Vanilla kubeadm clusters
+#   - K3s / RKE / RKE2
+#   - Rancher (multi-cluster)
+#   - On-prem OpenStack/VMware K8s
+#   - kind / minikube (for testing the manifests)
+#
+# Assumes:
+#   - NGINX Ingress Controller (the most portable choice)
+#   - cert-manager + Let's Encrypt OR a corporate CA wired via the
+#     `cluster-issuer` annotation
+#   - StorageClass defaults to whatever your cluster provides — override via
+#     STORAGE_CLASS env in scripts/deploy-k8s.sh, or patch this file.
+#   - Stateful workloads (postgres/mongo/redis/minio) run IN-CLUSTER by default
+#     (see homelab overlay for an example wiring). For production, swap to
+#     external managed services and update testlookup-secrets accordingly.
+
+resources:
+  - ../prod
+
+namespace: testlookup
+
+patches:
+  # ── Ingress: NGINX with cert-manager (most portable) ──────────────────────
+  - patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-ingress
+      spec:
+        ingressClassName: nginx
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
+  # ── Optional: pin a specific StorageClass ────────────────────────────────
+  # Uncomment and replace `local-path` (K3s default) with whatever your
+  # cluster provides (e.g. `longhorn`, `rook-ceph-block`, `nfs-client`).
+  # - patch: |-
+  #     - op: replace
+  #       path: /spec/storageClassName
+  #       value: longhorn
+  #   target:
+  #     kind: PersistentVolumeClaim
+
+# Image pull from your private/internal registry. The deploy-k8s.sh script
+# can override these via `kustomize edit set image` for one-off deployments.
+images:
+  - name: testlookup/backend
+    newName: testlookup/backend
+    newTag: "0.0.1"
+  - name: testlookup/frontend
+    newName: testlookup/frontend
+    newTag: "0.0.1"
+  - name: testlookup/mcp
+    newName: testlookup/mcp
+    newTag: "0.0.1"

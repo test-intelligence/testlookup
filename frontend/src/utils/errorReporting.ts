@@ -13,7 +13,10 @@
 
 import type { Metric } from 'web-vitals'
 
-const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/api/v1/observability/frontend`
+// When VITE_API_BASE_URL is unset, use a same-origin relative URL so the
+// reporter follows the page through any ingress (k8s, gcp, aws, homelab).
+// VITE_API_URL is also accepted as a legacy alias.
+const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? ''}/api/v1/observability/frontend`
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -83,9 +86,47 @@ export function flush(): void {
   }
 }
 
+// ── Privacy sanitization (PR-5) ──────────────────────────────────────────────
+
+/** Strip full file paths from stack traces, keeping only filename + line number. */
+function _sanitizeStack(stack: string | undefined): string | undefined {
+  if (!stack) return stack
+  // Replace full paths like /home/user/project/src/file.ts:42:10 → file.ts:42:10
+  return stack.replace(/(?:\/[\w./-]+\/|[A-Z]:\\[\w.\\-]+\\)([\w.-]+:\d+)/g, '$1')
+}
+
+/** Redact potential PII patterns from error messages. */
+function _sanitizeMessage(msg: string): string {
+  return msg
+    // Email addresses
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]')
+    // Phone numbers
+    .replace(/\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '[REDACTED_PHONE]')
+    // Bearer tokens — lowered floor from 20 → 8 to catch short opaque tokens
+    // (e.g., session IDs) while still avoiding obvious false positives like
+    // "Bearer token".
+    .replace(/Bearer\s+[A-Za-z0-9\-_.=]{8,}/gi, 'Bearer [REDACTED]')
+    // API keys — accept shorter keys (8+) because some integrations ship
+    // 10-12 character keys and would otherwise leak.
+    .replace(/api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9\-_]{8,}['"]?/gi, 'api_key=[REDACTED]')
+    // Known TestLookup API key prefixes (tl_, qai_, scim_) — catches keys
+    // that appear bare in a message without the "api_key=" antecedent.
+    .replace(/\b(?:tl|qai|scim)_[A-Za-z0-9\-_]{16,}/g, '[REDACTED_KEY]')
+    // JWT tokens (three base64url-ish sections separated by dots)
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]')
+    // Connection strings with passwords
+    .replace(/(\/\/[^:]+:)[^@]{4,}(@)/g, '$1[REDACTED]$2')
+}
+
 // ── Error capture ─────────────────────────────────────────────────────────────
 
 function _capture(error: FrontendError): void {
+  // Sanitize before buffering (PR-5: never send raw PII to backend)
+  error.message = _sanitizeMessage(error.message)
+  error.stack = _sanitizeStack(error.stack)
+  if (error.component_stack) {
+    error.component_stack = _sanitizeStack(error.component_stack)
+  }
   _batch.errors.push(error)
   _scheduleFlush()
 }

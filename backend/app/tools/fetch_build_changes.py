@@ -6,10 +6,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.http_client import get_http_client
 from app.db.postgres import AsyncSessionLocal
 
 logger = logging.getLogger("tools.fetch_build_changes")
@@ -18,25 +18,26 @@ logger = logging.getLogger("tools.fetch_build_changes")
 async def _fetch_github_commits(repo: str, since: str, until: str, token: str) -> list[dict]:
     """Fetch commits from GitHub API between two ISO timestamps."""
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"https://api.github.com/repos/{repo}/commits",
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
-                params={"since": since, "until": until, "per_page": 20},
-            )
-            if resp.status_code != 200:
-                return []
-            commits = resp.json()
-            return [
-                {
-                    "sha": c["sha"][:8],
-                    "message": c["commit"]["message"].split("\n")[0][:200],
-                    "author": c["commit"]["author"]["name"],
-                    "timestamp": c["commit"]["author"]["date"],
-                    "files_changed": [],
-                }
-                for c in commits
-            ]
+        client = get_http_client()
+        resp = await client.get(
+            f"https://api.github.com/repos/{repo}/commits",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+            params={"since": since, "until": until, "per_page": 20},
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            return []
+        commits = resp.json()
+        return [
+            {
+                "sha": c["sha"][:8],
+                "message": c["commit"]["message"].split("\n")[0][:200],
+                "author": c["commit"]["author"]["name"],
+                "timestamp": c["commit"]["author"]["date"],
+                "files_changed": [],
+            }
+            for c in commits
+        ]
     except Exception as exc:
         logger.debug("GitHub API call failed: %s", exc)
         return []

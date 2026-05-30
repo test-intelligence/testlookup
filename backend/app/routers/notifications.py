@@ -46,7 +46,10 @@ async def upsert_preference(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await upsert_notification_preference(db, payload, current_user)
+    pref = await upsert_notification_preference(db, payload, current_user)
+    await db.commit()
+    await db.refresh(pref)
+    return pref
 
 
 @router.put("/preferences/{pref_id}", response_model=NotificationPreferenceResponse)
@@ -56,7 +59,10 @@ async def update_preference(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await update_notification_preference(db, pref_id, payload, current_user)
+    pref = await update_notification_preference(db, pref_id, payload, current_user)
+    await db.commit()
+    await db.refresh(pref)
+    return pref
 
 
 @router.delete("/preferences/{pref_id}", status_code=204)
@@ -66,6 +72,7 @@ async def delete_preference(
     db: AsyncSession = Depends(get_db),
 ):
     await delete_notification_preference(db, pref_id, current_user)
+    await db.commit()
 
 
 @router.get("/history", response_model=list[NotificationLogResponse])
@@ -93,6 +100,7 @@ async def mark_read(
     db: AsyncSession = Depends(get_db),
 ):
     await mark_notification_read(db, log_id, current_user)
+    await db.commit()
 
 
 @router.post("/history/read-all", status_code=204)
@@ -101,6 +109,7 @@ async def mark_all_read(
     db: AsyncSession = Depends(get_db),
 ):
     await mark_all_notifications_read(db, current_user)
+    await db.commit()
 
 
 @router.post("/test")

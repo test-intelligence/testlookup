@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+
+<suite name="Realistic Client Examples" verbose="1">
+    <test name="programmatic-client-examples">
+        <classes>
+            <class name="com.example.ParallelSuitesWithOneApiKeyTest"/>
+            <class name="com.example.SingleSuiteHundredCasesTest"/>
+        </classes>
+    </test>
+</suite>

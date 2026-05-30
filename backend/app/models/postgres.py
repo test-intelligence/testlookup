@@ -5,20 +5,21 @@ from enum import Enum as PyEnum
 from typing import Any, Optional
 
 from sqlalchemy import (
-    JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres import Base
@@ -76,6 +77,22 @@ class UserRole(str, PyEnum):
     ADMIN = "ADMIN"
 
 
+class TriageStatus(str, PyEnum):
+    """Per-failure triage workflow state (migration 0088).
+
+    Distinct from ``TestStatus`` (which is the test's execution outcome).
+    Every auto-assigned FAILED/BROKEN TestCase starts at ``PENDING_REVIEW``
+    and is moved off the ``/my-failures`` inbox once the assignee or a
+    QA Lead picks one of the resolved states.
+    """
+    PENDING_REVIEW         = "PENDING_REVIEW"         # default — appears on /my-failures
+    REVIEWED_APPROVED      = "REVIEWED_APPROVED"      # no action — accepted as-is after review
+    DEFECT_CREATED         = "DEFECT_CREATED"         # defect/bug logged; notes hold the link
+    WONT_FIX               = "WONT_FIX"               # deprecated test / accepted failure
+    AUTOMATION_SCRIPT_ISSUE = "AUTOMATION_SCRIPT_ISSUE"  # test code bug, not a product bug
+    FLAKY_TEST             = "FLAKY_TEST"             # nondeterministic — quarantine candidate
+
+
 class NotificationChannel(str, PyEnum):
     EMAIL = "email"
     SLACK = "slack"
@@ -105,6 +122,8 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # True for self-registered users until they complete their first-time password reset
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Avatar colour slug chosen by the user (e.g. "blue", "emerald"); null = default slate
+    avatar_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
@@ -125,12 +144,36 @@ class Project(Base):
     end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))     # added migration 0022
     tags: Mapped[Optional[list]] = mapped_column(JSON)                                # added migration 0022
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    manager_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(                     # added migration 0076
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Default QA lead — every new TestSuite materialised during ingest gets a
+    # TestSuiteOwner row pointing here (migration 0079). When set, this is the
+    # first fallback in the owner-resolution chain (TestSuiteOwner row →
+    # default_qa_lead_user_id → manager_user_id). Enforced as QA_LEAD on this
+    # project (or ADMIN) at the application layer — no CHECK constraint here
+    # because ProjectMember.role is the source of truth.
+    default_qa_lead_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(             # added migration 0079
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
     # Relationships
     test_runs: Mapped[list["TestRun"]] = relationship("TestRun", back_populates="project", lazy="dynamic")
     quality_gates: Mapped[list["QualityGate"]] = relationship("QualityGate", back_populates="project")
+    test_suites: Mapped[list["TestSuite"]] = relationship(
+        "TestSuite", back_populates="project", cascade="all, delete-orphan"
+    )
+    canonical_test_cases: Mapped[list["CanonicalTestCase"]] = relationship(
+        "CanonicalTestCase", back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class TestRun(Base):
@@ -140,6 +183,8 @@ class TestRun(Base):
         UniqueConstraint("project_id", "build_number", "jenkins_job", name="uq_test_run_build"),
         Index("ix_test_runs_project_status", "project_id", "status"),
         Index("ix_test_runs_created_at", "created_at"),
+        # P3-3: Composite index for analytics queries that filter by project + status + time range
+        Index("ix_test_runs_project_status_created", "project_id", "status", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -168,6 +213,21 @@ class TestRun(Base):
 
     # S3 references
     minio_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)          # TG-1: custom + system tags
+
+    # Suite attribution — populated by ingestion finalize from TestCase.suite_name.
+    # primary_suite_name = dominant suite (most test cases; alphabetical tiebreak),
+    # suite_names = full sorted list of distinct suites in this run.
+    primary_suite_name: Mapped[Optional[str]] = mapped_column(String(500), index=True)
+    suite_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+
+    # 15-day durable archive of the raw SDK events for live-stream runs.
+    # Written at session-close time so /runs/{id}/recover-live can replay
+    # test_case rows long after the 25-hour Redis buffer TTL has lapsed
+    # (migration 0086, 2026-05-16). Null for non-live runs and for live
+    # runs whose archive has been purged after the 15-day window.
+    event_archive: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    event_archive_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -186,11 +246,24 @@ class TestCase(Base):
         Index("ix_test_cases_run_status", "test_run_id", "status"),
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
         Index("ix_test_cases_search", "search_vector", postgresql_using="gin"),
+        Index("ix_test_cases_canonical", "canonical_test_case_id"),
+        # Hot path: ``/my-failures`` filters by ``assigned_to_user_id +
+        # triage_status = 'PENDING_REVIEW'``. Composite index keeps the
+        # inbox query a single index scan (added migration 0088).
+        Index(
+            "ix_test_cases_assignee_triage",
+            "assigned_to_user_id", "triage_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
     test_fingerprint: Mapped[str] = mapped_column(String(64), index=True)  # hash(test_name + class_name)
+    # Junction to the project-scoped catalog. Populated by ingestion (migration 0075).
+    # SET NULL on canonical deletion so existing run rows survive a suite cleanup.
+    canonical_test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("canonical_test_cases.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Core fields from Allure/TestNG
     test_name: Mapped[str] = mapped_column(String(1000), nullable=False)
@@ -213,6 +286,46 @@ class TestCase(Base):
     failure_category: Mapped[Optional[FailureCategory]] = mapped_column(String(30))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Per-execution assignee — set by ``finalize_run`` for every FAILED/BROKEN
+    # TestCase in the run (migration 0080). Resolution order at assignment
+    # time: TestSuiteOwner row for the suite → Project.default_qa_lead_user_id
+    # → Project.manager_user_id → NULL. Historical rows retain the owner they
+    # were assigned to at ingest time; reassigning a suite owner later does
+    # NOT retroactively rewrite past assignments — preserve the action ledger.
+    assigned_to_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(            # added migration 0080
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # ── Triage workflow (migration 0088) ────────────────────────────
+    # Every auto-assigned FAILED/BROKEN row starts at PENDING_REVIEW.
+    # The /my-failures inbox filters to PENDING_REVIEW only; moving to
+    # any other status removes the row from the assignee's queue. PASSED
+    # / SKIPPED rows carry PENDING_REVIEW too but no UI surfaces them —
+    # the default keeps the column NOT NULL without a per-status branch
+    # in the assigner.
+    triage_status: Mapped[TriageStatus] = mapped_column(
+        String(30),
+        nullable=False,
+        default=TriageStatus.PENDING_REVIEW.value,
+        server_default=TriageStatus.PENDING_REVIEW.value,
+    )
+    # Free-form notes set when the assignee moves status off PENDING_REVIEW —
+    # typically a Jira link for DEFECT_CREATED or a rationale for
+    # WONT_FIX / REVIEWED_APPROVED. Cap is 2k chars to keep the row
+    # bounded; longer write-ups belong on the linked defect.
+    triage_notes: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    triage_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    triage_updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # S3 reference
     minio_s3_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
     has_attachments: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -228,6 +341,249 @@ class TestCase(Base):
     history: Mapped[list["TestCaseHistory"]] = relationship("TestCaseHistory", back_populates="test_case")
     ai_analysis: Mapped[Optional["AIAnalysis"]] = relationship("AIAnalysis", back_populates="test_case", uselist=False)
     defects: Mapped[list["Defect"]] = relationship("Defect", back_populates="test_case")
+    canonical_test_case: Mapped[Optional["CanonicalTestCase"]] = relationship(
+        "CanonicalTestCase", back_populates="test_cases"
+    )
+
+
+class TestSuite(Base):
+    """Project-scoped grouping of test cases.
+
+    Replaces the prior string-based ``suite_name`` model with a first-class
+    entity. Every project gets a row with ``is_default=True`` named
+    ``Default Suite ({project.name})`` — new test cases ingested without an
+    explicit suite are auto-assigned to it.
+    """
+    __tablename__ = "test_suites"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_test_suites_project_name"),
+        Index("ix_test_suites_project_id", "project_id"),
+        Index(
+            "ix_test_suites_project_default",
+            "project_id",
+            unique=True,
+            postgresql_where=text("is_default IS TRUE"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    project: Mapped["Project"] = relationship("Project", back_populates="test_suites")
+    canonical_test_cases: Mapped[list["CanonicalTestCase"]] = relationship(
+        "CanonicalTestCase", back_populates="test_suite", cascade="all, delete-orphan"
+    )
+
+
+class TestSuiteOwner(Base):
+    """Explicit owner for a (project, suite_name) pair (migration 0076).
+
+    Keyed by suite_name (string) to match the legacy aggregated Test Suites
+    view served from ``/api/v1/test-management/suites``. Falls back to
+    ``Project.manager_user_id`` when no row exists for a given suite.
+    """
+    __tablename__ = "test_suite_owners"
+    __table_args__ = (
+        UniqueConstraint("project_id", "suite_name", name="uq_test_suite_owners_proj_suite"),
+        Index("ix_test_suite_owners_project_id", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
+
+
+class SuiteRunReview(Base):
+    """Human-in-the-loop overlay on AI analysis for a (run, suite) (migration 0076).
+
+    Non-gating: the AI pipeline still completes runs without waiting for a
+    review. State machine: pending → confirmed | acknowledged | review_later.
+    Unique on ``(test_run_id, suite_name)`` so each run+suite has at most one
+    review (later updates mutate the row instead of inserting).
+    """
+    __tablename__ = "suite_run_reviews"
+    __table_args__ = (
+        UniqueConstraint("test_run_id", "suite_name", name="uq_suite_run_reviews_run_suite"),
+        Index("ix_suite_run_reviews_project_suite", "project_id", "suite_name"),
+        Index("ix_suite_run_reviews_state", "state"),
+        Index("ix_suite_run_reviews_test_run_id", "test_run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    reviewer_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default=text("'pending'"))
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
+
+
+SUITE_REVIEW_STATES = ("pending", "confirmed", "acknowledged", "review_later")
+
+
+class TestExecutionReview(Base):
+    """Per-TestCase human review overlay for AI-flagged failures (migration 0081).
+
+    When the AI analysis pipeline flags a failure as ``requires_human_review``
+    (model missing, low confidence, fallback path), the UI shows a "Pending
+    Human Review" tag. This row records the human's verdict once they look:
+    ``reviewed`` (AI was right), ``defect_filed`` (ticket created;
+    ``defect_link`` captures the URL), ``false_positive`` (flake or test bug;
+    downstream un-tags), or ``reproducible`` (failure confirmed locally,
+    awaiting fix).
+
+    Naming note: the older ``test_case_reviews`` table belongs to the
+    managed-test-AUTHORING workflow (review of an authored test definition
+    before it's published). This table is keyed on ``test_cases.id`` —
+    the execution row — and is unrelated.
+
+    One row per test_case_id (UNIQUE). Transitions mutate the row in-place;
+    cross-test audit lives in ``test_case_audit_logs`` for cases that need a
+    timeline. Keep this table small and queryable for the inbox + dashboards.
+    """
+    __tablename__ = "test_execution_reviews"
+    __table_args__ = (
+        UniqueConstraint("test_case_id", name="uq_ter_test_case_id"),
+        CheckConstraint(
+            "state IN ('pending_review', 'reviewed', 'defect_filed', "
+            "'false_positive', 'reproducible')",
+            name="ck_ter_state_valid",
+        ),
+        CheckConstraint(
+            "state <> 'defect_filed' OR NULLIF(BTRIM(defect_link), '') IS NOT NULL",
+            name="ck_ter_defect_link_required",
+        ),
+        Index("ix_ter_project_state", "project_id", "state"),
+        Index("ix_ter_reviewed_by", "reviewed_by_user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending_review",
+        server_default=text("'pending_review'"),
+    )
+    reviewed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    defect_link: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transitioned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now(),
+    )
+
+
+# State machine for TestExecutionReview. Transitions are validated in the
+# application layer (test_execution_review_service). pending_review is the
+# implicit initial state — rows are auto-inserted when the user first
+# transitions an AI-flagged failure.
+TEST_EXECUTION_REVIEW_STATES = (
+    "pending_review",
+    "reviewed",
+    "defect_filed",
+    "false_positive",
+    "reproducible",
+)
+
+
+class CanonicalTestCase(Base):
+    """Project-scoped test case identity.
+
+    Merges the prior ``SuiteMembership`` lifecycle model with a relational
+    anchor that the per-run ``test_cases`` table FKs to. Identified by
+    ``(project_id, test_fingerprint)`` — one row per logical test per project.
+    Every CanonicalTestCase belongs to exactly one TestSuite; manual re-linking
+    moves the row between suites without losing run history.
+    """
+    __tablename__ = "canonical_test_cases"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "test_fingerprint", name="uq_canonical_test_cases_project_fp"
+        ),
+        Index("ix_ctc_project_id", "project_id"),
+        Index("ix_ctc_test_suite_id", "test_suite_id"),
+        Index("ix_ctc_project_status", "project_id", "status"),
+        Index("ix_ctc_fingerprint", "test_fingerprint"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # RESTRICT so a suite with cases can't be silently dropped — UI must reassign or move cases first.
+    test_suite_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="RESTRICT"), nullable=False
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[str] = mapped_column(String(1000), nullable=False)
+    class_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Lifecycle (merged from suite_memberships). Values:
+    #   status: active | deleted | needs_review
+    #   source: execution | managed | linked
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", server_default="active")
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="execution", server_default="execution")
+
+    # Run lifecycle pointers (SET NULL — a run deletion shouldn't orphan the catalog row).
+    first_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    last_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    deleted_at_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Optional cross-link to the authored / AI-generated catalog.
+    managed_test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="SET NULL"), nullable=True
+    )
+
+    review_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    project: Mapped["Project"] = relationship("Project", back_populates="canonical_test_cases")
+    test_suite: Mapped["TestSuite"] = relationship("TestSuite", back_populates="canonical_test_cases")
+    test_cases: Mapped[list["TestCase"]] = relationship("TestCase", back_populates="canonical_test_case")
+    managed_test_case: Mapped[Optional["ManagedTestCase"]] = relationship("ManagedTestCase")
 
 
 class TestCaseHistory(Base):
@@ -235,11 +591,15 @@ class TestCaseHistory(Base):
     __tablename__ = "test_case_history"
     __table_args__ = (
         Index("ix_history_fingerprint_date", "test_fingerprint", "created_at"),
+        # FK indexes added in migration 0082 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        Index("ix_history_test_case_id", "test_case_id"),
+        Index("ix_history_test_run_id",  "test_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    test_case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"))
-    test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"))
+    test_case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False)
+    test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
     test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[TestStatus] = mapped_column(String(20), nullable=False)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
@@ -274,6 +634,13 @@ class AIAnalysis(Base):
     llm_model: Mapped[Optional[str]] = mapped_column(String(100))
     requires_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Migration 0063: per-test decision audit. Contains the ``_audit`` dict
+    # that analysis_agent builds at classification time — analysis_mode,
+    # mode_requested, fallback_from, fallback_reason, confidence_adjustments,
+    # retry_count, duration. Rendered by the decision-trail UI so QA leads
+    # can answer "why did the AI choose this engine for this test?" without
+    # querying Mongo event logs.
+    routing_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # Relationships
     test_case: Mapped["TestCase"] = relationship("TestCase", back_populates="ai_analysis")
@@ -289,6 +656,9 @@ class Defect(Base):
             unique=True,
             postgresql_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
         ),
+        # FK index added in migration 0082 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        Index("ix_defects_project_id", "project_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -361,6 +731,11 @@ class DefectCandidate(Base):
 class QualityGate(Base):
     """Quality gate rule configuration per project."""
     __tablename__ = "quality_gates"
+    # FK index added in migration 0082 — see
+    # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+    __table_args__ = (
+        Index("ix_quality_gates_project", "project_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
@@ -402,8 +777,11 @@ class NotificationPreference(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     channel: Mapped[NotificationChannel] = mapped_column(String(20), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    # JSON list of NotificationEventType values the user subscribed to
-    events: Mapped[list] = mapped_column(JSON, default=list)
+    # JSONB list of NotificationEventType values the user subscribed to.
+    # Type promoted from JSON → JSONB in migration 0083 for consistency
+    # with ``WebhookSubscription.events`` and so future "list users
+    # subscribed to event X" queries can use a GIN index.
+    events: Mapped[list] = mapped_column(JSONB, default=list)
     # Alert only when pass_rate falls below this percentage
     failure_rate_threshold: Mapped[Optional[float]] = mapped_column(Float, default=80.0)
     # Channel-specific overrides (if None, falls back to global settings)
@@ -466,6 +844,13 @@ class AgentStageResult(Base):
     confidence_score: Mapped[Optional[int]] = mapped_column(Integer)     # 0-100
     evidence_count: Mapped[Optional[int]] = mapped_column(Integer)       # number of evidence items produced
     route_rationale: Mapped[Optional[str]] = mapped_column(Text)         # why this stage was selected/skipped
+    # Migration 0061: structured decision trail — ordered list of
+    # {at, decision_point, chosen, rationale, context} records produced by
+    # BaseAgent.log_decision(). This is the authoritative per-stage record
+    # of *why* the agent chose each branch, used by the traceability UI.
+    decision_log: Mapped[Optional[list]] = mapped_column(JSON)
+    fallback_reason: Mapped[Optional[str]] = mapped_column(String(200))  # short reason when fallback_used=True
+    analysis_mode: Mapped[Optional[str]] = mapped_column(String(20))     # llm|ml|rules|auto — engine actually used
 
     # Relationships
     pipeline_run: Mapped["AgentPipelineRun"] = relationship("AgentPipelineRun", back_populates="stages")
@@ -724,7 +1109,13 @@ class ManagedTestCase(Base):
     priority: Mapped[str] = mapped_column(String(20), default="medium")       # critical|high|medium|low
     severity: Mapped[str] = mapped_column(String(20), default="major")        # blocker|critical|major|minor|trivial
     feature_area: Mapped[Optional[str]] = mapped_column(String(500))
-    suite_name: Mapped[Optional[str]] = mapped_column(String(500))            # Optional suite grouping
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))            # Legacy free-text suite label; superseded by test_suite_id when set.
+    # Migration 0087 — structured anchor to the canonical suite entity.
+    # Nullable so historical rows + create-without-suite paths keep working;
+    # SET NULL on delete so a suite drop doesn't cascade authored cases away.
+    test_suite_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_suites.id", ondelete="SET NULL"), nullable=True
+    )
     tags: Mapped[Optional[list]] = mapped_column(JSON)              # list[str]
 
     # Lifecycle state machine
@@ -753,6 +1144,25 @@ class ManagedTestCase(Base):
     estimated_duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
     last_executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_execution_status: Mapped[Optional[str]] = mapped_column(String(20))  # PASSED|FAILED|BLOCKED
+
+    # RAG lineage (RAG-11 / RAG-12)
+    generation_batch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("generation_batches.id", ondelete="SET NULL", use_alter=True), nullable=True,
+    )
+    is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stale_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Tier 2 item 9 — RAG faithfulness guardrails.
+    # Score in the range 0.0-1.0 produced by
+    # ``services/rag_faithfulness_service.evaluate`` when the case was
+    # generated. Null = never evaluated. The auto-accept path in the RAG
+    # review workflow refuses to mark a case accepted below the
+    # configured threshold and sets ``needs_review_reason`` to surface
+    # the case on the review queue instead.
+    faithfulness_score: Mapped[Optional[float]] = mapped_column(Float)
+    faithfulness_evaluator: Mapped[Optional[str]] = mapped_column(String(30))  # ollama|ragas|human
+    faithfulness_evaluated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    needs_review_reason: Mapped[Optional[str]] = mapped_column(String(500))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -872,6 +1282,7 @@ class TestPlan(Base):
     passed_cases: Mapped[int] = mapped_column(Integer, default=0)
     failed_cases: Mapped[int] = mapped_column(Integer, default=0)
     blocked_cases: Mapped[int] = mapped_column(Integer, default=0)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)          # TG-1: custom tags
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -947,6 +1358,202 @@ class TestStrategy(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
+# ── Knowledge Source Registry (RAG-1) ─────────────────────────────────────────
+
+
+class KnowledgeSourceType(str, PyEnum):
+    JIRA_ISSUE = "jira_issue"
+    JIRA_EPIC = "jira_epic"
+    CONFLUENCE_PAGE = "confluence_page"
+    UPLOADED_DOC = "uploaded_document"
+    INTERNAL_URL = "internal_url"
+    EXTERNAL_URL = "external_url"
+
+
+class KnowledgeSyncStatus(str, PyEnum):
+    PENDING = "pending"
+    SYNCING = "syncing"
+    SYNCED = "synced"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class KnowledgeClassification(str, PyEnum):
+    PUBLIC = "public"
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
+    RESTRICTED = "restricted"
+
+
+class KnowledgeSource(Base):
+    """Registry of external knowledge sources attached to a project for RAG-grounded test generation."""
+    __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        UniqueConstraint("project_id", "canonical_url", name="uq_ks_project_url"),
+        Index("ix_ks_project_type", "project_id", "source_type"),
+        Index("ix_ks_project_status", "project_id", "sync_status"),
+        Index("ix_ks_owner", "owner_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    canonical_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    external_id: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    owner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    sync_status: Mapped[str] = mapped_column(String(20), nullable=False, default=KnowledgeSyncStatus.PENDING.value)
+    last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    classification: Mapped[str] = mapped_column(String(20), nullable=False, default=KnowledgeClassification.INTERNAL.value)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    storage_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class KnowledgeSyncEvent(Base):
+    """Audit log for every sync attempt on a KnowledgeSource."""
+    __tablename__ = "knowledge_sync_events"
+    __table_args__ = (
+        Index("ix_kse_source_created", "source_id", "created_at"),
+        Index("ix_kse_project_created", "project_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    trigger: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    previous_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    content_changed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    chunk_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeChunk(Base):
+    """PostgreSQL metadata for each chunk stored in ChromaDB knowledge_chunks collection."""
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        Index("ix_kc_source_active", "source_id", "is_active"),
+        Index("ix_kc_project_active", "project_id", "is_active"),
+        Index("ix_kc_sync_version", "source_id", "sync_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    vector_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    section_heading: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    requirement_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_text_preview: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sync_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── RAG Generation Lineage (RAG-8 / RAG-9 / RAG-11 / RAG-12) ────────────────
+
+
+class GenerationBatch(Base):
+    """One row per AI test-case generation request (grounded or raw)."""
+    __tablename__ = "generation_batches"
+    __table_args__ = (
+        Index("ix_gb_project_created", "project_id", "created_at"),
+        Index("ix_gb_author", "created_by_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    prompt_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    generation_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="raw")
+    generation_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    cases_generated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cases_accepted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cases_rejected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    coverage_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt_redacted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    llm_model_used: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GenerationCaseSource(Base):
+    """Maps a generated ManagedTestCase to the KnowledgeChunks cited for it."""
+    __tablename__ = "generation_case_sources"
+    __table_args__ = (
+        UniqueConstraint("case_id", "chunk_vector_id", name="uq_gcs_case_chunk"),
+        Index("ix_gcs_case_id", "case_id"),
+        Index("ix_gcs_batch_id", "batch_id"),
+        Index("ix_gcs_source_id", "source_id"),
+        Index("ix_gcs_stale", "is_stale"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generation_batches.id", ondelete="CASCADE"), nullable=False)
+    case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("managed_test_cases.id", ondelete="CASCADE"), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False)
+    chunk_vector_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    relevance_score: Mapped[Optional[float]] = mapped_column(nullable=True)
+    section_heading: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    chunk_text_preview: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    source_content_hash_at_generation: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stale_detected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RequirementCoverage(Base):
+    """Tracks which requirements are covered/uncovered by a generation batch."""
+    __tablename__ = "requirement_coverage"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "requirement_id", name="uq_rc_batch_req"),
+        Index("ix_rc_batch_id", "batch_id"),
+        Index("ix_rc_project_req", "project_id", "requirement_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    batch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generation_batches.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    requirement_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    requirement_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    coverage_status: Mapped[str] = mapped_column(String(20), nullable=False, default="uncovered")
+    covered_by_case_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class LiveSession(Base):
     """
     Tracks an active live test execution session from a client machine.
@@ -961,10 +1568,27 @@ class LiveSession(Base):
         Index("ix_live_sessions_project_status", "project_id", "status"),
         Index("ix_live_sessions_token_hash", "session_token_hash"),
         Index("ix_live_sessions_started_at", "started_at"),
+        # Partial UNIQUE: only one *active* session may exist per (project, run).
+        # Completed/stale sessions do not participate, so a CI job can retry safely.
+        # Protects against duplicate event streams when two runners race on the same run_id.
+        Index(
+            "ux_live_sessions_active_project_run",
+            "project_id", "run_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # NOT a FK to ``test_runs.id`` despite the name. This is the
+    # SDK-supplied build/run identifier (slug, e.g. "build-1042" or a
+    # Jenkins-job-name+number string) that the client sends in the
+    # ``X-Run-ID`` header on the streaming endpoints. The canonical
+    # ``test_runs.id`` UUID is resolved from this slug via
+    # ``canonical_test_run_uuid()`` in worker/tasks.py before any FK
+    # write — see memory ``feedback_live_session_slug_vs_uuid.md`` for
+    # the production incident that made this distinction expensive.
     run_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)
     machine_id: Mapped[Optional[str]] = mapped_column(String(255))
@@ -976,6 +1600,16 @@ class LiveSession(Base):
     session_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)  # active|completed|stale
     release_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Human-readable launch label (analogous to ReportPortal's rp.launch).
+    # Sourced from `testlookup.launch` in properties / system props / env vars
+    # and surfaced in Live Execution and Runs columns. Nullable: legacy
+    # sessions and clients that don't set it fall back to build_number.
+    launch_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Run-level suite identifier supplied by the SDK (testlookup.suite, with
+    # testlookup.launch as the fallback). Persisted so `upsert_test_run` can
+    # stamp TestRun.primary_suite_name immediately at session close — no need
+    # to wait for per-event aggregation.
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
     events_received: Mapped[int] = mapped_column(Integer, default=0)
     extra_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
@@ -1014,6 +1648,60 @@ class TestCaseAuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+# ── Suite Membership Traceability (TS-1) ─────────────────────────────────────
+
+
+class SuiteMembership(Base):
+    """Tracks which test cases belong to which suite, linked to the run that confirmed membership."""
+    __tablename__ = "suite_memberships"
+    __table_args__ = (
+        UniqueConstraint("project_id", "suite_name", "test_fingerprint", name="uq_suite_membership"),
+        Index("ix_sm_project_suite", "project_id", "suite_name"),
+        Index("ix_sm_fingerprint", "test_fingerprint"),
+        Index("ix_sm_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[str] = mapped_column(String(1000), nullable=False)
+    class_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    managed_test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="SET NULL"), nullable=True,
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="execution")  # execution | managed | linked
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")      # active | deleted | needs_review
+    last_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    first_seen_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    deleted_at_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    review_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)          # TG-4: custom suite tags
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class SuiteMembershipEvent(Base):
+    """Immutable audit log of suite membership changes detected during sync."""
+    __tablename__ = "suite_membership_events"
+    __table_args__ = (
+        Index("ix_sme_project_suite", "project_id", "suite_name", "created_at"),
+        Index("ix_sme_run", "run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # added | deleted | modified | restored
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    old_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    new_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # ── Release Management ────────────────────────────────────────────────────────
 
 class Release(Base):
@@ -1021,6 +1709,13 @@ class Release(Base):
     __tablename__ = "releases"
     __table_args__ = (
         Index("ix_releases_project_status", "project_id", "status"),
+        # Migration 0077: at most one default release per project.
+        Index(
+            "ix_releases_project_default",
+            "project_id",
+            unique=True,
+            postgresql_where=text("is_default IS TRUE"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1032,6 +1727,13 @@ class Release(Base):
 
     # Status: planning|in_progress|released|cancelled
     status: Mapped[str] = mapped_column(String(30), default="planning")
+
+    # Migration 0077: project-level default — used when ingestion / live
+    # session create receives no explicit release_name. At most one row per
+    # project (partial unique index above).
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     # Target/actual dates
     planned_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -1177,11 +1879,20 @@ class ProjectMember(Base):
 
 
 class ApiKey(Base):
-    """Scoped personal access token (PAT) for CI/CD and API access."""
+    """Scoped personal access token (PAT) for CI/CD and API access.
+
+    When ``project_id`` is NULL the key is **user-scoped** and inherits the
+    owning user's project permissions.  When set, the key is
+    **project-scoped** — requests using this key are restricted to the
+    specified project.
+    """
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True,
+    )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     key_hint: Mapped[str] = mapped_column(String(12), nullable=False)  # first 8 chars shown in UI
@@ -1278,6 +1989,11 @@ class RunDiff(Base):
     __tablename__ = "run_diffs"
     __table_args__ = (
         Index("ix_run_diffs_run_id", "run_id", unique=True),
+        # FK index added in migration 0085 — see
+        # docs/DATABASE_AUDIT_2026-05-16.md (P3-4). Used by "show every
+        # run diffed against baseline X" queries. RunBaseline.baseline_run_id
+        # already has a matching index (``ix_run_baselines_baseline``).
+        Index("ix_run_diffs_baseline_run_id", "baseline_run_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1287,15 +2003,37 @@ class RunDiff(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class FeatureFlag(Base):
-    """Feature flags for controlled rollout."""
-    __tablename__ = "feature_flags"
+class RunComparisonReport(Base):
+    """Cached AI report for a run or suite comparison."""
+    __tablename__ = "run_comparison_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "left_run_id",
+            "right_run_id",
+            "suite_name_normalized",
+            "prompt_version",
+            name="uq_run_comparison_report_scope",
+        ),
+        Index("ix_run_comparison_reports_project", "project_id", "created_at"),
+        Index("ix_run_comparison_reports_runs", "left_run_id", "right_run_id"),
+    )
 
-    flag_key: Mapped[str] = mapped_column(String(100), primary_key=True)
-    scope: Mapped[str] = mapped_column(String(50), nullable=False, default="global")
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    config: Mapped[Optional[dict]] = mapped_column(JSON)
-    description: Mapped[Optional[str]] = mapped_column(String(500))
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    left_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    right_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    suite_name_normalized: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    compare_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    ai_report: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False, default="run_compare_v1")
+    model_name: Mapped[Optional[str]] = mapped_column(String(200))
+    created_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
@@ -1605,10 +2343,15 @@ class ReleaseGatePolicy(Base):
 
 
 class ReportShareLink(Base):
-    """Time-limited share token for run intelligence reports."""
+    """Time-limited share token for run intelligence reports.
+
+    The raw token is shown once at creation and never persisted. Only the
+    SHA-256 hex digest (``token_hash``) is stored, so a DB compromise cannot
+    recover active share tokens.
+    """
     __tablename__ = "report_share_links"
     __table_args__ = (
-        Index("ix_rsl_token", "token", unique=True),
+        Index("ix_rsl_token_hash", "token_hash", unique=True),
         Index("ix_rsl_run", "run_id"),
         Index("ix_rsl_expires", "expires_at"),
     )
@@ -1616,7 +2359,7 @@ class ReportShareLink(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     report_layout: Mapped[str] = mapped_column(String(20), nullable=False, default="executive")
     created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_by_name: Mapped[Optional[str]] = mapped_column(String(200))
@@ -1627,6 +2370,31 @@ class ReportShareLink(Base):
     storage_key_pdf: Mapped[Optional[str]] = mapped_column(String(500))
     storage_key_html: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RefreshTokenRecord(Base):
+    """Server-side record of issued refresh tokens for rotation and replay detection.
+
+    Each refresh token carries a random ``jti`` claim; only the SHA-256 hex digest
+    is persisted. On refresh, the record is marked ``rotated_to_id`` and a new
+    record is created. Presenting an already-rotated or revoked token triggers
+    family-wide revocation for the owning user (``replay_detected = true``).
+    """
+    __tablename__ = "refresh_token_records"
+    __table_args__ = (
+        Index("ix_rtr_jti_hash", "jti_hash", unique=True),
+        Index("ix_rtr_user_id", "user_id"),
+        Index("ix_rtr_expires_at", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    jti_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotated_to_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    replay_detected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 # ── Service Ownership (ENT-04) ────────────────────────────────────────────────
@@ -1661,7 +2429,13 @@ class ServiceOwnershipRule(Base):
 
 
 class SavedView(Base):
-    """Persisted filter/scope configuration — personal or shared."""
+    """Persisted filter/scope configuration — personal or shared.
+
+    The `filters` JSON field supports both legacy filter-only payloads and
+    analytics widget configurations (AC-2):
+      Legacy: {"severity": "critical", "date_range": 7}
+      Analytics: {"page": "dashboard", "widgets": ["w1", "w2"], "filters": {...}, "version": 1}
+    """
     __tablename__ = "saved_views"
     __table_args__ = (
         Index("ix_sv_user", "user_id"),
@@ -1673,7 +2447,8 @@ class SavedView(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    filters: Mapped[dict] = mapped_column(JSON, nullable=False)  # {severity, category, owner, date_range, ...}
+    page: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # dashboard | trends | coverage | defects
+    filters: Mapped[dict] = mapped_column(JSON, nullable=False)  # {severity, category, owner, date_range, widgets, ...}
     is_shared: Mapped[bool] = mapped_column(Boolean, default=False)  # visible to all project members
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)  # auto-load on page visit
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -1683,14 +2458,21 @@ class SavedView(Base):
 class DigestSchedule(str, PyEnum):
     DAILY = "DAILY"
     WEEKLY = "WEEKLY"
+    PER_RUN = "PER_RUN"
+    PER_RELEASE = "PER_RELEASE"
+    PER_SUITE = "PER_SUITE"
+    # Tier 2 item 12 — auto-retro. Fires every Monday 07:00 UTC and
+    # renders an AI-written "week in review" for the subscribed team.
+    WEEKLY_RETRO = "WEEKLY_RETRO"
 
 
 class DigestSubscription(Base):
-    """User subscription to a scheduled digest delivery."""
+    """User subscription to a scheduled or event-driven report delivery."""
     __tablename__ = "digest_subscriptions"
     __table_args__ = (
         Index("ix_ds_user", "user_id"),
         Index("ix_ds_next", "next_delivery_at"),
+        Index("ix_ds_schedule_active", "schedule", "is_active", "is_paused"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1698,10 +2480,14 @@ class DigestSubscription(Base):
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     saved_view_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("saved_views.id", ondelete="SET NULL"), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    schedule: Mapped[DigestSchedule] = mapped_column(String(10), nullable=False, default=DigestSchedule.WEEKLY.value)
+    schedule: Mapped[DigestSchedule] = mapped_column(String(20), nullable=False, default=DigestSchedule.WEEKLY.value)
     channel: Mapped[NotificationChannel] = mapped_column(String(20), nullable=False, default=NotificationChannel.EMAIL.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    # EM-2: Scope and trigger fields for event-driven subscriptions
+    scope_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="project")   # project | release | suite | global
+    scope_value: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)                     # suite name, release id, etc.
+    trigger_filter: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="all")    # all | failed_only | degraded_only
     last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_delivery_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     delivery_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -1774,7 +2560,12 @@ class AIEvalRun(Base):
     accuracy: Mapped[Optional[float]] = mapped_column(Float)
     agreement_rate: Mapped[Optional[float]] = mapped_column(Float)  # human-AI agreement
     # Detailed per-item results
-    item_results: Mapped[Optional[list]] = mapped_column(JSON)  # [{input, expected, actual, correct}]
+    # Promoted JSON → JSONB in migration 0084 for consistency with the
+    # sibling ``AIEvalGateRun.manifest`` (and the rest of the eval gate
+    # schema), unlocking GIN-indexed predicates like
+    # ``item_results @> '[{"correct": false}]'::jsonb`` if/when the
+    # eval-drift dashboards need them.
+    item_results: Mapped[Optional[list]] = mapped_column(JSONB)  # [{input, expected, actual, correct}]
     total_items: Mapped[int] = mapped_column(Integer, default=0)
     correct_items: Mapped[int] = mapped_column(Integer, default=0)
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -1814,6 +2605,28 @@ class AIEvalBaseline(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class AIEvalGateRun(Base):
+    """Historical record of an agent-stack release gate decision."""
+    __tablename__ = "ai_eval_gate_runs"
+    __table_args__ = (
+        Index("ix_aeg_change_id", "change_id"),
+        Index("ix_aeg_status", "status"),
+        Index("ix_aeg_manifest_checksum", "manifest_checksum_sha256"),
+        Index("ix_aeg_evaluated_at", "evaluated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    change_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    manifest_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    gate_results: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    blocking_gates: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    version_changes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    evaluated_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 # ── Agent Memory (P3 — Unified Memory & Retrieval) ──────────────────────────
@@ -1859,3 +2672,570 @@ class AgentMemoryEntry(Base):
     resolution: Mapped[Optional[str]] = mapped_column(String(50))  # resolved | open | wont_fix | duplicate
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Feature Flags (Tier 0A) ──────────────────────────────────────────────────
+#
+# Generic feature flag store replacing the hand-rolled ``KNOWLEDGE_RAG_ENABLED``
+# Redis→DB→env fallback. Every new feature lands behind a flag so enterprise
+# customers can toggle it per-project, per-role, or by gradual rollout.
+#
+# Resolution order consulted by ``services/feature_flags.is_enabled``:
+#   1. In-process cache (30s TTL)   — avoids hammering Redis on every request
+#   2. Redis cache (30s TTL)         — shared across workers
+#   3. Postgres row (authoritative)  — this table
+#   4. Environment variable fallback — only for legacy flags during migration
+#
+# Every create/update/delete writes a SettingsAuditLog entry so the flag
+# history is a first-class audit trail for regulated customers.
+
+
+class FeatureFlag(Base):
+    """Named capability toggle gated by project, role, and rollout percent."""
+    __tablename__ = "feature_flags"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Short machine-readable identifier, e.g. "cypress_ingest", "llm_cost_budget".
+    # Unique — there's exactly one row per flag.
+    key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Global kill switch. When False, the flag is off for everyone regardless
+    # of project/role/rollout overrides — use this to disable a flag that's
+    # misbehaving in production without losing its project-scoped history.
+    enabled_global: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Project allow-list. NULL or empty = all projects. When populated, only
+    # projects whose UUID is in the list see the flag as enabled (subject to
+    # ``enabled_global`` still being True).
+    enabled_projects: Mapped[Optional[list]] = mapped_column(JSONB)  # list[str UUID]
+
+    # Role allow-list using the UserRole enum values as strings. NULL or empty
+    # = all roles. Otherwise the user's role must be in the list.
+    enabled_roles: Mapped[Optional[list]] = mapped_column(JSONB)  # list[str]
+
+    # Deterministic percentage rollout (0-100). 0 = disabled for rollout; 100
+    # = enabled for everyone who passed the project/role gates. Bucket hash is
+    # ``sha1(f"{key}:{user_id or project_id}")`` for stable assignment.
+    rollout_percent: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now(),
+    )
+    # Last admin to change the flag — populated by the router from the JWT claims.
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+# ── LLM Cost Budget (Tier 1 item 2) ──────────────────────────────────────────
+#
+# Usage-based billing primitive. Every project gets:
+#
+# * ``ProjectLlmQuota`` (optional, one row per project) — the billing config:
+#   how many included dollars per period, the overage rate, the hard cap,
+#   and what to do when the cap is hit (soft warn, auto-downgrade to ML,
+#   auto-downgrade to rules, or hard block).
+#
+# * ``ProjectLlmUsage`` (one row per project per period) — the running meter:
+#   atomically incremented by ``services/llm_cost_budget.record_usage`` from
+#   ``BaseAgent.mark_stage_done`` every time a stage persists its cost.
+#
+# When no ``ProjectLlmQuota`` row exists the project is considered unlimited —
+# usage is still recorded for reporting, but no cap is enforced.
+#
+# The at-cap behaviour is evaluated inside ``analysis_agent.run`` *before*
+# the per-test routing decision so every classification for the rest of the
+# stage sees the downgraded mode. The downgrade is recorded as a decision
+# log entry so the decision trail UI surfaces it.
+
+
+class QuotaCapAction(str, PyEnum):
+    SOFT_WARN = "SOFT_WARN"                         # log + metric, do not gate
+    AUTO_DOWNGRADE_TO_ML = "AUTO_DOWNGRADE_TO_ML"   # force analysis_mode=ml
+    AUTO_DOWNGRADE_TO_RULES = "AUTO_DOWNGRADE_TO_RULES"  # force analysis_mode=rules
+    HARD_BLOCK = "HARD_BLOCK"                        # refuse LLM work entirely
+
+
+class ProjectLlmQuota(Base):
+    """Per-project LLM spend config used by the usage-based billing gate."""
+    __tablename__ = "project_llm_quota"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Billing period length. Currently only ``MONTHLY`` is supported; the
+    # column exists so we can add daily/quarterly budgets without a migration.
+    period_type: Mapped[str] = mapped_column(String(20), default="MONTHLY", nullable=False)
+
+    # Dollars included in the plan per period (what the customer pre-paid for).
+    included_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Overage rate charged per dollar above ``included_usd``. Used purely for
+    # display on the billing dashboard — the gate does not use it.
+    overage_rate_usd: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+
+    # The absolute ceiling. Below ``hard_cap_usd`` the ``at_cap_action`` may
+    # trigger at ``soft_warn_pct``. Above ``hard_cap_usd`` the hard action
+    # always fires regardless of config.
+    hard_cap_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+
+    # Percentage of ``hard_cap_usd`` at which the configured action starts
+    # firing. Default 100 means "only trigger at the hard cap". Setting it to
+    # 80 gives ops a warning lane that surfaces on the billing page before
+    # customers hit the wall.
+    soft_warn_threshold_pct: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+
+    # Behaviour when usage crosses ``soft_warn_threshold_pct * hard_cap_usd``.
+    at_cap_action: Mapped[str] = mapped_column(
+        String(32),
+        default=QuotaCapAction.AUTO_DOWNGRADE_TO_ML.value,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+# ── Flaky Auto-Quarantine (Tier 1 item 3) ───────────────────────────────────
+#
+# Workflow:
+#
+#   [DETECTED] agent spots a flaky pattern
+#        ↓ (agent proposes immediately if flip-rate >= configured floor)
+#   [PROPOSED] waiting for QA Lead approval
+#        ↓ (QA Lead clicks Approve)            ↘ (Reject)
+#   [APPROVED] approved, will be active on next ingestion  → [REJECTED]
+#        ↓ (first ingestion after approval)
+#   [QUARANTINED] active — test cases tagged 'quarantined', excluded
+#                  from release gate scoring                ↙ (Release manually)
+#        ↓ (quarantine window nearing end)                  → [RELEASED]
+#   [RECHECK_SCHEDULED] celery beat task evaluates recent runs
+#        ↓ flip-rate below threshold → [RELEASED]
+#        ↓ flip-rate still high → [RE_QUARANTINED] → QUARANTINED (new window)
+#
+# Auxiliary terminal states:
+#   - EXPIRED  — proposal sat in PROPOSED too long without action
+#   - REJECTED — QA Lead refused the proposal
+#
+# Uniqueness: at most one row per (project_id, test_fingerprint) may be in a
+# live (non-terminal) state at a time. Terminal-state rows are retained
+# as history so QA leads can see previous quarantine decisions for a test.
+
+
+class FlakyQuarantineStatus(str, PyEnum):
+    DETECTED = "DETECTED"
+    PROPOSED = "PROPOSED"
+    APPROVED = "APPROVED"
+    QUARANTINED = "QUARANTINED"
+    RECHECK_SCHEDULED = "RECHECK_SCHEDULED"
+    RELEASED = "RELEASED"
+    RE_QUARANTINED = "RE_QUARANTINED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+
+
+# Non-terminal states — used in the partial UNIQUE index and the "active
+# quarantine" lookup that the ingestion pipeline runs on every ingest.
+_LIVE_QUARANTINE_STATES = (
+    FlakyQuarantineStatus.DETECTED.value,
+    FlakyQuarantineStatus.PROPOSED.value,
+    FlakyQuarantineStatus.APPROVED.value,
+    FlakyQuarantineStatus.QUARANTINED.value,
+    FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
+    FlakyQuarantineStatus.RE_QUARANTINED.value,
+)
+
+
+# ── Performance Baselines (Tier 2 item 10) ─────────────────────────────────
+#
+# Running duration statistics per (project_id, test_fingerprint). Used by
+# ``perf_regression_service`` to detect per-test latency spikes and surface
+# them as a first-class category in release gate scoring.
+#
+# Design: rolling stats updated in O(1) by Welford's online algorithm so
+# we never have to scan the full TestCase history at scoring time. The
+# nightly beat task ``refresh_perf_baselines`` sweeps new test cases
+# into their baselines; the release gate reads the table directly.
+
+
+class PerfBaseline(Base):
+    """Per-test running duration statistics."""
+    __tablename__ = "perf_baselines"
+    __table_args__ = (
+        Index("ix_perf_baseline_project", "project_id"),
+        UniqueConstraint(
+            "project_id", "test_fingerprint", name="uq_perf_baseline_fingerprint",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Denormalized for the release gate UI — avoids a second lookup per
+    # baseline when rendering "top perf regressions".
+    test_name: Mapped[Optional[str]] = mapped_column(String(500))
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))
+
+    sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mean_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    # Welford accumulator for variance — see ``perf_regression_service``.
+    # Stored as-is so the nightly refresh can keep extending the series
+    # without re-scanning history.
+    m2: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    stddev_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    p95_ms: Mapped[Optional[float]] = mapped_column(Float)
+    last_observed_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    last_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+
+
+# ── Outbound Webhook Subscriptions (Tier 2 item 6) ─────────────────────────
+#
+# Per-project customer-managed subscriptions to TestLookup events. When a
+# supported event fires (``run.completed``, ``defect.promoted``, etc.) the
+# webhook service scans active subscriptions that include the event type
+# in their ``events`` list and enqueues one delivery job per match.
+#
+# The secret used to HMAC-sign each delivery lives in ``secret_service``
+# under scope ``webhook_subscription`` so a DB dump cannot recover it.
+# This table stores only the boolean ``has_secret`` flag for the UI.
+
+
+class WebhookSubscription(Base):
+    """Customer-managed outbound webhook subscription."""
+    __tablename__ = "webhook_subscriptions"
+    __table_args__ = (
+        Index("ix_webhook_sub_project", "project_id"),
+        Index("ix_webhook_sub_enabled", "enabled", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+
+    # Array of event types this subscription wants — e.g.
+    # ``["run.completed", "defect.promoted"]``. Validated server-side
+    # against the ``_SUPPORTED_EVENTS`` set in
+    # ``services/webhook_service.py`` before insert/update.
+    events: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    has_secret: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Per-subscription retry budget. The delivery Celery task honours
+    # this — defaults to 5 attempts so a transient outage still delivers
+    # via exponential backoff.
+    max_retries: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+
+    # Bookkeeping surfaces to the settings UI + Integration Health page.
+    last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_failure_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_delivered: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+class WebhookDelivery(Base):
+    """Audit trail for every webhook delivery attempt.
+
+    One row per (subscription, event emission). Retries update the same
+    row — ``attempt_count`` is incremented and the final outcome lands in
+    ``status``. Rows older than 30 days are pruned by a celery beat task
+    to keep the table bounded.
+    """
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        Index("ix_webhook_delivery_sub_created", "subscription_id", "created_at"),
+        Index("ix_webhook_delivery_status", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subscription_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"), nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_payload: Mapped[Optional[dict]] = mapped_column(JSONB)  # full JSON sent to the target
+
+    # PENDING | SUCCESS | FAILED (retries exhausted) | DLQ (hit max and aborted)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer)
+    response_preview: Mapped[Optional[str]] = mapped_column(String(2000))
+    error: Mapped[Optional[str]] = mapped_column(Text)
+
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── GitHub Integration (Tier 1 item 5) ─────────────────────────────────────
+#
+# Per-project outbound GitHub Checks API integration. When a test run
+# finishes, the ingestion pipeline posts a check run to the commit SHA
+# from the run, giving developers a green/red check on their PR that
+# deep-links back to Run Intelligence.
+#
+# Token storage: the Personal Access Token is NOT stored on this row.
+# Instead, ``services/secret_service`` holds the encrypted value under
+# scope ``github_integration`` + key ``project:{project_id}:pat``. This
+# row only holds a boolean ``has_pat`` hint for the UI so we can render
+# "token configured" without exposing the value.
+
+
+class GitHubIntegration(Base):
+    """Per-project GitHub Checks API integration config."""
+    __tablename__ = "github_integrations"
+    __table_args__ = (
+        Index("ix_github_integrations_project", "project_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    repo_owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    repo_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Defaults to public GitHub. Enterprise customers override this to
+    # e.g. ``https://ghe.corp.example.com/api/v3`` so the service points
+    # at GitHub Enterprise Server. No trailing slash.
+    api_base_url: Mapped[str] = mapped_column(
+        String(500),
+        default="https://api.github.com",
+        nullable=False,
+    )
+
+    # Cosmetic only — the real token lives in secret_service under
+    # scope "github_integration", key "project:{project_id}:pat". This
+    # flag lets the UI show "token configured" without roundtripping
+    # through the secret service for the list view.
+    has_pat: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Last successful post bookkeeping — surfaced on the Integration
+    # Health dashboard so stale configs are visible.
+    last_posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    last_error_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+# ── Release Compliance Export Pack (Tier 1 item 4) ─────────────────────────
+#
+# One row per generated signoff ZIP. The actual pack lives in MinIO — this
+# table is the authoritative index so ops can find every pack ever produced
+# for a given release, verify its SHA-256 manifest, and re-download it for
+# regulators. Rows are retained for the full retention window even after
+# the release itself is deleted (``ondelete=SET NULL`` on ``release_id``)
+# so the audit trail survives production housekeeping.
+
+
+class CompliancePack(Base):
+    """Generated compliance export pack (ZIP) for a release decision."""
+    __tablename__ = "compliance_packs"
+    __table_args__ = (
+        Index("ix_compliance_packs_release", "release_id"),
+        Index("ix_compliance_packs_project", "project_id", "generated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    # Which test run the decision was computed against. Kept even if the
+    # run is later purged — the snapshot we captured into the pack remains
+    # in MinIO, this column is just a pointer for fast lookups.
+    test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # MinIO object key for the ZIP. Bucket is implicit (``compliance-packs``).
+    minio_key: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # SHA-256 of the generated manifest.json. ``manifest.json`` itself
+    # contains SHA-256 digests of every other file in the ZIP, so this
+    # single hex digest bootstraps the entire tamper-detection chain:
+    # if this hash matches the manifest, and the manifest matches each
+    # file, the pack is authentic.
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Retention window. Default 7 years (2557 days) matches the common
+    # SOX/HIPAA/SOC-2 retention floor; ADMIN can override at generation time.
+    retention_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    generated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Structured metadata written by the service: policy_version, run_id,
+    # recommendation, dim_scores. Lets the list view render without pulling
+    # the ZIP.
+    metadata_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class FlakyQuarantineRequest(Base):
+    """Workflow record for proposing, approving, and enforcing quarantine
+    of a flaky test.
+
+    One row per quarantine lifecycle. When an approved quarantine is
+    ``RELEASED`` and the test flakes again, a fresh row is created rather
+    than reusing the old one — this keeps the history immutable and lets
+    QA leads see every past decision on the same test.
+    """
+    __tablename__ = "flaky_quarantine_requests"
+    __table_args__ = (
+        Index("ix_fqr_project_status", "project_id", "status"),
+        Index("ix_fqr_fingerprint", "project_id", "test_fingerprint"),
+        # Partial unique: only one LIVE row per (project, fingerprint). Uses
+        # a raw ``text()`` predicate because Alembic's autogenerate cannot
+        # express enum-membership with mapped_column metadata alone. The
+        # corresponding index is created in migration 0065.
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[Optional[str]] = mapped_column(String(500))   # denormalized for display
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500))  # denormalized for display
+
+    status: Mapped[str] = mapped_column(
+        String(32),
+        default=FlakyQuarantineStatus.PROPOSED.value,
+        nullable=False,
+    )
+
+    # Detection context — populated when the agent or a human creates the row.
+    detection_method: Mapped[str] = mapped_column(String(50), default="pass_fail_ratio")
+    flip_rate: Mapped[Optional[float]] = mapped_column(Float)          # 0.0-1.0
+    flip_window_size: Mapped[Optional[int]] = mapped_column(Integer)   # runs considered
+    pass_count: Mapped[Optional[int]] = mapped_column(Integer)
+    fail_count: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Lifecycle timestamps.
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    last_failure_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    proposed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    approved_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    rejected_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    # Quarantine window — populated on approval.
+    quarantine_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    quarantine_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    quarantine_duration_days: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
+    recheck_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Structured rationale for display — used by both the detection agent
+    # ({"method": "...", "flip_rate": 0.42, "sample_size": 20, "last_5": "PFPFP"})
+    # and by humans to record the reason for approve/reject/release.
+    rationale: Mapped[Optional[dict]] = mapped_column(JSONB)
+    reviewer_notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class ProjectLlmUsage(Base):
+    """Running per-period LLM cost meter for a project.
+
+    One row per ``(project_id, period_start)``. ``record_usage`` upserts with
+    atomic arithmetic increments so two workers writing concurrently don't
+    clobber each other. The ``(project_id, period_start)`` unique index is
+    what makes the upsert safe.
+    """
+    __tablename__ = "project_llm_usage"
+    __table_args__ = (
+        UniqueConstraint("project_id", "period_start", name="uq_project_period"),
+        Index("ix_llm_usage_period", "period_start"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    total_input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_llm_calls: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Incremented every time ``check_and_apply_cap`` returns a downgrade /
+    # hard-block decision. Used by the billing dashboard to show whether a
+    # project has been capped in the current period.
+    cap_hits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    last_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )

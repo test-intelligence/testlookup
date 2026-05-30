@@ -13,6 +13,7 @@ import structlog
 
 from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import TestHealthAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase
 
 logger = structlog.get_logger("agents.test_health")
@@ -84,7 +85,13 @@ class TestHealthAgent(BaseAgent):
 
         if not automation_test_ids:
             await self.mark_stage_done(pipeline_run_id, result_data={"analyzed": 0})
-            return {"test_health_findings": []}
+            return validate_agent_contract(
+                TestHealthAgentOutput,
+                {"test_health_findings": []},
+                agent_name=self.stage_name,
+                confidence=100,
+                decision_reason="no_automation_defects_detected",
+            )
 
         findings = []
         insufficient_count = 0
@@ -109,7 +116,25 @@ class TestHealthAgent(BaseAgent):
             + (f" ({insufficient_count} lacked source code)" if insufficient_count else ""),
         })
 
-        return {"test_health_findings": findings}
+        confidence_scores = [
+            int(finding.get("health_score") or 0)
+            for finding in findings
+            if isinstance(finding.get("health_score"), (int, float))
+        ]
+        return validate_agent_contract(
+            TestHealthAgentOutput,
+            {"test_health_findings": findings},
+            agent_name=self.stage_name,
+            confidence=(
+                int(sum(confidence_scores) / len(confidence_scores))
+                if confidence_scores else 70
+            ),
+            evidence_refs=[
+                {"type": "test_health_finding", "id": finding.get("test_case_id", "unknown")}
+                for finding in findings
+            ],
+            decision_reason="test_health_analysis_completed",
+        )
 
     async def _analyze_test(self, tc_id: str) -> dict | None:
         async with AsyncSessionLocal() as db:

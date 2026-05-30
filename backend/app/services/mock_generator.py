@@ -39,7 +39,11 @@ def generate_mock_allure_results(num_tests: int, failure_rate: float, project_id
                 {"name": "suite", "value": f"{component} Suite"},
                 {"name": "testClass", "value": f"com.testlookup.tests.{component.replace(' ', '')}Test"},
                 {"name": "package", "value": "com.testlookup.tests"},
-                {"name": "severity", "value": random.choice(["blocker", "critical", "normal", "minor"])},
+                # Use canonical Severity enum values (uppercase) — see
+                # app.models.postgres.Severity. Lowercase / unknown values
+                # ("normal", etc.) used to silently break TestCaseSummary
+                # serialization on the run detail page.
+                {"name": "severity", "value": random.choice(["BLOCKER", "CRITICAL", "MAJOR", "MINOR"])},
                 {"name": "feature", "value": feature},
                 {"name": "epic", "value": f"{component} Epic"},
                 {"name": "owner", "value": random.choice(owners)},

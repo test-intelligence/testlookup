@@ -4,19 +4,54 @@ import logging
 import random
 from typing import Any, cast
 
+import structlog
+from structlog.contextvars import bind_contextvars, clear_contextvars
+
 from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger("worker.tasks")
 
 
 def _run_async(coro):
-    """Run an async coroutine in a Celery task (sync context)."""
+    """Run an async coroutine in a Celery task (sync context).
+
+    Each Celery task runs in a separate thread / process.  The global async
+    clients (Redis, SQLAlchemy engine) hold references to the event loop that
+    was current when they were first created.  If that loop was already closed
+    (e.g. from a previous task invocation) we get "Event loop is closed" /
+    "Future attached to a different loop" errors.
+
+    Fix: reset the module-level singletons before creating the new loop so
+    that the first `get_redis()` call inside the coroutine creates a fresh
+    client bound to the *current* loop.
+    """
+    import app.db.redis_client as _redis_mod
+    _redis_mod._pool = None
+    _redis_mod._client = None
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coro)
     finally:
+        try:
+            # Close all async generators and pending tasks cleanly
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
         loop.close()
+
+
+def _bind_task_context(task, **extra):
+    """Bind structured logging context for a Celery task (observability improvement)."""
+    clear_contextvars()
+    bind_contextvars(
+        celery_task_id=task.request.id,
+        celery_task_name=task.name,
+        celery_retry=task.request.retries,
+        **extra,
+    )
 
 
 def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
@@ -26,18 +61,73 @@ def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
     return int(delay + jitter)
 
 
+def _beat_span(task_name: str):
+    """Return a context manager that produces an OTEL span for the named
+    Celery beat task.
+
+    Naming convention (Phase E-3): ``celery.beat.<task_name>``. All Tier
+    0-2 beat tasks use this helper so Jaeger surfaces them in a single
+    swim lane. The context yields a span-like object that supports
+    ``set_attribute`` + ``set_status`` — callers can enrich the span
+    with result counts, flag state, or error category without worrying
+    about whether OpenTelemetry is actually wired up in the current
+    environment (tests, offline-mode, missing SDK).
+    """
+    try:
+        from app.core.tracing import get_tracer
+        tracer = get_tracer("celery.beat")
+        return tracer.start_as_current_span(f"celery.beat.{task_name}")
+    except Exception:
+        from contextlib import nullcontext
+
+        class _NullSpan:
+            def set_attribute(self, *args, **kwargs) -> None:  # noqa: D401
+                pass
+
+            def set_status(self, *args, **kwargs) -> None:  # noqa: D401
+                pass
+
+        return nullcontext(_NullSpan())
+
+
 # ── Deduplication helper ──────────────────────────────────────────────────────
 
-async def _is_duplicate(key: str, ttl: int = 3600) -> bool:
+async def _is_duplicate(key: str, ttl: int = 3600, owner: str | None = None) -> bool:
     """
     Return True if `key` already exists in Redis (task already running/done).
     Otherwise, set the key with TTL and return False.
+
+    When owner is provided, the same owner can reacquire the lock. Celery
+    retries keep the task id stable, so a real retry should not be treated as
+    a duplicate of its own failed attempt.
     """
     from app.db.redis_client import get_redis
     redis = get_redis()
     # SET NX — only sets if key does not exist; returns True on first write
-    was_set = await redis.set(key, "1", ex=ttl, nx=True)
-    return not bool(was_set)
+    lock_value = owner or "1"
+    was_set = await redis.set(key, lock_value, ex=ttl, nx=True)
+    if was_set:
+        return False
+    if not owner:
+        return True
+    existing = await redis.get(key)
+    if isinstance(existing, bytes):
+        existing = existing.decode("utf-8", errors="ignore")
+    if existing == owner:
+        await redis.expire(key, ttl)
+        return False
+    return True
+
+
+async def _release_duplicate_lock(key: str, owner: str) -> None:
+    """Release a dedup lock only if it is still owned by this task."""
+    from app.db.redis_client import get_redis
+    redis = get_redis()
+    existing = await redis.get(key)
+    if isinstance(existing, bytes):
+        existing = existing.decode("utf-8", errors="ignore")
+    if existing == owner:
+        await redis.delete(key)
 
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -58,6 +148,7 @@ def persist_live_session(
     branch: str = "",
     commit_hash: str = "",
     final_state: dict | None = None,
+    suite_name: str | None = None,
 ):
     """
     Persist a completed live execution session to PostgreSQL.
@@ -74,20 +165,26 @@ def persist_live_session(
     import uuid as _uuid_mod
     from datetime import datetime, timezone
 
-    dedup_key = f"testlookup:dedup:live_persist:{run_id}"
     final_state = final_state or {}
 
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=3600):
-            logger.info("[Task %s] Skipping duplicate live persist for %s", self.request.id, run_id)
-            return
+        # Idempotency rule: skip only when persistence has actually completed
+        # — i.e., TestCase rows already exist for this run's canonical UUID.
+        # Determined by a single COUNT(*) query, **on the same session as
+        # the writes below**. A previous version opened a separate
+        # AsyncSessionLocal() for the count, which under asyncpg's
+        # connection pool raced with the main session's writes and raised
+        # "asyncpg.InterfaceError: cannot perform operation: another
+        # operation is in progress" — silently dropping retries.
+        from sqlalchemy import select as _sel, func as _func
 
+        from app.db.postgres import AsyncSessionLocal
         from app.db.redis_client import get_redis
         from app.streams import LIVE_TESTCASES_KEY
-        from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import (
             LaunchStatus, TestCase, TestRun, TestStatus,
         )
+        from app.services.stream_service import canonical_test_run_uuid
 
         redis = get_redis()
         list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
@@ -107,19 +204,43 @@ def persist_live_session(
         )
 
         # ── Compute aggregate counts ──────────────────────────────────────────
-        passed  = sum(1 for e in events if (e.get("status") or "").upper() == "PASSED")
-        failed  = sum(1 for e in events if (e.get("status") or "").upper() == "FAILED")
-        skipped = sum(1 for e in events if (e.get("status") or "").upper() == "SKIPPED")
-        broken  = sum(1 for e in events if (e.get("status") or "").upper() == "BROKEN")
-        total   = len(events) or final_state.get("total", 0)
+        # ``final_state`` comes from the authoritative HINCRBY counters
+        # (LIVE_STATE_KEY hash). It's accurate even when the per-test
+        # buffer hit its LTRIM cap mid-run or got partially drained by
+        # the Phase 4.5 incremental-drain task. Prefer it whenever a
+        # ``total`` was reported; only fall back to event-derived counts
+        # for legacy paths that never populated final_state (e.g.
+        # ``recover_live_run_from_buffer``).
+        fs_total = final_state.get("total")
+        if fs_total is not None and int(fs_total) > 0:
+            passed  = int(final_state.get("passed",  0) or 0)
+            failed  = int(final_state.get("failed",  0) or 0)
+            skipped = int(final_state.get("skipped", 0) or 0)
+            broken  = int(final_state.get("broken",  0) or 0)
+            total   = int(fs_total)
+        else:
+            passed  = sum(1 for e in events if (e.get("status") or "").upper() == "PASSED")
+            failed  = sum(1 for e in events if (e.get("status") or "").upper() == "FAILED")
+            skipped = sum(1 for e in events if (e.get("status") or "").upper() == "SKIPPED")
+            broken  = sum(1 for e in events if (e.get("status") or "").upper() == "BROKEN")
+            total   = len(events) or final_state.get("total", 0)
 
-        # Fall back to Redis final_state if events are missing (e.g. buffer expired)
-        if not events:
-            passed  = final_state.get("passed",  0)
-            failed  = final_state.get("failed",  0)
-            skipped = final_state.get("skipped", 0)
-            broken  = final_state.get("broken",  0)
-            total   = final_state.get("total",   0)
+        # Empty buffer at close — surface loudly so the empty Run
+        # Detail table on the UI is traceable to a real root cause
+        # (buffer TTL, dedup-skipped retry, or rpush failure in
+        # publish_event_batch). Aggregates above already reflect the
+        # truth regardless.
+        if not events and (passed + failed + skipped + broken) > 0:
+            logger.warning(
+                "[Task %s] Live persist: event buffer empty for run=%s but "
+                "final_state reports passed=%d failed=%d skipped=%d broken=%d. "
+                "TestRun aggregates will be written; per-test TestCase rows "
+                "cannot be reconstructed without the buffered events.",
+                self.request.id, run_id, passed, failed, skipped, broken,
+            )
+
+        # If total wasn't tracked explicitly, derive it from component counts
+        total = total or (passed + failed + skipped + broken)
 
         pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
         run_status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
@@ -131,21 +252,47 @@ def persist_live_session(
             logger.error("[Task %s] Invalid project_id %s — aborting", self.request.id, project_id)
             return
 
-        # ── Resolve run UUID (use run_id if it looks like a UUID, else generate) ──
-        try:
-            run_uuid = _uuid_mod.UUID(run_id)
-        except ValueError:
-            run_uuid = _uuid_mod.uuid5(_uuid_mod.NAMESPACE_DNS, run_id)
+        # ── Resolve run UUID via the shared helper ────────────────────────────
+        # Keeps slug→UUID derivation in lockstep with stream_service.upsert_test_run
+        # and the LiveSessionState response, so the frontend's /runs/<id> link
+        # always resolves to the same row this task writes.
+        run_uuid = canonical_test_run_uuid(run_id)
 
         now = datetime.now(timezone.utc)
 
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
 
+            # Idempotency check. Phase 4.5 incremental drain means a run
+            # can legitimately have BOTH existing TestCase rows AND a
+            # non-empty buffer (the tail of events that landed between
+            # the last drain tick and close_session). So we only skip
+            # when there's truly nothing left to do: buffer empty AND
+            # rows already present. The "buffer empty + rows present"
+            # path covers Celery retries firing this task twice for the
+            # same close, plus the legacy manual-recovery flow.
+            existing_tc_count = (
+                await db.execute(
+                    _sel(_func.count(TestCase.id)).where(TestCase.test_run_id == run_uuid)
+                )
+            ).scalar() or 0
+            if existing_tc_count > 0 and not events:
+                logger.info(
+                    "[Task %s] Skipping persist for run=%s — %d TestCase rows already "
+                    "present and buffer is empty (incremental drain or earlier retry)",
+                    self.request.id, run_id, existing_tc_count,
+                )
+                # Genuine no-op — a previous tick already drained
+                # everything OR this is a duplicate close_session
+                # retry. Skip finalize_run too; running it a second
+                # time double-fires auto-tagging + suite_sync.
+                return
+
             # Upsert TestRun — skip if already exists (idempotent)
             existing = await db.execute(select(TestRun).where(TestRun.id == run_uuid))
             run = existing.scalar_one_or_none()
 
+            session_suite = (suite_name or "").strip() or None
             if run is None:
                 run = TestRun(
                     id=run_uuid,
@@ -161,6 +308,8 @@ def persist_live_session(
                     skipped_tests=skipped,
                     broken_tests=broken,
                     pass_rate=pass_rate,
+                    primary_suite_name=session_suite,
+                    suite_names=[session_suite] if session_suite else None,
                     start_time=now,
                     end_time=now,
                 )
@@ -176,9 +325,63 @@ def persist_live_session(
                 run.broken_tests  = broken
                 run.pass_rate     = pass_rate
                 run.end_time      = now
+                # Stamp primary_suite_name if upsert_test_run never ran
+                # for this session (race window: session opens + closes
+                # without the periodic upsert firing).
+                if session_suite and not run.primary_suite_name:
+                    run.primary_suite_name = session_suite
+                    run.suite_names = [session_suite]
 
             # ── Insert TestCase rows ──────────────────────────────────────────
-            for event in events:
+            # Phase 2.2 — bulk-insert via SQLAlchemy Core ``insert(...)``
+            # with chunked ``execute_many``. Replaces a per-row ``db.add()``
+            # loop that issued one INSERT per event (= one round-trip per
+            # event). For a 5K-event run that's 5K round-trips serial on
+            # one connection; here it's 5 chunked round-trips. Memory
+            # footprint stays bounded by ``PERSIST_LIVE_BULK_INSERT_CHUNK``
+            # (default 1000 rows × ~500 B/row ≈ 500 KB per chunk).
+            from app.core.config import settings as _settings
+            chunk_size = max(1, _settings.PERSIST_LIVE_BULK_INSERT_CHUNK)
+            # Phase 4.2 — high-volume sampling. When the detector has
+            # flagged this project, drop to 1-of-N persistence so the
+            # bulk-insert stays well under the round-trip budget at
+            # 500-concurrent-run scale. Aggregates remain accurate
+            # because they come from ``test_runs.passed_tests`` /
+            # ``failed_tests`` (HINCRBY-sourced), not from a count of
+            # persisted ``test_cases`` rows. Logged so support can
+            # spot the sampling effect when comparing live-state
+            # counts against on-disk row counts.
+            sampled_events = events
+            sample_n = max(1, _settings.HIGH_VOLUME_SAMPLE_EVERY_N)
+            if sample_n > 1:
+                try:
+                    from app.services.high_volume_detector import is_high_volume
+                    if await is_high_volume(project_id):
+                        sampled_events = events[::sample_n]
+                        if len(sampled_events) < len(events):
+                            logger.info(
+                                "[Task %s] high_volume sampling run=%s "
+                                "kept=%d of %d (1-of-%d)",
+                                self.request.id, run_id,
+                                len(sampled_events), len(events), sample_n,
+                            )
+                except Exception as exc:  # pragma: no cover - fail-OPEN
+                    logger.warning(
+                        "[Task %s] high_volume sampling check failed: %s",
+                        self.request.id, exc,
+                    )
+            # Fall back to the session-level suite_name when the per-event
+            # field is missing. SDKs send testlookup.suite once at session
+            # create (stamped on TestRun.primary_suite_name) and typically
+            # don't repeat it on every event — so persisted TestCase rows
+            # ended up with NULL suite_name, invisible to every page that
+            # groups by tc.suite_name (test-management Test Suites tab,
+            # /reports/summary's cases_agg path, /coverage/suite).
+            session_suite_default = (suite_name or "").strip() or None
+            run_suite_default = getattr(run, "primary_suite_name", None) or None
+            default_suite = session_suite_default or run_suite_default
+            rows: list[dict] = []
+            for event in sampled_events:
                 test_name  = event.get("test_name") or ""
                 class_name = event.get("class_name") or ""
                 raw_status = (event.get("status") or "UNKNOWN").upper()
@@ -192,24 +395,132 @@ def persist_live_session(
                     f"{test_name}:{class_name}".encode()
                 ).hexdigest()
 
-                tc = TestCase(
-                    id=_uuid_mod.uuid4(),
-                    test_run_id=run.id,
-                    test_fingerprint=fingerprint,
-                    test_name=test_name[:1000],
-                    suite_name=(event.get("suite_name") or "")[:500] or None,
-                    class_name=class_name[:500] or None,
-                    status=tc_status,
-                    duration_ms=event.get("duration_ms"),
-                    error_message=event.get("error_message"),
-                    tags=event.get("tags"),
+                event_suite = (event.get("suite_name") or "").strip()
+                resolved_suite = (event_suite or default_suite or "")[:500] or None
+
+                rows.append({
+                    "id": _uuid_mod.uuid4(),
+                    "test_run_id": run.id,
+                    "test_fingerprint": fingerprint,
+                    "test_name": test_name[:1000],
+                    "suite_name": resolved_suite,
+                    "class_name": class_name[:500] or None,
+                    "status": tc_status.value if hasattr(tc_status, "value") else tc_status,
+                    "duration_ms": event.get("duration_ms"),
+                    "error_message": event.get("error_message"),
+                    "tags": event.get("tags"),
+                })
+            if rows:
+                from sqlalchemy import insert as _sa_insert
+                stmt = _sa_insert(TestCase)
+                for offset in range(0, len(rows), chunk_size):
+                    chunk = rows[offset:offset + chunk_size]
+                    await db.execute(stmt, chunk)
+            else:
+                # Buffer was empty but final_state reports tests ran.
+                # This happens when the SDK only sends a ``run_complete``
+                # event without per-test ``test_result`` events, or when
+                # the Phase 4.5 drain couldn't fire because the session
+                # lifetime was shorter than its 30s tick. Without a
+                # placeholder, the aggregates surface on /runs +
+                # /coverage but the action queue (/my-failures), the
+                # per-suite case table, and the run-detail per-test
+                # view all stay empty.
+                #
+                # Synthesize ONE placeholder TestCase per reported
+                # test so EVERY bucket (passed / failed / broken /
+                # skipped) materialises. Earlier versions only
+                # synthesized failures + broken — leaving the user
+                # with the "100 reported, 0 visible" confusion the
+                # 2026-05-19 bug captured. The row is clearly
+                # labelled "[ingestion gap]" so an operator
+                # immediately sees synthesised rows. Fingerprint
+                # seeds with the run id so re-running the task is
+                # idempotent (same hash = unique-constraint conflict
+                # = no duplicates).
+                placeholder_count = (
+                    int(passed) + int(failed) + int(skipped) + int(broken)
                 )
-                db.add(tc)
+                if placeholder_count > 0:
+                    from sqlalchemy import insert as _sa_insert
+                    placeholder_rows = []
+                    bucket_sequence = (
+                        (int(passed),  TestStatus.PASSED.value),
+                        (int(failed),  TestStatus.FAILED.value),
+                        (int(broken),  TestStatus.BROKEN.value),
+                        (int(skipped), TestStatus.SKIPPED.value),
+                    )
+                    i = 0
+                    for count, status_value in bucket_sequence:
+                        for _ in range(count):
+                            ph_fp = hashlib.md5(
+                                f"placeholder:{run.id}:{i}".encode()
+                            ).hexdigest()
+                            placeholder_rows.append({
+                                "id": _uuid_mod.uuid4(),
+                                "test_run_id": run.id,
+                                "test_fingerprint": ph_fp,
+                                "test_name": (
+                                    f"[ingestion gap — per-test detail "
+                                    f"unavailable] #{i + 1}"
+                                ),
+                                "suite_name": default_suite,
+                                "class_name": None,
+                                "status": status_value,
+                                "duration_ms": None,
+                                "error_message": (
+                                    "Per-test events were lost during "
+                                    "ingestion. Run reported "
+                                    f"{int(passed)} passed / "
+                                    f"{int(failed)} failed / "
+                                    f"{int(broken)} broken / "
+                                    f"{int(skipped)} skipped; re-run "
+                                    "the suite to capture per-test "
+                                    "detail."
+                                ) if status_value != TestStatus.PASSED.value else None,
+                                "tags": None,
+                            })
+                            i += 1
+                    stmt = _sa_insert(TestCase)
+                    await db.execute(stmt, placeholder_rows)
+                    logger.warning(
+                        "[Task %s] Synthesized %d placeholder TestCase "
+                        "row(s) for run=%s (passed=%d failed=%d "
+                        "broken=%d skipped=%d) because the event buffer "
+                        "was empty but final_state reported tests ran.",
+                        self.request.id, placeholder_count, run_id,
+                        int(passed), int(failed), int(broken), int(skipped),
+                    )
 
             await db.commit()
             logger.info(
                 "[Task %s] Persisted run=%s tests=%d passed=%d failed=%d",
                 self.request.id, run_id, total, passed, failed,
+            )
+
+        # ── Post-ingestion pipeline ──────────────────────────────────────────
+        # Live-stream ingestion has historically stopped here, after the
+        # TestCase rows committed. The API-ingest paths (ingest_uploaded_*)
+        # call finalize_run at this point to materialise test_suites,
+        # canonical_test_cases, suite_memberships, auto-tags, release link,
+        # and notifications. Skipping finalize_run for live-stream runs is
+        # why /suites was empty even with test_cases populated. Mirror the
+        # API path here so live runs participate in the full pipeline.
+        try:
+            from app.services.ingestion_pipeline import finalize_run
+            await finalize_run(
+                run_id=str(run_uuid),
+                project_id=str(proj_uuid),
+                build_number=build_number,
+            )
+        except Exception as exc:
+            # finalize_run runs each step inside an isolated session and
+            # logs its own failures; an outer failure here is unexpected.
+            # Don't fail the task — TestCase rows are already committed and
+            # the next persist retry will short-circuit on the dedup check.
+            logger.warning(
+                "[Task %s] finalize_run failed after live persist run=%s: %s",
+                self.request.id, run_id, exc,
             )
 
         # ── Clean up Redis buffer ─────────────────────────────────────────────
@@ -219,7 +530,31 @@ def persist_live_session(
         _run_async(_run())
     except Exception as exc:
         logger.error("[Task %s] persist_live_session failed: %s", self.request.id, exc)
-        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+        # Phase 4.3 — when retries are exhausted, write a structured
+        # dead-letter record so operators can inspect what blew up
+        # without grepping logs. ``self.retry`` raises ``MaxRetriesExceededError``
+        # when the retry budget is exhausted; we catch that to write
+        # the DLQ entry, then re-raise so Celery marks the task FAILED.
+        try:
+            raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+        except Exception as final_exc:
+            from celery.exceptions import MaxRetriesExceededError
+            if isinstance(final_exc, MaxRetriesExceededError):
+                try:
+                    from app.services.ingestion_dlq import record_persist_failure
+                    _run_async(record_persist_failure(
+                        run_id=run_id,
+                        project_id=project_id,
+                        task_id=self.request.id,
+                        retry_count=self.request.retries,
+                        error=str(exc),
+                    ))
+                except Exception as dlq_exc:  # pragma: no cover - DLQ is best-effort
+                    logger.error(
+                        "[Task %s] DLQ write failed for run=%s: %s",
+                        self.request.id, run_id, dlq_exc,
+                    )
+            raise
 
 
 @celery_app.task(
@@ -260,6 +595,187 @@ def ingest_test_run(self, sentinel_dict: dict, minio_prefix: str):
         logger.error("[Task %s] Ingestion failed: %s", self.request.id, exc, exc_info=True)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
+
+
+# ── Unified Ingest Tasks (POST /api/v1/ingest) ──────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.ingest_uploaded_results",
+    bind=True,
+    max_retries=3,
+    queue="ingestion",
+)
+def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
+    """
+    Process a JSON batch of test results from POST /api/v1/ingest.
+    Creates a TestRun, upserts test cases, runs post-ingestion pipeline.
+    """
+    from app.services.ingestion_pipeline import (
+        create_run_from_payload,
+        finalize_run,
+        ingest_test_results,
+    )
+
+    async def _run():
+        from app.db.postgres import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            try:
+                run = await create_run_from_payload(
+                    db,
+                    project_id=payload["project_id"],
+                    build_number=payload["build_number"],
+                    run_id=run_id,
+                    branch=payload.get("branch"),
+                    commit_hash=payload.get("commit_hash"),
+                    framework=payload.get("framework"),
+                    trigger_source=payload.get("trigger_source", "api"),
+                    release_name=payload.get("release_name"),
+                )
+                count = await ingest_test_results(db, run, payload["results"])
+                await db.commit()
+                logger.info(
+                    "[Task %s] Uploaded results ingested: %d cases",
+                    self.request.id, count,
+                )
+            except Exception:
+                await db.rollback()
+                raise
+
+        await finalize_run(
+            run_id=run_id,
+            project_id=payload["project_id"],
+            build_number=payload["build_number"],
+            release_name=payload.get("release_name"),
+        )
+
+    logger.info("[Task %s] Processing uploaded batch: run=%s", self.request.id, run_id)
+    try:
+        _run_async(_run())
+        try:
+            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.error("[Task %s] Batch ingest failed: %s", self.request.id, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.ingest_uploaded_file",
+    bind=True,
+    max_retries=3,
+    queue="ingestion",
+)
+def ingest_uploaded_file(
+    self,
+    run_id: str,
+    file_content: str,
+    file_name: str,
+    file_format: str,
+    project_id: str,
+    build_number: str,
+    branch: str = None,
+    commit_hash: str = None,
+    release_name: str = None,
+    user_id: str = None,
+):
+    """
+    Parse an uploaded test result file and ingest.
+    Supports JUnit XML, TestNG XML, and Allure JSON.
+    """
+    from app.services.ingestion_pipeline import (
+        create_run_from_payload,
+        finalize_run,
+        ingest_test_results,
+    )
+
+    async def _run():
+        from app.db.postgres import AsyncSessionLocal
+
+        # Parse file into normalized result dicts
+        results = _parse_file_to_results(file_content, file_format, file_name, run_id)
+
+        async with AsyncSessionLocal() as db:
+            try:
+                run = await create_run_from_payload(
+                    db,
+                    project_id=project_id,
+                    build_number=build_number,
+                    run_id=run_id,
+                    branch=branch,
+                    commit_hash=commit_hash,
+                    release_name=release_name,
+                )
+                count = await ingest_test_results(db, run, results)
+                await db.commit()
+                logger.info(
+                    "[Task %s] File ingested: %d cases from %s (%s)",
+                    self.request.id, count, file_name, file_format,
+                )
+            except Exception:
+                await db.rollback()
+                raise
+
+        await finalize_run(
+            run_id=run_id,
+            project_id=project_id,
+            build_number=build_number,
+            release_name=release_name,
+        )
+
+    logger.info("[Task %s] Processing uploaded file: %s (%s)", self.request.id, file_name, file_format)
+    try:
+        _run_async(_run())
+        try:
+            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.error("[Task %s] File ingest failed: %s", self.request.id, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -> list[dict]:
+    """Parse a test result file into normalized result dicts.
+
+    Dispatch table — each parser returns ``list[dict]`` matching the
+    TestLookup ingestion contract. New frameworks register here and add
+    their content-sniff rules in ``routers/ingest._detect_format``.
+    """
+    import json as _json
+
+    if fmt == "allure":
+        from app.services.allure_parser import parse_allure_result
+        try:
+            raw = _json.loads(content)
+        except _json.JSONDecodeError:
+            logger.warning("Invalid JSON in allure file: %s", filename)
+            return []
+        items = raw if isinstance(raw, list) else [raw]
+        results = []
+        for item in items:
+            parsed = parse_allure_result(item, run_id, filename)
+            if parsed:
+                results.append(parsed)
+        return results
+
+    if fmt == "testng":
+        from app.services.testng_parser import parse_testng_xml
+        return parse_testng_xml(content, run_id)
+
+    if fmt == "cypress":
+        from app.services.cypress_parser import parse_cypress_json
+        return parse_cypress_json(content, run_id)
+
+    if fmt == "playwright":
+        from app.services.playwright_parser import parse_playwright_json
+        return parse_playwright_json(content, run_id)
+
+    # junit (default) — reuse testng_parser which handles standard JUnit XML too
+    from app.services.testng_parser import parse_testng_xml
+    return parse_testng_xml(content, run_id)
 
 
 @celery_app.task(
@@ -381,11 +897,20 @@ def dispatch_run_notifications(
     total_tests: int,
     failed_tests: int,
     project_name: str,
-    dashboard_url: str = "#",
+    dashboard_url: str = "",
 ):
-    """Background task: fan-out run-completion notifications to all subscribed users."""
+    """Background task: fan-out run-completion notifications to all subscribed users.
+
+    When ``dashboard_url`` is empty, builds an absolute link from
+    ``settings.public_base_url`` so notifications rendered in Slack/Teams/email
+    contain a clickable link regardless of where the cluster is deployed.
+    """
     import uuid as _uuid
+    from app.core.config import settings
     from app.services.notification.manager import dispatch_run_notifications as _dispatch
+
+    if not dashboard_url or dashboard_url == "#":
+        dashboard_url = f"{settings.public_base_url}/runs/{run_id}"
 
     logger.info("[Task %s] Dispatching run notifications for build=%s", self.request.id, build_number)
     try:
@@ -424,13 +949,15 @@ def run_agent_pipeline(
     Deduplicates by test_run_id so multiple triggers for the same run don't stack up.
     Moves to DLQ after max retries.
     """
+    _bind_task_context(self, run_id=test_run_id, project_id=project_id, workflow_type=workflow_type)
     from app.agents.workflow import run_offline_pipeline, run_deep_pipeline
 
     # Include workflow_type in dedup key so a deep run isn't blocked by a prior offline run
     dedup_key = f"testlookup:dedup:pipeline:{test_run_id}:{workflow_type}"
+    dedup_owner = str(self.request.id)
 
     async def _run():
-        if await _is_duplicate(dedup_key, ttl=7200):
+        if await _is_duplicate(dedup_key, ttl=7200, owner=dedup_owner):
             logger.info(
                 "[Task %s] Skipping duplicate pipeline for run=%s type=%s",
                 self.request.id, test_run_id, workflow_type,
@@ -476,9 +1003,29 @@ def run_agent_pipeline(
         except Exception as inv_exc:
             logger.warning("[Task %s] Snapshot invalidation failed (non-blocking): %s", self.request.id, inv_exc)
 
+        # EM-1: Dispatch AI summary email after pipeline completes
+        if "summary" in stages_done:
+            try:
+                dispatch_ai_summary_email.delay(
+                    test_run_id=test_run_id,
+                    project_id=project_id,
+                    build_number=build_number,
+                )
+                logger.debug("[Task %s] AI summary email queued for run %s", self.request.id, test_run_id)
+            except Exception as email_exc:
+                logger.warning("[Task %s] AI summary email dispatch failed (non-blocking): %s", self.request.id, email_exc)
+
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
         logger.error("[Task %s] Pipeline failed: %s", self.request.id, exc, exc_info=True)
+        try:
+            _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
+        except Exception as release_exc:
+            logger.warning(
+                "[Task %s] Failed to release pipeline dedup lock after error: %s",
+                self.request.id,
+                release_exc,
+            )
         if self.request.retries >= self.max_retries:
             # Move to DLQ before the final exception propagates
             _run_async(_send_to_dlq(
@@ -487,6 +1034,363 @@ def run_agent_pipeline(
                 kwargs={"test_run_id": test_run_id, "build_number": build_number},
                 error=str(exc),
             ))
+        countdown = _exponential_backoff(self.request.retries)
+        raise self.retry(exc=exc, countdown=countdown)
+
+
+@celery_app.task(
+    name="app.worker.tasks.generate_run_compare_report",
+    bind=True,
+    max_retries=1,
+    queue="ai_analysis",
+    time_limit=900,
+)
+def generate_run_compare_report(
+    self,
+    project_id: str,
+    left_run_id: str,
+    right_run_id: str,
+    suite_name: str | None = None,
+):
+    """Generate and cache the AI report for a deterministic run comparison."""
+    _bind_task_context(
+        self,
+        project_id=project_id,
+        left_run_id=left_run_id,
+        right_run_id=right_run_id,
+        suite_name=suite_name,
+    )
+
+    async def _run():
+        import uuid as _uuid
+        from app.db.postgres import AsyncSessionLocal
+        from app.services import run_compare_ai_service, run_compare_service
+
+        pid = _uuid.UUID(project_id)
+        left = _uuid.UUID(left_run_id)
+        right = _uuid.UUID(right_run_id)
+        async with AsyncSessionLocal() as db:
+            selection = {
+                "mode": "explicit",
+                "scope": "suite" if suite_name else "run",
+                "suite_name": suite_name,
+                "selection_reason": "AI report generated asynchronously for a saved comparison.",
+                "project_id": pid,
+                "branch": None,
+                "branch_mismatch": False,
+                "release_name": None,
+            } if suite_name else None
+            compare_payload = await run_compare_service.compare_runs(
+                db,
+                left,
+                right,
+                suite_name=suite_name,
+                selection=selection,
+            )
+            try:
+                report = await run_compare_ai_service.generate_and_save_report(
+                    db,
+                    project_id=pid,
+                    left_run_id=left,
+                    right_run_id=right,
+                    suite_name=suite_name,
+                    compare_payload=compare_payload,
+                )
+                # Worker owns the transaction boundary here — the service was
+                # converted to stage-only (flush, not commit) to satisfy the
+                # architectural test, so the worker has to commit explicitly.
+                await db.commit()
+                return report
+            except Exception as exc:
+                await db.rollback()
+                async with AsyncSessionLocal() as failure_db:
+                    await run_compare_ai_service.mark_failed(
+                        failure_db,
+                        project_id=pid,
+                        left_run_id=left,
+                        right_run_id=right,
+                        suite_name=suite_name,
+                        compare_payload=compare_payload,
+                        error_message=str(exc),
+                    )
+                    await failure_db.commit()
+                raise
+
+    try:
+        return _run_async(_run())
+    except Exception as exc:
+        logger.error("[Task %s] Run compare report failed: %s", self.request.id, exc, exc_info=True)
+        if self.request.retries >= self.max_retries:
+            _run_async(_send_to_dlq(
+                task_name=self.name,
+                task_id=self.request.id,
+                kwargs={
+                    "project_id": project_id,
+                    "left_run_id": left_run_id,
+                    "right_run_id": right_run_id,
+                    "suite_name": suite_name,
+                },
+                error=str(exc),
+            ))
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.precompute_suite_comparisons_for_run",
+    bind=True,
+    max_retries=1,
+    queue="ai_analysis",
+    time_limit=1800,
+)
+def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str):
+    """Precompute default latest-vs-previous suite comparison reports after nightly runs."""
+    _bind_task_context(self, run_id=test_run_id, project_id=project_id)
+
+    async def _run():
+        import uuid as _uuid
+        from sqlalchemy import func, select
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import TestCase
+        from app.services import run_compare_ai_service, run_compare_service
+
+        rid = _uuid.UUID(test_run_id)
+        pid = _uuid.UUID(project_id)
+        generated = 0
+        async with AsyncSessionLocal() as db:
+            suites_result = await db.execute(
+                select(TestCase.suite_name)
+                .where(
+                    TestCase.test_run_id == rid,
+                    TestCase.suite_name.is_not(None),
+                    func.trim(TestCase.suite_name) != "",
+                )
+                .distinct()
+            )
+            suites = [row.suite_name for row in suites_result.all() if row.suite_name]
+            for suite in suites:
+                try:
+                    previous, latest = await run_compare_service.resolve_latest_suite_pair(
+                        db,
+                        project_id=pid,
+                        suite_name=suite,
+                    )
+                    if latest.id != rid:
+                        continue
+                    selection = {
+                        "mode": "latest_vs_previous",
+                        "scope": "suite",
+                        "suite_name": suite,
+                        "selection_reason": "Precomputed after run completion for the latest suite run on this branch.",
+                        "project_id": pid,
+                        "branch": latest.branch,
+                        "branch_mismatch": previous.branch != latest.branch,
+                        "release_name": None,
+                    }
+                    compare_payload = await run_compare_service.compare_runs(
+                        db,
+                        previous.id,
+                        latest.id,
+                        suite_name=suite,
+                        selection=selection,
+                    )
+                    await run_compare_ai_service.generate_and_save_report(
+                        db,
+                        project_id=pid,
+                        left_run_id=previous.id,
+                        right_run_id=latest.id,
+                        suite_name=suite,
+                        compare_payload=compare_payload,
+                    )
+                    generated += 1
+                except LookupError:
+                    continue
+                except Exception as exc:
+                    logger.warning("[Task %s] Suite comparison precompute failed for %s: %s", self.request.id, suite, exc)
+        return {"generated": generated}
+
+    try:
+        return _run_async(_run())
+    except Exception as exc:
+        logger.error("[Task %s] Suite comparison precompute failed: %s", self.request.id, exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.dispatch_ai_summary_email",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    queue="default",
+)
+def dispatch_ai_summary_email(
+    self,
+    test_run_id: str,
+    project_id: str,
+    build_number: str,
+):
+    """
+    EM-1: Send AI executive-summary email after the pipeline completes.
+
+    Loads the run summary (MongoDB or fallback) and dispatches to users
+    subscribed to AI_ANALYSIS_COMPLETE notifications. Deduplicates per run.
+    """
+    _bind_task_context(self, run_id=test_run_id, project_id=project_id)
+    import uuid as _uuid
+
+    from datetime import datetime, timezone
+
+    dedup_key = f"testlookup:dedup:ai_email:{test_run_id}"
+
+    async def _dispatch():
+        # Dedup check
+        if await _is_duplicate(dedup_key, ttl=3600):
+            logger.info("[AI Email] Skipping duplicate for run %s", test_run_id)
+            return
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.db.mongo import get_mongo_db, Collections
+        from app.models.postgres import Project as _Project, TestRun as _TestRun
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as db:
+            # Load run and project
+            run = (await db.execute(select(_TestRun).where(_TestRun.id == _uuid.UUID(test_run_id)))).scalar_one_or_none()
+            if not run:
+                logger.warning("[AI Email] Run %s not found", test_run_id)
+                return
+
+            project = (await db.execute(select(_Project).where(_Project.id == run.project_id))).scalar_one_or_none()
+            project_name = project.name if project else str(run.project_id)
+
+        # Load summary from MongoDB
+        mongo = get_mongo_db()
+        doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": test_run_id})
+        if not doc:
+            try:
+                doc = await mongo[Collections.RUN_SUMMARIES].find_one({"test_run_id": _uuid.UUID(test_run_id)})
+            except (ValueError, TypeError):
+                doc = None
+
+        executive_summary = ""
+        executive_panel = None
+        if doc:
+            executive_summary = doc.get("executive_summary") or doc.get("layer1_executive_summary") or ""
+            executive_panel = doc.get("executive_panel")
+
+        if not executive_summary:
+            # Fallback to deterministic summary
+            from app.services.run_summary_service import build_fallback_summary
+            async with AsyncSessionLocal() as db:
+                fallback = await build_fallback_summary(db, test_run_id)
+                if fallback:
+                    executive_summary = fallback.executive_summary
+                    executive_panel = fallback.executive_panel
+
+        from app.core.config import settings
+        from app.services.notification.manager import dispatch_ai_summary_notifications
+
+        _pass_rate = float(run.pass_rate or 0) if run else 0.0
+        _total_tests = int(run.total_tests or 0) if run else 0
+        _failed_tests = int(run.failed_tests or 0) if run else 0
+
+        # 1. Dispatch to notification-preference subscribers (AI_ANALYSIS_COMPLETE event)
+        await dispatch_ai_summary_notifications(
+            project_id=_uuid.UUID(project_id),
+            run_id=_uuid.UUID(test_run_id),
+            build_number=build_number,
+            project_name=project_name,
+            executive_summary=executive_summary,
+            executive_panel=executive_panel,
+            pass_rate=_pass_rate,
+            total_tests=_total_tests,
+            failed_tests=_failed_tests,
+            dashboard_url=f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
+        )
+
+        # 2. EM-4: Dispatch to PER_RUN digest subscribers
+        try:
+            from app.models.postgres import DigestSubscription, User as _User
+            from app.services.notification import email_service
+
+            async with AsyncSessionLocal() as db:
+                per_run_result = await db.execute(
+                    select(DigestSubscription).where(
+                        DigestSubscription.schedule == "PER_RUN",
+                        DigestSubscription.is_active == True,  # noqa: E712
+                        DigestSubscription.is_paused == False,  # noqa: E712
+                    )
+                )
+                per_run_subs = per_run_result.scalars().all()
+
+                for sub in per_run_subs:
+                    # Scope check: global or matching project
+                    if sub.project_id and str(sub.project_id) != project_id:
+                        continue
+                    # Trigger filter: failed_only skips all-green runs
+                    if sub.trigger_filter == "failed_only" and _failed_tests == 0:
+                        continue
+                    if sub.trigger_filter == "degraded_only" and _pass_rate >= 90:
+                        continue
+
+                    # Get user email
+                    user = (await db.execute(select(_User).where(_User.id == sub.user_id))).scalar_one_or_none()
+                    if not user or not user.email:
+                        continue
+
+                    # Dedup per (subscription, run)
+                    sub_dedup = f"testlookup:dedup:per_run_email:{sub.id}:{test_run_id}"
+                    if await _is_duplicate(sub_dedup, ttl=3600):
+                        continue
+
+                    title = f"🤖 AI Summary — Build {build_number} ({project_name})"
+
+                    await email_service.send_notification(
+                        to=user.email,
+                        title=title,
+                        body=executive_summary,
+                        event_type="ai_analysis_complete",
+                        metadata={
+                            "project_name": project_name,
+                            "build_number": build_number,
+                            "pass_rate": _pass_rate,
+                            "total_tests": _total_tests,
+                            "failed_tests": _failed_tests,
+                            "dashboard_url": f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
+                            "executive_panel": executive_panel,
+                        },
+                    )
+                    # Update delivery tracking atomically so concurrent
+                    # PER_RUN dispatches (different runs landing at the same
+                    # time) cannot lose a delivery_count increment.
+                    from sqlalchemy import update as _sql_update
+                    await db.execute(
+                        _sql_update(DigestSubscription)
+                        .where(DigestSubscription.id == sub.id)
+                        .values(
+                            delivery_count=DigestSubscription.delivery_count + 1,
+                            last_delivered_at=datetime.now(timezone.utc),
+                        )
+                    )
+                    await db.commit()
+                    logger.debug("[AI Email] Per-run email sent to %s for run %s (sub %s)", user.email, test_run_id, sub.id)
+        except Exception as sub_exc:
+            logger.warning("[AI Email] Per-run subscription dispatch failed (non-blocking): %s", sub_exc)
+
+        # TG-5/6: Apply AI-derived signal tags after analysis
+        try:
+            from app.services.auto_tagging_service import auto_tag_after_analysis
+            async with AsyncSessionLocal() as tag_db:
+                await auto_tag_after_analysis(tag_db, _uuid.UUID(test_run_id))
+                await tag_db.commit()
+        except Exception as tag_exc:
+            logger.warning("[AI Email] Post-analysis auto-tagging failed (non-blocking): %s", tag_exc)
+
+        logger.info("[AI Email] Summary email dispatched for run %s (build %s)", test_run_id, build_number)
+
+    try:
+        _run_async(_dispatch())
+    except Exception as exc:
+        logger.error("[AI Email] Failed for run %s: %s", test_run_id, exc)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
 
@@ -766,6 +1670,197 @@ def reindex_search(self, project_id: str | None = None, full: bool = False) -> d
         raise self.retry(exc=exc, countdown=60)
 
 
+# ── Knowledge source sync (RAG-4) ────────────────────────────────────────────
+
+
+@celery_app.task(queue="ai_analysis", bind=True, max_retries=3)
+def sync_knowledge_source(self, source_id: str, trigger: str = "manual") -> dict:
+    """Fetch content for a KnowledgeSource, chunk, index in ChromaDB, and update sync state."""
+    async def _run():
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import KnowledgeSource
+        from app.services.knowledge_sync_service import run_sync
+        import uuid as _uuid
+
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            result = await db.execute(
+                select(KnowledgeSource).where(KnowledgeSource.id == _uuid.UUID(source_id))
+            )
+            source = result.scalar_one_or_none()
+            if not source:
+                return {"status": "not_found", "source_id": source_id}
+            return await run_sync(db, source, trigger=trigger)
+
+    try:
+        return cast(dict[str, Any], _run_async(_run()))
+    except Exception as exc:
+        logger.error("sync_knowledge_source failed: %s (source=%s)", exc, source_id)
+        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
+
+
+# ── Knowledge source scheduled re-sync (RAG-6) ──────────────────────────────
+
+
+@celery_app.task(queue="default", bind=True, max_retries=0)
+def resync_stale_knowledge_sources(self) -> dict:
+    """Periodic task: find stale/failed sources and enqueue individual sync tasks."""
+    async def _find_and_enqueue():
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.knowledge_sync_service import list_stale_sources
+
+        async with AsyncSessionLocal() as db:
+            stale = await list_stale_sources(db)
+
+        from app.core.config import settings
+        cap = getattr(settings, "KNOWLEDGE_RESYNC_BATCH_CAP", 50)
+        enqueued = 0
+        for source in stale[:cap]:
+            sync_knowledge_source.apply_async(
+                kwargs={"source_id": str(source.id), "trigger": "scheduled"},
+                countdown=enqueued * 2,  # stagger to avoid burst
+            )
+            enqueued += 1
+
+        logger.info("Knowledge resync scheduled: enqueued=%d, total_stale=%d", enqueued, len(stale))
+        return {"enqueued": enqueued, "total_stale": len(stale)}
+
+    return cast(dict[str, Any], _run_async(_find_and_enqueue()))
+
+
+# ── Performance baseline refresh (Tier 2 item 10) ──────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.refresh_perf_baselines",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def refresh_perf_baselines(self) -> dict:
+    """Nightly sweep that extends each per-test duration baseline with
+    the newest observations from the TestCase table.
+
+    No-op until the ``perf_regression_detection`` feature flag is on.
+    """
+    async def _run():
+        from app.services.perf_regression_service import refresh_baselines
+        with _beat_span("refresh_perf_baselines") as span:
+            out = await refresh_baselines()
+            span.set_attribute("result.observed", int(out.get("observed", 0)))
+            span.set_attribute("result.baselines", int(out.get("baselines", 0)))
+            span.set_attribute("flag_enabled", not bool(out.get("skipped", 0)))
+            logger.info(
+                "[Task %s] perf baselines refresh: observed=%d baselines=%d",
+                self.request.id, out.get("observed", 0), out.get("baselines", 0),
+            )
+            return out
+
+    return cast(dict, _run_async(_run()))
+
+
+# ── Outbound webhook delivery (Tier 2 item 6) ──────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.deliver_webhook",
+    queue="default",
+    bind=True,
+    max_retries=5,
+    default_retry_delay=30,
+)
+def deliver_webhook(self, delivery_id: str) -> dict:
+    """Deliver a single webhook subscription event.
+
+    Delegates the actual HTTP work to ``webhook_service.deliver`` which
+    holds the DB row as the authoritative outcome. When that function
+    signals a retryable failure, we schedule an exponential retry via
+    ``self.retry`` so Celery's own backoff policy drives the cadence.
+    """
+    import uuid as _uuid_mod
+
+    async def _run():
+        from app.services.webhook_service import deliver
+        try:
+            return await deliver(_uuid_mod.UUID(delivery_id))
+        except Exception as exc:
+            logger.warning(
+                "[Task %s] deliver_webhook unhandled error: %s",
+                self.request.id, exc,
+            )
+            return {"error": str(exc), "retry": False}
+
+    result = cast(dict, _run_async(_run()))
+
+    if result.get("retry"):
+        # Exponential backoff — 30s, 60s, 120s, 240s, 480s. The webhook
+        # service already knows whether the subscription has retries left;
+        # we only reach this branch when it signals retry=True.
+        delay = min(30 * (2 ** self.request.retries), 480)
+        raise self.retry(countdown=delay, max_retries=5)
+
+    return result
+
+
+# ── Flaky quarantine maintenance (Tier 1 item 3) ────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.run_flaky_quarantine_maintenance",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def run_flaky_quarantine_maintenance(self) -> dict:
+    """Nightly housekeeping for the flaky auto-quarantine workflow.
+
+    Runs three passes in order:
+
+      1. ``expire_stale_proposals`` — PROPOSED rows older than 7 days
+         flip to EXPIRED so the UI stays readable.
+      2. ``schedule_pending_rechecks`` — QUARANTINED rows whose
+         ``recheck_at`` has passed move to RECHECK_SCHEDULED.
+      3. ``run_recheck_cycle`` — evaluates RECHECK_SCHEDULED rows against
+         recent TestCase history and either releases or re-quarantines
+         the test.
+
+    Every pass is a no-op when the ``flaky_auto_quarantine`` feature flag
+    is off, so enabling this beat entry is safe on existing deployments.
+    """
+    async def _run():
+        from app.services.flaky_quarantine_service import (
+            expire_stale_proposals,
+            run_recheck_cycle,
+            schedule_pending_rechecks,
+        )
+        with _beat_span("run_flaky_quarantine_maintenance") as span:
+            expired = await expire_stale_proposals()
+            rechecks_scheduled = await schedule_pending_rechecks()
+            outcomes = await run_recheck_cycle()
+            span.set_attribute("result.expired", int(expired))
+            span.set_attribute("result.rechecks_scheduled", int(rechecks_scheduled))
+            span.set_attribute("result.released", int(outcomes["released"]))
+            span.set_attribute("result.re_quarantined", int(outcomes["re_quarantined"]))
+            span.set_attribute("result.insufficient_data", int(outcomes["insufficient_data"]))
+            logger.info(
+                "[Task %s] flaky quarantine maintenance: expired=%d scheduled=%d "
+                "released=%d re_quarantined=%d insufficient_data=%d",
+                self.request.id,
+                expired,
+                rechecks_scheduled,
+                outcomes["released"],
+                outcomes["re_quarantined"],
+                outcomes["insufficient_data"],
+            )
+            return {
+                "expired": expired,
+                "rechecks_scheduled": rechecks_scheduled,
+                **outcomes,
+            }
+
+    return cast(dict[str, Any], _run_async(_run()))
+
+
 # ── DLQ helper ────────────────────────────────────────────────────────────────
 
 async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -> None:
@@ -843,7 +1938,7 @@ def dispatch_scheduled_digests(self):
     logger.info("[Task %s] Dispatching scheduled digests", self.request.id)
 
     async def _dispatch():
-        from sqlalchemy import select
+        from sqlalchemy import select, update
 
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import DigestSubscription, NotificationLog, User
@@ -851,34 +1946,105 @@ def dispatch_scheduled_digests(self):
 
         now = datetime.now(timezone.utc)
 
+        # Step 1: discover due subscriptions. We only read IDs here; the actual
+        # claim happens per-row via an atomic UPDATE so concurrent invocations
+        # of this task (beat hiccup, worker retry, manual trigger) cannot
+        # double-dispatch the same email.
         async with AsyncSessionLocal() as db:
-            # Find subscriptions due for delivery
-            result = await db.execute(
-                select(DigestSubscription).where(
-                    DigestSubscription.is_active == True,  # noqa: E712
-                    DigestSubscription.is_paused == False,  # noqa: E712
+            discovery = await db.execute(
+                select(DigestSubscription.id, DigestSubscription.schedule).where(
+                    DigestSubscription.is_active.is_(True),
+                    DigestSubscription.is_paused.is_(False),
                     DigestSubscription.next_delivery_at <= now,
+                    # Tier 2 item 12: ``WEEKLY_RETRO`` subscriptions use
+                    # the same dispatcher but are routed to the retro
+                    # renderer below. The extra schedule type is
+                    # feature-flag gated inside ``generate_weekly_retro``.
+                    DigestSubscription.schedule.in_(["DAILY", "WEEKLY", "WEEKLY_RETRO"]),
                 )
             )
-            subs = result.scalars().all()
-            logger.info("Found %d digest subscriptions due for delivery", len(subs))
+            due = discovery.all()
+        logger.info("Found %d digest subscriptions due for delivery", len(due))
 
-            for sub in subs:
-                try:
-                    period = "daily" if sub.schedule == "DAILY" else "weekly"
-                    digest = await generate_digest(db, sub.project_id, period)
+        # Step 2: for each candidate, try to atomically CLAIM it by advancing
+        # next_delivery_at in the same UPDATE that still sees it as due. A
+        # concurrent worker that already claimed the row will find its WHERE
+        # clause false and get rowcount=0 — we skip those.
+        #
+        # We deliberately advance next_delivery_at BEFORE sending the email.
+        # If the send fails later we log the failure but do NOT revert the
+        # claim: missing a digest (which the user can manually re-trigger) is
+        # always better than spamming users with duplicates because a crash
+        # between send and commit left the row "still due".
+        for sub_id, schedule in due:
+            delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
+            period = "daily" if schedule == "DAILY" else "weekly"
+            is_retro = schedule == "WEEKLY_RETRO"
+
+            # Each claim runs in its own short transaction so the UPDATE is
+            # visible to sibling workers immediately.
+            async with AsyncSessionLocal() as claim_db:
+                claim = await claim_db.execute(
+                    update(DigestSubscription)
+                    .where(
+                        DigestSubscription.id == sub_id,
+                        DigestSubscription.is_active.is_(True),
+                        DigestSubscription.is_paused.is_(False),
+                        DigestSubscription.next_delivery_at <= now,
+                    )
+                    .values(
+                        last_delivered_at=now,
+                        next_delivery_at=now + delta,
+                        delivery_count=DigestSubscription.delivery_count + 1,
+                    )
+                    .returning(
+                        DigestSubscription.user_id,
+                        DigestSubscription.project_id,
+                        DigestSubscription.channel,
+                    )
+                )
+                claimed = claim.first()
+                await claim_db.commit()
+
+            if claimed is None:
+                # Another worker won the race for this subscription.
+                continue
+            user_id, project_id, channel = claimed
+
+            # Step 3: actually deliver. A failure here only affects the log
+            # row — the claim is already persisted so we will not retry at
+            # the next beat tick.
+            status = "sent"
+            try:
+                async with AsyncSessionLocal() as db:
+                    if is_retro:
+                        # Tier 2 item 12 — route WEEKLY_RETRO through the
+                        # retro-specific renderer. Falls back to the
+                        # plain weekly digest when the feature flag is off
+                        # so paused-but-not-deleted subscriptions still
+                        # deliver something useful.
+                        from app.services.retro_digest_service import (
+                            generate_weekly_retro,
+                        )
+                        digest = await generate_weekly_retro(db, project_id)
+                        if digest is None:
+                            digest = await generate_digest(db, project_id, "weekly")
+                    else:
+                        digest = await generate_digest(db, project_id, period)
                     html_body = render_digest_html(digest)
 
-                    # Get user email
                     user_result = await db.execute(
-                        select(User).where(User.id == sub.user_id)
+                        select(User).where(User.id == user_id)
                     )
                     user = user_result.scalar_one_or_none()
                     if not user:
+                        logger.warning(
+                            "Claimed subscription %s references missing user %s",
+                            sub_id, user_id,
+                        )
                         continue
 
-                    # Dispatch via email (primary channel for digests)
-                    if sub.channel == "email":
+                    if channel == "email":
                         try:
                             from app.services.notification.email_service import send_email
                             await send_email(
@@ -886,34 +2052,800 @@ def dispatch_scheduled_digests(self):
                                 subject=f"TestLookup — {period.title()} Quality Digest",
                                 html_body=html_body,
                             )
-                            status = "sent"
                         except Exception as e:
                             status = "failed"
                             logger.warning("Digest email failed for %s: %s", user.email, e)
-                    else:
-                        status = "sent"  # Slack/Teams handled by notification manager
+                    # Slack/Teams handled by notification manager; status stays "sent".
 
-                    # Log delivery
                     db.add(NotificationLog(
-                        user_id=sub.user_id,
-                        project_id=sub.project_id,
-                        channel=sub.channel,
+                        user_id=user_id,
+                        project_id=project_id,
+                        channel=channel,
                         event_type="digest_delivery",
                         title=f"{period.title()} Quality Digest",
                         body=f"Digest for {digest.get('project_name', 'All Projects')}",
                         status=status,
                     ))
+                    await db.commit()
+            except Exception as exc:
+                logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
 
-                    # Update subscription
-                    sub.last_delivered_at = now
-                    sub.delivery_count = (sub.delivery_count or 0) + 1
-                    delta = timedelta(days=1) if sub.schedule == "DAILY" else timedelta(weeks=1)
-                    sub.next_delivery_at = now + delta
-
-                except Exception as exc:
-                    logger.error("Digest delivery failed for subscription %s: %s", sub.id, exc)
-
-            await db.commit()
-
-    _run_async(_dispatch())
+    with _beat_span("dispatch_scheduled_digests") as span:
+        try:
+            _run_async(_dispatch())
+            span.set_attribute("status", "ok")
+        except Exception as exc:
+            span.set_attribute("status", "error")
+            span.set_attribute("error.category", type(exc).__name__)
+            raise
     logger.info("[Task %s] Digest dispatch completed", self.request.id)
+
+
+@celery_app.task(
+    name="app.worker.tasks.close_stale_live_sessions",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
+    """Periodic safety net for live sessions whose clients forget to send a
+    ``run_complete`` event.
+
+    Symptom this fixes: clients (especially raw curl/Postman users) post
+    test results without a closing ``run_complete``. The LiveSession row
+    stays ``status='active'`` forever, ``upsert_test_run`` never runs, and
+    the run only ever appears in Live Execution — Runs / Overview / Coverage
+    / Failures / Trends all read from ``test_runs`` so they show 0.
+
+    Heuristic: any active LiveSession whose Redis state hash either no
+    longer exists (24h Redis TTL has expired = definitely orphaned) or
+    whose ``last_event_at`` is older than ``idle_minutes`` is closed via
+    the normal ``stream_service.close_session`` path. That path is
+    idempotent (it short-circuits if status='completed'), so a session
+    that was closed legitimately between the LIST and the per-row close
+    doesn't double-fire.
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import LiveSession
+    from app.services.stream_service import close_session
+    from app.streams.live_run_state import RedisLiveRunState
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=idle_minutes)
+        closed = 0
+        skipped_recent = 0
+        errors = 0
+
+        async with AsyncSessionLocal() as db:
+            active = (
+                await db.execute(
+                    select(LiveSession).where(LiveSession.status == "active")
+                )
+            ).scalars().all()
+
+            for session in active:
+                try:
+                    state = await RedisLiveRunState.get(session.run_id)
+                    last_event_iso = (state or {}).get("last_event_at")
+                    is_idle = True
+                    if last_event_iso:
+                        try:
+                            last_event = datetime.fromisoformat(last_event_iso)
+                            if last_event.tzinfo is None:
+                                last_event = last_event.replace(tzinfo=timezone.utc)
+                            is_idle = last_event < cutoff
+                        except Exception:
+                            # Malformed timestamp — treat as stale and close.
+                            is_idle = True
+                    else:
+                        # No Redis state / no last_event_at field means
+                        # either the Redis state hash expired (24h TTL —
+                        # definitely abandoned) OR the session never
+                        # received an event after registration. Fall back
+                        # to comparing ``started_at`` against the cutoff
+                        # so sessions that opened and were never used
+                        # don't sit ``active`` forever. 2026-05-15: this
+                        # branch added after finding 7 sessions on the
+                        # homelab stuck idle 50-65 min with NULL
+                        # last_event_at — they were registered by the
+                        # SDK but the first event never arrived, and the
+                        # prior reaper treated ``is_idle=True`` then
+                        # skipped them via ``not is_idle`` being false.
+                        # Result: sessions accumulated indefinitely.
+                        started_at = session.started_at
+                        if started_at and started_at.tzinfo is None:
+                            started_at = started_at.replace(tzinfo=timezone.utc)
+                        is_idle = bool(started_at and started_at < cutoff)
+
+                    if not is_idle:
+                        skipped_recent += 1
+                        continue
+
+                    await close_session(db, str(session.id))
+                    await db.commit()
+                    closed += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "close_stale_live_sessions: failed to close %s: %s",
+                        session.id, exc,
+                    )
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+
+        return {
+            "checked": len(active),
+            "closed": closed,
+            "skipped_recent": skipped_recent,
+            "errors": errors,
+            "idle_minutes": idle_minutes,
+        }
+
+    logger.info("[Task %s] close_stale_live_sessions starting (idle>%dm)",
+                self.request.id, idle_minutes)
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info("[Task %s] close_stale_live_sessions done: %s",
+                self.request.id, result)
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.reap_stuck_agent_pipelines",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def reap_stuck_agent_pipelines(self, stale_minutes: int = 30) -> dict:
+    """Periodic cleanup for agent_pipeline_runs that got stuck in
+    ``status='running'`` because a stage crashed before the outer
+    ``_mark_pipeline_done`` could record the failure.
+
+    The /agents read-time derivation already shows the right status to
+    end users; this task updates the DB rows so historical filters
+    (``?status=failed``) and metrics queries don't have to special-case
+    the running-but-actually-failed state.
+
+    A pipeline is reaped if EITHER:
+      * Any of its stage rows is ``status='failed'`` (downstream stages
+        couldn't continue, so the run is definitionally done).
+      * It has been ``running`` for longer than ``stale_minutes`` with
+        no ``completed_at`` (matches the Celery task time_limit on
+        ``run_agent_pipeline``).
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select, exists
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import AgentPipelineRun, AgentStageResult
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+        failed_due_to_stage = 0
+        failed_due_to_age = 0
+        errors = 0
+
+        async with AsyncSessionLocal() as db:
+            running = (
+                await db.execute(
+                    select(AgentPipelineRun).where(
+                        AgentPipelineRun.status == "running"
+                    )
+                )
+            ).scalars().all()
+
+            for pipeline in running:
+                try:
+                    has_failed_stage = (
+                        await db.execute(
+                            select(
+                                exists().where(
+                                    AgentStageResult.pipeline_run_id == pipeline.id,
+                                    AgentStageResult.status == "failed",
+                                )
+                            )
+                        )
+                    ).scalar()
+
+                    is_age_stale = (
+                        pipeline.started_at is not None
+                        and pipeline.completed_at is None
+                        and pipeline.started_at < cutoff
+                    )
+
+                    if not has_failed_stage and not is_age_stale:
+                        continue
+
+                    pipeline.status = "failed"
+                    pipeline.completed_at = datetime.now(timezone.utc)
+                    if not pipeline.error:
+                        pipeline.error = (
+                            "Stage failure detected by reaper" if has_failed_stage
+                            else f"Pipeline exceeded {stale_minutes}m without completion"
+                        )
+
+                    if has_failed_stage:
+                        failed_due_to_stage += 1
+                    else:
+                        failed_due_to_age += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "reap_stuck_agent_pipelines: failed for %s: %s",
+                        pipeline.id, exc,
+                    )
+
+            try:
+                await db.commit()
+            except Exception as exc:
+                logger.error("reap_stuck_agent_pipelines: commit failed: %s", exc)
+                await db.rollback()
+                errors += 1
+
+        return {
+            "checked": len(running),
+            "failed_due_to_stage": failed_due_to_stage,
+            "failed_due_to_age": failed_due_to_age,
+            "errors": errors,
+            "stale_minutes": stale_minutes,
+        }
+
+    logger.info(
+        "[Task %s] reap_stuck_agent_pipelines starting (stale>%dm)",
+        self.request.id, stale_minutes,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] reap_stuck_agent_pipelines done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.flag_orphan_test_suites",
+    bind=True,
+    queue="default",
+    time_limit=300,
+)
+def flag_orphan_test_suites(self, min_age_minutes: int = 60) -> dict:
+    """Detect and structured-log orphan ``TestSuite`` rows for ops review.
+
+    The ingestion pipeline's ``finalize_run`` commits each step in its own
+    session via ``_run_isolated`` (resilience pattern: a failing canonical
+    sync shouldn't roll back the suite sync that already succeeded). The
+    trade-off is that suite_sync may create a TestSuite row, then
+    canonical_sync fails before linking any CanonicalTestCase rows to it
+    — leaving an empty suite dangling.
+
+    This task runs nightly, finds non-default TestSuite rows that:
+
+    * Have no ``CanonicalTestCase`` children, AND
+    * Are older than ``min_age_minutes`` (default 60 — recent suites are
+      still mid-ingest and not yet orphaned).
+
+    For each orphan it emits a structured WARNING (greppable by
+    ``event=orphan_test_suite``) and bumps the ``orphan_test_suites_total``
+    Prometheus counter. The suite row is NOT deleted automatically — an
+    operator decides whether to reassign / delete / wait for the next
+    ingest to repopulate it.
+
+    See docs/DATABASE_AUDIT_2026-05-16.md (P2-3).
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import exists, select, and_
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import CanonicalTestCase, TestSuite
+
+    async def _sweep() -> dict:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=min_age_minutes)
+        orphans: list[dict] = []
+
+        async with AsyncSessionLocal() as db:
+            # Find TestSuite rows that are NOT default AND have no
+            # canonical_test_cases children AND were created before the
+            # cutoff. Use NOT EXISTS so we don't materialise the full
+            # canonical_test_cases table.
+            stmt = (
+                select(TestSuite)
+                .where(TestSuite.is_default.is_(False))
+                .where(TestSuite.created_at < cutoff)
+                .where(
+                    ~exists().where(
+                        and_(
+                            CanonicalTestCase.test_suite_id == TestSuite.id,
+                        )
+                    )
+                )
+            )
+            rows = (await db.execute(stmt)).scalars().all()
+
+            for suite in rows:
+                logger.warning(
+                    "orphan_test_suite",
+                    extra={
+                        "event": "orphan_test_suite",
+                        "test_suite_id": str(suite.id),
+                        "project_id": str(suite.project_id),
+                        "suite_name": suite.name,
+                        "created_at": suite.created_at.isoformat() if suite.created_at else None,
+                    },
+                )
+                orphans.append({
+                    "test_suite_id": str(suite.id),
+                    "project_id": str(suite.project_id),
+                    "suite_name": suite.name,
+                })
+
+        try:
+            from app.core.metrics import orphan_test_suites_total
+            orphan_test_suites_total.inc(len(orphans))
+        except (ImportError, AttributeError):  # pragma: no cover
+            # Metrics module may not have the counter declared yet —
+            # tolerate that gracefully so the reaper still runs.
+            pass
+
+        return {
+            "min_age_minutes": min_age_minutes,
+            "orphan_count": len(orphans),
+            "orphans": orphans,
+        }
+
+    logger.info(
+        "[Task %s] flag_orphan_test_suites starting (min_age=%dm)",
+        self.request.id, min_age_minutes,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] flag_orphan_test_suites done: %d orphan(s) flagged",
+        self.request.id, result["orphan_count"],
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.reconcile_canonical_deletions",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def reconcile_canonical_deletions(self) -> dict:
+    """Nightly safety net for canonical-deletion detection (Phase I follow-up).
+
+    ``finalize_run`` already calls ``test_suite_service.reconcile_canonical_deletions``
+    in an isolated session for every completed run, which is the primary
+    write path. This beat task exists for two failure modes that primary
+    path can't catch:
+
+      1. A run finalizes but the isolated reconcile step itself raises
+         (transient DB blip, lock conflict). Without this safety net the
+         canonical stays ``active`` until the next run for that project.
+      2. A project that's gone quiet — no new runs for days — needs
+         its catalog kept honest. Otherwise stale ``active`` rows
+         persist indefinitely after the underlying tests were removed.
+
+    Iterates every project and runs the same service function. Per-project
+    failures are logged but never abort the sweep so one bad project
+    doesn't starve the rest.
+    """
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services.test_suite_service import (
+        reconcile_canonical_deletions as _reconcile,
+    )
+
+    async def _sweep() -> dict:
+        totals = {"projects_scanned": 0, "deleted": 0, "errors": 0}
+
+        async with AsyncSessionLocal() as db:
+            projects = (await db.execute(select(Project.id))).all()
+            project_ids = [row[0] for row in projects]
+
+        for project_id in project_ids:
+            async with AsyncSessionLocal() as project_db:
+                try:
+                    result = await _reconcile(project_db, project_id)
+                    await project_db.commit()
+                    totals["projects_scanned"] += 1
+                    totals["deleted"] += int(result.get("deleted", 0))
+                except Exception as exc:
+                    await project_db.rollback()
+                    totals["errors"] += 1
+                    logger.warning(
+                        "reconcile_canonical_deletions project failed",
+                        extra={
+                            "event": "canonical_deletion_reconcile_failed",
+                            "project_id": str(project_id),
+                            "error": str(exc),
+                        },
+                    )
+
+        return totals
+
+    logger.info(
+        "[Task %s] reconcile_canonical_deletions starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] reconcile_canonical_deletions done: scanned=%d deleted=%d errors=%d",
+        self.request.id,
+        result["projects_scanned"], result["deleted"], result["errors"],
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.drain_active_live_sessions",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def drain_active_live_sessions(self) -> dict:
+    """Phase 4.5 — drain every active live session's Redis event buffer
+    into Postgres ``test_cases`` rows.
+
+    Runs on a 30-second beat schedule (``drain-active-live-sessions``)
+    so a long-running session that exceeds the ``LTRIM`` cap doesn't
+    lose its oldest per-test rows. The drain task is idempotent
+    (per-run SET-NX lock + LRANGE/LTRIM atomicity under append-only
+    writers) so overlapping ticks degrade gracefully.
+
+    The terminal ``persist_live_session`` + ``finalize_run`` chain at
+    ``close_session`` time is unchanged — this task only writes per-
+    test rows progressively so close-time has less to do.
+    """
+    from app.services.live_session_drainer import drain_all_active_runs
+
+    logger.info("[Task %s] drain_active_live_sessions starting", self.request.id)
+    result = cast(dict[str, Any], _run_async(drain_all_active_runs()))
+    logger.info(
+        "[Task %s] drain_active_live_sessions done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_placeholder_test_cases",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> dict:
+    """Retroactively synthesize placeholder TestCase rows.
+
+    For every TestRun where ``failed_tests + broken_tests > 0`` but
+    no ``test_cases`` rows exist (the live-stream-buffer-eviction or
+    SDK-no-test_result-events scenario), this task inserts the same
+    placeholder rows that ``persist_live_session`` now creates at
+    write time for new runs. The follow-on
+    ``backfill_unassigned_failures`` beat task (every 15 min) then
+    picks them up via ``failed_test_assignment_service`` so the
+    placeholders appear on ``/my-failures``.
+
+    Idempotent — the candidate query filters to runs with zero
+    test_cases, so a second tick after the first one's commit
+    produces zero new rows.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.placeholder_backfill_service import (
+        backfill_placeholders_all_projects,
+    )
+
+    async def _run() -> dict:
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await backfill_placeholders_all_projects(
+                    db, max_runs_per_project=max_runs_per_project,
+                )
+                await db.commit()
+                return result
+            except Exception:
+                await db.rollback()
+                raise
+
+    logger.info(
+        "[Task %s] backfill_placeholder_test_cases starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_run()))
+    logger.info(
+        "[Task %s] backfill_placeholder_test_cases done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.auto_recover_completed_live_runs",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def auto_recover_completed_live_runs(
+    self,
+    lookback_hours: int = 24,
+    max_runs: int = 100,
+) -> dict:
+    """Recover REAL per-test rows from ``TestRun.event_archive`` for
+    completed live_stream runs whose ``test_cases`` table is empty.
+
+    Defensive net for the close_session → persist_live_session handoff.
+    When the worker dispatch is dropped (silent apply_async failure,
+    queue backpressure, worker restart) the run shows correct aggregates
+    on /runs but per-test detail is missing on /test-management,
+    /coverage/suite, and the run-detail page. The hourly
+    ``backfill_placeholder_test_cases`` task eventually inserts marker
+    rows but loses the real test names the SDK shipped. We capture
+    those names in ``TestRun.event_archive`` at close-time (15-day TTL)
+    so this task can materialise them when the regular handoff
+    misfired. Runs on its own cadence (every 2 minutes) so users see
+    real per-test detail within ~2 minutes of close_session, well
+    before the placeholder backfill fires.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.live_run_recovery_service import (
+        auto_recover_completed_runs,
+        repair_clobbered_primary_suite_names,
+    )
+
+    async def _run() -> dict:
+        async with AsyncSessionLocal() as db:
+            recover = await auto_recover_completed_runs(
+                db,
+                lookback_hours=lookback_hours,
+                max_runs=max_runs,
+            )
+            # Companion sweep — heal runs whose finalize_run path
+            # clobbered ``primary_suite_name`` with the per-event
+            # dominant suite (e.g. a test class name from the old
+            # TestNG-listener default). Reads ``LiveSession.suite_name``
+            # as the authoritative session label. Bounded by the same
+            # 24h window so we don't rewrite ancient runs the user
+            # has long since accepted as-is.
+            repair = await repair_clobbered_primary_suite_names(
+                db,
+                lookback_hours=lookback_hours,
+                max_runs=max(max_runs, 200),
+            )
+            await db.commit()
+            return {"recover": recover, "repair": repair}
+
+    logger.info(
+        "[Task %s] auto_recover_completed_live_runs starting", self.request.id
+    )
+    result = cast(dict[str, Any], _run_async(_run()))
+    logger.info(
+        "[Task %s] auto_recover_completed_live_runs done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_unassigned_failures",
+    bind=True,
+    queue="default",
+    time_limit=600,
+)
+def backfill_unassigned_failures(self, max_runs_per_project: int = 200) -> dict:
+    """Retroactively assign FAILED/BROKEN TestCases left unassigned.
+
+    Drives two related backfills:
+
+    * ``default_qa_lead_service.backfill_default_qa_lead_for_all_projects``
+      to provision the synthetic QA-lead user on projects created before
+      this feature shipped.
+    * ``failed_test_assignment_service.backfill_unassigned_failures`` for
+      every project so already-ingested failures pick up the new owner.
+
+    Both resolvers are idempotent (default-lead provisioning is a no-op
+    when the FK is already set; per-run assignment only touches NULL
+    rows), so this can run on a tight cadence without risking write
+    storms. One project is processed per session so a stuck project
+    doesn't starve the others.
+    """
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services.default_qa_lead_service import (
+        backfill_default_qa_lead_for_all_projects,
+    )
+    from app.services.failed_test_assignment_service import (
+        backfill_unassigned_failures as _backfill,
+    )
+
+    async def _sweep() -> dict:
+        totals = {
+            "projects_scanned": 0,
+            "default_leads_provisioned": 0,
+            "runs": 0,
+            "assigned": 0,
+            "unassigned": 0,
+            "errors": 0,
+        }
+
+        # Pass 1: make sure every project has a default QA-lead user. The
+        # per-run assignment in pass 2 reads ``default_qa_lead_user_id`` so
+        # provisioning MUST land first.
+        async with AsyncSessionLocal() as lead_db:
+            try:
+                lead_counts = await backfill_default_qa_lead_for_all_projects(lead_db)
+                await lead_db.commit()
+                totals["default_leads_provisioned"] = int(
+                    lead_counts.get("provisioned", 0)
+                )
+            except Exception as exc:
+                await lead_db.rollback()
+                totals["errors"] += 1
+                logger.warning(
+                    "default_qa_lead_backfill failed: error=%s", exc,
+                )
+
+        async with AsyncSessionLocal() as db:
+            project_ids = [
+                row[0] for row in (await db.execute(select(Project.id))).all()
+            ]
+
+        for project_id in project_ids:
+            async with AsyncSessionLocal() as project_db:
+                try:
+                    result = await _backfill(
+                        project_db, project_id, max_runs=max_runs_per_project
+                    )
+                    await project_db.commit()
+                    totals["projects_scanned"] += 1
+                    totals["runs"] += int(result.get("runs", 0))
+                    totals["assigned"] += int(result.get("assigned", 0))
+                    totals["unassigned"] += int(result.get("unassigned", 0))
+                except Exception as exc:
+                    await project_db.rollback()
+                    totals["errors"] += 1
+                    logger.warning(
+                        "backfill_unassigned_failures project failed: project=%s error=%s",
+                        str(project_id), exc,
+                    )
+
+        return totals
+
+    logger.info(
+        "[Task %s] backfill_unassigned_failures starting",
+        self.request.id,
+    )
+    result = cast(dict[str, Any], _run_async(_sweep()))
+    logger.info(
+        "[Task %s] backfill_unassigned_failures done: %s",
+        self.request.id, result,
+    )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.notify_test_suite_owner",
+    bind=True,
+    max_retries=3,
+    queue="default",
+)
+def notify_test_suite_owner(
+    self,
+    *,
+    to_email: str,
+    owner_name: str,
+    test_name: str,
+    suite_name: str | None,
+    fail_count: int | None,
+    days: int,
+    project_id: str,
+    project_name: str | None,
+    latest_run_id: str | None,
+    latest_run_build: str | None,
+    is_fallback_owner: bool,
+    triggered_by: str | None = None,
+):
+    """Dispatch the "test is failing repeatedly" notification email.
+
+    Called from ``POST /api/v1/analytics/notify-owner`` after the caller has
+    already resolved the recipient. Kept idempotent-ish via a short dedup
+    window so a double-click doesn't fan out two emails.
+    """
+    import hashlib
+
+    dedup_key = (
+        f"testlookup:dedup:notify_owner:{project_id}:{to_email}:"
+        f"{hashlib.sha256(test_name.encode()).hexdigest()[:16]}"
+    )
+
+    async def _run():
+        if await _is_duplicate(dedup_key, ttl=300):
+            logger.info(
+                "[Task %s] notify_test_suite_owner: dedup hit for %s / %s",
+                self.request.id, to_email, test_name,
+            )
+            return {"queued": False, "reason": "deduplicated"}
+
+        from app.core.config import settings
+        from app.services.notification import email_service
+
+        fallback_note = " (assigned as the project default — no explicit suite owner)" if is_fallback_owner else ""
+        suite_clause = f" in suite \"{suite_name}\"" if suite_name else ""
+        run_clause = (
+            f"\nMost recent failing build: #{latest_run_build}" if latest_run_build else ""
+        )
+        triggered_clause = (
+            f"\nFlagged by: {triggered_by}" if triggered_by else ""
+        )
+        body = (
+            f"Hi {owner_name or 'there'},\n\n"
+            f"The test \"{test_name}\"{suite_clause} has been failing repeatedly "
+            f"over the last {days} day{'s' if days != 1 else ''}"
+            + (f" (failed {fail_count} time{'s' if fail_count != 1 else ''})" if fail_count else "")
+            + f".\n\nYou're receiving this because you're the test suite owner{fallback_note}.\n"
+            + run_clause + triggered_clause + "\n\n"
+            + "Open the Failures view in TestLookup to triage:\n"
+        )
+
+        dashboard_url = f"{settings.public_base_url}/failures?days={days}"
+        try:
+            await email_service.send_notification(
+                to=to_email,
+                title=f"⚠️ Recurring failure — {test_name}",
+                body=body,
+                event_type="test_owner_notification",
+                metadata={
+                    "project_name": project_name,
+                    "build_number": latest_run_build,
+                    "test_name": test_name,
+                    "suite_name": suite_name,
+                    "fail_count": fail_count,
+                    "window_days": days,
+                    "dashboard_url": dashboard_url,
+                },
+            )
+            return {"queued": True, "sent_to": to_email}
+        except Exception as exc:
+            logger.warning(
+                "[Task %s] notify_test_suite_owner email send failed for %s: %s",
+                self.request.id, to_email, exc,
+            )
+            raise
+
+    try:
+        return _run_async(_run())
+    except Exception as exc:
+        # Let Celery retry with backoff; max_retries=3 caps it.
+        raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+@celery_app.task(
+    name="app.worker.tasks.flush_ai_pipeline_queue",
+    bind=True,
+    queue="default",
+    time_limit=120,
+)
+def flush_ai_pipeline_queue(self) -> dict:
+    """Drain the AI-pipeline debouncer (Phase 3).
+
+    Scheduled every 2 minutes by Celery beat (see ``celery_app.py``).
+    Pulls runs older than ``AI_PIPELINE_DEBOUNCE_WINDOW_SECONDS`` from
+    the SortedSet, groups them by project, applies the per-project
+    LLM cost-budget cap, and fans out one ``run_agent_pipeline`` per
+    surviving run.
+
+    Returns the flush-summary dict for log inspection. Errors are
+    caught + logged inside ``flush_pending`` — this task body just
+    schedules the async call and surfaces the result.
+    """
+    from app.services.ai_pipeline_debouncer import flush_pending
+
+    try:
+        return _run_async(flush_pending())
+    except Exception as exc:
+        logger.warning(
+            "flush_ai_pipeline_queue_failed task=%s error=%s",
+            self.request.id, exc,
+        )
+        return {"drained": 0, "error": str(exc)}

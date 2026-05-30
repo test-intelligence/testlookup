@@ -3,6 +3,7 @@ import io
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +35,8 @@ async def view_shared_report(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
-    html_content = render_report_html(
+    html_content = await run_in_threadpool(
+        render_report_html,
         report,
         shared_by=link.created_by_name or "Unknown",
         expires_at=link.expires_at.isoformat() if link.expires_at else "",
@@ -72,7 +74,7 @@ async def download_shared_report_pdf(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
-    pdf_bytes = render_report_pdf(report)
+    pdf_bytes = await run_in_threadpool(render_report_pdf, report)
 
     # Audit
     db.add(AccessAuditLog(

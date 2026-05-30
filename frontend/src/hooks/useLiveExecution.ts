@@ -31,6 +31,7 @@ export interface LiveEvent {
   total?: number
   pass_rate?: number
   status?: string
+  suite_name?: string | null
   message?: string
   timestamp: number
 }
@@ -39,17 +40,17 @@ export type WsStatus = 'connecting' | 'open' | 'closed' | 'error'
 
 // ── Active sessions SWR hook ───────────────────────────────────────────────
 
-export function useActiveSessions(projectId?: string) {
+export function useActiveSessions(projectId?: string, suiteName?: string | null, days?: number) {
   return useSWR(
-    ['live-active', projectId],
-    () => liveStreamService.getActiveSessions(projectId),
+    ['live-active', projectId, suiteName, days],
+    () => liveStreamService.getActiveSessions(projectId, suiteName, days),
     { refreshInterval: 5_000, revalidateOnFocus: false },
   )
 }
 
 // ── Full live execution hook (sessions + WebSocket) ────────────────────────
 
-export function useLiveExecution(projectId?: string) {
+export function useLiveExecution(projectId?: string, suiteName?: string | null, days?: number) {
   const [sessions, setSessions] = useState<LiveSessionState[]>([])
   const [recentEvents, setRecentEvents] = useState<LiveEvent[]>([])
   const [wsStatus, setWsStatus] = useState<WsStatus>('closed')
@@ -58,13 +59,17 @@ export function useLiveExecution(projectId?: string) {
   const mountedRef = useRef(true)
 
   const token = useAuthStore(s => s.token)
+  // Hold the latest token in a ref so the WebSocket can refresh in-place when
+  // the token rotates, without tearing down and reconnecting the socket.
+  const tokenRef = useRef(token)
+  useEffect(() => { tokenRef.current = token }, [token])
 
   // ── SWR polling (initial load + fallback when WS is down) ──────────────
   const { data, mutate } = useSWR(
-    ['live-active', projectId],
-    () => liveStreamService.getActiveSessions(projectId),
+    ['live-active', projectId, suiteName, days],
+    () => liveStreamService.getActiveSessions(projectId, suiteName, days),
     {
-      refreshInterval: wsStatus === 'open' ? 10_000 : 2_000,
+      refreshInterval: wsStatus === 'open' ? 10_000 : 5_000,
       revalidateOnFocus: false,
       onSuccess: (d) => {
         if (!mountedRef.current) return
@@ -77,6 +82,33 @@ export function useLiveExecution(projectId?: string) {
           )
           return [...d.sessions, ...localOnly]
         })
+
+        // Seed the event feed from session data so the Workflow Event Feed
+        // widget is populated on initial load (before any WebSocket events).
+        setRecentEvents(prev => {
+          if (prev.length > 0) return prev // already have real-time events
+          const seeded: LiveEvent[] = d.sessions.map((s: LiveSessionState) => ({
+            type: s.status === 'running' ? 'live_run_started' : 'live_run_complete',
+            run_id: s.run_id,
+            build_number: s.build_number,
+            project_id: s.project_id,
+            suite_name: s.suite_name,
+            passed: s.passed,
+            failed: s.failed,
+            skipped: s.skipped,
+            broken: s.broken,
+            total: s.total,
+            pass_rate: s.pass_rate,
+            last_test: s.current_test,
+            status: s.status,
+            timestamp: s.completed_at
+              ? new Date(s.completed_at).getTime()
+              : s.started_at
+                ? new Date(s.started_at).getTime()
+                : Date.now(),
+          }))
+          return seeded.slice(0, 200)
+        })
       },
     },
   )
@@ -86,6 +118,10 @@ export function useLiveExecution(projectId?: string) {
     const type = msg.type as string
     if (type === 'ping') {
       wsRef.current?.send(JSON.stringify({ type: 'pong' }))
+      return
+    }
+    // Control-plane acks from the server — not user-visible events.
+    if (type === 'connected' || type === 'refreshed' || type === 'pong') {
       return
     }
 
@@ -143,13 +179,20 @@ export function useLiveExecution(projectId?: string) {
   }, [mutate])
 
   // ── WebSocket connection ────────────────────────────────────────────────
+  // `connect` deliberately omits `token` from its deps — it reads the latest
+  // token from `tokenRef`. Token rotation is handled by sending a `refresh`
+  // frame on the existing socket (effect below), avoiding a full reconnect.
   const connect = useCallback(() => {
-    if (!projectId || !token) return
+    const currentToken = tokenRef.current
+    if (!projectId || !currentToken) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
+    // Mirror the page protocol (https → wss, http → ws) so production over HTTPS
+    // never downgrades to an insecure WebSocket. Explicit env overrides still win.
+    const pageWsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const wsBase = (import.meta.env.VITE_WS_URL as string | undefined) ||
-      (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/^http/, 'ws') ||
-      `ws://${window.location.host}`
+      (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/^https?/, pageWsScheme) ||
+      `${pageWsScheme}://${window.location.host}`
 
     const url = `${wsBase}/ws/live/${projectId}`
     const ws = new WebSocket(url)
@@ -159,8 +202,8 @@ export function useLiveExecution(projectId?: string) {
     ws.onopen = () => {
       if (!mountedRef.current) return
       setWsStatus('open')
-      // Send JWT for auth after connection
-      ws.send(JSON.stringify({ type: 'auth', token }))
+      // Send JWT for auth after connection — always pull the freshest token
+      ws.send(JSON.stringify({ type: 'auth', token: tokenRef.current }))
     }
 
     ws.onmessage = (evt) => {
@@ -178,10 +221,10 @@ export function useLiveExecution(projectId?: string) {
     ws.onclose = () => {
       if (!mountedRef.current) return
       setWsStatus('closed')
-      // Reconnect after 5s
+      // Reconnect after 5s (auth token will be re-read from tokenRef on the next open)
       reconnectTimer.current = setTimeout(connect, 5_000)
     }
-  }, [projectId, token, handleWsMessage])
+  }, [projectId, handleWsMessage])
 
   const disconnect = useCallback(() => {
     if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
@@ -198,6 +241,18 @@ export function useLiveExecution(projectId?: string) {
       disconnect()
     }
   }, [connect, disconnect])
+
+  // Send a `refresh` frame to the server when the access token rotates while
+  // the socket is open — keeps the long-lived connection alive across token
+  // renewals (avoids the 5s reconnect gap).
+  useEffect(() => {
+    if (!token) return
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    try {
+      ws.send(JSON.stringify({ type: 'refresh', token }))
+    } catch { /* socket may have closed between the check and the send */ }
+  }, [token])
 
   // ── Derived stats ───────────────────────────────────────────────────────
   const runningSessions = sessions.filter(s => s.status === 'running')

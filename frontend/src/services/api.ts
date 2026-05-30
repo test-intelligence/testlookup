@@ -2,7 +2,30 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+// When VITE_API_BASE_URL is unset, use same-origin relative URLs. This makes
+// the production bundle deploy-target agnostic — it works behind any ingress
+// (k8s/homelab/gcp/aws) over both http and https without mixed-content or CORS
+// issues. In Vite dev mode, vite.config.ts proxies /api to localhost:8000.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+// Resolve the backend origin once so the request interceptor can cheaply
+// check whether an outbound call is same-origin before attaching the JWT.
+// Empty BASE_URL → same-origin as the page.
+const BACKEND_ORIGIN: string = (() => {
+  if (!BASE_URL) return window.location.origin
+  try { return new URL(BASE_URL, window.location.origin).origin } catch { return window.location.origin }
+})()
+
+function isSameOriginRequest(config: InternalAxiosRequestConfig): boolean {
+  const url = config.url ?? ''
+  // Relative path → always same-origin with BASE_URL
+  if (!/^https?:\/\//i.test(url)) return true
+  try {
+    return new URL(url).origin === BACKEND_ORIGIN
+  } catch {
+    return false
+  }
+}
 
 export const api = axios.create({
   baseURL: BASE_URL,
@@ -10,10 +33,13 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Request interceptor: attach current access token
+// Request interceptor: attach the access token only for requests bound for
+// the TestLookup backend. Any call to a foreign origin (e.g. a misconfigured
+// integration URL) must NOT receive the Authorization header — that would
+// leak the JWT to third parties.
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token
-  if (token) {
+  if (token && isSameOriginRequest(config)) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config

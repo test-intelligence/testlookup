@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_current_active_user, require_project_access, require_role
 from app.core.security import get_password_hash
 from app.db.postgres import get_db
 from app.models.postgres import Project, ProjectMember, User, UserInvitation, UserRole
@@ -37,7 +37,10 @@ projects_router = APIRouter(prefix="/api/v1/projects", tags=["User Management"])
 
 
 def _normalize_user_role(value: UserRole | str) -> UserRole:
-    """Accept enum values and legacy 'UserRole.X' strings from older rows."""
+    """Convert a stored role string to a UserRole enum.
+
+    After migration 0045, the ``UserRole.`` prefix guard is a safety net only.
+    """
     if isinstance(value, UserRole):
         return value
     raw_value = str(value).strip()
@@ -65,15 +68,18 @@ def _build_project_member_response(member: ProjectMember, user: User) -> Project
 async def list_users(
     is_active: Optional[bool] = Query(None),
     role: Optional[UserRole] = Query(None),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
 ):
-    """List all users. Requires QA_LEAD or higher."""
+    """List all users (paginated). Requires QA_LEAD or higher."""
     stmt = select(User).order_by(User.full_name)
     if is_active is not None:
         stmt = stmt.where(User.is_active == is_active)
     if role is not None:
         stmt = stmt.where(User.role == role)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     return result.scalars().all()
 
@@ -328,6 +334,7 @@ async def list_project_members(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
 ):
     """List all members of a project."""
     # Verify project exists
@@ -355,6 +362,7 @@ async def add_project_member(
     payload: AddProjectMemberRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Add a user to a project with a role. Requires QA_LEAD or higher."""
     # Verify project
@@ -390,6 +398,10 @@ async def add_project_member(
     await db.commit()
     await db.refresh(member)
 
+    # P3-2: Invalidate membership cache for the added user
+    from app.core.deps import invalidate_membership_cache
+    await invalidate_membership_cache(payload.user_id)
+
     return _build_project_member_response(member, user)
 
 
@@ -400,6 +412,7 @@ async def update_project_member_role(
     payload: UpdateProjectMemberRoleRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
 ):
     """Update a project member's role. Requires QA_LEAD or higher."""
     result = await db.execute(
@@ -416,6 +429,10 @@ async def update_project_member_role(
     await db.commit()
     await db.refresh(member)
 
+    # P3-2: Invalidate membership cache for the updated user
+    from app.core.deps import invalidate_membership_cache
+    await invalidate_membership_cache(user_id)
+
     return _build_project_member_response(member, user)
 
 
@@ -425,6 +442,7 @@ async def remove_project_member(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
 ):
     """Remove a user from a project. Requires ADMIN."""
     result = await db.execute(
@@ -438,4 +456,9 @@ async def remove_project_member(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project membership not found")
     await db.delete(member)
     await db.commit()
+
+    # P3-2: Invalidate membership cache for the removed user
+    from app.core.deps import invalidate_membership_cache
+    await invalidate_membership_cache(user_id)
+
     return None

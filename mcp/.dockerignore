@@ -1,0 +1,40 @@
+# Build-context exclusions for the MCP server image.
+#
+# Build context is ``mcp/`` (see homelabsetup/deploy-homelab.sh:361).
+# Same shape as backend/.dockerignore but smaller — the MCP module
+# doesn't carry SDK staging or large test fixtures.
+
+# ── Python build artifacts / caches ──────────────────────────────────
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# ── Local virtualenvs ────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Secrets ──────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── IDE / OS clutter ─────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ── Logs / docs ──────────────────────────────────────────────────────
+*.log
+README.md
+*.md

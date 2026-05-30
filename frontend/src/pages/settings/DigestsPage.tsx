@@ -34,8 +34,10 @@ export default function DigestsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newSubName, setNewSubName] = useState('');
-  const [newSubSchedule, setNewSubSchedule] = useState<'DAILY' | 'WEEKLY'>('WEEKLY');
+  const [newSubSchedule, setNewSubSchedule] = useState<import('@/services/digestService').DigestScheduleType>('WEEKLY');
   const [newSubChannel, setNewSubChannel] = useState<'email' | 'slack' | 'teams'>('email');
+  const [newSubTriggerFilter, setNewSubTriggerFilter] = useState<'all' | 'failed_only' | 'degraded_only'>('all');
+  const [newSubScopeValue, setNewSubScopeValue] = useState('');
 
   // Saved views
   const [views, setViews] = useState<SavedView[]>([]);
@@ -72,6 +74,8 @@ export default function DigestsPage() {
         name: newSubName.trim(),
         schedule: newSubSchedule,
         channel: newSubChannel,
+        ...(newSubSchedule === 'PER_SUITE' && newSubScopeValue ? { scope_type: 'suite' as const, scope_value: newSubScopeValue.trim() } : {}),
+        ...(newSubSchedule === 'PER_RUN' ? { trigger_filter: newSubTriggerFilter } : {}),
       });
       toast.success('Subscription created');
       setNewSubName('');
@@ -175,10 +179,13 @@ export default function DigestsPage() {
                 </div>
                 <div>
                   <label className="text-xs text-[var(--color-text-muted)]">Schedule</label>
-                  <select value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as 'DAILY' | 'WEEKLY')}
+                  <select value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as typeof newSubSchedule)}
                     className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1">
                     <option value="WEEKLY">Weekly</option>
                     <option value="DAILY">Daily</option>
+                    <option value="PER_RUN">Per Run</option>
+                    <option value="PER_RELEASE">Per Release</option>
+                    <option value="PER_SUITE">Per Suite</option>
                   </select>
                 </div>
                 <div>
@@ -190,6 +197,25 @@ export default function DigestsPage() {
                     <option value="teams">Teams</option>
                   </select>
                 </div>
+                {newSubSchedule === 'PER_RUN' && (
+                  <div>
+                    <label className="text-xs text-[var(--color-text-muted)]">Trigger</label>
+                    <select value={newSubTriggerFilter} onChange={e => setNewSubTriggerFilter(e.target.value as typeof newSubTriggerFilter)}
+                      className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1">
+                      <option value="all">All Runs</option>
+                      <option value="failed_only">Failed Only</option>
+                      <option value="degraded_only">Degraded Only</option>
+                    </select>
+                  </div>
+                )}
+                {newSubSchedule === 'PER_SUITE' && (
+                  <div className="flex-1">
+                    <label className="text-xs text-[var(--color-text-muted)]">Suite Name</label>
+                    <input value={newSubScopeValue} onChange={e => setNewSubScopeValue(e.target.value)}
+                      placeholder="e.g., smoke-tests"
+                      className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" />
+                  </div>
+                )}
                 <button onClick={handleCreateSub} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-neutral-200 text-sm">
                   Subscribe
                 </button>
@@ -206,7 +232,10 @@ export default function DigestsPage() {
                       </span>
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
-                      {sub.schedule} via {sub.channel} · Delivered: {sub.delivery_count} times
+                      {sub.schedule.replace('_', ' ')} via {sub.channel}
+                      {sub.scope_value ? ` · Scope: ${sub.scope_value}` : ''}
+                      {sub.trigger_filter && sub.trigger_filter !== 'all' ? ` · ${sub.trigger_filter.replace('_', ' ')}` : ''}
+                      {' '}· Delivered: {sub.delivery_count} times
                       {sub.next_delivery_at && ` · Next: ${new Date(sub.next_delivery_at).toLocaleDateString()}`}
                     </p>
                   </div>

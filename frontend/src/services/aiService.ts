@@ -1,7 +1,15 @@
 import type { AnalysisResult, AnalyzeRequest } from '@/types/ai'
-import { postData } from './http'
+import { getData, postData } from './http'
 
 export const aiService = {
+  /** Fetch a previously stored analysis without triggering a new LLM run.
+   *  Resolves to null when no analysis exists yet (404). */
+  getAnalysis: (testCaseId: string): Promise<AnalysisResult | null> =>
+    getData<AnalysisResult>(`/api/v1/analyze/${testCaseId}`).catch((err) => {
+      if (err?.response?.status === 404) return null
+      throw err
+    }),
+
   analyze: (request: AnalyzeRequest): Promise<AnalysisResult> =>
     postData('/api/v1/analyze', request),
 

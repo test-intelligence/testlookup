@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ElementType } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ElementType } from 'react'
 import {
   AlertCircle,
   AlertTriangle,
   ArrowRight,
   Bot,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Clock3,
   Cpu,
@@ -432,7 +433,6 @@ function StageNode({
   const key = stageKey(stage.stage_name)
   const meta = STAGE_META[stage.stage_name] ?? STAGE_META[key] ?? STAGE_META.default
   const status = STATUS_META[stage.status] ?? STATUS_META.pending
-  const Icon = meta.icon
   const StatusIcon = status.icon
   const duration = formatDuration(stage.started_at, stage.completed_at)
 
@@ -599,6 +599,10 @@ export default function WorkflowTimeline({
   )
   const defaultStageName = defaultStage?.stage_name ?? null
   const [selectedStageName, setSelectedStageName] = useState<string | null>(defaultStageName)
+  // Single toggle that collapses the whole DAG into a one-line summary so
+  // users can hide the pipeline detail when they're focused on the rest of
+  // the page (recent activity, KPIs, etc.) without losing access to it.
+  const [pipelineCollapsed, setPipelineCollapsed] = useState(false)
 
   useEffect(() => {
     setSelectedStageName(defaultStageName)
@@ -634,6 +638,16 @@ export default function WorkflowTimeline({
                 {selectedStage.status.replace(/_/g, ' ')}
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setPipelineCollapsed(v => !v)}
+              className="ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)]"
+              title={pipelineCollapsed ? 'Expand pipeline' : 'Collapse pipeline'}
+              aria-expanded={!pipelineCollapsed}
+            >
+              {pipelineCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {pipelineCollapsed ? 'Expand' : 'Collapse'}
+            </button>
           </div>
         </div>
       )}
@@ -643,22 +657,36 @@ export default function WorkflowTimeline({
         showEventFeed ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : 'grid-cols-1',
       )}>
         <div className="space-y-3">
-          <div className={clsx(
-            'grid gap-3',
-            compact
-              ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3'
-              : 'grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3',
-          )}>
-            {orderedStages.map(stage => (
-              <StageNode
-                key={stage.stage_name}
-                stage={stage}
-                active={selectedStage?.stage_name === stage.stage_name}
-                onClick={() => setSelectedStageName(stage.stage_name)}
-                compact={compact}
-              />
-            ))}
-          </div>
+          {pipelineCollapsed ? (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-card)]/40 px-3.5 py-2.5 text-xs text-[var(--color-text-muted)]">
+              {orderedStages.length} stages collapsed — expand to view the pipeline.
+            </div>
+          ) : (
+            /* Horizontal DAG flow: stages wrap onto multiple rows when the
+               viewport is narrow, with a ChevronRight connector between
+               consecutive stages so the directed flow stays obvious. The
+               connector hides between the last stage of one row and the
+               first of the next — flex-wrap eats it visually. */
+            <div className="flex flex-wrap items-stretch gap-2">
+              {orderedStages.map((stage, i) => (
+                <Fragment key={stage.stage_name}>
+                  <div className="flex-1 min-w-[220px] max-w-[300px] flex">
+                    <StageNode
+                      stage={stage}
+                      active={selectedStage?.stage_name === stage.stage_name}
+                      onClick={() => setSelectedStageName(stage.stage_name)}
+                      compact
+                    />
+                  </div>
+                  {i < orderedStages.length - 1 && (
+                    <div className="self-center text-[var(--color-text-faint)] shrink-0 hidden sm:flex" aria-hidden>
+                      <ChevronRight className="h-4 w-4" />
+                    </div>
+                  )}
+                </Fragment>
+              ))}
+            </div>
+          )}
 
           {showInspector && selectedStage && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]/30 p-4 space-y-3">

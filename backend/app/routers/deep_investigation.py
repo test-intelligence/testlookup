@@ -6,12 +6,12 @@ import logging
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_current_active_user, require_role, require_run_access
 from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import (
     Defect,
@@ -28,7 +28,9 @@ from app.models.schemas import (
     DefectPromotionRequest,
     DefectPromotionResponse,
 )
+from app.core.config import settings
 from app.services.action_policy import ActionStatus, approve_action, reject_action
+from app.services.analysis_router import get_analysis_mode
 from app.services.cluster_ranking_service import rank_clusters
 from app.services.defect_promotion_service import get_defect_candidate, promote_cluster
 from app.worker.tasks import run_agent_pipeline
@@ -43,7 +45,8 @@ class TriggerDeepRequest(BaseModel):
 
 
 class TriggerDeepResponse(BaseModel):
-    pipeline_run_id: Optional[str] = None
+    task_id: Optional[str] = None           # WF-2: Celery task ID (for queue tracking)
+    pipeline_run_id: Optional[str] = None   # WF-2: Deprecated — use task_id + pipeline-status endpoint
     message: str
     run_id: str
 
@@ -74,12 +77,25 @@ async def trigger_deep_investigation(
     run_id: uuid.UUID,
     body: TriggerDeepRequest,
     current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_run_access()),
 ):
     """
     Trigger the deep investigation pipeline for a completed test run.
     Uses workflow_type="deep" which adds failure clustering, flaky sentinel,
     test health analysis, and release risk on top of the standard 5-stage pipeline.
     """
+    if not settings.DEEP_INVESTIGATION_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Deep investigation is disabled. Enable it in Settings > AI Configuration.",
+        )
+    current_mode = get_analysis_mode()
+    if current_mode == "rules":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Deep investigation requires LLM or Auto mode. Current mode: rules.",
+        )
+
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(TestRun).where(TestRun.id == run_id))
         run = result.scalar_one_or_none()
@@ -99,8 +115,9 @@ async def trigger_deep_investigation(
             queue="ai_analysis",
         )
         return TriggerDeepResponse(
-            pipeline_run_id=task.id,
-            message=f"Deep investigation pipeline queued (mode={workflow_type})",
+            task_id=task.id,
+            pipeline_run_id=task.id,  # Deprecated: kept for backward compat
+            message=f"Deep investigation pipeline queued (mode={workflow_type}). Poll /pipeline-status for real execution state.",
             run_id=str(run_id),
         )
     except Exception as exc:
@@ -111,7 +128,7 @@ async def trigger_deep_investigation(
 @router.get("/{run_id}/clusters", response_model=list[ClusterResponse])
 async def get_failure_clusters(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
 ):
     """Return semantic failure clusters for a test run."""
     async with AsyncSessionLocal() as db:
@@ -119,6 +136,7 @@ async def get_failure_clusters(
             select(FailureCluster)
             .where(FailureCluster.test_run_id == run_id)
             .order_by(FailureCluster.size.desc())
+            .limit(200)  # Scalability: prevent unbounded results on large runs
         )
         clusters = result.scalars().all()
 
@@ -138,13 +156,14 @@ async def get_failure_clusters(
 @router.get("/{run_id}/findings", response_model=list[DeepFindingResponse])
 async def get_deep_findings(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
 ):
     """Return deep investigation findings per failure cluster for a test run."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(DeepFinding)
             .where(DeepFinding.test_run_id == run_id)
+            .limit(200)  # Scalability: prevent unbounded results on large runs
         )
         findings = result.scalars().all()
 
@@ -171,7 +190,7 @@ async def get_deep_findings(
 async def get_cluster_defect_candidate(
     run_id: uuid.UUID,
     cluster_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a pre-assembled defect candidate for a failure cluster."""
@@ -192,6 +211,7 @@ async def promote_cluster_to_defect(
     body: DefectPromotionRequest,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
 ):
     """Promote a failure cluster to a defect record (optionally with Jira ticket)."""
     # Resolve project_id from run
@@ -210,12 +230,15 @@ async def promote_cluster_to_defect(
             request=body.model_dump(),
             db=db,
         )
-        # BL-03: Mark intelligence snapshot stale after defect promotion
+        # BL-03: Mark intelligence snapshot stale after defect promotion.
+        # mark_stale also only flushes, so a single commit below covers the
+        # defect row, any Jira ticket link updates, and the staleness flag.
         try:
             from app.services.intelligence_snapshot_service import mark_stale
             await mark_stale(db, run_id)
         except Exception:
             pass  # Non-blocking
+        await db.commit()
         return DefectPromotionResponse(**result_dict)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -224,7 +247,7 @@ async def promote_cluster_to_defect(
 @router.get("/{run_id}/clusters/ranked")
 async def get_ranked_clusters(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
     db: AsyncSession = Depends(get_db),
 ):
     """Return failure clusters ranked by impact score for triage prioritization."""
@@ -260,60 +283,20 @@ async def get_ranked_clusters(
 async def check_cluster_duplicate(
     run_id: uuid.UUID,
     cluster_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Check if a cluster likely duplicates an existing open defect.
     Returns duplicate info without creating anything.
+    P3-9: Business logic extracted to cluster_service.
     """
-    result = await db.execute(
-        select(FailureCluster).where(
-            FailureCluster.test_run_id == run_id,
-            FailureCluster.cluster_id == cluster_id,
-        )
-    )
-    cluster = result.scalar_one_or_none()
-    if not cluster:
-        raise HTTPException(status_code=404, detail="Cluster not found")
+    from app.services.cluster_service import check_duplicate
 
-    from app.models.postgres import Defect
-    defects_result = await db.execute(
-        select(Defect)
-        .where(Defect.resolution_status == "OPEN")
-        .order_by(Defect.created_at.desc())
-        .limit(100)
-    )
-    open_defects = defects_result.scalars().all()
-
-    cluster_label_lower = (cluster.label or "").lower()
-    cluster_words = set(cluster_label_lower.split())
-
-    duplicates: list[dict] = []
-    for d in open_defects:
-        defect_title_lower = (d.title or "").lower()
-        defect_words = set(defect_title_lower.split())
-        intersection = cluster_words & defect_words
-        union = cluster_words | defect_words
-        similarity = len(intersection) / max(len(union), 1)
-
-        if similarity > 0.3 or cluster_label_lower in defect_title_lower or defect_title_lower in cluster_label_lower:
-            duplicates.append({
-                "defect_id": str(d.id),
-                "title": d.title,
-                "severity": d.severity,
-                "component": d.component,
-                "similarity": round(similarity, 2),
-                "jira_ticket_id": d.jira_ticket_id,
-            })
-
-    duplicates.sort(key=lambda x: x["similarity"], reverse=True)
-    return {
-        "cluster_id": cluster_id,
-        "cluster_label": cluster.label,
-        "potential_duplicates": duplicates[:5],
-        "has_likely_duplicate": len(duplicates) > 0,
-    }
+    try:
+        return await check_duplicate(str(run_id), cluster_id, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 # ── Phase 4: Defect approval workflow ────────────────────────────────────────
@@ -370,6 +353,7 @@ async def review_defect(
             if any("Jira" in r for r in policy_eval.get("policy_reasons", [])):
                 logger.info("Approved defect %s — Jira creation deferred to manual step", defect_id)
 
+        await db.commit()
         return DefectApprovalResponse(
             defect_id=str(defect_id),
             approval_status=ActionStatus.APPROVED,
@@ -391,6 +375,7 @@ async def review_defect(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Defect not found or not in pending_review status.",
             )
+        await db.commit()
         return DefectApprovalResponse(
             defect_id=str(defect_id),
             approval_status=ActionStatus.REJECTED,
@@ -400,15 +385,18 @@ async def review_defect(
 
 @router.get("/defects/pending-review")
 async def list_pending_defects(
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all defects awaiting approval (QA Lead+ only)."""
+    """List all defects awaiting approval (QA Lead+ only, paginated)."""
     result = await db.execute(
         select(Defect)
         .where(Defect.approval_status == ActionStatus.PENDING_REVIEW)
         .order_by(Defect.created_at.desc())
-        .limit(50)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     defects = result.scalars().all()
     return [

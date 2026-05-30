@@ -254,7 +254,7 @@ export function buildDigestWorkflow(
     }),
     toStage({
       stage_name: 'digest_compilation',
-      status: preview ? 'completed' : 'running',
+      status: preview ? 'completed' : 'pending',
       label: 'Digest Compilation',
       description: 'Rank blockers and summarize the week or day',
       result_data: preview ? {
@@ -358,7 +358,7 @@ export function buildAIEvalWorkflow(
     }),
     toStage({
       stage_name: 'quality_evaluation',
-      status: dashboard?.recent_eval_runs.length ? 'completed' : 'running',
+      status: dashboard?.recent_eval_runs.length ? 'completed' : 'pending',
       label: 'Quality Evaluation',
       description: 'Measure accuracy, F1, agreement, and drift',
       result_data: {
@@ -485,7 +485,7 @@ export function buildOverviewWorkflow(
   const stages = [
     toStage({
       stage_name: 'quality_snapshot',
-      status: summary ? 'completed' : 'pending',
+      status: summary ? 'completed' : 'skipped',
       label: 'Quality Snapshot',
       description: `Capture the current quality state for ${projectLabel}`,
       result_data: {
@@ -494,27 +494,30 @@ export function buildOverviewWorkflow(
         active_defects: metricValue(summary?.active_defects),
       },
       evidence_count: summary ? 1 : 0,
+      skipped_reason: !summary ? 'No quality data for this scope yet' : null,
     }),
     toStage({
       stage_name: 'readiness_check',
-      status: readiness ? 'completed' : 'pending',
+      status: readiness ? 'completed' : 'skipped',
       label: 'Readiness Check',
       description: 'Summarize release readiness and gate signals',
       result_data: { readiness },
       confidence_score: readiness === 'GREEN' ? 95 : readiness === 'AMBER' ? 70 : readiness === 'RED' ? 35 : null,
       evidence_count: readiness ? 1 : 0,
+      skipped_reason: !readiness ? 'No readiness signal — needs runs and gate policy' : null,
     }),
     toStage({
       stage_name: 'trend_analysis',
-      status: trendPoints.length > 0 ? 'completed' : 'running',
+      status: trendPoints.length > 0 ? 'completed' : 'skipped',
       label: 'Trend Analysis',
       description: 'Review pass rate, automation growth, and duration trends',
       result_data: { trend_points: trendPoints.length },
       evidence_count: trendPoints.length,
+      skipped_reason: trendPoints.length === 0 ? 'No trend data for this scope yet' : null,
     }),
     toStage({
       stage_name: 'action_focus',
-      status: summary?.new_failures_24h != null ? 'completed' : 'pending',
+      status: summary?.new_failures_24h != null ? 'completed' : 'skipped',
       label: 'Action Focus',
       description: 'Turn the quality snapshot into next steps',
       result_data: {
@@ -522,6 +525,7 @@ export function buildOverviewWorkflow(
         new_failures_24h: metricValue(summary?.new_failures_24h),
       },
       evidence_count: metricValue(summary?.new_failures_24h) ?? 0,
+      skipped_reason: summary?.new_failures_24h == null ? 'No 24h failure signal yet' : null,
     }),
   ]
 
@@ -545,11 +549,12 @@ export function buildRunsWorkflow(
   const stages = [
     toStage({
       stage_name: 'run_ingestion',
-      status: runs.length > 0 ? 'completed' : 'pending',
+      status: runs.length > 0 ? 'completed' : 'skipped',
       label: 'Run Ingestion',
       description: 'Load the latest builds for the current project scope',
       result_data: { runs: runs.length, all_projects: isAllProjects },
       evidence_count: runs.length,
+      skipped_reason: runs.length === 0 ? 'No runs ingested for this scope' : null,
     }),
     toStage({
       stage_name: 'failure_detection',
@@ -562,27 +567,29 @@ export function buildRunsWorkflow(
     }),
     toStage({
       stage_name: 'intelligence_handoff',
-      status: failedRuns.length > 0 ? 'completed' : 'pending',
+      status: failedRuns.length > 0 ? 'completed' : 'skipped',
       label: 'Intelligence Handoff',
       description: 'Route failed runs into Run Intelligence',
       result_data: { intelligence_ready: failedRuns.length },
       evidence_count: failedRuns.length,
+      skipped_reason: failedRuns.length === 0 ? 'Nothing to hand off — no failed runs' : null,
     }),
     toStage({
       stage_name: 'release_context',
-      status: passedRuns.length > 0 ? 'completed' : 'running',
+      status: passedRuns.length > 0 ? 'completed' : 'skipped',
       label: 'Release Context',
       description: 'Keep passing runs available for comparison and release checks',
       result_data: { passed_runs: passedRuns.length },
       evidence_count: passedRuns.length,
+      skipped_reason: passedRuns.length === 0 ? 'No passing runs in the current scope' : null,
     }),
   ]
 
   const events = buildEventsFromLabels([
-    { event_type: 'stage_completed', stage_name: 'run_ingestion', detail: { runs: runs.length } },
+    { event_type: runs.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'run_ingestion', detail: { runs: runs.length } },
     { event_type: failedRuns.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'failure_detection', detail: { failed_runs: failedRuns.length } },
-    { event_type: 'stage_completed', stage_name: 'intelligence_handoff', detail: { failed_runs: failedRuns.length } },
-    { event_type: 'stage_completed', stage_name: 'release_context', detail: { passed_runs: passedRuns.length } },
+    { event_type: failedRuns.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'intelligence_handoff', detail: { failed_runs: failedRuns.length } },
+    { event_type: passedRuns.length > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'release_context', detail: { passed_runs: passedRuns.length } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }
@@ -594,11 +601,12 @@ export function buildIntelligenceHubWorkflow(runs: Array<{ id: string; status: s
   const stages = [
     toStage({
       stage_name: 'run_selection',
-      status: runs.length > 0 ? 'completed' : 'pending',
+      status: runs.length > 0 ? 'completed' : 'skipped',
       label: 'Run Selection',
       description: 'Choose the run that needs investigation',
       result_data: { total_runs: runs.length },
       evidence_count: runs.length,
+      skipped_reason: runs.length === 0 ? 'No runs available to investigate' : null,
     }),
     toStage({
       stage_name: 'failed_run_focus',
@@ -611,19 +619,21 @@ export function buildIntelligenceHubWorkflow(runs: Array<{ id: string; status: s
     }),
     toStage({
       stage_name: 'intelligence_launch',
-      status: failedRuns.length > 0 ? 'completed' : 'pending',
+      status: failedRuns.length > 0 ? 'completed' : 'skipped',
       label: 'Intelligence Launch',
       description: 'Open the run intelligence view for the selected build',
       result_data: { ready_runs: failedRuns.length },
       evidence_count: failedRuns.length,
+      skipped_reason: failedRuns.length === 0 ? 'No failed runs to investigate' : null,
     }),
     toStage({
       stage_name: 'passing_context',
-      status: passedRuns.length > 0 ? 'completed' : 'running',
+      status: passedRuns.length > 0 ? 'completed' : 'skipped',
       label: 'Passing Context',
       description: 'Keep green runs ready for comparison',
       result_data: { passing_runs: passedRuns.length },
       evidence_count: passedRuns.length,
+      skipped_reason: passedRuns.length === 0 ? 'No passing runs available yet' : null,
     }),
   ]
   const events = buildEventsFromLabels([
@@ -645,43 +655,47 @@ export function buildFailureAnalysisWorkflow(
   const stages = [
     toStage({
       stage_name: 'flaky_detection',
-      status: flakyCount > 0 ? 'completed' : 'running',
+      status: flakyCount > 0 ? 'completed' : 'skipped',
       label: 'Flaky Detection',
       description: 'Detect unstable tests across the selected time window',
       result_data: { flaky_count: flakyCount, days },
       evidence_count: flakyCount,
+      skipped_reason: flakyCount === 0 ? 'No flaky tests detected in this window' : null,
     }),
     toStage({
       stage_name: 'category_clustering',
-      status: categoryCount > 0 ? 'completed' : 'running',
+      status: categoryCount > 0 ? 'completed' : 'skipped',
       label: 'Category Clustering',
       description: 'Group failures into human-readable categories',
       result_data: { category_count: categoryCount },
       evidence_count: categoryCount,
+      skipped_reason: categoryCount === 0 ? 'No failure categories yet — needs failed runs to cluster' : null,
     }),
     toStage({
       stage_name: 'hotspot_ranking',
-      status: topCount > 0 ? 'completed' : 'running',
+      status: topCount > 0 ? 'completed' : 'skipped',
       label: 'Hotspot Ranking',
       description: 'Rank the worst failing tests for remediation',
       result_data: { hotspot_count: topCount },
       evidence_count: topCount,
+      skipped_reason: topCount === 0 ? 'No hotspots — no failed tests in this window' : null,
     }),
     toStage({
       stage_name: 'remediation_focus',
-      status: 'completed',
+      status: (flakyCount + topCount) > 0 ? 'completed' : 'skipped',
       label: 'Remediation Focus',
       description: 'Identify the tests and suites to stabilize first',
       result_data: { actionable_items: flakyCount + topCount },
       evidence_count: flakyCount + topCount,
+      skipped_reason: (flakyCount + topCount) === 0 ? 'Nothing to remediate yet' : null,
     }),
   ]
 
   const events = buildEventsFromLabels([
-    { event_type: flakyCount > 0 ? 'stage_completed' : 'stage_started', stage_name: 'flaky_detection', detail: { flaky_count: flakyCount } },
-    { event_type: categoryCount > 0 ? 'stage_completed' : 'stage_started', stage_name: 'category_clustering', detail: { category_count: categoryCount } },
-    { event_type: topCount > 0 ? 'stage_completed' : 'stage_started', stage_name: 'hotspot_ranking', detail: { hotspot_count: topCount } },
-    { event_type: 'stage_completed', stage_name: 'remediation_focus', detail: { actionable_items: flakyCount + topCount } },
+    { event_type: flakyCount > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'flaky_detection', detail: { flaky_count: flakyCount } },
+    { event_type: categoryCount > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'category_clustering', detail: { category_count: categoryCount } },
+    { event_type: topCount > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'hotspot_ranking', detail: { hotspot_count: topCount } },
+    { event_type: (flakyCount + topCount) > 0 ? 'stage_completed' : 'stage_skipped', stage_name: 'remediation_focus', detail: { actionable_items: flakyCount + topCount } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }
@@ -698,7 +712,7 @@ export function buildCoverageWorkflow(
   const stages = [
     toStage({
       stage_name: 'coverage_snapshot',
-      status: totalExecutions > 0 ? 'completed' : 'pending',
+      status: totalExecutions > 0 ? 'completed' : 'skipped',
       label: 'Coverage Snapshot',
       description: `Capture coverage data for ${projectLabel} over the last ${days} days`,
       result_data: {
@@ -707,10 +721,11 @@ export function buildCoverageWorkflow(
         total_executions: totalExecutions,
       },
       evidence_count: totalExecutions,
+      skipped_reason: totalExecutions === 0 ? `No executions in the last ${days} days` : null,
     }),
     toStage({
       stage_name: 'suite_breadth',
-      status: suites.length > 0 ? 'completed' : 'running',
+      status: suites.length > 0 ? 'completed' : 'skipped',
       label: 'Suite Breadth',
       description: 'Map execution coverage across suites and project scope',
       result_data: {
@@ -718,10 +733,14 @@ export function buildCoverageWorkflow(
         failing_suites: failingSuites.length,
       },
       evidence_count: suites.length,
+      skipped_reason: suites.length === 0 ? 'No suites have executed in this window' : null,
     }),
     toStage({
       stage_name: 'coverage_risk',
-      status: failingSuites.length > 0 ? 'running' : 'completed',
+      // 'completed' for both branches — the work is already done; risk findings
+      // are surfaced via route_rationale and the failing-suite badge, not by
+      // showing a misleading "running" spinner.
+      status: totalExecutions > 0 ? 'completed' : 'skipped',
       label: 'Coverage Risk',
       description: 'Highlight where coverage quality or execution balance needs attention',
       result_data: {
@@ -731,16 +750,18 @@ export function buildCoverageWorkflow(
       confidence_score: summary?.avg_pass_rate != null ? Math.round(summary.avg_pass_rate) : null,
       evidence_count: failingSuites.length,
       route_rationale: failingSuites.length > 0 ? 'Some suites still require cleanup or deeper inspection' : 'Coverage is balanced across the current scope',
+      skipped_reason: totalExecutions === 0 ? 'No executions to analyze yet' : null,
     }),
     toStage({
       stage_name: 'coverage_actions',
-      status: totalExecutions > 0 ? 'completed' : 'pending',
+      status: totalExecutions > 0 ? 'completed' : 'skipped',
       label: 'Coverage Actions',
       description: 'Use the coverage signal to guide follow-up work',
       result_data: {
         top_suites: suites.slice(0, 5).map(suite => suite.suite_name),
       },
       evidence_count: failingSuites.length,
+      skipped_reason: totalExecutions === 0 ? 'Nothing to act on without executions' : null,
     }),
   ]
 
@@ -779,7 +800,7 @@ export function buildDefectsWorkflow(
     }),
     toStage({
       stage_name: 'jira_linkage',
-      status: linked.length > 0 ? 'completed' : 'running',
+      status: linked.length > 0 ? 'completed' : items.length > 0 ? 'skipped' : 'pending',
       label: 'Jira Linkage',
       description: 'Track which defects are already routed to Jira',
       result_data: {
@@ -787,10 +808,15 @@ export function buildDefectsWorkflow(
         unresolved: items.length - linked.length,
       },
       evidence_count: linked.length,
+      skipped_reason: items.length > 0 && linked.length === 0 ? 'None of the loaded defects are linked to Jira yet' : null,
     }),
     toStage({
       stage_name: 'resolution_flow',
-      status: resolvedItems.length > 0 ? 'completed' : 'running',
+      status: resolvedItems.length > 0
+        ? 'completed'
+        : items.length > 0
+          ? 'skipped'
+          : 'pending',
       label: 'Resolution Flow',
       description: 'Show how open, in-progress, and resolved defects move through the system',
       result_data: {
@@ -800,6 +826,10 @@ export function buildDefectsWorkflow(
       },
       evidence_count: openItems.length + resolvedItems.length,
       route_rationale: openItems.length > 0 ? 'Open defects still need owner follow-up' : 'No active defects in the current slice',
+      skipped_reason:
+        items.length > 0 && resolvedItems.length === 0
+          ? 'No resolved defects in this slice yet'
+          : null,
     }),
     toStage({
       stage_name: 'triage_focus',
@@ -817,8 +847,16 @@ export function buildDefectsWorkflow(
 
   const events = buildEventsFromLabels([
     { event_type: 'stage_completed', stage_name: 'defect_intake', detail: { defects: items.length, project: projectLabel } },
-    { event_type: linked.length > 0 ? 'stage_completed' : 'stage_started', stage_name: 'jira_linkage', detail: { linked: linked.length } },
-    { event_type: openItems.length > 0 ? 'stage_started' : 'stage_completed', stage_name: 'resolution_flow', detail: { open: openItems.length, resolved: resolvedItems.length } },
+    {
+      event_type: linked.length > 0 ? 'stage_completed' : items.length > 0 ? 'stage_skipped' : 'stage_started',
+      stage_name: 'jira_linkage',
+      detail: { linked: linked.length },
+    },
+    {
+      event_type: resolvedItems.length > 0 ? 'stage_completed' : items.length > 0 ? 'stage_skipped' : 'stage_started',
+      stage_name: 'resolution_flow',
+      detail: { open: openItems.length, resolved: resolvedItems.length },
+    },
     { event_type: 'stage_completed', stage_name: 'triage_focus', detail: { page, items: items.length } },
   ])
 
@@ -846,7 +884,7 @@ export function buildTrendsWorkflow(
     }),
     toStage({
       stage_name: 'signal_comparison',
-      status: enabledCharts.length > 0 ? 'completed' : 'running',
+      status: enabledCharts.length > 0 ? 'completed' : 'pending',
       label: 'Signal Comparison',
       description: 'Compare pass rate, failure rate, and volume movements',
       result_data: {
@@ -881,34 +919,53 @@ export function buildValueMetricsWorkflow(
   days: number,
   projectLabel: string,
 ): { stages: WorkflowStageNode[]; events: WorkflowEventNode[]; stageOrder: string[] } {
+  // Confidence is only meaningful when there's at least one positive value signal.
+  // An all-zero metrics payload was previously surfacing as 70% confident because
+  // the formula used 70 as an unconditional floor.
+  const hasValueSignal = !!metrics && (
+    metrics.triage_time_saved_minutes > 0 ||
+    metrics.defects_auto_grouped > 0 ||
+    metrics.duplicate_tickets_avoided > 0 ||
+    metrics.defects_promoted > 0 ||
+    metrics.risky_releases_blocked > 0 ||
+    metrics.releases_conditional > 0 ||
+    metrics.intelligence_reports_generated > 0
+  )
+  const roiEvidenceCount =
+    (metrics?.defects_auto_grouped ? 1 : 0) +
+    (metrics?.duplicate_tickets_avoided ? 1 : 0) +
+    (metrics?.risky_releases_blocked ? 1 : 0)
+
   const stages = [
     toStage({
       stage_name: 'value_capture',
-      status: metrics ? 'completed' : 'pending',
+      status: hasValueSignal ? 'completed' : 'pending',
       label: 'Value Capture',
       description: `Summarize the operational value generated for ${projectLabel}`,
       result_data: {
         triage_minutes: metrics?.triage_time_saved_minutes ?? 0,
         days,
       },
-      evidence_count: metrics ? 1 : 0,
+      evidence_count: (metrics?.triage_time_saved_minutes ?? 0) > 0 ? 1 : 0,
     }),
     toStage({
       stage_name: 'roi_calculation',
-      status: metrics ? 'completed' : 'running',
+      status: hasValueSignal ? 'completed' : 'pending',
       label: 'ROI Calculation',
       description: 'Quantify defects grouped, duplicates avoided, and releases blocked',
-      result_data: metrics ? {
-        defects_auto_grouped: metrics.defects_auto_grouped,
-        duplicate_tickets_avoided: metrics.duplicate_tickets_avoided,
-        risky_releases_blocked: metrics.risky_releases_blocked,
+      result_data: hasValueSignal ? {
+        defects_auto_grouped: metrics!.defects_auto_grouped,
+        duplicate_tickets_avoided: metrics!.duplicate_tickets_avoided,
+        risky_releases_blocked: metrics!.risky_releases_blocked,
       } : null,
-      confidence_score: metrics ? Math.min(100, 70 + Math.round(metrics.triage_time_saved_hours)) : null,
-      evidence_count: metrics ? 3 : 0,
+      confidence_score: hasValueSignal
+        ? Math.min(100, 70 + Math.round(metrics!.triage_time_saved_hours))
+        : null,
+      evidence_count: roiEvidenceCount,
     }),
     toStage({
       stage_name: 'value_delivery',
-      status: metrics ? 'completed' : 'pending',
+      status: hasValueSignal ? 'completed' : 'pending',
       label: 'Value Delivery',
       description: 'Prepare the exportable result for leadership and customer success',
       result_data: {
@@ -916,14 +973,16 @@ export function buildValueMetricsWorkflow(
         quarantine_recommended: metrics?.quarantine_recommended ?? 0,
       },
       evidence_count: metrics?.intelligence_reports_generated ?? 0,
-      route_rationale: metrics ? 'Metrics are ready to share across the team' : 'No metrics data loaded yet',
+      route_rationale: hasValueSignal
+        ? 'Metrics are ready to share across the team'
+        : 'No measurable value captured in the selected window',
     }),
   ]
 
   const events = buildEventsFromLabels([
-    { event_type: metrics ? 'stage_completed' : 'stage_started', stage_name: 'value_capture', detail: { days } },
-    { event_type: metrics ? 'stage_completed' : 'stage_started', stage_name: 'roi_calculation', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
-    { event_type: metrics ? 'stage_completed' : 'stage_started', stage_name: 'value_delivery', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
+    { event_type: hasValueSignal ? 'stage_completed' : 'stage_started', stage_name: 'value_capture', detail: { days } },
+    { event_type: hasValueSignal ? 'stage_completed' : 'stage_started', stage_name: 'roi_calculation', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
+    { event_type: hasValueSignal ? 'stage_completed' : 'stage_started', stage_name: 'value_delivery', detail: { reports: metrics?.intelligence_reports_generated ?? 0 } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }
@@ -940,7 +999,7 @@ export function buildDeepInvestigationWorkflow(
   const stages = [
     toStage({
       stage_name: 'failure_clustering',
-      status: clusters.length > 0 ? 'completed' : 'running',
+      status: clusters.length > 0 ? 'completed' : 'pending',
       label: 'Failure Clustering',
       description: 'Group failures into investigation-ready clusters',
       result_data: {
@@ -951,7 +1010,7 @@ export function buildDeepInvestigationWorkflow(
     }),
     toStage({
       stage_name: 'root_cause_analysis',
-      status: findings.length > 0 ? 'completed' : 'running',
+      status: findings.length > 0 ? 'completed' : 'pending',
       label: 'Root Cause Analysis',
       description: 'Trace symptoms to likely causes and services',
       result_data: {
@@ -962,7 +1021,7 @@ export function buildDeepInvestigationWorkflow(
     }),
     toStage({
       stage_name: 'evidence_synthesis',
-      status: evidenceCount > 0 ? 'completed' : 'running',
+      status: evidenceCount > 0 ? 'completed' : 'pending',
       label: 'Evidence Synthesis',
       description: 'Collect traces, logs, contract signals, and recommendations',
       result_data: {
@@ -1000,14 +1059,25 @@ export function buildSearchWorkflow(
   results: SearchResponse | null,
 ): { stages: WorkflowStageNode[]; events: WorkflowEventNode[]; stageOrder: string[] } {
   const total = results?.total ?? 0
+  const hasQuery = query.trim().length > 0
+  // Once a search has actually run, downstream stages with zero hits are
+  // "skipped" (work was attempted, nothing to rank/drill into) rather than
+  // "pending" (waiting for input). Pending implies activity; skipped does not.
+  const searchAttempted = hasQuery && results !== null
+  const downstreamStatus: WorkflowStageNode['status'] = total > 0
+    ? 'completed'
+    : searchAttempted
+      ? 'skipped'
+      : 'pending'
+
   const stages = [
     toStage({
       stage_name: 'query_capture',
-      status: query.trim() ? 'completed' : 'pending',
+      status: hasQuery ? 'completed' : 'pending',
       label: 'Query Capture',
       description: 'Capture the search intent and scope',
       result_data: { query },
-      evidence_count: query.trim().length > 0 ? 1 : 0,
+      evidence_count: hasQuery ? 1 : 0,
     }),
     toStage({
       stage_name: 'retrieval_mode',
@@ -1019,27 +1089,35 @@ export function buildSearchWorkflow(
     }),
     toStage({
       stage_name: 'ranking',
-      status: total > 0 ? 'completed' : 'running',
+      status: downstreamStatus,
       label: 'Ranking',
       description: 'Rank the best matches by relevance and evidence',
       result_data: { total_results: total, pages: results?.pages ?? 0 },
       evidence_count: total,
+      skipped_reason: searchAttempted && total === 0 ? 'No results matched this query' : null,
     }),
     toStage({
       stage_name: 'drilldown',
-      status: total > 0 ? 'completed' : 'pending',
+      status: downstreamStatus,
       label: 'Drilldown',
       description: 'Open the right run or test from the matched result',
       result_data: { match_reasons: results?.items?.[0]?.match_reasons?.length ?? 0 },
       evidence_count: results?.items?.[0] ? 1 : 0,
+      skipped_reason: searchAttempted && total === 0 ? 'Nothing to drill into without matches' : null,
     }),
   ]
 
+  const downstreamEvent = total > 0
+    ? 'stage_completed'
+    : searchAttempted
+      ? 'stage_skipped'
+      : 'stage_started'
+
   const events = buildEventsFromLabels([
-    { event_type: query.trim() ? 'stage_completed' : 'stage_started', stage_name: 'query_capture', detail: { query } },
+    { event_type: hasQuery ? 'stage_completed' : 'stage_started', stage_name: 'query_capture', detail: { query } },
     { event_type: 'stage_completed', stage_name: 'retrieval_mode', detail: { search_type: searchType } },
-    { event_type: total > 0 ? 'stage_completed' : 'stage_started', stage_name: 'ranking', detail: { total } },
-    { event_type: total > 0 ? 'stage_completed' : 'stage_started', stage_name: 'drilldown', detail: { total } },
+    { event_type: downstreamEvent, stage_name: 'ranking', detail: { total } },
+    { event_type: downstreamEvent, stage_name: 'drilldown', detail: { total } },
   ])
 
   return { stages, events, stageOrder: stages.map(stage => stage.stage_name) }

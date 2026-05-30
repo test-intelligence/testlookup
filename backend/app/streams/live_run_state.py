@@ -36,13 +36,33 @@ class RedisLiveRunState:
     """
 
     @classmethod
-    async def start(cls, run_id: str, project_id: str, build_number: str, total_tests: int = 0) -> None:
-        """Register a new live run. Idempotent — safe to call if run already exists."""
+    async def start(
+        cls,
+        run_id: str,
+        project_id: str,
+        build_number: str,
+        total_tests: int = 0,
+        *,
+        launch_name: Optional[str] = None,
+        suite_name: Optional[str] = None,
+    ) -> None:
+        """Register a new live run. Idempotent — safe to call if run already exists.
+
+        ``launch_name`` is the human-readable label (analogous to ReportPortal's
+        ``rp.launch``). When provided it lands in the Redis state hash so the
+        Live Execution UI can show it during the run, before the session is
+        finalised and persisted to Postgres.
+
+        ``suite_name`` is the run-level suite identifier (testlookup.suite,
+        with testlookup.launch as the documented SDK fallback). Stored on the
+        live-state hash so the /live UI can surface a suite column even while
+        the session is still active.
+        """
         redis = get_redis()
         key = _STATE_KEY(run_id)
 
         now = datetime.now(timezone.utc).isoformat()
-        await redis.hset(key, mapping={  # type: ignore[misc]
+        mapping: dict = {
             "run_id":       run_id,
             "project_id":   project_id,
             "build_number": build_number,
@@ -55,10 +75,16 @@ class RedisLiveRunState:
             "started_at":   now,
             "last_event_at": now,
             "status":       "running",
-        })
+        }
+        if launch_name:
+            mapping["launch_name"] = launch_name
+        if suite_name:
+            mapping["suite_name"] = suite_name
+        await redis.hset(key, mapping=mapping)  # type: ignore[misc]
         await redis.expire(key, _TTL)
         await redis.sadd(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
-        logger.info("Live run started: %s build=%s", run_id, build_number)
+        logger.info("Live run started: %s build=%s launch=%s suite=%s",
+                    run_id, build_number, launch_name or "-", suite_name or "-")
 
     @classmethod
     async def record_test_event(
@@ -187,4 +213,12 @@ class RedisLiveRunState:
         result["pass_rate"] = (
             round((result.get("passed", 0) / completed * 100), 2) if completed else 0.0
         )
+        # Ensure total >= completed count.
+        # When no pre-announced total was given (total=0 at start), total stays 0
+        # in Redis but the UI needs it to reflect tests seen so far.
+        # When a pre-announced total IS given (e.g. 100), max() keeps it unchanged
+        # until completed count surpasses it (shouldn't happen, but safe).
+        all_completed = (result.get("passed", 0) + result.get("failed", 0)
+                         + result.get("skipped", 0) + result.get("broken", 0))
+        result["total"] = max(result.get("total", 0), all_completed)
         return result

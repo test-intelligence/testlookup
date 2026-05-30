@@ -1,3 +1,10 @@
+"""
+Notification preference and history service.
+
+Transaction model (item #2): mutation functions stage changes only; the
+router handler owns ``db.commit()``. Read-only helpers are side-effect
+free and never touch the transaction.
+"""
 from __future__ import annotations
 
 import uuid
@@ -67,9 +74,7 @@ async def upsert_preference(
             teams_webhook_url=values["teams_webhook_url"],
         )
         db.add(pref)
-
-    await db.commit()
-    await db.refresh(pref)
+        await db.flush()  # materialize pref.id for the handler response
     return pref
 
 
@@ -87,15 +92,12 @@ async def update_preference(
     pref.email_override = values["email_override"]
     pref.slack_webhook_url = values["slack_webhook_url"]
     pref.teams_webhook_url = values["teams_webhook_url"]
-    await db.commit()
-    await db.refresh(pref)
     return pref
 
 
 async def delete_preference(db: AsyncSession, pref_id: uuid.UUID, current_user: User) -> None:
     pref = await get_preference_or_404(db, pref_id, current_user.id)
     await db.delete(pref)
-    await db.commit()
 
 
 async def list_notification_history(
@@ -134,7 +136,6 @@ async def mark_notification_read(db: AsyncSession, log_id: uuid.UUID, current_us
         )
         .values(is_read=True)
     )
-    await db.commit()
 
 
 async def mark_all_notifications_read(db: AsyncSession, current_user: User) -> None:
@@ -146,7 +147,6 @@ async def mark_all_notifications_read(db: AsyncSession, current_user: User) -> N
         )
         .values(is_read=True)
     )
-    await db.commit()
 
 
 async def resolve_notification_overrides(

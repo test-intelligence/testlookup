@@ -4,15 +4,23 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_role
 from app.db.postgres import get_db
-from app.models.postgres import AIEvalBaseline, AIEvalDataset, AIEvalRun, User, UserRole
+from app.models.postgres import (
+    AIEvalBaseline,
+    AIEvalDataset,
+    AIEvalGateRun,
+    AIEvalRun,
+    User,
+    UserRole,
+)
 from app.models.schemas import (
     AIEvalDatasetCreate,
+    AIEvalGateRunResponse,
     AIEvalDatasetResponse,
     AIEvalRunResponse,
     AIQualityDashboardResponse,
@@ -240,6 +248,15 @@ class PreReleaseGateRequest(BaseModel):
     dataset_id: Optional[str] = None
 
 
+class AgentStackReleaseGateRequest(BaseModel):
+    change_id: str
+    prompt_versions: dict[str, str] = Field(default_factory=dict)
+    model_versions: dict[str, str] = Field(default_factory=dict)
+    routing_versions: dict[str, str] = Field(default_factory=dict)
+    required_gates: list[dict[str, str]] | None = None
+    persist: bool = True
+
+
 class SetBaselineRequest(BaseModel):
     task_type: str = "classification"
     agent_name: str = "AnalysisAgent"
@@ -272,6 +289,49 @@ async def run_pre_release_gate(
         agent_name=body.agent_name,
         dataset_id=body.dataset_id,
     )
+
+
+@router.post("/agent-stack-release-gate")
+async def run_agent_stack_release_gate(
+    body: AgentStackReleaseGateRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Run the release gate for prompt/model/routing changes across the agent stack.
+
+    The returned manifest checksum makes the gated change set auditable.
+    """
+    from app.services.eval_gate_service import evaluate_agent_stack_release_gate
+
+    return await evaluate_agent_stack_release_gate(
+        db,
+        change_id=body.change_id,
+        prompt_versions=body.prompt_versions,
+        model_versions=body.model_versions,
+        routing_versions=body.routing_versions,
+        required_gates=body.required_gates,
+        evaluated_by=current_user.id,
+        persist=body.persist,
+    )
+
+
+@router.get("/agent-stack-release-gate/runs", response_model=list[AIEvalGateRunResponse])
+async def list_agent_stack_gate_runs(
+    change_id: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List historical agent-stack release gate decisions."""
+    query = select(AIEvalGateRun).order_by(AIEvalGateRun.evaluated_at.desc()).limit(limit)
+    if change_id:
+        query = query.where(AIEvalGateRun.change_id == change_id)
+    if status_filter:
+        query = query.where(AIEvalGateRun.status == status_filter)
+    result = await db.execute(query)
+    return result.scalars().all()
 
 
 @router.post("/baselines", status_code=201)

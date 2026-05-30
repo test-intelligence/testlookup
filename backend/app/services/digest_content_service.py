@@ -175,8 +175,26 @@ def render_digest_html(digest: dict) -> str:
     period = digest.get("period", "weekly").title()
     avg_pr = digest.get("avg_pass_rate")
     trend = digest.get("pass_rate_trend")
+    is_retro = digest.get("schedule_type") == "WEEKLY_RETRO"
 
     sections = []
+
+    # Tier 2 item 12 — retro header block prepends the AI-written
+    # narrative + weekly recovery counters. Rendered only when the
+    # digest was produced by ``retro_digest_service``.
+    if is_retro:
+        narrative = _e(digest.get("retro_narrative") or "", max_len=2000)
+        released_flaky = int(digest.get("released_flaky") or 0)
+        new_regressions_retro = int(digest.get("new_regressions") or 0)
+        sections.append(f"""
+        <div style="background:#EFF6FF;border-left:4px solid #2563EB;padding:12px 16px;margin-bottom:16px;border-radius:4px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1E3A8A;font-weight:600;margin-bottom:6px">Week in review</div>
+            <p style="font-size:13px;color:#1F2937;margin:0">{narrative}</p>
+            <div style="display:flex;gap:16px;margin-top:10px;font-size:12px;color:#374151">
+                <span><strong style="color:#059669">{released_flaky}</strong> flaky tests recovered</span>
+                <span><strong style="color:#DC2626">{new_regressions_retro}</strong> new regressions vs. last week</span>
+            </div>
+        </div>""")
 
     # Header metrics
     trend_str = ""

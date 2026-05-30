@@ -34,7 +34,7 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
             analysis.root_cause_summary = body.corrected_root_cause
         analysis.requires_human_review = False
 
-    await db.commit()
+    # stage-only: router handler commits
     return {"feedback_id": str(feedback.id), "message": "Feedback recorded — thank you!"}
 
 
@@ -57,7 +57,7 @@ async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     feedback.corrected_root_cause = body.corrected_root_cause
     feedback.comment = body.comment
     feedback.exported = False
-    await db.commit()
+    # stage-only: router handler commits
     return {"message": "Feedback updated"}
 
 
@@ -109,7 +109,7 @@ async def promote_model(db: AsyncSession, body, provider: str) -> dict:
         promoted_at=datetime.now(timezone.utc),
     )
     db.add(version)
-    await db.commit()
+    # stage-only: router handler commits
     return {"message": f"Model {body.model_name} promoted for track={body.track}"}
 
 
@@ -168,7 +168,7 @@ async def jira_resolution_webhook(db: AsyncSession, payload: dict) -> dict:
             )
         )
 
-    await db.commit()
+    # stage-only: router handler commits
     return {
         "message": f"Feedback recorded: {issue_key} → {rating if analysis else 'no analysis found'}",
         "defect_id": str(defect.id),

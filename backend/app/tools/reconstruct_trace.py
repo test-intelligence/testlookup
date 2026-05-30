@@ -4,10 +4,10 @@ Follows correlation IDs across microservices to build a causal chain.
 """
 import logging
 
-import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
+from app.core.http_client import get_http_client
 
 logger = logging.getLogger("tools.reconstruct_trace")
 
@@ -16,24 +16,25 @@ async def _query_splunk(spl: str, earliest: str = "-10m", latest: str = "now") -
     if not settings.SPLUNK_ENABLED or not settings.SPLUNK_BASE_URL:
         return []
     try:
-        async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
-            search_url = f"{settings.SPLUNK_BASE_URL}/services/search/jobs/export"
-            resp = await client.post(
-                search_url,
-                headers={"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"},
-                data={
-                    "search": f"search {spl}",
-                    "output_mode": "json",
-                    "earliest_time": earliest,
-                    "latest_time": latest,
-                    "count": 50,
-                },
-            )
-            if resp.status_code != 200:
-                return []
-            lines = [ln for ln in resp.text.strip().split("\n") if ln.strip()]
-            import json
-            return [json.loads(ln).get("result", {}) for ln in lines if ln]
+        client = get_http_client()
+        search_url = f"{settings.SPLUNK_BASE_URL}/services/search/jobs/export"
+        resp = await client.post(
+            search_url,
+            headers={"Authorization": f"Bearer {settings.SPLUNK_API_TOKEN}"},
+            data={
+                "search": f"search {spl}",
+                "output_mode": "json",
+                "earliest_time": earliest,
+                "latest_time": latest,
+                "count": 50,
+            },
+            timeout=20.0,
+        )
+        if resp.status_code != 200:
+            return []
+        lines = [ln for ln in resp.text.strip().split("\n") if ln.strip()]
+        import json
+        return [json.loads(ln).get("result", {}) for ln in lines if ln]
     except Exception as exc:
         logger.debug("Splunk query failed: %s", exc)
         return []

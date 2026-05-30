@@ -34,6 +34,14 @@ export interface AIReviewResult {
 }
 
 export interface ManagedTestCase {
+  /**
+   * "managed" for rows backed by ``managed_test_cases``, "automation" for
+   * synthesised rows derived from per-run ``test_cases`` (returned by
+   * /cases when ``include_automation=true``). The Test Management UI
+   * uses this to render an "Automation" badge and disable edit
+   * affordances on automation rows.
+   */
+  source?: 'managed' | 'automation' | string
   id: string
   project_id: string
   title: string

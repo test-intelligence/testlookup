@@ -34,7 +34,9 @@ async def ai_generate_cases(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return await generate_ai_cases(db, payload, current_user)
+    result = await generate_ai_cases(db, payload, current_user)
+    await db.commit()
+    return result
 
 
 @router.post("/cases/ai-generate/async", response_model=AITaskEnqueueResponse)
@@ -59,7 +61,9 @@ async def ai_review_case(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return await review_test_case_with_ai(db, case_id, current_user)
+    result = await review_test_case_with_ai(db, case_id, current_user)
+    await db.commit()
+    return result
 
 
 @router.post("/cases/ai-coverage", response_model=AICoverageAnalysisResponse)

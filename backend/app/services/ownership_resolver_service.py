@@ -152,6 +152,14 @@ async def resolve_cluster_ownership(
             fallback_reason="Cluster has no member tests",
         )
 
+    memory_resolution = await _resolve_cluster_ownership_from_memory(
+        db,
+        project_id,
+        member_test_ids,
+    )
+    if memory_resolution:
+        return memory_resolution
+
     # Load rules and project
     rules = await load_rules_for_project(db, project_id)
     proj_result = await db.execute(select(Project).where(Project.id == project_id))
@@ -214,4 +222,47 @@ async def resolve_cluster_ownership(
         matched_rule_id=best.matched_rule_id,
         match_source=best.match_source,
         fallback_reason=f"{len(best_results)}/{len(tests)} members mapped to this team" if vote_pct < 1.0 else None,
+    )
+
+
+async def _resolve_cluster_ownership_from_memory(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    member_test_ids: list[str],
+) -> OwnershipResult | None:
+    """Prefer prior canonical memory ownership for ownership-aware routing."""
+    try:
+        from app.services.agent_memory_service import resolve_ownership_from_memory
+
+        context = await resolve_ownership_from_memory(
+            db,
+            project_id,
+            member_test_ids=member_test_ids,
+        )
+    except Exception as exc:
+        logger.debug("Ownership memory lookup skipped: %s", exc)
+        return None
+    if not context:
+        return None
+    ownership = context.get("ownership") or {}
+    if not isinstance(ownership, dict):
+        return None
+    team_name = ownership.get("team_name")
+    service_name = ownership.get("service_name")
+    if not team_name and not service_name:
+        return None
+    confidence = str(ownership.get("confidence") or "low")
+    if confidence not in {"high", "medium", "low", "none"}:
+        confidence = "low"
+    return OwnershipResult(
+        service_name=service_name,
+        team_name=team_name,
+        team_contact=ownership.get("team_contact"),
+        confidence=confidence,
+        matched_rule_id=ownership.get("matched_rule_id"),
+        match_source="agent_memory",
+        fallback_reason=(
+            f"Resolved from canonical memory reference "
+            f"{context.get('memory_reference', {}).get('memory_entry_id')}"
+        ),
     )

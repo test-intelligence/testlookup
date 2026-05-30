@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "testlookup-reporter"
+version = "1.1.0"
+description = "Python client SDK for streaming test execution events to TestLookup"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "TestLookup" }]
+keywords = ["testing", "test-reporting", "live-streaming", "ci-cd"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "httpx>=0.24",
+]
+
+[project.optional-dependencies]
+yaml = ["pyyaml>=5.4"]
+
+# Pytest plugin auto-registration via entry points — no conftest.py needed.
+[project.entry-points.pytest11]
+testlookup = "testlookup_reporter"
+
+[tool.setuptools]
+# Single-file module — no nested package layout. Once we grow past one file,
+# convert this to a `[tool.setuptools.packages.find]` block.
+py-modules = ["testlookup_reporter"]
+
+[tool.setuptools.package-data]
+testlookup_reporter = ["testlookup.yaml.example"]

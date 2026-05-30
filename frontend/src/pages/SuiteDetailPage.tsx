@@ -1,26 +1,32 @@
-import { useState } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
-  Clock, Activity, AlertTriangle, Calendar,
+  Clock, Activity, AlertTriangle, Calendar, FolderTree,
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, Legend,
 } from 'recharts'
 import { clsx } from 'clsx'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useSuiteDetail } from '@/hooks/useMetrics'
+import { useSuites } from '@/hooks/useSuites'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailSummary } from '@/types/analytics'
+import { testManagementService } from '@/services/testManagementService'
 
 const PERIODS = [
+  { label: '1d',  days: 1 },
   { label: '7d',  days: 7 },
   { label: '14d', days: 14 },
   { label: '30d', days: 30 },
   { label: '90d', days: 90 },
-]
+] as const
+const PERIOD_DAYS = PERIODS.map(p => p.days) as readonly number[]
 
 const TOOLTIP_STYLE = {
   backgroundColor: '#1e293b', border: '1px solid #334155',
@@ -78,16 +84,76 @@ function fmtDate(iso: string | null | undefined) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SuiteDetailPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const project       = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
 
   const suiteName  = searchParams.get('name') ?? ''
-  const [days, setDays] = useState(() => Number(searchParams.get('days') ?? 30))
+  // Precedence: explicit URL ``?days=`` (deep link) > shared global
+  // preference > snapped default. Picking a period in the UI also
+  // rewrites the URL so the chip *and* the data refresh together —
+  // previously the URL pinned ``days``, so clicking 7d updated the
+  // store but ``days`` (derived) stayed on the URL value and the
+  // chart never refreshed. (Bug reported 2026-05-19 on
+  // /coverage/suite?name=…&days=90.)
+  const storedDays = useTimeWindowStore(s => s.days)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
+  const urlDays = Number(searchParams.get('days'))
+  const days = PERIOD_DAYS.includes(urlDays)
+    ? urlDays
+    : snapToAllowed(storedDays, PERIOD_DAYS)
+  const setDays = (next: number) => {
+    setStoredDays(next)
+    // Rewrite ?days= in the URL so the derived ``days`` value above
+    // re-reads the new selection on the next render. ``replace`` so
+    // the back button doesn't accumulate one entry per click.
+    const params = new URLSearchParams(searchParams)
+    params.set('days', String(next))
+    setSearchParams(params, { replace: true })
+  }
 
   const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
+
+  // Per-day trend (run_count + passed/failed/skipped) for the same time
+  // window. Owned by the new ``suite_history_service`` so every page
+  // shows the same numbers. Polled in lockstep with the days selector;
+  // refresh is bounded to the user's window so a chatty live-stream
+  // run-set doesn't refire the query every poll.
+  type SuiteTrendPoint = {
+    date: string
+    run_count: number
+    total_tests: number
+    passed_count: number
+    failed_count: number
+    skipped_count: number
+    broken_count: number
+  }
+  const [trendPoints, setTrendPoints] = useState<SuiteTrendPoint[]>([])
+  const [trendLoading, setTrendLoading] = useState(false)
+  useEffect(() => {
+    if (!suiteName) { setTrendPoints([]); return }
+    let alive = true
+    setTrendLoading(true)
+    const pid = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
+    testManagementService.getSuiteTrend(suiteName, pid, days)
+      .then(res => { if (alive) setTrendPoints(res.points || []) })
+      .catch(() => { if (alive) setTrendPoints([]) })
+      .finally(() => { if (alive) setTrendLoading(false) })
+    return () => { alive = false }
+  }, [suiteName, activeProjectId, days])
+  // The reverse-direction link to the catalog needs a TestSuite *id*,
+  // but the analytics page only knows the name (from the URL). Use the
+  // already-cached ``useSuites`` SWR entry to resolve it. The lookup is
+  // cheap (O(N) over a few dozen suites at most) and the fetch is
+  // shared with the rest of the app; we don't pay for it again here.
+  const { data: allSuites } = useSuites()
+  const catalogSuite = allSuites?.items.find(
+    (s) =>
+      s.name === suiteName &&
+      (activeProjectId === ALL_PROJECTS_ID || s.project_id === activeProjectId),
+  )
 
   if (!project && !isAllProjects) {
     return (
@@ -112,6 +178,22 @@ export default function SuiteDetailPage() {
   const summary: Partial<SuiteDetailSummary> = data?.summary ?? {}
   const testCases: TestCaseRow[] = data?.test_cases  ?? []
   const recentRuns: RunRow[]     = data?.recent_runs ?? []
+
+  // Run-level aggregates (unique_tests / total_executions / recent_runs) are
+  // populated even when the SDK shipped a TestNG/JUnit run without per-test
+  // rows (e.g. JUnit XML with <testsuite tests=…> but no <testcase> elements,
+  // or a live session whose Redis buffer evicted before persistence). The
+  // page used to gate the *entire* view on ``testCases.length`` and fall
+  // through to "No data for this suite" — hiding the real totals that every
+  // other surface (/test-management, /reports/summary) shows. We now bail
+  // only when there is genuinely nothing to summarise, and let the per-test
+  // table render its own inline explanation when only the per-test detail
+  // is missing.
+  const hasAnyData =
+    (summary.unique_tests ?? 0) > 0
+    || (summary.total_executions ?? 0) > 0
+    || recentRuns.length > 0
+    || trendPoints.some(p => p.run_count > 0)
 
   // Chart data — pass rate trend across recent runs (oldest first)
   const chartData = [...recentRuns].reverse().map((r) => ({
@@ -139,6 +221,27 @@ export default function SuiteDetailPage() {
     </div>
   )
 
+  // Pivot back to the catalog ("what tests live in this suite") from the
+  // analytics view ("how have those tests performed"). Only rendered when
+  // we can resolve the catalog suite id — analytics pages can be reached
+  // for suites that exist as a free-text aggregate on test_runs but
+  // haven't been materialised into a TestSuite row yet (live-stream gap
+  // fallback). For those we hide the link rather than navigating to a
+  // 404'd ``/suites/null`` route.
+  const headerActions = (
+    <div className="flex items-center gap-2">
+      {catalogSuite && (
+        <Link
+          to={`/suites/${catalogSuite.id}`}
+          className="inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm text-[var(--color-text-muted)] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
+        >
+          <FolderTree className="h-4 w-4" /> Open catalog
+        </Link>
+      )}
+      {periodSelector}
+    </div>
+  )
+
   return (
     <div className="space-y-6">
       <button
@@ -150,7 +253,7 @@ export default function SuiteDetailPage() {
       </button>
       <PageHeader
         title={suiteName}
-        actions={periodSelector}
+        actions={headerActions}
       />
 
       {isLoading ? (
@@ -161,7 +264,7 @@ export default function SuiteDetailPage() {
           title="Failed to load suite details"
           description="Check the console for errors or try again"
         />
-      ) : testCases.length === 0 ? (
+      ) : !hasAnyData ? (
         <EmptyState
           icon={<Layers className="h-8 w-8" />}
           title="No data for this suite"
@@ -210,6 +313,42 @@ export default function SuiteDetailPage() {
             ))}
           </div>
 
+          {/* Run-history trend — per-day count of runs that included this
+              suite, broken down by status. Independent of the
+              recent-runs pass-rate chart below (which is per-run,
+              snapshot-style). Hidden when there's less than one day of
+              data so empty suites don't show a flat zero chart. */}
+          {trendPoints.some(p => p.run_count > 0) && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">
+                  Run history — last {days} days
+                </h3>
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  {trendPoints.reduce((a, p) => a + p.run_count, 0)} runs ·
+                  {' '}{trendPoints.reduce((a, p) => a + p.total_tests, 0)} executions
+                </span>
+              </div>
+              {trendLoading ? (
+                <div className="flex items-center justify-center h-48"><LoadingSpinner size="sm" /></div>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={trendPoints} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="date" tick={AXIS_TICK} axisLine={false} tickLine={false} />
+                    <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="passed_count"  name="Passed"  stackId="status" fill="#10b981" />
+                    <Bar dataKey="failed_count"  name="Failed"  stackId="status" fill="#ef4444" />
+                    <Bar dataKey="skipped_count" name="Skipped" stackId="status" fill="#f59e0b" />
+                    <Bar dataKey="broken_count"  name="Broken"  stackId="status" fill="#fb923c" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          )}
+
           {/* Pass Rate Trend */}
           {chartData.length > 1 && (
             <div className="card">
@@ -243,6 +382,18 @@ export default function SuiteDetailPage() {
             <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">
               Test Cases ({testCases.length})
             </h3>
+            {testCases.length === 0 ? (
+              <div className="rounded border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
+                <p className="font-medium">
+                  {summary.total_executions ?? 0} test{(summary.total_executions ?? 0) === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
+                </p>
+                <p className="mt-1 text-xs text-amber-300/80">
+                  This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
+                  the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
+                  or the live buffer evicted before persistence. Re-run the suite to populate detail rows.
+                </p>
+              </div>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -304,6 +455,7 @@ export default function SuiteDetailPage() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
 
           {/* Recent Runs Table */}

@@ -1,18 +1,26 @@
-import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, Package, PencilLine, TrendingDown, X, Check } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, GitCompare, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
+import SuiteBadge from '@/components/ui/SuiteBadge'
+import SortableHeader from '@/components/ui/SortableHeader'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useRun, useTestCases } from '@/hooks/useRuns'
+import { useRun, useRuns, useTestCases } from '@/hooks/useRuns'
+import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
+import type { TestRun } from '@/types/runs'
+import { useTableSort } from '@/hooks/useTableSort'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import { runsService } from '@/services/runsService'
+import agentService from '@/services/agentService'
 import { mutate } from 'swr'
 import useSWR from 'swr'
 import { api } from '@/services/api'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
+import { usePermissions } from '@/hooks/usePermissions'
 
 interface TestCase {
   id: string
@@ -205,23 +213,140 @@ function ReleaseTag({ releaseName, onSet }: {
 export default function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
-  const [page, setPage] = useState(1)
-  const [statusFilter, setStatusFilter] = useState('')
-  const [suiteFilter, setSuiteFilter] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // P4-5: Persist filters in URL params so they survive navigation
+  const [page, setPage] = useState(() => Number(searchParams.get('page')) || 1)
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || '')
+  const [suiteFilter, setSuiteFilter] = useState(() => searchParams.get('suite') || '')
+
+  // P4-5: Sync state changes back to URL (replace to avoid history spam).
+  // NOTE: setSearchParams is intentionally excluded from deps — including it
+  // causes an infinite loop because react-router returns a new reference each render.
+  useEffect(() => {
+    const params: Record<string, string> = {}
+    if (statusFilter) params.status = statusFilter
+    if (suiteFilter) params.suite = suiteFilter
+    if (page > 1) params.page = String(page)
+    setSearchParams(params, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, suiteFilter, page])
 
   useProjectChangeRedirect('/runs', Boolean(runId))
 
   const { data: run } = useRun(runId)
+
+  // Fetch a small page of recent runs for THIS run's suite so the
+  // "Compare with previous run" CTA can pick the chronologically
+  // immediately preceding run. We fetch only when we know the suite
+  // (i.e. ``run.primary_suite_name`` is populated); the conditional
+  // ``suite_name`` param leaves the hook idle for runs without suite
+  // attribution. 50 results is plenty — the previous run is almost
+  // always one or two slots away from the current one.
+  const suiteForCompare = run?.primary_suite_name ?? null
+  const { data: suiteRunsData } = useRuns(
+    suiteForCompare
+      ? { page: 1, size: 50, days: 0, suite_name: suiteForCompare }
+      : undefined,
+  )
+  const suiteRuns = (suiteRunsData?.items ?? []) as TestRun[]
+
+  function handleCompareWithPrevious() {
+    if (!run) return
+    if (!run.primary_suite_name) {
+      toast('This run has no suite attribution — cannot pick a previous-of-same-suite.', { icon: '⚠️' })
+      return
+    }
+    const previous = findPreviousRunOfSuite(run, suiteRuns)
+    const href = buildCompareWithPreviousHref(run, previous)
+    if (!href) {
+      toast(
+        `No earlier run of "${run.primary_suite_name}" found — this may be the first ingested run for the suite.`,
+        { icon: '⚠️' },
+      )
+      return
+    }
+    navigate(href)
+  }
+
   const { data, isLoading, error } = useTestCases(runId, {
-    page, size: 50,
+    page, size: 25,
     ...(statusFilter && { status: statusFilter }),
     ...(suiteFilter && { suite: suiteFilter }),
   })
+  const tcItems = (data?.items ?? []) as TestCase[]
+  const { sorted: sortedCases, sortKey: tcSortKey, sortDir: tcSortDir, toggleSort: tcToggleSort } = useTableSort(tcItems, 'test_name', 'asc')
+
+  const { isQaEngineer } = usePermissions()
+  const [triggeringPipeline, setTriggeringPipeline] = useState(false)
+  const [triggeringDeep, setTriggeringDeep] = useState(false)
+  const [recoveringLive, setRecoveringLive] = useState(false)
+
+  async function handleRecoverLive() {
+    if (!runId || recoveringLive) return
+    setRecoveringLive(true)
+    try {
+      const resp = await api.post<{ queued: boolean; buffered_events: number }>(
+        `/api/v1/runs/${runId}/recover-live`,
+      )
+      toast.success(
+        `Replaying ${resp.data.buffered_events} buffered events. Refreshing shortly…`,
+        { icon: '↻', duration: 5000 },
+      )
+      // Persist task runs async on the ingestion worker. Give it a moment
+      // then revalidate the SWR test-cases cache so the table populates
+      // without a full page reload.
+      setTimeout(() => { mutate(['test-cases', runId, { page, size: 25 }]) }, 2500)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to queue recovery'
+      toast.error(detail)
+    } finally {
+      setRecoveringLive(false)
+    }
+  }
 
   async function handleSetRelease(name: string) {
     if (!runId) return
     await runsService.setRelease(runId, name)
     mutate(['run', runId])
+  }
+
+  async function handleTriggerPipeline() {
+    if (!runId) return
+    setTriggeringPipeline(true)
+    try {
+      await agentService.triggerPipeline(runId)
+      toast.success('Pipeline queued. Track progress on /agents.')
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to trigger pipeline'
+      toast.error(detail)
+    } finally {
+      setTriggeringPipeline(false)
+    }
+  }
+
+  async function handleTriggerDeep() {
+    if (!runId) return
+    setTriggeringDeep(true)
+    try {
+      await agentService.triggerDeepPipeline(runId)
+      toast.success('Deep investigation queued — opening live view…')
+      navigate(`/deep-investigate/${runId}`)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to trigger deep investigation'
+      toast.error(detail)
+    } finally {
+      setTriggeringDeep(false)
+    }
   }
 
   return (
@@ -240,6 +365,7 @@ export default function RunDetailPage() {
           subtitle={`${run.jenkins_job ?? 'Jenkins'} · ${formatDateTime(run.created_at)}`}
           actions={
             <div className="flex items-center gap-3 text-sm flex-wrap">
+              <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
               <ReleaseTag
                 releaseName={run.release_name}
                 onSet={handleSetRelease}
@@ -249,6 +375,44 @@ export default function RunDetailPage() {
               <span className="text-amber-400 font-medium">{run.skipped_tests} skipped</span>
               <span className="text-[var(--color-text-muted)]">/ {run.total_tests} total</span>
               <StatusBadge status={run.status} />
+              {isQaEngineer && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleTriggerPipeline}
+                    disabled={triggeringPipeline || triggeringDeep}
+                    title="Re-run the multi-agent analysis pipeline (ingestion → anomaly → root cause → summary → triage). Useful after changing AI mode or fixing an upstream issue."
+                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+                  >
+                    {triggeringPipeline ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                    {triggeringPipeline ? 'Queuing…' : 'Trigger pipeline'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTriggerDeep}
+                    disabled={triggeringPipeline || triggeringDeep}
+                    title="Run the deep investigation pipeline — adds failure clustering, flaky sentinel, test health, and release risk on top of the standard stages. Requires LLM or Auto mode."
+                    className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+                  >
+                    {triggeringDeep ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
+                    {triggeringDeep ? 'Queuing…' : 'Deep investigate'}
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={handleCompareWithPrevious}
+                disabled={!run.primary_suite_name}
+                title={
+                  run.primary_suite_name
+                    ? `Compare this run to the previous run of "${run.primary_suite_name}"`
+                    : 'No suite attribution on this run — cannot pick a previous-of-same-suite'
+                }
+                className="btn-secondary text-xs flex items-center gap-1.5 py-1 disabled:opacity-50"
+              >
+                <GitCompare className="h-3.5 w-3.5" />
+                Compare to previous
+              </button>
               <Link
                 to={`/runs/${runId}/intelligence`}
                 className="btn-primary text-xs flex items-center gap-1.5 py-1"
@@ -271,6 +435,7 @@ export default function RunDetailPage() {
             <button
               key={s || 'all'}
               onClick={() => { setStatusFilter(s); setPage(1) }}
+              aria-pressed={statusFilter === s}
               className={clsx(
                 'px-3 py-1 rounded-md text-sm font-medium transition-colors',
                 statusFilter === s ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
@@ -298,33 +463,113 @@ export default function RunDetailPage() {
             <span>Failed to load test cases — {(error as Error)?.message ?? 'server error'}</span>
           </div>
         ) : !data?.items?.length ? (
-          <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3">
-            {run?.trigger_source === 'live_stream' ? (
-              <>
-                <p>Live test results are being processed. This may take a few moments.</p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
-                >
-                  Refresh page
-                </button>
-              </>
-            ) : (
-              <p>No test cases found for this run.</p>
-            )}
+          <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3 px-6 text-center max-w-2xl mx-auto">
+            {(() => {
+              const isLive = run?.trigger_source === 'live_stream'
+              const totalReported = run?.total_tests ?? 0
+              const hasAggregates = totalReported > 0
+              const hasActiveFilter = Boolean(statusFilter || suiteFilter)
+
+              if (hasActiveFilter) {
+                return (
+                  <>
+                    <p>No test cases match the current filters{statusFilter && ` (status: ${statusFilter})`}{suiteFilter && ` (suite: ${suiteFilter})`}.</p>
+                    <button
+                      onClick={() => { setStatusFilter(''); setSuiteFilter(''); setPage(1) }}
+                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
+                    >
+                      Clear filters
+                    </button>
+                  </>
+                )
+              }
+
+              if (isLive && hasAggregates) {
+                // The run record carries aggregate counts from the live state
+                // hash (HINCRBY) but persist_live_session didn't materialise
+                // per-test rows — usually the persistence task crashed after
+                // setting its dedup key (so retries silently skipped) while
+                // the Redis event buffer (25h TTL) still has the data. The
+                // ``Recover from buffer`` button below triggers a fresh
+                // persist task that idempotency-checks based on actual
+                // TestCase row count rather than a stuck dedup flag.
+                // Migration 0086 also archives the events on the TestRun
+                // row at session-close time so the 15-day fallback path
+                // works even after the 25-hour Redis TTL has lapsed.
+                return (
+                  <>
+                    <p className="text-[var(--color-text)]">
+                      This live run reported <strong>{totalReported}</strong> test{totalReported === 1 ? '' : 's'}
+                      {' '}({run?.passed_tests ?? 0} passed, {run?.failed_tests ?? 0} failed
+                      {(run?.skipped_tests ?? 0) > 0 && `, ${run?.skipped_tests} skipped`}
+                      {(run?.broken_tests ?? 0) > 0 && `, ${run?.broken_tests} broken`}),
+                      but per-test details aren't loaded yet.
+                    </p>
+                    <p className="text-xs">
+                      Buffered events are held in Redis for 25 hours after a run
+                      closes, and a durable copy is archived on the run for{' '}
+                      <strong>up to 15 days</strong>. If persistence didn&apos;t
+                      finish on the first try (worker crash, transient error),
+                      use the button below to replay from whichever source is
+                      still available. After 15 days, re-run the suite or
+                      re-ingest the results as a file upload.
+                    </p>
+                    <div className="flex items-center gap-3 mt-1">
+                      <button
+                        type="button"
+                        disabled={recoveringLive || !runId}
+                        onClick={() => handleRecoverLive()}
+                        className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {recoveringLive
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <RotateCcw className="h-3.5 w-3.5" />}
+                        {recoveringLive ? 'Replaying…' : 'Recover from buffer'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs underline"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                  </>
+                )
+              }
+
+              if (isLive) {
+                return (
+                  <>
+                    <p>Live test results are still being processed. This usually takes a few seconds after the session closes.</p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] text-xs underline"
+                    >
+                      Refresh page
+                    </button>
+                  </>
+                )
+              }
+
+              return <p>No test cases found for this run.</p>
+            })()}
           </div>
         ) : (
           <>
             <table className="w-full">
               <thead className="border-b border-[var(--color-border)]">
                 <tr>
-                  {['Test Name', 'Suite', 'Status', 'Duration', 'Category', ''].map(h => (
-                    <th key={h} className="th">{h}</th>
-                  ))}
+                  <SortableHeader label="Test Name" sortKey="test_name" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Suite" sortKey="suite_name" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Status" sortKey="status" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Duration" sortKey="duration_ms" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <SortableHeader label="Category" sortKey="failure_category" currentKey={tcSortKey} dir={tcSortDir} onSort={tcToggleSort} />
+                  <th className="th" />
                 </tr>
               </thead>
               <tbody>
-                {((data?.items ?? []) as TestCase[]).map((tc) => (
+                {sortedCases.map((tc) => (
                   <tr
                     key={tc.id}
                     className="table-row"

@@ -8,8 +8,8 @@ Includes:
   - Token budget management (auto-truncation before LLM calls)
   - Redis-based analysis caching (identical failures skip LLM)
 """
-import json
 import importlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
@@ -17,14 +17,14 @@ from typing import Any, Optional, cast
 from app.core.config import settings
 from app.core.tracing import get_tracer
 from app.db.mongo import Collections, get_mongo_db
-from app.services.llm_factory import get_llm
-from app.services.pipeline_event_log import emit_event as _emit_event
 from app.services.input_sanitizer import (
     sanitize_error_message,
     sanitize_free_text,
     sanitize_service_name,
     sanitize_stack_trace,
 )
+from app.services.llm_factory import get_llm
+from app.services.pipeline_event_log import emit_event as _emit_event
 from app.services.resilience import (
     compute_analysis_cache_key,
     truncate_to_token_budget,
@@ -32,11 +32,6 @@ from app.services.resilience import (
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("services.agent")
-
-# Reserve tokens for system prompt + agent reasoning overhead
-_PROMPT_OVERHEAD_TOKENS = 1500
-# Cache TTL for AI analysis results (1 hour)
-_ANALYSIS_CACHE_TTL_S = 3600
 
 SYSTEM_PROMPT = """You are an expert Software Quality Assurance Architect and Site Reliability Engineer.
 Your objective is to analyse failed automated test cases, identify the root cause, and produce
@@ -114,6 +109,7 @@ async def run_triage_agent(
     ocp_namespace: Optional[str] = None,
     error_message: Optional[str] = None,
     stack_trace: Optional[str] = None,
+    pipeline_run_id: Optional[str] = None,
 ) -> dict:
     """
     Execute the LangChain ReAct triage agent for a failed test case.
@@ -142,7 +138,12 @@ async def run_triage_agent(
         logger.info("Cache hit for test '%s' — returning cached analysis", test_name)
         cached["cache_hit"] = True
         await _store_audit_trail(test_case_id, f"cache_hit:{test_name}", cached, [])
-        await _emit_event("", "cache_hit", test_case_id=test_case_id, detail={"type": "redis_exact", "test_name": test_name[:100]})
+        await _emit_event(
+            pipeline_run_id or "",
+            "cache_hit",
+            test_case_id=test_case_id,
+            detail={"type": "redis_exact", "test_name": test_name[:100]},
+        )
         return cached
 
     # ── Semantic cache: skip LLM for similar failures ────────────────────
@@ -151,11 +152,16 @@ async def run_triage_agent(
         sem_cached = await semantic_cache_lookup(test_name, error_message or "", stack_trace or "")
         if sem_cached is not None:
             await _store_audit_trail(test_case_id, f"semantic_cache_hit:{test_name}", sem_cached, [])
-            await _emit_event("", "cache_hit", test_case_id=test_case_id, detail={
-                "type": "semantic_chromadb",
-                "test_name": test_name[:100],
-                "similarity": sem_cached.get("semantic_similarity", 0),
-            })
+            await _emit_event(
+                pipeline_run_id or "",
+                "cache_hit",
+                test_case_id=test_case_id,
+                detail={
+                    "type": "semantic_chromadb",
+                    "test_name": test_name[:100],
+                    "similarity": sem_cached.get("semantic_similarity", 0),
+                },
+            )
             return sem_cached
     except Exception as sem_exc:
         logger.debug("Semantic cache skipped: %s", sem_exc)
@@ -179,7 +185,7 @@ async def run_triage_agent(
 
     # ── Token budget enforcement ─────────────────────────────────────────────
     # Truncate inputs that would blow the context window before the agent starts.
-    max_input_tokens = settings.LLM_MAX_TOKENS - _PROMPT_OVERHEAD_TOKENS
+    max_input_tokens = settings.LLM_MAX_TOKENS - settings.PROMPT_OVERHEAD_TOKENS
     if error_message:
         error_message = truncate_to_token_budget(error_message, max_input_tokens // 4)
     if stack_trace:
@@ -189,10 +195,10 @@ async def run_triage_agent(
     from langchain_core.prompts import PromptTemplate
 
     langchain_agents = importlib.import_module("langchain.agents")
-    create_react_agent = cast(Any, getattr(langchain_agents, "create_react_agent"))
-    AgentExecutor = cast(Any, getattr(langchain_agents, "AgentExecutor"))
+    create_react_agent = cast(Any, langchain_agents.create_react_agent)
+    AgentExecutor = cast(Any, langchain_agents.AgentExecutor)
 
-    llm = get_llm()
+    llm = await get_llm()
     tools = _get_tools()
 
     prompt = PromptTemplate.from_template(SYSTEM_PROMPT)
@@ -233,6 +239,17 @@ async def run_triage_agent(
 
             # Parse JSON from agent output
             analysis = _parse_agent_output(raw_output)
+            if analysis.get("schema_validated") is False:
+                await _emit_event(
+                    pipeline_run_id or "",
+                    "schema_validation_failed",
+                    test_case_id=test_case_id,
+                    detail={
+                        "agent": "react_triage",
+                        "schema": "RootCauseAnalysis",
+                        "error": str(analysis.get("schema_validation_error") or "")[:500],
+                    },
+                )
             analysis["llm_provider"] = settings.LLM_PROVIDER
             analysis["llm_model"] = settings.LLM_MODEL
             analysis["requires_human_review"] = analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD
@@ -242,14 +259,19 @@ async def run_triage_agent(
 
             # Record tool call details as OTEL span events and pipeline events
             _record_tool_spans(triage_span, intermediate_steps)
-            await _emit_event("", "llm_called", test_case_id=test_case_id, detail={
-                "provider": settings.LLM_PROVIDER,
-                "model": settings.LLM_MODEL,
-                "tools_used": tools_used,
-                "iterations": len(intermediate_steps),
-                "confidence": analysis.get("confidence_score", 0),
-                "category": analysis.get("failure_category", "UNKNOWN"),
-            })
+            await _emit_event(
+                pipeline_run_id or "",
+                "llm_called",
+                test_case_id=test_case_id,
+                detail={
+                    "provider": settings.LLM_PROVIDER,
+                    "model": settings.LLM_MODEL,
+                    "tools_used": tools_used,
+                    "iterations": len(intermediate_steps),
+                    "confidence": analysis.get("confidence_score", 0),
+                    "category": analysis.get("failure_category", "UNKNOWN"),
+                },
+            )
 
             triage_span.set_attribute("agent.tools_used", ",".join(tools_used))
             triage_span.set_attribute("agent.confidence_score", analysis.get("confidence_score", 0))
@@ -259,9 +281,46 @@ async def run_triage_agent(
         except Exception as e:
             logger.error("Agent execution failed: %s", e, exc_info=True)
             triage_span.set_attribute("agent.error", str(e)[:500])
-            # Detect token limit errors and provide actionable feedback
             error_str = str(e).lower()
-            if any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
+
+            # ── Model not installed → fall back to rules engine silently ──────
+            _model_not_found = (
+                "model" in error_str and "not found" in error_str
+            ) or (
+                "404" in error_str and ("model" in error_str or "pull" in error_str)
+            )
+            if _model_not_found:
+                logger.warning(
+                    "LLM model '%s' not available (%s) — falling back to rules engine",
+                    settings.LLM_MODEL, str(e)[:120],
+                )
+                # Open the circuit breaker so subsequent tasks skip the LLM
+                try:
+                    from app.streams.circuit_breaker import LLMCircuitBreaker
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()
+                    await LLMCircuitBreaker.record_failure()  # 5 failures → OPEN
+                except Exception:
+                    pass
+                try:
+                    from app.services.rules_engine import RulesEngine
+                    analysis = RulesEngine.classify_test(
+                        error_message=error_message,
+                        test_name=test_name,
+                        stack_trace=stack_trace,
+                    )
+                    analysis["llm_provider"] = settings.LLM_PROVIDER
+                    analysis["llm_model"] = settings.LLM_MODEL
+                    analysis["analysis_engine"] = "rules"
+                    analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
+                except Exception as rules_exc:
+                    logger.error("Rules engine fallback also failed: %s", rules_exc)
+                    analysis = _fallback_analysis(_model_missing_hint(settings.LLM_MODEL))
+
+            # ── Token limit ───────────────────────────────────────────────────
+            elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
                 logger.warning("Token limit exceeded — returning fallback with truncation hint")
                 analysis = _fallback_analysis(
                     f"Input exceeded LLM context window. Error: {str(e)[:200]}. "
@@ -327,24 +386,67 @@ def _record_tool_spans(parent_span: Any, intermediate_steps: list) -> None:
 
 def _parse_agent_output(raw: str) -> dict:
     """Extract and parse JSON from agent final answer."""
-    # Try to extract JSON block from output
-    raw = raw.strip()
-    if raw.startswith("{"):
-        try:
-            return cast(dict[Any, Any], json.loads(raw))
-        except json.JSONDecodeError:
-            pass
+    from app.models.llm_schemas import RootCauseAnalysis, validate_llm_output_with_error
+    from app.services.llm_json_parser import parse_llm_json
 
-    # Try to find JSON within the output
-    import re
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        try:
-            return cast(dict[Any, Any], json.loads(match.group()))
-        except json.JSONDecodeError:
-            pass
+    expected_keys = [
+        "root_cause_summary",
+        "failure_category",
+        "backend_error_found",
+        "pod_issue_found",
+        "is_flaky",
+        "confidence_score",
+        "recommended_actions",
+        "role_actions",
+        "evidence_references",
+    ]
+    parsed, error = parse_llm_json(
+        raw,
+        expected_keys=expected_keys,
+        context="react_triage_root_cause",
+    )
+    if error:
+        fallback = _fallback_analysis(
+            f"Could not parse structured output from agent ({error})"
+        )
+        fallback["schema_validation_error"] = error
+        fallback["schema_validated"] = False
+        return fallback
 
-    return _fallback_analysis("Could not parse structured output from agent")
+    validated, validation_error = validate_llm_output_with_error(
+        RootCauseAnalysis,
+        parsed,
+        context="react_triage_root_cause",
+    )
+    validated["schema_validated"] = validation_error is None
+    if validation_error:
+        validated["schema_validation_error"] = validation_error
+    return validated
+
+
+def _model_missing_hint(model: str) -> str:
+    """Build a runtime-aware "model not installed" hint.
+
+    The previous hardcoded ``docker compose exec ollama ollama pull ...``
+    message was wrong for K8s deployments — users on K3s / OpenShift saw
+    a Docker Compose command and (correctly) wondered why it didn't work.
+    Detect the runtime via the standard K8s service-account file and emit
+    the matching ``pull`` recipe. Falls back to a generic hint when the
+    runtime can't be detected.
+    """
+    import os
+    on_k8s = os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token")
+    if on_k8s:
+        namespace = os.environ.get("KUBERNETES_NAMESPACE", "testlookup")
+        pull_cmd = f"kubectl -n {namespace} exec deploy/testlookup-ollama -- ollama pull {model}"
+    else:
+        pull_cmd = f"docker compose exec ollama ollama pull {model}"
+    return (
+        f"Model '{model}' not installed on the Ollama instance. "
+        f"Ask your admin to pull it: {pull_cmd}. "
+        "If the Ollama pod has no internet egress (NordVPN / firewall blocking "
+        "registry.ollama.ai), the pull will fail until that's resolved."
+    )
 
 
 def _fallback_analysis(error_msg: str) -> dict:
@@ -418,6 +520,6 @@ async def _store_analysis_cache(
         cache_key = compute_analysis_cache_key(test_name, error_message, stack_trace)
         # Store a clean copy without transient fields
         cacheable = {k: v for k, v in analysis.items() if k not in ("cache_hit",)}
-        await redis.set(cache_key, json.dumps(cacheable, default=str), ex=_ANALYSIS_CACHE_TTL_S)
+        await redis.set(cache_key, json.dumps(cacheable, default=str), ex=settings.AI_ANALYSIS_CACHE_TTL)
     except Exception as exc:
         logger.debug("Analysis cache store failed (non-critical): %s", exc)

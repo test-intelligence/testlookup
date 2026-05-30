@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import require_role, require_run_access
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
@@ -42,7 +42,7 @@ class ReleaseDecisionResponse(BaseModel):
 @router.get("/{run_id}", response_model=ReleaseCouncilResponse)
 async def get_release_decision(
     run_id: uuid.UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_run_access()),
 ):
     """
     Retrieve the release readiness decision with full council context:
@@ -64,6 +64,7 @@ async def override_release_decision(
     run_id: uuid.UUID,
     body: ReleaseCouncilOverrideRequest,
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_run_access()),
 ):
     """
     Override the AI release decision (QA Lead only).
@@ -94,10 +95,13 @@ async def override_release_decision(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No release decision found for this run.",
             )
-        # BL-03: Mark intelligence snapshot stale after release override
+        # BL-03: Mark intelligence snapshot stale after release override.
+        # ``apply_override`` and ``mark_stale`` both stage-only now, so a
+        # single commit below makes the override + staleness flip atomic.
         try:
             from app.services.intelligence_snapshot_service import mark_stale
             await mark_stale(db, run_id)
         except Exception:
             pass  # Non-blocking
+        await db.commit()
         return council

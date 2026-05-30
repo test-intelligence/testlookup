@@ -44,7 +44,7 @@ class ContractAgent:
                         v["endpoint"] = endpoint
                         all_violations.append(v)
             except Exception as exc:
-                logger.debug("Contract validation failed for %s: %s", tc_id, exc)
+                logger.debug("contract_validation_failed", test_case_id=tc_id, error=str(exc))
 
         critical = [v for v in all_violations if v.get("severity") == "critical"]
         drift = [v for v in all_violations if v.get("violation_type") == "schema_drift"]

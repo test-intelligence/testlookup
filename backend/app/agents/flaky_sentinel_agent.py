@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import FlakySentinelAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase, TestCaseHistory, TestRun, TestStatus
 from app.tools.fetch_build_changes import fetch_build_changes
 
@@ -38,7 +39,13 @@ class FlakySentinelAgent(BaseAgent):
 
         if not flaky_test_ids:
             await self.mark_stage_done(pipeline_run_id, result_data={"flaky_investigated": 0})
-            return {"flaky_findings": []}
+            return validate_agent_contract(
+                FlakySentinelAgentOutput,
+                {"flaky_findings": []},
+                agent_name=self.stage_name,
+                confidence=100,
+                decision_reason="no_flaky_tests_detected",
+            )
 
         findings = []
         capped_ids = flaky_test_ids[:10]  # Cap at 10 to avoid excessive processing
@@ -64,7 +71,17 @@ class FlakySentinelAgent(BaseAgent):
             "message": f"Flaky sentinel investigated {len(findings)} tests",
         })
 
-        return {"flaky_findings": findings}
+        return validate_agent_contract(
+            FlakySentinelAgentOutput,
+            {"flaky_findings": findings},
+            agent_name=self.stage_name,
+            confidence=85 if findings else 70,
+            evidence_refs=[
+                {"type": "flaky_finding", "id": finding.get("test_case_id", "unknown")}
+                for finding in findings
+            ],
+            decision_reason="flaky_lifecycle_investigation_completed",
+        )
 
     async def _investigate_flaky_test(
         self, db, tc: TestCase, tc_id: str, project_id: str
@@ -140,6 +157,45 @@ class FlakySentinelAgent(BaseAgent):
         else:
             recommendation = "MONITOR -- low flakiness rate, worth tracking but not yet critical"
 
+        # Tier 1 item 3 — if the flip rate crosses the quarantine floor,
+        # propose the test for QA Lead approval via the quarantine service.
+        # Threshold matches the acceptance criterion (>= 20% flip rate over
+        # 10 runs). The service is idempotent: repeat runs just refresh the
+        # existing PROPOSED row. Feature-flag gated, never raises.
+        quarantine_request_id: str | None = None
+        if failure_rate >= 0.20 and len(statuses) >= 10:
+            try:
+                import uuid as _uuid
+                from app.services.flaky_quarantine_service import propose_quarantine
+                from app.models.postgres import TestStatus as _TS
+                passes = sum(1 for s in statuses if s == _TS.PASSED)
+                fails = sum(1 for s in statuses if s in (_TS.FAILED, _TS.BROKEN))
+                # TestCase has no project_id column — derive it from state.
+                # state["project_id"] is a str; coerce to UUID for the service contract.
+                proj_uuid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+                request = await propose_quarantine(
+                    project_id=proj_uuid,
+                    test_fingerprint=tc.test_fingerprint,
+                    test_name=tc.test_name,
+                    suite_name=tc.suite_name,
+                    detection_method="flaky_sentinel_agent",
+                    flip_rate=round(failure_rate, 3),
+                    flip_window_size=len(statuses),
+                    pass_count=passes,
+                    fail_count=fails,
+                    rationale={
+                        "method": "flaky_sentinel_pass_fail_ratio",
+                        "flaky_since_build": flaky_since_build,
+                        "last_stable_build": last_stable_build,
+                        "sample_history": [str(s) for s in statuses[-10:]],
+                        "change_summary": change_summary,
+                    },
+                )
+                if request is not None:
+                    quarantine_request_id = str(request.id)
+            except Exception as exc:  # pragma: no cover — best-effort
+                logger.debug("quarantine proposal failed", error=str(exc))
+
         return {
             "test_case_id": tc_id,
             "test_name": tc.test_name,
@@ -151,4 +207,5 @@ class FlakySentinelAgent(BaseAgent):
             "change_summary": change_summary,
             "recommendation": recommendation,
             "status_history": [str(s) for s in statuses[-10:]],
+            "quarantine_request_id": quarantine_request_id,
         }

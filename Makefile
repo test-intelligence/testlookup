@@ -1,7 +1,12 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset setup-minio mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset demo benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+
+# Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
+# breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
+# /usr/bin/bash; on Linux/macOS it's at /bin/bash — both resolve via PATH.
+SHELL := bash
 
 DOCKER_COMPOSE = docker compose
 BACKEND_CONTAINER = testlookup_backend
@@ -33,21 +38,34 @@ help: ## Show this help message
 	$(CP_CMD)
 	@echo "Created .env from .env.example — review values before production use."
 
-dev: .env ## Start all services in development mode (auto-seeds on first run)
+dev: .env ## Start core stack without local LLM (Ollama/ChromaDB excluded)
 	$(DOCKER_COMPOSE) up -d --build
 	@echo ""
-	@echo "Stack started."
+	@echo "Stack started (no local LLM — AI falls back to rules/ML engine)."
 	@echo "  Dashboard  -> http://localhost:3000"
 	@echo "  API Docs   -> http://localhost:8000/docs"
 	@echo "  MinIO      -> http://localhost:9001  (credentials from .env)"
 	@echo "  Flower     -> http://localhost:5555"
 	@echo ""
+	@echo "  To enable Ollama + ChromaDB: run 'make dev-llm' instead."
 	@echo "  Seed data runs automatically via the seed-init container."
 	@echo "  Use the Quick Login buttons at http://localhost:3000 (no password required in dev)."
 	@echo "  Run 'make dev-logs-seed' to watch seed progress."
 
-dev-setup: .env ## First-time full setup: start stack + pull LLM models
-	$(MAKE) dev
+dev-llm: .env ## Start full stack including local LLM (Ollama + ChromaDB)
+	$(DOCKER_COMPOSE) --profile local-llm up -d --build
+	@echo ""
+	@echo "Stack started with local LLM enabled."
+	@echo "  Dashboard  -> http://localhost:3000"
+	@echo "  API Docs   -> http://localhost:8000/docs"
+	@echo "  Ollama     -> http://localhost:11434"
+	@echo "  ChromaDB   -> http://localhost:8001"
+	@echo ""
+	@echo "  Run 'make pull-llm' to download models (required on first run)."
+	@echo "  Seed data runs automatically via the seed-init container."
+
+dev-setup: .env ## First-time full setup with local LLM: start stack + pull LLM models
+	$(MAKE) dev-llm
 	@echo "Pulling Ollama LLM models (this may take a while on first run)..."
 	$(MAKE) pull-llm
 	@echo ""
@@ -66,15 +84,21 @@ dev-logs: ## Tail logs for all services
 dev-logs-seed: ## Tail seed-init container output (useful on first run)
 	$(DOCKER_COMPOSE) logs -f seed-init
 
-stop: ## Stop all services
-	$(DOCKER_COMPOSE) down
+stop: ## Stop all services (including local-llm profile if running)
+	$(DOCKER_COMPOSE) --profile local-llm down
 
 restart: ## Restart all services
-	$(DOCKER_COMPOSE) restart
+	$(DOCKER_COMPOSE) --profile local-llm restart
 
 clean: ## Stop services and remove volumes (WARNING: deletes all data)
-	$(DOCKER_COMPOSE) down -v --remove-orphans
-	@echo "WARNING: All volumes removed."
+	@echo "This will PERMANENTLY delete all PostgreSQL/MongoDB/Redis/MinIO/Chroma data."
+	@echo "Set CONFIRM=yes to proceed (e.g. 'make clean CONFIRM=yes')."
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "Aborted — no changes made."; \
+		exit 1; \
+	fi
+	$(DOCKER_COMPOSE) --profile local-llm down -v --remove-orphans
+	@echo "All volumes removed."
 
 # ── Database ─────────────────────────────────────────────────
 
@@ -91,19 +115,25 @@ migrate-status: ## Show migration status
 	$(DOCKER_COMPOSE) exec backend alembic current
 
 # ── AI / LLM ─────────────────────────────────────────────────
+# These targets require Ollama to be running.
+# Start it first with: make dev-llm
 
-pull-llm: ## Pull recommended local LLM models via Ollama
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:7b
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull nomic-embed-text
+pull-llm: ## Pull recommended local LLM models (requires: make dev-llm)
+	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \
+	  (echo "ERROR: Ollama is not running. Start it first with: make dev-llm" && exit 1)
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:7b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull nomic-embed-text
 	@echo "Models downloaded."
 
-pull-llm-large: ## Pull larger/more capable models (requires 16GB+ VRAM)
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:14b
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull llama3.2:8b
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama pull deepseek-coder:6.7b
+pull-llm-large: ## Pull larger/more capable models — 16GB+ VRAM (requires: make dev-llm)
+	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \
+	  (echo "ERROR: Ollama is not running. Start it first with: make dev-llm" && exit 1)
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:14b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull llama3.2:8b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull deepseek-coder:6.7b
 
-list-llm: ## List downloaded LLM models
-	$(DOCKER_COMPOSE) exec $(OLLAMA_CONTAINER) ollama list
+list-llm: ## List downloaded LLM models (requires: make dev-llm)
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama list
 
 # ── Testing ───────────────────────────────────────────────────
 
@@ -136,6 +166,18 @@ type-check: ## Run type checking (mypy + tsc)
 	$(DOCKER_COMPOSE) exec backend mypy app/
 	$(DOCKER_COMPOSE) exec frontend npm run type-check
 
+quality-gate: ## Run cross-cutting invariant guards (backend / frontend / database / agents)
+	python scripts/quality_gate.py
+
+quality-gate-list: ## List every quality-gate guard with a one-line description
+	python scripts/quality_gate.py --list
+
+quality-gate-update-baseline: ## Re-snapshot the ratchet baseline (review the diff before commit)
+	python scripts/quality_gate.py --update-baseline
+
+quality-gate-test: ## Run the unit tests for the quality-gate script itself
+	cd scripts && python -m pytest test_quality_gate.py -v
+
 # ── Build ─────────────────────────────────────────────────────
 
 build: ## Build production Docker images
@@ -162,6 +204,42 @@ k8s-deploy-prod: ## Deploy to production Kubernetes cluster
 
 k8s-deploy-openshift: ## Deploy using OpenShift-compatible overlay
 	kubectl apply -k k8s/overlays/openshift
+
+ifeq ($(OS),Windows_NT)
+  BASH_CMD := "C:/Program Files/Git/bin/bash.exe"
+else
+  BASH_CMD := bash
+endif
+
+k8s-bootstrap-homelab: ## Bootstrap K3s on 3 homelab nodes via SSH (cluster only, no app)
+	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh $(ARGS)
+
+k8s-oneclick-homelab: ## One-click: bootstrap K3s + deploy TestLookup (HOMELAB_NODE{1,2,3}_PASS env or interactive)
+	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --deploy $(ARGS)
+
+k8s-teardown-homelab: ## Uninstall K3s from all 3 homelab nodes
+	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --teardown $(ARGS)
+
+k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS, e.g. make k8s-deploy-homelab ARGS="--skip-registry")
+	$(BASH_CMD) homelabsetup/deploy-homelab.sh $(ARGS)
+
+k8s-deploy-homelab-update: ## Rebuild images and redeploy to homelab (skip registry + models)
+	$(BASH_CMD) homelabsetup/deploy-homelab.sh --skip-registry --skip-models $(ARGS)
+
+k8s-deploy-openshift-artifactory: ## Air-gapped OpenShift deploy over HTTPS, all images from one Artifactory (config: openshiftsetup/artifactory.env; flags via ARGS)
+	$(BASH_CMD) openshiftsetup/deploy-openshift-artifactory.sh $(ARGS)
+
+k8s-deploy-openshift-artifactory-update: ## Rebuild app images + redeploy to OpenShift, reuse already-mirrored infra images
+	$(BASH_CMD) openshiftsetup/deploy-openshift-artifactory.sh --skip-mirror $(ARGS)
+
+k8s-mirror-images-openshift: ## Pre-seed the configured Artifactory with all third-party infra images (run on an internet-connected host)
+	$(BASH_CMD) openshiftsetup/mirror-images.sh $(ARGS)
+
+k8s-stop-homelab: ## Graceful pause: drain testlookup workloads + stop K3s on every node (PVCs preserved)
+	$(BASH_CMD) homelabsetup/stop-homelab.sh $(ARGS)
+
+k8s-restart-homelab: ## Resume from k8s-stop-homelab: start K3s + scale workloads back to their pre-shutdown replicas
+	$(BASH_CMD) homelabsetup/restart-homelab.sh $(ARGS)
 
 k8s-status: ## Show Kubernetes deployment status
 	kubectl get pods,svc,ing -n testlookup
@@ -206,6 +284,12 @@ shell-backend: ## Open a shell in the backend container
 shell-db: ## Open psql in the postgres container
 	$(DOCKER_COMPOSE) exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB)
 
+create-admin: ## Create initial admin user (Docker Compose)
+	$(DOCKER_COMPOSE) exec backend python /app/scripts/create_admin.py
+
+create-admin-k8s: ## Create initial admin user (Kubernetes)
+	kubectl -n testlookup exec -it deployment/testlookup-backend -- python /app/scripts/create_admin.py
+
 simulate-upload: ## Simulate a single Jenkins test run upload to MinIO
 	$(DOCKER_COMPOSE) exec backend python /app/scripts/simulate_upload.py
 
@@ -215,6 +299,50 @@ seed-data: ## Seed demo users, projects, test cases, plans, strategies and relea
 seed-data-reset: ## Wipe seed data and regenerate from scratch
 	$(DOCKER_COMPOSE) exec backend python /app/scripts/seed_dev_data.py --reset
 
+demo: .env ## One-shot demo: start core stack, wait for health, seed data loads automatically
+	@echo "==> Starting core stack (no LLM)..."
+	$(DOCKER_COMPOSE) up -d --build
+	@echo "==> Waiting for backend health check..."
+	@until curl -sf http://localhost:8000/health > /dev/null 2>&1; do sleep 2; done
+	@echo "==> Backend healthy. Seed data loads automatically on first start."
+	@echo "==> Uploading sample test results..."
+	@for f in samples/junit/*.xml; do \
+		$(DOCKER_COMPOSE) exec -T backend python -c "\
+import asyncio, sys, httpx; \
+asyncio.run((lambda: httpx.AsyncClient(base_url='http://localhost:8000', timeout=30).post('/api/v1/auth/dev-login?role=admin'))())" 2>/dev/null; \
+		echo "  Uploading $$f"; \
+		curl -sf -X POST http://localhost:8000/api/v1/ingest/file \
+			-H "Authorization: Bearer $$(curl -sf -X POST http://localhost:8000/api/v1/auth/dev-login?role=admin | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))')" \
+			-F "file=@$$f" \
+			-F "project_id=$$(curl -sf http://localhost:8000/api/v1/projects -H "Authorization: Bearer $$(curl -sf -X POST http://localhost:8000/api/v1/auth/dev-login?role=admin | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))')" | python3 -c 'import sys,json; ps=json.load(sys.stdin); print(ps[0]["id"] if ps else "")')" \
+			-F "build_number=demo-$$(date +%s)" \
+			-F "format=auto" > /dev/null 2>&1 || true; \
+	done
+	@echo ""
+	@echo "==> Demo ready!"
+	@echo "    Dashboard:  http://localhost:3000"
+	@echo "    API docs:   http://localhost:8000/docs"
+	@echo "    MCP SSE:    http://localhost:8002/sse"
+	@echo ""
+	@echo "    Default login: use the dev-login endpoint or register via the API."
+	@echo "    To stop: make stop"
+
+benchmark: ## Run classification + throughput benchmarks (stack must be running)
+	@echo "==> Running classification benchmark (rules mode, in-container)..."
+	$(DOCKER_COMPOSE) exec backend python /app/benchmarks/classification/evaluate.py \
+		--mode rules \
+		--output /app/benchmarks/results/classification_rules.json
+	@echo ""
+	@echo "==> Running throughput benchmark..."
+	$(DOCKER_COMPOSE) exec backend python /app/scripts/load_test_concurrent.py bench \
+		--base-url http://localhost:8000 \
+		--iterations 20 \
+		--concurrency 5 \
+		--check-budgets \
+		--output /app/benchmarks/results/throughput.json
+	@echo ""
+	@echo "==> Benchmarks complete. Results in benchmarks/results/"
+
 setup-minio: ## Manually configure MinIO bucket and webhook (runs inside Docker — no host deps)
 	docker run --rm \
 		--network testlookup_net \
@@ -223,6 +351,16 @@ setup-minio: ## Manually configure MinIO bucket and webhook (runs inside Docker 
 		-e BACKEND_URL=http://backend:8000 \
 		--entrypoint sh \
 		minio/mc /setup-minio.sh
+
+# ── Client SDKs ──────────────────────────────────────────────
+
+build-java-sdk: ## Build the Java SDK fat JAR (requires Maven + JDK 11+)
+	cd client/java && mvn clean package -DskipTests -q
+	@echo "Built: client/java/target/testlookup-reporter-1.0.0-all.jar"
+
+build-java-sdk-docker: ## Build the Java SDK fat JAR using Docker (no local Maven needed)
+	docker run --rm -v "$(CURDIR)/client/java:/app" -w /app maven:3.9-eclipse-temurin-11 mvn clean package -DskipTests -q
+	@echo "Built: client/java/target/testlookup-reporter-1.0.0-all.jar"
 
 # ── MCP Server ────────────────────────────────────────────────
 

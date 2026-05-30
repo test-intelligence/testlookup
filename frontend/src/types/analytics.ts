@@ -6,8 +6,17 @@ export interface DashboardMetricValue {
   trend_direction?: 'up' | 'down' | 'flat'
 }
 
+export type ReleaseReadinessBand = 'red' | 'orange' | 'yellow' | 'green'
+
 export interface DashboardSummary {
-  release_readiness?: 'GREEN' | 'AMBER' | 'RED'
+  // null when the backend has no test executions to grade in the selected
+  // window. UI renders a neutral "Pending" banner in that case.
+  release_readiness?: 'GREEN' | 'AMBER' | 'RED' | null
+  // 4-band classification from the active ReleaseGatePolicy. Falls back
+  // to undefined when no policy is configured — the legacy 3-state
+  // ``release_readiness`` is the source of truth in that case.
+  release_readiness_band?: ReleaseReadinessBand | null
+  release_readiness_downgrades?: string[]
   total_executions_7d?: DashboardMetricValue
   avg_pass_rate_7d?: DashboardMetricValue
   active_defects?: DashboardMetricValue
@@ -33,6 +42,14 @@ export interface FailureCategoryItem {
 export interface TopFailingItem {
   test_name: string
   fail_count: number
+  /** Suite the failing test belongs to (NULL for tests with no suite tag). */
+  suite_name?: string | null
+  /** Class / module qualifier from the test runner output. */
+  class_name?: string | null
+  /** AI-resolved failure category (PRODUCT_BUG / INFRASTRUCTURE / FLAKY / …). */
+  failure_category?: string | null
+  /** ISO timestamp of the most recent failure in the window. */
+  last_failed?: string | null
 }
 
 export interface CoverageSummary {
@@ -72,6 +89,44 @@ export interface DefectItem {
 }
 
 export type DefectResponse = PaginatedResponse<DefectItem>
+
+export type DefectIntakeSeverity = 'P0' | 'P1' | 'P2' | 'P3'
+
+export type DefectIntakeCategory =
+  | 'PRODUCT_BUG'
+  | 'INFRASTRUCTURE'
+  | 'TEST_DATA'
+  | 'AUTOMATION_DEFECT'
+  | 'FLAKY'
+  | 'UNKNOWN'
+
+export interface DefectIntakePayload {
+  project_id: string
+  title: string
+  description?: string
+  severity: DefectIntakeSeverity
+  failure_category: DefectIntakeCategory
+  component?: string
+  test_name?: string
+  suite_name?: string
+  jira_ticket_url?: string
+}
+
+export interface DefectIntakeResponse {
+  id: string
+  project_id: string
+  title: string
+  severity: DefectIntakeSeverity
+  failure_category?: string
+  component?: string
+  test_name?: string
+  suite_name?: string
+  jira_ticket_id?: string
+  jira_ticket_url?: string
+  resolution_status: string
+  ai_confidence_score?: number
+  created_at: string
+}
 
 export interface SuiteDetailSummary {
   unique_tests: number

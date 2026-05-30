@@ -1,42 +1,47 @@
 import type {
   CoverageResponse,
+  DefectIntakePayload,
+  DefectIntakeResponse,
   DefectResponse,
   FailureCategoryItem,
   FlakyTestItem,
   SuiteDetailResponse,
   TopFailingItem,
 } from '@/types/analytics'
-import { getData } from './http'
+import { getData, postData } from './http'
 
 function projectParam(projectId: string | null): Record<string, string> {
   return projectId ? { project_id: projectId } : {}
 }
 
 export const analyticsService = {
-  getFlakyTests: (projectId: string | null, days = 30) =>
+  getFlakyTests: (projectId: string | null, days = 30, suiteName?: string | null) =>
     getData<{ items: FlakyTestItem[] }>('/api/v1/analytics/flaky-tests', {
-      params: { ...projectParam(projectId), days },
+      params: { ...projectParam(projectId), days, ...(suiteName ? { suite_name: suiteName } : {}) },
     }),
 
-  getFailureCategories: (projectId: string | null, days = 30) =>
+  getFailureCategories: (projectId: string | null, days = 30, suiteName?: string | null) =>
     getData<{ items: FailureCategoryItem[] }>('/api/v1/analytics/failure-categories', {
-      params: { ...projectParam(projectId), days },
+      params: { ...projectParam(projectId), days, ...(suiteName ? { suite_name: suiteName } : {}) },
     }),
 
-  getTopFailing: (projectId: string | null, days = 30) =>
+  getTopFailing: (projectId: string | null, days = 30, suiteName?: string | null) =>
     getData<{ items: TopFailingItem[] }>('/api/v1/analytics/top-failing', {
-      params: { ...projectParam(projectId), days },
+      params: { ...projectParam(projectId), days, ...(suiteName ? { suite_name: suiteName } : {}) },
     }),
 
-  getCoverage: (projectId: string | null, days = 30) =>
+  getCoverage: (projectId: string | null, days = 30, suiteName?: string | null) =>
     getData<CoverageResponse>('/api/v1/analytics/coverage', {
-      params: { ...projectParam(projectId), days },
+      params: { ...projectParam(projectId), days, ...(suiteName ? { suite_name: suiteName } : {}) },
     }),
 
   getDefects: (projectId: string | null, params?: Record<string, unknown>) =>
     getData<DefectResponse>('/api/v1/analytics/defects', {
       params: { ...projectParam(projectId), ...params },
     }),
+
+  createDefect: (payload: DefectIntakePayload) =>
+    postData<DefectIntakeResponse, DefectIntakePayload>('/api/v1/analytics/defects', payload),
 
   getAiSummary: (projectId: string | null, days = 30) =>
     getData('/api/v1/analytics/ai-summary', {

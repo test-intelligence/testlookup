@@ -15,7 +15,10 @@ CMD ["npm", "run", "dev"]
 
 # Build stage — Vite handles TypeScript compilation internally via esbuild
 FROM base AS builder
-ARG VITE_API_BASE_URL=http://localhost:8000
+# Default to empty so the bundle uses same-origin relative URLs (works behind
+# any ingress, e.g. testlookup.local in k8s). Deployments that need an absolute
+# URL (gcp-vm, cloudrun) override this via --build-arg.
+ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 COPY . .
 RUN npm run build
@@ -23,6 +26,11 @@ RUN npm run build
 # Production stage
 FROM nginx:alpine AS production
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# nginx:alpine runs envsubst on /etc/nginx/templates/*.template at container
+# start, writing the result to /etc/nginx/conf.d/. This lets the same image
+# work in any deploy target by setting BACKEND_UPSTREAM (default backend:8000
+# for docker-compose; set to testlookup-backend:8000 in Kubernetes).
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV BACKEND_UPSTREAM=backend:8000
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

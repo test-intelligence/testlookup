@@ -1,0 +1,62 @@
+# Homelab NetworkPolicy additions:
+#   1. The colocated data stores (postgres/mongo/redis/minio/chroma) need
+#      ingress allows — the base default-deny-all otherwise blocks them.
+#   2. Traefik on K3s lives in kube-system, not ingress-nginx, so the base
+#      allow-frontend/allow-backend/allow-mcp policies are extended below.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-data-stores
+  namespace: testlookup
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - testlookup-postgres
+          - testlookup-mongo
+          - testlookup-redis
+          - testlookup-minio
+          - testlookup-chromadb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: worker
+        - podSelector:
+            matchLabels:
+              app: testlookup-mcp
+        - podSelector:
+            matchLabels:
+              app: testlookup-beat
+
+---
+# Allow Traefik (kube-system) to reach frontend, backend, and MCP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-ingress
+  namespace: testlookup
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - testlookup-frontend
+          - testlookup-backend
+          - testlookup-mcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system

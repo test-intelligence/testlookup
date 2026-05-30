@@ -12,8 +12,10 @@ Context engineering improvements over v1:
   8. Source priority matches intent — relevant sources float to top of the list
 """
 import asyncio
+import hashlib
 import structlog
 import re
+import time
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
@@ -34,7 +36,7 @@ from app.models.postgres import (
     TestRun,
 )
 from app.services.llm_factory import get_llm
-from app.services.prompt_redaction import redact_text
+from app.services.redaction_service import redact_text
 
 logger = structlog.get_logger("agents.conversation")
 
@@ -42,6 +44,12 @@ logger = structlog.get_logger("agents.conversation")
 _MAX_MESSAGE_LENGTH = 50_000
 # Debounce: skip compression if it ran within this many seconds
 _COMPRESS_DEBOUNCE_SECONDS = 300
+# P2-8: In-memory TTL cache for _fetch_run_context() — avoids re-fetching
+# the same run history multiple times within a chat session.
+_RUN_CONTEXT_CACHE: dict[str, tuple[float, str, list[dict]]] = {}
+_RUN_CONTEXT_TTL_SECONDS = 60
+# P2-8: Hash of last compressed message list per session — skip if unchanged
+_LAST_COMPRESSION_HASH: dict[str, str] = {}
 
 # ── Intent classification ─────────────────────────────────────────────────────
 
@@ -167,7 +175,11 @@ class ConversationAgent:
 
         # 1. Classify intent (fast — no LLM call)
         intent = classify_intent(user_message)
-        logger.debug("Session %s intent=%s query=%r", session_id, intent.value, user_message[:80])
+        # structlog kwargs (BoundLogger doesn't accept positional %s args).
+        logger.debug(
+            "chat_intent_classified",
+            session_id=session_id, intent=intent.value, query=user_message[:80],
+        )
 
         # 2. Load history BEFORE saving user message — prevents duplicate in LLM context
         history, summary_ctx = await self._load_history(session_id)
@@ -203,7 +215,7 @@ class ConversationAgent:
 
         # 7. Invoke LLM with timeout
         try:
-            llm = get_llm()
+            llm = await get_llm()
             response = await asyncio.wait_for(
                 llm.ainvoke(messages),
                 timeout=settings.AI_TIMEOUT_SECONDS,
@@ -317,7 +329,7 @@ class ConversationAgent:
                 parts.append(f"### Latest Run Summary\n{summary_str}")
 
         # Semantic search supplements any intent (optional, non-blocking)
-        semantic_ctx = await self._semantic_search(query)
+        semantic_ctx = await self._semantic_search(query, project_id)
         if semantic_ctx:
             parts.append(f"### Semantically Similar Historical Failures\n{semantic_ctx}")
 
@@ -331,7 +343,20 @@ class ConversationAgent:
     async def _fetch_run_context(
         self, project_id: Optional[str], limit: int = 5
     ) -> tuple[str, list[dict]]:
-        """Fetch test run history in a table-friendly format."""
+        """Fetch test run history in a table-friendly format.
+
+        P2-8: Results are cached in-memory with a 60-second TTL to avoid
+        redundant DB queries within the same chat session.
+        """
+        # Check in-memory TTL cache
+        cache_key = f"{project_id or 'all'}:{limit}"
+        cached = _RUN_CONTEXT_CACHE.get(cache_key)
+        if cached:
+            ts, cached_text, cached_sources = cached
+            if time.monotonic() - ts < _RUN_CONTEXT_TTL_SECONDS:
+                return cached_text, cached_sources
+            del _RUN_CONTEXT_CACHE[cache_key]
+
         try:
             async with AsyncSessionLocal() as db:
                 q = (
@@ -362,9 +387,11 @@ class ConversationAgent:
                     )
                     src.append({"type": "test_run", "id": str(r.id), "build": r.build_number})
 
-                return header + "\n" + "\n".join(lines), src
+                result_text = header + "\n" + "\n".join(lines)
+                _RUN_CONTEXT_CACHE[cache_key] = (time.monotonic(), result_text, src)
+                return result_text, src
         except Exception as exc:
-            logger.debug("Run context fetch error: %s", exc)
+            logger.debug("run_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_analysis_context(
@@ -416,7 +443,7 @@ class ConversationAgent:
 
                 return "\n".join(lines), src
         except Exception as exc:
-            logger.debug("Analysis context fetch error: %s", exc)
+            logger.debug("analysis_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_flaky_context(
@@ -449,7 +476,7 @@ class ConversationAgent:
                 src = [{"type": "flaky_test", "test_name": r.test_name} for r in rows]
                 return "\n".join(lines), src
         except Exception as exc:
-            logger.debug("Flaky context fetch error: %s", exc)
+            logger.debug("flaky_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_perf_context(
@@ -458,6 +485,10 @@ class ConversationAgent:
         """Fetch tests with duration spikes compared to their 30-day average."""
         try:
             async with AsyncSessionLocal() as db:
+                from sqlalchemy.orm import aliased
+
+                current_run = aliased(TestRun)
+                history_run = aliased(TestRun)
                 q = (
                     select(
                         TestCase.test_name,
@@ -466,6 +497,8 @@ class ConversationAgent:
                         func.avg(TestCaseHistory.duration_ms).label("avg_duration_ms"),
                     )
                     .join(TestCaseHistory, TestCaseHistory.test_fingerprint == TestCase.test_fingerprint)
+                    .join(current_run, current_run.id == TestCase.test_run_id)
+                    .join(history_run, history_run.id == TestCaseHistory.test_run_id)
                     .where(TestCase.duration_ms.isnot(None))
                     .group_by(
                         TestCase.id, TestCase.test_name,
@@ -478,8 +511,9 @@ class ConversationAgent:
                     .limit(10)
                 )
                 if project_id:
-                    q = q.join(TestRun, TestRun.id == TestCase.test_run_id).where(
-                        TestRun.project_id == project_id
+                    q = q.where(
+                        current_run.project_id == project_id,
+                        history_run.project_id == project_id,
                     )
 
                 rows = (await db.execute(q)).all()
@@ -496,7 +530,7 @@ class ConversationAgent:
                         )
                 return "\n".join(lines) if lines else "No anomalies above 1.5× threshold.", []
         except Exception as exc:
-            logger.debug("Perf context fetch error: %s", exc)
+            logger.debug("perf_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_triage_context(
@@ -536,7 +570,7 @@ class ConversationAgent:
                     src.append({"type": "defect", "id": str(r.id)})
                 return "\n".join(lines), src
         except Exception as exc:
-            logger.debug("Triage context fetch error: %s", exc)
+            logger.debug("triage_context_fetch_error", error=str(exc))
             return "", []
 
     async def _fetch_run_summaries(self, project_id: Optional[str]) -> str:
@@ -552,10 +586,10 @@ class ConversationAgent:
             if doc:
                 return str(doc.get("executive_summary", ""))
         except Exception as exc:
-            logger.debug("Run summary fetch error: %s", exc)
+            logger.debug("run_summary_fetch_error", error=str(exc))
         return ""
 
-    async def _semantic_search(self, query: str) -> str:
+    async def _semantic_search(self, query: str, project_id: Optional[str]) -> str:
         """ChromaDB semantic similarity search — wrapped in asyncio.to_thread to avoid blocking."""
         def _sync_search() -> str:
             try:
@@ -568,7 +602,10 @@ class ConversationAgent:
                     return ""
                 embedder = get_embedding_model()
                 vector = embedder.embed_query(query)
-                results = collection.query(query_embeddings=[vector], n_results=3)
+                query_kwargs = {"query_embeddings": [vector], "n_results": 3}
+                if project_id:
+                    query_kwargs["where"] = {"project_id": project_id}
+                results = collection.query(**query_kwargs)
                 docs = (results.get("documents") or [[]])[0]
                 return "\n".join(f"- {d[:300]}" for d in docs) if docs else ""
             except Exception:
@@ -686,6 +723,12 @@ class ConversationAgent:
                 f"{m.role.upper()}: {m.content[:600]}" for m in older
             )
 
+            # P2-8: Skip compression if message list is identical to last compression
+            content_hash = hashlib.sha256(transcript.encode()).hexdigest()[:16]
+            if _LAST_COMPRESSION_HASH.get(session_id) == content_hash:
+                return
+            _LAST_COMPRESSION_HASH[session_id] = content_hash
+
             compression_prompt = (
                 "Summarise the following QA analysis chat conversation in 4-6 bullet points. "
                 "Preserve: specific test names, build numbers, pass rates, failure categories, "
@@ -696,7 +739,7 @@ class ConversationAgent:
             # Generate summary with timeout (outside DB session to avoid holding connection)
             _COMPRESS_TIMEOUT = min(60, settings.AI_TIMEOUT_SECONDS)
             try:
-                llm = get_llm()
+                llm = await get_llm()
                 response = await asyncio.wait_for(
                     llm.ainvoke([HumanMessage(content=compression_prompt)]),
                     timeout=_COMPRESS_TIMEOUT,

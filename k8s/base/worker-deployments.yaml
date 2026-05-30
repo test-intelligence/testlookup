@@ -36,10 +36,30 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 60   # allow in-flight tasks to finish
+      # Block worker startup until the Celery broker (Redis) is reachable.
+      # Without this, the worker container can start before Redis is ready,
+      # the initial broker connect fails, and although Celery retries the
+      # connection, the consumer loop is not always re-established cleanly —
+      # leaving a "1/1 Running" pod that is silently NOT consuming from its
+      # queue. See: persist_live_session was never running on the homelab
+      # despite live sessions completing, because worker-ingestion came up
+      # before testlookup-redis.
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -91,8 +111,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -127,10 +153,22 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 120   # parsing can take time
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -139,7 +177,21 @@ spec:
             - --loglevel=info
             - --concurrency=4
             - -Q
-            - ingestion
+            # Subscribe to BOTH the legacy ``ingestion`` queue AND every
+            # ``ingestion.shard.<i>`` queue. ``persist_live_session`` is
+            # routed to ``ingestion.shard.<hash(project_id) mod N>`` by
+            # the Phase 2 fairness work (services/stream_service.py +
+            # worker/ingestion_routing.py). Without the shard queues in
+            # this -Q list, tasks pile up unconsumed and per-test rows
+            # never get written — the symptom is /suites empty +
+            # /failures showing "per-test rows haven't been persisted
+            # yet" while /runs displays the aggregate counts cleanly.
+            # Incident 2026-05-18.
+            #
+            # Keep this in lockstep with LIVE_INGEST_SHARD_COUNT
+            # (default 8 — see core/config.py). If you change the
+            # shard count, update this list too.
+            - ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7
             - --max-tasks-per-child=200
           envFrom:
             - configMapRef:
@@ -182,8 +234,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -218,10 +276,22 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 1860  # match Celery hard time limit (31 min)
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -273,8 +343,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -309,10 +385,22 @@ spec:
     spec:
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -364,8 +452,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
 ---
 # ── beat: Celery beat scheduler (always exactly 1 replica — never scaled) ─────
 apiVersion: apps/v1
@@ -390,10 +484,22 @@ spec:
         app.kubernetes.io/component: scheduler
     spec:
       serviceAccountName: testlookup-sa
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z testlookup-redis 6379; do
+                echo "wait-for-redis: testlookup-redis:6379 not reachable yet, retrying in 2s"
+                sleep 2
+              done
+              echo "wait-for-redis: Redis is reachable, starting beat"
       containers:
         - name: beat
-          image: testlookup/backend:latest
-          imagePullPolicy: Always
+          image: testlookup/backend:0.0.1
+          imagePullPolicy: IfNotPresent
           command:
             - celery
             - -A
@@ -421,13 +527,20 @@ spec:
               command:
                 - sh
                 - -c
-                - "pgrep -f 'celery.*beat' > /dev/null"
-            initialDelaySeconds: 15
+                # python:slim doesn't ship procps/pgrep, so grep /proc cmdlines instead.
+                - "grep -la 'celery' /proc/[0-9]*/cmdline 2>/dev/null | head -1 | grep -q ."
+            initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault

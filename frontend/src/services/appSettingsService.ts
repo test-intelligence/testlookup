@@ -30,6 +30,8 @@ export interface SmtpTestResult {
 
 // ── AI Configuration ─────────────────────────────────────────
 
+export type AnalysisMode = 'llm' | 'ml' | 'rules' | 'auto'
+
 export interface AIConfigRead {
   llm_provider: string
   llm_model: string
@@ -44,6 +46,13 @@ export interface AIConfigRead {
   finetune_enabled: boolean
   openai_key_set: boolean
   google_key_set: boolean
+  // Analysis mode — LLM-free operation
+  analysis_mode: AnalysisMode
+  ml_model_available: boolean
+  ml_model_accuracy: number | null
+  ml_training_sample_count: number
+  // Knowledge RAG
+  knowledge_rag_enabled: boolean
 }
 
 export interface AIConfigUpdate {
@@ -60,6 +69,8 @@ export interface AIConfigUpdate {
   finetune_enabled?: boolean
   openai_api_key?: string
   google_api_key?: string
+  analysis_mode?: AnalysisMode
+  knowledge_rag_enabled?: boolean
 }
 
 // ── Integrations Configuration ──────────────────────────────

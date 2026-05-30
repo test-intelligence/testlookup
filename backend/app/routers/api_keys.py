@@ -5,14 +5,15 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_role
+from app.core.deps import require_api_key_owner, require_role
 from app.db.postgres import get_db
-from app.models.postgres import ApiKey, User, UserRole
+from app.models.postgres import ApiKey, Project, User, UserRole
 from app.models.schemas import ApiKeyCreate, ApiKeyCreatedResponse, ApiKeyResponse
 
 router = APIRouter(prefix="/api/v1/keys", tags=["API Keys"])
@@ -36,6 +37,7 @@ def _build_api_key_response(api_key: ApiKey) -> ApiKeyResponse:
         name=api_key.name,
         key_hint=api_key.key_hint,
         scopes=_normalize_scopes(api_key.scopes),
+        project_id=api_key.project_id,
         is_active=api_key.is_active,
         expires_at=api_key.expires_at,
         last_used_at=api_key.last_used_at,
@@ -49,7 +51,39 @@ async def create_api_key(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
-    """Generate a new scoped API key. The raw key is only shown once."""
+    """Generate a new scoped API key. The raw key is only shown once.
+
+    ADMIN can supply ``project_id`` to restrict the key to a single project
+    and ``target_user_id`` to create a key on behalf of another user.
+    """
+    # ── target user resolution ────────────────────────────────────────────
+    owner_id = current_user.id
+    if payload.target_user_id is not None:
+        if current_user.role != UserRole.ADMIN.value and current_user.role != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only ADMIN can create keys for other users",
+            )
+        target_result = await db.execute(select(User).where(User.id == payload.target_user_id))
+        target_user = target_result.scalar_one_or_none()
+        if not target_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target user not found")
+        owner_id = payload.target_user_id
+
+    # ── project validation ────────────────────────────────────────────────
+    if payload.project_id is not None:
+        if current_user.role != UserRole.ADMIN.value and current_user.role != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only ADMIN can create project-scoped API keys",
+            )
+        project_result = await db.execute(
+            select(Project.id).where(Project.id == payload.project_id)
+        )
+        if not project_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    # ── key generation ────────────────────────────────────────────────────
     raw_key = f"qai_{secrets.token_urlsafe(32)}"
     key_hash = _hash_key(raw_key)
     key_hint = raw_key[:8] + "..."
@@ -59,11 +93,12 @@ async def create_api_key(
         expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
 
     api_key = ApiKey(
-        user_id=current_user.id,
+        user_id=owner_id,
         name=payload.name,
         key_hash=key_hash,
         key_hint=key_hint,
         scopes=payload.scopes,
+        project_id=payload.project_id,
         expires_at=expires_at,
     )
     db.add(api_key)
@@ -78,15 +113,23 @@ async def create_api_key(
 
 @router.get("", response_model=list[ApiKeyResponse])
 async def list_api_keys(
+    project_id: Optional[uuid.UUID] = Query(None, description="Filter by project (ADMIN only)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
-    """List all active API keys for the current user."""
-    result = await db.execute(
-        select(ApiKey)
-        .where(ApiKey.user_id == current_user.id, ApiKey.is_active == True)  # noqa: E712
-        .order_by(ApiKey.created_at.desc())
-    )
+    """List active API keys. Non-admin users see only their own keys.
+    ADMIN can filter by project_id to see all keys bound to a project.
+    """
+    stmt = select(ApiKey).where(ApiKey.is_active == True)  # noqa: E712
+
+    is_admin = current_user.role == UserRole.ADMIN.value or current_user.role == UserRole.ADMIN
+    if is_admin and project_id is not None:
+        stmt = stmt.where(ApiKey.project_id == project_id)
+    else:
+        stmt = stmt.where(ApiKey.user_id == current_user.id)
+
+    stmt = stmt.order_by(ApiKey.created_at.desc())
+    result = await db.execute(stmt)
     return [_build_api_key_response(api_key) for api_key in result.scalars().all()]
 
 
@@ -95,6 +138,7 @@ async def revoke_api_key(
     key_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_api_key_owner()),
 ):
     """Revoke (soft-delete) an API key. Only the owner can revoke their own keys."""
     result = await db.execute(

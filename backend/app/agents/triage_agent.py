@@ -11,13 +11,18 @@ duplicate defect creation from parallel pipeline executions.
 """
 import structlog
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import DefectTriageAgentOutput, validate_agent_contract
 from app.models.postgres import Defect, TestCase
+from app.services.action_policy import (
+    ActionStatus,
+    check_jira_ticket_creation_policy,
+)
 from app.services.jira_client import create_jira_issue
 
 logger = structlog.get_logger("agents.triage")
@@ -90,12 +95,30 @@ class DefectTriageAgent(BaseAgent):
             },
         )
 
-        return {
-            "triage_results": triage_results,
-            "completed_stages": ["triage"],
-            "errors": errors,
-            "current_stage": "done",
-        }
+        return validate_agent_contract(
+            DefectTriageAgentOutput,
+            {
+                "triage_results": triage_results,
+                "completed_stages": ["triage"],
+                "errors": errors,
+                "current_stage": "done",
+            },
+            agent_name=self.stage_name,
+            fallback_used=bool(errors),
+            confidence=0 if errors else 100,
+            evidence_refs=[
+                {
+                    "type": "triage_result",
+                    "id": result.get("test_case_id", "unknown"),
+                    "action": result.get("action", "unknown"),
+                }
+                for result in triage_results
+            ],
+            decision_reason=(
+                "triage_completed_with_errors"
+                if errors else "triage_completed"
+            ),
+        )
 
     async def _triage_one(
         self,
@@ -130,26 +153,67 @@ class DefectTriageAgent(BaseAgent):
                 resolution_status="OPEN",
             ).on_conflict_do_nothing(
                 index_elements=["test_case_id"],
-                where=Defect.resolution_status == "OPEN",
+                index_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
             ).returning(Defect.id)
             result = await db.execute(stmt)
             new_row = result.first()
             await db.commit()
 
-            # If insert was a no-op, an open defect already exists — skip Jira
-            if new_row is None:
-                return {
-                    "test_case_id": tc_id,
-                    "action": "existing",
-                    "reason": "Open defect already tracked",
-                }
-            defect_id = new_row[0]
+            action = "created"
 
-        # Step 2: Create Jira ticket AFTER successful DB insert
-        # This ensures no orphan Jira tickets if DB race is lost
+            # If insert was a no-op, an open defect already exists. Retry Jira
+            # creation only when the existing defect still has no ticket.
+            if new_row is None:
+                existing_result = await db.execute(
+                    select(Defect.id, Defect.jira_ticket_id, Defect.jira_ticket_url).where(
+                        Defect.test_case_id == tc_id,
+                        Defect.resolution_status == "OPEN",
+                    )
+                )
+                existing = existing_result.first()
+                if not existing:
+                    return {
+                        "test_case_id": tc_id,
+                        "action": "existing",
+                        "reason": "Open defect already tracked",
+                    }
+                defect_id = existing.id
+                if existing.jira_ticket_id:
+                    return {
+                        "test_case_id": tc_id,
+                        "action": "existing",
+                        "ticket_key": existing.jira_ticket_id,
+                        "ticket_url": existing.jira_ticket_url,
+                        "reason": "Open defect already tracked",
+                    }
+                action = "jira_retry"
+            else:
+                defect_id = new_row[0]
+
+        # Step 2: Create Jira ticket AFTER successful DB insert, or retry it
+        # for an existing open defect that was left ticketless by a prior
+        # transient Jira failure.
         ticket_key = ticket_url = ticket_id = None
+        jira_error = None
         idempotency_key = f"{_JIRA_IDEMPOTENCY_PREFIX}:{tc_id}:{state['test_run_id']}"
         if settings.JIRA_ENABLED:
+            policy_result = await check_jira_ticket_creation_policy(
+                project_id=project_id,
+                confidence_score=analysis.get("confidence_score"),
+                failure_category=analysis.get("failure_category", "UNKNOWN"),
+                source="defect_triage_agent",
+            )
+            if policy_result["initial_status"] == ActionStatus.PENDING_REVIEW:
+                await self._mark_defect_pending_review(defect_id, policy_result)
+                return {
+                    "test_case_id": tc_id,
+                    "action": "pending_review",
+                    "mutating_action": "jira_ticket_creation",
+                    "approval_status": ActionStatus.PENDING_REVIEW.value,
+                    "requires_approval": True,
+                    "policy_reasons": policy_result["policy_reasons"],
+                    "reason": "Jira ticket creation requires approval before execution",
+                }
             try:
                 jira_project_key = await self._get_jira_key(project_id)
                 ticket = await create_jira_issue(
@@ -159,17 +223,18 @@ class DefectTriageAgent(BaseAgent):
                     ai_summary=analysis.get("root_cause_summary", ""),
                     recommended_action=", ".join(analysis.get("recommended_actions", [])[:2]),
                     stack_trace="",
-                    dashboard_link=f"/runs/{state['test_run_id']}",
+                    dashboard_link=f"{settings.public_base_url}/runs/{state['test_run_id']}",
                     labels=[idempotency_key],
                 )
                 ticket_id = ticket.get("ticket_id")
                 ticket_key = ticket.get("ticket_key")
                 ticket_url = ticket.get("ticket_url")
             except Exception as jira_exc:
+                jira_error = str(jira_exc)
                 logger.warning(
                     "Jira ticket creation skipped",
                     test_case_id=tc_id,
-                    error=str(jira_exc),
+                    error=jira_error,
                 )
 
         # Step 3: Update defect row with Jira info (if ticket was created)
@@ -183,16 +248,44 @@ class DefectTriageAgent(BaseAgent):
                         jira_ticket_id=ticket_id,
                         jira_ticket_url=ticket_url,
                         jira_status="Open",
+                        approval_status=ActionStatus.EXECUTED.value,
                     )
                 )
                 await db.commit()
 
+        if jira_error:
+            return {
+                "test_case_id": tc_id,
+                "action": f"{action}_jira_failed",
+                "error": jira_error,
+                "reason": "Defect remains open without Jira ticket; future runs will retry",
+            }
+
         return {
             "test_case_id": tc_id,
-            "action": "created",
+            "action": action,
+            "approval_status": (
+                ActionStatus.EXECUTED.value if ticket_key else ActionStatus.APPROVED.value
+            ),
+            "requires_approval": False,
             "ticket_key": ticket_key,
             "ticket_url": ticket_url,
         }
+
+    async def _mark_defect_pending_review(self, defect_id, policy_result: dict) -> None:
+        """Persist a policy hold before any external Jira side effect."""
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import update
+
+            await db.execute(
+                update(Defect)
+                .where(Defect.id == defect_id)
+                .values(
+                    approval_status=ActionStatus.PENDING_REVIEW.value,
+                    policy_evaluation=policy_result,
+                )
+            )
+            await db.commit()
 
     async def _get_jira_key(self, project_id: str) -> str | None:
         from app.models.postgres import Project

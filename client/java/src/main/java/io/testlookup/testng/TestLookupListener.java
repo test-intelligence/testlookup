@@ -1,5 +1,6 @@
 package io.testlookup.testng;
 
+import io.testlookup.ConfigLoader;
 import io.testlookup.TestLookupReporter;
 import io.testlookup.TestLookupReporter.*;
 
@@ -10,11 +11,14 @@ import java.util.logging.Logger;
 /**
  * TestNG Listener — streams test results to TestLookup in real-time.
  *
- * <h3>Usage (testng.xml)</h3>
+ * <h3>Simplest usage (testng.xml with suite parameters)</h3>
  * <pre>{@code
  * <suite name="My Suite">
+ *   <parameter name="testlookup.url" value="http://localhost:8000"/>
+ *   <parameter name="testlookup.apiKey" value="qai_..."/>
+ *   <parameter name="testlookup.projectId" value="your-project-uuid"/>
  *   <listeners>
- *     <listener class-name="ai.testlookup.testng.TestLookupListener"/>
+ *     <listener class-name="io.testlookup.testng.TestLookupListener"/>
  *   </listeners>
  *   <test name="API Tests">
  *     <classes>
@@ -24,27 +28,35 @@ import java.util.logging.Logger;
  * </suite>
  * }</pre>
  *
- * <h3>Programmatic registration</h3>
- * <pre>{@code
- * TestNG testng = new TestNG();
- * testng.addListener(new TestLookupListener());
- * testng.setTestClasses(new Class[]{ MyTest.class });
- * testng.run();
- * }</pre>
- *
- * <h3>Configuration via environment variables</h3>
+ * <h3>Optional suite parameters</h3>
  * <pre>
- *   TESTLOOKUP_URL          Server base URL     (required)
- *   TESTLOOKUP_TOKEN        JWT access token    (required)
- *   TESTLOOKUP_PROJECT_ID   Target project UUID (required)
- *   TESTLOOKUP_BUILD        CI build number     (optional)
- *   TESTLOOKUP_BRANCH       Git branch name     (optional)
- *   TESTLOOKUP_COMMIT       Git commit SHA      (optional)
+ *   testlookup.url          Server base URL       (required)
+ *   testlookup.apiKey       API key               (required — or use testlookup.token)
+ *   testlookup.token        JWT access token       (alternative to apiKey)
+ *   testlookup.projectId    Target project UUID   (required)
+ *   testlookup.build        CI build number       (optional)
+ *   testlookup.branch       Git branch name       (optional)
+ *   testlookup.commit       Git commit SHA        (optional)
  * </pre>
  *
- * <h3>Configuration via JVM system properties (takes precedence)</h3>
+ * <h3>Configuration precedence</h3>
+ * Suite parameters &gt; JVM system properties &gt; Environment variables &gt; testlookup.yaml
+ *
+ * <h3>Environment variable fallbacks</h3>
+ * <pre>
+ *   TESTLOOKUP_URL          Server base URL
+ *   TESTLOOKUP_API_KEY      API key
+ *   TESTLOOKUP_TOKEN        JWT access token
+ *   TESTLOOKUP_PROJECT_ID   Target project UUID
+ *   TESTLOOKUP_BUILD        CI build number
+ *   TESTLOOKUP_BRANCH       Git branch name
+ *   TESTLOOKUP_COMMIT       Git commit SHA
+ * </pre>
+ *
+ * <h3>JVM system properties (takes precedence over env vars)</h3>
  * <pre>
  *   -Dtestlookup.url=...
+ *   -Dtestlookup.apiKey=...
  *   -Dtestlookup.token=...
  *   -Dtestlookup.projectId=...
  *   -Dtestlookup.build=...
@@ -56,39 +68,90 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
     private TestLookupReporter reporter;
     private LiveSession       session;
+    /** Resolved run-level suite (testlookup.suite > testlookup.launch). */
+    private String            configuredSuite;
 
     // ── ISuiteListener ────────────────────────────────────────────────────────
 
     @Override
     public void onStart(ISuite suite) {
-        String url       = prop("testlookup.url",       "TESTLOOKUP_URL");
-        String token     = prop("testlookup.token",     "TESTLOOKUP_TOKEN");
-        String projectId = prop("testlookup.projectId", "TESTLOOKUP_PROJECT_ID");
+        // Resolve config: suite params > system props > env vars > testlookup.yaml
+        String url       = resolve(suite, "testlookup.url",       "TESTLOOKUP_URL",        null);
+        String apiKey    = resolve(suite, "testlookup.apiKey",    "TESTLOOKUP_API_KEY",    null);
+        String token     = resolve(suite, "testlookup.token",     "TESTLOOKUP_TOKEN",      null);
+        String projectId = resolve(suite, "testlookup.projectId", "TESTLOOKUP_PROJECT_ID", null);
 
-        if (url.isEmpty() || token.isEmpty() || projectId.isEmpty()) {
-            LOG.warning("TestLookupListener: disabled — missing URL, token, or projectId");
-            return;
+        // Skip silently if essential config is missing
+        boolean hasAuth = apiKey != null || token != null;
+        if (url == null || !hasAuth || projectId == null) {
+            if (!ConfigLoader.isConfigured()) {
+                LOG.fine("TestLookupListener: no configuration found — skipping");
+                return;
+            }
         }
 
-        reporter = new TestLookupReporter.Builder()
-            .baseUrl(url)
-            .token(token)
-            .projectId(projectId)
-            .framework("testng")
-            .build();
-
         try {
+            TestLookupReporter.Builder builder = new TestLookupReporter.Builder()
+                .framework("testng");
+
+            // Apply suite-level overrides (Builder values take precedence over ConfigLoader)
+            if (url != null)       builder.baseUrl(url);
+            if (apiKey != null)    builder.apiKey(apiKey);
+            if (token != null)     builder.token(token);
+            if (projectId != null) builder.projectId(projectId);
+
+            reporter = builder.build();
+
+            // testlookup.suite preferred, testlookup.launch as the fallback —
+            // both flow into SessionOptions.suiteName so every event in the run
+            // is stamped with the same suite identifier. When neither is
+            // configured via the suite-param/JVM/env channels the listener
+            // sees, the TestNG <suite name="..."> value is a sensible last
+            // resort — it's the same label the test author put on the run.
+            // (Reporter.suiteName from testlookup.properties is also read by
+            // the SDK Builder at session-create time and serves as the
+            // session-level default downstream; this listener-level fallback
+            // closes the gap for runs where testlookup.properties doesn't
+            // configure a suite at all.)
+            String configuredSuiteLocal = resolve(suite, "testlookup.suite",  "TESTLOOKUP_SUITE",  null);
+            if (configuredSuiteLocal == null) {
+                configuredSuiteLocal = resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null);
+            }
+            if (configuredSuiteLocal == null) {
+                String testngSuiteName = suite.getName();
+                if (testngSuiteName != null && !testngSuiteName.isEmpty()
+                        && !"Default suite".equalsIgnoreCase(testngSuiteName)) {
+                    configuredSuiteLocal = testngSuiteName;
+                }
+            }
+            this.configuredSuite = configuredSuiteLocal;
+
             session = reporter.startSession(
                 SessionOptions.builder()
-                    .buildNumber(prop("testlookup.build",  "TESTLOOKUP_BUILD",
+                    .buildNumber(resolve(suite, "testlookup.build",  "TESTLOOKUP_BUILD",
                                     "testng-" + System.currentTimeMillis()))
-                    .branch(     nullable("testlookup.branch", "TESTLOOKUP_BRANCH"))
-                    .commitHash( nullable("testlookup.commit", "TESTLOOKUP_COMMIT"))
+                    .branch(     resolve(suite, "testlookup.branch", "TESTLOOKUP_BRANCH", null))
+                    .commitHash( resolve(suite, "testlookup.commit", "TESTLOOKUP_COMMIT", null))
+                    .launchName( resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null))
+                    .suiteName(  configuredSuiteLocal)
                     .build()
             );
             LOG.info("TestLookupListener: session started: " + session.getSessionId());
         } catch (Exception e) {
-            LOG.warning("TestLookupListener: failed to start session: " + e.getMessage());
+            // Include the exception class so users can distinguish transient
+            // connection failures (deploy in progress, hosts file wrong)
+            // from configuration errors. Previously the warning collapsed
+            // every failure mode into one terse "Request failed: <url>"
+            // line that hid the real cause — see 2026-05-15 regression
+            // where the SDK couldn't reach the backend during a deploy
+            // window and the warning didn't say so.
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            LOG.warning("TestLookupListener: disabled — " + msg);
+            // Stack trace at FINE level so users hitting the wall can
+            // enable verbose logging without code changes:
+            //   -Djava.util.logging.ConsoleHandler.level=FINE
+            LOG.log(java.util.logging.Level.FINE, "TestLookupListener startSession() exception", e);
+            reporter = null;
             session = null;
         }
     }
@@ -139,7 +202,6 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
         long durationMs = result.getEndMillis() - result.getStartMillis();
         String testName  = result.getMethod().getMethodName();
-        String suiteName = result.getTestClass().getName();
 
         String error = null;
         String stack = null;
@@ -151,30 +213,50 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
             stack = sw.toString();
         }
 
-        RecordOptions opts = RecordOptions.builder()
-            .suiteName(suiteName)
+        // Per-event ``suite_name`` is set only when the listener could
+        // explicitly resolve one from testng.xml ``<parameter>``, JVM
+        // property, or env var. When it can't, we deliberately leave it
+        // null so ``LiveSession.record()`` falls back to the session-level
+        // suite the Reporter resolved from ``testlookup.properties``
+        // (``reporting.suite_name`` / ``reporting.launch_name``) and the
+        // ``<suite name="...">`` value carried on the session payload.
+        // The previous behaviour defaulted to ``result.getTestClass().getName()``
+        // when configuredSuite was null, which split a single logical
+        // suite into N per-class buckets on /test-management and
+        // /coverage/suite (one per test class) even when the user had
+        // ``testlookup.launch=My Suite`` in testlookup.properties.
+        // ``class_name`` is still captured separately, so the per-class
+        // grouping is recoverable without overloading suite_name.
+        RecordOptions.Builder optsBuilder = RecordOptions.builder()
             .className(result.getTestClass().getRealClass().getName())
             .error(error)
-            .stackTrace(stack)
-            .build();
+            .stackTrace(stack);
+        if (configuredSuite != null) {
+            optsBuilder.suiteName(configuredSuite);
+        }
 
-        session.record(testName, status, durationMs, opts);
+        session.record(testName, status, durationMs, optsBuilder.build());
     }
 
-    private static String prop(String sysProp, String envVar) {
-        String v = System.getProperty(sysProp);
+    /**
+     * Resolve a config value with precedence:
+     * suite parameter > JVM system property > environment variable > default.
+     */
+    private static String resolve(ISuite suite, String paramName, String envVar, String defaultVal) {
+        // 1. Suite parameter (highest precedence for testng.xml config)
+        String v = suite.getParameter(paramName);
         if (v != null && !v.isEmpty()) return v;
-        v = System.getenv(envVar);
-        return v != null ? v : "";
-    }
 
-    private static String prop(String sysProp, String envVar, String defaultVal) {
-        String v = prop(sysProp, envVar);
-        return v.isEmpty() ? defaultVal : v;
-    }
+        // 2. JVM system property
+        v = System.getProperty(paramName);
+        if (v != null && !v.isEmpty()) return v;
 
-    private static String nullable(String sysProp, String envVar) {
-        String v = prop(sysProp, envVar);
-        return v.isEmpty() ? null : v;
+        // 3. Environment variable
+        if (envVar != null) {
+            v = System.getenv(envVar);
+            if (v != null && !v.isEmpty()) return v;
+        }
+
+        return defaultVal;
     }
 }

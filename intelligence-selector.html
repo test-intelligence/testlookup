@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<style data-omelette-injected>html,body{background:transparent}</style><script data-omelette-injected>(()=>{var j=["https://claude.ai","https://preview.claude.ai"];var x=true;var S=30000;var f=3000;document.addEventListener("DOMContentLoaded",()=>{const H=window.Babel;const G="om-src-id";if(H&&H.registerPlugin&&!(H.availablePlugins&&H.availablePlugins[G])){H.registerPlugin(G,({types:Y})=>({visitor:{JSXOpeningElement(U,Q){const J=U.node;if(J.name&&J.name.type==="JSXMemberExpression")return;for(let V=0;V<J.attributes.length;V++){const L=J.attributes[V];if(L.type==="JSXAttribute"&&L.name&&L.name.name==="data-om-id")return}const W=Q.file&&Q.file.opts&&Q.file.opts.filename||"?";const Z=J.loc&&J.loc.start;const z=`jsx:${W}:${J.start??0}:${Z?Z.line:0}:${Z?Z.column+1:0}`;J.attributes.push(Y.jsxAttribute(Y.jsxIdentifier("data-om-id"),Y.stringLiteral(z)))}}}))}const k="om-text-extract";let A=false;if(x&&H&&H.registerPlugin&&!(H.availablePlugins&&H.availablePlugins[k])){const Y=window.React;if(Y&&Y.useSyncExternalStore&&Y.createElement){A=true;const U={};const Q=new Set;let J=0;window.__omTextO=U;window.__omTextSet=(z)=>{for(const V in z){const L=z[V];if(L==null)delete U[V];else U[V]=L}J++;Q.forEach((V)=>V())};const W=(z)=>{Q.add(z);return()=>Q.delete(z)};const Z=()=>J;window.__OmT=function z(V){Y.useSyncExternalStore(W,Z,Z);return Y.createElement("span",{"data-om-text":V.i,className:"__om-t"},V.i in U?U[V.i]:V.children)};H.registerPlugin(k,({types:z})=>{const V={style:1,script:1,noscript:1,textarea:1,title:1,option:1,text:1,tspan:1,textPath:1};const L={placeholder:1,alt:1,title:1,label:1,"aria-label":1,"aria-description":1,"aria-placeholder":1};const _=($,C)=>z.logicalExpression("??",z.memberExpression(z.logicalExpression("||",z.memberExpression(z.identifier("window"),z.identifier("__omTextO")),z.objectExpression([])),z.stringLiteral($),true),C);const E=($)=>$.file&&$.file.opts&&$.file.opts.filename||"?";const B=($)=>$.file&&$.file.code||"";const b=($,C)=>{const X=(F)=>F&&F.start!=null&&F.end!=null&&(F.type==="StringLiteral"||F.type==="TemplateLiteral"&&F.expressions.length===0)?[F.start,F.end]:null;const N=X(C);if(N)return N;if(C&&C.type==="Identifier"){const F=$.scope.getBinding(C.name);if(F&&F.constant&&F.path.node.type==="VariableDeclarator"){return X(F.path.node.init)}}return null};const M=($,C,X)=>{const N=$.node;let F=false;const w=(K,q)=>{F=true;return z.jsxElement(z.jsxOpeningElement(z.jsxIdentifier("__OmT"),[z.jsxAttribute(z.jsxIdentifier("i"),z.stringLiteral(K))],false),z.jsxClosingElement(z.jsxIdentifier("__OmT")),[q],false)};const D=N.children.map((K)=>{if(K.type==="JSXText"){if(K.start==null||K.end==null)return K;const q=X.slice(K.start,K.end);const R=q.length-q.trimStart().length;const m=q.length-q.trimEnd().length;if(R+m>=q.length)return K;return w(`txt:${C}:${K.start+R}:${K.end-m}`,K)}if(K.type==="JSXExpressionContainer"){const q=b($,K.expression);if(q)return w(`str:${C}:${q[0]}:${q[1]}`,K)}return K});if(F)N.children=D};return{visitor:{JSXOpeningElement($,C){const X=$.node;const N=E(C);const F={};for(let w=0;w<X.attributes.length;w++){const D=X.attributes[w];if(D.type!=="JSXAttribute"||!D.name)continue;const K=D.name.name;if(!L[K])continue;if(!D.value||D.value.type!=="StringLiteral")continue;if(D.value.start==null||D.value.end==null)continue;const q=`txt:${N}:${D.value.start}:${D.value.end}`;F[K]=q;D.value=z.jsxExpressionContainer(_(q,z.stringLiteral(D.value.value)))}if(Object.keys(F).length){X.attributes.push(z.jsxAttribute(z.jsxIdentifier("data-om-text-attrs"),z.stringLiteral(JSON.stringify(F))))}},JSXElement($,C){const X=$.node.openingElement;const N=X&&X.name&&X.name.name;if(N==="__OmT")return;if(typeof N==="string"&&V[N])return;M($,E(C),B(C))},JSXFragment($,C){M($,E(C),B(C))}}}})}}const u=A?["transform-react-jsx-source",G,k]:["transform-react-jsx-source",G];document.querySelectorAll('script[type="text/babel"],script[type="text/jsx"]').forEach((Y,U)=>{const Q=Y.getAttribute("data-plugins")||"";const J=u.filter((W)=>Q.indexOf(W)<0);if(J.length){Y.setAttribute("data-plugins",Q?`${Q},${J.join(",")}`:J.join(","))}if(!Y.hasAttribute("data-filename")){Y.setAttribute("data-filename",Y.getAttribute("src")||`inline-${U}`)}})});var y=window.parent;if(y&&y!==window){const H=(Q,J)=>{try{y.postMessage({__omelette_log:true,type:Q,data:J},"*")}catch{}};["log","warn","error"].forEach((Q)=>{const J=console[Q];console[Q]=(...W)=>{const Z=W.map((z)=>{try{return typeof z==="object"?JSON.stringify(z):String(z)}catch{try{return String(z)}catch{return"[unstringifiable]"}}}).join(" ");H(Q,Z);J.apply(console,W)}});window.addEventListener("error",(Q)=>{const J=Q.target;if(J&&J!==window&&J.tagName){const W=J.src||J.href||"";H("resource_error",`${J.tagName} failed to load: ${W}`)}else{H("error",`${Q.message||"Unknown error"} at ${Q.filename||"?"}:${Q.lineno||0}:${Q.colno||0}`)}},true);window.addEventListener("unhandledrejection",(Q)=>{const J=Q.reason;const W=J instanceof Error?`${J.message} ${J.stack}`:String(J);H("error",`Unhandled rejection: ${W}`)});const G=()=>{try{y.postMessage({type:"omelette:height",height:document.documentElement.scrollHeight},"*")}catch{}};if(document.readyState==="complete")G();else window.addEventListener("load",G);if(window.ResizeObserver)new ResizeObserver(G).observe(document.documentElement);const k={};let A=0;window.claude={complete(Q){return new Promise((J,W)=>{if(!j.length){W(new Error("claude.complete: no parent origin"));return}const Z=`c${++A}`;const z=()=>setTimeout(()=>{delete k[Z];W(new Error(`claude.complete: no data for ${S/1000}s`))},S);const V=z();k[Z]={resolve:J,reject:W,text:"",t:V,arm:z};try{for(const L of j){y.postMessage({__om_api:true,id:Z,body:Q},L)}}catch(L){clearTimeout(V);delete k[Z];W(L)}})}};const u={};let Y=0;window.omelette={writeFile:(Q,J)=>new Promise((W,Z)=>{if(!j.length){W();return}const z=`f${++Y}`;const V=setTimeout(()=>{delete u[z];W()},f);u[z]={resolve:W,reject:Z,t:V};try{for(const L of j){y.postMessage({__om_file:true,id:z,op:"write",path:Q,content:J},L)}}catch{clearTimeout(V);delete u[z];W()}})};const U=(Q)=>{try{return JSON.stringify(Q)}catch{return JSON.stringify(String(Q))}};window.addEventListener("message",(Q)=>{if(j.indexOf(Q.origin)<0)return;if(Q.source!==y)return;const J=Q.data;if(!J)return;if(J.type==="omelette-preview-refresh"){if(typeof J.token!=="string"||!/^[0-9a-f.-]+$/.test(J.token))return;const z=Math.max(1,Math.floor((J.expiresAt||0)-Date.now()/1000));document.cookie="__Host-omelette-preview="+J.token+"; Path=/; Secure; SameSite=None; Partitioned; Max-Age="+z;return}if(J.__om_file_r){const z=u[J.id];if(!z)return;clearTimeout(z.t);delete u[J.id];if(J.ok)z.resolve();else z.reject(new Error(J.error||"write failed"));return}if(J.__om_api_r){const z=k[J.id];if(!z)return;if(J.error!=null){clearTimeout(z.t);delete k[J.id];z.reject(new Error(J.error));return}if(J.chunk!=null){clearTimeout(z.t);z.t=z.arm();z.text+=J.chunk;return}if(J.done){clearTimeout(z.t);delete k[J.id];z.resolve(J.text!=null?J.text:z.text);return}return}if(!J.__om_eval)return;const W=J;const Z=(z)=>{Q.source.postMessage({...z,__om_eval_r:1,id:W.id},Q.origin)};try{const z=(0,eval)(W.code);if(z&&typeof z.then==="function"){z.then((V)=>Z({ok:1,v:U(V)}),(V)=>Z({ok:0,e:String(V)}))}else{Z({ok:1,v:U(z)})}}catch(z){Z({ok:0,e:String(z)})}})}})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Run Intelligence — Redesign</title>
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-sans); font-size: var(--text-base); }
+  button { font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; }
+  code { font-family: var(--font-mono); font-size: 0.92em; }
+
+  main { max-width: 1360px; margin: 0 auto; padding: 24px 28px 80px; }
+
+  /* ── Header ─────────────────────────────────── */
+  .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .head h1 { margin: 0; font-size: var(--text-2xl); font-weight: 700; letter-spacing: -0.01em; }
+  .head .sub { color: var(--color-text-muted); font-size: var(--text-sm); margin-top: 4px; }
+  .head .h-r { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-secondary); font-size: var(--text-sm); font-weight: 500; }
+  .btn:hover { border-color: var(--color-border-light); color: var(--color-text); }
+  .btn-primary { background: var(--color-btn-primary-bg); color: #fff; border-color: transparent; }
+  .btn-primary:hover { background: var(--color-btn-primary-hover); }
+  .btn .ico { width: 14px; height: 14px; }
+  .kbd { display:inline-block; padding:1px 5px; border:1px solid var(--color-border); border-radius:4px; background:var(--color-bg-secondary); font-family:var(--font-mono); font-size:11px; color:var(--color-text-muted); }
+
+  /* ── Verdict (top hero) ─────────────────────── */
+  .verdict {
+    border: 1px solid rgba(34,197,94,0.32);
+    background: radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%), var(--color-bg-card);
+    border-radius: var(--radius-lg);
+    padding: 20px 22px;
+    display: grid; grid-template-columns: 1.5fr 1fr; gap: 28px;
+    margin-bottom: 14px; position: relative; overflow: hidden;
+  }
+  .verdict::before { content: ""; position: absolute; left:0; top:0; bottom:0; width:3px; background: var(--gate-go); }
+  .v-tag { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:var(--tracking-wider); color:#86efac; }
+  .v-tag .pulse { width:6px; height:6px; border-radius:50%; background:var(--gate-go); box-shadow:0 0 0 0 rgba(34,197,94,0.55); animation:p 1.8s ease-out infinite; }
+  @keyframes p { 0%{box-shadow:0 0 0 0 rgba(34,197,94,0.5)} 70%{box-shadow:0 0 0 8px rgba(34,197,94,0)} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} }
+  .verdict h2 { margin: 8px 0 6px; font-size: 26px; font-weight: 700; letter-spacing:-0.02em; line-height:1.15; }
+  .verdict h2 em { color: #86efac; font-style: normal; }
+  .verdict .lede { color: var(--color-text-secondary); font-size: var(--text-sm); margin: 0 0 14px; max-width: 56ch; }
+  .v-cta { display:flex; gap:8px; flex-wrap:wrap; }
+
+  /* Right side health summary */
+  .v-health { display:flex; flex-direction:column; gap:14px; }
+  .health-top { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; }
+  .health-top .lab { font-size:11px; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:var(--tracking-wider); }
+  .health-top .val { font-size: 38px; font-weight:700; line-height:1; font-variant-numeric:tabular-nums; color:#86efac; letter-spacing:-0.02em; }
+  .health-top .delta { font-size:12px; color:#86efac; font-weight:500; }
+  .health-bar { display:grid; grid-template-columns: 42fr 5fr 3fr; height:8px; border-radius:999px; overflow:hidden; gap:2px; background:var(--color-bg-secondary); padding:2px; }
+  .health-bar > i { display:block; border-radius:999px; }
+  .health-bar > i.pass { background: linear-gradient(90deg,#22c55e,#34d399); }
+  .health-bar > i.flake { background: #c084fc; }
+  .health-bar > i.fail { background: #ef4444; }
+  .health-legend { display:flex; gap:14px; font-size:12px; color:var(--color-text-muted); }
+  .health-legend .dot { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+
+  /* ── Section title row ─────────────────────── */
+  .section-title { display:flex; align-items:baseline; justify-content:space-between; margin: 22px 0 10px; gap: 12px; flex-wrap:wrap; }
+  .section-title h3 { margin:0; font-size: var(--text-lg); font-weight:600; }
+  .section-title .meta { color: var(--color-text-muted); font-size: var(--text-sm); }
+
+  /* ── Filter bar ────────────────────────────── */
+  .filters { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding: 10px 12px; border:1px solid var(--color-border); background: var(--color-bg-card); border-radius: var(--radius-lg); margin-bottom: 12px; }
+  .search { flex: 1 1 280px; display:flex; align-items:center; gap:8px; background: var(--color-bg-input); border:1px solid var(--color-border); border-radius: var(--radius-md); padding: 6px 10px; min-width:240px; }
+  .search input { flex:1; background:transparent; border:0; outline:0; color: var(--color-text); font-size: var(--text-sm); }
+  .search .kbd { margin-left:auto; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--color-border); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--color-text-secondary); background: var(--color-bg-input); }
+  .chip:hover { color: var(--color-text); border-color: var(--color-border-light); }
+  .chip .ico { width:12px; height:12px; opacity:0.6; }
+  .chip.active { border-color: var(--color-accent); color: var(--color-text); background: var(--color-accent-muted); }
+
+  /* ── Two-col body ─────────────────────────── */
+  .body { display:grid; grid-template-columns: 1.7fr 1fr; gap: 14px; }
+  .panel { border: 1px solid var(--color-border); background: var(--color-bg-card); border-radius: var(--radius-lg); }
+  .panel h4 { margin: 0; padding: 14px 16px 10px; font-size: var(--text-sm); font-weight: 600; display:flex; align-items:center; gap:8px; justify-content:space-between; }
+  .panel h4 .right { font-size: 12px; color: var(--color-text-muted); font-weight:400; display:inline-flex; align-items:center; gap:6px; }
+  .panel-sub { color: var(--color-text-muted); font-size: 12px; padding: 0 16px 10px; }
+
+  /* ── Runs table ───────────────────────────── */
+  table.runs { width:100%; border-collapse: collapse; font-size: var(--text-sm); }
+  .runs thead th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: var(--tracking-wider); color: var(--color-text-muted); text-align: left; padding: 8px 14px; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
+  .runs tbody td { padding: 11px 14px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+  .runs tbody tr:hover { background: var(--color-bg-hover); cursor: pointer; }
+  .runs tbody tr.row-selected { background: rgba(68,147,248,0.06); box-shadow: inset 3px 0 0 var(--color-accent); }
+  .runs tbody tr:last-child td { border-bottom: 0; }
+  .runs td.id { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-secondary); }
+  .runs td.title { color: var(--color-text); font-weight: 500; }
+  .runs td.title .meta { display:block; font-size: 11.5px; color: var(--color-text-muted); margin-top: 2px; font-weight: 400; }
+  .runs td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .runs td.right { text-align: right; color: var(--color-text-muted); font-size: 12px; }
+
+  .status { display:inline-flex; align-items:center; gap:6px; font-size: 12px; font-weight:500; padding:3px 8px; border-radius: var(--radius-pill); border:1px solid; }
+  .status .dot { width:6px; height:6px; border-radius:50%; }
+  .s-pass { color:#86efac; background: var(--status-passed-bg); border-color: var(--status-passed-bd); }
+  .s-pass .dot { background:#34d399; }
+  .s-fail { color:#fca5a5; background: var(--status-failed-bg); border-color: var(--status-failed-bd); }
+  .s-fail .dot { background:#ef4444; }
+  .s-flake { color:#d8b4fe; background: var(--status-flaky-bg); border-color: var(--status-flaky-bd); }
+  .s-flake .dot { background:#a855f7; }
+  .s-running { color:#93c5fd; background: rgba(59,130,246,0.16); border-color: rgba(37,99,235,0.5); }
+  .s-running .dot { background:#3b82f6; }
+  .s-broken { color:#fdba74; background: var(--status-broken-bg); border-color: var(--status-broken-bd); }
+  .s-broken .dot { background:#fb923c; }
+
+  .conf { display:inline-flex; align-items:center; gap:8px; font-size:12px; color: var(--color-text-muted); }
+  .conf .meter { width: 56px; height: 5px; background: var(--color-bg-secondary); border-radius:999px; overflow:hidden; position:relative; }
+  .conf .meter i { display:block; height:100%; background: linear-gradient(90deg,#22c55e,#34d399); }
+  .conf .meter i.med { background: linear-gradient(90deg,#eab308,#fcd34d); }
+  .conf .meter i.low { background: linear-gradient(90deg,#ef4444,#fca5a5); }
+
+  .duration { font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
+  .sparkline { display:inline-block; width:60px; height:18px; vertical-align: middle; }
+
+  .branch { font-family: var(--font-mono); font-size: 11.5px; color: var(--color-text-muted); padding: 1px 6px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-bg-secondary); }
+
+  .avatar { width: 22px; height: 22px; border-radius: 50%; display:inline-flex; align-items:center; justify-content:center; font-size: 11px; font-weight: 600; color: #fff; }
+  .a-1 { background: #4493f8; }  .a-2 { background: #f97316; }  .a-3 { background: #a855f7; }
+  .a-4 { background: #14b8a6; }  .a-5 { background: #ec4899; }  .a-6 { background: #facc15; color:#422006; }
+
+  /* ── Insight cards in right column ─────────── */
+  .insight { padding: 14px 16px; border-bottom: 1px solid var(--color-border); display:flex; gap:12px; align-items:flex-start; cursor:pointer; transition:background 120ms; }
+  .insight:last-child { border-bottom:0; }
+  .insight:hover { background: var(--color-bg-hover); }
+  .insight .ic { width: 32px; height: 32px; border-radius: 8px; display:flex; align-items:center; justify-content:center; flex:none; border:1px solid; }
+  .ic-amber { background: rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.32); color: #fcd34d; }
+  .ic-violet { background: rgba(168,85,247,0.10); border-color: rgba(168,85,247,0.32); color: #d8b4fe; }
+  .ic-blue { background: rgba(68,147,248,0.10); border-color: rgba(68,147,248,0.32); color: #93c5fd; }
+  .ic-teal { background: rgba(20,184,166,0.10); border-color: rgba(20,184,166,0.32); color: #5eead4; }
+  .insight .t { font-size: var(--text-sm); color: var(--color-text); font-weight: 500; line-height: 1.4; }
+  .insight .d { font-size: 12px; color: var(--color-text-muted); margin-top: 3px; line-height: 1.45; }
+  .insight .badge { display:inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 6px; }
+  .b-amber { background: rgba(245,158,11,0.15); color:#fcd34d; }
+  .b-violet { background: rgba(168,85,247,0.15); color:#d8b4fe; }
+  .b-blue { background: rgba(68,147,248,0.15); color:#93c5fd; }
+  .b-teal { background: rgba(20,184,166,0.15); color:#5eead4; }
+
+  /* ── Spend / cost card ────────────────────── */
+  .spend { padding: 16px; display:grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
+  .spend .k { font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-wider); color: var(--color-text-muted); }
+  .spend .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; margin-top: 3px; letter-spacing: -0.01em; }
+  .spend .v small { font-size: 13px; font-weight:500; color: var(--color-text-muted); margin-left: 4px; }
+  .spend .meter-row { grid-column: 1 / -1; display:flex; flex-direction:column; gap: 6px; padding-top: 4px; border-top: 1px solid var(--color-border); }
+  .spend .meter-row .lab { display:flex; justify-content:space-between; font-size: 12px; color: var(--color-text-muted); }
+  .spend .meter-row .bar { height: 6px; background: var(--color-bg-secondary); border-radius:999px; overflow: hidden; }
+  .spend .meter-row .bar i { display:block; height: 100%; width: 38%; background: linear-gradient(90deg, var(--brand-500), var(--brand-400)); border-radius:999px; }
+
+  /* ── Activity feed ─────────────────────────── */
+  .feed { padding: 4px 0 6px; }
+  .feed .row { display:flex; align-items:flex-start; gap: 10px; padding: 9px 16px; }
+  .feed .row .ts { font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; min-width: 52px; padding-top:1px; }
+  .feed .row .body { font-size: var(--text-sm); color: var(--color-text-secondary); line-height: 1.45; }
+  .feed .row .body strong { color: var(--color-text); font-weight: 600; }
+  .feed .row .body code { background: var(--color-bg-secondary); padding: 0 4px; border-radius: 3px; }
+  .feed .more { text-align: center; font-size: 12px; color: var(--color-text-muted); padding: 6px 16px 12px; }
+  .feed .more a { color: var(--color-accent); }
+
+  /* utility */
+  .hide-narrow { @media (max-width: 960px) { display: none; } }
+
+  @media (max-width: 1100px) {
+    .verdict { grid-template-columns: 1fr; }
+    .body { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body data-theme="midnight">
+
+<main data-screen-label="Run Intelligence Selector">
+
+  <!-- Header -->
+  <header class="head">
+    <div>
+      <h1>Run Intelligence</h1>
+      <p class="sub">AI analyzes every run · pick one to drill into, or follow the insights below</p>
+    </div>
+    <div class="h-r">
+      <button class="btn">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Decision trail
+      </button>
+      <button class="btn">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+        Compare runs
+      </button>
+      <button class="btn btn-primary">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Analyze new run
+      </button>
+    </div>
+  </header>
+
+  <!-- Verdict -->
+  <section class="verdict">
+    <div>
+      <span class="v-tag"><span class="pulse"></span> Pipeline health · Last 24h</span>
+      <h2>All clear — <em>nothing needs investigation</em> right now.</h2>
+      <p class="lede">12 runs across 4 branches in the last 24h. 11 pass, 1 known-flaky retry recovered. Intelligence still found 3 things worth your attention below.</p>
+      <div class="v-cta">
+        <button class="btn">Jump to most recent run <span class="kbd">↵</span></button>
+        <button class="btn">View flaky recoveries (1)</button>
+        <button class="btn">Configure notifications</button>
+      </div>
+    </div>
+    <div class="v-health">
+      <div class="health-top">
+        <div>
+          <div class="lab">Composite health · 7d</div>
+          <div class="val">94<small style="font-size:18px;color:var(--color-text-muted);font-weight:500;">/100</small></div>
+        </div>
+        <div style="text-align:right">
+          <div class="lab">vs prev 7d</div>
+          <div class="delta">▲ 3.2 pts</div>
+        </div>
+      </div>
+      <div class="health-bar">
+        <i class="pass" title="42 passed"></i>
+        <i class="flake" title="5 flaky"></i>
+        <i class="fail" title="3 failed"></i>
+      </div>
+      <div class="health-legend">
+        <span><span class="dot" style="background:#22c55e"></span>42 passed</span>
+        <span><span class="dot" style="background:#c084fc"></span>5 flaky</span>
+        <span><span class="dot" style="background:#ef4444"></span>3 failed</span>
+        <span style="margin-left:auto;color:var(--color-text-faint)">50 runs analyzed</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filter bar -->
+  <div class="filters">
+    <div class="search">
+      <svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input placeholder="Search runs by ID, branch, commit, PR…" />
+      <span class="kbd">/</span>
+    </div>
+    <button class="chip active">Last 24h <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+    <button class="chip">All branches <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+    <button class="chip">All envs <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+    <button class="chip">All outcomes <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+    <span style="flex:1"></span>
+    <button class="chip">Saved: My team</button>
+    <button class="chip">Saved: Needs review</button>
+  </div>
+
+  <!-- Body grid -->
+  <div class="body">
+
+    <!-- LEFT: Runs table -->
+    <section class="panel">
+      <h4>
+        Recent runs analyzed
+        <span class="right">12 runs · sorted by recency · <a style="color:var(--color-accent)">change sort</a></span>
+      </h4>
+      <table class="runs">
+        <thead>
+          <tr>
+            <th style="width: 96px;">Run</th>
+            <th>Trigger</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>AI confidence</th>
+            <th class="right hide-narrow">When</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="id">#ci-build-1247</td>
+            <td class="title">
+              fix(checkout): handle Stripe retry on 402
+              <span class="meta"><span class="branch">feat/checkout-retry</span> · <span class="avatar a-1" style="width:16px;height:16px;font-size:9px;vertical-align:middle">MR</span> Maya R. · PR #2104</span>
+            </td>
+            <td><span class="status s-pass"><span class="dot"></span>Passed</span></td>
+            <td class="duration">8m 12s</td>
+            <td>
+              <span class="conf"><span class="meter"><i style="width:92%"></i></span>92%</span>
+            </td>
+            <td class="right hide-narrow">12m ago</td>
+          </tr>
+          <tr>
+            <td class="id">#ci-build-1246</td>
+            <td class="title">
+              chore(deps): bump @stripe/stripe-js 14 → 15
+              <span class="meta"><span class="branch">main</span> · <span class="avatar a-6" style="width:16px;height:16px;font-size:9px;vertical-align:middle">DB</span> dependabot</span>
+            </td>
+            <td><span class="status s-flake"><span class="dot"></span>Flaky · 1 retry</span></td>
+            <td class="duration">11m 04s</td>
+            <td>
+              <span class="conf"><span class="meter"><i class="med" style="width:74%"></i></span>74%</span>
+            </td>
+            <td class="right hide-narrow">38m ago</td>
+          </tr>
+          <tr class="row-selected">
+            <td class="id">#ci-build-1245</td>
+            <td class="title">
+              feat(refund): partial-refund ledger entries
+              <span class="meta"><span class="branch">feat/partial-refunds</span> · <span class="avatar a-2" style="width:16px;height:16px;font-size:9px;vertical-align:middle">JL</span> Jamie L. · PR #2098</span>
+            </td>
+            <td><span class="status s-pass"><span class="dot"></span>Passed</span></td>
+            <td class="duration">9m 47s</td>
+            <td>
+              <span class="conf"><span class="meter"><i style="width:88%"></i></span>88%</span>
+            </td>
+            <td class="right hide-narrow">1h ago</td>
+          </tr>
+          <tr>
+            <td class="id">#ci-build-1244</td>
+            <td class="title">
+              fix(auth): 2FA SMS fallback timeout copy
+              <span class="meta"><span class="branch">hotfix/2fa-copy</span> · <span class="avatar a-3" style="width:16px;height:16px;font-size:9px;vertical-align:middle">SK</span> Sana K.</span>
+            </td>
+            <td><span class="status s-pass"><span class="dot"></span>Passed</span></td>
+            <td class="duration">7m 21s</td>
+            <td>
+              <span class="conf"><span class="meter"><i style="width:96%"></i></span>96%</span>
+            </td>
+            <td class="right hide-narrow">2h ago</td>
+          </tr>
+          <tr>
+            <td class="id">#ci-build-1243</td>
+            <td class="title">
+              feat(invoices): bulk PDF export
+              <span class="meta"><span class="branch">feat/bulk-pdf</span> · <span class="avatar a-4" style="width:16px;height:16px;font-size:9px;vertical-align:middle">TK</span> Theo K. · PR #2091</span>
+            </td>
+            <td><span class="status s-pass"><span class="dot"></span>Passed</span></td>
+            <td class="duration">10m 02s</td>
+            <td>
+              <span class="conf"><span class="meter"><i style="width:81%"></i></span>81%</span>
+            </td>
+            <td class="right hide-narrow">3h ago</td>
+          </tr>
+          <tr>
+            <td class="id">#ci-build-1242</td>
+            <td class="title">
+              refactor(api): extract billing webhook handler
+              <span class="meta"><span class="branch">main</span> · <span class="avatar a-5" style="width:16px;height:16px;font-size:9px;vertical-align:middle">EO</span> Esme O.</span>
+            </td>
+            <td><span class="status s-flake"><span class="dot"></span>Flaky · 2 retries</span></td>
+            <td class="duration">13m 50s</td>
+            <td>
+              <span class="conf"><span class="meter"><i class="med" style="width:67%"></i></span>67%</span>
+            </td>
+            <td class="right hide-narrow">5h ago</td>
+          </tr>
+          <tr>
+            <td class="id">#ci-build-1241</td>
+            <td class="title">
+              chore(test): add invoice e2e smoke
+              <span class="meta"><span class="branch">main</span> · <span class="avatar a-1" style="width:16px;height:16px;font-size:9px;vertical-align:middle">MR</span> Maya R.</span>
+            </td>
+            <td><span class="status s-pass"><span class="dot"></span>Passed</span></td>
+            <td class="duration">8m 38s</td>
+            <td>
+              <span class="conf"><span class="meter"><i style="width:90%"></i></span>90%</span>
+            </td>
+            <td class="right hide-narrow">7h ago</td>
+          </tr>
+          <tr>
+            <td class="id">#ci-build-1240</td>
+            <td class="title">
+              fix(perf): N+1 in customer search
+              <span class="meta"><span class="branch">perf/customer-search</span> · <span class="avatar a-2" style="width:16px;height:16px;font-size:9px;vertical-align:middle">JL</span> Jamie L. · PR #2085</span>
+            </td>
+            <td><span class="status s-pass"><span class="dot"></span>Passed</span></td>
+            <td class="duration">7m 56s</td>
+            <td>
+              <span class="conf"><span class="meter"><i style="width:84%"></i></span>84%</span>
+            </td>
+            <td class="right hide-narrow">9h ago</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- RIGHT: rail -->
+    <aside style="display:flex; flex-direction:column; gap: 12px;">
+
+      <!-- Cross-run insights -->
+      <section class="panel">
+        <h4>
+          What the AI found across runs
+          <span class="right">3 insights · 24h</span>
+        </h4>
+        <div>
+          <div class="insight">
+            <div class="ic ic-violet">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 5-5"/></svg>
+            </div>
+            <div>
+              <div class="t"><span class="badge b-violet">Perf drift</span><code>billing/invoice.spec.ts</code> is 38% slower than 7d baseline</div>
+              <div class="d">Affects 9 of last 12 runs. Suspect commit: <code>a4f3e21</code> (refactor billing webhook handler) — correlates with the regression on every branch since.</div>
+            </div>
+          </div>
+          <div class="insight">
+            <div class="ic ic-amber">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+            </div>
+            <div>
+              <div class="t"><span class="badge b-amber">Flake rising</span>2 tests have flaked ≥3× this week</div>
+              <div class="d"><code>auth/2fa-resend.spec.ts</code> (4 flakes) and <code>checkout/stripe-3ds.spec.ts</code> (3 flakes) — both timing-related, both candidates for quarantine.</div>
+            </div>
+          </div>
+          <div class="insight">
+            <div class="ic ic-blue">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M21 3 14 10"/><path d="M8 21H3v-5"/><path d="m3 21 7-7"/></svg>
+            </div>
+            <div>
+              <div class="t"><span class="badge b-blue">Coverage</span>Coverage dropped 0.4% in <code>src/billing/</code></div>
+              <div class="d">PR #2098 added 240 LOC, only 184 covered. Three new branches in <code>refund-ledger.ts</code> are untested.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Spend -->
+      <section class="panel">
+        <h4>
+          Intelligence spend · this month
+          <span class="right">$8.40 / $50 budget</span>
+        </h4>
+        <div class="spend">
+          <div>
+            <div class="k">Used today</div>
+            <div class="v">$1.24<small>· 12 runs</small></div>
+          </div>
+          <div>
+            <div class="k">Avg per run</div>
+            <div class="v">$0.10<small>· ~12k tokens</small></div>
+          </div>
+          <div class="meter-row">
+            <div class="lab"><span>Monthly budget</span><span>17% used · 22d left</span></div>
+            <div class="bar"><i></i></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Activity feed -->
+      <section class="panel">
+        <h4>
+          Recent activity
+          <span class="right"><a style="color:var(--color-accent)">View all</a></span>
+        </h4>
+        <div class="feed">
+          <div class="row">
+            <span class="ts">12m</span>
+            <div class="body"><strong>Maya R.</strong> analyzed <code>#ci-build-1247</code> · verdict <span style="color:#86efac">Pass</span></div>
+          </div>
+          <div class="row">
+            <span class="ts">1h</span>
+            <div class="body"><strong>Jamie L.</strong> opened <code>#ci-build-1245</code> and exported the decision trail</div>
+          </div>
+          <div class="row">
+            <span class="ts">2h</span>
+            <div class="body">Auto-analysis flagged <code>billing/invoice.spec.ts</code> perf drift on <code>#ci-build-1244</code></div>
+          </div>
+          <div class="row">
+            <span class="ts">5h</span>
+            <div class="body"><strong>Esme O.</strong> quarantined <code>auth/2fa-resend.spec.ts</code> from the gate config</div>
+          </div>
+          <div class="row">
+            <span class="ts">Yest</span>
+            <div class="body"><strong>Theo K.</strong> compared <code>#1241</code> ↔ <code>#1240</code> and shared to #release-eng</div>
+          </div>
+          <div class="more"><a>View full activity log →</a></div>
+        </div>
+      </section>
+
+    </aside>
+  </div>
+
+</main>
+
+</body>
+</html>

@@ -13,8 +13,9 @@ from slowapi.util import get_remote_address
 
 from app.bootstrap import configure_metrics, configure_middlewares, register_routers
 from app.core.config import settings
+from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
-from app.db.mongo import close_mongo, get_mongo_db
+from app.db.mongo import close_mongo, ensure_indexes as ensure_mongo_indexes
 from app.db.postgres import close_db
 from app.db.redis_client import close_redis
 
@@ -69,16 +70,10 @@ async def lifespan(app: FastAPI):
             f"security issue(s): {'; '.join(critical_warnings)}"
         )
 
-    # Ensure MongoDB indexes exist
-    db = get_mongo_db()
+    # Ensure MongoDB indexes exist — centralized spec lives in app/db/mongo.py
+    # so new collections/lookups only need to be registered in one place.
     try:
-        await db["raw_allure_json"].create_index("test_case_id", unique=True, background=True)
-        await db["ai_analysis_payloads"].create_index("test_case_id", background=True)
-        await db["ocp_pod_events"].create_index("test_run_id", background=True)
-        await db["run_summaries"].create_index("test_run_id", unique=True, background=True)
-        await db["live_execution_events"].create_index("run_id", background=True)
-        await db["rest_api_payloads"].create_index("test_case_id", background=True)
-        await db["rest_api_payloads"].create_index("endpoint", background=True)
+        await ensure_mongo_indexes()
         logger.info("MongoDB indexes verified")
     except Exception as e:
         logger.warning("Failed to create MongoDB indexes", error=str(e))
@@ -99,10 +94,11 @@ async def lifespan(app: FastAPI):
         pass
     logger.info("Live event stream consumer stopped")
 
-    # Shutdown DB connections
+    # Shutdown DB connections and pooled outbound HTTP client
     await close_db()
     await close_mongo()
     await close_redis()
+    await close_http_client()
     logger.info("TestLookup shutdown complete")
 
 
@@ -124,12 +120,31 @@ configure_metrics(app)
 register_routers(app)
 
 
-# ── Login rate limit (applied here to avoid importing limiter into auth.py) ──
+# ── Auth rate limits (P5-8: covers login + register) ────────────────────────
+# Rate limit config: path → (production limit, error message)
+_AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
+    "/api/v1/auth/login": (
+        "10/minute",
+        "Too many login attempts. Try again in a minute.",
+    ),
+    "/api/v1/auth/register": (
+        "5/minute",
+        "Too many registration attempts. Try again in a minute.",
+    ),
+}
+
+
 @app.middleware("http")
-async def rate_limit_login(request: Request, call_next):
-    """Apply 10 requests/minute rate limit to the login endpoint."""
-    if request.url.path == "/api/v1/auth/login" and request.method == "POST":
-        limit = "200/minute" if settings.APP_ENV == "development" else "10/minute"
+async def rate_limit_auth(request: Request, call_next):
+    """Apply rate limits to authentication endpoints.
+
+    Production: login 10/min, register 5/min.
+    Development: 200/min for both (no friction during dev).
+    """
+    config = _AUTH_RATE_LIMITS.get(request.url.path)
+    if request.method == "POST" and config:
+        prod_limit, error_msg = config
+        limit = "200/minute" if settings.APP_ENV == "development" else prod_limit
 
         @limiter.limit(limit)
         async def _limited(request: Request):
@@ -140,16 +155,14 @@ async def rate_limit_login(request: Request, call_next):
         except RateLimitExceeded:
             return JSONResponse(
                 status_code=429,
-                content={"detail": "Too many login attempts. Try again in a minute."},
+                content={"detail": error_msg},
             )
     return await call_next(request)
 
 
-# ── Legacy single-endpoint health shim (keeps old K8s probes working) ────────
-@app.get("/health", tags=["Health"], include_in_schema=False)
-async def health_shim():
-    """Legacy liveness shim — prefer /health/live and /health/ready."""
-    return {"status": "ok", "version": settings.APP_VERSION}
+# Note: the legacy ``GET /health`` shim was retired in item #10 cleanup —
+# K8s probes should target ``/health/live`` (liveness) and ``/health/ready``
+# (readiness). See ``backend/app/routers/health.py`` for the current contract.
 
 
 @app.get("/", tags=["System"])

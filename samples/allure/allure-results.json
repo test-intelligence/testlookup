@@ -1,0 +1,86 @@
+[
+  {
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "test_search_by_keyword",
+    "fullName": "com.testlookup.demo.SearchTest.test_search_by_keyword",
+    "status": "passed",
+    "start": 1710000000000,
+    "stop": 1710000001200,
+    "labels": [
+      {"name": "suite", "value": "SearchSuite"},
+      {"name": "testClass", "value": "com.testlookup.demo.SearchTest"},
+      {"name": "feature", "value": "Search"},
+      {"name": "severity", "value": "critical"}
+    ],
+    "steps": [
+      {"name": "POST /api/v1/search?q=login", "status": "passed", "start": 1710000000100, "stop": 1710000000400},
+      {"name": "Assert response contains 3 results", "status": "passed", "start": 1710000000400, "stop": 1710000000420}
+    ],
+    "attachments": []
+  },
+  {
+    "uuid": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+    "name": "test_search_empty_query",
+    "fullName": "com.testlookup.demo.SearchTest.test_search_empty_query",
+    "status": "passed",
+    "start": 1710000002000,
+    "stop": 1710000002800,
+    "labels": [
+      {"name": "suite", "value": "SearchSuite"},
+      {"name": "testClass", "value": "com.testlookup.demo.SearchTest"},
+      {"name": "feature", "value": "Search"},
+      {"name": "severity", "value": "normal"}
+    ],
+    "steps": [
+      {"name": "POST /api/v1/search?q=", "status": "passed", "start": 1710000002100, "stop": 1710000002300},
+      {"name": "Assert response is empty array", "status": "passed", "start": 1710000002300, "stop": 1710000002310}
+    ],
+    "attachments": []
+  },
+  {
+    "uuid": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+    "name": "test_search_pagination",
+    "fullName": "com.testlookup.demo.SearchTest.test_search_pagination",
+    "status": "failed",
+    "start": 1710000003000,
+    "stop": 1710000005400,
+    "statusDetails": {
+      "message": "Expected page 2 to have 10 results but got 8",
+      "trace": "AssertionError: Expected page 2 to have 10 results but got 8\n  at SearchTest.java:67\n  at AbstractRunner.execute(AbstractRunner.java:45)"
+    },
+    "labels": [
+      {"name": "suite", "value": "SearchSuite"},
+      {"name": "testClass", "value": "com.testlookup.demo.SearchTest"},
+      {"name": "feature", "value": "Search"},
+      {"name": "severity", "value": "normal"}
+    ],
+    "steps": [
+      {"name": "Seed 25 test results", "status": "passed", "start": 1710000003100, "stop": 1710000003500},
+      {"name": "GET /api/v1/search?q=test&page=2&size=10", "status": "passed", "start": 1710000003500, "stop": 1710000004200},
+      {"name": "Assert page 2 has 10 results", "status": "failed", "start": 1710000004200, "stop": 1710000004220}
+    ],
+    "attachments": []
+  },
+  {
+    "uuid": "d4e5f6a7-b8c9-0123-defa-234567890123",
+    "name": "test_search_special_characters",
+    "fullName": "com.testlookup.demo.SearchTest.test_search_special_characters",
+    "status": "broken",
+    "start": 1710000006000,
+    "stop": 1710000006100,
+    "statusDetails": {
+      "message": "NullPointerException: query sanitizer returned null",
+      "trace": "java.lang.NullPointerException: query sanitizer returned null\n  at QuerySanitizer.sanitize(QuerySanitizer.java:23)\n  at SearchService.search(SearchService.java:45)"
+    },
+    "labels": [
+      {"name": "suite", "value": "SearchSuite"},
+      {"name": "testClass", "value": "com.testlookup.demo.SearchTest"},
+      {"name": "feature", "value": "Search"},
+      {"name": "severity", "value": "blocker"}
+    ],
+    "steps": [
+      {"name": "POST /api/v1/search?q=%22DROP+TABLE%22", "status": "broken", "start": 1710000006050, "stop": 1710000006080}
+    ],
+    "attachments": []
+  }
+]

@@ -1,0 +1,83 @@
+{
+  "stats": {
+    "suites": 1,
+    "tests": 5,
+    "passes": 3,
+    "failures": 1,
+    "pending": 1,
+    "skipped": 0,
+    "start": "2026-04-15T10:00:00.000Z",
+    "end": "2026-04-15T10:00:18.500Z",
+    "duration": 18500
+  },
+  "results": [
+    {
+      "uuid": "e5f6a7b8-c9d0-1234-efab-345678901234",
+      "title": "Checkout Flow",
+      "file": "cypress/e2e/checkout.cy.ts",
+      "fullFile": "/app/cypress/e2e/checkout.cy.ts",
+      "duration": 18500,
+      "suites": [
+        {
+          "uuid": "f6a7b8c9-d0e1-2345-fabc-456789012345",
+          "title": "Checkout Flow",
+          "tests": [
+            {
+              "title": "should add item to cart",
+              "fullTitle": "Checkout Flow should add item to cart",
+              "duration": 2300,
+              "state": "passed",
+              "pass": true,
+              "fail": false,
+              "pending": false,
+              "err": {}
+            },
+            {
+              "title": "should apply discount code",
+              "fullTitle": "Checkout Flow should apply discount code",
+              "duration": 3100,
+              "state": "passed",
+              "pass": true,
+              "fail": false,
+              "pending": false,
+              "err": {}
+            },
+            {
+              "title": "should complete purchase with credit card",
+              "fullTitle": "Checkout Flow should complete purchase with credit card",
+              "duration": 5200,
+              "state": "passed",
+              "pass": true,
+              "fail": false,
+              "pending": false,
+              "err": {}
+            },
+            {
+              "title": "should handle payment gateway error gracefully",
+              "fullTitle": "Checkout Flow should handle payment gateway error gracefully",
+              "duration": 6400,
+              "state": "failed",
+              "pass": false,
+              "fail": true,
+              "pending": false,
+              "err": {
+                "message": "Timed out retrying after 4000ms: Expected to find element `.error-banner`, but never found it.",
+                "estack": "AssertionError: Timed out retrying after 4000ms\n  at Context.eval (cypress/e2e/checkout.cy.ts:45:12)"
+              }
+            },
+            {
+              "title": "should handle Apple Pay checkout",
+              "fullTitle": "Checkout Flow should handle Apple Pay checkout",
+              "duration": 0,
+              "state": "pending",
+              "pass": false,
+              "fail": false,
+              "pending": true,
+              "err": {}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

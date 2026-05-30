@@ -1,0 +1,251 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - ingress-traefik.yaml
+  # middleware-redirect-https.yaml removed — homelab ingress is HTTP-only.
+  - infra-postgres.yaml
+  - infra-mongo.yaml
+  - infra-redis.yaml
+  - infra-minio.yaml
+  - infra-chromadb.yaml
+  - netpol-homelab.yaml
+  - frontend-nginx-configmap.yaml
+
+namespace: testlookup
+
+patches:
+  # ── Remove the base nginx Ingress (replaced by Traefik IngressRoute) ──────
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: testlookup-ingress
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
+  # ── Remove the base template Secret (homelab creates real secrets via kubectl) ──
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: testlookup-secrets
+    target:
+      kind: Secret
+      name: testlookup-secrets
+
+  # ── Force re-pull on pod start ────────────────────────────────────────────
+  # Now that BUILD_TAG is immutable per deploy, kubectl apply -k normally
+  # forces a rollout on its own. This patch is retained for the corner case
+  # of re-running deploy-homelab.sh against the same BUILD_TAG (e.g. local
+  # iteration without --skip-build that happens to land within the same
+  # second). Targets app.kubernetes.io/name=testlookup so infra deployments
+  # (postgres/mongo/redis/minio/chromadb/ollama) keep IfNotPresent.
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/name=testlookup
+
+  # ── Single-replica deployments for homelab ────────────────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-backend
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-frontend
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-critical
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ingestion
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-ai
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-worker-default
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Cap HPAs for homelab resource limits ──────────────────────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+    target:
+      kind: HorizontalPodAutoscaler
+
+  # ── Ollama PVC: use local-path StorageClass (K3s built-in) ────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/storageClassName
+        value: local-path
+    target:
+      kind: PersistentVolumeClaim
+      name: ollama-models-pvc
+
+  # ── Lower Ollama memory for homelab (models are smaller) ──────────────────
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 16Gi
+    target:
+      kind: Deployment
+      name: testlookup-ollama
+
+  # ── Frontend: nginx:alpine needs root to write /var/cache/nginx and
+  # /etc/nginx/conf.d (envsubst target). The base sets runAsUser: 101, so we
+  # must override it to 0 here — strategic merge cannot remove a field by
+  # omitting it. Traefik intercepts /api before it reaches the pod.
+  #
+  # We also mount a pre-rendered nginx config from a ConfigMap. The base image's
+  # entrypoint envsubst was producing the Dockerfile ENV default ("backend:8000")
+  # rather than the K8s env override ("testlookup-backend:8000") — likely a quirk
+  # of the nginx:alpine version in the built image. The ConfigMap subPath mount
+  # bypasses templating entirely.
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          # nginx master forks workers as uid 101 — needs CHOWN/SETUID/SETGID
+          # capabilities to do so. Dropping ALL caps breaks nginx startup with
+          # `chown("/var/cache/nginx/client_temp") Operation not permitted`.
+          runAsNonRoot: false
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: nginx-conf
+            configMap:
+              name: frontend-nginx-conf
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: nginx-conf
+            mountPath: /etc/nginx/conf.d/default.conf
+            subPath: default.conf
+      # Bypass /docker-entrypoint.sh — its envsubst step fails on the read-only
+      # ConfigMap mount and `set -e` kills the container. We don't need
+      # templating since the ConfigMap is already rendered.
+      - op: add
+        path: /spec/template/spec/containers/0/command
+        value: [nginx, "-g", "daemon off;"]
+    target:
+      kind: Deployment
+      name: testlookup-frontend
+
+  # ── Beat: write celerybeat-schedule to /tmp (writable by uid 1000) ──────────
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/command
+        value:
+          - celery
+          - -A
+          - app.worker.celery_app
+          - beat
+          - --loglevel=info
+          - -s
+          - /tmp/celerybeat-schedule
+    target:
+      kind: Deployment
+      name: testlookup-beat
+
+  # ── Environment configuration ─────────────────────────────────────────────
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: testlookup-config
+      data:
+        APP_ENV: "production"
+        LOG_LEVEL: "INFO"
+        AI_OFFLINE_MODE: "true"
+        CORS_ORIGINS: "http://testlookup.local"
+        PUBLIC_BASE_URL: "http://testlookup.local"
+        STORAGE_BACKEND: "minio"
+        ANALYSIS_MODE: "auto"
+        DEEP_INVESTIGATION_ENABLED: "true"
+        DEV_AUTO_LOGIN_ENABLED: "false"
+    target:
+      kind: ConfigMap
+      name: testlookup-config
+
+images:
+  # newTag is overwritten in-place by homelabsetup/deploy-homelab.sh to an
+  # immutable build tag (build-YYYYMMDD-HHMMSS) so we never deploy a floating
+  # :latest. The placeholder below intentionally won't resolve in any registry —
+  # running ``kubectl apply -k`` directly (bypassing the deploy script) is
+  # expected to fail at ImagePull, which prevents accidental :latest deploys.
+  #
+  # **Port 30500, not 5000.** This is the NodePort the registry pod is
+  # exposed on (``REGISTRY_NODEPORT`` in bootstrap-homelab.sh, mirrored
+  # via ``/etc/rancher/k3s/registries.yaml`` on every K3s node). An
+  # earlier revision pointed at ``:5000`` (the registry's pod-internal
+  # port), which the K3s containerd mirror config did NOT cover, so
+  # pulls failed at the imagePull step with "connection refused" on
+  # every worker node while pushes (which use the NodePort directly)
+  # kept succeeding. Keep this in sync with bootstrap-homelab.sh:47 +
+  # deploy-homelab.sh:28.
+  - name: testlookup/backend
+    newName: registry.local:30500/testlookup/backend
+    newTag: BUILD_TAG_PLACEHOLDER
+  - name: testlookup/frontend
+    newName: registry.local:30500/testlookup/frontend
+    newTag: BUILD_TAG_PLACEHOLDER
+  - name: testlookup/mcp
+    newName: registry.local:30500/testlookup/mcp
+    newTag: BUILD_TAG_PLACEHOLDER

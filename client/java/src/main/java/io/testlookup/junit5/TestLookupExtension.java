@@ -1,5 +1,6 @@
 package io.testlookup.junit5;
 
+import io.testlookup.ConfigLoader;
 import io.testlookup.TestLookupReporter;
 import io.testlookup.TestLookupReporter.*;
 
@@ -27,7 +28,8 @@ import java.util.logging.Logger;
  * <h3>Configuration via environment variables</h3>
  * <pre>
  *   TESTLOOKUP_URL          Server base URL     (required)
- *   TESTLOOKUP_TOKEN        JWT access token    (required)
+ *   TESTLOOKUP_API_KEY      API key             (required — or use TESTLOOKUP_TOKEN)
+ *   TESTLOOKUP_TOKEN        JWT access token    (alternative to API key)
  *   TESTLOOKUP_PROJECT_ID   Target project UUID (required)
  *   TESTLOOKUP_BUILD        CI build number     (optional)
  *   TESTLOOKUP_BRANCH       Git branch name     (optional)
@@ -37,7 +39,7 @@ import java.util.logging.Logger;
  * <h3>Configuration via JVM system properties (takes precedence)</h3>
  * <pre>
  *   -Dtestlookup.url=...
- *   -Dtestlookup.token=...
+ *   -Dtestlookup.apiKey=...   (or -Dtestlookup.token=...)
  *   -Dtestlookup.projectId=...
  *   -Dtestlookup.build=...
  *   -Dtestlookup.branch=...
@@ -60,29 +62,30 @@ public class TestLookupExtension
 
     @Override
     public void beforeAll(ExtensionContext ctx) {
-        String url       = prop("testlookup.url",       "TESTLOOKUP_URL");
-        String token     = prop("testlookup.token",     "TESTLOOKUP_TOKEN");
-        String projectId = prop("testlookup.projectId", "TESTLOOKUP_PROJECT_ID");
-
-        if (url.isEmpty() || token.isEmpty() || projectId.isEmpty()) {
-            LOG.warning("TestLookupExtension: disabled — missing URL, token, or projectId");
+        // When auto-discovered via ServiceLoader, skip silently if not configured
+        if (!ConfigLoader.isConfigured()) {
+            LOG.fine("TestLookupExtension: no configuration found — skipping");
             return;
         }
 
-        TestLookupReporter reporter = new TestLookupReporter.Builder()
-            .baseUrl(url)
-            .token(token)
-            .projectId(projectId)
-            .framework("junit5")
-            .build();
-
         try {
+            // Builder.build() resolves config from testlookup.yaml / env / system props
+            TestLookupReporter reporter = new TestLookupReporter.Builder()
+                .framework("junit5")
+                .build();
+
+            // testlookup.suite preferred, testlookup.launch as fallback.
+            String suiteId = nullable("testlookup.suite", "TESTLOOKUP_SUITE");
+            if (suiteId == null) suiteId = nullable("testlookup.launch", "TESTLOOKUP_LAUNCH");
+
             LiveSession session = reporter.startSession(
                 SessionOptions.builder()
                     .buildNumber(prop("testlookup.build",  "TESTLOOKUP_BUILD",
                                     "junit5-" + System.currentTimeMillis()))
                     .branch(     nullable("testlookup.branch", "TESTLOOKUP_BRANCH"))
                     .commitHash( nullable("testlookup.commit", "TESTLOOKUP_COMMIT"))
+                    .launchName( nullable("testlookup.launch", "TESTLOOKUP_LAUNCH"))
+                    .suiteName(  suiteId)
                     .build()
             );
 
@@ -91,7 +94,7 @@ public class TestLookupExtension
             store.put(KEY_SESSION,  session);
             LOG.info("TestLookupExtension: session started: " + session.getSessionId());
         } catch (Exception e) {
-            LOG.warning("TestLookupExtension: failed to start session: " + e.getMessage());
+            LOG.warning("TestLookupExtension: disabled — " + e.getMessage());
         }
     }
 

@@ -30,11 +30,11 @@ export default function MetricCard({ title, metric, icon, accentColor = 'default
   }
 
   return (
-    <div className="card flex items-start justify-between gap-4">
+    <div className="card flex items-start justify-between gap-4" role="status" aria-live="polite">
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">{title}</p>
         {loading ? (
-          <div className="h-8 w-24 bg-[var(--color-bg-secondary)] rounded animate-pulse" />
+          <div className="h-8 w-24 bg-[var(--color-bg-secondary)] rounded animate-pulse" aria-label="Loading" />
         ) : (
           <p className="text-3xl font-bold text-[var(--color-text)] tabular-nums">{metric?.value ?? '—'}</p>
         )}

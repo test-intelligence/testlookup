@@ -5,13 +5,18 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_run_access
+from app.core.deps import (
+    get_current_active_user,
+    require_link_access,
+    require_run_access,
+)
 from app.db.postgres import get_db
-from app.models.postgres import AccessAuditLog, TestRun, User
+from app.models.postgres import AccessAuditLog, ReportShareLink, TestRun, User
 from app.services import report_service
 
 logger = logging.getLogger("routers.reports")
@@ -57,16 +62,19 @@ async def export_run_report_pdf(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
-    pdf_bytes = render_report_pdf(report)
+    # ReportLab is synchronous and CPU-bound — run it off the event loop so
+    # the request worker stays free to accept other connections.
+    pdf_bytes = await run_in_threadpool(render_report_pdf, report)
 
-    # Audit log
-    run_result = await db.execute(
-        __import__("sqlalchemy").select(TestRun.project_id).where(TestRun.id == run_id)
-    )
-    project_id = run_result.scalar_one_or_none()
-    await _log_audit(db, "report_export_pdf", current_user, project_id, {
+    # Audit log — stage + single commit before streaming the response
+    from sqlalchemy import select
+    project_id = (await db.execute(
+        select(TestRun.project_id).where(TestRun.id == run_id)
+    )).scalar_one_or_none()
+    _stage_audit(db, "report_export_pdf", current_user, project_id, {
         "run_id": str(run_id), "layout": layout,
     })
+    await db.commit()
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -93,13 +101,15 @@ async def export_evidence_bundle(
         logger.error("Evidence bundle failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Bundle generation failed")
 
-    # Audit log
+    # Audit log — stage + single commit before streaming the response
     from sqlalchemy import select
-    run_result = await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
-    project_id = run_result.scalar_one_or_none()
-    await _log_audit(db, "report_export_bundle", current_user, project_id, {
+    project_id = (await db.execute(
+        select(TestRun.project_id).where(TestRun.id == run_id)
+    )).scalar_one_or_none()
+    _stage_audit(db, "report_export_bundle", current_user, project_id, {
         "run_id": str(run_id),
     })
+    await db.commit()
 
     return StreamingResponse(
         io.BytesIO(zip_bytes),
@@ -118,8 +128,11 @@ class CreateShareLinkRequest(BaseModel):
 
 class ShareLinkResponse(BaseModel):
     id: str
-    token: str
-    share_url: str
+    # token is only populated on creation responses — it is hashed at rest,
+    # so list endpoints cannot return it. Callers must copy the token the
+    # one time it is shown.
+    token: Optional[str] = None
+    share_url: Optional[str] = None
     report_layout: str
     expires_at: str
     created_by_name: Optional[str] = None
@@ -145,7 +158,7 @@ async def create_share_link_endpoint(
     if not project_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-    link = await create_share_link(
+    created = await create_share_link(
         db=db,
         run_id=run_id,
         project_id=project_id,
@@ -153,20 +166,23 @@ async def create_share_link_endpoint(
         layout=body.layout,
         expiry_days=body.expiry_days,
     )
+    link = created.link
+    raw_token = created.raw_token
+
+    _stage_audit(db, "report_share_created", current_user, project_id, {
+        "run_id": str(run_id), "layout": body.layout, "expiry_days": body.expiry_days,
+    })
+    # Single commit covers both the new link and its audit event.
     await db.commit()
     await db.refresh(link)
 
-    await _log_audit(db, "report_share_created", current_user, project_id, {
-        "run_id": str(run_id), "layout": body.layout, "expiry_days": body.expiry_days,
-    })
-
     from app.core.config import settings
     base_url = settings.SAML_BASE_URL  # reuse the base URL setting
-    share_url = f"{base_url}/api/v1/shared/reports/{link.token}"
+    share_url = f"{base_url}/api/v1/shared/reports/{raw_token}"
 
     return ShareLinkResponse(
         id=str(link.id),
-        token=link.token,
+        token=raw_token,
         share_url=share_url,
         report_layout=link.report_layout,
         expires_at=link.expires_at.isoformat(),
@@ -185,16 +201,14 @@ async def list_share_links_endpoint(
 ):
     """List all share links for a run."""
     from app.services.share_link_service import list_share_links
-    from app.core.config import settings
 
     links = await list_share_links(db, run_id)
-    base_url = settings.SAML_BASE_URL
-
+    # Raw tokens are not stored, so list responses show metadata only.
     return [
         ShareLinkResponse(
             id=str(link.id),
-            token=link.token,
-            share_url=f"{base_url}/api/v1/shared/reports/{link.token}",
+            token=None,
+            share_url=None,
             report_layout=link.report_layout,
             expires_at=link.expires_at.isoformat(),
             created_by_name=link.created_by_name,
@@ -208,33 +222,35 @@ async def list_share_links_endpoint(
 
 @router.delete("/share-links/{link_id}", status_code=204)
 async def revoke_share_link_endpoint(
-    link_id: uuid.UUID,
+    link: ReportShareLink = Depends(require_link_access()),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Revoke a share link."""
-    from app.services.share_link_service import revoke_share_link
-
-    try:
-        await revoke_share_link(db, link_id)
-        await db.commit()
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-
+    """Revoke a share link. Creator, project members, and admins can revoke."""
+    link.is_revoked = True
+    _stage_audit(db, "report_share_revoked", current_user, link.project_id, {
+        "link_id": str(link.id),
+        "run_id": str(link.run_id),
+    })
+    await db.commit()
     return None
 
 
 # ── Audit helper ─────────────────────────────────────────────────────────────
 
 
-async def _log_audit(
+def _stage_audit(
     db: AsyncSession,
     action: str,
     actor: User | None,
     project_id: uuid.UUID | None,
     after_value: dict | None = None,
 ) -> None:
-    """Persist a report export/share audit event."""
+    """Stage a report export/share audit event on the current session.
+
+    The caller owns the transaction and must call ``await db.commit()`` at
+    the end of the request. Staging-only keeps us at one commit per request.
+    """
     db.add(AccessAuditLog(
         actor_user_id=actor.id if actor else None,
         actor_name=actor.username if actor else "anonymous_share",
@@ -242,4 +258,3 @@ async def _log_audit(
         action=action,
         after_value=after_value,
     ))
-    await db.commit()

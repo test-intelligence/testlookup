@@ -35,7 +35,6 @@ from app.services.action_policy import (
     check_defect_promotion_policy,
 )
 from app.services.criticality_service import get_scoring_model_info, score_cluster
-from app.services.llm_factory import get_llm
 
 logger = logging.getLogger("services.defect_promotion")
 
@@ -61,6 +60,13 @@ Produce a Jira-ready defect in JSON format:
   "labels": ["regression", "automated-test", "cluster-promoted"],
   "duplicate_hint": "brief description to help detect similar open tickets (for dedup query)"
 }}"""
+
+
+async def get_llm(*args, **kwargs):
+    """Lazy LLM factory import so pure defect helpers work without LangChain."""
+    from app.services.llm_factory import get_llm as _factory_get_llm
+
+    return await _factory_get_llm(*args, **kwargs)
 
 
 def _failure_category_value(category: Any) -> str:
@@ -140,6 +146,17 @@ async def get_defect_candidate(
 
     # LLM-generated Jira content (with fallback)
     jira_content = await _generate_jira_content(cluster, analyses)
+    memory_ownership = await _resolve_defect_owner_from_memory(
+        db,
+        project_id=str(run.project_id),
+        cluster_id=cluster_id,
+        component=jira_content.get("component"),
+        member_test_ids=[str(member_id) for member_id in member_ids],
+    )
+    if memory_ownership and jira_content.get("owner_team") in {None, "", "Unknown"}:
+        jira_content["owner_team"] = memory_ownership.get("team_name") or "Unknown"
+    if memory_ownership and jira_content.get("component") in {None, "", "Unknown"}:
+        jira_content["component"] = memory_ownership.get("service_name") or "Unknown"
 
     # Semantic duplicate detection
     duplicate_id, duplicate_detected = await _find_duplicate_semantic(
@@ -237,6 +254,18 @@ async def promote_cluster(
     )
     composite = round(composite, 1)
 
+    memory_ownership = await _resolve_defect_owner_from_memory(
+        db,
+        project_id=project_id,
+        cluster_id=cluster_id,
+        component=request.get("component"),
+        member_test_ids=[str(member_id) for member_id in member_ids],
+    )
+    if memory_ownership and request.get("owner_team") in {None, "", "Unknown"}:
+        request["owner_team"] = memory_ownership.get("team_name") or "Unknown"
+    if memory_ownership and request.get("component") in {None, "", "Unknown"}:
+        request["component"] = memory_ownership.get("service_name") or "Unknown"
+
     # Check for duplicate
     duplicate_id, duplicate_detected = await _find_duplicate_semantic(
         project_id=project_id,
@@ -295,10 +324,14 @@ async def promote_cluster(
         policy_evaluation=policy_result,
     )
     db.add(defect)
-    await db.commit()
-    await db.refresh(defect)
+    await db.flush()  # materialize defect.id so jira ticket writes can reference it
 
-    # Only create Jira ticket if approved (not pending review)
+    # Only create Jira ticket if approved (not pending review).
+    # Jira is an *external* side effect, so we commit the defect record
+    # first (outside this service) before calling out. The handler is
+    # responsible for the atomic write; Jira creation then happens on a
+    # best-effort basis and gets its own follow-up flush if it updates
+    # the defect row.
     jira_ticket: Optional[dict] = None
     jira_url: Optional[str] = None
     if (
@@ -317,8 +350,6 @@ async def promote_cluster(
             defect.jira_ticket_id = jira_ticket.get("key")
             defect.jira_ticket_url = jira_url
             defect.approval_status = ActionStatus.EXECUTED
-            db.add(defect)
-            await db.commit()
 
     # Track promotion metrics
     if duplicate_detected:
@@ -416,6 +447,36 @@ def _build_evidence_bundle(analyses: list[AIAnalysis], finding: Any) -> dict:
     }
 
 
+async def _resolve_defect_owner_from_memory(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    cluster_id: str,
+    component: str | None,
+    member_test_ids: list[str],
+) -> dict[str, Any] | None:
+    """Resolve candidate owner through canonical memory, if available."""
+    try:
+        from app.services.agent_memory_service import resolve_ownership_from_memory
+
+        context = await resolve_ownership_from_memory(
+            db,
+            _uuid.UUID(str(project_id)),
+            cluster_id=cluster_id,
+            component=component,
+            member_test_ids=member_test_ids,
+        )
+    except Exception as exc:
+        logger.debug("Defect owner memory lookup skipped: %s", exc)
+        return None
+    if not context:
+        return None
+    ownership = context.get("ownership") or {}
+    if not isinstance(ownership, dict):
+        return None
+    return ownership
+
+
 async def _generate_jira_content(cluster: FailureCluster, analyses: list[AIAnalysis]) -> dict:
     analyses_json = json.dumps(
         [
@@ -451,7 +512,7 @@ async def _generate_jira_content(cluster: FailureCluster, analyses: list[AIAnaly
     )
 
     try:
-        llm = get_llm(temperature=0.1)
+        llm = await get_llm(temperature=0.1)
         response = await llm.ainvoke(prompt)
         raw = response.content if hasattr(response, "content") else str(response)
         content = str(raw).strip()
@@ -484,6 +545,22 @@ async def _find_duplicate_semantic(
     Falls back to difflib title similarity when ChromaDB is unavailable.
     Returns (duplicate_defect_id, found_bool).
     """
+    try:
+        from app.services.agent_memory_service import find_duplicate_defect_memory
+
+        memory_match = await find_duplicate_defect_memory(
+            db,
+            _uuid.UUID(str(project_id)),
+            duplicate_hint,
+        )
+        if memory_match.get("found"):
+            return str(memory_match.get("duplicate_defect_id")), True
+        audit = memory_match.get("retrieval_audit") or {}
+        if audit.get("memory_entry_count"):
+            return None, False
+    except Exception as exc:
+        logger.debug("Canonical memory duplicate check skipped: %s", exc)
+
     # Get open defects for this project
     try:
         result = await db.execute(

@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
+import type { ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 
 import ReleaseGatePage from './ReleaseGatePage'
 
@@ -89,8 +90,13 @@ describe('ReleaseGatePage', () => {
     const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
     const { useRuns } = await import('@/hooks/useRuns')
 
-    const state = {
-      council: null as any,
+    const state: {
+      council: ReleaseCouncilDecision | null
+      isLoading: boolean
+      isError: boolean
+      refresh: () => void
+    } = {
+      council: null,
       isLoading: true,
       isError: false,
       refresh: vi.fn(),

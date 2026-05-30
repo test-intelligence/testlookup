@@ -1,60 +1,65 @@
-import useSWR from 'swr'
+import useSWR, { mutate } from 'swr'
 import { metricsService } from '@/services/metricsService'
 import { analyticsService } from '@/services/analyticsService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
-export function useDashboardSummary(days = 7) {
+export function refreshDefects() {
+  return mutate((key: unknown) => Array.isArray(key) && key[0] === 'analytics-defects')
+}
+
+export function useDashboardSummary(days = 7, suiteName?: string | null) {
   return useProjectScopedSWR(
     'metrics-summary',
-    (projectId) => metricsService.getSummary(projectId, days),
-    { refreshInterval: 30_000 },
-    [days],
+    (projectId) => metricsService.getSummary(projectId, days, suiteName),
+    { refreshInterval: REFRESH_INTERVALS.POLLING },
+    [days, suiteName],
   )
 }
 
-export function useTrendData(days = 7) {
+export function useTrendData(days = 7, suiteName?: string | null) {
   return useProjectScopedSWR(
     'metrics-trends',
-    (projectId) => metricsService.getTrends(projectId, days),
-    { refreshInterval: 60_000 },
-    [days],
+    (projectId) => metricsService.getTrends(projectId, days, suiteName),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+    [days, suiteName],
   )
 }
 
-export function useFlakyTests(days = 30) {
+export function useFlakyTests(days = 30, suiteName?: string | null) {
   return useProjectScopedSWR(
     'analytics-flaky',
-    (projectId) => analyticsService.getFlakyTests(projectId, days),
-    { refreshInterval: 120_000 },
-    [days],
+    (projectId) => analyticsService.getFlakyTests(projectId, days, suiteName),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+    [days, suiteName],
   )
 }
 
-export function useFailureCategories(days = 30) {
+export function useFailureCategories(days = 30, suiteName?: string | null) {
   return useProjectScopedSWR(
     'analytics-categories',
-    (projectId) => analyticsService.getFailureCategories(projectId, days),
-    { refreshInterval: 120_000 },
-    [days],
+    (projectId) => analyticsService.getFailureCategories(projectId, days, suiteName),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+    [days, suiteName],
   )
 }
 
-export function useTopFailing(days = 30) {
+export function useTopFailing(days = 30, suiteName?: string | null) {
   return useProjectScopedSWR(
     'analytics-top-failing',
-    (projectId) => analyticsService.getTopFailing(projectId, days),
-    { refreshInterval: 120_000 },
-    [days],
+    (projectId) => analyticsService.getTopFailing(projectId, days, suiteName),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+    [days, suiteName],
   )
 }
 
-export function useCoverage(days = 30) {
+export function useCoverage(days = 30, suiteName?: string | null) {
   return useProjectScopedSWR(
     'analytics-coverage',
-    (projectId) => analyticsService.getCoverage(projectId, days),
-    { refreshInterval: 120_000 },
-    [days],
+    (projectId) => analyticsService.getCoverage(projectId, days, suiteName),
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
+    [days, suiteName],
   )
 }
 
@@ -62,7 +67,7 @@ export function useDefects(page = 1, resolutionStatus?: string) {
   return useProjectScopedSWR(
     'analytics-defects',
     (projectId) => analyticsService.getDefects(projectId, { page, resolution_status: resolutionStatus }),
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
     [page, resolutionStatus],
   )
 }
@@ -81,7 +86,7 @@ export function useAiSummary(days = 30) {
   return useProjectScopedSWR(
     'analytics-ai-summary',
     (projectId) => analyticsService.getAiSummary(projectId, days),
-    { refreshInterval: 120_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
     [days],
   )
 }

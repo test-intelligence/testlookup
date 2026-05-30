@@ -6,13 +6,39 @@ when new test runs are ingested or test case statuses change.
 import asyncio
 import json
 import logging
-from typing import Set
+import time
+import uuid as _uuid
+from dataclasses import dataclass
+from typing import Optional, Set
 
 from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from jose import JWTError
+from sqlalchemy import select
+
 from app.core.config import settings
-from app.core.deps import verify_webhook_secret
+from app.core.deps import get_accessible_project_ids, verify_webhook_secret
+from app.core.security import decode_token
+from app.db.postgres import AsyncSessionLocal
+from app.models.postgres import User
+from app.services.access_audit_service import log_access_change
 
 logger = logging.getLogger(__name__)
+
+# WS auth handshake timeout — clients must send {"type": "auth", "token": "..."}
+# within this window of opening the socket, or we close the connection.
+WS_AUTH_TIMEOUT_SECONDS = 10.0
+
+# Grace period after token expiry before we close the socket — gives a
+# well-behaved client time to send {"type":"refresh","token":"<new>"}.
+WS_TOKEN_GRACE_SECONDS = 5.0
+
+
+@dataclass
+class WsSession:
+    """Per-connection auth state held for the lifetime of the WebSocket."""
+    user_id: _uuid.UUID
+    user_name: Optional[str]
+    token_exp: float  # epoch seconds; 0 means "no exp claim"
 
 router = APIRouter(prefix="/ws", tags=["Live Reporting"])
 
@@ -25,27 +51,40 @@ class ConnectionManager:
         # project_id -> set of WebSocket connections
         self._channels: dict[str, Set[WebSocket]] = {}
 
-    async def connect(self, project_id: str, websocket: WebSocket) -> bool:
-        """Accept the connection; returns False and closes it if limits are exceeded."""
-        # Check total connection limit first (before accept to avoid resource waste)
+    async def accept(self, project_id: str, websocket: WebSocket) -> bool:
+        """Accept the WS handshake if limits permit; do NOT yet register in the
+        broadcast channel — caller must call ``register`` after authenticating.
+
+        Limits are checked against the registered-channel count, so a flood of
+        un-authenticated sockets cannot exceed the per-project cap once they
+        time out within ``WS_AUTH_TIMEOUT_SECONDS``.
+        """
         total = self.active_connections
         if total >= settings.WS_MAX_TOTAL_CONNECTIONS:
             await websocket.close(code=1008, reason="Server connection limit reached")
-            logger.warning("WS rejected: global limit %d reached", settings.WS_MAX_TOTAL_CONNECTIONS)
+            logger.warning(
+                f"ws_rejected_global_limit limit={settings.WS_MAX_TOTAL_CONNECTIONS}"
+            )
             return False
 
         project_count = len(self._channels.get(project_id, set()))
         if project_count >= settings.WS_MAX_CONNECTIONS_PER_PROJECT:
             await websocket.close(code=1008, reason="Project connection limit reached")
-            logger.warning("WS rejected: project=%s limit %d reached", project_id, settings.WS_MAX_CONNECTIONS_PER_PROJECT)
+            logger.warning(
+                f"ws_rejected_project_limit project_id={project_id} "
+                f"limit={settings.WS_MAX_CONNECTIONS_PER_PROJECT}"
+            )
             return False
 
         await websocket.accept()
+        return True
+
+    def register(self, project_id: str, websocket: WebSocket) -> None:
+        """Register an already-accepted, authenticated socket in the broadcast channel."""
         if project_id not in self._channels:
             self._channels[project_id] = set()
         self._channels[project_id].add(websocket)
         logger.info(f"WS connect: project={project_id} total={len(self._channels[project_id])}")
-        return True
 
     def disconnect(self, project_id: str, websocket: WebSocket) -> None:
         channel = self._channels.get(project_id, set())
@@ -66,7 +105,17 @@ class ConnectionManager:
         async def _send(ws: WebSocket) -> None:
             try:
                 await asyncio.wait_for(ws.send_text(payload), timeout=timeout)
-            except Exception:
+            except asyncio.TimeoutError:
+                logger.debug(f"ws_broadcast_timeout project_id={project_id}")
+                dead.add(ws)
+            except (RuntimeError, ConnectionError):
+                # RuntimeError: WebSocket already in CLOSED state.
+                # ConnectionError: peer vanished mid-send.
+                dead.add(ws)
+            except Exception as exc:  # noqa: BLE001 — defensive: never let one dead socket poison gather
+                logger.warning(
+                    f"ws_broadcast_failed project_id={project_id}: {exc}"
+                )
                 dead.add(ws)
 
         await asyncio.gather(*[_send(ws) for ws in list(channel)], return_exceptions=True)
@@ -86,6 +135,122 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+# ── Authentication ─────────────────────────────────────────────────────────
+
+async def _validate_token_and_membership(
+    token: str,
+    project_uuid: _uuid.UUID,
+) -> tuple[Optional[User], Optional[float], Optional[tuple[int, str]]]:
+    """
+    Decode a JWT, load the user, and check project access.
+
+    Returns ``(user, exp_epoch, None)`` on success.
+    Returns ``(None, None, (close_code, close_reason))`` on failure so the
+    caller can close the socket with the right code.
+    """
+    try:
+        payload = decode_token(token)
+    except JWTError:
+        return None, None, (4401, "Invalid token")
+
+    if payload.get("type") != "access":
+        return None, None, (4401, "Wrong token type")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        return None, None, (4401, "Missing sub claim")
+
+    try:
+        uid = _uuid.UUID(str(user_id))
+    except ValueError:
+        return None, None, (4401, "Invalid sub claim")
+
+    exp_raw = payload.get("exp")
+    exp_epoch: float = float(exp_raw) if isinstance(exp_raw, (int, float)) else 0.0
+
+    async with AsyncSessionLocal() as db:
+        user = (await db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
+        if user is None or not user.is_active:
+            return None, None, (4401, "User not found or inactive")
+
+        accessible = await get_accessible_project_ids(db, user)
+        if accessible is not None and project_uuid not in accessible:
+            return None, None, (4403, "Not a member of this project")
+
+    return user, exp_epoch, None
+
+
+async def _authenticate_ws(
+    websocket: WebSocket, project_id: str
+) -> Optional[WsSession]:
+    """
+    Validate the post-connect auth handshake.
+
+    Expected first client message: ``{"type": "auth", "token": "<JWT>"}``.
+    Returns a ``WsSession`` on success; closes the socket and returns None on
+    any failure. Caller must not send further frames if None.
+    """
+    try:
+        raw = await asyncio.wait_for(
+            websocket.receive_text(), timeout=WS_AUTH_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        await websocket.close(code=4401, reason="Auth timeout")
+        return None
+    except WebSocketDisconnect:
+        return None
+
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        await websocket.close(code=4400, reason="Malformed auth payload")
+        return None
+
+    if msg.get("type") != "auth" or not isinstance(msg.get("token"), str):
+        await websocket.close(code=4400, reason="Expected {type:'auth',token:'...'}")
+        return None
+
+    try:
+        project_uuid = _uuid.UUID(project_id)
+    except ValueError:
+        await websocket.close(code=4400, reason="Invalid project_id")
+        return None
+
+    user, exp_epoch, err = await _validate_token_and_membership(msg["token"], project_uuid)
+    if err is not None or user is None or exp_epoch is None:
+        code, reason = err if err is not None else (4401, "Auth failed")
+        await websocket.close(code=code, reason=reason)
+        return None
+
+    return WsSession(user_id=user.id, user_name=user.username, token_exp=exp_epoch)
+
+
+async def _audit_ws_event(
+    action: str,
+    user_id: Optional[_uuid.UUID],
+    user_name: Optional[str],
+    project_uuid: Optional[_uuid.UUID],
+    detail: Optional[dict] = None,
+) -> None:
+    """Best-effort audit write — never let an audit failure break the WS."""
+    try:
+        async with AsyncSessionLocal() as db:
+            entry_actor = None
+            if user_id is not None:
+                # Build a lightweight stand-in so log_access_change can pull id/username
+                entry_actor = await db.get(User, user_id)
+            await log_access_change(
+                db,
+                action=action,
+                actor=entry_actor,
+                project_id=project_uuid,
+                after_value=detail,
+            )
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 — audit is fire-and-forget
+        logger.debug(f"ws_audit_skipped action={action}: {exc}")
+
+
 # ── WebSocket endpoint ─────────────────────────────────────────────────────
 
 @router.websocket("/live/{project_id}")
@@ -93,46 +258,112 @@ async def live_updates(websocket: WebSocket, project_id: str):
     """
     WebSocket endpoint for real-time test run updates.
 
+    Auth handshake (required, ~10s timeout):
+        client → ``{"type":"auth","token":"<JWT access token>"}``
+
+    On success, server sends ``{"type":"connected", ...}``.
+    On failure, server closes with a ``4xxx`` code and a reason.
+
     Message types sent to client:
-    - run_started: A new test run has been queued for ingestion
-    - run_updated: Test run aggregates (pass/fail counts) have changed
-    - run_completed: Ingestion finished, final stats available
-    - test_failed: Individual test case failed
-    - ai_analysis_ready: AI analysis completed for a test case
+    - connected: Auth successful, subscription active
+    - run_started / run_updated / run_completed: lifecycle of a test run
+    - test_failed / ai_analysis_ready: per-test events
     - ping: Keep-alive heartbeat every 30s
 
-    Message types received from client:
+    Message types received from client (post-auth):
     - ping: Client keep-alive (server responds with pong)
     """
-    accepted = await manager.connect(project_id, websocket)
+    accepted = await manager.accept(project_id, websocket)
     if not accepted:
         return
+
+    session = await _authenticate_ws(websocket, project_id)
+    if session is None:
+        # _authenticate_ws already closed the socket. Nothing registered yet.
+        return
+
+    manager.register(project_id, websocket)
+
+    # Audit the connect — non-blocking, best-effort
+    try:
+        project_uuid_for_audit = _uuid.UUID(project_id)
+    except ValueError:
+        project_uuid_for_audit = None
+    await _audit_ws_event(
+        "ws_connect",
+        session.user_id,
+        session.user_name,
+        project_uuid_for_audit,
+        detail={"channel": "live"},
+    )
+
+    close_reason_for_audit = "client_disconnect"
+
     try:
         # Send welcome message
         await websocket.send_json({
             "type": "connected",
             "project_id": project_id,
+            "user_id": str(session.user_id),
             "message": "Subscribed to live test updates",
         })
 
-        # Keep connection alive with ping/pong
+        # Keep connection alive with ping/pong + periodic token-expiry checks.
         while True:
+            # Expiry check runs on every iteration (cheap — just clock math).
+            if session.token_exp and time.time() > session.token_exp + WS_TOKEN_GRACE_SECONDS:
+                close_reason_for_audit = "token_expired"
+                await websocket.close(code=4401, reason="Token expired — reconnect")
+                break
+
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                msg = json.loads(data)
-                if msg.get("type") == "ping":
+                try:
+                    msg = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+
+                msg_type = msg.get("type")
+                if msg_type == "ping":
                     await websocket.send_json({"type": "pong"})
+                elif msg_type == "refresh" and isinstance(msg.get("token"), str):
+                    # Client is renewing its access token — re-validate everything.
+                    try:
+                        proj_uuid = _uuid.UUID(project_id)
+                    except ValueError:
+                        close_reason_for_audit = "invalid_project_on_refresh"
+                        await websocket.close(code=4400, reason="Invalid project_id")
+                        break
+                    user, exp_epoch, err = await _validate_token_and_membership(
+                        msg["token"], proj_uuid
+                    )
+                    if err is not None or user is None or exp_epoch is None:
+                        code, reason = err if err is not None else (4401, "Refresh failed")
+                        close_reason_for_audit = f"refresh_failed:{reason}"
+                        await websocket.close(code=code, reason=reason)
+                        break
+                    session.user_id = user.id
+                    session.user_name = user.username
+                    session.token_exp = exp_epoch
+                    await websocket.send_json({"type": "refreshed", "exp": exp_epoch})
             except asyncio.TimeoutError:
-                # Send server-side heartbeat
+                # Server-side heartbeat (and the next loop iteration re-checks expiry).
                 await websocket.send_json({"type": "ping"})
-            except json.JSONDecodeError:
-                pass
 
     except WebSocketDisconnect:
-        manager.disconnect(project_id, websocket)
+        pass  # close_reason_for_audit stays "client_disconnect"
     except Exception as e:
+        close_reason_for_audit = f"server_error:{type(e).__name__}"
         logger.warning(f"WS error for project={project_id}: {e}")
+    finally:
         manager.disconnect(project_id, websocket)
+        await _audit_ws_event(
+            "ws_disconnect",
+            session.user_id,
+            session.user_name,
+            project_uuid_for_audit,
+            detail={"channel": "live", "reason": close_reason_for_audit},
+        )
 
 
 # ── Helper functions called from ingestion pipeline ───────────────────────

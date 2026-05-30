@@ -1,0 +1,61 @@
+{
+  "_meta": {
+    "description": "Labelled test-failure classification dataset for benchmarking TestLookup's analysis engine",
+    "version": "1.0.0",
+    "license": "CC0-1.0",
+    "total_cases": 42,
+    "categories": ["PRODUCT_BUG", "INFRASTRUCTURE", "TEST_DATA", "AUTOMATION_DEFECT", "FLAKY", "UNKNOWN"],
+    "coverage": "All 14 keyword patterns, historical flakiness, regression, duration anomaly, suite-level, cross-suite, and fallback paths"
+  },
+  "cases": [
+    {"id": "INF-01", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "java.lang.OutOfMemoryError: Container killed (OOMKilled)", "test_name": "test_bulk_import", "duration_ms": 45000, "severity": "critical"},
+    {"id": "INF-02", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "ConnectionRefusedError: Connection refused on port 5432", "test_name": "test_db_health_check", "duration_ms": 5200, "severity": "blocker"},
+    {"id": "INF-03", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "TimeoutError: Request timed out after 30000ms", "test_name": "test_external_api_call", "duration_ms": 30500, "severity": "major"},
+    {"id": "INF-04", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "HTTP 502 Bad Gateway from upstream service", "test_name": "test_proxy_passthrough", "duration_ms": 1200, "severity": "critical"},
+    {"id": "INF-05", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "DNS resolution failed: unknown host payments.internal", "test_name": "test_payment_dns", "duration_ms": 800, "severity": "blocker"},
+    {"id": "INF-06", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "SSL: CERTIFICATE_VERIFY_FAILED - self-signed certificate in chain", "test_name": "test_mtls_handshake", "duration_ms": 2100, "severity": "major"},
+    {"id": "INF-07", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "HTTP 503 Service Unavailable", "test_name": "test_health_endpoint", "duration_ms": 900, "severity": "critical"},
+    {"id": "INF-08", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "504 Gateway Timeout from load balancer", "test_name": "test_lb_timeout", "duration_ms": 60100, "severity": "major"},
+    {"id": "INF-09", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "ECONNRESET: Connection reset by peer during TLS handshake", "test_name": "test_tls_reset", "duration_ms": 3200, "severity": "major"},
+    {"id": "INF-10", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "500 Internal Server Error from auth-service", "test_name": "test_auth_proxy", "duration_ms": 1500, "severity": "critical", "_note": "duration anomaly path: 3x median", "history": {"median_duration_ms": 400, "pass_count": 50, "fail_count": 1, "consecutive_failures": 1}},
+
+    {"id": "TD-01", "label": "TEST_DATA", "is_flaky": false, "error_message": "HTTP 404 Not Found: /api/v1/users/nonexistent-uuid", "test_name": "test_get_deleted_user", "duration_ms": 120, "severity": "minor"},
+    {"id": "TD-02", "label": "TEST_DATA", "is_flaky": false, "error_message": "SetupError: fixture 'db_session' raised DatabaseError during setup", "test_name": "test_with_broken_fixture", "duration_ms": 50, "severity": "normal"},
+    {"id": "TD-03", "label": "TEST_DATA", "is_flaky": false, "error_message": "beforeEach hook failed: seed data not found in test environment", "test_name": "test_checkout_flow", "duration_ms": 200, "severity": "normal"},
+    {"id": "TD-04", "label": "TEST_DATA", "is_flaky": false, "error_message": "PermissionDenied: 403 Forbidden - user lacks ADMIN role", "test_name": "test_admin_endpoint_as_viewer", "duration_ms": 80, "severity": "minor"},
+    {"id": "TD-05", "label": "TEST_DATA", "is_flaky": false, "error_message": "HTTP 401 Unauthorized - token expired", "test_name": "test_api_with_stale_token", "duration_ms": 90, "severity": "minor"},
+    {"id": "TD-06", "label": "TEST_DATA", "is_flaky": false, "error_message": "Resource not found: expected test fixture user_admin to exist", "test_name": "test_missing_fixture_user", "duration_ms": 60, "severity": "normal"},
+
+    {"id": "AD-01", "label": "AUTOMATION_DEFECT", "is_flaky": false, "error_message": "NullPointerException at LoginPage.getUsername(LoginPage.java:34)", "test_name": "test_login_page_object", "duration_ms": 300, "severity": "major"},
+    {"id": "AD-02", "label": "AUTOMATION_DEFECT", "is_flaky": false, "error_message": "NoSuchElementException: element not found using selector #submit-btn", "test_name": "test_form_submit", "duration_ms": 4500, "severity": "major"},
+    {"id": "AD-03", "label": "AUTOMATION_DEFECT", "is_flaky": false, "error_message": "ImportError: No module named 'deprecated_helper'", "test_name": "test_legacy_import", "duration_ms": 100, "severity": "normal"},
+    {"id": "AD-04", "label": "AUTOMATION_DEFECT", "is_flaky": false, "error_message": "TypeError: undefined is not a function at checkout.spec.js:23", "test_name": "test_checkout_undefined", "duration_ms": 150, "severity": "major"},
+    {"id": "AD-05", "label": "AUTOMATION_DEFECT", "is_flaky": false, "error_message": "ClassNotFoundException: com.legacy.OldTestHelper not found in classpath", "test_name": "test_classpath_missing", "duration_ms": 80, "severity": "normal"},
+    {"id": "AD-06", "label": "AUTOMATION_DEFECT", "is_flaky": false, "error_message": "Locator timeout: could not find element [data-testid='modal-close'] within 5000ms", "test_name": "test_modal_close_button", "duration_ms": 5200, "severity": "major"},
+
+    {"id": "PB-01", "label": "PRODUCT_BUG", "is_flaky": false, "error_message": "AssertionError: expected response.total to equal 10 but got 8", "test_name": "test_pagination_count", "duration_ms": 250, "severity": "normal"},
+    {"id": "PB-02", "label": "PRODUCT_BUG", "is_flaky": false, "error_message": "AssertionError: Expected status 200 but received 422 - validation error on 'email' field", "test_name": "test_user_registration", "duration_ms": 180, "severity": "critical"},
+    {"id": "PB-03", "label": "PRODUCT_BUG", "is_flaky": false, "error_message": "AssertionError: expected order.status to be 'SHIPPED' but was 'PENDING'", "test_name": "test_order_state_machine", "duration_ms": 320, "severity": "critical", "_note": "regression path: consecutive passes then first fail", "history": {"pass_count": 15, "fail_count": 0, "consecutive_failures": 1, "status_sequence": ["PASSED","PASSED","PASSED","PASSED","FAILED"]}},
+    {"id": "PB-04", "label": "PRODUCT_BUG", "is_flaky": false, "error_message": "AssertionError: discount calculation wrong - expected 19.99 got 21.49", "test_name": "test_discount_rounding", "duration_ms": 140, "severity": "major"},
+
+    {"id": "FL-01", "label": "FLAKY", "is_flaky": true, "error_message": "AssertionError: expected element to be visible but it was not", "test_name": "test_animation_complete", "duration_ms": 3500, "severity": "minor", "history": {"pass_count": 45, "fail_count": 22, "consecutive_failures": 1, "status_sequence": ["PASSED","FAILED","PASSED","FAILED","PASSED"]}},
+    {"id": "FL-02", "label": "FLAKY", "is_flaky": true, "error_message": "Race condition: expected count 5 but got 4", "test_name": "test_concurrent_counter", "duration_ms": 1200, "severity": "normal", "history": {"pass_count": 30, "fail_count": 18, "consecutive_failures": 2, "status_sequence": ["FAILED","PASSED","FAILED","FAILED","PASSED"]}},
+    {"id": "FL-03", "label": "FLAKY", "is_flaky": true, "error_message": "Intermittent timeout waiting for WebSocket message", "test_name": "test_ws_notification", "duration_ms": 10200, "severity": "normal", "history": {"pass_count": 60, "fail_count": 12, "consecutive_failures": 1}},
+    {"id": "FL-04", "label": "FLAKY", "is_flaky": true, "error_message": "StaleElementReferenceException: element is not attached to the page document", "test_name": "test_dynamic_list_scroll", "duration_ms": 4800, "severity": "minor", "history": {"pass_count": 80, "fail_count": 25, "consecutive_failures": 1}},
+    {"id": "FL-05", "label": "FLAKY", "is_flaky": true, "error_message": "AssertionError: snapshot mismatch - 2 pixels differ", "test_name": "test_visual_regression_header", "duration_ms": 2100, "severity": "trivial", "history": {"pass_count": 100, "fail_count": 8, "consecutive_failures": 1}},
+
+    {"id": "UNK-01", "label": "UNKNOWN", "is_flaky": false, "error_message": "Process exited with code 137", "test_name": "test_mysterious_crash", "duration_ms": 200, "severity": "major"},
+    {"id": "UNK-02", "label": "UNKNOWN", "is_flaky": false, "error_message": null, "test_name": "test_no_error_message", "duration_ms": 500, "severity": null},
+    {"id": "UNK-03", "label": "UNKNOWN", "is_flaky": false, "error_message": "", "test_name": "test_empty_error", "duration_ms": 100, "severity": "normal"},
+
+    {"id": "SUITE-01", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "Connection pool exhausted", "test_name": "test_suite_wide_failure_1", "duration_ms": 300, "severity": "major", "run_context": {"suite_failure_rate": 0.95, "cross_suite_failure_rate": 0.1, "failed_tests": 20, "pass_rate": 0.05}},
+    {"id": "SUITE-02", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "Connection pool exhausted", "test_name": "test_suite_wide_failure_2", "duration_ms": 280, "severity": "major", "run_context": {"suite_failure_rate": 0.95, "cross_suite_failure_rate": 0.1, "failed_tests": 20, "pass_rate": 0.05}},
+
+    {"id": "CROSS-01", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "HTTP 503 from gateway", "test_name": "test_cross_suite_blast", "duration_ms": 600, "severity": "critical", "run_context": {"suite_failure_rate": 0.4, "cross_suite_failure_rate": 0.7, "failed_tests": 50, "pass_rate": 0.3}},
+
+    {"id": "DUR-01", "label": "INFRASTRUCTURE", "is_flaky": false, "error_message": "Test completed but exceeded expected duration", "test_name": "test_slow_query", "duration_ms": 15000, "severity": "major", "history": {"median_duration_ms": 2000, "pass_count": 40, "fail_count": 2}},
+
+    {"id": "REG-01", "label": "PRODUCT_BUG", "is_flaky": false, "error_message": "AssertionError: expected 200 got 500 after deploy", "test_name": "test_api_regression", "duration_ms": 350, "severity": "critical", "history": {"pass_count": 50, "fail_count": 0, "consecutive_failures": 1, "status_sequence": ["PASSED","PASSED","PASSED","PASSED","PASSED","FAILED"]}},
+    {"id": "REG-02", "label": "PRODUCT_BUG", "is_flaky": false, "error_message": "AssertionError: field 'created_at' missing from response", "test_name": "test_schema_regression", "duration_ms": 120, "severity": "major", "history": {"pass_count": 30, "fail_count": 0, "consecutive_failures": 1}}
+  ]
+}

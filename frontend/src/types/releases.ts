@@ -43,6 +43,8 @@ export interface LinkedRun {
   skipped_tests: number
   pass_rate: number | null
   created_at: string
+  primary_suite_name?: string | null
+  suite_names?: string[] | null
   phase_id: string | null
 }
 

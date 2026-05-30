@@ -6,11 +6,12 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_user_or_api_key
 from app.routers import (
     agent_memory,
     agents,
     ai_evaluation,
+    admin_maintenance,
     analyze,
     analytics,
     api_keys,
@@ -18,38 +19,55 @@ from app.routers import (
     audit_dashboard,
     auth,
     chat,
+    compliance_packs,
     deep_investigation,
     debug,
+    decision_trail,
     digests,
+    feature_flags as feature_flags_router,
     feedback,
+    flaky_quarantine,
+    github_integration,
     identity_events,
+    ingest,
     integration_health,
     integrations,
+    knowledge_sources,
     live,
+    llm_cost_budget as llm_cost_budget_router,
     metrics,
+    my_failures,
     notifications,
     onboarding,
     ownership,
     performance,
     projects,
+    rag_generation,
     release_gate_policies,
     release_readiness,
     releases,
     reports,
+    run_compare,
     run_intelligence,
     runs,
     saved_views,
     scim,
     scoring,
+    sdk,
     search,
+    seed,
     shared_reports,
     sso,
     stream,
+    suites,
+    summary_report,
+    test_execution_reviews,
     test_health,
     test_management,
     users,
     value_metrics,
     webhooks,
+    webhooks_outbound,
 )
 from app.routers.health import router as health_router
 from app.routers.observability import router as observability_router
@@ -64,10 +82,21 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     sso.router,            # SSO/SAML — public endpoints (metadata, ACS, login-url, status)
     scim.router,           # SCIM 2.0 — bearer-token auth (not JWT)
     shared_reports.router,  # Public shared report views (token-based, ENT-03)
+    sdk.router,             # Client SDK downloads (no auth required)
+    # live.router has its own auth: WebSocket auths via post-connect message,
+    # POST /events uses verify_webhook_secret. Cannot be added to PROTECTED_ROUTERS
+    # because OAuth2PasswordBearer crashes on WebSocket scope (no Request object).
+    live.router,
 )
 
 PROTECTED_ROUTERS: Sequence[APIRouter] = (
+    admin_maintenance.router,
     projects.router,
+    # run_compare must be registered BEFORE runs.router because both share the
+    # ``/api/v1/runs`` prefix and runs.router has ``GET /{run_id}`` which
+    # otherwise swallows ``/compare`` and ``/compare/latest`` as a UUID path
+    # param, yielding 422.
+    run_compare.router,                # Tier 2 item 8: two-run compare
     runs.router,
     metrics.router,
     search.router,
@@ -76,7 +105,6 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     integrations.router,
     notifications.router,
     app_settings.router,
-    live.router,
     agents.router,
     chat.router,
     feedback.router,
@@ -104,6 +132,21 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     ai_evaluation.router,            # AI evaluation dashboards (OPS-02)
     performance.router,              # Performance budgets & config (OPS-03)
     agent_memory.router,             # Unified agent memory & recall (P3)
+    seed.router,                      # Dev-only seed data management
+    ingest.router,                     # Unified test data ingestion (JSON batch + file upload)
+    knowledge_sources.router,          # Knowledge source registry (RAG-1/2/3)
+    rag_generation.router,             # RAG grounded generation (RAG-7 through RAG-14)
+    feature_flags_router.router,       # Tier 0A: generic feature flag store (ADMIN)
+    decision_trail.router,             # Tier 0B: AI decision audit trail per run
+    llm_cost_budget_router.router,     # Tier 1 item 2: LLM cost budget + usage meter
+    flaky_quarantine.router,           # Tier 1 item 3: flaky-test quarantine workflow
+    compliance_packs.router,           # Tier 1 item 4: release compliance export pack
+    github_integration.router,         # Tier 1 item 5: GitHub Checks integration
+    webhooks_outbound.router,          # Tier 2 item 6: outbound webhook subscriptions
+    suites.router,                     # Phase 3: TestSuite + CanonicalTestCase CRUD
+    my_failures.router,                # 0080: per-user "My Failures" inbox of auto-assigned failures
+    test_execution_reviews.router,     # 0081: per-TestCase human review transitions
+    summary_report.router,             # Per-project consolidated summary report + PDF export
 )
 
 
@@ -113,7 +156,7 @@ def configure_middlewares(app: FastAPI) -> None:
         allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Webhook-Secret", "X-Request-ID"],
+        allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Webhook-Secret", "X-Request-ID"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.
@@ -139,7 +182,8 @@ def register_routers(app: FastAPI) -> None:
     for router in PUBLIC_ROUTERS:
         app.include_router(router)
 
-    protected_deps = [Depends(get_current_active_user)]
+    # CLI-5: Accept both JWT and API key auth on protected routes
+    protected_deps = [Depends(get_current_user_or_api_key)]
     for router in PROTECTED_ROUTERS:
         app.include_router(router, dependencies=protected_deps)
 

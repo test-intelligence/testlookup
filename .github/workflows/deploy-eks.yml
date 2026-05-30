@@ -1,0 +1,165 @@
+name: Deploy to AWS EKS
+
+# Reference workflow for cloud deploys (Phase OS-Deploy follow-up — open-source
+# adoption smoother). The companion ``scripts/deploy-k8s.sh`` is intentionally
+# CLI-only and idempotent; this workflow just wires AWS-specific authentication
+# + ECR push + ``aws eks update-kubeconfig`` around it, then hands off to the
+# script. Mirroring this file for GCP/Azure is a copy-and-swap exercise:
+#   - replace ``configure-aws-credentials`` with the cloud-equivalent auth
+#   - replace ``aws-actions/amazon-ecr-login`` with the cloud-equivalent push
+#   - replace ``aws eks update-kubeconfig`` with the cloud-equivalent kubeconfig
+#   - change ``--cloud=aws`` on the deploy script invocation
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   AWS_ROLE_TO_ASSUME    IAM role with ECR-push + EKS-describe + EKS-list
+#                         permissions, trusted for GitHub OIDC. Preferred over
+#                         long-lived access keys; see
+#                         docs/deployment/aws-eks.md § 10 for the trust policy.
+#   AWS_REGION            e.g. us-east-1
+#   AWS_ECR_REGISTRY      Account-scoped ECR host
+#                         (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com)
+#   EKS_CLUSTER_NAME      e.g. testlookup-prod
+#
+# Trigger:
+#   * manual: workflow_dispatch with an explicit image tag (recommended)
+#   * automatic: push of a v*.*.* tag (mirrors deploy-production.yml on GCP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to build + deploy (e.g. v0.1.0, sha-abc1234).'
+        required: true
+        default: ''
+  push:
+    tags:
+      - 'v*.*.*'
+
+# OIDC token issuance for ``configure-aws-credentials``. Without
+# ``id-token: write`` the action falls back to long-lived access keys —
+# possible but discouraged; the OIDC path leaves no rotatable secret behind.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_TAG: ${{ inputs.image_tag || github.ref_name }}
+
+jobs:
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ env.IMAGE_TAG }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Stage client SDKs into backend context
+        # Populate ``backend/__client_sdks_staged/`` so the production
+        # Dockerfile bakes the SDK artifacts into the image (the
+        # ``/api/v1/sdk/{lang}`` endpoint reads from there). Mirrors the
+        # equivalent step in ci.yml and homelabsetup/deploy-homelab.sh.
+        run: |
+          set -euo pipefail
+          STAGED_SDK="./backend/__client_sdks_staged"
+          rm -rf "$STAGED_SDK"
+          mkdir -p "$STAGED_SDK"
+          rsync -a \
+            --exclude='.pytest_cache' --exclude='__pycache__' \
+            --exclude='*.pyc' --exclude='.venv' --exclude='venv' \
+            --exclude='node_modules' --exclude='.tox' \
+            --exclude='.mypy_cache' --exclude='.ruff_cache' \
+            --exclude='target' --exclude='build' \
+            --exclude='*.egg-info' --exclude='.coverage' \
+            --exclude='htmlcov' --exclude='.DS_Store' \
+            ./client/ "$STAGED_SDK/"
+
+      - name: Build & push backend image
+        run: |
+          REPO="${{ secrets.AWS_ECR_REGISTRY }}/testlookup/backend"
+          docker build -t "$REPO:$IMAGE_TAG" ./backend
+          docker push "$REPO:$IMAGE_TAG"
+
+      - name: Build & push frontend image
+        run: |
+          REPO="${{ secrets.AWS_ECR_REGISTRY }}/testlookup/frontend"
+          docker build -t "$REPO:$IMAGE_TAG" ./frontend
+          docker push "$REPO:$IMAGE_TAG"
+
+      - name: Build & push MCP image
+        run: |
+          REPO="${{ secrets.AWS_ECR_REGISTRY }}/testlookup/mcp"
+          docker build -t "$REPO:$IMAGE_TAG" ./mcp
+          docker push "$REPO:$IMAGE_TAG"
+
+  deploy:
+    name: Apply to EKS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    # Bind to the ``production`` environment so the protected-secrets
+    # set (and any required reviewers configured in repo settings) gate
+    # the apply step. Mirrors deploy-production.yml on the GCP side.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update kubeconfig
+        # ``--alias`` keeps the context name predictable so the deploy
+        # script's ``kubectl config current-context`` log line is
+        # consistent across runs. Without it the action picks an
+        # ARN-shaped string, which is verbose in logs.
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ secrets.EKS_CLUSTER_NAME }}" \
+            --region "${{ secrets.AWS_REGION }}" \
+            --alias testlookup-eks
+
+      - name: Deploy via deploy-k8s.sh
+        env:
+          # Forward the build's image tag + the ECR registry into the
+          # deploy script's ``--image-tag`` / ``--registry`` flags so
+          # the kustomize overlay points at the freshly-pushed images
+          # instead of whatever's baked into the manifest.
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          REGISTRY: ${{ secrets.AWS_ECR_REGISTRY }}
+        run: |
+          chmod +x scripts/deploy-k8s.sh
+          scripts/deploy-k8s.sh \
+            --cloud=aws \
+            --image-tag="$IMAGE_TAG" \
+            --registry="$REGISTRY"
+
+      - name: Smoke check
+        # The deploy script already runs ``kubectl rollout status`` on
+        # the backend + frontend deployments with a 5-min timeout; this
+        # step is a belt-and-braces health probe so the workflow fails
+        # loudly when the service responds with a non-2xx after rollout.
+        # Override BACKEND_URL via repo secret when the ingress host is
+        # known; otherwise this step is skipped.
+        if: ${{ secrets.BACKEND_URL != '' }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl --fail --silent --show-error "${{ secrets.BACKEND_URL }}/health"; then
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i failed; sleeping 10s"
+            sleep 10
+          done
+          echo "Health check FAILED after 5 attempts"
+          exit 1

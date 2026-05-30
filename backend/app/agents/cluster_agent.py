@@ -14,6 +14,7 @@ import structlog
 
 from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import ClusterAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase
 
 logger = structlog.get_logger("agents.cluster")
@@ -32,7 +33,13 @@ class ClusterAgent(BaseAgent):
 
         if not failed_test_ids:
             await self.mark_stage_done(pipeline_run_id, result_data={"clusters": 0})
-            return {"failure_clusters": [], "cluster_map": {}}
+            return validate_agent_contract(
+                ClusterAgentOutput,
+                {"failure_clusters": [], "cluster_map": {}},
+                agent_name=self.stage_name,
+                confidence=100,
+                decision_reason="No failed tests detected; clustering not required",
+            )
 
         # Fetch error messages for all failed tests
         test_id_to_error: dict[str, str] = {}
@@ -47,7 +54,7 @@ class ClusterAgent(BaseAgent):
                 error = row.error_message or f"Test '{row.test_name}' failed with no error message"
                 test_id_to_error[tc_id] = error
 
-        test_ids = list(test_id_to_error.keys())
+        test_ids = sorted(test_id_to_error.keys())
         errors = [test_id_to_error[tid] for tid in test_ids]
         valid_ids = set(test_ids)
 
@@ -111,7 +118,22 @@ class ClusterAgent(BaseAgent):
             "message": f"Grouped {len(failed_test_ids)} failures into {len(clusters)} clusters",
         })
 
-        return {"failure_clusters": clusters, "cluster_map": cluster_map}
+        return validate_agent_contract(
+            ClusterAgentOutput,
+            {"failure_clusters": clusters, "cluster_map": cluster_map},
+            agent_name=self.stage_name,
+            fallback_used=bool(fallback_reason),
+            confidence=100 if not fallback_reason else 60,
+            evidence_refs=[
+                {"type": "cluster", "id": str(cluster.get("cluster_id"))}
+                for cluster in clusters[:10]
+            ],
+            decision_reason=(
+                "Semantic clustering completed"
+                if not fallback_reason
+                else "Semantic clustering failed; deterministic per-test fallback used"
+            ),
+        )
 
     def _validate_clusters(
         self, raw_clusters: list, valid_ids: set[str]

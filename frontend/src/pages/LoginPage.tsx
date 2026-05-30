@@ -7,6 +7,7 @@ import { useAuthStore } from '../store/authStore';
 import AppLogo from '@/components/ui/AppLogo';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { type SSOStatus, getSSOStatus } from '../services/ssoService';
+import { isSafeExternalUrl } from '@/utils/safeUrl';
 
 const DEV_ROLES = [
   { label: 'Admin',       value: 'admin',       colour: 'text-red-400' },
@@ -70,8 +71,7 @@ export default function LoginPage() {
       toast.success('Logged in successfully');
       // ProtectedRoute will redirect to /reset-password if must_change_password=true
       navigate(from, { replace: true });
-    } catch (err: unknown) {
-      console.error('Login failed', err);
+    } catch {
       toast.error('Invalid username or password');
     } finally {
       setIsSubmitting(false);
@@ -109,9 +109,10 @@ export default function LoginPage() {
 
   /** Dev-only: log in as a seeded role without credentials. */
   const handleDevLogin = async (role: string) => {
+    if (!isDev) return;
     setDevLoggingInAs(role);
     try {
-      const res = await api.post(`/api/v1/auth/dev-login?role=${role}`, {});
+      const res = await api.post(`/api/v1/auth/dev-login?role=${encodeURIComponent(role)}`, {});
       const { access_token, refresh_token } = res.data;
       const userRes = await api.get('/api/v1/auth/me', {
         headers: { Authorization: `Bearer ${access_token}` },
@@ -130,7 +131,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 theme-bg">
       <div className="sm:mx-auto sm:w-full sm:max-w-md flex flex-col items-center">
         <div className="mb-6">
-          <AppLogo className="h-16 w-auto" fallbackClassName="text-4xl font-extrabold bg-gradient-to-r from-teal-400 to-teal-200 bg-clip-text text-transparent" />
+          <AppLogo className="text-[42px]" />
         </div>
         <h2 className="mt-2 text-center text-3xl font-extrabold text-[var(--color-text)]">
           {mode === 'login' ? 'Sign in to TestLookup' : 'Create an account'}
@@ -232,6 +233,10 @@ export default function LoginPage() {
                     onClick={async () => {
                       try {
                         const { data } = await api.get('/api/v1/sso/login-url');
+                        if (!isSafeExternalUrl(data?.redirect_url)) {
+                          toast.error('SSO login URL rejected');
+                          return;
+                        }
                         window.location.href = data.redirect_url;
                       } catch {
                         toast.error('SSO login unavailable');

@@ -91,6 +91,7 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
                 get_current_active_user=MagicMock(),
                 verify_webhook_secret=MagicMock(),
                 require_project_role=MagicMock(return_value=MagicMock()),
+                invalidate_membership_cache=AsyncMock(),
             ),
         )
 
@@ -278,6 +279,7 @@ class TestListApiKeys:
         key.name = "CI Key"
         key.key_hint = "qai_abc123..."
         key.scopes = ["test:read"]
+        key.project_id = None
         key.is_active = True
         key.expires_at = None
         key.last_used_at = None
@@ -313,6 +315,7 @@ class TestListApiKeys:
         key.name = "Legacy Key"
         key.key_hint = "qai_legacy..."
         key.scopes = None
+        key.project_id = None
         key.is_active = True
         key.expires_at = None
         key.last_used_at = None
@@ -339,6 +342,7 @@ class TestCreateApiKey:
         new_key.name = "Test Key"
         new_key.key_hint = "qai_test12..."
         new_key.scopes = []
+        new_key.project_id = None
         new_key.is_active = True
         new_key.expires_at = None
         new_key.last_used_at = None

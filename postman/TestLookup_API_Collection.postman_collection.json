@@ -1,0 +1,977 @@
+{
+  "info": {
+    "name": "TestLookup API",
+    "description": "Complete API collection for TestLookup — AI-powered software testing intelligence platform.\n\n## Getting Started\n1. Import both the collection and the environment file\n2. Run **Auth > Dev Login (Admin)** to get a JWT token (auto-saved)\n3. Run **Projects > List Projects** and copy a `project_id` into the environment\n4. Explore any endpoint — auth headers and variables are wired up automatically\n\n## Authentication\n- JWT Bearer token: auto-attached from `{{access_token}}`\n- API Key: set `{{api_key}}` and use the `X-API-Key` header\n- Dev login: only works when `APP_ENV=development` and `DEV_AUTO_LOGIN_ENABLED=true`\n\n## Variables\nConfigure `{{base_url}}`, `{{project_id}}`, and auth tokens in the environment.",
+    "_postman_id": "tl-api-collection-v1",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": ["// Collection-level pre-request — auth token attached via collection auth"]
+      }
+    }
+  ],
+  "variable": [],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Authentication, registration, profile management, and token refresh.",
+      "item": [
+        {
+          "name": "Dev Login (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    pm.environment.set('access_token', json.access_token);",
+                  "    pm.environment.set('refresh_token', json.refresh_token);",
+                  "    console.log('Token saved to environment');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/auth/dev-login?role=admin",
+            "description": "Quick login without credentials (dev environment only).\nRequires `APP_ENV=development` and `DEV_AUTO_LOGIN_ENABLED=true`.\nAuto-saves the JWT token to environment variables."
+          }
+        },
+        {
+          "name": "Dev Login (QA Engineer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    pm.environment.set('access_token', json.access_token);",
+                  "    pm.environment.set('refresh_token', json.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/v1/auth/dev-login?role=qa_engineer"
+          }
+        },
+        {
+          "name": "Register",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"username\": \"newuser\",\n  \"full_name\": \"New User\",\n  \"password\": \"SecurePass123!\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/auth/register",
+            "description": "Self-service registration. Creates user with VIEWER role and must_change_password=True."
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    pm.environment.set('access_token', json.access_token);",
+                  "    pm.environment.set('refresh_token', json.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/x-www-form-urlencoded" }],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "username", "value": "admin", "type": "text" },
+                { "key": "password", "value": "admin123", "type": "text" }
+              ]
+            },
+            "url": "{{base_url}}/api/v1/auth/login",
+            "description": "Standard login with username/email + password. Returns JWT access + refresh tokens."
+          }
+        },
+        {
+          "name": "Get Current User (Me)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/auth/me"
+          }
+        },
+        {
+          "name": "Update Profile (Me)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Updated Name\",\n  \"avatar_color\": \"#3B82F6\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/auth/me"
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"oldpassword\",\n  \"new_password\": \"NewSecurePass456!\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/auth/change-password"
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    pm.environment.set('access_token', json.access_token);",
+                  "    pm.environment.set('refresh_token', json.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/auth/refresh"
+          }
+        },
+        {
+          "name": "List Users (Dropdown)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/auth/users?limit=50"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "description": "Kubernetes-compatible health probes and system status.",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{base_url}}/health/live" }
+        },
+        {
+          "name": "Readiness",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{base_url}}/health/ready" }
+        },
+        {
+          "name": "Details (All Services)",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{base_url}}/health/details" }
+        }
+      ]
+    },
+    {
+      "name": "Projects",
+      "description": "Project CRUD and membership management.",
+      "item": [
+        {
+          "name": "List Projects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.length > 0) {",
+                  "        pm.environment.set('project_id', json[0].id);",
+                  "        console.log('project_id set to: ' + json[0].id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/projects",
+            "description": "Lists all projects the current user has access to. Auto-saves first project_id."
+          }
+        },
+        {
+          "name": "Create Project",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"My Test Project\",\n  \"slug\": \"my-test-project\",\n  \"description\": \"A sample project for API testing\",\n  \"jira_project_key\": \"MTP\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/projects"
+          }
+        },
+        {
+          "name": "Get Project",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/projects/{{project_id}}" }
+        },
+        {
+          "name": "Update Project",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Updated project description\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/projects/{{project_id}}"
+          }
+        },
+        {
+          "name": "List Project Members",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/projects/{{project_id}}/members" }
+        }
+      ]
+    },
+    {
+      "name": "Test Runs",
+      "description": "Test run listing, details, and test case browsing.",
+      "item": [
+        {
+          "name": "List Test Runs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.items && json.items.length > 0) {",
+                  "        pm.environment.set('run_id', json.items[0].id);",
+                  "        console.log('run_id set to: ' + json.items[0].id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/runs?project_id={{project_id}}&page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "runs"],
+              "query": [
+                { "key": "project_id", "value": "{{project_id}}" },
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Test Run",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/runs/{{run_id}}" }
+        },
+        {
+          "name": "List Test Cases in Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.items && json.items.length > 0) {",
+                  "        pm.environment.set('test_case_id', json.items[0].id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/runs/{{run_id}}/tests?page=1&size=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "runs", "{{run_id}}", "tests"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "50" },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Test Case Detail",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/runs/{{run_id}}/tests/{{test_case_id}}" }
+        },
+        {
+          "name": "Regression Diff",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/runs/{{run_id}}/regression-diff" }
+        },
+        {
+          "name": "Link Run to Release",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"release_name\": \"v1.2.0\"\n}" },
+            "url": "{{base_url}}/api/v1/runs/{{run_id}}/release"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard & Metrics",
+      "description": "Executive dashboard KPIs and trend data.",
+      "item": [
+        {
+          "name": "Dashboard Summary",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/metrics/summary?project_id={{project_id}}&days=7",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "metrics", "summary"],
+              "query": [
+                { "key": "project_id", "value": "{{project_id}}" },
+                { "key": "days", "value": "7" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Trend Data",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/metrics/trends?project_id={{project_id}}&days=30",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "metrics", "trends"],
+              "query": [
+                { "key": "project_id", "value": "{{project_id}}" },
+                { "key": "days", "value": "30" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "description": "Keyword, semantic, and hybrid search across test data.",
+      "item": [
+        {
+          "name": "Search Test Cases",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/search?q=login&project_id={{project_id}}&search_type=keyword&page=1&size=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "search"],
+              "query": [
+                { "key": "q", "value": "login" },
+                { "key": "project_id", "value": "{{project_id}}" },
+                { "key": "search_type", "value": "keyword" },
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "20" },
+                { "key": "status", "value": "", "disabled": true },
+                { "key": "days", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Global Search",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/search/global?q=timeout&project_id={{project_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "search", "global"],
+              "query": [
+                { "key": "q", "value": "timeout" },
+                { "key": "project_id", "value": "{{project_id}}" },
+                { "key": "entity_types", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Similar Failures",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/search/similar/{{test_case_id}}?limit=5"
+          }
+        },
+        {
+          "name": "Index Status",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/search/index-status" }
+        }
+      ]
+    },
+    {
+      "name": "AI Analysis",
+      "description": "LangChain ReAct agent for root-cause analysis of test failures.",
+      "item": [
+        {
+          "name": "Get Analysis (Cached)",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/analyze/{{test_case_id}}" }
+        },
+        {
+          "name": "Trigger Analysis",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"test_case_id\": \"{{test_case_id}}\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/analyze",
+            "description": "Runs the LangChain ReAct agent with 5 tools (stacktrace, REST payload, Splunk logs, flakiness history, OCP pod events) to produce root-cause analysis."
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI Pipeline",
+      "description": "LangGraph multi-agent pipeline execution and observability.",
+      "item": [
+        {
+          "name": "List Pipelines",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/pipelines?project_id={{project_id}}&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "agents", "pipelines"],
+              "query": [
+                { "key": "project_id", "value": "{{project_id}}" },
+                { "key": "limit", "value": "20" },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Trigger Pipeline",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"test_run_id\": \"{{run_id}}\"\n}" },
+            "url": "{{base_url}}/api/v1/agents/pipelines/trigger"
+          }
+        },
+        {
+          "name": "Get Pipeline Stages",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/agents/pipelines/{{pipeline_id}}/stages" }
+        },
+        {
+          "name": "Get Pipeline Timeline",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/agents/pipelines/{{pipeline_id}}/timeline" }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "description": "Conversational AI agent for test analysis.",
+      "item": [
+        {
+          "name": "List Sessions",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/chat/sessions" }
+        },
+        {
+          "name": "Create Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    pm.environment.set('chat_session_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Test Analysis Session\",\n  \"project_id\": \"{{project_id}}\"\n}" },
+            "url": "{{base_url}}/api/v1/chat/sessions"
+          }
+        },
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"text\": \"Summarize the latest test run failures\"\n}" },
+            "url": "{{base_url}}/api/v1/chat/sessions/{{chat_session_id}}/messages"
+          }
+        },
+        {
+          "name": "Get Messages",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/chat/sessions/{{chat_session_id}}/messages?limit=50" }
+        },
+        {
+          "name": "Get Run Summaries",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/chat/run-summaries?project_id={{project_id}}&days=5"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Knowledge RAG",
+      "description": "Knowledge-grounded test case generation (RAG pipeline).\nRequires KNOWLEDGE_RAG_ENABLED=true in Settings > AI Configuration.",
+      "item": [
+        {
+          "name": "RAG Status",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/test-management/rag/status" }
+        },
+        {
+          "name": "List Knowledge Sources",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/knowledge-sources?project_id={{project_id}}"
+          }
+        },
+        {
+          "name": "Create Knowledge Source (Jira)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    pm.environment.set('knowledge_source_id', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_type\": \"jira_issue\",\n  \"title\": \"PROJ-123: Login Feature\",\n  \"canonical_url\": \"https://jira.example.com/browse/PROJ-123\",\n  \"external_id\": \"PROJ-123\",\n  \"classification\": \"internal\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/knowledge-sources?project_id={{project_id}}"
+          }
+        },
+        {
+          "name": "Create Knowledge Source (URL)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_type\": \"internal_url\",\n  \"title\": \"API Design Guide\",\n  \"canonical_url\": \"https://docs.internal.com/api-guide\",\n  \"classification\": \"internal\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/knowledge-sources?project_id={{project_id}}"
+          }
+        },
+        {
+          "name": "Sync Knowledge Source",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/knowledge-sources/{{knowledge_source_id}}/sync"
+          }
+        },
+        {
+          "name": "Get Source Freshness",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/knowledge-sources/{{knowledge_source_id}}/freshness"
+          }
+        },
+        {
+          "name": "Get Sync History",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/knowledge-sources/{{knowledge_source_id}}/sync-history?limit=10"
+          }
+        },
+        {
+          "name": "Test Connector (Jira)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"source_type\": \"jira_issue\"\n}" },
+            "url": "{{base_url}}/api/v1/knowledge-sources/connectors/test"
+          }
+        },
+        {
+          "name": "Retrieve Evidence (Preview)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{project_id}}\",\n  \"query_text\": \"user login requirements\",\n  \"top_k\": 10\n}"
+            },
+            "url": "{{base_url}}/api/v1/test-management/cases/rag-retrieve"
+          }
+        },
+        {
+          "name": "Generate Test Cases (Grounded)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.environment.set('batch_id', pm.response.json().batch_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{project_id}}\",\n  \"prompt_text\": \"Generate test cases for the user authentication flow including login, logout, and password reset\",\n  \"source_ids\": [],\n  \"persist\": true\n}"
+            },
+            "url": "{{base_url}}/api/v1/test-management/cases/rag-generate",
+            "description": "Generate test cases. Use source_ids=[] for raw mode or provide source UUIDs for grounded mode."
+          }
+        },
+        {
+          "name": "Get Generation Batch",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/test-management/batches/{{batch_id}}" }
+        },
+        {
+          "name": "Get Batch Coverage",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/test-management/batches/{{batch_id}}/coverage" }
+        },
+        {
+          "name": "Get Batch Eval",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/test-management/batches/{{batch_id}}/eval" }
+        },
+        {
+          "name": "Get Domain Allowlist",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/knowledge-sources/governance/domain-allowlist" }
+        },
+        {
+          "name": "Update Domain Allowlist",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"domains\": [\"jira.corp.com\", \"confluence.corp.com\", \"docs.internal.io\"]\n}" },
+            "url": "{{base_url}}/api/v1/knowledge-sources/governance/domain-allowlist"
+          }
+        },
+        {
+          "name": "List Stale Cases",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/test-management/cases/stale?project_id={{project_id}}&page=1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Integrations",
+      "description": "Jira defect creation from AI analysis.",
+      "item": [
+        {
+          "name": "Create Jira Issue",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_key\": \"PROJ\",\n  \"test_case_id\": \"{{test_case_id}}\",\n  \"test_name\": \"test_login_valid_credentials\",\n  \"run_id\": \"{{run_id}}\",\n  \"ai_summary\": \"Login fails due to expired session token\",\n  \"recommended_action\": \"Check token refresh logic in auth middleware\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/integrations/jira"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Releases",
+      "description": "Release management and readiness tracking.",
+      "item": [
+        {
+          "name": "List Releases",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/releases?project_id={{project_id}}"
+          }
+        },
+        {
+          "name": "Create Release",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"v2.0.0\",\n  \"project_id\": \"{{project_id}}\",\n  \"description\": \"Major release with RAG features\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/releases"
+          }
+        }
+      ]
+    },
+    {
+      "name": "User Management",
+      "description": "Admin user and membership management. Requires ADMIN or QA_LEAD role.",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/users?page=1&page_size=50"
+          }
+        },
+        {
+          "name": "Create User (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"engineer@example.com\",\n  \"username\": \"engineer1\",\n  \"full_name\": \"Test Engineer\",\n  \"role\": \"QA_ENGINEER\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/users",
+            "description": "Creates user with a random temp password (returned once in response)."
+          }
+        },
+        {
+          "name": "Update User Role",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"role\": \"QA_LEAD\"\n}" },
+            "url": "{{base_url}}/api/v1/users/{{user_id}}/role"
+          }
+        },
+        {
+          "name": "Invite User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"invited@example.com\",\n  \"role\": \"TESTER\"\n}" },
+            "url": "{{base_url}}/api/v1/users/invite"
+          }
+        }
+      ]
+    },
+    {
+      "name": "API Keys",
+      "description": "Personal access tokens for CI/CD and SDK integration.",
+      "item": [
+        {
+          "name": "Generate API Key",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ci-pipeline-key\",\n  \"scopes\": [\"runs:write\", \"analysis:read\"],\n  \"expires_days\": 90\n}"
+            },
+            "url": "{{base_url}}/api/v1/keys",
+            "description": "Raw API key is only shown once in the response. Store it securely."
+          }
+        },
+        {
+          "name": "List API Keys",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/keys" }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "description": "Notification preferences and history.",
+      "item": [
+        {
+          "name": "List Preferences",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/notifications/preferences" }
+        },
+        {
+          "name": "Get Notification History",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/notifications/history?limit=50" }
+        },
+        {
+          "name": "Unread Count",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/notifications/history/unread-count" }
+        },
+        {
+          "name": "Mark All Read",
+          "request": { "method": "POST", "url": "{{base_url}}/api/v1/notifications/history/read-all" }
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "description": "PDF report generation, evidence bundles, and share links.",
+      "item": [
+        {
+          "name": "Export Run as PDF",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/reports/runs/{{run_id}}/pdf?layout=executive"
+          }
+        },
+        {
+          "name": "Download Evidence Bundle",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/reports/runs/{{run_id}}/evidence-bundle" }
+        },
+        {
+          "name": "Create Share Link",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"layout\": \"executive\",\n  \"expiry_days\": 7\n}" },
+            "url": "{{base_url}}/api/v1/reports/runs/{{run_id}}/share"
+          }
+        },
+        {
+          "name": "List Share Links",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/reports/runs/{{run_id}}/share-links" }
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "description": "Application configuration (AI, SMTP, integrations, storage). GET requires QA_LEAD+, PUT requires ADMIN.",
+      "item": [
+        {
+          "name": "Get AI Config",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/settings/ai" }
+        },
+        {
+          "name": "Update AI Config",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"analysis_mode\": \"auto\",\n  \"knowledge_rag_enabled\": true,\n  \"llm_provider\": \"ollama\",\n  \"llm_model\": \"qwen2.5:7b\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/settings/ai",
+            "description": "Update AI settings. Set knowledge_rag_enabled=true to enable RAG test generation."
+          }
+        },
+        {
+          "name": "Get SMTP Config",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/settings/smtp" }
+        },
+        {
+          "name": "Test SMTP",
+          "request": { "method": "POST", "url": "{{base_url}}/api/v1/settings/smtp/test" }
+        },
+        {
+          "name": "Get Integrations Config",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/settings/integrations" }
+        },
+        {
+          "name": "Get Storage Config",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/settings/storage" }
+        },
+        {
+          "name": "Get Integration Health",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/settings/integrations/health" }
+        },
+        {
+          "name": "List Feature Flags",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/settings/flags" }
+        },
+        {
+          "name": "Settings Audit Log",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/settings/audit-log?limit=50" }
+        }
+      ]
+    },
+    {
+      "name": "SSO / SAML",
+      "description": "SSO configuration and SAML integration (ADMIN only).",
+      "item": [
+        {
+          "name": "SSO Status",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{base_url}}/api/v1/sso/status" }
+        },
+        {
+          "name": "List SSO Configs",
+          "request": { "method": "GET", "url": "{{base_url}}/api/v1/sso/configs" }
+        },
+        {
+          "name": "Get SP Metadata",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{base_url}}/api/v1/sso/metadata" }
+        }
+      ]
+    },
+    {
+      "name": "Observability",
+      "description": "Frontend telemetry ingestion and SDK endpoints.",
+      "item": [
+        {
+          "name": "Send Frontend Telemetry",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"errors\": [],\n  \"vitals\": [\n    {\"name\": \"LCP\", \"value\": 1200, \"rating\": \"good\"}\n  ]\n}"
+            },
+            "url": "{{base_url}}/api/v1/observability/frontend"
+          }
+        },
+        {
+          "name": "List SDKs",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{base_url}}/api/v1/sdk" }
+        }
+      ]
+    }
+  ]
+}

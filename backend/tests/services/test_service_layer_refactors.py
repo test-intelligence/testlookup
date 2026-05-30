@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import sys
 
 import pytest
@@ -71,6 +71,11 @@ class FakeAsyncDB:
         self.delete = AsyncMock()
         self.flush = AsyncMock()
         self.refresh = AsyncMock()
+        # Default identity-load for project-existence guards (e.g.
+        # ``create_manual_defect`` does ``db.get(Project, project_id)``
+        # before staging). Returns a truthy stub so the guard passes;
+        # tests that need a 404 path override ``db.get`` after construction.
+        self.get = AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))
 
     async def execute(self, _stmt, _params=None):
         return self._execute_results.pop(0)
@@ -122,6 +127,11 @@ def _fake_live_session(session_id: uuid.UUID, project_id: uuid.UUID, run_id: str
         "commit_hash": "abc123",
         "status": "active",
         "release_name": None,
+        # launch_name / suite_name became real columns on LiveSession and are
+        # read directly by build_completed_session_state. Stub them so test
+        # SimpleNamespaces match the real ORM row shape.
+        "launch_name": None,
+        "suite_name": None,
         "total_tests": 12,
         "events_received": 4,
         "extra_metadata": {},
@@ -148,7 +158,9 @@ async def test_deprecate_managed_test_case_sets_status_and_audits():
 
     assert test_case.status == "deprecated"
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: the service only mutates + audits. The router handler owns
+    # the commit, so this unit test should not see commit called.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -173,8 +185,9 @@ async def test_apply_review_action_updates_review_and_test_case():
     assert review.human_notes == "Looks good"
     assert review.reviewed_at is not None
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once_with(test_case)
+    # Item #2: the service only mutates; router handler owns commit+refresh.
+    db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -199,22 +212,44 @@ async def test_recompute_plan_counts_updates_all_aggregates():
 
 @pytest.mark.asyncio
 async def test_list_project_runs_enriches_paginated_runs():
+    """After the load-test pagination optimization, ``list_project_runs``
+    issues two direct queries (count + items with LEFT JOIN on Project)
+    instead of calling the generic ``paginate_query`` + a separate
+    ``fetch_project_name_map`` round-trip. The release map is still
+    fetched separately because release links aren't UNIQUE.
+    """
     run_id = uuid.uuid4()
     run = _fake_run(run_id, status="failed")
-    db = FakeAsyncDB([])
 
-    with (
-        patch.object(runs_service, "paginate_query", AsyncMock(return_value=([run], 1, 1))),
-        patch.object(
-            runs_service,
-            "fetch_release_map",
-            AsyncMock(return_value={str(run_id): {"id": "rel-1", "name": "Release 1"}}),
-        ),
-        patch.object(
-            runs_service,
-            "fetch_project_name_map",
-            AsyncMock(return_value={}),
-        ),
+    # Items query returns Row objects with the TestRun at index 0 and
+    # ``project_name`` exposed as a labeled column attribute. SQLAlchemy
+    # rows support both indexing (``row[0]``) and attribute access
+    # (``row.project_name``); the fake mirrors that contract.
+    class _FakeRow:
+        def __init__(self, run_obj, project_name):
+            self._run = run_obj
+            self.project_name = project_name
+
+        def __getitem__(self, idx):
+            return (self._run, self.project_name)[idx]
+
+    db = FakeAsyncDB([
+        FakeExecuteResult(scalar=1),                                  # count
+        FakeExecuteResult(rows=[_FakeRow(run, "Checkout")]),          # items
+    ])
+
+    with patch.object(
+        runs_service,
+        "fetch_release_map",
+        AsyncMock(return_value={str(run_id): {"id": "rel-1", "name": "Release 1"}}),
+    ), patch.object(
+        # ``fetch_run_seq_map`` issues its own queries; stub it so the
+        # FakeAsyncDB doesn't have to model the window-function SQL. The
+        # helper's behaviour is covered by dedicated tests in
+        # tests/services/test_run_seq_map.py.
+        runs_service,
+        "fetch_run_seq_map",
+        AsyncMock(return_value={str(run_id): 1}),
     ):
         items, total, pages = await runs_service.list_project_runs(db, "project-1", 1, 20, "FAILED", None)
 
@@ -294,7 +329,8 @@ async def test_generate_ai_cases_persists_created_cases_when_requested():
     assert len(result["created_ids"]) == 1
     assert result["test_cases"][0]["title"] == "AI Login Case"
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -341,7 +377,8 @@ async def test_review_test_case_with_ai_creates_review_when_missing():
     assert test_case.ai_quality_score == 91
     assert any(type(obj).__name__ == "TestCaseReview" for obj in db.added)
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -374,7 +411,8 @@ async def test_generate_ai_strategy_creates_strategy_and_audits():
     assert strategy.objective == "Reduce checkout risk"
     assert strategy.scope == "Payments"
     audit_mock.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits + refreshes.
+    db.commit.assert_not_awaited()
 
 
 def test_get_ai_task_status_maps_success_failure_and_pending():
@@ -460,8 +498,11 @@ async def test_upsert_notification_preference_updates_existing_preference():
     assert pref.events == ["run_failed"]
     assert pref.failure_rate_threshold == 75.0
     assert pref.email_override == "qa@example.com"
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once_with(pref)
+    # After the item-#2 refactor, the service only mutates the attached
+    # row. The router handler owns commit+refresh, so this unit test
+    # should not see either called.
+    db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -516,10 +557,13 @@ async def test_release_service_link_test_run_returns_existing_link_message():
     )
 
     with patch.object(release_service, "get_release_or_404", AsyncMock(return_value=release)):
-        result = await release_service.link_test_run(db, str(release.id), body)
+        # After the item-#2 refactor link_test_run returns (link, is_new) so
+        # the router can decide whether to commit. For an existing link,
+        # is_new is False and the returned ``link`` is the existing row.
+        link, is_new = await release_service.link_test_run(db, str(release.id), body)
 
-    assert result["message"] == "Already linked"
-    assert result["id"] == str(existing.id)
+    assert is_new is False
+    assert link is existing
 
 
 def test_report_service_build_html_report_summarizes_totals():
@@ -652,6 +696,131 @@ async def test_analytics_service_list_defects_returns_pagination_metadata():
     assert result["items"][0]["jira_ticket_id"] == "QA-123"
 
 
+# ── create_manual_defect — manual Defect Intake ───────────────────────────────
+#
+# Covers the service added for the "New defect" flow on the Defects page.
+# Verified behaviours:
+#   * P0–P3 severity maps to the defects.severity column's CRITICAL/HIGH/MEDIUM/LOW
+#     vocabulary (not the raw P-codes).
+#   * promotion_source is always 'manual' and resolution_status defaults to 'OPEN'
+#     regardless of what the caller passed.
+#   * When a test_name is supplied AND a matching TestCase exists, the new defect
+#     row's test_case_id is attached.
+#   * When no test_name is supplied OR no matching TestCase is found, test_case_id
+#     stays NULL — intake must not fail on missing test linkage.
+#   * Jira browse URL → jira_ticket_id auto-extracted; a malformed URL gives None.
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_maps_p0_to_critical_and_links_test_case():
+    project_id = uuid.uuid4()
+    matched_test_case_id = uuid.uuid4()
+    # First execute() resolves the recent-matching-test-case lookup.
+    db = FakeAsyncDB([FakeExecuteResult(scalar=matched_test_case_id)])
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Checkout fails on second attempt",
+            "description": "Repro: add to cart, pay, retry.",
+            "severity": "P0",
+            "failure_category": "PRODUCT_BUG",
+            "component": "checkout-service",
+            "test_name": "checkout.test_payment_retry",
+            "suite_name": "checkout-smoke",
+            "jira_ticket_url": "https://example.atlassian.net/browse/ABC-1234",
+        },
+    )
+
+    assert len(db.added) == 1
+    assert defect is db.added[0]
+    assert defect.severity == "CRITICAL"
+    assert defect.resolution_status == "OPEN"
+    assert defect.promotion_source == "manual"
+    assert defect.test_case_id == matched_test_case_id
+    assert defect.jira_ticket_id == "ABC-1234"
+    assert defect.jira_ticket_url == "https://example.atlassian.net/browse/ABC-1234"
+    assert defect.component == "checkout-service"
+    db.flush.assert_awaited_once()
+    # Single-owner commit rule (see backend/CLAUDE.md): services with an
+    # injected session must NOT commit. The router / get_db dependency
+    # owns the transaction lifecycle.
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_falls_back_to_null_test_case_id_when_no_match():
+    project_id = uuid.uuid4()
+    # The lookup runs and returns no row.
+    db = FakeAsyncDB([FakeExecuteResult(scalar=None)])
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Latency spike in /search",
+            "severity": "P2",
+            "failure_category": "INFRASTRUCTURE",
+            "test_name": "search.test_latency_p99",
+            "suite_name": "search-perf",
+            "jira_ticket_url": None,
+        },
+    )
+
+    assert defect.severity == "MEDIUM"
+    assert defect.test_case_id is None
+    assert defect.jira_ticket_id is None
+    assert defect.jira_ticket_url is None
+    assert defect.promotion_source == "manual"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_without_test_name_skips_lookup():
+    """When no test_name is supplied the service must NOT query for a TestCase
+    — that would emit an unbounded scan. We assert by giving the FakeAsyncDB
+    zero pre-staged results: any call to .execute() would IndexError.
+    """
+    project_id = uuid.uuid4()
+    db = FakeAsyncDB([])  # zero stubbed executes — calling execute would error
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Standalone defect, no test linkage",
+            "severity": "P3",
+            "failure_category": "UNKNOWN",
+            "test_name": None,
+            "suite_name": None,
+        },
+    )
+
+    assert defect.severity == "LOW"
+    assert defect.test_case_id is None
+    assert defect.promotion_source == "manual"
+
+
+@pytest.mark.asyncio
+async def test_create_manual_defect_handles_malformed_jira_url():
+    project_id = uuid.uuid4()
+    db = FakeAsyncDB([])
+
+    defect = await analytics_service.create_manual_defect(
+        db,
+        project_id,
+        {
+            "title": "Bad jira url",
+            "severity": "P1",
+            "jira_ticket_url": "https://example.com/no-key-here",
+        },
+    )
+
+    assert defect.severity == "HIGH"
+    assert defect.jira_ticket_url == "https://example.com/no-key-here"
+    assert defect.jira_ticket_id is None
+
+
 @pytest.mark.asyncio
 async def test_stream_service_create_session_stores_token_and_initializes_live_state():
     project_id = uuid.uuid4()
@@ -669,7 +838,10 @@ async def test_stream_service_create_session_stores_token_and_initializes_live_s
         metadata={"env": "staging"},
     )
     db = FakeAsyncDB([])
-    db.get = AsyncMock(return_value=object())
+    # ``resolve_project`` returns a Project row whose ``.id`` is used as the
+    # canonical project UUID for every downstream write — must be a real
+    # UUID, not a bare ``object()``.
+    db.get = AsyncMock(return_value=SimpleNamespace(id=project_id))
     redis = SimpleNamespace(setex=AsyncMock())
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(start=AsyncMock()))
 
@@ -685,13 +857,20 @@ async def test_stream_service_create_session_stores_token_and_initializes_live_s
     assert result.session_token == "token-123"
     redis.setex.assert_awaited_once()
     live_state_module.RedisLiveRunState.start.assert_awaited_once()
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once()
+    # Item #2: service stages + flushes so Redis ops can see the row, but
+    # the router handler owns the commit so an aborted transaction never
+    # leaves a dangling Redis session token.
+    db.commit.assert_not_awaited()
+    db.flush.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_stream_service_ingest_event_batch_validates_and_refreshes_token():
-    redis = SimpleNamespace(get=AsyncMock(return_value="sess-1"), expire=AsyncMock())
+    pipe_mock = AsyncMock()
+    pipe_mock.rpush = MagicMock()
+    pipe_mock.expire = MagicMock()
+    pipe_mock.execute = AsyncMock()
+    redis = SimpleNamespace(get=AsyncMock(return_value="sess-1"), expire=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
     batch = SimpleNamespace(session_id="sess-1", run_id="run-1", events=[{"event_type": "test_result"}])
 
     with (
@@ -703,6 +882,282 @@ async def test_stream_service_ingest_event_batch_validates_and_refreshes_token()
     assert result.accepted == 1
     publish_mock.assert_awaited_once()
     redis.expire.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_service_ingest_via_api_key_creates_session_on_first_call():
+    project_id = uuid.uuid4()
+    new_session_uuid = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+    request = SimpleNamespace(
+        run_id="ci-build-42",
+        events=[SimpleNamespace(model_dump=lambda: {"event_type": "test_result", "test_name": "t1", "status": "PASSED"})],
+        meta=SimpleNamespace(
+            build_number="42",
+            branch="main",
+            commit_hash="abc",
+            framework="pytest",
+            total_tests=10,
+            machine_id="runner-1",
+            release_name="Release 5",
+            # ``ingest_via_api_key`` reads these directly off meta; the real
+            # Pydantic model defines them as Optional with None default, so
+            # the SimpleNamespace mock has to mirror that.
+            launch_name=None,
+            metadata={"env": "ci"},
+        ),
+    )
+
+    # No existing active session for (project_id, run_id) → service creates one.
+    db = FakeAsyncDB([FakeExecuteResult(scalar=None)])
+    db.get = AsyncMock(return_value=object())  # Project exists.
+
+    pipe_mock = AsyncMock()
+    pipe_mock.rpush = MagicMock()
+    pipe_mock.expire = MagicMock()
+    pipe_mock.hincrby = MagicMock()
+    pipe_mock.hset = MagicMock()
+    pipe_mock.execute = AsyncMock()
+    redis = SimpleNamespace(setex=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
+
+    live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(start=AsyncMock()))
+    release_linker_module = SimpleNamespace(resolve_or_create_release=AsyncMock())
+
+    with (
+        patch.object(stream_service, "get_redis", return_value=redis),
+        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=1)) as publish_mock,
+        patch.dict(sys.modules, {
+            "app.streams.live_run_state": live_state_module,
+            "app.services.release_linker": release_linker_module,
+        }),
+        patch("app.services.stream_service.uuid.uuid4", return_value=new_session_uuid),
+        patch("app.services.stream_service.secrets.token_urlsafe", return_value="auto-token"),
+    ):
+        result = await stream_service.ingest_via_api_key(
+            db=db,
+            project_id=project_id,
+            api_key_name="ci-runner-key",
+            request=request,
+        )
+
+    assert result.created_session is True
+    assert result.session_id == str(new_session_uuid)
+    assert result.run_id == "ci-build-42"
+    assert result.accepted == 1
+    publish_mock.assert_awaited_once()
+
+    # New LiveSession was staged with the meta + API key name as client_name.
+    assert len(db.added) == 1
+    staged = db.added[0]
+    assert staged.client_name == "ci-runner-key"
+    assert staged.build_number == "42"
+    assert staged.framework == "pytest"
+    assert staged.release_name == "Release 5"
+    assert staged.run_id == "ci-build-42"
+
+    # Redis token registered + live run state started + release auto-created.
+    redis.setex.assert_awaited_once()
+    live_state_module.RedisLiveRunState.start.assert_awaited_once()
+    release_linker_module.resolve_or_create_release.assert_awaited_once()
+    db.commit.assert_not_awaited()  # Handler owns the commit.
+
+
+@pytest.mark.asyncio
+async def test_stream_service_ingest_via_api_key_reuses_existing_session():
+    project_id = uuid.uuid4()
+    existing_session_id = uuid.UUID("33333333-3333-3333-3333-333333333333")
+    existing_session = SimpleNamespace(
+        id=existing_session_id,
+        project_id=project_id,
+        run_id="ci-build-99",
+        status="active",
+    )
+
+    request = SimpleNamespace(
+        run_id="ci-build-99",
+        events=[SimpleNamespace(model_dump=lambda: {"event_type": "test_result", "test_name": "t2", "status": "FAILED"})],
+        meta=None,
+    )
+
+    db = FakeAsyncDB([FakeExecuteResult(scalar=existing_session)])
+    db.get = AsyncMock(return_value=object())
+
+    pipe_mock = AsyncMock()
+    pipe_mock.rpush = MagicMock()
+    pipe_mock.expire = MagicMock()
+    pipe_mock.hincrby = MagicMock()
+    pipe_mock.hset = MagicMock()
+    pipe_mock.execute = AsyncMock()
+    redis = SimpleNamespace(setex=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
+
+    with (
+        patch.object(stream_service, "get_redis", return_value=redis),
+        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=1)),
+    ):
+        result = await stream_service.ingest_via_api_key(
+            db=db,
+            project_id=project_id,
+            api_key_name="ci-runner-key",
+            request=request,
+        )
+
+    assert result.created_session is False
+    assert result.session_id == str(existing_session_id)
+    assert result.run_id == "ci-build-99"
+    # No new session was added; no Redis token registered.
+    assert db.added == []
+    redis.setex.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stream_service_ingest_via_api_key_run_complete_triggers_close():
+    """A batch carrying a run_complete event must finalize the session so the
+    TestRun row gets created and downstream pipelines fire — otherwise the run
+    stays invisible in Runs / Overview / Coverage / Failures / Trends.
+    """
+    project_id = uuid.uuid4()
+    existing_session_id = uuid.UUID("44444444-4444-4444-4444-444444444444")
+    existing_session = SimpleNamespace(
+        id=existing_session_id,
+        project_id=project_id,
+        run_id="ci-build-final",
+        status="active",
+    )
+
+    request = SimpleNamespace(
+        run_id="ci-build-final",
+        events=[
+            SimpleNamespace(model_dump=lambda: {"event_type": "test_result", "test_name": "t", "status": "PASSED"}),
+            SimpleNamespace(model_dump=lambda: {"event_type": "run_complete"}),
+        ],
+        meta=None,
+    )
+
+    db = FakeAsyncDB([FakeExecuteResult(scalar=existing_session)])
+    db.get = AsyncMock(return_value=object())
+
+    pipe_mock = AsyncMock()
+    pipe_mock.rpush = MagicMock()
+    pipe_mock.expire = MagicMock()
+    pipe_mock.hincrby = MagicMock()
+    pipe_mock.hset = MagicMock()
+    pipe_mock.execute = AsyncMock()
+    redis = SimpleNamespace(setex=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
+
+    with (
+        patch.object(stream_service, "get_redis", return_value=redis),
+        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=2)),
+        patch.object(stream_service, "close_session", AsyncMock()) as close_mock,
+    ):
+        result = await stream_service.ingest_via_api_key(
+            db=db,
+            project_id=project_id,
+            api_key_name="ci-runner-key",
+            request=request,
+        )
+
+    assert result.created_session is False
+    close_mock.assert_awaited_once_with(db, str(existing_session_id))
+
+
+@pytest.mark.asyncio
+async def test_stream_service_ingest_via_api_key_no_close_without_run_complete():
+    """Sanity check: a regular batch (no run_complete) must NOT close the session."""
+    project_id = uuid.uuid4()
+    existing_session = SimpleNamespace(
+        id=uuid.UUID("55555555-5555-5555-5555-555555555555"),
+        project_id=project_id,
+        run_id="ci-build-active",
+        status="active",
+    )
+    request = SimpleNamespace(
+        run_id="ci-build-active",
+        events=[SimpleNamespace(model_dump=lambda: {"event_type": "test_result", "test_name": "t", "status": "PASSED"})],
+        meta=None,
+    )
+    db = FakeAsyncDB([FakeExecuteResult(scalar=existing_session)])
+    db.get = AsyncMock(return_value=object())
+
+    pipe_mock = AsyncMock()
+    pipe_mock.rpush = MagicMock()
+    pipe_mock.expire = MagicMock()
+    pipe_mock.hincrby = MagicMock()
+    pipe_mock.hset = MagicMock()
+    pipe_mock.execute = AsyncMock()
+    redis = SimpleNamespace(setex=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
+
+    with (
+        patch.object(stream_service, "get_redis", return_value=redis),
+        patch.object(stream_service, "publish_event_batch", AsyncMock(return_value=1)),
+        patch.object(stream_service, "close_session", AsyncMock()) as close_mock,
+    ):
+        await stream_service.ingest_via_api_key(
+            db=db,
+            project_id=project_id,
+            api_key_name="ci-runner-key",
+            request=request,
+        )
+
+    close_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stream_service_ingest_via_api_key_409s_finalised_run_id():
+    """Reusing a run_id whose session has already finalised must 409 — not
+    silently create a new active session that would conflate two runs under
+    the same display id."""
+    project_id = uuid.uuid4()
+    completed_session = SimpleNamespace(
+        id=uuid.UUID("66666666-6666-6666-6666-666666666666"),
+        project_id=project_id,
+        run_id="ci-build-1",
+        status="completed",
+    )
+    request = SimpleNamespace(
+        run_id="ci-build-1",
+        events=[SimpleNamespace(model_dump=lambda: {"event_type": "test_result"})],
+        meta=None,
+    )
+
+    db = FakeAsyncDB([FakeExecuteResult(scalar=completed_session)])
+    db.get = AsyncMock(return_value=object())  # project exists
+
+    from fastapi import HTTPException as _HTTPException
+
+    with pytest.raises(_HTTPException) as exc_info:
+        await stream_service.ingest_via_api_key(
+            db=db,
+            project_id=project_id,
+            api_key_name="ci-runner-key",
+            request=request,
+        )
+    assert exc_info.value.status_code == 409
+    assert "ci-build-1" in str(exc_info.value.detail)
+    # No new session was added to the DB — the request was rejected pre-write.
+    assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_stream_service_ingest_via_api_key_404s_unknown_project():
+    db = FakeAsyncDB([])
+    db.get = AsyncMock(return_value=None)  # Project does not exist.
+
+    request = SimpleNamespace(
+        run_id="run-x",
+        events=[SimpleNamespace(model_dump=lambda: {"event_type": "test_result"})],
+        meta=None,
+    )
+
+    from fastapi import HTTPException as _HTTPException
+
+    with pytest.raises(_HTTPException) as exc_info:
+        await stream_service.ingest_via_api_key(
+            db=db,
+            project_id=uuid.uuid4(),
+            api_key_name="key",
+            request=request,
+        )
+    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -747,7 +1202,14 @@ async def test_stream_service_list_active_sessions_combines_sources():
     ]
 
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(get_all_active=AsyncMock(return_value=active)))
-    with patch.dict(sys.modules, {"app.streams.live_run_state": live_state_module}):
+    # ``list_active_sessions`` now also decorates each session with its
+    # per-(project, suite) ``run_seq`` via ``runs_service.fetch_run_seq_map``.
+    # The helper fires its own SELECTs which would drain FakeAsyncDB's
+    # canned-result list; stub it to an empty dict for this test, which
+    # only asserts on session presence + ordering. Dedicated coverage
+    # for the helper lives in tests/services/test_run_seq_map.py.
+    with patch.dict(sys.modules, {"app.streams.live_run_state": live_state_module}), \
+         patch("app.services.runs_service.fetch_run_seq_map", AsyncMock(return_value={})):
         result = await stream_service.list_active_sessions(db, str(project_id))
 
     assert result.count == 3
@@ -763,8 +1225,16 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     db.get = AsyncMock(return_value=session)
     persist_task = SimpleNamespace(apply_async=Mock())
     pipeline_task = SimpleNamespace(apply_async=Mock())
-    release_linker = SimpleNamespace(auto_link_release=AsyncMock())
+    # ``_close_session`` now goes through ``link_run_or_default`` so it can
+    # fall back to the project's default release when session.release_name
+    # is blank. The mock exposes that entry point.
+    release_linker = SimpleNamespace(link_run_or_default=AsyncMock())
     live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(complete=AsyncMock(return_value={"passed": 4, "failed": 1, "total": 5})))
+    # Phase 3 (2026-05-16) — close_session now enqueues the AI pipeline
+    # via the debouncer instead of calling ``run_agent_pipeline.apply_async``
+    # directly. Stub the debouncer so we can assert on its call instead
+    # of the legacy direct dispatch.
+    debouncer_module = SimpleNamespace(enqueue_pipeline_for_run=AsyncMock(return_value="debounced"))
 
     with (
         patch.object(stream_service, "upsert_test_run", AsyncMock()) as upsert_mock,
@@ -773,6 +1243,7 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
             {
                 "app.streams.live_run_state": live_state_module,
                 "app.services.release_linker": release_linker,
+                "app.services.ai_pipeline_debouncer": debouncer_module,
                 "app.worker.tasks": SimpleNamespace(
                     persist_live_session=persist_task,
                     run_agent_pipeline=pipeline_task,
@@ -786,10 +1257,15 @@ async def test_stream_service_close_session_marks_complete_and_queues_followup_w
     assert session.completed_at is not None
     assert session.extra_metadata["final_state"]["total"] == 5
     upsert_mock.assert_awaited_once()
-    release_linker.auto_link_release.assert_awaited_once()
-    db.commit.assert_awaited_once()
+    release_linker.link_run_or_default.assert_awaited_once()
+    # Item #2: service stages; router handler commits.
+    db.commit.assert_not_awaited()
     persist_task.apply_async.assert_called_once()
-    pipeline_task.apply_async.assert_called_once()
+    # Phase 3 — pipeline trigger now routes through the debouncer.
+    # ``pipeline_task.apply_async`` is NOT called directly here; the
+    # beat task drains the SortedSet later.
+    debouncer_module.enqueue_pipeline_for_run.assert_awaited_once()
+    pipeline_task.apply_async.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -852,7 +1328,8 @@ async def test_feedback_service_jira_resolution_webhook_creates_feedback_for_inv
     assert result["defect_id"] == str(defect.id)
     assert defect.resolution_status == "INVALID"
     assert any(getattr(obj, "source", None) == "jira_invalid" for obj in db.added)
-    db.commit.assert_awaited_once()
+    # Item #2: service stages only, router handler commits.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -901,18 +1378,26 @@ async def test_chat_service_get_run_summaries_merges_ai_summaries_and_stubs():
 
 @pytest.mark.asyncio
 async def test_chat_service_send_message_updates_default_title_and_dispatches_agent():
-    session_id = uuid.uuid4()
-    session = SimpleNamespace(id=session_id, user_id=uuid.uuid4(), project_id=uuid.uuid4(), title="New conversation")
+    """After the pilot refactor ``send_message`` receives a pre-authorized
+    :class:`ChatSession` from the ``require_session_access`` dependency and
+    stages the title mutation without committing. The router handler owns
+    the commit, so this unit test should not see ``db.commit`` called."""
+    session = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        title="New conversation",
+    )
     current_user = SimpleNamespace(id=session.user_id)
     payload = SimpleNamespace(message="Investigate latest failures", project_id=None)
-    db = FakeAsyncDB([FakeExecuteResult(scalar=session)])
+    db = FakeAsyncDB([])
     conversation_agent_cls = Mock()
     conversation_agent_cls.return_value.chat = AsyncMock(return_value={"reply": "Here is the summary", "sources": [{"type": "run"}]})
 
     with patch.dict(sys.modules, {"app.agents.conversation": SimpleNamespace(ConversationAgent=conversation_agent_cls)}):
-        result = await chat_service.send_message(db, session_id, payload, current_user)
+        result = await chat_service.send_message(db, session, payload, current_user)
 
     assert session.title == "Investigate latest failures"
-    db.commit.assert_awaited_once()
+    db.commit.assert_not_awaited()
     conversation_agent_cls.return_value.chat.assert_awaited_once()
     assert result["reply"] == "Here is the summary"

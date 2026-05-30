@@ -45,7 +45,7 @@ class LogIntelligenceAgent:
             trace_data = json.loads(trace_json)
             evidence["distributed_trace"] = trace_data
         except Exception as exc:
-            logger.debug("Trace reconstruction failed: %s", exc)
+            logger.debug("trace_reconstruction_failed", error=str(exc))
             evidence["distributed_trace"] = {"error": str(exc)}
 
         # 2. Detect log rate anomaly for primary service
@@ -61,7 +61,7 @@ class LogIntelligenceAgent:
             anomaly_data = json.loads(anomaly_json)
             evidence["log_anomaly"] = anomaly_data
         except Exception as exc:
-            logger.debug("Log anomaly detection failed: %s", exc)
+            logger.debug("log_anomaly_detection_failed", error=str(exc))
             evidence["log_anomaly"] = {"error": str(exc)}
 
         # Build a summary for the calling agent

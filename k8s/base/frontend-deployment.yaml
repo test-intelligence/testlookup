@@ -24,11 +24,18 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: testlookup/frontend:latest
-          imagePullPolicy: Always
+          image: testlookup/frontend:0.0.1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
               name: http
+          env:
+            # Override the docker-compose default ("backend:8000") with the
+            # in-cluster Service name. The base ingress routes /api to the
+            # backend before traffic reaches this pod, but this fallback lets
+            # `kubectl port-forward svc/testlookup-frontend` also work.
+            - name: BACKEND_UPSTREAM
+              value: "testlookup-backend:8000"
           resources:
             requests:
               cpu: 50m
@@ -54,8 +61,15 @@ spec:
             timeoutSeconds: 3
           securityContext:
             runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

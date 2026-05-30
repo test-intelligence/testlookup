@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Edit3, FlaskConical, Plus, Trash2, X } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { projectsService } from '@/services/projectsService'
@@ -35,12 +35,18 @@ export default function ProjectsPage() {
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [form, setForm] = useState<NewProjectForm>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
-  const { setActiveProject } = useProjectStore()
+  const setActiveProject = useProjectStore(s => s.setActiveProject)
+  const refreshProjects = useProjectStore(s => s.refreshProjects)
   const { isAdmin, isQaLead } = usePermissions()
   const canEdit = isAdmin || isQaLead
 
-  const load = () => projectsService.list().then(setProjects).catch(() => {})
-  useEffect(() => { load() }, [])
+  const load = useCallback(
+    () => refreshProjects().then(setProjects).catch(() => {}),
+    [refreshProjects],
+  )
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const handleNameChange = (name: string) => {
     setForm(f => ({ ...f, name, slug: slugify(name) }))
@@ -55,11 +61,14 @@ export default function ProjectsPage() {
       if (form.description) payload.description = form.description
       if (form.jira_project_key) payload.jira_project_key = form.jira_project_key
       if (form.ocp_namespace) payload.ocp_namespace = form.ocp_namespace
-      await projectsService.create(payload)
+      const created = await projectsService.create(payload)
       toast.success('Project created')
       setShowModal(false)
       setForm(EMPTY_FORM)
-      load()
+      // Refresh the shared store so the TopBar dropdown updates immediately,
+      // then make the new project the active selection.
+      await load()
+      if (created?.id) setActiveProject(created)
     } catch {
       toast.error('Failed to create project')
     } finally {

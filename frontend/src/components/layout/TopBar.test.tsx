@@ -11,9 +11,14 @@ const mocked = vi.hoisted(() => {
   const markAllRead = vi.fn(async () => {})
   const refreshLogs = vi.fn()
 
+  const projects = [{ id: 'p1', name: 'Core UI' }]
+  const refreshProjects = vi.fn(async () => projects)
+
   const projectStoreState = {
     activeProject: null as null | { id: string; name: string },
     activeProjectId: null as null | string,
+    projects,
+    refreshProjects,
     setActiveProject,
     setAllProjects,
   }
@@ -22,14 +27,17 @@ const mocked = vi.hoisted(() => {
     user: {
       full_name: 'Test User',
       username: 'tester',
-      role: 'admin',
+      role: 'ADMIN',
       email: 'test@example.com',
+      avatar_color: null,
     },
   }
 
   const useProjectStore = vi.fn((selector?: (s: typeof projectStoreState) => unknown) =>
     selector ? selector(projectStoreState) : projectStoreState,
   )
+  ;(useProjectStore as unknown as { getState: () => typeof projectStoreState }).getState = () =>
+    projectStoreState
   const useAuthStore = vi.fn((selector?: (s: typeof authState) => unknown) =>
     selector ? selector(authState) : authState,
   )
@@ -107,7 +115,7 @@ describe('TopBar', () => {
       </MemoryRouter>,
     )
 
-    const input = screen.getByPlaceholderText('Search tests, errors… (Enter)')
+    const input = screen.getByPlaceholderText('Search tests, runs, defects… (Enter)')
     fireEvent.change(input, { target: { value: 'timeout issue' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
@@ -166,7 +174,7 @@ describe('TopBar', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+    fireEvent.click(screen.getByRole('button', { name: /Notifications/ }))
     expect(screen.getByText('Notifications')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }))

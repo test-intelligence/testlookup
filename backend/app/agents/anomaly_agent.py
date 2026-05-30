@@ -30,10 +30,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import (
+    AnomalyDetectionAgentOutput,
+    validate_agent_contract,
+)
 from app.models.postgres import TestCase, TestCaseHistory, TestRun, TestStatus
 from app.services.llm_factory import get_llm
 
 logger = structlog.get_logger("agents.anomaly")
+
+
+def _status_value(status) -> str:
+    """Normalize SQLAlchemy enum/string values to stored TestStatus strings."""
+    return str(getattr(status, "value", status))
 
 
 class AnomalyDetectionAgent(BaseAgent):
@@ -45,7 +54,7 @@ class AnomalyDetectionAgent(BaseAgent):
         project_id: str = state["project_id"]
         current_pass_rate: float = state.get("pass_rate", 0.0)
         total_tests: int = state.get("total_tests", 0)
-        branch: Optional[str] = state.get("branch")
+        branch: Optional[str] = state.get("branch") or (state.get("test_run_data") or {}).get("branch")
 
         log = logger.bind(
             pipeline_run_id=pipeline_run_id,
@@ -204,15 +213,31 @@ class AnomalyDetectionAgent(BaseAgent):
                 },
             )
 
-            return {
-                "anomalies": anomalies,
-                "is_regression": is_regression,
-                "regression_tests": regression_tests,
-                "anomaly_summary": anomaly_summary,
-                "completed_stages": ["anomaly_detection"],
-                "errors": [],
-                "current_stage": "root_cause_analysis",
-            }
+            return validate_agent_contract(
+                AnomalyDetectionAgentOutput,
+                {
+                    "anomalies": anomalies,
+                    "is_regression": is_regression,
+                    "regression_tests": regression_tests,
+                    "anomaly_summary": anomaly_summary,
+                    "completed_stages": ["anomaly_detection"],
+                    "errors": [],
+                    "current_stage": "root_cause_analysis",
+                },
+                agent_name=self.stage_name,
+                confidence=(
+                    max(a.get("confidence", 50) for a in anomalies)
+                    if anomalies else 100
+                ),
+                evidence_refs=[
+                    {"type": "anomaly", "id": a.get("type", "unknown")}
+                    for a in anomalies
+                ],
+                decision_reason=(
+                    "regression_signals_detected"
+                    if is_regression else "baseline_checks_completed"
+                ),
+            )
 
         except Exception as exc:
             error_msg = f"Anomaly agent error: {exc}"
@@ -222,15 +247,22 @@ class AnomalyDetectionAgent(BaseAgent):
                 error=error_msg,
                 error_category="anomaly_agent_exception",
             )
-            return {
-                "anomalies": [],
-                "is_regression": False,
-                "regression_tests": [],
-                "anomaly_summary": None,
-                "errors": [error_msg],
-                "completed_stages": ["anomaly_detection"],
-                "current_stage": "root_cause_analysis",
-            }
+            return validate_agent_contract(
+                AnomalyDetectionAgentOutput,
+                {
+                    "anomalies": [],
+                    "is_regression": False,
+                    "regression_tests": [],
+                    "anomaly_summary": None,
+                    "errors": [error_msg],
+                    "completed_stages": ["anomaly_detection"],
+                    "current_stage": "root_cause_analysis",
+                },
+                agent_name=self.stage_name,
+                fallback_used=True,
+                confidence=0,
+                decision_reason="anomaly_agent_exception",
+            )
 
     # ── Private helpers ────────────────────────────────────────────────────────
 
@@ -302,7 +334,7 @@ class AnomalyDetectionAgent(BaseAgent):
             select(TestCase.id, TestCase.test_fingerprint, TestCase.test_name)
             .where(
                 TestCase.test_run_id == current_run_id,
-                TestCase.status.in_([TestStatus.FAILED, TestStatus.BROKEN]),
+                TestCase.status.in_([TestStatus.FAILED.value, TestStatus.BROKEN.value]),
             )
         )
         current_rows = cur_result.all()
@@ -321,7 +353,7 @@ class AnomalyDetectionAgent(BaseAgent):
             )
         )
         prev_by_fp: dict[str, str] = {
-            r.test_fingerprint: str(r.status) for r in prev_result.all()
+            r.test_fingerprint: _status_value(r.status) for r in prev_result.all()
         }
 
         new_failures: list[dict] = []
@@ -335,7 +367,7 @@ class AnomalyDetectionAgent(BaseAgent):
                 "prev_status": prev_by_fp.get(fp),
             }
             prev_s = prev_by_fp.get(fp)
-            if prev_s in (None, str(TestStatus.PASSED), str(TestStatus.SKIPPED)):
+            if prev_s in (None, TestStatus.PASSED.value, TestStatus.SKIPPED.value):
                 new_failures.append(entry)
             else:
                 possibly_persistent.append(entry)
@@ -375,12 +407,12 @@ class AnomalyDetectionAgent(BaseAgent):
                         TestCase.test_fingerprint.in_(persistent_fps),
                     )
                 )
-                older_by_fp = {r.test_fingerprint: str(r.status) for r in older_cases.all()}
+                older_by_fp = {r.test_fingerprint: _status_value(r.status) for r in older_cases.all()}
 
             for entry in possibly_persistent:
                 fp = entry["test_fingerprint"]
                 older_s = older_by_fp.get(fp)
-                if older_s == str(TestStatus.PASSED):
+                if older_s == TestStatus.PASSED.value:
                     reopened.append(entry)
                 else:
                     persistent.append(entry)
@@ -506,7 +538,7 @@ class AnomalyDetectionAgent(BaseAgent):
             select(TestCase.test_fingerprint, TestCase.id, TestCase.test_name)
             .where(
                 TestCase.test_run_id == test_run_id,
-                TestCase.status.in_([TestStatus.FAILED, TestStatus.BROKEN]),
+                TestCase.status.in_([TestStatus.FAILED.value, TestStatus.BROKEN.value]),
             )
         )
         failed_rows = failed_result.all()
@@ -543,7 +575,7 @@ class AnomalyDetectionAgent(BaseAgent):
             if fp not in history_by_fp:
                 history_by_fp[fp] = []
             if len(history_by_fp[fp]) < window:
-                history_by_fp[fp].append(str(row.status))
+                history_by_fp[fp].append(_status_value(row.status))
 
         min_history = settings.ANOMALY_MIN_HISTORY_RUNS
         flaky_results: list[dict] = []
@@ -554,7 +586,7 @@ class AnomalyDetectionAgent(BaseAgent):
 
             fail_count = sum(
                 1 for s in statuses
-                if s in (str(TestStatus.FAILED), str(TestStatus.BROKEN))
+                if s in (TestStatus.FAILED.value, TestStatus.BROKEN.value)
             )
             fail_rate = fail_count / len(statuses)
 
@@ -617,7 +649,7 @@ class AnomalyDetectionAgent(BaseAgent):
         )
 
         try:
-            llm = get_llm(temperature=0.0)
+            llm = await get_llm(temperature=0.0)
             response = await llm.ainvoke(prompt)
             raw = response.content if hasattr(response, "content") else str(response)
             return (raw if isinstance(raw, str) else str(raw)).strip(), 1

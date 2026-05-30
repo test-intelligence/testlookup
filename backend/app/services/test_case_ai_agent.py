@@ -32,7 +32,7 @@ def _content_to_text(value: Any) -> str:
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
 @tool
-def generate_test_cases_tool(requirements: str) -> str:
+async def generate_test_cases_tool(requirements: str) -> str:
     """Generate test cases from a requirements or feature description.
 
     Args:
@@ -41,7 +41,7 @@ def generate_test_cases_tool(requirements: str) -> str:
     Returns:
         JSON string with a list of test case objects.
     """
-    llm = get_llm()
+    llm = await get_llm()
     system = SystemMessage(content="""You are an expert QA engineer. Given a requirements description,
 generate comprehensive test cases following best practices. Return ONLY valid JSON with this structure:
 {
@@ -70,7 +70,7 @@ Generate 3-8 test cases covering: happy path, edge cases, error conditions, boun
 
     human = HumanMessage(content=f"Generate test cases for:\n\n{requirements}")
     try:
-        response = llm.invoke([system, human])
+        response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
         # Extract JSON from response
         start = content.find("{")
@@ -84,7 +84,7 @@ Generate 3-8 test cases covering: happy path, edge cases, error conditions, boun
 
 
 @tool
-def review_test_quality_tool(test_case_json: str) -> str:
+async def review_test_quality_tool(test_case_json: str) -> str:
     """Review a test case for quality, completeness, and best practices.
 
     Args:
@@ -93,7 +93,7 @@ def review_test_quality_tool(test_case_json: str) -> str:
     Returns:
         JSON string with quality assessment and improvement suggestions.
     """
-    llm = get_llm()
+    llm = await get_llm()
     system = SystemMessage(content="""You are a senior QA architect reviewing test cases for quality.
 Evaluate the test case and return ONLY valid JSON:
 {
@@ -122,7 +122,7 @@ proper test data definition, no UI-dependency in unit tests, reproducible.""")
 
     human = HumanMessage(content=f"Review this test case:\n\n{test_case_json}")
     try:
-        response = llm.invoke([system, human])
+        response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
         start = content.find("{")
         end = content.rfind("}") + 1
@@ -135,7 +135,7 @@ proper test data definition, no UI-dependency in unit tests, reproducible.""")
 
 
 @tool
-def analyze_coverage_gaps_tool(requirements: str, existing_tests_summary: str) -> str:
+async def analyze_coverage_gaps_tool(requirements: str, existing_tests_summary: str) -> str:
     """Identify coverage gaps between requirements and existing test cases.
 
     Args:
@@ -145,7 +145,7 @@ def analyze_coverage_gaps_tool(requirements: str, existing_tests_summary: str) -
     Returns:
         JSON string with coverage analysis and gap report.
     """
-    llm = get_llm()
+    llm = await get_llm()
     system = SystemMessage(content="""You are a QA coverage analyst. Analyze requirements vs existing tests.
 Return ONLY valid JSON:
 {
@@ -162,7 +162,7 @@ Return ONLY valid JSON:
 
     human = HumanMessage(content=f"Requirements:\n{requirements}\n\nExisting tests:\n{existing_tests_summary}")
     try:
-        response = llm.invoke([system, human])
+        response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
         start = content.find("{")
         end = content.rfind("}") + 1
@@ -175,7 +175,7 @@ Return ONLY valid JSON:
 
 
 @tool
-def generate_test_strategy_tool(project_context: str) -> str:
+async def generate_test_strategy_tool(project_context: str) -> str:
     """Generate a comprehensive test strategy document for a project.
 
     Args:
@@ -184,7 +184,7 @@ def generate_test_strategy_tool(project_context: str) -> str:
     Returns:
         JSON string with complete test strategy sections.
     """
-    llm = get_llm()
+    llm = await get_llm()
     system = SystemMessage(content="""You are a QA Director creating a test strategy document.
 Return ONLY valid JSON:
 {
@@ -211,7 +211,7 @@ Return ONLY valid JSON:
 
     human = HumanMessage(content=f"Create a test strategy for:\n\n{project_context}")
     try:
-        response = llm.invoke([system, human])
+        response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
         start = content.find("{")
         end = content.rfind("}") + 1
@@ -224,7 +224,7 @@ Return ONLY valid JSON:
 
 
 @tool
-def optimize_test_plan_tool(test_cases_json: str, constraints: str) -> str:
+async def optimize_test_plan_tool(test_cases_json: str, constraints: str) -> str:
     """Optimize test case ordering and prioritization for a test plan.
 
     Args:
@@ -234,7 +234,7 @@ def optimize_test_plan_tool(test_cases_json: str, constraints: str) -> str:
     Returns:
         JSON string with optimized execution order and rationale.
     """
-    llm = get_llm()
+    llm = await get_llm()
     system = SystemMessage(content="""You are a test planning optimizer. Given test cases and constraints,
 provide an optimized execution plan. Return ONLY valid JSON:
 {
@@ -254,7 +254,7 @@ Prioritize: smoke tests first, critical path second, regression last. Group by f
 
     human = HumanMessage(content=f"Test cases:\n{test_cases_json}\n\nConstraints:\n{constraints}")
     try:
-        response = llm.invoke([system, human])
+        response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
         start = content.find("{")
         end = content.rfind("}") + 1
@@ -270,9 +270,7 @@ Prioritize: smoke tests first, critical path second, regression last. Group by f
 
 async def ai_generate_test_cases(requirements: str) -> dict[str, Any]:
     """Generate test cases from requirements text. Returns parsed dict."""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, lambda: generate_test_cases_tool.invoke({"requirements": requirements}))
+    raw = await generate_test_cases_tool.ainvoke({"requirements": requirements})
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
@@ -281,10 +279,8 @@ async def ai_generate_test_cases(requirements: str) -> dict[str, Any]:
 
 async def ai_review_test_case(test_case: dict[str, Any]) -> dict[str, Any]:
     """AI quality review of a test case dict. Returns review result."""
-    import asyncio
     tc_json = json.dumps(test_case, indent=2)
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, lambda: review_test_quality_tool.invoke({"test_case_json": tc_json}))
+    raw = await review_test_quality_tool.ainvoke({"test_case_json": tc_json})
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
@@ -293,13 +289,11 @@ async def ai_review_test_case(test_case: dict[str, Any]) -> dict[str, Any]:
 
 async def ai_analyze_coverage(requirements: str, existing_tests: list[dict]) -> dict[str, Any]:
     """Analyze coverage gaps. existing_tests is list of {title, objective} dicts."""
-    import asyncio
     summary = "\n".join(f"- {t.get('title', '')}: {t.get('objective', '')}" for t in existing_tests)
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, lambda: analyze_coverage_gaps_tool.invoke({
+    raw = await analyze_coverage_gaps_tool.ainvoke({
         "requirements": requirements,
         "existing_tests_summary": summary or "No existing test cases yet.",
-    }))
+    })
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
@@ -308,9 +302,7 @@ async def ai_analyze_coverage(requirements: str, existing_tests: list[dict]) -> 
 
 async def ai_generate_strategy(project_context: str) -> dict[str, Any]:
     """Generate test strategy for a project context description."""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, lambda: generate_test_strategy_tool.invoke({"project_context": project_context}))
+    raw = await generate_test_strategy_tool.ainvoke({"project_context": project_context})
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:
@@ -319,7 +311,6 @@ async def ai_generate_strategy(project_context: str) -> dict[str, Any]:
 
 async def ai_optimize_plan(test_cases: list[dict], constraints: str = "") -> dict[str, Any]:
     """Optimize test plan execution order."""
-    import asyncio
     tc_json = json.dumps([{
         "title": t.get("title", ""),
         "priority": t.get("priority", "medium"),
@@ -327,11 +318,10 @@ async def ai_optimize_plan(test_cases: list[dict], constraints: str = "") -> dic
         "estimated_duration_minutes": t.get("estimated_duration_minutes", 5),
     } for t in test_cases], indent=2)
     constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
-    loop = asyncio.get_event_loop()
-    raw = await loop.run_in_executor(None, lambda: optimize_test_plan_tool.invoke({
+    raw = await optimize_test_plan_tool.ainvoke({
         "test_cases_json": tc_json,
         "constraints": constraints_text,
-    }))
+    })
     try:
         return cast(dict[str, Any], json.loads(raw)) if isinstance(raw, str) else cast(dict[str, Any], raw)
     except json.JSONDecodeError:

@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_role
+from app.core.deps import require_project_access, require_role, require_run_access
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
@@ -34,6 +34,7 @@ async def list_project_memories(
     size: int = Query(default=50, ge=1, le=200),
     current_user: User = Depends(require_role(UserRole.VIEWER)),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
 ):
     """List memory entries for a project, optionally filtered by entity type."""
     entries, total = await agent_memory_service.list_project_memories(
@@ -55,6 +56,7 @@ async def get_run_memory_timeline(
     run_id: uuid.UUID,
     current_user: User = Depends(require_role(UserRole.VIEWER)),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
 ):
     """Get all memory entries for a run, grouped by entity type."""
     entries_by_type, total = await agent_memory_service.get_run_memory_timeline(
@@ -98,6 +100,7 @@ async def recall_similar_memories(
     body: SimilarMemoryRecallRequest,
     current_user: User = Depends(require_role(UserRole.VIEWER)),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
 ):
     """Find historically similar failures in the same project via semantic search."""
     matches = await agent_memory_service.recall_similar(
@@ -112,12 +115,16 @@ async def recall_similar_memories(
         SimilarMemoryResponse(
             memory=AgentMemoryEntryResponse.model_validate(m["memory"]),
             similarity=m["similarity"],
+            retrieval_audit=m.get("retrieval_audit"),
+            memory_reference=m.get("memory_reference"),
         )
         for m in matches
     ]
+    retrieval_audit = matches[0].get("retrieval_audit") if matches else None
 
     return SimilarMemoryRecallResponse(
         query_signature=body.error_signature[:200],
         results=results,
         total_found=len(results),
+        retrieval_audit=retrieval_audit,
     )

@@ -56,6 +56,9 @@ class ReportData:
     baseline_diff: dict = field(default_factory=dict)
     provenance: dict = field(default_factory=dict)
 
+    # Structured executive panel (ES-2)
+    executive_panel: dict = field(default_factory=dict)
+
     # Engineering-only sections
     failure_clusters: list[dict] = field(default_factory=list)
     top_analyses: list[dict] = field(default_factory=list)
@@ -111,6 +114,9 @@ async def compose_report(
         or summary.get("layer1_executive", "")
         or "No executive summary available."
     )
+
+    # ── Executive panel ──────────────────────────────────────────────────
+    report.executive_panel = summary.get("executive_panel") or {}
 
     # ── Release decision ────────────────────────────────────────────────
     decision = payload.get("release_decision") or {}

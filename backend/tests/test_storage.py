@@ -53,3 +53,28 @@ async def test_local_storage_provider(temp_storage_path):
     # Test get_presigned_url — use Path.as_uri() for cross-platform comparison
     url = await provider.get_presigned_url(key=key, bucket=bucket)
     assert url == expected_path.resolve().as_uri()
+
+
+@pytest.mark.asyncio
+async def test_local_storage_rejects_key_traversal(temp_storage_path):
+    provider = LocalStorageProvider()
+
+    with pytest.raises(ValueError):
+        await provider.put_object(
+            key="../outside.txt",
+            content=b"blocked",
+            bucket="test-bucket",
+        )
+
+    assert not (Path(temp_storage_path) / "outside.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_local_storage_rejects_bucket_traversal(temp_storage_path):
+    provider = LocalStorageProvider()
+
+    with pytest.raises(ValueError):
+        await provider.get_object_content(
+            key="object.txt",
+            bucket="../outside-bucket",
+        )

@@ -243,6 +243,58 @@ report_exports_total = Counter(
     ["format", "type"],  # format: excel|word|pdf; type: test_cases|test_plan|strategy|intelligence
 )
 
+# ── Tier 0-2 operations (Phase E-3, 2026-04-15) ─────────────────────────────
+
+quarantine_proposals_total = Counter(
+    "testlookup_quarantine_proposals_total",
+    "Total flaky quarantine proposals created",
+    ["source"],  # auto | manual
+)
+
+quarantine_approvals_total = Counter(
+    "testlookup_quarantine_approvals_total",
+    "Total flaky quarantine state transitions on approval",
+    ["outcome"],  # approved | rejected
+)
+
+quarantine_expired_total = Counter(
+    "testlookup_quarantine_expired_total",
+    "Total quarantined tests that transitioned to RELEASED or RE_QUARANTINED "
+    "via the nightly maintenance sweep",
+    ["terminal_state"],  # released | re_quarantined
+)
+
+perf_baseline_refresh_runs_total = Counter(
+    "testlookup_perf_baseline_refresh_runs_total",
+    "Total perf baseline nightly refresh task runs",
+    ["status"],  # success | skipped | failure
+)
+
+retro_digest_dispatch_total = Counter(
+    "testlookup_retro_digest_dispatch_total",
+    "Total weekly retro digest dispatch task runs",
+    ["status"],  # success | skipped | failure
+)
+
+webhook_delivery_attempts_total = Counter(
+    "testlookup_webhook_delivery_attempts_total",
+    "Total outbound webhook delivery attempts",
+    ["event_type", "result"],  # result: success | failure | retry
+)
+
+compliance_pack_generated_total = Counter(
+    "testlookup_compliance_pack_generated_total",
+    "Total release compliance packs generated",
+    ["result"],  # success | disabled | not_available | error
+)
+
+# P2-3: orphan TestSuite rows flagged by the nightly reaper. Increments
+# once per detected orphan — see docs/DATABASE_AUDIT_2026-05-16.md.
+orphan_test_suites_total = Counter(
+    "testlookup_orphan_test_suites_total",
+    "Total orphan TestSuite rows flagged for ops review (no canonical_test_cases children)",
+)
+
 # ── Service Metadata ──────────────────────────────────────────────────────────
 
 app_info = Info(
