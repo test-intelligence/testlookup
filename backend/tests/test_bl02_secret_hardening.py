@@ -203,6 +203,50 @@ class TestStartupGuards:
         assert warnings == []
 
 
+class TestCriticalSecurityFailures:
+    """The startup fail-fast guard (main.py lifespan) keys off this helper."""
+
+    def test_default_secret_is_critical_in_production(self):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="production", JWT_SECRET_KEY="change-me-jwt-secret")
+        assert s.critical_security_failures()  # non-empty → startup refused
+
+    def test_default_secret_is_critical_in_staging(self):
+        # Staging is treated like production — this is the behavior widened from
+        # production-only fail-fast (review finding M4).
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="staging", JWT_SECRET_KEY="change-me-jwt-secret")
+        assert s.critical_security_failures()
+
+    def test_no_critical_failures_in_development(self):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="development", JWT_SECRET_KEY="change-me-jwt-secret")
+        assert s.critical_security_failures() == []
+
+    def test_warning_only_item_is_not_critical(self):
+        # A default WEBHOOK_SECRET is WARNING-severity, not CRITICAL: it must not
+        # block startup on its own.
+        from app.core.config import Settings
+
+        s = Settings(
+            APP_ENV="production",
+            JWT_SECRET_KEY="a-real-strong-secret-key-here",
+            APP_SECRET_KEY="another-real-strong-key",
+            WEBHOOK_SECRET="change-me-webhook-secret",
+            DEV_AUTO_LOGIN_ENABLED=False,
+        )
+        assert s.critical_security_failures() == []
+
+    def test_dev_auto_login_is_critical(self):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="production", DEV_AUTO_LOGIN_ENABLED=True)
+        assert any("DEV_AUTO_LOGIN_ENABLED" in w for w in s.critical_security_failures())
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Infra Masking in Storage Config
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -308,6 +308,16 @@ class Settings(BaseSettings):
                 warnings.append("WARNING: SAML_BASE_URL is set to localhost — update it for production")
         return warnings
 
+    def critical_security_failures(self) -> list[str]:
+        """
+        CRITICAL-severity subset of validate_production_secrets().
+
+        Drives the startup fail-fast guard. Returns [] outside production/staging
+        (validate_production_secrets only emits there), so booting dev is never blocked.
+        Staging is treated like production: a CRITICAL default secret refuses startup.
+        """
+        return [w for w in self.validate_production_secrets() if w.startswith("CRITICAL")]
+
 
 @lru_cache()
 def get_settings() -> Settings:

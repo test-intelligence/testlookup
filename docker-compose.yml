@@ -74,6 +74,11 @@ services:
     image: redis:7-alpine
     container_name: testlookup_redis
     restart: unless-stopped
+    # volatile-lru (not allkeys-lru): only evict keys that carry a TTL. This protects
+    # TTL-less critical keys — live session tokens (X-Session-Token O(1) lookup) and the
+    # live-events stream — from eviction under memory pressure. Bounded-memory assumption:
+    # the events stream is MAXLEN-capped (100k) and the per-run testcases buffer has a 25h
+    # TTL + is drained to Postgres every 30s, so unevictable keys can't grow unbounded.
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy volatile-lru
     ports:
       - "6379:6379"

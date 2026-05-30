@@ -64,3 +64,10 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 3
+          volumeMounts:
+            # readOnlyRootFilesystem: true makes / read-only; give libs a writable /tmp.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
