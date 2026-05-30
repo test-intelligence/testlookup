@@ -4,10 +4,7 @@ import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from pathlib import Path
-from typing import AsyncGenerator, cast
-
-import aioboto3
-from botocore.client import Config
+from typing import Any, AsyncGenerator, cast
 
 from app.core.config import settings
 
@@ -40,6 +37,9 @@ class S3StorageProvider(StorageProvider):
     """S3/MinIO compatible storage provider with connection pooling."""
 
     def __init__(self):
+        import aioboto3
+        from botocore.client import Config
+
         # Single session reused across all requests — aioboto3 manages the pool internally
         self._session = aioboto3.Session()
         self._endpoint = f"{'https' if settings.MINIO_USE_SSL else 'http'}://{settings.MINIO_ENDPOINT}"
@@ -48,7 +48,7 @@ class S3StorageProvider(StorageProvider):
             max_pool_connections=settings.S3_MAX_POOL_CONNECTIONS,
         )
 
-    def get_client_context(self):
+    def get_client_context(self) -> Any:
         return self._session.client(
             "s3",
             endpoint_url=self._endpoint,
@@ -107,18 +107,29 @@ class LocalStorageProvider(StorageProvider):
     """Local file system storage provider."""
 
     def __init__(self):
-        self.base_path = Path(settings.LOCAL_STORAGE_PATH)
+        self.base_path = Path(settings.LOCAL_STORAGE_PATH).resolve()
         self.base_path.mkdir(parents=True, exist_ok=True)
 
-    def _get_full_path(self, key: str, bucket: str | None = None) -> Path:
+    def _get_bucket_path(self, bucket: str | None = None) -> Path:
         bucket = bucket or settings.MINIO_BUCKET_NAME
-        # Ensure path stays within base_path
-        full_path = self.base_path / bucket / key
-        return cast(Path, full_path.resolve())
+        bucket_path = (self.base_path / bucket).resolve()
+        try:
+            bucket_path.relative_to(self.base_path)
+        except ValueError as exc:
+            raise ValueError("Invalid storage bucket path") from exc
+        return bucket_path
+
+    def _get_full_path(self, key: str, bucket: str | None = None) -> Path:
+        bucket_path = self._get_bucket_path(bucket)
+        full_path = (bucket_path / key).resolve()
+        try:
+            full_path.relative_to(bucket_path)
+        except ValueError as exc:
+            raise ValueError("Invalid storage object path") from exc
+        return cast(Path, full_path)
 
     async def list_objects(self, prefix: str, bucket: str | None = None) -> list[dict]:
-        bucket = bucket or settings.MINIO_BUCKET_NAME
-        bucket_dir = self.base_path / bucket
+        bucket_dir = self._get_bucket_path(bucket)
         if not bucket_dir.exists():
             return []
 

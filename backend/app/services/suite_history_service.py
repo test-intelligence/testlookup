@@ -146,12 +146,12 @@ async def compute_suite_history(
             c for c in where_clauses
             if "effective_suite" in c
         ]
-        pre_where = ("WHERE " + " AND ".join(pre_clauses)) if pre_clauses else ""
+        pre_where = ("WHERE " + " AND ".join(pre_clauses)) if pre_clauses else "WHERE TRUE"
         suite_where = (
             "WHERE " + " AND ".join(post_clauses)
         ) if post_clauses else ""
     else:
-        pre_where = ""
+        pre_where = "WHERE TRUE"
 
     query = sa_text(f"""
         WITH run_effective AS (

@@ -16,7 +16,7 @@ export default defineConfig({
   globalSetup: './tests/e2e/global-setup.ts',
 
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000',
     trace: 'on-first-retry',
     // All test contexts start pre-authenticated (JWT already in localStorage)
     storageState: './tests/e2e/.auth/user.json',

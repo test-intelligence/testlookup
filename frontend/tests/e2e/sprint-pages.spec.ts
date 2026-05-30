@@ -193,7 +193,8 @@ test.describe('Sprint pages — smoke', () => {
 
       await expect(page.getByText('test_login_redirects_after_sso')).toBeVisible()
       await expect(page.getByText('test_payment_contract')).toBeVisible()
-      await expect(page.getByText('Checkout').first()).toBeVisible()
+      await expect(page.getByText('AuthSuite')).toBeVisible()
+      await expect(page.getByText('PaymentAPI')).toBeVisible()
       await expect(page.getByText('2 assigned')).toBeVisible()
 
       await page.getByText('test_login_redirects_after_sso').click()

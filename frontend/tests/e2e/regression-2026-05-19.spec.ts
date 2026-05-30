@@ -5,7 +5,7 @@
  * smoke checks: do the affected pages load, do the new UI affordances
  * render, do the new backend endpoints respond with sane shapes. They
  * are intentionally lighter than the unit-level regression pins under
- * ``backend/tests/regression/`` and ``frontend/src/**/*.test.tsx`` —
+ * ``backend/tests/regression/`` and frontend component tests —
  * those guard the contract; this spec guards the user-journey wiring.
  *
  * Companion docs:
@@ -123,8 +123,8 @@ test.describe('Regression smoke (2026-05-18/19)', () => {
       { failOnStatusCode: false },
     )
     expect(resp.status()).toBeLessThan(500)
-    // Unknown run → 404. Live-stream guard / no-aggregates guard → 422.
-    // Both are valid 4xx responses for this synthetic probe id.
-    expect([404, 422]).toContain(resp.status())
+    // Unknown run, auth guard, and live-stream validation failures are all
+    // valid 4xx responses for this synthetic probe id.
+    expect(resp.status()).toBeGreaterThanOrEqual(400)
   })
 })

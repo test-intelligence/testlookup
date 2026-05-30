@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # P3-2: Redis cache TTL for project membership lookups (seconds)
 _MEMBERSHIP_CACHE_TTL = 300  # 5 minutes
+_API_KEY_BOUND_PROJECT_ATTR = "_testlookup_api_key_project_id"
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/v1/auth/login",
@@ -58,6 +59,28 @@ def _normalize_user_role(value: UserRole | str) -> UserRole:
     if raw_value.startswith("UserRole."):
         raw_value = raw_value.split(".", 1)[1]
     return UserRole(raw_value)
+
+
+def _bind_api_key_project(user: User, project_id: uuid.UUID | None) -> User:
+    """Attach request-local API-key project scope to the loaded user object."""
+    setattr(user, _API_KEY_BOUND_PROJECT_ATTR, project_id)
+    return user
+
+
+def _api_key_bound_project(user: User) -> uuid.UUID | None:
+    value = getattr(user, _API_KEY_BOUND_PROJECT_ATTR, None)
+    return value if isinstance(value, uuid.UUID) else None
+
+
+def _enforce_api_key_project_binding(
+    user: User,
+    project_id: uuid.UUID,
+    *,
+    detail: str = "This API key is restricted to a different project",
+) -> None:
+    bound_project_id = _api_key_bound_project(user)
+    if bound_project_id is not None and bound_project_id != project_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 async def get_current_user(
@@ -115,19 +138,7 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
 
-    return user
-
-
-async def get_current_active_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
-    """Return the current user, raising 403 if the account is disabled."""
-    if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user account",
-        )
-    return current_user
+    return _bind_api_key_project(user, None)
 
 
 # ── CLI-5: Dual auth (JWT OR API Key) ────────────────────────────────────────
@@ -165,7 +176,7 @@ async def _validate_api_key(db: AsyncSession, raw_key: str) -> ApiKeyContext:
     api_key.last_used_at = datetime.now(timezone.utc)
     await db.commit()
 
-    return ApiKeyContext(user=user, project_id=api_key.project_id)
+    return ApiKeyContext(user=_bind_api_key_project(user, api_key.project_id), project_id=api_key.project_id)
 
 
 async def get_current_user_or_api_key(
@@ -197,6 +208,18 @@ async def get_current_user_or_api_key(
         detail="Authentication required — provide Authorization Bearer token or X-API-Key header",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def get_current_active_user(
+    current_user: User = Depends(get_current_user_or_api_key),
+) -> User:
+    """Return the current user from JWT or API key, raising 403 if disabled."""
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive user account",
+        )
+    return current_user
 
 
 @dataclass
@@ -411,6 +434,10 @@ async def get_accessible_project_ids(
     """
     from app.models.postgres import ProjectMember
 
+    bound_project_id = _api_key_bound_project(user)
+    if bound_project_id is not None:
+        return {bound_project_id}
+
     if _normalize_user_role(user.role) == UserRole.ADMIN:
         return None  # ADMIN sees everything
 
@@ -537,7 +564,8 @@ def require_project_access(project_id_param: str = "project_id"):
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
-        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+        bound_project_id = _api_key_bound_project(current_user)
+        if bound_project_id is None and _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
 
         project_id_str = request.path_params.get(project_id_param)
@@ -548,6 +576,10 @@ def require_project_access(project_id_param: str = "project_id"):
             project_uuid = uuid.UUID(project_id_str)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid project ID")
+
+        _enforce_api_key_project_binding(current_user, project_uuid)
+        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+            return current_user
 
         result = await db.execute(
             select(ProjectMember.id).where(
@@ -577,7 +609,8 @@ def require_run_access():
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
-        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+        bound_project_id = _api_key_bound_project(current_user)
+        if bound_project_id is None and _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
 
         run_id_str = request.path_params.get("run_id")
@@ -595,6 +628,14 @@ def require_run_access():
         project_id = result.scalar_one_or_none()
         if not project_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
+
+        _enforce_api_key_project_binding(
+            current_user,
+            project_id,
+            detail="This API key is restricted to a different project",
+        )
+        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+            return current_user
 
         membership = await db.execute(
             select(ProjectMember.id).where(
@@ -645,7 +686,8 @@ def _make_project_scoped_guard(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_active_user),
     ) -> User:
-        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+        bound_project_id = _api_key_bound_project(current_user)
+        if bound_project_id is None and _normalize_user_role(current_user.role) == UserRole.ADMIN:
             return current_user
 
         raw = request.path_params.get(id_param)
@@ -666,6 +708,10 @@ def _make_project_scoped_guard(
         project_id = result.scalar_one_or_none()
         if project_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
+
+        _enforce_api_key_project_binding(current_user, project_id)
+        if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+            return current_user
 
         membership = await db.execute(
             select(ProjectMember.id).where(
