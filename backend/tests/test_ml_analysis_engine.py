@@ -404,3 +404,88 @@ class TestAnalysisModeConfig:
         assert hasattr(settings, "ML_ACCURACY_THRESHOLD")
         assert settings.ML_MIN_TRAINING_SAMPLES > 0
         assert 0 < settings.ML_ACCURACY_THRESHOLD <= 1.0
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ML model load-contract validation (review/analysis-engine Major)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+from app.services.ml import classifier as _clf  # noqa: E402
+from app.services.ml.feature_extractor import FEATURE_NAMES  # noqa: E402
+
+
+class TestModelContractValidation:
+    """_model_contract_ok rejects a persisted model whose feature/label contract
+    drifted from the current code, so the router degrades to rules instead of
+    emitting silently-wrong categories."""
+
+    def test_accepts_matching_contract(self, tmp_path):
+        from types import SimpleNamespace
+
+        (tmp_path / "training_metadata.json").write_text(json.dumps({
+            "feature_names": FEATURE_NAMES,
+            "category_labels": _clf.CATEGORY_LABELS,
+        }))
+        model = SimpleNamespace(n_features_in_=len(FEATURE_NAMES))
+        assert _clf._model_contract_ok(model, tmp_path / "classifier_v1.joblib") is True
+
+    def test_rejects_feature_count_mismatch(self, tmp_path):
+        from types import SimpleNamespace
+
+        model = SimpleNamespace(n_features_in_=len(FEATURE_NAMES) + 1)
+        assert _clf._model_contract_ok(model, tmp_path / "classifier_v1.joblib") is False
+
+    def test_rejects_persisted_feature_order_drift(self, tmp_path):
+        from types import SimpleNamespace
+
+        (tmp_path / "training_metadata.json").write_text(json.dumps({
+            "feature_names": list(reversed(FEATURE_NAMES)),
+            "category_labels": _clf.CATEGORY_LABELS,
+        }))
+        model = SimpleNamespace(n_features_in_=len(FEATURE_NAMES))
+        assert _clf._model_contract_ok(model, tmp_path / "classifier_v1.joblib") is False
+
+    def test_rejects_persisted_label_drift(self, tmp_path):
+        from types import SimpleNamespace
+
+        (tmp_path / "training_metadata.json").write_text(json.dumps({
+            "feature_names": FEATURE_NAMES,
+            "category_labels": _clf.CATEGORY_LABELS + ["NEW_CATEGORY"],
+        }))
+        model = SimpleNamespace(n_features_in_=len(FEATURE_NAMES))
+        assert _clf._model_contract_ok(model, tmp_path / "classifier_v1.joblib") is False
+
+    def test_accepts_when_metadata_absent(self, tmp_path):
+        """No metadata file → fall back to the feature-count check only (don't
+        reject a model just because metadata is missing)."""
+        from types import SimpleNamespace
+
+        model = SimpleNamespace(n_features_in_=len(FEATURE_NAMES))
+        assert _clf._model_contract_ok(model, tmp_path / "classifier_v1.joblib") is True
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Trainer class-diversity guard (review/analysis-engine Major)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestTrainerClassDiversityGuard:
+    """train_classifier must not crash on a single-class label set — it should
+    return a clean status instead of a bare sklearn ValueError."""
+
+    @pytest.mark.asyncio
+    async def test_single_class_returns_insufficient_diversity(self, monkeypatch):
+        pytest.importorskip("sklearn")
+        pytest.importorskip("numpy")
+        from app.services.ml import trainer
+
+        sample = {name: 0.0 for name in FEATURE_NAMES}
+        samples = [dict(sample) for _ in range(300)]
+        labels = ["PRODUCT_BUG"] * 300
+
+        async def _fake_gather():
+            return samples, labels
+
+        monkeypatch.setattr(trainer, "_gather_training_data", _fake_gather)
+        result = await trainer.train_classifier()
+        assert result["status"] == "insufficient_class_diversity"
