@@ -165,23 +165,66 @@ def _verify_xml_signature(xml_bytes: bytes, idp_certificate_pem: str):
 
 def parse_saml_response(
     saml_response_b64: str,
-    idp_certificate_pem: Optional[str] = None,
+    idp_certificate_pem: str,
 ) -> dict:
     """
-    Parse a base64-encoded SAML Response and extract identity attributes.
+    Parse a base64-encoded SAML Response, verify its signature, and extract
+    identity claims **only from the cryptographically-verified subtree**.
 
     ``idp_certificate_pem`` is the PEM-encoded X.509 certificate stored on
-    the ``SSOConfiguration`` record; when provided (and it MUST be for any
-    production flow) the assertion's XML-DSig signature is verified before
-    any claim is extracted, and all claims are pulled exclusively from the
-    signed subtree (defeats XML Signature Wrapping).
+    the ``SSOConfiguration`` record. It is **required** — a falsy value
+    raises immediately so the parser is fail-closed regardless of caller
+    (an empty/misconfigured cert can never silently downgrade to an unsigned
+    parse). Structural unit tests that need to parse without a real cert must
+    call :func:`parse_saml_response_unverified` explicitly.
 
-    Passing ``idp_certificate_pem=None`` is only valid for unit tests that
-    verify structural parsing without a real IdP cert; the SSO router
-    always supplies the configured cert. See ``routers/sso.py`` callers.
+    Returns a dict with keys: name_id, issuer, attributes, session_index,
+    audiences, recipient, in_response_to, assertion_id, not_on_or_after,
+    conditions_present. Replay / audience / recipient binding is enforced
+    separately by :func:`enforce_saml_security` (which needs the config).
 
-    Returns a dict with keys: name_id, issuer, attributes, session_index.
-    Raises ValueError on malformed/invalid/unsigned responses.
+    Raises ValueError on malformed/invalid/unsigned responses, on a missing
+    or empty certificate, or when the signed subtree does not contain exactly
+    one Assertion / Subject / NameID (XML Signature Wrapping defence).
+    """
+    import base64
+
+    if not idp_certificate_pem or not str(idp_certificate_pem).strip():
+        # Fail closed: without a cert we cannot verify the signature, so we
+        # refuse to process the assertion rather than trust unsigned claims.
+        raise ValueError(
+            "SAML signature verification requires an IdP certificate; "
+            "refusing to process assertion without one."
+        )
+
+    try:
+        xml_bytes = base64.b64decode(saml_response_b64)
+    except Exception as exc:
+        raise ValueError(f"Invalid base64 in SAMLResponse: {exc}") from exc
+
+    # Verify the XML-DSig signature and extract claims ONLY from the signed
+    # subtree. Anything outside that tree is untrusted and never read.
+    signed = _verify_xml_signature(xml_bytes, idp_certificate_pem)
+    try:
+        xml_str = _lxml_to_bytes(signed)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Failed to serialize verified SAML XML: {exc}") from exc
+
+    try:
+        root = SafeET.fromstring(xml_str)
+    except ElementTree.ParseError as exc:
+        raise ValueError(f"Malformed SAML XML: {exc}") from exc
+
+    return _extract_saml_claims(root)
+
+
+def parse_saml_response_unverified(saml_response_b64: str) -> dict:
+    """
+    Structural-only parse with **no signature verification**.
+
+    This exists exclusively for unit tests that exercise XML extraction in
+    isolation. Production code paths (``routers/sso.py``) MUST call
+    :func:`parse_saml_response` with the configured IdP certificate.
     """
     import base64
 
@@ -189,43 +232,23 @@ def parse_saml_response(
         xml_bytes = base64.b64decode(saml_response_b64)
     except Exception as exc:
         raise ValueError(f"Invalid base64 in SAMLResponse: {exc}") from exc
+    try:
+        root = SafeET.fromstring(xml_bytes)
+    except ElementTree.ParseError as exc:
+        raise ValueError(f"Malformed SAML XML: {exc}") from exc
+    return _extract_saml_claims(root)
 
-    if idp_certificate_pem:
-        # Path A (production): verify the XML-DSig signature and extract
-        # claims ONLY from the signed subtree. Anything outside that tree
-        # is untrusted and must never be read.
-        signed = _verify_xml_signature(xml_bytes, idp_certificate_pem)
 
-        # Top-level "root" is the signed Response or the signed Assertion
-        # itself. The status check must come from the Response wrapper if
-        # present; fall back to signed element if the signed element IS
-        # the assertion.
-        try:
-            xml_str = _lxml_to_bytes(signed)
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError(f"Failed to serialize verified SAML XML: {exc}") from exc
+def _extract_saml_claims(root) -> dict:
+    """
+    Extract and time-validate identity claims from a parsed SAML tree.
 
-        root = SafeET.fromstring(xml_str)
-    else:
-        # Path B (tests only): parse without signature verification. The
-        # router MUST NOT take this path — see the router call site.
-        try:
-            root = SafeET.fromstring(xml_bytes)
-        except ElementTree.ParseError as exc:
-            raise ValueError(f"Malformed SAML XML: {exc}") from exc
-
-    # Extract Issuer
-    issuer_el = root.find(".//saml:Issuer", _NS)
-    issuer = issuer_el.text.strip() if issuer_el is not None and issuer_el.text else None
-
-    # Extract assertion (may be the root itself if the Assertion was signed
-    # directly rather than the Response wrapper).
-    assertion = root.find(".//saml:Assertion", _NS)
-    if assertion is None and root.tag.endswith("Assertion"):
-        assertion = root
-    if assertion is None:
-        raise ValueError("No Assertion found in SAML Response")
-
+    ``root`` is either a ``samlp:Response`` wrapper or a bare ``saml:Assertion``
+    (when the IdP signs the assertion directly). Closes the XML Signature
+    Wrapping residual by asserting **exactly one** Assertion and **exactly
+    one** Subject/NameID inside the (already signature-verified) tree, and by
+    reading every claim from that single assertion element.
+    """
     # Status check (only present on a Response wrapper)
     status_code = root.find(".//samlp:Status/samlp:StatusCode", _NS)
     if status_code is not None:
@@ -233,11 +256,59 @@ def parse_saml_response(
         if "Success" not in status_value:
             raise ValueError(f"SAML authentication failed with status: {status_value}")
 
-    # NameID
-    name_id_el = assertion.find(".//saml:Subject/saml:NameID", _NS)
-    name_id = name_id_el.text.strip() if name_id_el is not None and name_id_el.text else None
+    # Resolve the single Assertion. XSW defence: reject 0 or >1 assertions.
+    if root.tag.endswith("Assertion"):
+        assertion = root
+        nested = root.findall(".//saml:Assertion", _NS)
+        if nested:
+            raise ValueError("SAML Assertion contains nested assertions — rejecting")
+    else:
+        assertions = root.findall(".//saml:Assertion", _NS)
+        if len(assertions) == 0:
+            raise ValueError("No Assertion found in SAML Response")
+        if len(assertions) > 1:
+            raise ValueError(
+                f"Expected exactly one SAML Assertion, found {len(assertions)} — rejecting"
+            )
+        assertion = assertions[0]
+
+    assertion_id = assertion.get("ID")
+
+    # Issuer — read from the assertion itself (inside the signed subtree).
+    issuer_el = assertion.find("saml:Issuer", _NS)
+    if issuer_el is None:
+        issuer_el = root.find(".//saml:Issuer", _NS)
+    issuer = issuer_el.text.strip() if issuer_el is not None and issuer_el.text else None
+
+    # Subject / NameID — assert exactly one Subject and one NameID.
+    subjects = assertion.findall(".//saml:Subject", _NS)
+    if len(subjects) != 1:
+        raise ValueError(
+            f"Expected exactly one SAML Subject, found {len(subjects)} — rejecting"
+        )
+    name_id_els = subjects[0].findall("saml:NameID", _NS)
+    if len(name_id_els) != 1:
+        raise ValueError(
+            f"Expected exactly one SAML NameID, found {len(name_id_els)} — rejecting"
+        )
+    name_id = name_id_els[0].text.strip() if name_id_els[0].text else None
     if not name_id:
         raise ValueError("No NameID found in SAML Assertion")
+
+    # SubjectConfirmationData carries Recipient / InResponseTo / NotOnOrAfter
+    # used for response binding (replay protection).
+    recipient = None
+    subject_in_response_to = None
+    scd = subjects[0].find(
+        "saml:SubjectConfirmation/saml:SubjectConfirmationData", _NS
+    )
+    if scd is not None:
+        recipient = scd.get("Recipient")
+        subject_in_response_to = scd.get("InResponseTo")
+
+    # InResponseTo may also appear on the Response wrapper.
+    response_in_response_to = root.get("InResponseTo") if not root.tag.endswith("Assertion") else None
+    in_response_to = response_in_response_to or subject_in_response_to
 
     # Session index
     authn_stmt = assertion.find(".//saml:AuthnStatement", _NS)
@@ -257,8 +328,13 @@ def parse_saml_response(
             if attr_name and values:
                 attributes[attr_name] = values
 
-    # Validate conditions (audience + time)
+    # Conditions: time-window validation + audience extraction. The presence
+    # of <Conditions> is required (enforced by enforce_saml_security); here we
+    # validate the window when present and surface what we found.
     conditions = assertion.find(".//saml:Conditions", _NS)
+    conditions_present = conditions is not None
+    not_on_or_after = None
+    audiences: list[str] = []
     if conditions is not None:
         not_before = conditions.get("NotBefore")
         not_on_or_after = conditions.get("NotOnOrAfter")
@@ -271,12 +347,23 @@ def parse_saml_response(
             noa = datetime.fromisoformat(not_on_or_after.replace("Z", "+00:00"))
             if now >= noa:
                 raise ValueError("SAML Assertion has expired (NotOnOrAfter)")
+        for aud_el in conditions.findall(
+            "saml:AudienceRestriction/saml:Audience", _NS
+        ):
+            if aud_el.text and aud_el.text.strip():
+                audiences.append(aud_el.text.strip())
 
     return {
         "name_id": name_id,
         "issuer": issuer,
         "attributes": attributes,
         "session_index": session_index,
+        "audiences": audiences,
+        "recipient": recipient,
+        "in_response_to": in_response_to,
+        "assertion_id": assertion_id,
+        "not_on_or_after": not_on_or_after,
+        "conditions_present": conditions_present,
     }
 
 
@@ -284,6 +371,134 @@ def _lxml_to_bytes(element) -> bytes:
     """Serialize an lxml element to XML bytes."""
     from lxml import etree  # noqa: PLC0415
     return etree.tostring(element)
+
+
+# ── SAML response binding / anti-replay (Redis-backed) ───────────────────────
+
+_SAML_REQUEST_PREFIX = "saml:authnreq:"
+_SAML_ASSERTION_PREFIX = "saml:assertion:"
+# An SP-initiated login must round-trip through the IdP within this window.
+_SAML_REQUEST_TTL_SECONDS = 600  # 10 minutes
+# Fallback single-use cache lifetime when the assertion carries no NotOnOrAfter.
+_SAML_ASSERTION_DEFAULT_TTL = 600
+_SAML_ASSERTION_MAX_TTL = 24 * 3600
+
+
+async def remember_saml_request(request_id: str, ttl: int = _SAML_REQUEST_TTL_SECONDS) -> None:
+    """Persist a freshly-minted SP-initiated request id so the ACS can later
+    bind the IdP's response to it (single-use). Best-effort: a Redis failure
+    here only means the eventual login falls back to IdP-initiated handling."""
+    if not request_id:
+        return
+    from app.db.redis_client import get_redis
+
+    redis = get_redis()
+    await redis.set(f"{_SAML_REQUEST_PREFIX}{request_id}", "1", ex=ttl)
+
+
+async def consume_saml_request(request_id: str) -> bool:
+    """Atomically consume a stored SP-initiated request id.
+
+    Returns True iff the id existed and was pending (and is now burned, so it
+    can never be replayed). Fails CLOSED — a Redis error raises so the ACS
+    rejects the assertion rather than silently skipping the binding check.
+    """
+    if not request_id:
+        return False
+    from app.db.redis_client import get_redis
+
+    redis = get_redis()
+    key = f"{_SAML_REQUEST_PREFIX}{request_id}"
+    try:
+        deleted = await redis.getdel(key)
+    except AttributeError:
+        # redis-py without GETDEL (< 4.0): do get+delete atomically server-side
+        # via EVAL (supported since Redis 2.6) so two concurrent ACS requests
+        # can't both observe the same pending id and bypass replay protection.
+        deleted = await redis.eval(
+            "local v = redis.call('get', KEYS[1]); "
+            "if v then redis.call('del', KEYS[1]) end; return v",
+            1,
+            key,
+        )
+    return deleted is not None
+
+
+def _assertion_ttl_seconds(not_on_or_after: Optional[str]) -> int:
+    """Seconds to retain an assertion id in the single-use cache: until just
+    past its NotOnOrAfter (capped), so replays can't outlive the assertion."""
+    if not not_on_or_after:
+        return _SAML_ASSERTION_DEFAULT_TTL
+    try:
+        noa = datetime.fromisoformat(not_on_or_after.replace("Z", "+00:00"))
+    except ValueError:
+        return _SAML_ASSERTION_DEFAULT_TTL
+    delta = int((noa - datetime.now(timezone.utc)).total_seconds()) + 60
+    return max(1, min(delta, _SAML_ASSERTION_MAX_TTL))
+
+
+async def claim_assertion_id(assertion_id: str, ttl: int) -> bool:
+    """Atomically claim an assertion id as used. Returns True if this is the
+    first time we've seen it (fresh), False if it's a replay. Fails CLOSED."""
+    from app.db.redis_client import get_redis
+
+    redis = get_redis()
+    ok = await redis.set(
+        f"{_SAML_ASSERTION_PREFIX}{assertion_id}", "1", ex=max(1, ttl), nx=True
+    )
+    return bool(ok)
+
+
+async def enforce_saml_security(parsed: dict, config: SSOConfiguration) -> None:
+    """Validate the response-binding and anti-replay properties of a
+    signature-verified assertion. Raises ValueError on any failure.
+
+    Checks, in order:
+      1. ``<Conditions>`` present (a bounded validity window is mandatory).
+      2. ``AudienceRestriction`` contains this SP (blocks cross-SP reuse).
+      3. ``Recipient`` matches the configured ACS URL when present.
+      4. ``InResponseTo`` matches and consumes a pending SP-initiated request
+         (or, when absent, IdP-initiated must be explicitly enabled).
+      5. The assertion ID has not been seen before (single-use replay cache).
+    """
+    if not parsed.get("conditions_present"):
+        raise ValueError(
+            "SAML Assertion has no <Conditions> — refusing an assertion with no bounded validity window"
+        )
+
+    # 2. Audience restriction must name this SP.
+    audiences = set(parsed.get("audiences") or [])
+    expected = {a for a in (config.audience, config.sp_entity_id) if a}
+    if not audiences:
+        raise ValueError("SAML Assertion has no AudienceRestriction")
+    if expected and not (audiences & expected):
+        raise ValueError("SAML Assertion audience does not match this service provider")
+
+    # 3. Recipient (SubjectConfirmationData) must match the ACS URL.
+    recipient = parsed.get("recipient")
+    expected_acs = (config.sp_acs_url or "").rstrip("/")
+    if recipient and expected_acs and recipient.rstrip("/") != expected_acs:
+        raise ValueError("SAML Assertion Recipient does not match the configured ACS URL")
+
+    # 4. Response binding (anti-replay leg #1): consume the SP-initiated request.
+    in_response_to = parsed.get("in_response_to")
+    if in_response_to:
+        if not await consume_saml_request(in_response_to):
+            raise ValueError(
+                "SAML Assertion InResponseTo does not match a pending login request (possible replay)"
+            )
+    elif not settings.SAML_ALLOW_IDP_INITIATED:
+        raise ValueError(
+            "SAML Assertion is missing InResponseTo and IdP-initiated SSO is disabled"
+        )
+
+    # 5. Single-use assertion id (anti-replay leg #2 — universal).
+    assertion_id = parsed.get("assertion_id")
+    if not assertion_id:
+        raise ValueError("SAML Assertion has no ID — cannot enforce single-use")
+    ttl = _assertion_ttl_seconds(parsed.get("not_on_or_after"))
+    if not await claim_assertion_id(assertion_id, ttl):
+        raise ValueError("SAML Assertion has already been used (replay detected)")
 
 
 def validate_saml_issuer(parsed: dict, config: SSOConfiguration) -> None:
@@ -294,33 +509,75 @@ def validate_saml_issuer(parsed: dict, config: SSOConfiguration) -> None:
         )
 
 
+# Role hierarchy for picking the highest match / applying the ceiling.
+_ROLE_ORDER = [UserRole.VIEWER, UserRole.TESTER, UserRole.QA_ENGINEER, UserRole.QA_LEAD, UserRole.ADMIN]
+
+
+def _provisioning_ceiling() -> UserRole:
+    """The configured maximum role an IdP/SCIM provision may grant."""
+    raw = (settings.SSO_MAX_PROVISIONED_ROLE or "ADMIN").strip()
+    try:
+        ceiling = UserRole(raw)
+        if ceiling in _ROLE_ORDER:
+            return ceiling
+    except (ValueError, KeyError):
+        pass
+    logger.warning(
+        "Invalid SSO_MAX_PROVISIONED_ROLE=%r — defaulting provisioning ceiling to ADMIN",
+        raw,
+    )
+    return UserRole.ADMIN
+
+
 def resolve_role_from_groups(
     groups: list[str],
     role_mapping: dict | None,
     default_role: UserRole,
 ) -> UserRole:
-    """Map IdP group memberships to the highest matching internal role."""
+    """Map IdP group memberships to the highest matching internal role.
+
+    The resolved role is clamped to ``SSO_MAX_PROVISIONED_ROLE`` so a
+    misconfigured ``role_mapping``/``default_role`` cannot mint an account
+    above the configured ceiling via an IdP login or SCIM provision. A grant
+    of QA_LEAD or higher (and any clamp) is logged at WARNING for audit.
+    """
     if not role_mapping or not groups:
-        return default_role
+        resolved = default_role
+    else:
+        best_idx = -1
+        for group in groups:
+            mapped = role_mapping.get(group)
+            if mapped:
+                try:
+                    role = UserRole(mapped)
+                    idx = _ROLE_ORDER.index(role)
+                    if idx > best_idx:
+                        best_idx = idx
+                except (ValueError, KeyError):
+                    continue
+        resolved = _ROLE_ORDER[best_idx] if best_idx >= 0 else default_role
 
-    # Role hierarchy for picking the highest match
-    role_order = [UserRole.VIEWER, UserRole.TESTER, UserRole.QA_ENGINEER, UserRole.QA_LEAD, UserRole.ADMIN]
+    ceiling = _provisioning_ceiling()
+    try:
+        if _ROLE_ORDER.index(resolved) > _ROLE_ORDER.index(ceiling):
+            logger.warning(
+                "IdP/SCIM provisioning resolved role %s exceeds ceiling %s — clamping",
+                resolved.value, ceiling.value,
+            )
+            resolved = ceiling
+    except ValueError:
+        pass
 
-    best_idx = -1
-    for group in groups:
-        mapped = role_mapping.get(group)
-        if mapped:
-            try:
-                role = UserRole(mapped)
-                idx = role_order.index(role)
-                if idx > best_idx:
-                    best_idx = idx
-            except (ValueError, KeyError):
-                continue
+    try:
+        if _ROLE_ORDER.index(resolved) >= _ROLE_ORDER.index(UserRole.QA_LEAD):
+            logger.warning(
+                "IdP/SCIM provisioning granting elevated role %s (groups=%s)",
+                resolved.value, groups,
+            )
+    except ValueError:
+        pass
 
-    if best_idx >= 0:
-        return role_order[best_idx]
-    return default_role
+    return resolved
 
 
 # ── SSO Configuration CRUD ──────────────────────────────────────────────────

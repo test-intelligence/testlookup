@@ -28,10 +28,12 @@ from app.models.schemas import (
 )
 from app.services.sso_service import (
     certificate_fingerprint,
+    enforce_saml_security,
     get_active_sso_config,
     jit_provision_or_link,
     log_identity_event,
     parse_saml_response,
+    remember_saml_request,
     validate_certificate_format,
     validate_saml_issuer,
 )
@@ -39,6 +41,9 @@ from app.services.sso_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/sso", tags=["SSO / SAML"])
+
+# Upper bound on an inbound base64 SAMLResponse before we decode/parse it.
+_MAX_SAML_RESPONSE_BYTES = 1_000_000
 
 # ── Public endpoints (no JWT required) ───────────────────────────────────────
 
@@ -70,8 +75,11 @@ async def get_sso_login_url(db: AsyncSession = Depends(get_db)):
             detail="No active SSO configuration found",
         )
 
-    # SP-initiated: redirect to IdP SSO URL
-    request_id = str(uuid.uuid4())
+    # SP-initiated: redirect to IdP SSO URL. Persist the minted request id
+    # (single-use, short TTL) so the ACS can bind the IdP's response to this
+    # request via InResponseTo and reject replays / unsolicited responses.
+    request_id = "_" + uuid.uuid4().hex
+    await remember_saml_request(request_id)
     redirect_url = config.idp_sso_url
 
     return {
@@ -111,20 +119,38 @@ async def saml_acs(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing SAMLResponse in form data",
         )
+    # Bound the untrusted payload before base64-decoding + XML parsing on this
+    # public endpoint (cheap-DoS guard). Real assertions are a few KB; 1 MB is
+    # generous headroom for large signed multi-attribute responses.
+    if len(str(saml_response_b64)) > _MAX_SAML_RESPONSE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="SAMLResponse too large",
+        )
 
     client_ip = request.client.host if request.client else None
+
+    # Fail closed: an active config must carry a non-empty IdP certificate or
+    # we cannot verify the signature. Refuse rather than downgrade to an
+    # unsigned parse.
+    if not config.idp_certificate or not config.idp_certificate.strip():
+        logger.error("SAML ACS rejected: active SSO config %s has no IdP certificate", config.id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSO is misconfigured. Contact your administrator.",
+        )
 
     try:
         # Pass the configured IdP X.509 cert so parse_saml_response can
         # cryptographically verify the assertion's XML-DSig signature
-        # before extracting any claims. Passing the cert is mandatory in
-        # the production flow — the None-cert branch exists only for unit
-        # tests that exercise structural parsing in isolation.
+        # before extracting any claims, then enforce response-binding /
+        # anti-replay (audience, recipient, InResponseTo, single-use).
         parsed = parse_saml_response(
             str(saml_response_b64),
             idp_certificate_pem=config.idp_certificate,
         )
         validate_saml_issuer(parsed, config)
+        await enforce_saml_security(parsed, config)
     except ValueError as exc:
         await log_identity_event(
             db,
@@ -136,10 +162,12 @@ async def saml_acs(
             error_message=str(exc),
         )
         await db.commit()
+        # Keep the specific reason server-side only; returning it to the
+        # unauthenticated caller leaks signal that helps tune forged responses.
         logger.warning("SAML assertion validation failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"SAML assertion validation failed: {exc}",
+            detail="SAML assertion validation failed.",
         )
 
     try:

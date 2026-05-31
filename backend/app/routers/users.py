@@ -8,7 +8,7 @@ from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_project_access, require_role
@@ -47,6 +47,70 @@ def _normalize_user_role(value: UserRole | str) -> UserRole:
     if raw_value.startswith("UserRole."):
         raw_value = raw_value.split(".", 1)[1]
     return UserRole(raw_value)
+
+
+_ROLE_ORDER: list[UserRole] = [
+    UserRole.VIEWER,
+    UserRole.TESTER,
+    UserRole.QA_ENGINEER,
+    UserRole.QA_LEAD,
+    UserRole.ADMIN,
+]
+
+
+def _role_rank(role: UserRole | str) -> int:
+    try:
+        return _ROLE_ORDER.index(_normalize_user_role(role))
+    except ValueError:
+        return -1
+
+
+def _enforce_grant_ceiling(current_user: User, granted_role: UserRole, target_user_id: uuid.UUID) -> None:
+    """Reject project-role grants that exceed the caller's authority.
+
+    A global ADMIN may grant any project role. Anyone else (QA_LEAD managing
+    members) may not grant a project role above their own global role, and may
+    not change their own membership role at all — both close the project-scoped
+    privilege-escalation path where a QA_LEAD mints a project-ADMIN (incl. self).
+    """
+    if _normalize_user_role(current_user.role) == UserRole.ADMIN:
+        return
+    if target_user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot change your own project role",
+        )
+    if _role_rank(granted_role) > _role_rank(current_user.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot grant a project role higher than your own",
+        )
+
+
+async def _assert_not_last_admin(db: AsyncSession, target_user: User) -> None:
+    """Block demoting/deactivating the last remaining active ADMIN.
+
+    Self-changes are already blocked upstream; this guards the case where an
+    ADMIN removes admin access from the *only other* admin, locking everyone out.
+    """
+    if _normalize_user_role(target_user.role) != UserRole.ADMIN or not target_user.is_active:
+        return
+    other_admins = (
+        await db.execute(
+            select(func.count())
+            .select_from(User)
+            .where(
+                User.role == UserRole.ADMIN,
+                User.is_active == True,  # noqa: E712
+                User.id != target_user.id,
+            )
+        )
+    ).scalar() or 0
+    if other_admins == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove the last active administrator",
+        )
 
 
 def _build_project_member_response(member: ProjectMember, user: User) -> ProjectMemberResponse:
@@ -112,6 +176,9 @@ async def update_user_role(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
+    # Last-admin guard: refuse to strip ADMIN from the only other active admin.
+    if _normalize_user_role(payload.role) != UserRole.ADMIN:
+        await _assert_not_last_admin(db, user)
     old_role = str(user.role)
     user.role = payload.role
     await log_access_change(db, "role_changed", current_user, target_user_id=user_id,
@@ -135,6 +202,9 @@ async def update_user_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
+    # Last-admin guard: refuse to deactivate the only other active admin.
+    if payload.is_active is False:
+        await _assert_not_last_admin(db, user)
     old_active = user.is_active
     user.is_active = payload.is_active
     await log_access_change(db, "status_changed", current_user, target_user_id=user_id,
@@ -177,11 +247,15 @@ async def update_user_profile(
     if payload.role is not None:
         if user.id == current_user.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
+        if _normalize_user_role(payload.role) != UserRole.ADMIN:
+            await _assert_not_last_admin(db, user)
         user.role = payload.role
 
     if payload.is_active is not None:
         if user.id == current_user.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
+        if payload.is_active is False:
+            await _assert_not_last_admin(db, user)
         user.is_active = payload.is_active
 
     await db.commit()
@@ -376,6 +450,10 @@ async def add_project_member(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    # Privilege-escalation guard: a non-admin cannot grant a project role above
+    # their own, nor add themselves above their current standing.
+    _enforce_grant_ceiling(current_user, payload.role, payload.user_id)
+
     # Check not already a member
     existing = await db.execute(
         select(ProjectMember).where(
@@ -415,6 +493,10 @@ async def update_project_member_role(
     _: User = Depends(require_project_access()),
 ):
     """Update a project member's role. Requires QA_LEAD or higher."""
+    # Privilege-escalation guard: a non-admin cannot grant a project role above
+    # their own, nor change their own membership role.
+    _enforce_grant_ceiling(current_user, payload.role, user_id)
+
     result = await db.execute(
         select(ProjectMember, User)
         .join(User, ProjectMember.user_id == User.id)

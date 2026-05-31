@@ -262,17 +262,22 @@ async def scim_list_users(
     """List users for SCIM with optional filter. Returns (users, total_count)."""
     query = select(User)
 
-    # Basic SCIM filter support: userName eq "value" or email eq "value"
+    # Basic SCIM filter support: userName eq "value" or email eq "value".
+    # An unrecognised filter must NOT silently return the whole directory —
+    # that surprises an IdP expecting a narrowed result. Return empty instead.
     if filter_str:
         filter_str = filter_str.strip()
+        matched = False
         if 'userName eq' in filter_str:
             value = _extract_scim_filter_value(filter_str)
             if value:
                 query = query.where(User.username == value)
+                matched = True
         elif 'email eq' in filter_str or 'emails.value eq' in filter_str:
             value = _extract_scim_filter_value(filter_str)
             if value:
                 query = query.where(User.email == value)
+                matched = True
         elif 'externalId eq' in filter_str:
             value = _extract_scim_filter_value(filter_str)
             if value:
@@ -282,10 +287,16 @@ async def scim_list_users(
                     )
                 )
                 user_ids = [row[0] for row in fed_result.all()]
-                if user_ids:
-                    query = query.where(User.id.in_(user_ids))
-                else:
+                if not user_ids:
                     return [], 0
+                query = query.where(User.id.in_(user_ids))
+                matched = True
+        # A recognised predicate with an unparseable/empty value leaves `matched`
+        # False; like a wholly unsupported filter it must return empty rather than
+        # fall through to an unfiltered query that would leak the whole directory.
+        if not matched:
+            logger.warning("Unsupported SCIM filter, returning empty result: %s", filter_str)
+            return [], 0
 
     # Total count
     count_query = select(func.count()).select_from(query.subquery())
