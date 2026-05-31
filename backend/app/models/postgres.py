@@ -243,6 +243,17 @@ class TestCase(Base):
     """Individual test case result within a run."""
     __tablename__ = "test_cases"
     __table_args__ = (
+        # One row per logical test per run. The file-ingestion path
+        # (services/ingestion._upsert_test_case) already treats
+        # (test_run_id, test_fingerprint) as the idempotency key; this
+        # constraint enforces the same contract for the live-stream bulk
+        # insert (worker/tasks.persist_live_session), so a task retry after
+        # a partial commit can't create duplicate per-test rows. Added in
+        # migration 0089.
+        UniqueConstraint(
+            "test_run_id", "test_fingerprint",
+            name="uq_test_cases_run_fingerprint",
+        ),
         Index("ix_test_cases_run_status", "test_run_id", "status"),
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
         Index("ix_test_cases_search", "search_vector", postgresql_using="gin"),

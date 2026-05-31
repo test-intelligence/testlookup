@@ -380,7 +380,12 @@ async def close_session(
             db=db,
             project_id=session.project_id,
             release_name=session.release_name,
-            test_run_id=uuid.UUID(session.run_id),
+            # run_id is a slug for live sessions (e.g. "local-abc123"); the
+            # TestRun row is persisted under canonical_test_run_uuid(run_id),
+            # so the release link must target the SAME uuid. Using
+            # uuid.UUID(session.run_id) raised ValueError on every slug run,
+            # silently skipping release linking via the broad except below.
+            test_run_id=canonical_test_run_uuid(session.run_id),
         )
     except Exception as rel_err:
         logger.warning(

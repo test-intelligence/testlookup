@@ -411,8 +411,16 @@ def persist_live_session(
                     "tags": event.get("tags"),
                 })
             if rows:
-                from sqlalchemy import insert as _sa_insert
-                stmt = _sa_insert(TestCase)
+                from sqlalchemy.dialects.postgresql import insert as _pg_insert
+                # on_conflict_do_nothing: a task retry after a partial commit
+                # re-presents the same (test_run_id, test_fingerprint) rows
+                # (the Redis buffer is only deleted post-finalize, so on retry
+                # `events` is still non-empty and the dedup skip doesn't fire).
+                # The uq_test_cases_run_fingerprint constraint turns the
+                # re-insert into a no-op instead of a duplicate per-test row.
+                stmt = _pg_insert(TestCase).on_conflict_do_nothing(
+                    index_elements=["test_run_id", "test_fingerprint"]
+                )
                 for offset in range(0, len(rows), chunk_size):
                     chunk = rows[offset:offset + chunk_size]
                     await db.execute(stmt, chunk)
@@ -442,7 +450,7 @@ def persist_live_session(
                     int(passed) + int(failed) + int(skipped) + int(broken)
                 )
                 if placeholder_count > 0:
-                    from sqlalchemy import insert as _sa_insert
+                    from sqlalchemy.dialects.postgresql import insert as _pg_insert
                     placeholder_rows = []
                     bucket_sequence = (
                         (int(passed),  TestStatus.PASSED.value),
@@ -481,7 +489,13 @@ def persist_live_session(
                                 "tags": None,
                             })
                             i += 1
-                    stmt = _sa_insert(TestCase)
+                    # Idempotent on retry — the placeholder fingerprint seeds
+                    # with the run id, so on_conflict_do_nothing keeps re-runs
+                    # from duplicating the synthesised rows (matches the
+                    # comment above that assumed this constraint existed).
+                    stmt = _pg_insert(TestCase).on_conflict_do_nothing(
+                        index_elements=["test_run_id", "test_fingerprint"]
+                    )
                     await db.execute(stmt, placeholder_rows)
                     logger.warning(
                         "[Task %s] Synthesized %d placeholder TestCase "
