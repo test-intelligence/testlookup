@@ -172,9 +172,11 @@ async def _validate_api_key(db: AsyncSession, raw_key: str) -> ApiKeyContext:
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="API key owner account is inactive")
 
-    # Update last_used_at
+    # Touch last_used_at on the injected session WITHOUT committing here —
+    # the auth dependency does not own this transaction. The request's get_db
+    # dependency commits on success, so the timestamp persists with the
+    # handler's own work instead of prematurely ending its transaction.
     api_key.last_used_at = datetime.now(timezone.utc)
-    await db.commit()
 
     return ApiKeyContext(user=_bind_api_key_project(user, api_key.project_id), project_id=api_key.project_id)
 
@@ -292,8 +294,8 @@ async def get_streaming_api_key_context(
             detail="API key owner account is inactive",
         )
 
+    # See _validate_api_key: touch the timestamp but let get_db own the commit.
     api_key.last_used_at = datetime.now(timezone.utc)
-    await db.commit()
 
     return StreamingApiKeyContext(
         user=user,

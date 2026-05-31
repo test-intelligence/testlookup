@@ -2,6 +2,7 @@
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -39,6 +40,15 @@ from app.models.schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
+
+
+@lru_cache(maxsize=1)
+def _dummy_password_hash() -> str:
+    """A throwaway bcrypt hash used to equalise login timing when the supplied
+    username/email doesn't exist (anti user-enumeration). Computed once."""
+    import secrets as _secrets
+
+    return get_password_hash(_secrets.token_urlsafe(16))
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)
@@ -90,7 +100,15 @@ async def login(
     )
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    # Compare against a fixed dummy hash when the user doesn't exist so the
+    # response time doesn't reveal whether the username/email is registered
+    # (closes a user-enumeration timing oracle).
+    password_ok = (
+        verify_password(form_data.password, user.hashed_password)
+        if user is not None
+        else verify_password(form_data.password, _dummy_password_hash())
+    )
+    if not user or not password_ok:
         logger.warning("Failed login attempt for: %s", form_data.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -183,6 +201,14 @@ async def _get_or_create_dev_user(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Active user '{requested_username}' was not found",
+            )
+        # Even though dev-login is environment-gated, the username path must not
+        # be an impersonation vector for real seeded/admin accounts in a dev DB.
+        # Restrict it to synthetic dev accounts (the @testlookup.dev fixtures).
+        if not (requested_user.email or "").lower().endswith("@testlookup.dev"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="dev-login username is restricted to synthetic @testlookup.dev accounts",
             )
         return requested_user
 
@@ -317,7 +343,7 @@ async def refresh_tokens(
     )
 
     try:
-        data = decode_token(payload.refresh_token)
+        data = decode_token(payload.refresh_token, expected_type="refresh")
         if data.get("type") != "refresh":
             raise credentials_exception
         user_id: str = data.get("sub", "")

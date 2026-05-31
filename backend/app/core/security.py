@@ -57,9 +57,20 @@ def create_refresh_token(subject: Any, jti: Optional[str] = None) -> tuple[str, 
     return token, jti, expire
 
 
-def decode_token(token: str) -> dict[Any, Any]:
-    """Decode and validate a JWT token. Raises JWTError on failure."""
-    return cast(
+def decode_token(token: str, expected_type: Optional[str] = None) -> dict[Any, Any]:
+    """Decode and validate a JWT token. Raises JWTError on failure.
+
+    When ``expected_type`` is given (e.g. ``"access"`` / ``"refresh"``), the
+    token's ``type`` claim must match or a ``JWTError`` is raised — pushing the
+    access-vs-refresh confused-deputy check into the decode layer as
+    defense-in-depth (callers may still re-check for clearer error messages).
+    """
+    from jose import JWTError
+
+    payload = cast(
         dict[Any, Any],
         jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]),
     )
+    if expected_type is not None and payload.get("type") != expected_type:
+        raise JWTError(f"Unexpected token type: expected {expected_type!r}")
+    return payload

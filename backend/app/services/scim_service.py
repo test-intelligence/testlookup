@@ -262,7 +262,9 @@ async def scim_list_users(
     """List users for SCIM with optional filter. Returns (users, total_count)."""
     query = select(User)
 
-    # Basic SCIM filter support: userName eq "value" or email eq "value"
+    # Basic SCIM filter support: userName eq "value" or email eq "value".
+    # An unrecognised filter must NOT silently return the whole directory —
+    # that surprises an IdP expecting a narrowed result. Return empty instead.
     if filter_str:
         filter_str = filter_str.strip()
         if 'userName eq' in filter_str:
@@ -286,6 +288,10 @@ async def scim_list_users(
                     query = query.where(User.id.in_(user_ids))
                 else:
                     return [], 0
+        else:
+            # Unsupported filter expression — fail safe to an empty result.
+            logger.warning("Unsupported SCIM filter, returning empty result: %s", filter_str)
+            return [], 0
 
     # Total count
     count_query = select(func.count()).select_from(query.subquery())

@@ -190,59 +190,65 @@ class TestCertificateValidation:
 
 
 class TestSAMLParsing:
+    """Structural parsing via the explicit test-only unverified helper.
+
+    Production callers use ``parse_saml_response`` which now REQUIRES a cert
+    and verifies the signature (see TestSAMLSignatureVerification).
+    """
+
     def test_parse_valid_saml_response(self):
-        from app.services.sso_service import parse_saml_response
+        from app.services.sso_service import parse_saml_response_unverified
 
         b64 = _make_saml_response(name_id="user@test.com", issuer="https://idp.test")
-        result = parse_saml_response(b64)
+        result = parse_saml_response_unverified(b64)
         assert result["name_id"] == "user@test.com"
         assert result["issuer"] == "https://idp.test"
         assert result["session_index"] == "_session123"
 
     def test_parse_saml_with_attributes(self):
-        from app.services.sso_service import parse_saml_response
+        from app.services.sso_service import parse_saml_response_unverified
 
         b64 = _make_saml_response(
             attributes={"email": ["user@test.com"], "groups": ["admins", "engineers"]}
         )
-        result = parse_saml_response(b64)
+        result = parse_saml_response_unverified(b64)
         assert result["attributes"]["email"] == ["user@test.com"]
         assert result["attributes"]["groups"] == ["admins", "engineers"]
 
     def test_parse_saml_invalid_base64(self):
-        from app.services.sso_service import parse_saml_response
+        from app.services.sso_service import parse_saml_response_unverified
 
         with pytest.raises(ValueError, match="Invalid base64"):
-            parse_saml_response("!!!not_base64!!!")
+            parse_saml_response_unverified("!!!not_base64!!!")
 
     def test_parse_saml_invalid_xml(self):
-        from app.services.sso_service import parse_saml_response
+        from app.services.sso_service import parse_saml_response_unverified
 
         b64 = base64.b64encode(b"<not valid xml").decode()
         with pytest.raises(ValueError, match="Malformed SAML XML"):
-            parse_saml_response(b64)
+            parse_saml_response_unverified(b64)
 
     def test_parse_saml_no_assertion(self):
-        from app.services.sso_service import parse_saml_response
+        from app.services.sso_service import parse_saml_response_unverified
 
         xml = '<?xml version="1.0"?><samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"></samlp:Response>'
         b64 = base64.b64encode(xml.encode()).decode()
         with pytest.raises(ValueError, match="No Assertion"):
-            parse_saml_response(b64)
+            parse_saml_response_unverified(b64)
 
     def test_parse_saml_failed_status(self):
-        from app.services.sso_service import parse_saml_response
+        from app.services.sso_service import parse_saml_response_unverified
 
         b64 = _make_saml_response(status_value="urn:oasis:names:tc:SAML:2.0:status:Requester")
         with pytest.raises(ValueError, match="SAML authentication failed"):
-            parse_saml_response(b64)
+            parse_saml_response_unverified(b64)
 
     def test_parse_saml_expired_assertion(self):
-        from app.services.sso_service import parse_saml_response
+        from app.services.sso_service import parse_saml_response_unverified
 
         b64 = _make_saml_response(expired=True)
         with pytest.raises(ValueError, match="expired"):
-            parse_saml_response(b64)
+            parse_saml_response_unverified(b64)
 
     def test_validate_saml_issuer_match(self):
         from app.services.sso_service import validate_saml_issuer
@@ -318,16 +324,26 @@ class TestSAMLSignatureVerification:
         with pytest.raises(ValueError, match="signature verification unavailable|not installed"):
             sso_service.parse_saml_response(b64, idp_certificate_pem="-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----")
 
-    def test_no_cert_still_parses_for_unit_tests(self):
+    def test_production_parse_requires_cert(self):
         """
-        The None-cert test branch must still work so existing structural
-        unit tests in TestSAMLParsing keep passing. The router never takes
-        this path — it always passes ``config.idp_certificate``.
+        ``parse_saml_response`` is now fail-closed: a missing/empty cert raises
+        instead of silently downgrading to an unsigned parse. Structural-only
+        tests must call ``parse_saml_response_unverified`` explicitly.
         """
         from app.services.sso_service import parse_saml_response
 
         b64 = _make_saml_response(name_id="test@example.com")
-        result = parse_saml_response(b64, idp_certificate_pem=None)
+        with pytest.raises(ValueError, match="requires an IdP certificate|certificate"):
+            parse_saml_response(b64, idp_certificate_pem=None)
+        with pytest.raises(ValueError, match="requires an IdP certificate|certificate"):
+            parse_saml_response(b64, idp_certificate_pem="   ")
+
+    def test_unverified_helper_parses_structure(self):
+        """The explicit test-only helper parses without a cert."""
+        from app.services.sso_service import parse_saml_response_unverified
+
+        b64 = _make_saml_response(name_id="test@example.com")
+        result = parse_saml_response_unverified(b64)
         assert result["name_id"] == "test@example.com"
 
 

@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     APP_NAME: str = "TestLookup"
     APP_ENV: Literal["development", "staging", "production"] = "development"
     APP_SECRET_KEY: str = "change-me-in-production"
+    # Optional previous key for secret-at-rest rotation. When set, the secret
+    # service decrypts with a MultiFernet [current, previous] so values
+    # encrypted under the old key keep decrypting while new writes use the
+    # current key. Rotate, re-encrypt on next write, then drop this.
+    APP_SECRET_KEY_PREVIOUS: Optional[str] = None
     APP_DEBUG: bool = False
     APP_VERSION: str = "0.0.1"
     CORS_ORIGINS_RAW: str = Field(
@@ -285,6 +290,18 @@ class Settings(BaseSettings):
     SAML_BASE_URL: str = "http://localhost:8000"
     # Admin fallback: allow local password login for ADMIN users even when SSO is enforced
     SSO_ADMIN_FALLBACK_ENABLED: bool = True
+    # When False (default), reject SAML assertions that carry no ``InResponseTo``
+    # (i.e. IdP-initiated logins). SP-initiated flow only — the ACS binds each
+    # response to a single-use request id minted at /login-url. Operators who
+    # genuinely need IdP-initiated SSO can opt in, but they lose the
+    # request-binding leg of replay protection (the assertion-ID single-use
+    # cache + audience + recipient + signature checks still apply).
+    SAML_ALLOW_IDP_INITIATED: bool = False
+    # Hard ceiling on the role an IdP group-mapping (SSO JIT) or SCIM provision
+    # may grant. Resolved roles above this are clamped down and a WARNING audit
+    # is emitted. Default ADMIN honours deliberate admin-configured mappings;
+    # set lower (e.g. QA_LEAD) to refuse IdP-driven admin grants entirely.
+    SSO_MAX_PROVISIONED_ROLE: str = "ADMIN"
 
     # ── Fine-Tuning / Continuous Learning ────────────────────
     FINETUNE_ENABLED: bool = False                    # master switch

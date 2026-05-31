@@ -2,7 +2,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,8 +74,8 @@ async def verify_scim_bearer(
 @router.get("/Users")
 async def scim_list(
     request: Request,
-    startIndex: int = 1,
-    count: int = 100,
+    startIndex: int = Query(1, ge=1, description="1-based start index (SCIM)"),
+    count: int = Query(100, ge=0, le=200, description="Page size (bounded to protect the directory)"),
     filter: str | None = None,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),

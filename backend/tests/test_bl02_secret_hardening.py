@@ -119,12 +119,13 @@ class TestFernetEncryption:
 
 class TestMasking:
     def test_mask_standard_key(self):
+        # Hardened (auth review Tier 3): reveal at most the last 2 chars and
+        # never a usable prefix. An 18-char key shows only its last 2 chars.
         from app.services.secret_service import mask_value
 
         result = mask_value("sk-abcdef123456789")
-        assert result.startswith("sk-a")
-        assert result.endswith("789")
-        assert "..." in result
+        assert result == "****89"
+        assert "sk-a" not in result
 
     def test_mask_short_value(self):
         from app.services.secret_service import mask_value
@@ -133,11 +134,17 @@ class TestMasking:
         assert mask_value("") == "****"
         assert mask_value("1234567") == "****"
 
-    def test_mask_exactly_8_chars(self):
+    def test_mask_below_16_chars_fully_masked(self):
+        # Anything shorter than 16 chars is fully masked — no prefix leak.
         from app.services.secret_service import mask_value
 
-        result = mask_value("12345678")
-        assert result == "1234...678"
+        assert mask_value("12345678") == "****"
+        assert mask_value("123456789012345") == "****"  # 15 chars
+
+    def test_mask_16_chars_reveals_last_two(self):
+        from app.services.secret_service import mask_value
+
+        assert mask_value("1234567890123456") == "****56"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
