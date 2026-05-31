@@ -16,6 +16,7 @@ Redis keys:
 """
 import logging
 import time
+import uuid
 from typing import Any, Callable, Coroutine
 
 from app.db.redis_client import get_redis
@@ -100,8 +101,11 @@ class LLMCircuitBreaker:
         redis = get_redis()
         now = time.time()
 
-        # Add failure to sliding window
-        await redis.zadd(_WINDOW_KEY, {str(now): now})
+        # Add failure to sliding window. The member must be unique — keying it
+        # solely on the float timestamp collapsed two failures in the same tick
+        # (or across processes producing identical floats) into one sorted-set
+        # member, under-counting failures and delaying the OPEN transition.
+        await redis.zadd(_WINDOW_KEY, {f"{now}:{uuid.uuid4().hex}": now})
         await redis.expire(_WINDOW_KEY, FAILURE_WINDOW_S * 2)
 
         # Prune failures outside the window
@@ -158,7 +162,12 @@ class LLMCircuitBreaker:
         except CircuitBreakerOpen:
             raise
         except Exception as exc:
-            await cls.record_failure()
+            # Never let a circuit-breaker bookkeeping error (e.g. Redis down)
+            # mask the real provider exception the caller needs to see.
+            try:
+                await cls.record_failure()
+            except Exception as cb_err:
+                logger.warning("circuit breaker record_failure failed: %s", cb_err)
             raise exc
 
     # ── Internal helpers ──────────────────────────────────────────────────────

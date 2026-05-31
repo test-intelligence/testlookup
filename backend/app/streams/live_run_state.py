@@ -177,13 +177,18 @@ class RedisLiveRunState:
         if not await redis.exists(key):
             return None
 
-        await redis.hset(key, mapping={  # type: ignore[misc]
+        # Flip status, shorten TTL to 1h post-completion, and drop from the
+        # active set as ONE pipeline. Done separately, a crash between the HSET
+        # and the SREM left a completed run lingering in LIVE_ACTIVE_SET (so
+        # get_all_active reported it as active until its key expired).
+        pipe = redis.pipeline(transaction=True)
+        pipe.hset(key, mapping={
             "status":       "completed",
             "last_event_at": datetime.now(timezone.utc).isoformat(),
         })
-        # Shorten TTL to 1 hour post-completion
-        await redis.expire(key, 3600)
-        await redis.srem(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
+        pipe.expire(key, 3600)
+        pipe.srem(LIVE_ACTIVE_SET, run_id)
+        await pipe.execute()
 
         state = await cls.get(run_id)
         logger.info(
@@ -194,13 +199,21 @@ class RedisLiveRunState:
 
     @classmethod
     def should_warn(cls, state: dict) -> bool:
-        """Return True if early-warning threshold is crossed."""
+        """Return True if early-warning threshold is crossed.
+
+        Computes pass_rate from the counter fields rather than trusting a
+        ``pass_rate`` key — that key only exists on ``get()``/``_deserialise``
+        results, so a caller passing a raw Redis hash would otherwise always
+        see the 100.0 default and never warn.
+        """
         passed = int(state.get("passed", 0) or 0)
         failed = int(state.get("failed", 0) or 0)
         broken = int(state.get("broken", 0) or 0)
         completed = passed + failed + broken
-        pass_rate = float(state.get("pass_rate", 100.0) or 100.0)
-        return completed >= _WARN_THRESHOLD and pass_rate < _WARN_PASS_RATE
+        if completed < _WARN_THRESHOLD:
+            return False
+        pass_rate = (passed / completed * 100) if completed else 100.0
+        return pass_rate < _WARN_PASS_RATE
 
     @staticmethod
     def _deserialise(raw: dict[str, Any]) -> dict[str, Any]:

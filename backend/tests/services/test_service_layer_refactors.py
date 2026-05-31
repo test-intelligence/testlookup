@@ -1057,7 +1057,11 @@ async def test_stream_service_ingest_via_api_key_run_complete_triggers_close():
         )
 
     assert result.created_session is False
-    close_mock.assert_awaited_once_with(db, str(existing_session_id))
+    # close_session now receives the API key's bound project for defense-in-depth
+    # scope re-assertion (parity with the JWT path).
+    close_mock.assert_awaited_once_with(
+        db, str(existing_session_id), bound_project_id=project_id
+    )
 
 
 @pytest.mark.asyncio
