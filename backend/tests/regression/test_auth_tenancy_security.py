@@ -341,3 +341,59 @@ class TestSecretReadFallback:
         assert mask_value("sk-supersecretvalue99") == "****99"
         assert mask_value("short") == "****"
         assert mask_value("123456789012345") == "****"  # 15 chars fully masked
+
+
+class TestScimListFilterSafety:
+    """Regression: a recognised SCIM predicate carrying an unparseable/empty
+    value must return an EMPTY result, never fall through to an unfiltered query.
+
+    e0d4fea added an ``else`` that caught wholly-unrecognised filters, but a
+    recognised predicate (``userName eq``) whose value failed extraction (empty
+    quotes -> "" falsy, or no quotes -> None) skipped the ``if value:`` body, did
+    NOT hit the ``else``, and fell through to an unfiltered SELECT returning the
+    entire user directory. A ``matched`` flag now closes that path.
+    """
+
+    async def test_empty_quoted_username_filter_returns_empty(self):
+        from app.services import scim_service
+
+        db = AsyncMock()
+        users, total = await scim_service.scim_list_users(db, filter_str='userName eq ""')
+        assert users == []
+        assert total == 0
+        db.execute.assert_not_awaited()
+
+    async def test_unquoted_username_filter_returns_empty(self):
+        from app.services import scim_service
+
+        db = AsyncMock()
+        users, total = await scim_service.scim_list_users(db, filter_str="userName eq alice")
+        assert users == []
+        assert total == 0
+        db.execute.assert_not_awaited()
+
+    async def test_unsupported_predicate_returns_empty(self):
+        from app.services import scim_service
+
+        db = AsyncMock()
+        users, total = await scim_service.scim_list_users(db, filter_str='displayName co "x"')
+        assert users == []
+        assert total == 0
+        db.execute.assert_not_awaited()
+
+    async def test_valid_username_filter_executes_query(self):
+        from tests.conftest import FakeExecuteResult
+        from app.services import scim_service
+
+        user = SimpleNamespace(id=uuid.uuid4(), username="alice")
+        db = AsyncMock()
+        db.execute = AsyncMock(
+            side_effect=[
+                FakeExecuteResult(scalar_value=1),
+                FakeExecuteResult(all_list=[user]),
+            ]
+        )
+        users, total = await scim_service.scim_list_users(db, filter_str='userName eq "alice"')
+        assert total == 1
+        assert users == [user]
+        assert db.execute.await_count == 2

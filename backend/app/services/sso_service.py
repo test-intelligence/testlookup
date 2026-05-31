@@ -412,10 +412,15 @@ async def consume_saml_request(request_id: str) -> bool:
     try:
         deleted = await redis.getdel(key)
     except AttributeError:
-        # Redis < 6.2 (or a client without GETDEL): emulate with get+delete.
-        deleted = await redis.get(key)
-        if deleted is not None:
-            await redis.delete(key)
+        # redis-py without GETDEL (< 4.0): do get+delete atomically server-side
+        # via EVAL (supported since Redis 2.6) so two concurrent ACS requests
+        # can't both observe the same pending id and bypass replay protection.
+        deleted = await redis.eval(
+            "local v = redis.call('get', KEYS[1]); "
+            "if v then redis.call('del', KEYS[1]) end; return v",
+            1,
+            key,
+        )
     return deleted is not None
 
 
