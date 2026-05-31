@@ -411,7 +411,6 @@ class TestAnalysisModeConfig:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 from app.services.ml import classifier as _clf  # noqa: E402
-from app.services.ml.feature_extractor import FEATURE_NAMES  # noqa: E402
 
 
 class TestModelContractValidation:
