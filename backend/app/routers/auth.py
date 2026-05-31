@@ -343,9 +343,9 @@ async def refresh_tokens(
     )
 
     try:
+        # decode_token(expected_type="refresh") already rejects a non-refresh
+        # token (e.g. an access token presented here), so we only verify `sub`.
         data = decode_token(payload.refresh_token, expected_type="refresh")
-        if data.get("type") != "refresh":
-            raise credentials_exception
         user_id: str = data.get("sub", "")
         jti: str = data.get("jti", "")
         if not user_id or not jti:

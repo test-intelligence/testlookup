@@ -2,7 +2,7 @@
 import hashlib
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from xml.etree import ElementTree
 
@@ -339,13 +339,16 @@ def _extract_saml_claims(root) -> dict:
         not_before = conditions.get("NotBefore")
         not_on_or_after = conditions.get("NotOnOrAfter")
         now = datetime.now(timezone.utc)
+        # Tolerate bounded IdP/SP clock drift so minor NTP skew doesn't reject
+        # otherwise-valid assertions at the time-window edges.
+        skew = timedelta(seconds=max(0, settings.SAML_CLOCK_SKEW_SECONDS))
         if not_before:
             nb = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
-            if now < nb:
+            if now < nb - skew:
                 raise ValueError("SAML Assertion is not yet valid (NotBefore)")
         if not_on_or_after:
             noa = datetime.fromisoformat(not_on_or_after.replace("Z", "+00:00"))
-            if now >= noa:
+            if now >= noa + skew:
                 raise ValueError("SAML Assertion has expired (NotOnOrAfter)")
         for aud_el in conditions.findall(
             "saml:AudienceRestriction/saml:Audience", _NS

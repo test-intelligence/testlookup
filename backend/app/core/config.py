@@ -6,7 +6,7 @@ import json as _json
 from functools import lru_cache
 from typing import List, Literal, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -297,11 +297,28 @@ class Settings(BaseSettings):
     # request-binding leg of replay protection (the assertion-ID single-use
     # cache + audience + recipient + signature checks still apply).
     SAML_ALLOW_IDP_INITIATED: bool = False
+    # Allowed IdP/SP clock drift (seconds) applied to SAML assertion
+    # NotBefore / NotOnOrAfter so minor NTP skew doesn't reject valid logins.
+    SAML_CLOCK_SKEW_SECONDS: int = 60
     # Hard ceiling on the role an IdP group-mapping (SSO JIT) or SCIM provision
     # may grant. Resolved roles above this are clamped down and a WARNING audit
     # is emitted. Default ADMIN honours deliberate admin-configured mappings;
     # set lower (e.g. QA_LEAD) to refuse IdP-driven admin grants entirely.
     SSO_MAX_PROVISIONED_ROLE: str = "ADMIN"
+
+    @field_validator("SSO_MAX_PROVISIONED_ROLE")
+    @classmethod
+    def _validate_sso_max_provisioned_role(cls, v):
+        # Fail fast on a typo'd role. Otherwise the SSO/SCIM role clamp silently
+        # falls back to the least-restrictive ceiling (ADMIN) at request time,
+        # defeating the guard. Normalise to upper-case.
+        valid_roles = {"VIEWER", "TESTER", "QA_ENGINEER", "QA_LEAD", "ADMIN"}
+        normalized = (v or "").strip().upper()
+        if normalized not in valid_roles:
+            raise ValueError(
+                f"SSO_MAX_PROVISIONED_ROLE must be one of {sorted(valid_roles)} (got {v!r})"
+            )
+        return normalized
 
     # ── Fine-Tuning / Continuous Learning ────────────────────
     FINETUNE_ENABLED: bool = False                    # master switch
