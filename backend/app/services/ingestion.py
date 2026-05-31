@@ -470,14 +470,17 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
 
     total = counts.total or 0
     passed = counts.passed or 0
-    # NOTE (inconsistency, flagged 2026-05-30): this path divides by ``total``
-    # (which INCLUDES skipped), whereas the live-stream paths (live_consumer,
-    # stream_service, persist_live_session) divide by passed+failed+broken
-    # (EXCLUDING skipped). The same run can therefore show a different
-    # pass_rate via file vs live ingestion. Left as-is pending a product
-    # decision — changing it shifts displayed pass rates for every
-    # file-ingested run that has skips. See docs/reviews/live-stream-ingestion.
-    pass_rate = round((passed / total * 100), 2) if total > 0 else 0.0
+    failed = counts.failed or 0
+    broken = counts.broken or 0
+    # Canonical pass_rate (single source of truth — finalize_run calls this for
+    # BOTH file and live ingestion). EXCLUDES skipped from the denominator: a
+    # skipped test wasn't executed, so it's neither a pass nor a fail. This now
+    # matches the live-stream transient displays (live_consumer / stream_service)
+    # and the FAILED-iff-failed+broken status rule, so a run's pass_rate no
+    # longer shifts when a live run finalizes. (Previously divided by ``total``
+    # which included skipped — see docs/reviews/live-stream-ingestion.)
+    executed = passed + failed + broken
+    pass_rate = round((passed / executed * 100), 2) if executed > 0 else 0.0
 
     # Suite attribution — distinct suite_name values + dominant suite.
     suite_q = await db.execute(
