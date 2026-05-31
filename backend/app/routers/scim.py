@@ -75,7 +75,7 @@ async def verify_scim_bearer(
 async def scim_list(
     request: Request,
     startIndex: int = Query(1, ge=1, description="1-based start index (SCIM)"),
-    count: int = Query(100, ge=0, le=200, description="Page size (bounded to protect the directory)"),
+    count: int = Query(100, ge=1, le=200, description="Page size (bounded to protect the directory)"),
     filter: str | None = None,
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),

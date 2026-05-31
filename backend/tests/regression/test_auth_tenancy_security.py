@@ -25,7 +25,7 @@ from __future__ import annotations
 import base64
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -401,3 +401,94 @@ class TestScimListFilterSafety:
         assert total == 1
         assert users == [user]
         assert db.execute.await_count == 2
+
+
+def _assertion_xml(*, not_before=None, not_on_or_after=None):
+    """Minimal Response/Assertion with a <Conditions> time window, for exercising
+    the clock-skew tolerance in parse_saml_response_unverified."""
+    conds_attrs = ""
+    if not_before:
+        conds_attrs += f' NotBefore="{not_before}"'
+    if not_on_or_after:
+        conds_attrs += f' NotOnOrAfter="{not_on_or_after}"'
+    return (
+        '<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" '
+        'xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">'
+        '<saml:Assertion ID="_a1">'
+        '<saml:Subject><saml:NameID>a@x.com</saml:NameID></saml:Subject>'
+        f'<saml:Conditions{conds_attrs}>'
+        '<saml:AudienceRestriction><saml:Audience>https://sp.test</saml:Audience>'
+        '</saml:AudienceRestriction>'
+        '</saml:Conditions>'
+        '</saml:Assertion>'
+        '</samlp:Response>'
+    )
+
+
+class TestSamlClockSkew:
+    """_extract_saml_claims applies settings.SAML_CLOCK_SKEW_SECONDS to the
+    NotBefore / NotOnOrAfter window, so small IdP/SP drift doesn't reject a valid
+    assertion, while drift beyond the tolerance still fails closed.
+    """
+
+    def test_recently_expired_within_skew_passes(self, monkeypatch):
+        pytest.importorskip("defusedxml")
+        from datetime import datetime, timedelta, timezone
+        from app.core.config import settings
+        from app.services.sso_service import parse_saml_response_unverified
+
+        monkeypatch.setattr(settings, "SAML_CLOCK_SKEW_SECONDS", 120, raising=False)
+        noa = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
+        parsed = parse_saml_response_unverified(_b64(_assertion_xml(not_on_or_after=noa)))
+        assert parsed["assertion_id"] == "_a1"  # parsed, not rejected
+
+    def test_expired_beyond_skew_rejected(self, monkeypatch):
+        pytest.importorskip("defusedxml")
+        from datetime import datetime, timedelta, timezone
+        from app.core.config import settings
+        from app.services.sso_service import parse_saml_response_unverified
+
+        monkeypatch.setattr(settings, "SAML_CLOCK_SKEW_SECONDS", 0, raising=False)
+        noa = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        with pytest.raises(ValueError, match="expired"):
+            parse_saml_response_unverified(_b64(_assertion_xml(not_on_or_after=noa)))
+
+    def test_not_yet_valid_within_skew_passes(self, monkeypatch):
+        pytest.importorskip("defusedxml")
+        from datetime import datetime, timedelta, timezone
+        from app.core.config import settings
+        from app.services.sso_service import parse_saml_response_unverified
+
+        monkeypatch.setattr(settings, "SAML_CLOCK_SKEW_SECONDS", 120, raising=False)
+        nb = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
+        parsed = parse_saml_response_unverified(_b64(_assertion_xml(not_before=nb)))
+        assert parsed["assertion_id"] == "_a1"
+
+    def test_not_yet_valid_beyond_skew_rejected(self, monkeypatch):
+        pytest.importorskip("defusedxml")
+        from datetime import datetime, timedelta, timezone
+        from app.core.config import settings
+        from app.services.sso_service import parse_saml_response_unverified
+
+        monkeypatch.setattr(settings, "SAML_CLOCK_SKEW_SECONDS", 0, raising=False)
+        nb = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        with pytest.raises(ValueError, match="not yet valid"):
+            parse_saml_response_unverified(_b64(_assertion_xml(not_before=nb)))
+
+
+class TestSsoMaxRoleValidation:
+    """SSO_MAX_PROVISIONED_ROLE is validated at settings construction: a typo
+    fails fast instead of silently degrading to the ADMIN ceiling at runtime.
+    """
+
+    def test_invalid_role_rejected(self):
+        from pydantic import ValidationError
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError, match="SSO_MAX_PROVISIONED_ROLE"):
+            Settings(SSO_MAX_PROVISIONED_ROLE="SUPERADMIN")
+
+    def test_valid_role_normalised_to_upper(self):
+        from app.core.config import Settings
+
+        assert Settings(SSO_MAX_PROVISIONED_ROLE="qa_lead").SSO_MAX_PROVISIONED_ROLE == "QA_LEAD"

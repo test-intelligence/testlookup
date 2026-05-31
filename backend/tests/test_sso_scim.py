@@ -102,7 +102,9 @@ def _make_saml_response(
     """Build a base64-encoded SAML response for testing."""
     now = datetime.now(timezone.utc)
     not_before = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    not_after = (now - timedelta(minutes=1) if expired else now + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # 1-hour margin (not 1 minute) so a slow CI run can't let the "expired"
+    # fixture drift back inside the validity (or clock-skew) window mid-test.
+    not_after = (now - timedelta(hours=1) if expired else now + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     attr_statements = ""
     if attributes:
