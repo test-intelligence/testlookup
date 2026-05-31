@@ -72,7 +72,7 @@ class MLClassifier:
         """Classify a single test case from its feature vector.
 
         Args:
-            features: Dict of 32 numeric features from feature_extractor.
+            features: Dict of 31 numeric features from feature_extractor.
 
         Returns:
             Dict matching AIAnalysis shape with failure_category,
@@ -176,15 +176,66 @@ def _try_load(path: Path) -> Any:
 
     try:
         loaded = joblib.load(path)
-        _model = loaded
-        _model_version = path.stem.split("_v")[-1]
-        _model_path = str(path)
-        _last_version_check = time.monotonic()
-        logger.info("Loaded ML classifier model: %s", path.name)
-        return _model
     except Exception as exc:
         logger.error("Failed to load ML model %s: %s", path, exc)
         return None
+
+    # Validate the persisted feature/label contract before trusting the model.
+    # A model trained against an older FEATURE_NAMES order or CATEGORY_LABELS set
+    # would otherwise silently misclassify (predict() returns an index we map via
+    # the *current* lists). Refuse the model on any mismatch → rules fallback.
+    if not _model_contract_ok(loaded, path):
+        return None
+
+    _model = loaded
+    _model_version = path.stem.split("_v")[-1]
+    _model_path = str(path)
+    _last_version_check = time.monotonic()
+    logger.info("Loaded ML classifier model: %s", path.name)
+    return _model
+
+
+def _model_contract_ok(loaded: Any, path: Path) -> bool:
+    """Verify a loaded model matches the current feature/label contract.
+
+    Checks the sklearn estimator's input width and, when available, the
+    feature/label lists persisted in training_metadata.json. Any mismatch means
+    the on-disk model predates an incompatible code change — reject it so the
+    router degrades to rules instead of emitting silently-wrong categories.
+    """
+    from app.services.ml.feature_extractor import FEATURE_NAMES
+
+    n_expected = len(FEATURE_NAMES)
+    n_in = getattr(loaded, "n_features_in_", None)
+    if n_in is not None and n_in != n_expected:
+        logger.warning(
+            "Rejecting ML model %s: expects %s features, code provides %s",
+            path.name, n_in, n_expected,
+        )
+        return False
+
+    meta_path = path.parent / "training_metadata.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text())
+        except Exception:
+            meta = {}
+        persisted_features = meta.get("feature_names")
+        if persisted_features is not None and persisted_features != FEATURE_NAMES:
+            logger.warning(
+                "Rejecting ML model %s: persisted feature_names differ from current FEATURE_NAMES",
+                path.name,
+            )
+            return False
+        persisted_labels = meta.get("category_labels")
+        if persisted_labels is not None and persisted_labels != CATEGORY_LABELS:
+            logger.warning(
+                "Rejecting ML model %s: persisted category_labels differ from current CATEGORY_LABELS",
+                path.name,
+            )
+            return False
+
+    return True
 
 
 def _generate_summary(category: str, confidence: int, features: dict) -> str:

@@ -1070,8 +1070,14 @@ class AnalysisAgent(BaseAgent):
         }
 
     def _build_error_analysis(self, exc: Exception) -> dict:
+        # This dict is persisted to AIAnalysis (root_cause_summary/error), so the
+        # raw exception — which can carry DSNs, internal hostnames, or PII from the
+        # failure text — must be sanitized before it crosses the persistence boundary.
+        from app.services.privacy_service import sanitize_for_persistence
+
+        safe_error = sanitize_for_persistence(str(exc))
         return {
-            "root_cause_summary": f"Analysis failed: {exc}. Manual review required.",
+            "root_cause_summary": "Analysis failed — manual review required.",
             "failure_category": self.UNKNOWN_CATEGORY,
             "backend_error_found": False,
             "pod_issue_found": False,
@@ -1083,7 +1089,7 @@ class AnalysisAgent(BaseAgent):
             ],
             "evidence_references": [],
             "requires_human_review": True,
-            "error": str(exc),
+            "error": safe_error,
             "tools_used": [],
         }
 

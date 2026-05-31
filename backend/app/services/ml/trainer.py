@@ -126,9 +126,36 @@ async def train_classifier() -> dict[str, Any]:
     X = np.array([features_to_array(s) for s in samples])
     y = np.array([label_to_idx.get(lbl, label_to_idx["UNKNOWN"]) for lbl in labels])
 
+    # Surface data-quality drift: labels outside CATEGORY_LABELS are silently
+    # folded into UNKNOWN, which corrupts the training target if it goes unnoticed.
+    unmapped = Counter(lbl for lbl in labels if lbl not in label_to_idx)
+    if unmapped:
+        logger.warning(
+            "Remapped %s sample(s) with out-of-vocabulary labels to UNKNOWN: %s",
+            sum(unmapped.values()), dict(unmapped),
+        )
+
     # Log class distribution for diagnostics
     class_dist = Counter(labels)
     logger.info("Training class distribution: %s", dict(class_dist))
+
+    # ── Guard: stratified split + 5-fold CV require >=2 (>=5 for CV) samples
+    # per class and at least 2 distinct classes. Early in a deployment the
+    # labeled set is tiny and skewed, so without this the retrain job crashes
+    # with a bare sklearn ValueError instead of degrading gracefully.
+    class_idx_counts = Counter(int(v) for v in y)
+    distinct_classes = len(class_idx_counts)
+    min_class_count = min(class_idx_counts.values()) if class_idx_counts else 0
+    if distinct_classes < 2:
+        return {
+            "status": "insufficient_class_diversity",
+            "message": f"Need >=2 distinct categories to train, have {distinct_classes}.",
+            "sample_count": len(samples),
+            "class_distribution": dict(class_dist),
+        }
+    can_stratify = min_class_count >= 2
+    cv_splits = min(5, min_class_count)
+    use_cv = cv_splits >= 2
 
     # ── 3. Compute class weights (handle imbalanced categories) ─────────
     class_weights = _compute_class_weights(y, len(CATEGORY_LABELS))
@@ -136,11 +163,11 @@ async def train_classifier() -> dict[str, Any]:
 
     # ── 4. Train/test split ─────────────────────────────────────────────
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.20, random_state=42, stratify=y
+        X, y, test_size=0.20, random_state=42,
+        stratify=y if can_stratify else None,
     )
 
     # ── 5. Cross-validation to estimate generalization ──────────────────
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     sample_weights_train = _compute_sample_weights(y_train, class_weights)
 
     # Train with tuned hyperparameters
@@ -157,14 +184,25 @@ async def train_classifier() -> dict[str, Any]:
         random_state=42,
     )
 
-    cv_scores = cross_val_score(
-        model, X_train, y_train, cv=cv, scoring="accuracy",
-        fit_params={"sample_weight": sample_weights_train},
-    )
-    logger.info(
-        "Cross-validation scores: %s (mean=%.3f ± %.3f)",
-        [round(s, 3) for s in cv_scores], cv_scores.mean(), cv_scores.std(),
-    )
+    if use_cv:
+        cv = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)
+        cv_scores = cross_val_score(
+            model, X_train, y_train, cv=cv, scoring="accuracy",
+            fit_params={"sample_weight": sample_weights_train},
+        )
+        logger.info(
+            "Cross-validation scores (%s-fold): %s (mean=%.3f ± %.3f)",
+            cv_splits, [round(s, 3) for s in cv_scores], cv_scores.mean(), cv_scores.std(),
+        )
+    else:
+        # Too few samples in the smallest class for meaningful CV — skip it and
+        # report a single-element score so downstream mean/std stay well-defined.
+        import numpy as _np
+        cv_scores = _np.array([0.0])
+        logger.warning(
+            "Skipping cross-validation: smallest class has %s sample(s) (<2 folds possible)",
+            min_class_count,
+        )
 
     # ── 6. Final training on full train set with sample weights ─────────
     model.fit(X_train, y_train, sample_weight=sample_weights_train)
@@ -215,7 +253,13 @@ async def train_classifier() -> dict[str, Any]:
 
     if accuracy >= settings.ML_ACCURACY_THRESHOLD:
         model_path = model_dir / f"classifier_v{version}.joblib"
-        joblib.dump(model, model_path)
+        # Atomic write: dump to a temp file in the same dir, then os.replace so a
+        # crash mid-dump can't leave a half-written .joblib that the classifier
+        # later tries (and fails) to load.
+        import os
+        tmp_model = model_path.with_suffix(".joblib.tmp")
+        joblib.dump(model, tmp_model)
+        os.replace(tmp_model, model_path)
 
         metadata = {
             "status": "trained",
@@ -246,9 +290,10 @@ async def train_classifier() -> dict[str, Any]:
                 "n_iter_no_change": 15,
             },
         }
-        (model_dir / "training_metadata.json").write_text(
-            json.dumps(metadata, indent=2, default=str)
-        )
+        meta_path = model_dir / "training_metadata.json"
+        tmp_meta = meta_path.with_suffix(".json.tmp")
+        tmp_meta.write_text(json.dumps(metadata, indent=2, default=str))
+        os.replace(tmp_meta, meta_path)
 
         logger.info("Model saved: %s (accuracy: %.3f)", model_path, accuracy)
         return {
