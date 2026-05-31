@@ -8,6 +8,8 @@ Covers:
   - MLSummaryGenerator: template-based summary generation
   - Config: ANALYSIS_MODE settings
 """
+import json
+
 import pytest
 
 pytest.importorskip("asyncpg")
