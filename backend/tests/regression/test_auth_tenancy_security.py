@@ -387,10 +387,14 @@ class TestScimListFilterSafety:
 
         user = SimpleNamespace(id=uuid.uuid4(), username="alice")
         db = AsyncMock()
+        # scim_list_users issues two queries: a count (.scalar()) then the user
+        # page (.scalars().all()). FakeExecuteResult.scalars() returns its
+        # scalar_value, so the page result nests an inner FakeExecuteResult whose
+        # all_value is the user list.
         db.execute = AsyncMock(
             side_effect=[
                 FakeExecuteResult(scalar_value=1),
-                FakeExecuteResult(all_list=[user]),
+                FakeExecuteResult(scalar_value=FakeExecuteResult(all_value=[user])),
             ]
         )
         users, total = await scim_service.scim_list_users(db, filter_str='userName eq "alice"')
