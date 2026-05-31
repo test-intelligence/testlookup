@@ -105,7 +105,6 @@ class RedisLiveRunState:
             logger.warning("Received event for unknown run %s — ignoring", run_id)
             return None
 
-        # Atomic counter increment
         status_upper = status.upper()
         field_map: dict[str, str] = {
             "PASSED": "passed",
@@ -114,10 +113,8 @@ class RedisLiveRunState:
             "BROKEN": "broken",
         }
         counter_field = field_map.get(status_upper)
-        if counter_field:
-            await redis.hincrby(key, counter_field, 1)  # type: ignore[misc]
 
-        # Update metadata fields
+        # Build the metadata update.
         now = datetime.now(timezone.utc).isoformat()
         updates: dict[str, str | int] = {"last_event_at": now}
         if test_name:
@@ -127,11 +124,18 @@ class RedisLiveRunState:
             current_total = int(await redis.hget(key, "total") or 0)  # type: ignore[misc]
             if total_tests > current_total:
                 updates["total"] = total_tests
-        if updates:
-            await redis.hset(key, mapping=updates)  # type: ignore[misc]
 
-        # Refresh TTL on activity
-        await redis.expire(key, _TTL)
+        # Commit the counter increment, metadata, and TTL refresh as ONE
+        # pipeline. Done as separate awaits, a crash between the HSET and the
+        # EXPIRE could leave the hash without a TTL (orphaned forever), and the
+        # counter could land without its metadata. The pipeline makes them a
+        # single round trip that applies together.
+        pipe = redis.pipeline(transaction=True)
+        if counter_field:
+            pipe.hincrby(key, counter_field, 1)
+        pipe.hset(key, mapping=updates)
+        pipe.expire(key, _TTL)
+        await pipe.execute()
         return await cls.get(run_id)
 
     @classmethod
@@ -173,13 +177,18 @@ class RedisLiveRunState:
         if not await redis.exists(key):
             return None
 
-        await redis.hset(key, mapping={  # type: ignore[misc]
+        # Flip status, shorten TTL to 1h post-completion, and drop from the
+        # active set as ONE pipeline. Done separately, a crash between the HSET
+        # and the SREM left a completed run lingering in LIVE_ACTIVE_SET (so
+        # get_all_active reported it as active until its key expired).
+        pipe = redis.pipeline(transaction=True)
+        pipe.hset(key, mapping={
             "status":       "completed",
             "last_event_at": datetime.now(timezone.utc).isoformat(),
         })
-        # Shorten TTL to 1 hour post-completion
-        await redis.expire(key, 3600)
-        await redis.srem(LIVE_ACTIVE_SET, run_id)  # type: ignore[misc]
+        pipe.expire(key, 3600)
+        pipe.srem(LIVE_ACTIVE_SET, run_id)
+        await pipe.execute()
 
         state = await cls.get(run_id)
         logger.info(
@@ -190,13 +199,21 @@ class RedisLiveRunState:
 
     @classmethod
     def should_warn(cls, state: dict) -> bool:
-        """Return True if early-warning threshold is crossed."""
+        """Return True if early-warning threshold is crossed.
+
+        Computes pass_rate from the counter fields rather than trusting a
+        ``pass_rate`` key — that key only exists on ``get()``/``_deserialise``
+        results, so a caller passing a raw Redis hash would otherwise always
+        see the 100.0 default and never warn.
+        """
         passed = int(state.get("passed", 0) or 0)
         failed = int(state.get("failed", 0) or 0)
         broken = int(state.get("broken", 0) or 0)
         completed = passed + failed + broken
-        pass_rate = float(state.get("pass_rate", 100.0) or 100.0)
-        return completed >= _WARN_THRESHOLD and pass_rate < _WARN_PASS_RATE
+        if completed < _WARN_THRESHOLD:
+            return False
+        pass_rate = (passed / completed * 100) if completed else 100.0
+        return pass_rate < _WARN_PASS_RATE
 
     @staticmethod
     def _deserialise(raw: dict[str, Any]) -> dict[str, Any]:

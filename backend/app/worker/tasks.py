@@ -234,8 +234,9 @@ def persist_live_session(
             logger.warning(
                 "[Task %s] Live persist: event buffer empty for run=%s but "
                 "final_state reports passed=%d failed=%d skipped=%d broken=%d. "
-                "TestRun aggregates will be written; per-test TestCase rows "
-                "cannot be reconstructed without the buffered events.",
+                "TestRun aggregates will be written; per-test rows will be "
+                "synthesised as labelled placeholders (real per-test detail "
+                "is unavailable without the buffered events).",
                 self.request.id, run_id, passed, failed, skipped, broken,
             )
 
@@ -538,7 +539,16 @@ def persist_live_session(
             )
 
         # ── Clean up Redis buffer ─────────────────────────────────────────────
-        await redis.delete(list_key)
+        # Guarded: rows are already committed, so a Redis blip here must not
+        # raise and trigger a spurious full-task retry (which would re-run the
+        # dedup-skip path anyway). The 25h TTL reclaims the buffer regardless.
+        try:
+            await redis.delete(list_key)
+        except Exception as exc:
+            logger.warning(
+                "[Task %s] buffer cleanup failed for run=%s (TTL will reclaim): %s",
+                self.request.id, run_id, exc,
+            )
 
     try:
         _run_async(_run())

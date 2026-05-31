@@ -139,9 +139,13 @@ async def ingest_test_results(
         existing_by_fp = {r.test_fingerprint: r for r in existing_rows}
 
     count = 0
+    failed = 0
     for case_data, fingerprint in zip(results, fingerprints):
         if default_suite_name and not (case_data.get("suite_name") or "").strip():
-            case_data["suite_name"] = default_suite_name
+            # Rebind to a copy — mutating the caller's dict in place injects the
+            # backend default into the caller's results list and masks the "SDK
+            # omitted suite_name" signal the primary_suite_name repair sweeps use.
+            case_data = {**case_data, "suite_name": default_suite_name}
         try:
             await _upsert_test_case(
                 db,
@@ -152,10 +156,31 @@ async def ingest_test_results(
             )
             count += 1
         except Exception as e:
+            failed += 1
             logger.warning(
                 "Failed to upsert test case",
                 test_name=case_data.get("test_name"),
                 error=str(e),
+            )
+
+    # Surface the failure signal: a run where EVERY row failed to upsert
+    # returns count=0 and otherwise looks identical to an empty payload —
+    # but it still flows to finalize_run and gets marked "complete". Without
+    # a loud signal the only trace is N scattered per-row warnings.
+    if failed:
+        if count == 0 and results:
+            logger.error(
+                "ingest_test_results_all_failed",
+                run_id=str(run.id),
+                attempted=len(results),
+                failed=failed,
+            )
+        else:
+            logger.warning(
+                "ingest_test_results_partial_failure",
+                run_id=str(run.id),
+                ingested=count,
+                failed=failed,
             )
     return count
 
@@ -264,8 +289,6 @@ async def finalize_run(
     # step a no-op for deployments that haven't enabled the workflow.
     async def _apply_quarantine_tags(d: AsyncSession) -> None:
         from app.services.flaky_quarantine_service import active_quarantines_for_project
-        from app.models.postgres import TestCase as _TC
-        from sqlalchemy import select as _sel
         fingerprints = await active_quarantines_for_project(d, pid)
         if not fingerprints:
             return
@@ -273,9 +296,9 @@ async def finalize_run(
         # by the run so the query is cheap even when the fingerprint set is
         # large.
         result = await d.execute(
-            _sel(_TC).where(
-                _TC.test_run_id == rid,
-                _TC.test_fingerprint.in_(fingerprints),
+            select(TestCase).where(
+                TestCase.test_run_id == rid,
+                TestCase.test_fingerprint.in_(fingerprints),
             )
         )
         rows = list(result.scalars().all())

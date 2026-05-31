@@ -29,9 +29,10 @@ Architecture:
 import asyncio
 import json
 import logging
-from typing import Any, cast
+import os
 import socket
 import time
+from typing import Any, cast
 
 from app.db.redis_client import get_redis
 from app.streams import (
@@ -40,7 +41,6 @@ from app.streams import (
     DLQ_STREAM,
     LIVE_EVENTS_STREAM,
     LIVE_GROUP,
-    LIVE_TESTCASES_KEY,
     MAX_DELIVERY_ATTEMPTS,
     STALE_CLAIM_INTERVAL_S,
     STALE_IDLE_MS,
@@ -50,7 +50,7 @@ from app.streams.live_run_state import RedisLiveRunState
 logger = logging.getLogger("streams.live_consumer")
 
 # Unique consumer name per process (handles multiple uvicorn workers)
-_CONSUMER_NAME = f"{socket.gethostname()}:{__import__('os').getpid()}"
+_CONSUMER_NAME = f"{socket.gethostname()}:{os.getpid()}"
 
 
 class LiveEventStreamConsumer:
@@ -62,8 +62,6 @@ class LiveEventStreamConsumer:
     def __init__(self):
         self._running = False
         self._last_reclaim = 0.0
-        # Per-message retry counts: {msg_id: attempt_count}
-        self._retry_counts: dict[str, int] = {}
 
     async def run(self) -> None:
         """Main consumer loop. Runs until cancelled."""
@@ -106,11 +104,16 @@ class LiveEventStreamConsumer:
 
             await self._process(run_id, event_type, payload)
             await self._ack(msg_id)
-            self._retry_counts.pop(msg_id, None)
 
         except Exception as exc:
-            attempt = self._retry_counts.get(msg_id, 0) + 1
-            self._retry_counts[msg_id] = attempt
+            # Attempt count comes from the stream's own delivery counter
+            # (XPENDING ``times_delivered``), NOT a per-process dict. The
+            # dict was lost on restart and not shared across uvicorn workers,
+            # so a message reclaimed by a different consumer restarted its
+            # count at 0 and MAX_DELIVERY_ATTEMPTS was never enforced
+            # consistently across the fleet. Redis increments times_delivered
+            # on the initial XREADGROUP and on every XAUTOCLAIM reclaim.
+            attempt = await self._delivery_count(msg_id)
             logger.warning(
                 "Failed to process live event msg=%s attempt=%d error=%s",
                 msg_id, attempt, exc,
@@ -118,8 +121,7 @@ class LiveEventStreamConsumer:
             if attempt >= MAX_DELIVERY_ATTEMPTS:
                 await self._move_to_dlq(msg_id, raw, str(exc), attempt)
                 await self._ack(msg_id)
-                self._retry_counts.pop(msg_id, None)
-            # If under max retries: leave in pending list for XAUTOCLAIM to re-deliver
+            # If under max attempts: leave in pending list for XAUTOCLAIM to re-deliver
 
     async def _process(self, run_id: str, event_type: str, payload: dict) -> None:
         """Dispatch to the appropriate handler based on event type."""
@@ -216,6 +218,27 @@ class LiveEventStreamConsumer:
 
     # ── Stream operations ─────────────────────────────────────────────────────
 
+    async def _delivery_count(self, msg_id: str) -> int:
+        """How many times this message has been delivered, per Redis' own
+        PEL counter. Shared across all consumers and durable across restarts,
+        unlike a per-process dict — so MAX_DELIVERY_ATTEMPTS is enforced
+        consistently regardless of which worker handles a reclaimed message.
+
+        Best-effort: on any lookup error, return 1 (treat as first delivery)
+        so a transient XPENDING failure can never prematurely DLQ a message.
+        """
+        redis = get_redis()
+        try:
+            pending = await redis.xpending_range(
+                LIVE_EVENTS_STREAM, LIVE_GROUP,
+                min=msg_id, max=msg_id, count=1,
+            )
+            if pending:
+                return int(pending[0]["times_delivered"])
+        except Exception as exc:
+            logger.debug("xpending_range failed for msg=%s: %s", msg_id, exc)
+        return 1
+
     async def _ensure_group(self) -> None:
         """Create the consumer group if it doesn't exist."""
         redis = get_redis()
@@ -297,33 +320,6 @@ class LiveEventStreamConsumer:
         )
 
 
-    # ── Test event buffer ────────────────────────────────────────────────────
-
-    async def _buffer_test_event(self, run_id: str, payload: dict) -> None:
-        """Append a minimal test-result snapshot to the per-run Redis List.
-        Used by persist_live_session to recreate TestCase rows after run completion.
-        List TTL: 25 h — cleaned up by the Celery task on success.
-        """
-        try:
-            redis = get_redis()
-            entry = json.dumps({
-                "test_name":     payload.get("test_name", ""),
-                "status":        payload.get("status", "UNKNOWN"),
-                "duration_ms":   payload.get("duration_ms", 0),
-                "suite_name":    payload.get("suite_name"),
-                "class_name":    payload.get("class_name"),
-                "error_message": payload.get("error_message"),
-                "stack_trace":   payload.get("stack_trace"),
-                "tags":          payload.get("tags"),
-                "timestamp_ms":  payload.get("timestamp_ms"),
-            })
-            key = LIVE_TESTCASES_KEY.format(run_id=run_id)
-            await redis.rpush(key, entry)  # type: ignore[misc]
-            await redis.expire(key, 90_000)   # 25 h
-        except Exception as exc:
-            logger.debug("Failed to buffer test event for run %s: %s", run_id, exc)
-
-
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
 async def _broadcast(project_id: str, payload: dict) -> None:
@@ -395,6 +391,9 @@ async def _finalise_run_in_db(run_id: str, state: dict) -> None:
                 run.failed_tests = failed
                 run.skipped_tests = skipped
                 run.broken_tests = broken
+                # Pass rate intentionally EXCLUDES skipped from the denominator
+                # (passed / passed+failed+broken), consistent with stream_service
+                # and ingestion. Skips are neither a pass nor a failure.
                 run.pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
                 run.end_time = datetime.now(timezone.utc)
                 await db.commit()

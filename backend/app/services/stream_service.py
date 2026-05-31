@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import secrets
 import uuid
@@ -24,6 +25,19 @@ from app.models.schemas import (
 from app.services.async_utils import await_if_needed
 
 logger = logging.getLogger(__name__)
+
+# Throttle: warn at most once per process when the live buffer cap is disabled.
+_buffer_cap_disabled_warned = False
+
+
+def _warn_buffer_cap_disabled() -> None:
+    global _buffer_cap_disabled_warned
+    _buffer_cap_disabled_warned = True
+    logger.warning(
+        "LIVE_BUFFER_MAX_EVENTS_PER_RUN <= 0 — per-run event buffer is "
+        "UNBOUNDED; Redis backpressure for live runs is disabled."
+    )
+
 
 SESSION_TTL = 86_400
 SESSION_TOKEN_KEY = "live:session:{token}"
@@ -329,17 +343,14 @@ async def close_session(
     # not block session close.
     try:
         from app.streams import LIVE_TESTCASES_KEY
-        from app.db.redis_client import get_redis
-        from app.models.postgres import TestRun
 
         redis = get_redis()
         list_key = LIVE_TESTCASES_KEY.format(run_id=session.run_id)
         raw_events = await redis.lrange(list_key, 0, -1)
         decoded: list = []
-        import json as _json
         for raw in raw_events:
             try:
-                decoded.append(_json.loads(raw))
+                decoded.append(json.loads(raw))
             except Exception:
                 continue
         if decoded:
@@ -491,7 +502,6 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
     because close_session() / persist_live_session can be dispatched before
     the consumer processes the stream (race condition).
     """
-    import json as _json
     from app.streams import LIVE_TESTCASES_KEY, LIVE_STATE_KEY
 
     accepted = await publish_event_batch(session_id=session_id, run_id=run_id, events=events)
@@ -504,10 +514,12 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
     last_test_name = ""
 
     pipe = redis.pipeline()
+    test_event_count = 0
     for event in events:
         event_dict: dict = event.model_dump() if hasattr(event, "model_dump") else dict(event)
         if event_dict.get("event_type") == "test_result":
-            entry = _json.dumps({
+            test_event_count += 1
+            entry = json.dumps({
                 "test_name":     event_dict.get("test_name", ""),
                 "status":        event_dict.get("status", "UNKNOWN"),
                 "duration_ms":   event_dict.get("duration_ms", 0),
@@ -540,6 +552,11 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
         # on Redis Lists; we run it on every batch so the cap is enforced
         # as soon as it's exceeded rather than only at TTL refresh.
         await await_if_needed(pipe.ltrim(list_key, -buffer_cap, -1))
+    elif not _buffer_cap_disabled_warned:
+        # cap <= 0 disables backpressure entirely (unbounded per-run list).
+        # Surface it once so a misconfigured deploy is observable rather than
+        # silently dropping the safeguard.
+        _warn_buffer_cap_disabled()
     await await_if_needed(pipe.expire(list_key, 90_000))  # 25 h TTL — same as consumer's buffer
     if last_test_name:
         await await_if_needed(pipe.hset(state_key, mapping={"last_event_at": now, "current_test": last_test_name}))
@@ -548,14 +565,10 @@ async def _persist_event_batch(session_id: str, run_id: str, events) -> int:
     await await_if_needed(pipe.expire(state_key, 86_400))
     await pipe.execute()
 
-    # Phase 4.1 — feed the high-volume detector with the test_result
-    # event count from this batch. Project_id is looked up lazily (one
-    # cached DB read per run) and never blocks the ingest path —
-    # ``record_test_events`` swallows its own errors.
-    test_event_count = sum(
-        1 for e in events
-        if (e.model_dump() if hasattr(e, "model_dump") else dict(e)).get("event_type") == "test_result"
-    )
+    # Phase 4.1 — feed the high-volume detector with the test_result event
+    # count from this batch (counted in the loop above — no second model_dump
+    # pass). Project_id is looked up lazily (one cached DB read per run) and
+    # never blocks the ingest path — ``record_test_events`` swallows its errors.
     if test_event_count > 0:
         try:
             from app.services.high_volume_detector import record_test_events
@@ -587,7 +600,7 @@ async def resolve_project_id_for_session(
         stored = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
     except Exception:
         return None
-    if not stored or stored != session_id:
+    if not stored or not secrets.compare_digest(stored, session_id):
         return None
     # Look up the project_id on the LiveSession row. The cheaper path
     # would be to cache (token → project_id) in Redis at session-create
@@ -607,7 +620,7 @@ async def resolve_project_id_for_session(
 async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchResponse:
     redis = get_redis()
     stored_session_id = await redis.get(SESSION_TOKEN_KEY.format(token=x_session_token))
-    if not stored_session_id or stored_session_id != batch.session_id:
+    if not stored_session_id or not secrets.compare_digest(stored_session_id, batch.session_id):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired session token",
@@ -749,7 +762,9 @@ async def ingest_via_api_key(
         for event in request.events
     )
     if has_run_complete and session.status == "active":
-        await close_session(db, str(session.id))
+        # Pass the API key's bound project so close_session re-asserts scope
+        # (defense-in-depth parity with the JWT path), not just the row lookup.
+        await close_session(db, str(session.id), bound_project_id=project_id)
 
     return LiveStreamIngestResponse(
         accepted=accepted,
@@ -965,6 +980,8 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     total = int(state.get("total", session.total_tests or 0))
     # Fallback: if total wasn't tracked, derive it from component counts
     total = total or (passed + failed + skipped + broken)
+    # Pass rate EXCLUDES skipped from the denominator (passed / passed+failed+broken),
+    # consistent with live_consumer and ingestion. Skips are neither pass nor fail.
     pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
     run_status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
     now = datetime.now(timezone.utc)

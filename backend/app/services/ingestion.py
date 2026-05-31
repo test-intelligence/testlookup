@@ -81,7 +81,11 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                         if parsed:
                             return parsed, result_data
                     except Exception as e:
-                        logger.warning(f"Failed to parse {obj['Key']}: {e}")
+                        logger.warning(
+                            "allure_parse_failed",
+                            object_key=obj["Key"],
+                            error=str(e),
+                        )
                 return None
 
             allure_results = await asyncio.gather(*[_fetch_allure(obj) for obj in result_files])
@@ -109,16 +113,28 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                         content = await storage.get_object_content(obj["Key"])
                         return parse_testng_xml(content.decode("utf-8"), str(run.id))
                     except Exception as e:
-                        logger.warning(f"Failed to parse TestNG XML {obj['Key']}: {e}")
+                        logger.warning(
+                            "testng_parse_failed",
+                            object_key=obj["Key"],
+                            error=str(e),
+                        )
                         return []
 
             testng_results = await asyncio.gather(*[_fetch_testng(obj) for obj in xml_files])
-            existing_names = {p["test_name"] for p in parsed_cases}
+            # Dedup by fingerprint (test_name + class_name), NOT bare test_name:
+            # two distinct tests with the same method name in different classes
+            # are different tests and must both survive — the same multi-class
+            # case the per-run fingerprint already distinguishes everywhere else.
+            existing_fps = {
+                make_test_fingerprint(p["test_name"], p.get("class_name"))
+                for p in parsed_cases
+            }
             for xml_cases in testng_results:
                 for case in xml_cases:
-                    if case["test_name"] not in existing_names:
+                    fp = make_test_fingerprint(case["test_name"], case.get("class_name"))
+                    if fp not in existing_fps:
                         parsed_cases.append(case)
-                        existing_names.add(case["test_name"])
+                        existing_fps.add(fp)
 
             # ── Upsert test cases to PostgreSQL ────────────
             for case_data in parsed_cases:
@@ -454,7 +470,17 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
 
     total = counts.total or 0
     passed = counts.passed or 0
-    pass_rate = round((passed / total * 100), 2) if total > 0 else 0.0
+    failed = counts.failed or 0
+    broken = counts.broken or 0
+    # Canonical pass_rate (single source of truth — finalize_run calls this for
+    # BOTH file and live ingestion). EXCLUDES skipped from the denominator: a
+    # skipped test wasn't executed, so it's neither a pass nor a fail. This now
+    # matches the live-stream transient displays (live_consumer / stream_service)
+    # and the FAILED-iff-failed+broken status rule, so a run's pass_rate no
+    # longer shifts when a live run finalizes. (Previously divided by ``total``
+    # which included skipped — see docs/reviews/live-stream-ingestion.)
+    executed = passed + failed + broken
+    pass_rate = round((passed / executed * 100), 2) if executed > 0 else 0.0
 
     # Suite attribution — distinct suite_name values + dominant suite.
     suite_q = await db.execute(
@@ -493,7 +519,11 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
         "skipped_tests": counts.skipped or 0,
         "broken_tests":  counts.broken or 0,
         "pass_rate":     pass_rate,
-        "status":        LaunchStatus.PASSED if pass_rate == 100 else LaunchStatus.FAILED,
+        # FAILED iff something actually failed/broke — matches the live-stream
+        # path (live_consumer / persist_live_session) and avoids the brittle
+        # ``pass_rate == 100`` float compare, which also wrongly marked a
+        # 0-test run (pass_rate 0.0) as FAILED.
+        "status":        LaunchStatus.FAILED if ((counts.failed or 0) + (counts.broken or 0)) > 0 else LaunchStatus.PASSED,
         "end_time":      datetime.now(timezone.utc),
         # ``suite_names`` is the full set actually present in the
         # events — always refresh it (its purpose is to mirror the
