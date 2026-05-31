@@ -81,7 +81,11 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                         if parsed:
                             return parsed, result_data
                     except Exception as e:
-                        logger.warning(f"Failed to parse {obj['Key']}: {e}")
+                        logger.warning(
+                            "allure_parse_failed",
+                            object_key=obj["Key"],
+                            error=str(e),
+                        )
                 return None
 
             allure_results = await asyncio.gather(*[_fetch_allure(obj) for obj in result_files])
@@ -109,7 +113,11 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                         content = await storage.get_object_content(obj["Key"])
                         return parse_testng_xml(content.decode("utf-8"), str(run.id))
                     except Exception as e:
-                        logger.warning(f"Failed to parse TestNG XML {obj['Key']}: {e}")
+                        logger.warning(
+                            "testng_parse_failed",
+                            object_key=obj["Key"],
+                            error=str(e),
+                        )
                         return []
 
             testng_results = await asyncio.gather(*[_fetch_testng(obj) for obj in xml_files])

@@ -105,7 +105,6 @@ class RedisLiveRunState:
             logger.warning("Received event for unknown run %s — ignoring", run_id)
             return None
 
-        # Atomic counter increment
         status_upper = status.upper()
         field_map: dict[str, str] = {
             "PASSED": "passed",
@@ -114,10 +113,8 @@ class RedisLiveRunState:
             "BROKEN": "broken",
         }
         counter_field = field_map.get(status_upper)
-        if counter_field:
-            await redis.hincrby(key, counter_field, 1)  # type: ignore[misc]
 
-        # Update metadata fields
+        # Build the metadata update.
         now = datetime.now(timezone.utc).isoformat()
         updates: dict[str, str | int] = {"last_event_at": now}
         if test_name:
@@ -127,11 +124,18 @@ class RedisLiveRunState:
             current_total = int(await redis.hget(key, "total") or 0)  # type: ignore[misc]
             if total_tests > current_total:
                 updates["total"] = total_tests
-        if updates:
-            await redis.hset(key, mapping=updates)  # type: ignore[misc]
 
-        # Refresh TTL on activity
-        await redis.expire(key, _TTL)
+        # Commit the counter increment, metadata, and TTL refresh as ONE
+        # pipeline. Done as separate awaits, a crash between the HSET and the
+        # EXPIRE could leave the hash without a TTL (orphaned forever), and the
+        # counter could land without its metadata. The pipeline makes them a
+        # single round trip that applies together.
+        pipe = redis.pipeline(transaction=True)
+        if counter_field:
+            pipe.hincrby(key, counter_field, 1)
+        pipe.hset(key, mapping=updates)
+        pipe.expire(key, _TTL)
+        await pipe.execute()
         return await cls.get(run_id)
 
     @classmethod

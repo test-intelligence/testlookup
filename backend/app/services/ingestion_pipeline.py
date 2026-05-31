@@ -139,6 +139,7 @@ async def ingest_test_results(
         existing_by_fp = {r.test_fingerprint: r for r in existing_rows}
 
     count = 0
+    failed = 0
     for case_data, fingerprint in zip(results, fingerprints):
         if default_suite_name and not (case_data.get("suite_name") or "").strip():
             case_data["suite_name"] = default_suite_name
@@ -152,10 +153,31 @@ async def ingest_test_results(
             )
             count += 1
         except Exception as e:
+            failed += 1
             logger.warning(
                 "Failed to upsert test case",
                 test_name=case_data.get("test_name"),
                 error=str(e),
+            )
+
+    # Surface the failure signal: a run where EVERY row failed to upsert
+    # returns count=0 and otherwise looks identical to an empty payload —
+    # but it still flows to finalize_run and gets marked "complete". Without
+    # a loud signal the only trace is N scattered per-row warnings.
+    if failed:
+        if count == 0 and results:
+            logger.error(
+                "ingest_test_results_all_failed",
+                run_id=str(run.id),
+                attempted=len(results),
+                failed=failed,
+            )
+        else:
+            logger.warning(
+                "ingest_test_results_partial_failure",
+                run_id=str(run.id),
+                ingested=count,
+                failed=failed,
             )
     return count
 

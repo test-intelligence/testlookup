@@ -51,6 +51,7 @@ class LLMCircuitBreaker:
         Return True if the circuit is CLOSED or HALF_OPEN (allow request).
         Return False if OPEN (reject request — caller should retry later).
         """
+        redis = get_redis()
         state = await cls._get_state()
         if state == _STATE_CLOSED:
             return True
@@ -61,8 +62,15 @@ class LLMCircuitBreaker:
                 await cls._set_state(_STATE_HALF_OPEN)
                 logger.info("Circuit breaker → HALF_OPEN (probing LLM provider)")
                 return True
+            # Still OPEN. Refresh the state-hash TTL so a sustained reject
+            # storm can't let the key lapse back to CLOSED before recovery
+            # elapses (reads don't refresh TTL on their own). The TTL is kept
+            # only as a self-heal net for a circuit that goes fully idle.
+            await redis.expire(CIRCUIT_KEY, RECOVERY_TIMEOUT_S * 4)
             return False
-        # HALF_OPEN: allow request through
+        # HALF_OPEN: allow the probe through. Refresh TTL too so the probe
+        # window can't expire to CLOSED before a call resolves it.
+        await redis.expire(CIRCUIT_KEY, RECOVERY_TIMEOUT_S * 4)
         return True
 
     @classmethod

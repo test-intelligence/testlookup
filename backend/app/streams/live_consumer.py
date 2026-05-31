@@ -62,8 +62,6 @@ class LiveEventStreamConsumer:
     def __init__(self):
         self._running = False
         self._last_reclaim = 0.0
-        # Per-message retry counts: {msg_id: attempt_count}
-        self._retry_counts: dict[str, int] = {}
 
     async def run(self) -> None:
         """Main consumer loop. Runs until cancelled."""
@@ -106,11 +104,16 @@ class LiveEventStreamConsumer:
 
             await self._process(run_id, event_type, payload)
             await self._ack(msg_id)
-            self._retry_counts.pop(msg_id, None)
 
         except Exception as exc:
-            attempt = self._retry_counts.get(msg_id, 0) + 1
-            self._retry_counts[msg_id] = attempt
+            # Attempt count comes from the stream's own delivery counter
+            # (XPENDING ``times_delivered``), NOT a per-process dict. The
+            # dict was lost on restart and not shared across uvicorn workers,
+            # so a message reclaimed by a different consumer restarted its
+            # count at 0 and MAX_DELIVERY_ATTEMPTS was never enforced
+            # consistently across the fleet. Redis increments times_delivered
+            # on the initial XREADGROUP and on every XAUTOCLAIM reclaim.
+            attempt = await self._delivery_count(msg_id)
             logger.warning(
                 "Failed to process live event msg=%s attempt=%d error=%s",
                 msg_id, attempt, exc,
@@ -118,8 +121,7 @@ class LiveEventStreamConsumer:
             if attempt >= MAX_DELIVERY_ATTEMPTS:
                 await self._move_to_dlq(msg_id, raw, str(exc), attempt)
                 await self._ack(msg_id)
-                self._retry_counts.pop(msg_id, None)
-            # If under max retries: leave in pending list for XAUTOCLAIM to re-deliver
+            # If under max attempts: leave in pending list for XAUTOCLAIM to re-deliver
 
     async def _process(self, run_id: str, event_type: str, payload: dict) -> None:
         """Dispatch to the appropriate handler based on event type."""
@@ -215,6 +217,27 @@ class LiveEventStreamConsumer:
         # No duplicate trigger needed here.
 
     # ── Stream operations ─────────────────────────────────────────────────────
+
+    async def _delivery_count(self, msg_id: str) -> int:
+        """How many times this message has been delivered, per Redis' own
+        PEL counter. Shared across all consumers and durable across restarts,
+        unlike a per-process dict — so MAX_DELIVERY_ATTEMPTS is enforced
+        consistently regardless of which worker handles a reclaimed message.
+
+        Best-effort: on any lookup error, return 1 (treat as first delivery)
+        so a transient XPENDING failure can never prematurely DLQ a message.
+        """
+        redis = get_redis()
+        try:
+            pending = await redis.xpending_range(
+                LIVE_EVENTS_STREAM, LIVE_GROUP,
+                min=msg_id, max=msg_id, count=1,
+            )
+            if pending:
+                return int(pending[0]["times_delivered"])
+        except Exception as exc:
+            logger.debug("xpending_range failed for msg=%s: %s", msg_id, exc)
+        return 1
 
     async def _ensure_group(self) -> None:
         """Create the consumer group if it doesn't exist."""
