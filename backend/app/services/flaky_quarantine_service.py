@@ -596,21 +596,29 @@ async def expire_stale_proposals() -> int:
         )
         rows = list(result.scalars().all())
         now = datetime.now(timezone.utc)
+        pending_audits: list[tuple[uuid.UUID, uuid.UUID, dict[str, Any], dict[str, Any]]] = []
         for row in rows:
             before = _snapshot(row)
             row.status = FlakyQuarantineStatus.EXPIRED.value
             row.updated_at = now
-            await _audit(
-                db, None,
-                action="expire",
-                request_id=row.id,
-                project_id=row.project_id,
-                before=before,
-                after=_snapshot(row),
-            )
+            pending_audits.append((row.id, row.project_id, before, _snapshot(row)))
             expired += 1
         if rows:
             await db.commit()
+            # Audit AFTER the commit (every other caller in this module does
+            # too): ``_audit`` writes + commits on its OWN session, so auditing
+            # mid-loop would make the "expire" rows durable even if this batch
+            # commit failed — the log would then claim expirations that rolled
+            # back.
+            for req_id, proj_id, before, after in pending_audits:
+                await _audit(
+                    db, None,
+                    action="expire",
+                    request_id=req_id,
+                    project_id=proj_id,
+                    before=before,
+                    after=after,
+                )
     return expired
 
 
@@ -654,7 +662,7 @@ async def run_recheck_cycle() -> dict[str, int]:
     released = re_quarantined = insufficient = 0
 
     async with AsyncSessionLocal() as db:
-        from app.models.postgres import TestCase, TestStatus
+        from app.models.postgres import TestCase, TestRun, TestStatus
         from sqlalchemy import func as _func
         result = await db.execute(
             select(FlakyQuarantineRequest).where(
@@ -666,10 +674,20 @@ async def run_recheck_cycle() -> dict[str, int]:
 
         for row in rows:
             since = row.quarantine_start or (now - timedelta(days=row.quarantine_duration_days))
+            # MUST scope to the row's project: ``test_fingerprint`` is
+            # ``sha256(class::name)`` with no project salt (see
+            # ingestion.make_test_fingerprint), so two projects with a
+            # same-named test share a fingerprint. Without the project join
+            # the flip-rate would blend other tenants' executions and drive
+            # a wrong release/re-quarantine decision. TestCase carries the
+            # project only via TestRun, hence the join.
             counts_stmt = select(
                 TestCase.status,
                 _func.count(TestCase.id).label("c"),
+            ).join(
+                TestRun, TestRun.id == TestCase.test_run_id,
             ).where(
+                TestRun.project_id == row.project_id,
                 TestCase.test_fingerprint == row.test_fingerprint,
                 TestCase.created_at >= since,
             ).group_by(TestCase.status)
