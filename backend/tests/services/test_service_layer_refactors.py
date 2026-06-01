@@ -83,6 +83,19 @@ class FakeAsyncDB:
     def add(self, obj):
         self.added.append(obj)
 
+    def begin_nested(self):
+        # No-op SAVEPOINT context manager that does not suppress exceptions,
+        # so an IntegrityError raised in the body still propagates (mirrors a
+        # real SAVEPOINT). Services wrap racy inserts in db.begin_nested().
+        class _SP:
+            async def __aenter__(self_inner):
+                return None
+
+            async def __aexit__(self_inner, *exc):
+                return False
+
+        return _SP()
+
 
 def _fake_run(run_id: uuid.UUID, status: str = "passed"):
     columns = [SimpleNamespace(name="id"), SimpleNamespace(name="status"), SimpleNamespace(name="created_at")]
@@ -861,7 +874,10 @@ async def test_stream_service_create_session_stores_token_and_initializes_live_s
     # the router handler owns the commit so an aborted transaction never
     # leaves a dangling Redis session token.
     db.commit.assert_not_awaited()
-    db.flush.assert_awaited_once()
+    # Two flushes: the LiveSession row, then the companion TestRun stub
+    # (SAVEPOINT-wrapped). The stub path runs now that FakeAsyncDB supports
+    # begin_nested(); previously it AttributeError'd into the broad except.
+    assert db.flush.await_count == 2
 
 
 @pytest.mark.asyncio
