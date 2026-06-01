@@ -9,16 +9,23 @@ Pairing uses ``TestCase.test_fingerprint`` — the stable hash of test
 name + suite + package — so the same logical test matches across
 builds even when its UUID changes.
 
-Classifications:
+Classifications (see ``_classify`` for the authoritative rules):
 
-* ``new_failure``   — left=passed,   right=failed/broken
-* ``fixed``         — left=failed,   right=passed
-* ``still_failing`` — left=failed,   right=failed
-* ``regressed``     — left=passed,   right=skipped/broken (partial fail)
-* ``improved``      — left=broken,   right=passed
-* ``new_test``      — did not exist in left run
-* ``removed_test``  — did not exist in right run
-* ``duration_spike``— same status, right_duration > 3× left_duration
+* ``new_failure``   — left=passed → right=failed/broken, OR a test absent
+                      from the left run that lands failing on the right.
+* ``fixed``         — left=failed/broken/skipped → right=passed.
+* ``still_failing`` — left=failed → right=failed, or broken → broken.
+* ``regressed``     — left=passed → right=skipped, plus any other status
+                      change not covered above (catch-all for triage).
+* ``new_test``      — absent from the left run and passing on the right.
+* ``removed_test``  — present in the left run, absent on the right.
+* ``duration_spike``— same status, right_duration > 3× left_duration.
+* ``renamed``       — fuzzy second pass: a removed_test + new_test pair
+                      whose ``suite::name`` is similar enough to be the
+                      same logical test after a rename.
+* ``improved``      — RESERVED. Always 0 today: broken→passed is reported
+                      as ``fixed`` (pinned by ``test_classify_fixed``). The
+                      bucket is kept in the envelope for API stability.
 
 The response includes aggregate counts so the UI's summary tiles can
 render without re-computing the classification client-side.
@@ -238,8 +245,11 @@ async def _load_test_rows(
     """Return a map keyed by ``test_fingerprint``.
 
     Same-fingerprint duplicates inside a single run (e.g. retries) are
-    resolved by keeping the last-observed row — matches how the release
-    dashboards render the run.
+    resolved by keeping the most recent row (highest ``created_at``) —
+    matches how the release dashboards render the run. The query is
+    ordered ``created_at, id`` ascending and we keep-last on insert, so
+    the winner is deterministic instead of whatever order the DB happened
+    to return.
 
     Suite scoping mirrors ``resolve_latest_suite_pair``'s union semantics
     so the compare path doesn't reject runs the resolver accepted. The
@@ -270,6 +280,9 @@ async def _load_test_rows(
                 run_level_match,
             )
         )
+    # Ascending order so the keep-last loop below deterministically retains
+    # the most recent execution per fingerprint (id breaks created_at ties).
+    stmt = stmt.order_by(TestCase.created_at.asc(), TestCase.id.asc())
     result = await db.execute(stmt)
     rows: dict[str, TestCase] = {}
     for tc in result.scalars().all():
