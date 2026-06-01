@@ -28,14 +28,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
-import structlog
-from sqlalchemy import desc, func, select, text
+from sqlalchemy import case, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Project, TestCase, TestRun, TestStatus
 from app.services.metrics_service import _count_flaky_tests
-
-logger = structlog.get_logger(__name__)
 
 
 SummaryMode = Literal["window", "latest"]
@@ -140,8 +137,14 @@ async def build_summary_report(
         "avg_duration_ms": avg_duration_ms,
         "latest_run_at": latest_run_at.isoformat() if latest_run_at else None,
         "flaky_test_count": flaky_count,
+        # ``flaky_count`` is an all-time, project-wide count
+        # (metrics_service._count_flaky_tests has no window bound) while
+        # ``totals.total`` is windowed, so for a short window the ratio can
+        # exceed 100%. Clamp so the report never shows a nonsensical rate.
         "flaky_rate_pct": (
-            round(flaky_count / totals.total * 100.0, 1) if totals.total else 0.0
+            min(100.0, round(flaky_count / totals.total * 100.0, 1))
+            if totals.total
+            else 0.0
         ),
         "suites": suites,
         "top_failing_tests": top_failing,
@@ -685,10 +688,27 @@ async def _top_failing_tests(
     end: datetime,
     limit: int,
 ) -> list[dict]:
-    """Top tests by failure count in the window. Grouped by (suite, class, name)."""
+    """Top tests by failure count in the window. Grouped by (suite, class, name).
+
+    Suite uses the same effective-suite expression as the per-suite
+    breakdowns (``feedback_effective_suite_query_pattern``): for live_stream
+    runs prefer ``tr.primary_suite_name`` over the per-event ``tc.suite_name``
+    (which can be the test class name), so a failing test's count isn't split
+    across divergent suite labels and the label matches the suites table.
+    """
+    effective_suite = func.coalesce(
+        case(
+            (
+                TestRun.trigger_source == "live_stream",
+                func.nullif(func.trim(TestRun.primary_suite_name), ""),
+            ),
+            else_=None,
+        ),
+        func.nullif(func.trim(TestCase.suite_name), ""),
+    )
     stmt = (
         select(
-            TestCase.suite_name.label("suite_name"),
+            effective_suite.label("suite_name"),
             TestCase.class_name.label("class_name"),
             TestCase.test_name.label("test_name"),
             func.count(TestCase.id).label("failures"),
@@ -703,7 +723,7 @@ async def _top_failing_tests(
             ),
         )
         .group_by(
-            TestCase.suite_name, TestCase.class_name, TestCase.test_name
+            effective_suite, TestCase.class_name, TestCase.test_name
         )
         .order_by(desc("failures"))
         .limit(limit)
