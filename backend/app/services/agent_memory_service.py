@@ -32,7 +32,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.postgres import AgentMemoryEntry
-from app.services.async_utils import await_if_needed
 
 logger = logging.getLogger("services.agent_memory")
 
@@ -186,6 +185,20 @@ def _normalize_memory_signature(signature: str | None) -> str:
     """Normalize recall/index text so vector lookup is replayable."""
     normalized = re.sub(r"\s+", " ", str(signature or "")).strip().lower()
     return normalized[:5000]
+
+
+def _sanitize_memory_text(value: object) -> Any:
+    """Redact PII/secrets from free-text memory fields before persistence.
+
+    Returns None/empty unchanged so callers preserve their nullability; any
+    non-empty string is routed through the privacy service (the same boundary
+    used before DB writes elsewhere in the codebase).
+    """
+    if not value:
+        return value
+    from app.services.privacy_service import sanitize_for_persistence  # noqa: PLC0415
+
+    return sanitize_for_persistence(str(value))
 
 
 def _memory_retrieval_manifest(
@@ -953,8 +966,14 @@ async def persist_memory_entries(
         return 0
 
     count = 0
+    index_tasks: list[Any] = []
     for entry_data in entries:
         entry_id = entry_data.get("id") or uuid.uuid4()
+        # Redact PII/secrets before the text crosses the persistence boundary
+        # (Postgres row + ChromaDB document below). Memory text is re-derived
+        # from pipeline state, which may carry raw failure output.
+        signature = _sanitize_memory_text(entry_data.get("error_signature"))
+        root_cause = _sanitize_memory_text(entry_data.get("root_cause_summary"))
         entry = AgentMemoryEntry(
             id=entry_id,
             project_id=entry_data["project_id"],
@@ -962,22 +981,25 @@ async def persist_memory_entries(
             pipeline_run_id=entry_data.get("pipeline_run_id"),
             entity_type=entry_data["entity_type"],
             entity_id=str(entry_data["entity_id"]),
-            error_signature=entry_data.get("error_signature"),
+            error_signature=signature,
             failure_category=entry_data.get("failure_category"),
-            root_cause_summary=entry_data.get("root_cause_summary"),
+            root_cause_summary=root_cause,
             payload=entry_data.get("payload"),
             confidence=entry_data.get("confidence"),
             resolution=entry_data.get("resolution"),
         )
-        await await_if_needed(db.add(entry))
+        db.add(entry)
         count += 1
 
-        # Index in ChromaDB if there's a searchable signature
-        sig = entry_data.get("error_signature")
-        if sig:
-            asyncio.create_task(_index_memory_vector(
+        # Index in ChromaDB if there's a searchable signature. Collect the
+        # coroutines and await them below — a detached asyncio.create_task is
+        # not guaranteed to run before the caller's event loop tears down (the
+        # pipeline persists memory inside a short-lived AsyncSessionLocal block),
+        # which would silently leave rows unindexed and unrecallable.
+        if signature:
+            index_tasks.append(_index_memory_vector(
                 str(entry_id),
-                sig,
+                signature,
                 {
                     "entity_type": entry_data["entity_type"],
                     "project_id": str(entry_data["project_id"]),
@@ -986,6 +1008,9 @@ async def persist_memory_entries(
             ))
 
     await db.commit()
+    if index_tasks:
+        # _index_memory_vector swallows its own exceptions; gather defensively.
+        await asyncio.gather(*index_tasks, return_exceptions=True)
     logger.info("Persisted %d memory entries", count)
     return count
 
@@ -1001,6 +1026,10 @@ async def list_project_memories(
     List memory entries for a project, optionally filtered by entity_type.
     Returns (entries, total_count).
     """
+    # Clamp pagination defensively to match the other query helpers (the router
+    # already bounds these, but an internal caller might not).
+    page = max(1, int(page or 1))
+    size = max(1, min(int(size or 50), 200))
     base = select(AgentMemoryEntry).where(
         AgentMemoryEntry.project_id == project_id,
     )
@@ -1079,9 +1108,15 @@ async def recall_similar(
     )
     entry_ids = [m["entry_id"] for m in ranked_matches]
 
+    # Chroma metadata ids are external input — skip any that don't parse as a
+    # UUID rather than letting uuid.UUID() raise and abort the whole recall.
+    valid_ids = [parsed for eid in entry_ids if (parsed := _coerce_uuid(eid))]
+    if not valid_ids:
+        return []
     result = await db.execute(
         select(AgentMemoryEntry).where(
-            AgentMemoryEntry.id.in_([uuid.UUID(eid) for eid in entry_ids if eid])
+            AgentMemoryEntry.id.in_([uuid.UUID(eid) for eid in valid_ids]),
+            AgentMemoryEntry.project_id == project_id,
         )
     )
     entries = {str(e.id): e for e in result.scalars().all()}
@@ -1131,9 +1166,18 @@ async def persist_pipeline_memory(
     unified memory graph linking runs → clusters → analyses → decisions.
     """
     entries: list[dict] = []
-    pid = uuid.UUID(project_id)
-    rid = uuid.UUID(run_id)
-    plid = uuid.UUID(pipeline_run_id) if pipeline_run_id else None
+    try:
+        pid = uuid.UUID(project_id)
+        rid = uuid.UUID(run_id)
+        plid = uuid.UUID(pipeline_run_id) if pipeline_run_id else None
+    except (TypeError, ValueError) as exc:
+        # Make a malformed id an explicit, logged no-op rather than a generic
+        # exception the caller swallows as "memory_persistence_failed".
+        logger.warning(
+            "persist_pipeline_memory skipped: invalid id (project_id=%s run_id=%s): %s",
+            project_id, run_id, exc,
+        )
+        return 0
 
     base = {
         "project_id": pid,
