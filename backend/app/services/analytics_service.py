@@ -322,17 +322,19 @@ async def suite_detail(
     project_filter = _tenant_filter(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
-    # Match by EITHER the per-row ``tc.suite_name`` OR the run-level
-    # ``tr.primary_suite_name``. Live-stream SDKs only stamp the run-
-    # level value (per-row stays NULL); legacy ingests only stamp the
-    # per-row value; TestNG-class-as-suite ingests set per-row to the
-    # class name AND run-level to the suite. Strict per-row match used
-    # to miss all but the third. Case-insensitive trim so trailing
-    # spaces / casing drift between SDK fields don't drop cases.
-    suite_match = (
-        "(LOWER(TRIM(COALESCE(tc.suite_name, ''))) = :suite_key "
-        "OR LOWER(TRIM(COALESCE(tr.primary_suite_name, ''))) = :suite_key)"
-    )
+    # Match by the EFFECTIVE suite (equality), NOT a loose OR. The OR form
+    # (``tc.suite_name = :s OR tr.primary_suite_name = :s``) over-returns:
+    # for a multi-suite run whose ``primary_suite_name`` matches, the second
+    # clause is true for EVERY test of that run, so an Order test surfaces
+    # under "Smoke" and ``/coverage/suite`` then contradicts ``/coverage``
+    # (which groups by this same effective suite). Equality on the effective
+    # suite attributes each test to exactly one suite: the session label for
+    # live_stream rows (where per-event ``tc.suite_name`` is often the test
+    # class name), the per-event suite for file uploads. Shares
+    # ``_effective_suite_sql`` with ``coverage_stats`` + ``_suite_filter_sql``
+    # so attribution can never drift. (Same fix as Bug 2026-05-20, which
+    # migrated the other analytics queries but missed this one.)
+    suite_match = f"LOWER({_effective_suite_sql()}) = :suite_key"
     summary_query = text(
         f"""
         SELECT
@@ -608,7 +610,7 @@ async def _find_recent_test_case_id(
     if not test_name:
         return None
     # TestCase has no direct project_id — scope through TestRun.project_id and
-    # order by run recency (TestCase has no created_at column on this schema).
+    # order by run recency (the most recent run's matching test case wins).
     stmt = (
         select(TestCase.id)
         .join(TestRun, TestRun.id == TestCase.test_run_id)
