@@ -84,6 +84,61 @@ def test_filter_and_grouping_share_one_expression():
     assert _effective_suite_sql() in _suite_filter_sql()
 
 
+@pytest.mark.asyncio
+async def test_suite_detail_matches_on_effective_suite_not_loose_or():
+    """``suite_detail`` (/coverage/suite) must use equality on the effective
+    suite — the same rule ``coverage_stats`` (/coverage) uses — so the two
+    surfaces agree. The loose OR (``tc.suite_name = :s OR
+    tr.primary_suite_name = :s``) over-returned every test of a multi-suite
+    run whose ``primary_suite_name`` matched; it must be gone from all three
+    suite_detail queries (summary/cases/runs)."""
+    import uuid
+
+    from app.services import analytics_service as svc
+    from app.services.analytics_service import _effective_suite_sql
+
+    class _Row:
+        def __init__(self, mapping):
+            self._mapping = mapping
+
+    class _Result:
+        def __init__(self, *, one_row=None, rows=None):
+            self._one = one_row
+            self._rows = rows or []
+
+        def one(self):
+            return self._one
+
+        def fetchall(self):
+            return self._rows
+
+    class _FakeDB:
+        def __init__(self):
+            self.sqls: list[str] = []
+
+        async def execute(self, stmt, params=None):
+            self.sqls.append(str(stmt))
+            # First query is the summary (.one()); return a non-empty total so
+            # the run-level fallback path is skipped. The rest use .fetchall().
+            if len(self.sqls) == 1:
+                return _Result(one_row=_Row({"total_executions": 5}))
+            return _Result(rows=[])
+
+    db = _FakeDB()
+    await svc.suite_detail(
+        db, project_id=str(uuid.uuid4()), suite_name="Smoke", days=7,
+        allowed_project_ids=None,
+    )
+
+    eff = _effective_suite_sql()
+    # summary + cases + runs queries (no fallback fired).
+    assert len(db.sqls) == 3
+    for sql in db.sqls:
+        assert eff in sql, "suite_detail query must match on the effective suite"
+        # The exact over-returning OR fragment must be gone.
+        assert "OR LOWER(TRIM(COALESCE(tr.primary_suite_name" not in sql
+
+
 # ── search_service: primary_suite_name in the search OR ────────────────────
 
 
