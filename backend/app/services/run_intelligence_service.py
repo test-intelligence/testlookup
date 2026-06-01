@@ -5,9 +5,12 @@ Aggregates all AI pipeline outputs for a test run into a single structured
 payload.  The router (run_intelligence.py) is a thin HTTP wrapper around this
 service — all DB/Mongo queries and business logic live here.
 
-P3-1: Independent DB queries are executed concurrently with asyncio.gather()
-after the initial TestRun fetch.  This reduces latency from ~2s (serial) to
-~500ms (parallel) for pages with 10+ queries.
+P3-1: The MongoDB summary fetch is overlapped with the PostgreSQL queries via
+asyncio.gather() (Motor and the PG engine are independent clients, so this is
+safe).  The PG queries themselves run *sequentially* on the single injected
+AsyncSession — a SQLAlchemy AsyncSession is NOT safe for concurrent use, and
+issuing two ``db.execute()`` calls on it from gathered coroutines raises
+``InvalidRequestError: concurrent operations are not permitted``.
 """
 import asyncio
 import logging
@@ -89,6 +92,10 @@ async def get_run_intelligence(
 
     Returns a dict matching the RunIntelligenceResponse shape.
     Raises ValueError if the run is not found (caller should map to 404).
+
+    ``include`` is reserved for future partial-expansion support; the router
+    currently uses a non-empty set only to bypass the snapshot cache and force
+    a live recompute. The full payload is always returned regardless.
     """
     include = include or set()
 
@@ -117,9 +124,12 @@ async def get_run_intelligence(
     # Partial-failure accumulator — sections that fail don't crash the whole response
     _partial_errors: list[str] = []
 
-    # ── P3-1: Parallel fetch — all independent queries run concurrently ──────
-    # After step 1 (TestRun), steps 2-5 and 8 only depend on run_id, so we
-    # launch them all at once with asyncio.gather.
+    # ── P3-1: Overlap Mongo with PG ──────────────────────────────────────────
+    # After step 1 (TestRun), the remaining fetches only depend on run_id.  The
+    # single MongoDB read runs concurrently with the PG queries (independent
+    # clients), but the PG queries themselves MUST run sequentially on the one
+    # injected ``db`` session — a shared AsyncSession used concurrently raises
+    # ``InvalidRequestError: concurrent operations are not permitted``.
 
     async def _fetch_summary_doc():
         try:
@@ -201,9 +211,24 @@ async def get_run_intelligence(
         r = await db.execute(select(Project).where(Project.id == run.project_id))
         return r.scalar_one_or_none()
 
-    # Execute all independent fetches concurrently
-    (
-        summary_doc,
+    async def _fetch_pg_bundle():
+        """Run every PostgreSQL query serially on the shared session.
+
+        These cannot be gathered against each other — they all use the same
+        ``db`` AsyncSession, which forbids concurrent operations.
+        """
+        return (
+            await _fetch_clusters(),
+            await _fetch_analyses(),
+            await _fetch_affected_suites(),
+            await _fetch_release_decision(),
+            await _fetch_pipeline_run(),
+            await _fetch_project(),
+            await _fetch_deep_pipeline_status(),
+        )
+
+    # Overlap the Mongo read (separate client) with the serial PG bundle.
+    summary_doc, (
         clusters_raw,
         analyses,
         affected_suites,
@@ -213,13 +238,7 @@ async def get_run_intelligence(
         deep_pipeline_status,
     ) = await asyncio.gather(
         _fetch_summary_doc(),
-        _fetch_clusters(),
-        _fetch_analyses(),
-        _fetch_affected_suites(),
-        _fetch_release_decision(),
-        _fetch_pipeline_run(),
-        _fetch_project(),
-        _fetch_deep_pipeline_status(),
+        _fetch_pg_bundle(),
     )
 
     # ── Process summary doc ──────────────────────────────────────────────────
@@ -272,7 +291,7 @@ async def get_run_intelligence(
             "role_actions": a.role_actions or {},
         })
 
-    avg_confidence = round(sum(confidence_scores) / len(confidence_scores), 1) if confidence_scores else 0
+    avg_confidence = round(sum(confidence_scores) / len(confidence_scores), 1) if confidence_scores else 0.0
 
     # ── Process release decision ─────────────────────────────────────────────
     release_decision: Optional[dict] = None
