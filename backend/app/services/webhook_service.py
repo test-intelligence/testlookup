@@ -27,12 +27,16 @@ on (flag off OR offline mode on) → the whole subsystem is a silent no-op.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import ipaddress
 import json
+import socket
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -83,6 +87,73 @@ def validate_events(events: list[str]) -> list[str]:
 
 def _secret_key(subscription_id: uuid.UUID | str) -> str:
     return f"subscription:{subscription_id}:hmac"
+
+
+# ── SSRF guard ───────────────────────────────────────────────────────────────
+
+
+def _is_safe_public_url(url: str) -> tuple[bool, str]:
+    """Reject webhook targets that resolve to a non-public address.
+
+    Webhook delivery POSTs to a customer-supplied URL server-side and stores
+    the response, so an unvalidated target is an SSRF sink (cloud metadata
+    169.254.169.254, localhost admin ports, internal services). This blocks
+    any host that resolves to a private / loopback / link-local / reserved /
+    multicast / unspecified address.
+
+    A host that does NOT resolve is allowed: it can't be reached, so there's
+    no SSRF, and we don't want to reject a legitimate endpoint that isn't live
+    yet. The delivery then fails naturally at the HTTP layer.
+
+    Synchronous (does a DNS lookup); call via ``asyncio.to_thread`` from async
+    code.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False, "URL could not be parsed"
+    if parsed.scheme not in ("http", "https"):
+        return False, "URL scheme must be http or https"
+    host = parsed.hostname
+    if not host:
+        return False, "URL has no host"
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return False, "URL has an invalid port"
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except Exception:
+        # Unresolvable host — not reachable, so not an SSRF risk. Allow it;
+        # the actual POST will record a connection error if it's truly dead.
+        return True, ""
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return False, f"target resolves to a non-public address ({addr})"
+    return True, ""
+
+
+async def _assert_safe_target_url(target_url: str) -> None:
+    """Raise 422 when ``target_url`` is unsafe (SSRF guard at registration)."""
+    safe, reason = await asyncio.to_thread(_is_safe_public_url, target_url)
+    if not safe:
+        from fastapi import HTTPException, status as _s
+        raise HTTPException(
+            status_code=_s.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Webhook target URL rejected: {reason}",
+        )
 
 
 # ── Feature-flag / offline gates ────────────────────────────────────────────
@@ -162,6 +233,7 @@ async def create_subscription(
     secret: Optional[str],
 ) -> WebhookSubscription:
     validate_events(events)
+    await _assert_safe_target_url(target_url)  # SSRF guard
     # Project-existence guard. The router-level access check rejects ids
     # outside the caller's membership, but admins and stale UI sessions
     # can still target a deleted project — we'd otherwise blow up with
@@ -222,6 +294,7 @@ async def update_subscription(
     if name is not None:
         row.name = name
     if target_url is not None:
+        await _assert_safe_target_url(target_url)  # SSRF guard
         row.target_url = target_url
     if events is not None:
         validate_events(events)
@@ -532,6 +605,24 @@ async def deliver(delivery_id: uuid.UUID) -> dict[str, Any]:
             delivery.error = "webhooks disabled or offline mode"
             await db.commit()
             return {"error": "gated"}
+
+        # SSRF guard at the egress boundary. create/update validate too, but a
+        # hostname can rebind to an internal IP between registration and
+        # delivery, and pre-existing rows predate the create-time check — so
+        # re-validate here, where the actual request is made.
+        safe, reason = await asyncio.to_thread(
+            _is_safe_public_url, subscription.target_url
+        )
+        if not safe:
+            delivery.status = "FAILED"
+            delivery.error = f"blocked unsafe target URL: {reason}"
+            await db.commit()
+            from app.core.metrics import webhook_delivery_attempts_total
+            webhook_delivery_attempts_total.labels(
+                event_type=delivery.event_type,
+                result="failure",
+            ).inc()
+            return {"error": "blocked_unsafe_target", "reason": reason}
 
         # Load HMAC secret, if configured.
         hmac_secret: Optional[str] = None
