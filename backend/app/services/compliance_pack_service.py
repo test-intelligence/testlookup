@@ -121,26 +121,30 @@ async def _gather_decision_and_run(
     db: AsyncSession, release: Release,
 ) -> tuple[Optional[ReleaseDecision], Optional[TestRun]]:
     """Find the most recent test run linked to this release that has a
-    ReleaseDecision row, and return the decision + run."""
-    # Releases ↔ runs via ``ReleaseTestRunLink`` — query through it to find
-    # the newest linked run first.
+    ReleaseDecision row, and return the decision + run.
+
+    The ``ReleaseDecision`` join is part of the query (not a follow-up lookup
+    on the single newest linked run) so a newer linked run that hasn't been
+    through the gate yet does NOT mask an older, decided run — otherwise a
+    release that was decided and then re-run could no longer produce a pack.
+    """
+    # Releases ↔ runs via ``ReleaseTestRunLink``; join ReleaseDecision so only
+    # decided runs are eligible, newest-first.
     from app.models.postgres import ReleaseTestRunLink
     stmt = (
-        select(TestRun)
+        select(ReleaseDecision, TestRun)
+        .select_from(TestRun)
         .join(ReleaseTestRunLink, ReleaseTestRunLink.test_run_id == TestRun.id)
+        .join(ReleaseDecision, ReleaseDecision.test_run_id == TestRun.id)
         .where(ReleaseTestRunLink.release_id == release.id)
         .order_by(TestRun.start_time.desc().nulls_last())
         .limit(1)
     )
-    result = await db.execute(stmt)
-    run = result.scalar_one_or_none()
-    if run is None:
+    row = (await db.execute(stmt)).first()
+    if row is None:
         return None, None
-
-    dec_result = await db.execute(
-        select(ReleaseDecision).where(ReleaseDecision.test_run_id == run.id)
-    )
-    return dec_result.scalar_one_or_none(), run
+    decision, run = row
+    return decision, run
 
 
 async def _gather_policy_snapshot(
@@ -400,10 +404,15 @@ async def _build_pack_payload(
         )
 
     # Gather every section. Each helper returns plain dicts/lists so we
-    # can serialize them with the shared `_serialize` helper. Any single
-    # failure is logged and written into the pack as an ``error`` payload
-    # so the reviewer knows the pack is degraded rather than the service
-    # raising and producing nothing.
+    # can serialize them with the shared `_serialize` helper.
+    #
+    # Resilience is deliberately split: ``_gather_decision_trail`` and
+    # ``_gather_audit_events`` self-guard and embed an ``error`` payload on
+    # failure (best-effort surrounding context). The CORE snapshots
+    # (release / run / decision / policy / clusters / defects) are NOT
+    # swallowed — a compliance pack must be complete, so if one of those
+    # can't be assembled we fail loudly here rather than ship a silently
+    # incomplete artifact that a reviewer would trust as authoritative.
     release_snapshot = await _gather_release_snapshot(db, release)
     run_snapshot = _to_jsonable(run)
     decision_snapshot = _to_jsonable(decision)
