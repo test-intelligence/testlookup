@@ -29,6 +29,7 @@ from app.models.postgres import (
     TestCase,
     TestRun,
 )
+from app.core.config import settings
 from app.core.metrics import defect_promotions_total
 from app.services.action_policy import (
     ActionStatus,
@@ -334,10 +335,15 @@ async def promote_cluster(
     # the defect row.
     jira_ticket: Optional[dict] = None
     jira_url: Optional[str] = None
+    # AI_OFFLINE_MODE is a hard kill-switch above any integration flag: it must
+    # block every outbound call (Jira included), so short-circuit before the
+    # POST regardless of JIRA_ENABLED. (jira_client only checks JIRA_ENABLED.)
+    offline = settings.AI_OFFLINE_MODE
     if (
         project_key
         and not duplicate_detected
         and initial_status == ActionStatus.APPROVED
+        and not offline
     ):
         jira_ticket, jira_url = await _create_jira_ticket(
             project_key=project_key,
@@ -358,9 +364,11 @@ async def promote_cluster(
         defect_promotions_total.labels(result="pending_review").inc()
     elif jira_ticket:
         defect_promotions_total.labels(result="jira_created").inc()
-    elif project_key and not jira_ticket:
+    elif project_key and not offline and not jira_ticket:
+        # A Jira create was actually attempted (online + approved) but failed.
         defect_promotions_total.labels(result="jira_failed").inc()
     else:
+        # No project_key, offline mode, or otherwise persisted locally only.
         defect_promotions_total.labels(result="local_only").inc()
 
     return {
@@ -583,9 +591,13 @@ async def _find_duplicate_semantic(
 
     # Try ChromaDB semantic similarity
     try:
-        from app.core.config import settings
-
-        _DEFECT_COLLECTION = "open_defects"
+        # Per-PROJECT collection: a single shared "open_defects" collection
+        # persists across calls and accumulates every project's defects, so a
+        # nearest-neighbour query would return another tenant's defect —
+        # leaking a foreign duplicate_of FK and suppressing a legitimate Jira
+        # ticket. Namespacing by project keeps the dedup tenant-isolated, like
+        # the PG and memory layers.
+        _DEFECT_COLLECTION = f"open_defects_{project_id}"
 
         def _chroma_dedup() -> Optional[str]:
             import chromadb
