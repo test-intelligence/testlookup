@@ -76,12 +76,15 @@ async def get_or_create_default_suite(
         is_default=True,
         description="Auto-created. New test cases without an explicit suite land here.",
     )
-    db.add(suite)
+    # SAVEPOINT, not a bare db.rollback(): this is an injected session whose
+    # caller owns the transaction. A full rollback here would discard the
+    # caller's pending work; begin_nested() unwinds only the failed insert
+    # when the partial unique index rejects a concurrent duplicate.
     try:
-        await db.flush()
-        await _maybe_seed_default_owner(db, project.id, suite.name)
-    except Exception:
-        await db.rollback()
+        async with db.begin_nested():
+            db.add(suite)
+            await db.flush()
+    except IntegrityError:
         # Re-select after the partial unique index rejected our insert.
         result = await db.execute(
             select(TestSuite).where(
@@ -90,6 +93,8 @@ async def get_or_create_default_suite(
             )
         )
         suite = result.scalar_one()
+    else:
+        await _maybe_seed_default_owner(db, project.id, suite.name)
     return suite
 
 
@@ -133,12 +138,22 @@ async def _maybe_seed_default_owner(
         if existing is not None:
             return
 
-        db.add(TestSuiteOwner(
-            project_id=project_id,
-            suite_name=suite_name,
-            owner_user_id=default_qa_lead_id,
-        ))
-        await db.flush()
+        # SAVEPOINT around the insert: TestSuiteOwner has a unique
+        # (project_id, suite_name) constraint, so the check-then-insert above
+        # races with concurrent ingests. A failed flush on a bare injected
+        # session leaves it in a rollback-required state and poisons the
+        # caller's transaction; begin_nested() unwinds only this insert.
+        try:
+            async with db.begin_nested():
+                db.add(TestSuiteOwner(
+                    project_id=project_id,
+                    suite_name=suite_name,
+                    owner_user_id=default_qa_lead_id,
+                ))
+                await db.flush()
+        except IntegrityError:
+            # A concurrent seed won the race — the owner row already exists.
+            return
         logger.info(
             "suite_default_owner_seeded",
             project_id=str(project_id),
@@ -180,12 +195,15 @@ async def get_or_create_suite_by_name(
         return suite
 
     suite = TestSuite(project_id=project_id, name=name, is_default=False)
-    db.add(suite)
+    # SAVEPOINT, not a bare db.rollback() — see get_or_create_default_suite.
+    # This path runs inside a loop (sync_canonical_test_cases) on an injected
+    # session, so a full rollback would discard sibling suites already created
+    # in the same transaction. begin_nested() unwinds only the racing insert.
     try:
-        await db.flush()
-        await _maybe_seed_default_owner(db, project_id, name)
-    except Exception:
-        await db.rollback()
+        async with db.begin_nested():
+            db.add(suite)
+            await db.flush()
+    except IntegrityError:
         result = await db.execute(
             select(TestSuite).where(
                 TestSuite.project_id == project_id,
@@ -193,6 +211,8 @@ async def get_or_create_suite_by_name(
             )
         )
         suite = result.scalar_one()
+    else:
+        await _maybe_seed_default_owner(db, project_id, name)
     return suite
 
 
@@ -316,12 +336,18 @@ async def sync_canonical_test_cases(
                 first_seen_run_id=run_id,
                 last_seen_run_id=run_id,
             )
-            db.add(canonical)
+            # SAVEPOINT around the per-case flush: a bare db.rollback() here
+            # would discard EVERY canonical + TestCase link already added in
+            # this batch (the function runs inside ingestion_pipeline's
+            # _run_isolated session, which commits once at the end), silently
+            # truncating the run's catalog. begin_nested() unwinds only the
+            # row that lost the concurrent-upsert race.
             try:
-                await db.flush()
-            except Exception:
-                await db.rollback()
-                # Lost the race to a concurrent upsert — re-select.
+                async with db.begin_nested():
+                    db.add(canonical)
+                    await db.flush()
+            except IntegrityError:
+                # Lost the race to a concurrent upsert — re-select the winner.
                 refetch = await db.execute(
                     select(CanonicalTestCase).where(
                         CanonicalTestCase.project_id == project_id,
@@ -465,8 +491,14 @@ async def list_test_suites(
                         tags=None,
                         is_default=False,
                     )
-                    db.add(suite)
-                    await db.flush()
+                    # SAVEPOINT: a bare db.rollback() would unwind the suites
+                    # backfilled earlier in this loop and leave them as
+                    # expired/detached objects in ``suites`` — serializing
+                    # those in the response (below) then 500s the GET.
+                    # begin_nested() unwinds only this insert.
+                    async with db.begin_nested():
+                        db.add(suite)
+                        await db.flush()
                     suites.append(suite)
                     existing_keys.add((row.project_id, row.suite_name))
                     backfilled = True
@@ -476,10 +508,9 @@ async def list_test_suites(
                         suite_name=row.suite_name,
                     )
                 except IntegrityError:
-                    # Concurrent backfill from another request — rollback
-                    # the pending insert and refetch the now-present row
-                    # so the caller still sees it in this response.
-                    await db.rollback()
+                    # Concurrent backfill from another request — the savepoint
+                    # already unwound the failed insert; refetch the now-present
+                    # row so the caller still sees it in this response.
                     refetch_q = await db.execute(
                         select(TestSuite).where(
                             TestSuite.project_id == row.project_id,
@@ -538,11 +569,14 @@ async def create_test_suite(
         tags=tags,
         is_default=False,
     )
-    db.add(suite)
+    # SAVEPOINT instead of an injected-session db.rollback(): the failed
+    # insert unwinds inside the savepoint and the caller's transaction stays
+    # clean for its own rollback-on-exception handling.
     try:
-        await db.flush()
+        async with db.begin_nested():
+            db.add(suite)
+            await db.flush()
     except IntegrityError as exc:
-        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A suite named '{name}' already exists in this project",
@@ -564,10 +598,11 @@ async def update_test_suite(
         suite.description = description
     if tags is not None:
         suite.tags = tags
+    # SAVEPOINT instead of an injected-session db.rollback() (see create_test_suite).
     try:
-        await db.flush()
+        async with db.begin_nested():
+            await db.flush()
     except IntegrityError as exc:
-        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Another suite in this project already uses that name",
@@ -807,8 +842,9 @@ async def bulk_link_canonicals_to_suite(
         )
 
     # De-dup the input. Callers (UI multi-select) sometimes send the same
-    # id twice — we don't want that to double-count "moved".
-    unique_ids = list({cid for cid in canonical_ids})
+    # id twice — we don't want that to double-count "moved". ``dict.fromkeys``
+    # de-dups while preserving order so ``missing_ids`` is deterministic.
+    unique_ids = list(dict.fromkeys(canonical_ids))
 
     result = await db.execute(
         select(CanonicalTestCase).where(CanonicalTestCase.id.in_(unique_ids))
