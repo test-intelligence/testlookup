@@ -326,10 +326,19 @@ async def _search_flaky_tests(
     override_limit: Optional[int] = None,
 ) -> list[dict]:
     pattern = like_contains(q)
-    # Find test fingerprints with intermittent pass/fail that match the query
+    # Find test fingerprints with intermittent pass/fail that match the query.
+    # ``make_test_fingerprint`` is NOT project-salted, so grouping by
+    # fingerprint ALONE blends a same-named test across projects (in fan-out
+    # mode across a user's memberships, or unrestricted for an admin) into one
+    # flaky entry with summed runs + a ``func.max`` name picked from whichever
+    # project — wrong stats and an ambiguous result. Group by
+    # ``(fingerprint, project_id)`` so each project's flaky test is its own,
+    # correctly-scoped entry. (For a single pinned project the tenant filter
+    # already restricts to one project, so this is a no-op there.)
     stmt = (
         select(
             TestCaseHistory.test_fingerprint,
+            TestRun.project_id.label("project_id"),
             func.max(TestCase.test_name).label("test_name"),
             func.max(TestCase.suite_name).label("suite_name"),
             func.count().label("total_runs"),
@@ -338,7 +347,7 @@ async def _search_flaky_tests(
         .join(TestCase, TestCaseHistory.test_case_id == TestCase.id)
         .join(TestRun, TestCaseHistory.test_run_id == TestRun.id)
         .where(TestCase.test_name.ilike(pattern, escape="\\"))
-        .group_by(TestCaseHistory.test_fingerprint)
+        .group_by(TestCaseHistory.test_fingerprint, TestRun.project_id)
         .having(func.count() >= 5)
         .limit(override_limit or 15)
     )
@@ -355,6 +364,7 @@ async def _search_flaky_tests(
                     "entity_id": row.test_fingerprint,
                     "title": row.test_name or row.test_fingerprint,
                     "subtitle": f"{rate:.0f}% failure rate over {row.total_runs} runs",
+                    "project_id": str(row.project_id) if row.project_id else None,
                     "navigation_url": "/failures",
                     "relevance_score": 0.55,
                     "match_reasons": ["Flaky test matching query"],
