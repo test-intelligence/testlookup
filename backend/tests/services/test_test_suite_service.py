@@ -18,6 +18,20 @@ from app.services import test_suite_service as svc
 from tests.conftest import FakeExecuteResult
 
 
+def _attach_savepoint(db):
+    """Give an AsyncMock session a no-op ``begin_nested()`` async context
+    manager so the SAVEPOINT-wrapped inserts in the service work under mocks.
+    """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _noop_savepoint():
+        yield
+
+    db.begin_nested = lambda: _noop_savepoint()
+    return db
+
+
 # ── default_suite_name_for ────────────────────────────────────────────────
 
 
@@ -53,6 +67,7 @@ async def test_get_or_create_default_suite_creates_when_missing():
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeExecuteResult(scalar_value=None))
     db.flush = AsyncMock()
+    _attach_savepoint(db)
 
     result = await svc.get_or_create_default_suite(db, project)
 
@@ -86,6 +101,7 @@ async def test_get_or_create_suite_by_name_creates_new():
     db = AsyncMock()
     db.execute = AsyncMock(return_value=FakeExecuteResult(scalar_value=None))
     db.flush = AsyncMock()
+    _attach_savepoint(db)
 
     result = await svc.get_or_create_suite_by_name(db, project_id, "Smoke")
     assert result.name == "Smoke"
@@ -156,6 +172,7 @@ async def test_sync_canonical_creates_test_suite_from_primary_suite_name():
 
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[empty_cases, run_lookup, no_existing_suite])
+    _attach_savepoint(db)
     # Stamp ids on flush to mimic SQLAlchemy default uuid generation, so
     # the seeded suite owner path (no-op since the project has no
     # default_qa_lead_user_id) doesn't bomb on a None id.
@@ -206,6 +223,7 @@ async def test_sync_canonical_adds_new_fingerprints(monkeypatch):
 
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[cases_result, suites_result, canonical_result])
+    _attach_savepoint(db)
 
     # Real SQLAlchemy populates ``id`` from ``default=uuid.uuid4`` at flush
     # time. The AsyncMock flush is a no-op, so we simulate that here by

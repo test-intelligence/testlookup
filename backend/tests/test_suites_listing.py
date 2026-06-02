@@ -202,10 +202,19 @@ async def test_list_test_suites_backfills_missing_suites_from_test_runs():
     # synthesized suite is returned to the caller.
     added: list = []
 
+    # The backfill now wraps each insert in a SAVEPOINT (db.begin_nested())
+    # instead of a bare db.rollback(); provide a no-op async context manager.
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _noop_savepoint():
+        yield
+
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=fake_execute),
         flush=AsyncMock(),
         rollback=AsyncMock(),
+        begin_nested=lambda: _noop_savepoint(),
         add=lambda obj: added.append(obj),
     )
 

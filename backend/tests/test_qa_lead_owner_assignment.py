@@ -328,6 +328,15 @@ async def test_seed_writes_owner_when_default_qa_lead_set():
     ])
     db.add = MagicMock()
     db.flush = AsyncMock()
+    # The owner insert is now wrapped in a SAVEPOINT; give the mock a no-op
+    # begin_nested() async context manager.
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _noop_savepoint():
+        yield
+
+    db.begin_nested = lambda: _noop_savepoint()
 
     await _maybe_seed_default_owner(db, project_id, "Smoke")
     db.add.assert_called_once()
