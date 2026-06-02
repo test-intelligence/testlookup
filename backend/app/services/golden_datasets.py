@@ -99,7 +99,7 @@ def get_golden_classification_items() -> list[dict]:
             "expected_output": {"failure_category": "FLAKY", "correct": True},
             "metadata": {"label": "timing_sensitive_flaky"},
         },
-        # ── Automation Defect cases ──────────────────────────────────────
+        # ── Automation Defect / Test Data cases ──────────────────────────
         {
             "input": {
                 "root_cause_summary": "Test selector #submit-btn changed to .btn-primary in latest UI refactor",
