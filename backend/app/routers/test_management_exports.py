@@ -639,11 +639,21 @@ async def list_test_suites(
     Return test suites grouped by suite_name, combining automation test_cases
     (from ingested runs) and manually authored managed_test_cases.
     """
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return []
+    from app.core.deps import get_accessible_project_ids
+    accessible = await get_accessible_project_ids(db, current_user)
+    if project_id is not None:
+        # Verify access to the explicitly-requested project. Previously a
+        # provided project_id skipped the accessible-projects gate (only the
+        # no-project_id path was guarded), letting any authenticated user read
+        # another tenant's suite catalog via ?project_id=<foreign-uuid>.
+        if accessible is not None and project_id not in accessible:
+            raise HTTPException(
+                status_code=403, detail="You do not have access to this project"
+            )
+    elif accessible is not None:
+        # Non-admin, all-projects view: this query path has no accessible-set
+        # fan-out, so return empty rather than an unfiltered cross-tenant list.
+        return []
     from sqlalchemy import text as sa_text
 
     # Automation test cases — catalog view, not execution view.
@@ -945,14 +955,21 @@ async def get_suite_trend(
     ``services/suite_history_service.compute_suite_trend`` so /suites
     /reports/summary can adopt the same shape later.
     """
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
+    from app.core.deps import get_accessible_project_ids
+    accessible = await get_accessible_project_ids(db, current_user)
+    if project_id is not None:
+        # Verify access to the explicitly-requested project — a provided
+        # project_id previously skipped the gate (only the no-project_id path
+        # was guarded), leaking another tenant's suite trend.
+        if accessible is not None and project_id not in accessible:
+            raise HTTPException(
+                status_code=403, detail="You do not have access to this project"
+            )
+    elif accessible is not None:
         # Cross-project trend is meaningless — a suite name can collide
         # across projects, so we 200 with an empty trend rather than
         # surface a misleading cross-tenant aggregate.
-        if accessible is not None:
-            return {"suite_name": suite_name, "days": days, "points": []}
+        return {"suite_name": suite_name, "days": days, "points": []}
 
     from app.services.suite_history_service import compute_suite_trend
     points = await compute_suite_trend(
