@@ -16,6 +16,29 @@ from app.services.runs_service import get_run_with_release, list_project_runs, l
 router = APIRouter(prefix="/api/v1/runs", tags=["Test Runs"])
 
 
+async def _require_accessible_project(
+    db: AsyncSession, current_user: User, project_id: str,
+) -> tuple[uuid.UUID, set | None]:
+    """Verify the caller may read an explicitly-requested project.
+
+    Returns ``(parsed_uuid, accessible_set)`` where ``accessible_set`` is
+    ``None`` for admins (no restriction). Raises 400 on a malformed id and 403
+    when a non-admin caller isn't a member of the project. Closes the
+    cross-tenant IDOR where a provided ``project_id`` bypassed the
+    accessible-projects filter that only guarded the no-project_id path.
+    """
+    try:
+        requested = uuid.UUID(project_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid project_id") from exc
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None and requested not in accessible:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this project"
+        )
+    return requested, accessible
+
+
 @router.get("")
 async def list_runs(
     project_id: str | None = None,
@@ -48,6 +71,9 @@ async def list_runs(
             suite_name=suite_name,
         )
     else:
+        # Explicit project_id: verify the caller can read it (closes the
+        # IDOR) and pass the accessible set for service-level defence-in-depth.
+        _, accessible = await _require_accessible_project(db, current_user, project_id)
         items, total, pages = await list_project_runs(
             db,
             project_id,
@@ -55,6 +81,7 @@ async def list_runs(
             size,
             status,
             release_id,
+            accessible_project_ids=accessible,
             days=effective_days,
             suite_name=suite_name,
         )
@@ -98,10 +125,10 @@ async def list_failed_run_ids(
         stmt = stmt.where(TestRun.created_at >= cutoff)
 
     if project_id:
-        try:
-            stmt = stmt.where(TestRun.project_id == uuid.UUID(project_id))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid project_id") from exc
+        # Verify access to the requested project — a provided project_id used
+        # to skip the accessible-projects filter (cross-tenant IDOR).
+        requested, _ = await _require_accessible_project(db, current_user, project_id)
+        stmt = stmt.where(TestRun.project_id == requested)
     else:
         # Tenant isolation: non-admin sees only their accessible projects.
         accessible = await get_accessible_project_ids(db, current_user)
