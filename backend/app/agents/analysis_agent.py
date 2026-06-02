@@ -580,6 +580,8 @@ class AnalysisAgent(BaseAgent):
                             error_message=meta.get("error_message"),
                             stack_trace=meta.get("stack_trace"),
                             pipeline_run_id=pipeline_run_id,
+                            # Scope the analysis caches to this tenant.
+                            project_id=str(state.get("project_id")) if state.get("project_id") else None,
                         ),
                         timeout=settings.AI_TIMEOUT_SECONDS,
                     )

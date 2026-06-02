@@ -31,11 +31,16 @@ def _get_chroma_client():
     return chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
 
 
-async def _get_or_create_collection():
+async def _get_or_create_collection(project_id: Optional[str] = None):
+    # Per-project collection so a cached analysis (which embeds project-specific
+    # Splunk/OCP evidence on the slow path) can't be matched/served across
+    # tenants. A single global collection would leak one project's evidence to
+    # another on a semantically-similar failure.
+    name = f"{_COLLECTION_NAME}_{project_id}" if project_id else _COLLECTION_NAME
     client = await asyncio.to_thread(_get_chroma_client)
     return await asyncio.to_thread(
         client.get_or_create_collection,
-        _COLLECTION_NAME,
+        name,
         metadata={"hnsw:space": "cosine"},
     )
 
@@ -56,18 +61,20 @@ async def semantic_cache_lookup(
     test_name: str,
     error_message: str,
     stack_trace: str,
+    project_id: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Query ChromaDB for a semantically similar cached analysis.
 
     Returns the cached analysis dict if a match is found above the
-    similarity threshold, or None on miss / error.
+    similarity threshold, or None on miss / error. ``project_id`` scopes the
+    collection so matches never cross tenants.
     """
     if not error_message and not stack_trace:
         return None
 
     try:
-        collection = await _get_or_create_collection()
+        collection = await _get_or_create_collection(project_id)
         signature = _build_signature(test_name, error_message, stack_trace)
 
         results = await asyncio.to_thread(
@@ -121,18 +128,20 @@ async def semantic_cache_store(
     error_message: str,
     stack_trace: str,
     analysis: dict,
+    project_id: Optional[str] = None,
 ) -> None:
     """
     Store an analysis result in the ChromaDB semantic cache.
 
     The error signature is embedded as the document, and the full
     analysis JSON is stored in metadata for retrieval on cache hit.
+    ``project_id`` scopes the collection to the tenant.
     """
     if not error_message and not stack_trace:
         return
 
     try:
-        collection = await _get_or_create_collection()
+        collection = await _get_or_create_collection(project_id)
         signature = _build_signature(test_name, error_message, stack_trace)
 
         # Build a unique ID from the signature hash

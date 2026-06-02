@@ -110,6 +110,8 @@ async def run_triage_agent(
     error_message: Optional[str] = None,
     stack_trace: Optional[str] = None,
     pipeline_run_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> dict:
     """
     Execute the LangChain ReAct triage agent for a failed test case.
@@ -122,6 +124,11 @@ async def run_triage_agent(
 
     Stores full audit trail to MongoDB in both cases.
     Returns structured analysis dict.
+
+    ``run_id`` / ``project_id`` are optional context. ``project_id`` scopes the
+    analysis caches (exact Redis + semantic ChromaDB) so one tenant's cached
+    analysis — which on the slow path embeds project-specific Splunk/OCP
+    evidence — is never served to another tenant on an identical failure.
     """
     # ── Phase 4: Sanitise inputs before any LLM/tool interaction ────────────
     if service_name:
@@ -133,7 +140,7 @@ async def run_triage_agent(
     test_name = sanitize_free_text(test_name, max_length=500)
 
     # ── Cache lookup: skip LLM for identical failures ──────────────────────
-    cached = await _check_analysis_cache(test_name, error_message or "", stack_trace or "")
+    cached = await _check_analysis_cache(test_name, error_message or "", stack_trace or "", project_id)
     if cached is not None:
         logger.info("Cache hit for test '%s' — returning cached analysis", test_name)
         cached["cache_hit"] = True
@@ -149,7 +156,7 @@ async def run_triage_agent(
     # ── Semantic cache: skip LLM for similar failures ────────────────────
     try:
         from app.services.semantic_cache import semantic_cache_lookup
-        sem_cached = await semantic_cache_lookup(test_name, error_message or "", stack_trace or "")
+        sem_cached = await semantic_cache_lookup(test_name, error_message or "", stack_trace or "", project_id=project_id)
         if sem_cached is not None:
             await _store_audit_trail(test_case_id, f"semantic_cache_hit:{test_name}", sem_cached, [])
             await _emit_event(
@@ -178,7 +185,7 @@ async def run_triage_agent(
             if quick is not None:
                 quick["tools_used"] = []  # Fast classifier uses no tools — honest empty list
                 await _store_audit_trail(test_case_id, f"fast_classifier:{test_name}", quick, [])
-                await _store_analysis_cache(test_name, error_message or "", stack_trace or "", quick)
+                await _store_analysis_cache(test_name, error_message or "", stack_trace or "", quick, project_id)
                 return quick
         except Exception as fc_exc:
             logger.debug("FastClassifier skipped: %s", fc_exc)
@@ -335,10 +342,10 @@ async def run_triage_agent(
 
     # Cache successful analyses for future identical AND similar failures
     if analysis.get("confidence_score", 0) > 0 and error_message:
-        await _store_analysis_cache(test_name, error_message or "", stack_trace or "", analysis)
+        await _store_analysis_cache(test_name, error_message or "", stack_trace or "", analysis, project_id)
         try:
             from app.services.semantic_cache import semantic_cache_store
-            await semantic_cache_store(test_name, error_message or "", stack_trace or "", analysis)
+            await semantic_cache_store(test_name, error_message or "", stack_trace or "", analysis, project_id=project_id)
         except Exception as sem_exc:
             logger.debug("Semantic cache store skipped: %s", sem_exc)
 
@@ -492,8 +499,22 @@ async def _store_audit_trail(test_case_id: str, prompt: str, analysis: dict, ste
 
 # ── Redis-based AI analysis cache ───────────────────────────────────────────
 
+def _scoped_cache_key(
+    test_name: str, error_message: str, stack_trace: str, project_id: Optional[str],
+) -> str:
+    """Project-scoped analysis cache key.
+
+    The cached slow-path analysis embeds project-specific evidence
+    (Splunk/OCP excerpts), so the key MUST be tenant-scoped — otherwise an
+    identical failure in another project gets served this project's evidence.
+    """
+    base = compute_analysis_cache_key(test_name, error_message, stack_trace)
+    return f"{base}:proj:{project_id}" if project_id else base
+
+
 async def _check_analysis_cache(
-    test_name: str, error_message: str, stack_trace: str
+    test_name: str, error_message: str, stack_trace: str,
+    project_id: Optional[str] = None,
 ) -> Optional[dict]:
     """Return cached analysis for identical failure, or None on miss."""
     if not error_message and not stack_trace:
@@ -501,7 +522,7 @@ async def _check_analysis_cache(
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
-        cache_key = compute_analysis_cache_key(test_name, error_message, stack_trace)
+        cache_key = _scoped_cache_key(test_name, error_message, stack_trace, project_id)
         raw = await redis.get(cache_key)
         if raw:
             return cast(dict[Any, Any], json.loads(raw))
@@ -511,13 +532,14 @@ async def _check_analysis_cache(
 
 
 async def _store_analysis_cache(
-    test_name: str, error_message: str, stack_trace: str, analysis: dict
+    test_name: str, error_message: str, stack_trace: str, analysis: dict,
+    project_id: Optional[str] = None,
 ) -> None:
     """Cache an analysis result in Redis with TTL."""
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
-        cache_key = compute_analysis_cache_key(test_name, error_message, stack_trace)
+        cache_key = _scoped_cache_key(test_name, error_message, stack_trace, project_id)
         # Store a clean copy without transient fields
         cacheable = {k: v for k, v in analysis.items() if k not in ("cache_hit",)}
         await redis.set(cache_key, json.dumps(cacheable, default=str), ex=settings.AI_ANALYSIS_CACHE_TTL)
