@@ -204,8 +204,13 @@ async def list_project_runs(
         filters.append(TestRun.created_at >= cutoff)
     if project_id:
         filters.append(TestRun.project_id == project_id)
-    elif accessible_project_ids is not None:
-        # Tenant isolation: non-admin users only see runs from their projects
+    if accessible_project_ids is not None:
+        # Tenant isolation (defence-in-depth): non-admin callers are confined
+        # to their memberships even when an explicit project_id is supplied.
+        # Previously this was an ``elif`` — a provided project_id skipped the
+        # membership filter entirely, so a caller passing ``?project_id=<foreign>``
+        # could read another tenant's runs if the router forgot to verify it.
+        # Applying both filters keeps the service safe regardless of caller.
         filters.append(TestRun.project_id.in_(accessible_project_ids))
     if status:
         filters.append(TestRun.status == status)
