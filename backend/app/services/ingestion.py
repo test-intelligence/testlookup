@@ -382,15 +382,37 @@ async def _upsert_test_case(
 
     await db.flush()
 
-    # Record history entry
-    history = TestCaseHistory(
-        test_case_id=tc.id,
-        test_run_id=run.id,
-        test_fingerprint=fingerprint,
-        status=status,
-        duration_ms=case_data.get("duration_ms"),
-    )
-    db.add(history)
+    # Record history — exactly ONE row per (test_case, run). On the update
+    # path (a retry's extra Allure ``-result.json`` for the same fingerprint,
+    # or a same-build re-ingest under a different minio_prefix), refresh the
+    # existing row's final status/duration instead of inserting a duplicate.
+    # Duplicates have no unique-key guard and would inflate the per-fingerprint
+    # run count that flaky detection + historical-recurrence scoring divide by,
+    # mis-classifying flaky tests. Only probe for an existing row when the
+    # TestCase already existed (a brand-new TestCase can't have history yet);
+    # autoflush makes a history row added earlier in THIS ingest visible here.
+    hist_existing: Optional[TestCaseHistory] = None
+    if existing is not None:
+        hist_existing = (
+            await db.execute(
+                select(TestCaseHistory).where(
+                    TestCaseHistory.test_case_id == tc.id,
+                    TestCaseHistory.test_run_id == run.id,
+                )
+            )
+        ).scalar_one_or_none()
+
+    if hist_existing is not None:
+        hist_existing.status = status
+        hist_existing.duration_ms = case_data.get("duration_ms")
+    else:
+        db.add(TestCaseHistory(
+            test_case_id=tc.id,
+            test_run_id=run.id,
+            test_fingerprint=fingerprint,
+            status=status,
+            duration_ms=case_data.get("duration_ms"),
+        ))
 
     return cast(TestCase, tc)
 
