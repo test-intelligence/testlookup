@@ -1,13 +1,14 @@
 """RAG grounded test case generation endpoints (RAG-7 through RAG-14)."""
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     get_current_active_user,
     require_generation_batch_access,
     require_role,
+    resolve_project_scope,
 )
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
@@ -28,6 +29,23 @@ from app.models.schemas import (
 router = APIRouter(prefix="/api/v1/test-management", tags=["RAG Generation"])
 
 
+async def _require_case_project_access(db: AsyncSession, current_user, case_id: uuid.UUID):
+    """Fetch a ManagedTestCase and verify the caller can access its project.
+
+    Case-id RAG endpoints (citations, dismiss-stale) fetch by PK only; without
+    this the case's project_id is never access-checked, letting any
+    authenticated user read/mutate another tenant's generated cases.
+    """
+    from app.models.postgres import ManagedTestCase
+
+    case = await db.get(ManagedTestCase, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    # Raises 403 when the (non-admin) caller isn't a member of the project.
+    await resolve_project_scope(db, current_user, str(case.project_id))
+    return case
+
+
 # ── RAG-7: Retrieval preview ─────────────────────────────────────────────────
 
 
@@ -39,8 +57,11 @@ router = APIRouter(prefix="/api/v1/test-management", tags=["RAG Generation"])
 async def rag_retrieve(
     payload: RagRetrieveRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
+    # Tenant isolation: verify access to the requested project (403 if the
+    # non-admin caller isn't a member) before retrieving its RAG chunks.
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     from app.services.rag_retrieval_service import retrieve_chunks
     chunks = await retrieve_chunks(
         db, payload.project_id, payload.query_text,
@@ -75,6 +96,10 @@ async def rag_generate(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Tenant isolation: a QA_ENGINEER must not generate/persist test cases into
+    # — or read RAG evidence from — a project they can't access. Verify before
+    # the (write-capable) generation runs.
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     from app.services.rag_generation_service import grounded_generate
     result = await grounded_generate(
         db,
@@ -194,8 +219,9 @@ async def reject_case(
 async def get_case_citations(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
+    await _require_case_project_access(db, current_user, case_id)
     from sqlalchemy import select
     from app.models.postgres import GenerationCaseSource
     result = await db.execute(
@@ -224,8 +250,9 @@ async def list_stale_cases(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
+    await resolve_project_scope(db, current_user, str(project_id))
     from app.services.rag_staleness_service import get_stale_cases
     items, total = await get_stale_cases(db, project_id, page, size)
     return {
@@ -244,8 +271,9 @@ async def list_stale_cases(
 async def dismiss_stale(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
 ):
+    await _require_case_project_access(db, current_user, case_id)
     from app.services.rag_staleness_service import dismiss_stale as _dismiss
     await _dismiss(db, case_id)
     await db.commit()
