@@ -6,10 +6,11 @@ Authorization policy:
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,11 +90,28 @@ async def list_releases(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return []
-    return await release_service.list_releases(db, project_id, status)
+    accessible = await get_accessible_project_ids(db, current_user)
+    if project_id is not None:
+        # Verify access to the explicitly-requested project. Previously a
+        # provided project_id skipped the accessible-projects gate entirely
+        # (only the no-project_id path was guarded), so any authenticated user
+        # could list another tenant's releases via ?project_id=<foreign-uuid>.
+        try:
+            requested = uuid.UUID(project_id)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid project_id") from exc
+        if accessible is not None and requested not in accessible:
+            raise HTTPException(
+                status_code=403, detail="You do not have access to this project"
+            )
+    elif accessible is not None and not accessible:
+        # Non-admin with no memberships, all-projects view → nothing to show.
+        return []
+    # Pass the accessible set so the service confines results to the caller's
+    # projects (fan-out in all-projects mode; defence-in-depth when pinned).
+    return await release_service.list_releases(
+        db, project_id, status, accessible_project_ids=accessible,
+    )
 
 
 @router.get("/{release_id}")
