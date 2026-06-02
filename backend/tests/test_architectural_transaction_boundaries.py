@@ -185,13 +185,16 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "upsert_quota was converted to stage-only in Phase E-1 (2026-04-15).",
     ),
     "github_checks_service.py": (
-        3,
+        4,
         "Tier 1-5 worker paths only: post_check_run_for_run (called from "
         "the ingestion worker's finalize_run) writes last_error / "
-        "last_posted_at / last_error_at on three mutually-exclusive "
-        "branches (failure, success, non-success). The router-facing "
+        "last_posted_at / last_error_at on FOUR mutually-exclusive branches "
+        "(retry-failure, success, non-success, and the SSRF-blocked-target "
+        "branch added in the 2026-06-02 github-checks review — refuses to "
+        "send the PAT to a loopback/link-local target and records it). Each "
+        "runs on its own AsyncSessionLocal. The router-facing "
         "upsert_integration was converted to stage-only in Phase E-1 "
-        "(2026-04-15).",
+        "(2026-04-15). Ratcheted 3 → 4.",
     ),
     "flaky_quarantine_service.py": (
         9,
@@ -405,7 +408,10 @@ def test_allowlist_total_is_bounded() -> None:
     # delivery-time "blocked unsafe target → mark FAILED" branch to
     # ``deliver`` that commits on its own worker session (9 → 10 for
     # webhook_service.py), mirroring the other deliver outcome branches.
-    assert total <= 51, (
+    # Raised 51 → 52 on 2026-06-02: the github-checks SSRF review added the
+    # same delivery-time blocked-target branch to ``post_check_run_for_run``
+    # (3 → 4 for github_checks_service.py), on its own worker session.
+    assert total <= 52, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )
