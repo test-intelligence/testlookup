@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Optional, cast
 
 import structlog
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import TestCaseAuditLog, User
+from app.core.deps import get_current_active_user, resolve_project_scope
+from app.db.postgres import get_db
+from app.models.postgres import ManagedTestCase, TestCaseAuditLog, TestPlan, User
 
 logger = structlog.get_logger(__name__)
 
@@ -48,6 +50,35 @@ async def get_or_404(db: AsyncSession, model, entity_id, detail: str):
     if not instance:
         raise HTTPException(status_code=404, detail=detail)
     return instance
+
+
+async def require_case_access(
+    case_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> ManagedTestCase:
+    """Dependency: load a ManagedTestCase and enforce the caller's project
+    access before any ``/cases/{case_id}*`` handler runs.
+
+    The service helpers (``get_*_or_404``) fetch by PK only, so without this
+    every by-id endpoint was a cross-tenant IDOR (read/edit/delete/review of
+    another project's test case).
+    """
+    case = await get_or_404(db, ManagedTestCase, case_id, "Test case not found")
+    await resolve_project_scope(db, current_user, str(case.project_id))
+    return cast(ManagedTestCase, case)
+
+
+async def require_plan_access(
+    plan_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> TestPlan:
+    """Dependency: load a TestPlan and enforce project access — same rationale
+    as ``require_case_access`` for the ``/plans/{plan_id}*`` surface."""
+    plan = await get_or_404(db, TestPlan, plan_id, "Test plan not found")
+    await resolve_project_scope(db, current_user, str(plan.project_id))
+    return cast(TestPlan, plan)
 
 
 async def paginate_scalars(db: AsyncSession, query, page: int, size: int):

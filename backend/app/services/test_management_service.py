@@ -212,6 +212,10 @@ async def create_managed_test_case(
             status_code=404,
             detail=f"Project {payload.project_id} not found — refresh the page or pick a different project.",
         )
+    # Tenant guard: the caller must be a member of the target project. Without
+    # this a user could author a case in ANY project by supplying its id.
+    from app.core.deps import resolve_project_scope
+    await resolve_project_scope(db, current_user, str(payload.project_id))
 
     # Migration 0087 — resolve or create the structured suite anchor when the
     # caller supplied a ``suite_name``. This lets authored cases participate
@@ -460,6 +464,9 @@ async def create_test_plan(db: AsyncSession, payload: TestPlanCreate, current_us
             status_code=404,
             detail=f"Project {payload.project_id} not found — refresh the page or pick a different project.",
         )
+    # Tenant guard — caller must be a member of the target project.
+    from app.core.deps import resolve_project_scope
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     plan = TestPlan(**payload.model_dump(exclude_unset=True), created_by_id=current_user.id)
     db.add(plan)
     await db.flush()  # materialize plan.id so the audit row can reference it

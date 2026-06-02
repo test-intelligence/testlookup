@@ -198,17 +198,18 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "rest of the sweep.",
     ),
     "webhook_service.py": (
-        9,
+        10,
         "Tier 2-6 (post 2026-05-16 P1 follow-up cleanup): subscription "
         "CRUD is now stage-only — create/update/delete_subscription let "
         "get_db commit the primary mutation; the audit row uses a fresh "
         "session inside ``_audit`` (P2-4 pattern) so audit failure no "
-        "longer rolls back the subscription. The 9 remaining commits are "
+        "longer rolls back the subscription. The 10 remaining commits are "
         "all on isolated sessions: replay_delivery (1, enqueue-after-commit), "
-        "emit_event (1, enqueue-after-commit), deliver_webhook (6, each "
+        "emit_event (1, enqueue-after-commit), deliver_webhook (7, each "
         "branch of the Celery task that records delivery outcome on its "
-        "own session), and ``_audit``'s own fresh-session commit (1). "
-        "Ratcheted 14 → 9.",
+        "own session — incl. the SSRF-blocked-target branch added in the "
+        "webhook-service review), and ``_audit``'s own fresh-session commit "
+        "(1). Ratcheted 14 → 9 → 10.",
     ),
     "perf_regression_service.py": (
         1,
@@ -396,7 +397,11 @@ def test_allowlist_total_is_bounded() -> None:
     # P1 follow-up cleanup: subscription CRUD converted to stage-only
     # (14 → 9 commits remaining; the 9th is _audit's fresh-session
     # commit that ``_count_commits`` matches by regex shape).
-    assert total <= 50, (
+    # Raised 50 → 51 on 2026-06-01: the webhook-service SSRF review added a
+    # delivery-time "blocked unsafe target → mark FAILED" branch to
+    # ``deliver`` that commits on its own worker session (9 → 10 for
+    # webhook_service.py), mirroring the other deliver outcome branches.
+    assert total <= 51, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )
