@@ -170,3 +170,102 @@ async def test_persist_agent_stack_gate_run_records_gate_metadata():
     assert row.status == "FAIL"
     assert row.blocking_gates == ["regression"]
     assert row.version_changes == [{"old": "v1", "new": "v2"}]
+
+
+# ── Regression: re-baseline must not violate uq_aeb_task_agent_prompt ─────────
+#
+# Bug pinned (review/eval-gate-service, 2026-06-02):
+#   set_baseline_from_eval deactivated existing active baselines then INSERTED a
+#   new row with the requested prompt_version. AIEvalBaseline has
+#   UniqueConstraint(task_type, agent_name, prompt_version) (applies regardless
+#   of is_active), and prompt_version defaults to "v1", so re-baselining the
+#   same agent at the same prompt_version raised IntegrityError. The router only
+#   catches ValueError → HTTP 500; the baseline could never be refreshed.
+#   Fix: upsert on the unique key (refresh the existing row in place; deactivate
+#   only OTHER active prompt_versions).
+
+
+@pytest.mark.asyncio
+async def test_re_baseline_same_prompt_version_updates_in_place(monkeypatch):
+    from app.services import eval_gate_service as svc
+
+    monkeypatch.setattr(svc, "_load_dataset_items", AsyncMock(return_value=[{"x": 1}]))
+    monkeypatch.setattr(
+        svc, "compute_metrics_for_task_type",
+        lambda _t, _i: {"accuracy": 0.95, "precision": 0.9, "recall": 0.95, "f1_score": 0.92},
+    )
+
+    # First call — no existing rows → insert path.
+    db1 = _FakeAsyncDB(execute_results=[_FakeExecuteResult(scalars=[])])
+    await svc.set_baseline_from_eval(db1, task_type="classification", agent_name="AnalysisAgent")
+    assert len(db1.added) == 1
+    first_row = db1.added[0]
+    assert first_row.prompt_version == "v1"
+
+    # Second call — the same (task_type, agent_name, prompt_version="v1") row
+    # already exists. Must REFRESH it in place, not add a duplicate (which
+    # would hit the unique constraint).
+    monkeypatch.setattr(
+        svc, "compute_metrics_for_task_type",
+        lambda _t, _i: {"accuracy": 0.80, "precision": 0.8, "recall": 0.8, "f1_score": 0.8},
+    )
+    db2 = _FakeAsyncDB(execute_results=[_FakeExecuteResult(scalars=[first_row])])
+    await svc.set_baseline_from_eval(db2, task_type="classification", agent_name="AnalysisAgent")
+
+    assert db2.added == []                       # no NEW row inserted
+    assert first_row.baseline_accuracy == 0.80   # metrics refreshed in place
+    assert first_row.is_active is True
+    db2.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_re_baseline_deactivates_other_prompt_versions(monkeypatch):
+    from app.models.postgres import AIEvalBaseline
+    from app.services import eval_gate_service as svc
+
+    monkeypatch.setattr(svc, "_load_dataset_items", AsyncMock(return_value=[{"x": 1}]))
+    monkeypatch.setattr(
+        svc, "compute_metrics_for_task_type",
+        lambda _t, _i: {"accuracy": 0.9, "precision": 0.9, "recall": 0.9, "f1_score": 0.9},
+    )
+
+    old = AIEvalBaseline(
+        task_type="classification", agent_name="AnalysisAgent",
+        prompt_version="v1", is_active=True,
+    )
+    db = _FakeAsyncDB(execute_results=[_FakeExecuteResult(scalars=[old])])
+
+    # New baseline at a DIFFERENT prompt_version → the v1 row is deactivated and
+    # a fresh v2 row is inserted (distinct unique key, no conflict).
+    await svc.set_baseline_from_eval(
+        db, task_type="classification", agent_name="AnalysisAgent", prompt_version="v2",
+    )
+    assert old.is_active is False
+    new_rows = [r for r in db.added if getattr(r, "prompt_version", None) == "v2"]
+    assert len(new_rows) == 1
+    assert new_rows[0].is_active is True
+
+
+def test_coerce_dataset_uuid_handles_malformed():
+    """A malformed dataset_id must not raise — it coerces to None so the gate
+    falls back to the golden dataset instead of 500ing."""
+    import uuid as _uuid
+
+    from app.services.eval_gate_service import _coerce_dataset_uuid
+
+    assert _coerce_dataset_uuid(None) is None
+    assert _coerce_dataset_uuid("") is None
+    assert _coerce_dataset_uuid("not-a-uuid") is None
+    good = str(_uuid.uuid4())
+    assert str(_coerce_dataset_uuid(good)) == good
+
+
+@pytest.mark.asyncio
+async def test_load_dataset_items_malformed_id_does_not_500():
+    from app.services import eval_gate_service as svc
+
+    db = _FakeAsyncDB()
+    # Previously raised ValueError("badly formed hexadecimal UUID string") deep
+    # in the gate; now falls through to the golden dataset.
+    items = await svc._load_dataset_items(db, "classification", "garbage-not-uuid")
+    assert isinstance(items, list)
