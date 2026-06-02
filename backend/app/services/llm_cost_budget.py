@@ -362,26 +362,42 @@ async def check_and_apply_cap(
 async def _increment_cap_hit(
     db: AsyncSession, project_id: uuid.UUID, period_start: datetime,
 ) -> None:
-    """Increment ``cap_hits`` on the current-period usage row."""
-    usage = await _load_usage_row(db, project_id, period_start)
-    if usage is None:
-        # The cap was hit before any usage was recorded — seed a zero row
-        # so the increment has something to land on.
-        now = datetime.now(timezone.utc)
-        _, period_end = current_period_bounds()
-        db.add(
-            ProjectLlmUsage(
-                project_id=project_id,
-                period_start=period_start,
-                period_end=period_end,
-                total_cost_usd=0.0,
-                cap_hits=1,
-                last_updated_at=now,
+    """Increment ``cap_hits`` on the current-period usage row.
+
+    Pure telemetry — best-effort, and it must NEVER propagate. The caller
+    (:func:`check_and_apply_cap`) has *already decided* to block/downgrade by
+    the time this runs; if a bookkeeping failure (e.g. a transient commit
+    error, or a unique-key race seeding the zero row) bubbled up, it would hit
+    the caller's fail-open handler and silently convert an enforced
+    ``HARD_BLOCK`` into ``UNLIMITED``. The hard cap is a wall, not a knob — a
+    failed counter write must not tear it down.
+    """
+    try:
+        usage = await _load_usage_row(db, project_id, period_start)
+        if usage is None:
+            # The cap was hit before any usage was recorded — seed a zero row
+            # so the increment has something to land on.
+            now = datetime.now(timezone.utc)
+            _, period_end = current_period_bounds()
+            db.add(
+                ProjectLlmUsage(
+                    project_id=project_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                    total_cost_usd=0.0,
+                    cap_hits=1,
+                    last_updated_at=now,
+                )
             )
+        else:
+            usage.cap_hits = int(usage.cap_hits or 0) + 1
+        await db.commit()
+    except Exception as exc:
+        logger.debug(
+            "cap_hit increment failed (non-fatal)",
+            project_id=str(project_id),
+            error=str(exc),
         )
-    else:
-        usage.cap_hits = int(usage.cap_hits or 0) + 1
-    await db.commit()
 
 
 # ── Read helpers for the billing router ───────────────────────────────────
