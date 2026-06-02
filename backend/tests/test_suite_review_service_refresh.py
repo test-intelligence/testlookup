@@ -18,6 +18,7 @@ the update path must refresh.
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -30,6 +31,20 @@ def _scalar_result(value):
     return res
 
 
+def _attach_savepoint(db):
+    """Give a bare AsyncMock session a no-op ``begin_nested`` async CM so the
+    SAVEPOINT-guarded create path in ``get_or_create_review`` runs under the
+    mock (a bare ``AsyncMock().begin_nested()`` returns a coroutine, not an
+    async context manager)."""
+
+    @asynccontextmanager
+    async def _noop():
+        yield
+
+    db.begin_nested = MagicMock(side_effect=lambda: _noop())
+    return db
+
+
 @pytest.mark.asyncio
 async def test_get_or_create_review_refreshes_after_creating_new_row():
     """First call (no existing row) must refresh so server defaults load."""
@@ -40,6 +55,7 @@ async def test_get_or_create_review_refreshes_after_creating_new_row():
     db.add = MagicMock()
     db.flush = AsyncMock()
     db.refresh = AsyncMock()
+    _attach_savepoint(db)
 
     project_id = uuid.uuid4()
     run_id = uuid.uuid4()
@@ -49,6 +65,44 @@ async def test_get_or_create_review_refreshes_after_creating_new_row():
     db.add.assert_called_once()
     db.flush.assert_awaited_once()
     db.refresh.assert_awaited_once_with(row)
+    db.begin_nested.assert_called_once()  # INSERT ran inside a SAVEPOINT
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_review_reselects_winner_on_unique_race():
+    """Concurrent submit for the same (run, suite): the SAVEPOINT-guarded
+    INSERT raises IntegrityError (uq_suite_run_reviews_run_suite), and the
+    service must re-select the winning row instead of letting the 500 escape
+    to get_db and dropping the verdict."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services import suite_review_service as svc
+
+    run_id = uuid.uuid4()
+    winner = SimpleNamespace(
+        id=uuid.uuid4(), state="pending", test_run_id=run_id, suite_name="payments"
+    )
+
+    def _scalar_one_result(value):
+        res = MagicMock()
+        res.scalar_one = MagicMock(return_value=value)
+        return res
+
+    db = AsyncMock()
+    # 1st execute = existing-check (None); 2nd = post-race re-select (winner).
+    db.execute = AsyncMock(
+        side_effect=[_scalar_result(None), _scalar_one_result(winner)]
+    )
+    db.add = MagicMock()
+    db.flush = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("dup")))
+    db.refresh = AsyncMock()
+    _attach_savepoint(db)
+
+    row = await svc.get_or_create_review(db, uuid.uuid4(), "payments", run_id)
+
+    assert row is winner               # re-selected the winner, no 500
+    db.refresh.assert_not_awaited()    # refresh is skipped on the race path
+    assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio
