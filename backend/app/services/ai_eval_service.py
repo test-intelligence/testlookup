@@ -34,13 +34,26 @@ async def build_dataset_from_feedback(
     """
     Build a labeled evaluation dataset from human feedback records.
 
-    Each item has: input (AI analysis data) and expected_output (human correction or agreement).
+    Each item has: input (AI analysis data) and expected_output (human correction
+    or agreement). The items are **classification-shaped** (input carries
+    ``failure_category``/``confidence_score``/``is_flaky``); this builder only
+    produces classification feedback, so the ``task_type`` argument is a label
+    for the caller's dataset row, not a shape switch.
+
+    ``min_confidence`` (0-100) keeps only feedback on analyses whose
+    ``confidence_score`` is at or above the floor — useful to train/evaluate
+    against the model's higher-confidence predictions. ``0`` (default) applies
+    no floor and keeps rows with a NULL confidence.
     """
     query = (
         select(AIFeedback, AIAnalysis)
         .join(AIAnalysis, AIFeedback.analysis_id == AIAnalysis.id)
         .where(AIFeedback.rating.in_(["correct", "incorrect"]))
     )
+    if min_confidence:
+        # Was previously accepted but never applied — a silent no-op that let a
+        # caller think they were filtering to high-confidence feedback.
+        query = query.where(AIAnalysis.confidence_score >= min_confidence)
     result = await db.execute(query.order_by(AIFeedback.created_at.desc()).limit(1000))
     rows = result.all()
 
