@@ -50,7 +50,12 @@ async def get_phase_or_404(db: AsyncSession, release_id: str, phase_id: str) -> 
     return phase
 
 
-async def list_releases(db: AsyncSession, project_id: Optional[str], status: Optional[str] = None) -> dict:
+async def list_releases(
+    db: AsyncSession,
+    project_id: Optional[str],
+    status: Optional[str] = None,
+    accessible_project_ids: Optional[set] = None,
+) -> dict:
     stmt = (
         select(Release)
         .options(selectinload(Release.phases))
@@ -58,6 +63,12 @@ async def list_releases(db: AsyncSession, project_id: Optional[str], status: Opt
     )
     if project_id:
         stmt = stmt.where(Release.project_id == uuid.UUID(project_id))
+    if accessible_project_ids is not None:
+        # Tenant isolation (defence-in-depth): confine non-admin callers to
+        # their memberships even when an explicit project_id is supplied, so a
+        # provided project_id can't bypass scoping at the service layer if a
+        # future caller forgets the router check. ``None`` = admin (no filter).
+        stmt = stmt.where(Release.project_id.in_(list(accessible_project_ids)))
     if status:
         stmt = stmt.where(Release.status == status)
     rows = (await db.execute(stmt)).scalars().all()
