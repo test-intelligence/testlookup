@@ -20,7 +20,7 @@ from app.models.schemas import (
     TestCaseReviewResponse,
     TestCaseVersionResponse,
 )
-from app.routers.test_management_shared import row
+from app.routers.test_management_shared import require_case_access, row
 from app.services.test_management_service import (
     add_test_case_comment,
     apply_review_action,
@@ -179,6 +179,7 @@ async def get_test_case(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     return row(await get_test_case_or_404(db, case_id), ManagedTestCaseResponse)
 
@@ -189,6 +190,7 @@ async def update_test_case(
     payload: ManagedTestCaseUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     test_case = await update_managed_test_case(db, case_id, payload, current_user)
     await db.commit()
@@ -201,6 +203,7 @@ async def deprecate_test_case(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     await deprecate_managed_test_case(db, case_id, current_user)
     await db.commit()
@@ -211,6 +214,7 @@ async def get_test_case_history(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     result = await db.execute(select(TestCaseVersion).where(TestCaseVersion.test_case_id == case_id).order_by(TestCaseVersion.version.desc()).limit(100))
     return [row(version, TestCaseVersionResponse) for version in result.scalars().all()]
@@ -221,6 +225,7 @@ async def request_review(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     review = await request_test_case_review(db, case_id, current_user)
     await db.commit()
@@ -234,6 +239,7 @@ async def review_action(
     payload: ReviewActionRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     test_case = await apply_review_action(db, case_id, payload, current_user)
     await db.commit()
@@ -246,6 +252,7 @@ async def get_reviews(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     result = await db.execute(select(TestCaseReview).where(TestCaseReview.test_case_id == case_id).order_by(TestCaseReview.created_at.desc()).limit(50))
     return [row(review, TestCaseReviewResponse) for review in result.scalars().all()]
@@ -256,6 +263,7 @@ async def list_comments(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     result = await db.execute(select(TestCaseComment).where(TestCaseComment.test_case_id == case_id).order_by(TestCaseComment.created_at.asc()).limit(200))
     return [row(comment, TestCaseCommentResponse) for comment in result.scalars().all()]
@@ -267,6 +275,7 @@ async def add_comment(
     payload: TestCaseCommentCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _case=Depends(require_case_access),
 ):
     comment = await add_test_case_comment(db, case_id, payload, current_user)
     await db.commit()

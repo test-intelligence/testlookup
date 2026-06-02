@@ -21,7 +21,7 @@ from app.models.schemas import (
     TestPlanResponse,
     TestPlanUpdate,
 )
-from app.routers.test_management_shared import audit_event, logger, row
+from app.routers.test_management_shared import audit_event, logger, require_plan_access, row
 from app.services.test_management_service import (
     add_test_plan_item,
     create_test_plan,
@@ -71,6 +71,7 @@ async def get_plan(
     plan_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _plan=Depends(require_plan_access),
 ):
     return row(await get_plan_or_404(db, plan_id), TestPlanResponse)
 
@@ -81,6 +82,7 @@ async def update_plan(
     payload: TestPlanUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _plan=Depends(require_plan_access),
 ):
     plan = await update_test_plan(db, plan_id, payload, current_user)
     await db.commit()
@@ -93,6 +95,7 @@ async def list_plan_items(
     plan_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _plan=Depends(require_plan_access),
 ):
     await get_plan_or_404(db, plan_id)
     result = await db.execute(select(TestPlanItem).where(TestPlanItem.plan_id == plan_id).order_by(TestPlanItem.order_index))
@@ -105,6 +108,7 @@ async def add_plan_item(
     payload: TestPlanItemCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _plan=Depends(require_plan_access),
 ):
     item = await add_test_plan_item(db, plan_id, payload, current_user)
     await db.commit()
@@ -118,6 +122,7 @@ async def remove_plan_item(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _plan=Depends(require_plan_access),
 ):
     await remove_test_plan_item(db, plan_id, item_id)
     await db.commit()
@@ -130,6 +135,7 @@ async def record_execution(
     payload: ExecuteTestPlanItemRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    _plan=Depends(require_plan_access),
 ):
     item = await record_test_plan_execution(
         db,
@@ -151,8 +157,12 @@ async def ai_create_plan(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    from app.core.deps import resolve_project_scope
     from app.services.test_case_ai_agent import ai_optimize_plan
     from app.models.postgres import TestPlan, TestPlanItem
+
+    # Tenant guard — caller must be a member of the target project.
+    await resolve_project_scope(db, current_user, str(payload.project_id))
 
     result = await db.execute(
         select(ManagedTestCase).where(
@@ -193,8 +203,13 @@ async def ai_create_plan(
 @router.post("/plans/ai-create/async", response_model=AITaskEnqueueResponse)
 async def ai_create_plan_async(
     payload: AIOptimizePlanRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Tenant guard — caller must be a member of the target project before we
+    # enqueue a worker task that builds a plan in it.
+    from app.core.deps import resolve_project_scope
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     try:
         from app.worker.tasks import create_ai_test_plan_task
 

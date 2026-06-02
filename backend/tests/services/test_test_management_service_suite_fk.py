@@ -34,6 +34,17 @@ from app.services import test_management_service as svc
 from tests.conftest import FakeExecuteResult
 
 
+@pytest.fixture(autouse=True)
+def _allow_project_access(monkeypatch):
+    """create_managed_test_case now enforces project membership via
+    resolve_project_scope (cross-tenant IDOR fix). These tests exercise the
+    suite-FK wiring, not access control, so permit access for all of them."""
+    monkeypatch.setattr(
+        "app.core.deps.resolve_project_scope",
+        AsyncMock(return_value=(None, None)),
+    )
+
+
 def _fake_project(project_id: uuid.UUID) -> SimpleNamespace:
     return SimpleNamespace(id=project_id, name="Acme")
 
