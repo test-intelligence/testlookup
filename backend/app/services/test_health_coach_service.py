@@ -392,20 +392,14 @@ async def refresh_flaky_coach(
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Find all test fingerprints with history in this project
-    # A test is flaky if it has both PASSED and FAILED/BROKEN in the window
+    # Candidate fingerprints: those with >= 3 history rows in the window for
+    # this project. Only the fingerprint is needed here — total/failed/passed
+    # counts, the ordered status history, and flaky_since/last_failure are all
+    # derived per fingerprint by ``status_q`` below (which yields data the
+    # aggregates can't). The earlier total_runs/failed_runs_raw/last_run_at
+    # aggregates were never read, so they're dropped.
     history_q = (
-        select(
-            TestCaseHistory.test_fingerprint,
-            sa_func.count(TestCaseHistory.id).label("total_runs"),
-            sa_func.count(
-                sa_func.nullif(
-                    TestCaseHistory.status.in_([TestStatus.FAILED, TestStatus.BROKEN]),
-                    False,
-                )
-            ).label("failed_runs_raw"),
-            sa_func.max(TestCaseHistory.created_at).label("last_run_at"),
-        )
+        select(TestCaseHistory.test_fingerprint)
         .join(TestRun, TestRun.id == TestCaseHistory.test_run_id)
         .where(TestRun.project_id == project_id)
         .where(TestCaseHistory.created_at >= cutoff)
