@@ -51,6 +51,22 @@ def test_worse_verdict_go_only_when_both_go():
     assert _worse_verdict("GO", "GO") == "GO"
 
 
+def test_worse_verdict_recognises_canonical_conditional_go():
+    """Regression: the recommendation vocabulary is ``CONDITIONAL_GO``
+    (score_to_recommendation / persisted agent decision), not the band's
+    ``CONDITIONAL``. ``_worse_verdict`` MUST rank it so a green band can't
+    soften CONDITIONAL_GO → GO (the old bug returned the band verdict for the
+    unrecognised composite, i.e. fail-OPEN)."""
+    from app.services.release_council_service import _worse_verdict
+    # The bug: CONDITIONAL_GO composite + GO band must NOT become GO.
+    assert _worse_verdict("CONDITIONAL_GO", "GO") == "CONDITIONAL_GO"
+    assert _worse_verdict("GO", "CONDITIONAL_GO") == "CONDITIONAL_GO"
+    # CONDITIONAL_GO and the band's CONDITIONAL are the same severity.
+    assert _worse_verdict("CONDITIONAL_GO", "CONDITIONAL") == "CONDITIONAL_GO"
+    # NO_GO still wins over CONDITIONAL_GO.
+    assert _worse_verdict("CONDITIONAL_GO", "NO_GO") == "NO_GO"
+
+
 def test_worse_verdict_unknown_input_never_softens():
     """An unknown verdict on one side must NOT be allowed to soften the
     other side. The function returns the known input rather than fall
@@ -148,6 +164,28 @@ async def test_band_floor_never_softens_composite():
     # Band itself is green, but the final recommendation MUST stay NO_GO.
     assert band == "green"
     assert rec == "NO_GO"
+
+
+@pytest.mark.asyncio
+async def test_band_floor_does_not_soften_conditional_go_in_green_band():
+    """Regression for the verdict-vocabulary bug: a CONDITIONAL_GO composite
+    (the real value score_to_recommendation / the agent produce) in a green
+    band must STAY CONDITIONAL_GO, not be softened to GO. Previously
+    CONDITIONAL_GO wasn't in _VERDICT_RANK, so _worse_verdict returned the
+    band's GO."""
+    from app.services.release_council_service import _apply_band_floor
+    rules = {
+        "pass_rate_bands": {"orange_min": 90.0, "yellow_min": 95.0, "green_min": 99.0},
+        "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
+    }
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    rec, band, downgrades = await _apply_band_floor(
+        db, project_id=uuid.uuid4(), recommendation="CONDITIONAL_GO",
+        pass_rate=99.5, open_defects=0,
+    )
+    assert band == "green"
+    assert rec == "CONDITIONAL_GO"  # NOT softened to GO
 
 
 @pytest.mark.asyncio

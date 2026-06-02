@@ -47,7 +47,23 @@ logger = logging.getLogger("services.release_council")
 
 
 # Worst → best so worse_of returns the leftmost in a sorted pair.
-_VERDICT_RANK = {"NO_GO": 0, "CONDITIONAL": 1, "GO": 2}
+#
+# Two vocabularies converge here: the recommendation vocabulary produced by
+# ``criticality_service.score_to_recommendation`` (and persisted on
+# ``ReleaseDecision.recommendation``) is ``CONDITIONAL_GO``, while
+# ``metrics_service.classify_with_policy`` emits ``CONDITIONAL`` for the band
+# verdict. Both must rank identically — otherwise an unrecognised
+# ``CONDITIONAL_GO`` falls through ``_worse_verdict``'s "unknown → return the
+# other" branch and a green band SOFTENS the composite to GO (fail-OPEN). Rank
+# both spellings the same.
+_VERDICT_RANK = {"NO_GO": 0, "CONDITIONAL": 1, "CONDITIONAL_GO": 1, "GO": 2}
+
+
+def _normalize_verdict(verdict: str) -> str:
+    """Map the band vocabulary (``CONDITIONAL``) onto the canonical
+    recommendation vocabulary (``CONDITIONAL_GO``) so the value returned to the
+    API/UI/override endpoint is always one of GO / CONDITIONAL_GO / NO_GO."""
+    return "CONDITIONAL_GO" if verdict == "CONDITIONAL" else verdict
 
 
 def _worse_verdict(a: str, b: str) -> str:
@@ -114,7 +130,10 @@ async def _apply_band_floor(
         bands=bands,
         hard_caps=caps,
     )
-    band_verdict = classified["verdict"]
+    # Normalise the band verdict onto the recommendation vocabulary so
+    # ``_worse_verdict`` compares like-with-like and the returned value stays
+    # canonical (CONDITIONAL_GO, not the band's CONDITIONAL).
+    band_verdict = _normalize_verdict(classified["verdict"])
     final = _worse_verdict(recommendation, band_verdict)
     return final, classified["band"], classified["downgrades"]
 
