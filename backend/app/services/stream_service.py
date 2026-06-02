@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -709,40 +710,71 @@ async def ingest_via_api_key(
             started_at=datetime.now(timezone.utc),
             extra_metadata=(meta.metadata if meta else None) or {},
         )
-        db.add(session)
-        await db.flush()
-
-        redis = get_redis()
-        await redis.setex(SESSION_TOKEN_KEY.format(token=session_token), SESSION_TTL, str(session_uuid))
-
-        from app.streams.live_run_state import RedisLiveRunState
-
-        await RedisLiveRunState.start(
-            run_id=request.run_id,
-            project_id=str(project_id),
-            build_number=(meta.build_number if meta else None) or request.run_id,
-            total_tests=(meta.total_tests if meta else None) or 0,
-            launch_name=(meta.launch_name.strip() if meta and meta.launch_name else None),
-        )
-
-        # Auto-create the release record so it shows up in release tracking
-        # immediately. The actual run→release link is wired up at session close.
-        if session.release_name:
-            try:
-                from app.services.release_linker import resolve_or_create_release
-
-                await resolve_or_create_release(db, project_id, session.release_name)
-            except Exception as exc:  # pragma: no cover - non-fatal, log only
-                logger.warning(
-                    "live_session_release_autocreate_failed run_id=%s release=%s: %s",
-                    request.run_id, session.release_name, exc,
+        # SAVEPOINT-wrap the insert: a concurrent first-batch for the same
+        # (project_id, run_id) hits the partial unique index
+        # ``ix_live_sessions_active_run`` (active sessions only). Without this
+        # guard the loser's flush raises IntegrityError, which 500s the SDK's
+        # first batch instead of degrading to "reuse the winning session".
+        # ``begin_nested`` unwinds only the failed insert; the outer
+        # transaction stays usable for the re-select + event persist below.
+        raced = False
+        try:
+            async with db.begin_nested():
+                db.add(session)
+                await db.flush()
+        except IntegrityError:
+            raced = True
+            session = (
+                await db.execute(
+                    select(LiveSession)
+                    .where(
+                        LiveSession.project_id == project_id,
+                        LiveSession.run_id == request.run_id,
+                    )
+                    .order_by(LiveSession.started_at.desc())
+                    .limit(1)
                 )
+            ).scalar_one()
+            logger.info(
+                "live_session_create_race_reusing_winner run_id=%s project=%s",
+                request.run_id, project_id,
+            )
 
-        created_session = True
-        logger.info(
-            "Live session auto-created via API key: session=%s run=%s project=%s",
-            session_uuid, request.run_id, project_id,
-        )
+        if not raced:
+            # Only the runner that actually created the row registers the
+            # Redis token / run-state and auto-creates the release — the
+            # race winner already did all of this for its own create.
+            redis = get_redis()
+            await redis.setex(SESSION_TOKEN_KEY.format(token=session_token), SESSION_TTL, str(session_uuid))
+
+            from app.streams.live_run_state import RedisLiveRunState
+
+            await RedisLiveRunState.start(
+                run_id=request.run_id,
+                project_id=str(project_id),
+                build_number=(meta.build_number if meta else None) or request.run_id,
+                total_tests=(meta.total_tests if meta else None) or 0,
+                launch_name=(meta.launch_name.strip() if meta and meta.launch_name else None),
+            )
+
+            # Auto-create the release record so it shows up in release tracking
+            # immediately. The actual run→release link is wired up at session close.
+            if session.release_name:
+                try:
+                    from app.services.release_linker import resolve_or_create_release
+
+                    await resolve_or_create_release(db, project_id, session.release_name)
+                except Exception as exc:  # pragma: no cover - non-fatal, log only
+                    logger.warning(
+                        "live_session_release_autocreate_failed run_id=%s release=%s: %s",
+                        request.run_id, session.release_name, exc,
+                    )
+
+            created_session = True
+            logger.info(
+                "Live session auto-created via API key: session=%s run=%s project=%s",
+                session_uuid, request.run_id, project_id,
+            )
     else:
         session = existing
 
