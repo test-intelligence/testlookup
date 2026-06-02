@@ -220,12 +220,23 @@ async def evaluate(
     """
     if not await _feature_enabled(db):
         return None
+
+    # Redact before any LLM sees the content — the privacy invariant requires
+    # scrubbing at every LLM boundary, matching rag_generation's redact_prompt
+    # (RAG-13). The evaluator backend may be hosted (Ragas, or get_llm() with a
+    # cloud provider when AI_OFFLINE_MODE=false), so the generated case + its
+    # citations must not egress unredacted. Redaction is applied consistently
+    # to both sides, so faithfulness of non-PII claims is still evaluable.
+    from app.services.rag_redaction_service import redact_prompt
+    safe_content = redact_prompt(generated_content or "")[0]
+    safe_citations = [redact_prompt(c or "")[0] for c in (citations or [])]
+
     backend = await _resolve_backend()
     try:
         if backend == "ragas":
-            score, reason = await _evaluate_via_ragas(generated_content, citations)
+            score, reason = await _evaluate_via_ragas(safe_content, safe_citations)
         else:
-            score, reason = await _evaluate_via_ollama(generated_content, citations)
+            score, reason = await _evaluate_via_ollama(safe_content, safe_citations)
     except Exception as exc:
         logger.warning("faithfulness evaluator crashed", error=str(exc))
         return {
