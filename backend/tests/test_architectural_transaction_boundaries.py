@@ -126,11 +126,13 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "and siblings) via AsyncSessionLocal — not from request handlers.",
     ),
     "rag_generation_service.py": (
-        2,
-        "grounded_generate has mutually-exclusive happy-path + "
-        "failure-recovery commits. Moving them would require redesigning "
-        "error-state rollback logic (SAVEPOINT or similar). At most one "
-        "runs per invocation, so the caller still sees one-commit-per-call.",
+        1,
+        "grounded_generate commits once at the end of the happy path. The "
+        "2026-06-02 review removed the failure-path rollback-then-recommit "
+        "recovery: it called rollback() on the injected request session (the "
+        "anti-pattern) and, because the batch was only flushed, persisted "
+        "nothing — the except now just re-raises and lets get_db roll back. "
+        "Ratcheted 2 -> 1.",
     ),
     "run_diff_service.py": (
         1,

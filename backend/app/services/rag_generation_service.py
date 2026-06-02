@@ -142,14 +142,14 @@ async def grounded_generate(
         )
 
     except Exception as exc:
+        # Re-raise so the request's ``get_db`` dependency rolls back the whole
+        # unit of work (the pending GenerationBatch + any partial cases).
+        # Deliberately do NOT ``rollback()``/re-commit the injected session
+        # here: rolling back a caller-owned session is the anti-pattern that
+        # aborts the caller's transaction, and the batch was only ``flush``ed
+        # (never committed) so after a rollback it's detached — the previous
+        # "mark failed + commit" recovery therefore persisted nothing anyway.
         logger.error("Grounded generation failed for batch %s: %s", batch.id, exc)
-        try:
-            await db.rollback()
-            batch.status = "failed"
-            batch.error_message = str(exc)[:500]
-            await db.commit()
-        except Exception:
-            logger.warning("Failed to record batch error state for %s", batch.id)
         raise
 
 
