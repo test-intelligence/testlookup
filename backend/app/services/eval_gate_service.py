@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -51,6 +52,24 @@ def _canonical_json(value: Any) -> str:
 
 def _manifest_checksum(manifest: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(manifest).encode("utf-8")).hexdigest()
+
+
+def _coerce_dataset_uuid(dataset_id: Optional[str]) -> Optional[uuid.UUID]:
+    """Parse a dataset_id into a UUID, returning ``None`` on missing/malformed
+    input. The request body types ``dataset_id`` as ``Optional[str]`` (not a
+    UUID), so a malformed value would otherwise raise deep in the gate and 500
+    the request; treat it as "no specific dataset" and let the caller fall back
+    to the golden dataset instead."""
+    if not dataset_id:
+        return None
+    try:
+        return uuid.UUID(dataset_id)
+    except (ValueError, TypeError, AttributeError):
+        logger.warning(
+            "Ignoring malformed dataset_id %r — falling back to golden dataset",
+            dataset_id,
+        )
+        return None
 
 
 def build_agent_stack_gate_manifest(
@@ -339,37 +358,47 @@ async def set_baseline_from_eval(
 
     metrics = compute_metrics_for_task_type(task_type, items)
 
-    # Deactivate existing baselines
+    # Upsert on the unique key. ``AIEvalBaseline`` has
+    # UniqueConstraint(task_type, agent_name, prompt_version) which applies
+    # regardless of ``is_active`` — so a deactivate-then-insert at the same
+    # prompt_version (``"v1"`` default) would violate the constraint and 500
+    # the re-baseline. Find the row for this exact key and refresh it in
+    # place; deactivate only the *other* active baselines (different
+    # prompt_versions) for this task_type+agent_name.
     existing = await db.execute(
         select(AIEvalBaseline).where(
             AIEvalBaseline.task_type == task_type,
             AIEvalBaseline.agent_name == agent_name,
-            AIEvalBaseline.is_active.is_(True),
         )
     )
+    baseline: Optional[AIEvalBaseline] = None
     for b in existing.scalars().all():
-        b.is_active = False
-        db.add(b)
+        if b.prompt_version == prompt_version:
+            baseline = b  # refresh this one in place
+        elif b.is_active:
+            b.is_active = False
+            db.add(b)
 
-    import uuid as _uuid
+    if baseline is None:
+        baseline = AIEvalBaseline(
+            task_type=task_type,
+            agent_name=agent_name,
+            prompt_version=prompt_version,
+        )
+        db.add(baseline)
 
-    baseline = AIEvalBaseline(
-        task_type=task_type,
-        agent_name=agent_name,
-        prompt_version=prompt_version,
-        model_name=model_name,
-        baseline_accuracy=metrics.get("accuracy"),
-        baseline_precision=metrics.get("precision"),
-        baseline_recall=metrics.get("recall"),
-        baseline_f1=metrics.get("f1_score"),
-        min_accuracy=min_accuracy,
-        min_f1=min_f1,
-        max_regression_pct=max_regression_pct,
-        dataset_id=_uuid.UUID(dataset_id) if dataset_id else None,
-        created_by=created_by,
-        is_active=True,
-    )
-    db.add(baseline)
+    baseline.model_name = model_name
+    baseline.baseline_accuracy = metrics.get("accuracy")
+    baseline.baseline_precision = metrics.get("precision")
+    baseline.baseline_recall = metrics.get("recall")
+    baseline.baseline_f1 = metrics.get("f1_score")
+    baseline.min_accuracy = min_accuracy
+    baseline.min_f1 = min_f1
+    baseline.max_regression_pct = max_regression_pct
+    baseline.dataset_id = _coerce_dataset_uuid(dataset_id)
+    baseline.created_by = created_by
+    baseline.is_active = True
+
     # Service receives an injected session — caller commits. Flush so the
     # response can read ``baseline.id`` immediately.
     await db.flush()
@@ -412,10 +441,10 @@ async def _load_dataset_items(
     dataset_id: Optional[str] = None,
 ) -> list[dict]:
     """Load dataset items — from specific dataset or golden defaults."""
-    if dataset_id:
-        import uuid as _uuid
+    dataset_uuid = _coerce_dataset_uuid(dataset_id)
+    if dataset_uuid is not None:
         result = await db.execute(
-            select(AIEvalDataset).where(AIEvalDataset.id == _uuid.UUID(dataset_id))
+            select(AIEvalDataset).where(AIEvalDataset.id == dataset_uuid)
         )
         dataset = result.scalar_one_or_none()
         if dataset:
