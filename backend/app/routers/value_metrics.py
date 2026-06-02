@@ -14,6 +14,14 @@ from app.services.value_metrics_service import get_value_metrics
 router = APIRouter(prefix="/api/v1/value-metrics", tags=["Value Metrics"])
 
 
+def _project_in_scope(project_id: str, accessible: set) -> bool:
+    """True when ``project_id`` is one the caller may access."""
+    try:
+        return uuid.UUID(str(project_id)) in accessible
+    except (ValueError, TypeError):
+        return False
+
+
 @router.get("")
 async def get_metrics(
     project_id: Optional[str] = Query(None),
@@ -22,9 +30,11 @@ async def get_metrics(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return operational value metrics for a project (or all) over a time window."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None:
+        # Non-admin: verify the provided project_id too — otherwise a caller
+        # could read any tenant's value metrics via ?project_id=<foreign-uuid>.
+        if not project_id or not _project_in_scope(project_id, accessible):
             return {}
     pid = uuid.UUID(project_id) if project_id else None
     return await get_value_metrics(db, project_id=pid, days=days)
@@ -61,14 +71,13 @@ async def export_metrics(
     current_user: User = Depends(get_current_active_user),
 ):
     """Export value metrics as a downloadable JSON report."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return Response(
-                content='{"report_type": "value_metrics"}',
-                media_type="application/json",
-                headers={"Content-Disposition": f"attachment; filename=value-metrics-{days}d.json"},
-            )
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None and (not project_id or not _project_in_scope(project_id, accessible)):
+        return Response(
+            content='{"report_type": "value_metrics"}',
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=value-metrics-{days}d.json"},
+        )
     import json
     pid = uuid.UUID(project_id) if project_id else None
     metrics = await get_value_metrics(db, project_id=pid, days=days)

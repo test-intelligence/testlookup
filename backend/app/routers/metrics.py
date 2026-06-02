@@ -1,4 +1,6 @@
 """Dashboard metrics endpoints."""
+import uuid
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +12,14 @@ from app.services.metrics_service import get_dashboard_summary, get_trend_data
 router = APIRouter(prefix="/api/v1/metrics", tags=["Metrics"])
 
 
+def _project_in_scope(project_id: str, accessible: set) -> bool:
+    """True when ``project_id`` is one the caller may access."""
+    try:
+        return uuid.UUID(str(project_id)) in accessible
+    except (ValueError, TypeError):
+        return False
+
+
 @router.get("/summary")
 async def dashboard_summary(
     project_id: str | None = None,
@@ -19,9 +29,12 @@ async def dashboard_summary(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return aggregated KPI metrics for the Executive Dashboard."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None:
+        # Non-admin: must request a project they're a member of. Without
+        # verifying the *provided* project_id a caller could read any tenant's
+        # KPIs via ?project_id=<other-tenant-uuid> (the service trusts it).
+        if not project_id or not _project_in_scope(project_id, accessible):
             return {}
     return await get_dashboard_summary(db, project_id, days, suite_name=suite_name)
 
@@ -35,9 +48,10 @@ async def trend_data(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return daily pass/fail/skip breakdown for trend charts."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None:
+        # Non-admin: only own-project trends (see dashboard_summary).
+        if not project_id or not _project_in_scope(project_id, accessible):
             return {"data": [], "period_days": days}
     data = await get_trend_data(db, project_id, days, suite_name=suite_name)
     return {"data": data, "period_days": days}
