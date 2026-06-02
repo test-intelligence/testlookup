@@ -165,9 +165,12 @@ async def test_ingest_test_results_handles_empty_input_without_extra_select(monk
 
 @pytest.mark.asyncio
 async def test_upsert_test_case_skips_select_when_existing_supplied(monkeypatch):
-    """Direct unit test on ``_upsert_test_case``: when the caller
-    supplies ``existing`` and ``fingerprint``, the function does NOT
-    issue its own SELECT — the prefetch supplied the answer."""
+    """Direct unit test on ``_upsert_test_case``: when the caller supplies
+    ``existing`` and ``fingerprint``, the function does NOT issue the
+    TestCase-existence SELECT (the prefetch supplied it). On the update path it
+    DOES issue a single idempotent history lookup so a retry can't insert a
+    duplicate TestCaseHistory row (see
+    ``tests/regression/test_ingestion_history_no_duplicate_on_retry``)."""
     from app.services import ingestion
 
     run = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
@@ -179,10 +182,17 @@ async def test_upsert_test_case_skips_select_when_existing_supplied(monkeypatch)
         test_fingerprint="fp-x",
     )
 
+    seen_sql: list[str] = []
+
+    def _result_for(stmt, *args, **kwargs):
+        seen_sql.append(str(stmt))
+        res = MagicMock()
+        # No existing history row → the function takes the INSERT branch.
+        res.scalar_one_or_none = MagicMock(return_value=None)
+        return res
+
     db = SimpleNamespace(
-        execute=AsyncMock(side_effect=AssertionError(
-            "no SELECT must fire when existing+fingerprint are supplied"
-        )),
+        execute=AsyncMock(side_effect=_result_for),
         add=MagicMock(),
         flush=AsyncMock(),
     )
@@ -207,4 +217,7 @@ async def test_upsert_test_case_skips_select_when_existing_supplied(monkeypatch)
     assert result is existing_tc
     assert existing_tc.duration_ms == 200
     assert existing_tc.error_message == "boom"
-    db.execute.assert_not_awaited()  # the SELECT was skipped
+    # The TestCase-existence SELECT was skipped; the only query issued is the
+    # idempotent (test_case_id, test_run_id) history lookup.
+    assert len(seen_sql) == 1
+    assert "test_case_history" in seen_sql[0]
