@@ -148,24 +148,33 @@ class TrainingDataExporter:
                     source="category_correction",
                 ))
 
-            # Mark as exported
+            # Collect the unexported feedback ids — but DON'T mark them yet.
             feedback_ids = await db.execute(
                 select(AIFeedback.id).where(AIFeedback.exported.is_(False))
             )
             ids = [r[0] for r in feedback_ids.all()]
-            if ids:
-                await db.execute(
-                    sa_update(AIFeedback)
-                    .where(AIFeedback.id.in_(ids))
-                    .values(exported=True)
-                )
-                await db.commit()
 
         if not examples:
             logger.info("Classifier export: no new examples")
             return 0
 
-        return await self._write_jsonl("classifier", examples)
+        # Upload FIRST. Marking ``exported=True`` resets the "unexported
+        # feedback" stat (feedback_service / training_tasks count
+        # ``exported.is_(False)``), so it must not happen until the JSONL is
+        # durably written — otherwise an upload failure would zero the stat
+        # with no artifact produced for this run.
+        written = await self._write_jsonl("classifier", examples)
+
+        if ids:
+            async with AsyncSessionLocal() as mark_db:
+                await mark_db.execute(
+                    sa_update(AIFeedback)
+                    .where(AIFeedback.id.in_(ids))
+                    .values(exported=True)
+                )
+                await mark_db.commit()
+
+        return written
 
     # ── Track 2: Reasoning ────────────────────────────────────────────────────
 
