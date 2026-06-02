@@ -46,6 +46,18 @@ _STALE_THRESHOLDS_HOURS: dict[str, int] = {
 }
 
 
+# Source types whose sync fetches from an EXTERNAL / hosted system over the
+# network. These must not egress when ``AI_OFFLINE_MODE`` is on. ``INTERNAL_URL``
+# (same-network by definition) and ``UPLOADED_DOC`` (read from local/MinIO) are
+# deliberately excluded — they don't reach hosted services.
+_EXTERNAL_FETCH_TYPES: frozenset[str] = frozenset({
+    KnowledgeSourceType.JIRA_ISSUE.value,
+    KnowledgeSourceType.JIRA_EPIC.value,
+    KnowledgeSourceType.CONFLUENCE_PAGE.value,
+    KnowledgeSourceType.EXTERNAL_URL.value,
+})
+
+
 def _effective_threshold(source_type: str) -> int:
     default = _STALE_THRESHOLDS_HOURS.get(source_type, 24)
     if default == -1:
@@ -72,6 +84,26 @@ async def run_sync(
     """
     t_start = time.monotonic()
     previous_hash = source.content_hash
+
+    # Offline-mode hard gate (above the KNOWLEDGE_RAG_ENABLED flag): a source
+    # that fetches from a hosted/external system must not egress when
+    # AI_OFFLINE_MODE is on. Short-circuit BEFORE mutating state or hitting the
+    # network — and without writing an event, so a re-sync beat tick doesn't
+    # spam skipped events every cycle in an air-gapped deployment.
+    if settings.AI_OFFLINE_MODE and source.source_type in _EXTERNAL_FETCH_TYPES:
+        logger.info(
+            "knowledge sync skipped — offline mode",
+            source_id=str(source.id),
+            source_type=source.source_type,
+            trigger=trigger,
+        )
+        return {
+            "status": "skipped",
+            "reason": "offline_mode",
+            "content_changed": False,
+            "chunk_count": 0,
+            "duration_ms": int((time.monotonic() - t_start) * 1000),
+        }
 
     try:
         # Mark as syncing
