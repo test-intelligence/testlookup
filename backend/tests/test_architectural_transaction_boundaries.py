@@ -134,8 +134,12 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
     ),
     "run_diff_service.py": (
         1,
-        "Outermost: the diff computation persists its own summary row as "
-        "part of a single unit of work with no further caller-side work.",
+        "Dedicated write session for the diff-cache populate (CQS split, "
+        "2026-06-02 review): get_baseline_diff is consumed by GET aggregators "
+        "(run_intelligence_service.get_run_intelligence + the /baseline-diff "
+        "endpoint) that keep using the injected session for further reads, so "
+        "the RunBaseline/RunDiff cache is written via its own AsyncSessionLocal "
+        "and the injected session stays read-only.",
     ),
     "run_intelligence_service.py": (
         1,
