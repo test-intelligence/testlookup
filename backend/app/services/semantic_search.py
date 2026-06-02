@@ -310,10 +310,11 @@ async def semantic_search(
     if not valid_uuids:
         return [], 0, 0
 
-    from sqlalchemy import func
+    from sqlalchemy import and_, func
     from sqlalchemy.orm import aliased
 
     history_case = aliased(TestCase)
+    history_run = aliased(TestRun)
     pg_query = (
         select(
             TestCase.id.label("test_case_id"),
@@ -322,10 +323,21 @@ async def semantic_search(
             TestCase.suite_name,
             TestCase.status,
             TestCase.created_at.label("last_run_date"),
-            func.count().filter(history_case.status == "FAILED").label("failure_count"),
+            func.count().filter(
+                and_(
+                    history_case.status == "FAILED",
+                    # test_fingerprint is NOT project-salted, so a fingerprint-only
+                    # join blends a same-named test in ANOTHER tenant into this
+                    # count — inflating failure_count and leaking cross-tenant
+                    # failure aggregates into search ranking + display. Scope the
+                    # history to the matched row's own project.
+                    history_run.project_id == TestRun.project_id,
+                )
+            ).label("failure_count"),
         )
         .join(TestRun, TestRun.id == TestCase.test_run_id)
         .outerjoin(history_case, history_case.test_fingerprint == TestCase.test_fingerprint)
+        .outerjoin(history_run, history_run.id == history_case.test_run_id)
         .where(TestCase.id.in_(valid_uuids))
         .group_by(
             TestCase.id, TestCase.test_run_id, TestCase.test_name,
@@ -389,19 +401,23 @@ async def hybrid_search(
     """
     from app.services.search_service import search_test_cases_query
 
-    # Run both in parallel
-    semantic_task = asyncio.create_task(
-        semantic_search(
-            db, q, 1, size * 2, project_id, status, days,
-            allowed_project_ids=allowed_project_ids,
-        )
-    )
+    # Run sequentially on the injected session. ``semantic_search`` and
+    # ``search_test_cases_query`` both issue ``db.execute()`` on the SAME
+    # AsyncSession; scheduling one with ``asyncio.create_task`` while awaiting
+    # the other let two ``db.execute`` calls overlap on one session, which
+    # SQLAlchemy rejects with "another operation is in progress" (intermittent,
+    # timing-dependent). The two reads are independent, so serialising them
+    # gives identical results without the concurrency hazard. (A genuinely
+    # parallel version would need a second, isolated session.)
     keyword_results, kw_total, _ = await search_test_cases_query(
         db, q=q, page=1, size=size * 2,
         project_id=project_id, status=status, days=days,
         allowed_project_ids=allowed_project_ids,
     )
-    sem_results, _, _ = await semantic_task
+    sem_results, _, _ = await semantic_search(
+        db, q, 1, size * 2, project_id, status, days,
+        allowed_project_ids=allowed_project_ids,
+    )
 
     from app.services.search_ranking import compute_hybrid_score, build_match_reasons
 
