@@ -29,6 +29,7 @@ from typing import Optional
 import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -312,8 +313,25 @@ async def get_or_create_review(
         test_run_id=test_run_id,
         state="pending",
     )
-    db.add(row)
-    await db.flush()
+    # Two reviewers (or a double-clicked submit) can race the SELECT above for
+    # the same (test_run_id, suite_name); the unique index
+    # ``uq_suite_run_reviews_run_suite`` would then turn the loser's INSERT
+    # into an IntegrityError that, on the injected request session, escapes to
+    # ``get_db`` as a 500 and drops that verdict. Guard the INSERT in a
+    # SAVEPOINT so only the failed INSERT unwinds, then re-select the winner.
+    try:
+        async with db.begin_nested():
+            db.add(row)
+            await db.flush()
+    except IntegrityError:
+        return (
+            await db.execute(
+                select(SuiteRunReview).where(
+                    SuiteRunReview.test_run_id == test_run_id,
+                    SuiteRunReview.suite_name == suite_name,
+                )
+            )
+        ).scalar_one()
     # Materialise server-side defaults (created_at / updated_at) so callers
     # that serialize the row before the request commits don't trigger a
     # sync lazy-load on the expired columns — that path raises
