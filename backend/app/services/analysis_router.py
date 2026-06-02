@@ -312,6 +312,10 @@ async def _classify_llm(
     """Delegate to the existing LLM-based triage agent."""
     try:
         from app.services.agent import run_triage_agent
+        # Scope the analysis caches to this tenant (avoids cross-project
+        # evidence leak on identical failures). project_id may be carried on
+        # the test_case or the run-level context dict.
+        _pid = test_case.get("project_id") or (run_context or {}).get("project_id")
         return await run_triage_agent(
             test_case_id=test_case.get("test_case_id", ""),
             test_name=test_case.get("test_name", ""),
@@ -319,6 +323,7 @@ async def _classify_llm(
             error_message=test_case.get("error_message"),
             stack_trace=test_case.get("stack_trace"),
             pipeline_run_id=test_case.get("pipeline_run_id"),
+            project_id=str(_pid) if _pid else None,
         )
     except Exception as exc:  # noqa: BLE001
         reason = f"llm_error: {type(exc).__name__}: {exc}"
