@@ -268,61 +268,7 @@ async def get_baseline_diff(
     # ── Selection reason ─────────────────────────────────────────────────────
     selection_reason = "latest_passing"
 
-    # ── Persist baseline record (idempotent) ─────────────────────────────────
-    try:
-        from app.models.postgres import RunBaseline, RunDiff
-
-        existing_baseline = await db.execute(
-            select(RunBaseline).where(RunBaseline.run_id == run.id)
-        )
-        rb = existing_baseline.scalar_one_or_none()
-        if not rb:
-            db.add(RunBaseline(
-                run_id=run.id,
-                baseline_run_id=baseline.id,
-                selection_reason=selection_reason,
-                classification=regression_class,
-                baseline_build_number=baseline.build_number,
-                pass_rate_delta=pass_rate_delta,
-                commit_range=commit_range,
-                config_drift=config_drift if config_drift else None,
-            ))
-
-        diff_payload = {
-            "baseline_run_id": str(baseline.id),
-            "baseline_build_number": baseline.build_number,
-            "pass_rate_delta": pass_rate_delta,
-            "new_failures": new_failures,
-            "resolved_failures": resolved_failures,
-            "regression_classification": regression_class,
-            "regression_clusters": regression_clusters,
-            "classified_new_failures": classified_new_failures,
-            "suites_impacted_delta": len(current_suites) - len(baseline_suites),
-            "current_suite_count": len(current_suites),
-            "baseline_suite_count": len(baseline_suites),
-            "commit_range": commit_range,
-            "config_drift": config_drift,
-            "selection_reason": selection_reason,
-        }
-
-        existing_diff = await db.execute(
-            select(RunDiff).where(RunDiff.run_id == run.id)
-        )
-        rd = existing_diff.scalar_one_or_none()
-        if rd:
-            rd.diff_payload = diff_payload
-        else:
-            db.add(RunDiff(
-                run_id=run.id,
-                baseline_run_id=baseline.id,
-                diff_payload=diff_payload,
-            ))
-
-        await db.commit()
-    except Exception as exc:
-        logger.warning("Failed to persist baseline/diff for run %s: %s", run.id, exc)
-
-    return {
+    diff_payload = {
         "baseline_run_id": str(baseline.id),
         "baseline_build_number": baseline.build_number,
         "pass_rate_delta": pass_rate_delta,
@@ -338,6 +284,56 @@ async def get_baseline_diff(
         "config_drift": config_drift,
         "selection_reason": selection_reason,
     }
+
+    # ── Persist baseline + diff cache (idempotent) on a DEDICATED session ──────
+    # CQS split (same pattern as run_intelligence_service._build_and_persist_
+    # defect_candidates and test_health_coach): this service is consumed by GET
+    # aggregators that keep using the injected ``db`` for further reads AFTER
+    # this call — run_intelligence_service.get_run_intelligence reads defect
+    # candidates + stage results in steps 7-8, and the /baseline-diff endpoint's
+    # get_db owns the request transaction. Committing the injected session here
+    # ends the caller's transaction mid-aggregation, and a swallowed commit
+    # failure (broad except, no rollback) would leave it in a rollback-required
+    # state and 500 the rest of the endpoint. Writing the cache through its own
+    # AsyncSessionLocal keeps ``db`` strictly read-only in this service.
+    try:
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import RunBaseline, RunDiff
+
+        async with AsyncSessionLocal() as write_db:
+            existing_baseline = await write_db.execute(
+                select(RunBaseline).where(RunBaseline.run_id == run.id)
+            )
+            if existing_baseline.scalar_one_or_none() is None:
+                write_db.add(RunBaseline(
+                    run_id=run.id,
+                    baseline_run_id=baseline.id,
+                    selection_reason=selection_reason,
+                    classification=regression_class,
+                    baseline_build_number=baseline.build_number,
+                    pass_rate_delta=pass_rate_delta,
+                    commit_range=commit_range,
+                    config_drift=config_drift if config_drift else None,
+                ))
+
+            existing_diff = await write_db.execute(
+                select(RunDiff).where(RunDiff.run_id == run.id)
+            )
+            rd = existing_diff.scalar_one_or_none()
+            if rd:
+                rd.diff_payload = diff_payload
+            else:
+                write_db.add(RunDiff(
+                    run_id=run.id,
+                    baseline_run_id=baseline.id,
+                    diff_payload=diff_payload,
+                ))
+
+            await write_db.commit()
+    except Exception as exc:
+        logger.warning("Failed to persist baseline/diff for run %s: %s", run.id, exc)
+
+    return diff_payload
 
 
 async def _classify_failure_clusters(
