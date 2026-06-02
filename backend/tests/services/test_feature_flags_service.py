@@ -5,8 +5,12 @@ suite is fast, needs no DB, and exercises the decision logic only.
 """
 from __future__ import annotations
 
+import time
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 
 from app.services import feature_flags as ff
@@ -297,3 +301,70 @@ def test_legacy_env_fallback_falsy_values(monkeypatch):
 def test_legacy_env_fallback_unset_returns_none(monkeypatch):
     monkeypatch.delenv("KNOWLEDGE_RAG_ENABLED", raising=False)
     assert ff._legacy_env_fallback("knowledge_rag") is None
+
+
+# ── is_enabled resolution chain (cache → redis → db → legacy) ────────────────
+#
+# Coverage gap filled in review/feature-flags-service (2026-06-02): the pure
+# _evaluate path was well-tested, but the resolution + caching layer in
+# is_enabled had no unit coverage — including the security-critical invariant
+# that the in-process cache stores the flag ROW and re-evaluates per caller
+# (NOT the boolean result, which would leak gating across projects/users).
+
+
+@pytest.fixture
+def _clear_ff_cache():
+    ff._cache.clear()
+    yield
+    ff._cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_is_enabled_evaluates_cached_row_per_project(_clear_ff_cache):
+    """The cached entry is the flag ROW; is_enabled must re-evaluate it against
+    each caller's project — caching the boolean would leak a project-scoped
+    flag to other projects."""
+    allowed = uuid.uuid4()
+    flag = {
+        "key": "scoped_flag", "enabled_global": True,
+        "enabled_projects": [str(allowed)], "enabled_roles": [],
+        "rollout_percent": 100,
+    }
+    ff._cache["scoped_flag"] = (time.monotonic() + 100, flag)
+
+    assert await ff.is_enabled("scoped_flag", project_id=allowed) is True
+    # Same cached row, a DIFFERENT project → still gated out.
+    assert await ff.is_enabled("scoped_flag", project_id=uuid.uuid4()) is False
+
+
+@pytest.mark.asyncio
+async def test_is_enabled_in_process_cache_hit_skips_db(_clear_ff_cache):
+    """A fresh in-process cache entry must short-circuit before any DB query."""
+    flag = {
+        "key": "c", "enabled_global": True, "enabled_projects": [],
+        "enabled_roles": [], "rollout_percent": 100,
+    }
+    ff._cache["c"] = (time.monotonic() + 100, flag)
+    db = AsyncMock()
+
+    assert await ff.is_enabled("c", db=db) is True
+    db.execute.assert_not_awaited()  # cache hit → no DB round trip
+
+
+@pytest.mark.asyncio
+async def test_is_enabled_cached_none_uses_legacy_env_fallback(monkeypatch, _clear_ff_cache):
+    """A cached 'no row' for a legacy key consults the env var each call."""
+    ff._cache["knowledge_rag"] = (time.monotonic() + 100, None)
+
+    monkeypatch.setenv("KNOWLEDGE_RAG_ENABLED", "true")
+    assert await ff.is_enabled("knowledge_rag") is True
+    # Still cached as None → re-reads the env (not a stale boolean).
+    monkeypatch.setenv("KNOWLEDGE_RAG_ENABLED", "false")
+    assert await ff.is_enabled("knowledge_rag") is False
+
+
+@pytest.mark.asyncio
+async def test_is_enabled_cached_none_non_legacy_key_is_false(_clear_ff_cache):
+    """A cached 'no row' for a non-legacy key fails closed."""
+    ff._cache["random_flag"] = (time.monotonic() + 100, None)
+    assert await ff.is_enabled("random_flag") is False
