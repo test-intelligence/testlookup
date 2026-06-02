@@ -161,7 +161,7 @@ async def test_list_test_suites_returns_unique_counts_from_cte(monkeypatch):
     result = await list_test_suites(
         project_id=project_id,
         db=db,
-        current_user=SimpleNamespace(id=uuid.uuid4()),
+        current_user=SimpleNamespace(id=uuid.uuid4(), role="ADMIN"),
     )
 
     by_name = {s["suite_name"]: s for s in result}
@@ -211,7 +211,7 @@ async def test_list_test_suites_merges_managed_cases_additively(monkeypatch):
     result = await list_test_suites(
         project_id=project_id,
         db=db,
-        current_user=SimpleNamespace(id=uuid.uuid4()),
+        current_user=SimpleNamespace(id=uuid.uuid4(), role="ADMIN"),
     )
 
     by_name = {s["suite_name"]: s for s in result}
@@ -260,7 +260,7 @@ async def test_list_test_suites_surfaces_live_stream_gap_suites(monkeypatch):
     result = await list_test_suites(
         project_id=project_id,
         db=db,
-        current_user=SimpleNamespace(id=uuid.uuid4()),
+        current_user=SimpleNamespace(id=uuid.uuid4(), role="ADMIN"),
     )
 
     by_name = {s["suite_name"]: s for s in result}
@@ -311,7 +311,7 @@ async def test_list_test_suites_run_aggregate_does_not_double_count_existing(mon
     result = await list_test_suites(
         project_id=project_id,
         db=db,
-        current_user=SimpleNamespace(id=uuid.uuid4()),
+        current_user=SimpleNamespace(id=uuid.uuid4(), role="ADMIN"),
     )
 
     by_name = {s["suite_name"]: s for s in result}
