@@ -31,10 +31,14 @@ Design notes
 """
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import re
+import socket
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -59,6 +63,40 @@ def _secret_key(project_id: uuid.UUID | str) -> str:
 # Commit-SHA recognizer. Rejects short SHAs because the Checks API
 # requires a full 40-char SHA on the target commit.
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+async def _ssrf_block_reason(url: str) -> Optional[str]:
+    """Return a reason string if ``url``'s host resolves to a loopback,
+    link-local, or unspecified address — else ``None``.
+
+    ``api_base_url`` is QA_LEAD-configurable and we send the project's PAT to
+    it (and surface the response body from ``test_connection``), so an
+    unguarded base is an SSRF read primitive: a QA_LEAD could point it at the
+    cloud metadata endpoint (169.254.169.254 → IAM creds) or localhost and use
+    ``repo_owner``/``repo_name`` path-traversal to hit arbitrary internal
+    paths. We block exactly the loopback + link-local + unspecified ranges —
+    those are never a valid GitHub / GitHub-Enterprise base — while
+    INTENTIONALLY allowing RFC1918 private ranges so a self-hosted GHE on a
+    private network still works. A non-resolving host is allowed (don't block
+    initial setup / air-gapped DNS); the check runs at egress time so it also
+    defends against DNS rebinding and pre-existing rows.
+    """
+    host = (urlparse(url).hostname or "").strip()
+    if not host:
+        return "invalid_url"
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+    except Exception:
+        return None  # non-resolving → allow (setup-friendly, no SSRF reach)
+    for info in infos:
+        raw = info[4][0]
+        try:
+            addr = ipaddress.ip_address(raw.split("%")[0])
+        except ValueError:
+            continue
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+            return f"blocked_target:{raw}"
+    return None
 
 
 class GitHubChecksDisabledError(RuntimeError):
@@ -216,6 +254,16 @@ async def test_connection(
         }
 
     url = f"{row.api_base_url.rstrip('/')}/repos/{row.repo_owner}/{row.repo_name}"
+
+    block = await _ssrf_block_reason(url)
+    if block:
+        return {
+            "success": False,
+            "status_code": None,
+            "message": f"Target host is not allowed ({block})",
+            "repo_html_url": None,
+        }
+
     headers = {
         "Authorization": f"Bearer {pat}",
         "Accept": "application/vnd.github+json",
@@ -356,6 +404,22 @@ async def post_check_run_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
             f"{integration.api_base_url.rstrip('/')}"
             f"/repos/{integration.repo_owner}/{integration.repo_name}/check-runs"
         )
+
+        block = await _ssrf_block_reason(url)
+        if block:
+            # Refuse to send the PAT to a loopback/link-local target (SSRF) —
+            # record it so Integration Health surfaces the misconfiguration.
+            integration.last_error = f"blocked unsafe target: {block}"
+            integration.last_error_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.warning(
+                "github_checks blocked unsafe target",
+                project_id=str(run.project_id),
+                run_id=str(run_id),
+                reason=block,
+            )
+            return {"skipped": "blocked_unsafe_target", "reason": block}
+
         headers = {
             "Authorization": f"Bearer {pat}",
             "Accept": "application/vnd.github+json",
