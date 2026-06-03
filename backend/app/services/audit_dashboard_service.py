@@ -184,24 +184,24 @@ async def get_tenant_observability(
     """Get tenant-scoped observability metrics for a project."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Test runs
+    # Test runs — total/avg/sum AND the FAILED count in one aggregate query
+    # (a conditional COUNT ... FILTER) instead of a second COUNT over the same
+    # (project_id, created_at >= cutoff) window. FILTER (WHERE status='FAILED')
+    # counts exactly the rows the separate ``status == 'FAILED'`` query did
+    # (NULL status is excluded by both), so the result is identical.
     runs_result = await db.execute(
         select(
             func.count(TestRun.id).label("total_runs"),
             func.avg(sa_cast(TestRun.pass_rate, Float)).label("avg_pass_rate"),
             func.sum(TestRun.total_tests).label("total_tests"),
+            func.count(TestRun.id)
+            .filter(TestRun.status == "FAILED")
+            .label("failed_runs"),
         )
         .where(TestRun.project_id == project_id, TestRun.created_at >= cutoff)
     )
     run_stats = runs_result.one_or_none()
-
-    # Failed runs
-    failed_result = await db.execute(
-        select(func.count(TestRun.id))
-        .where(TestRun.project_id == project_id, TestRun.created_at >= cutoff,
-               TestRun.status == "FAILED")
-    )
-    failed_runs = failed_result.scalar() or 0
+    failed_runs = (run_stats.failed_runs or 0) if run_stats else 0
 
     # AI analyses
     ai_result = await db.execute(

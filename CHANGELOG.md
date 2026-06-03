@@ -122,6 +122,12 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   True iff the count is 0. O(N) row fetch → O(1) aggregate; behavior identical incl. the
   NULL-status-is-incomplete and zero-phases (`all([]) is True`) edges. Pinned by
   `tests/regression/test_release_phase_all_done_count.py`.
+- **`audit_dashboard_service.get_tenant_observability` merges failed-runs COUNT** (`auto/perf-20260603-2018`)
+  — it ran a separate `COUNT WHERE status='FAILED'` in addition to the total/avg/sum aggregate
+  over the same `(project_id, created_at >= cutoff)` window. The FAILED count is now a conditional
+  `count(...).filter(status == 'FAILED')` in that same query; the function drops from 5 DB round
+  trips to 4 with identical output (FILTER excludes NULL status just as the `status == 'FAILED'`
+  WHERE did). Pinned by `tests/regression/test_audit_observability_single_runs_query.py`.
 
 ### Performance (2026-06-03 — query batching, human-directed)
 
