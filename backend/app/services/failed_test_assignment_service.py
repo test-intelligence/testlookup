@@ -187,8 +187,28 @@ async def assign_failed_tests_to_suite_owners(
     # post-Phase 2 but still possible from legacy ingest paths) map to its
     # owner correctly. ``get_or_create_default_suite`` is idempotent and
     # cheap to call here.
+    # Effective-suite resolution: live-stream runs from older SDKs leave
+    # ``tc.suite_name`` NULL but carry the real label on
+    # ``TestRun.primary_suite_name``. Fold it in so an explicit
+    # ``TestSuiteOwner`` for that suite is honoured instead of falling through
+    # to the default-suite owner / QA-lead pool. (Recurring effective-suite
+    # pattern: owner/suite resolution must consider BOTH tc.suite_name AND
+    # tr.primary_suite_name.)
+    run_primary_suite = (
+        await db.execute(
+            select(TestRun.primary_suite_name).where(TestRun.id == run_id)
+        )
+    ).scalar_one_or_none()
+    run_primary_suite = (run_primary_suite or "").strip() or None
+
     suite_names_in_run = {f.suite_name for f in failures if f.suite_name}
-    needs_default = any(f.suite_name in (None, "") for f in failures)
+    if run_primary_suite:
+        suite_names_in_run.add(run_primary_suite)
+    # The default suite is only needed when a NULL-suite failure can't fall
+    # back to the run's primary suite.
+    needs_default = (
+        any(f.suite_name in (None, "") for f in failures) and not run_primary_suite
+    )
     default_suite_name: Optional[str] = None
     if needs_default:
         from app.services.test_suite_service import get_or_create_default_suite
@@ -227,7 +247,7 @@ async def assign_failed_tests_to_suite_owners(
         if f.assigned_to_user_id is not None:
             counts["already_assigned"] += 1
             continue
-        suite_key = f.suite_name or default_suite_name
+        suite_key = f.suite_name or run_primary_suite or default_suite_name
         owner_id: Optional[uuid.UUID] = (
             owner_by_suite.get(suite_key) if suite_key else None
         )
