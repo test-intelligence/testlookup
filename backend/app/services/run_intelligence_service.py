@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 
 """
 Run Intelligence Service.
