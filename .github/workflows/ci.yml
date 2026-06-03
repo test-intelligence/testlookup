@@ -500,3 +500,4 @@ jobs:
         run: |
           echo "ℹ️  Deploy skipped. Images were built and pushed successfully."
           echo "   To enable auto-deploy, add KUBE_CONFIG_DEV to the 'development' GitHub Environment."
+# no-op to retrigger CI
