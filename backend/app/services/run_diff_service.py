@@ -153,15 +153,21 @@ async def get_baseline_diff(
         str(row.id): row.test_fingerprint for row in current_failed_rows
     }
 
-    # ── Baseline failures (fingerprints only) ─────────────────────────────────
-    baseline_failed_result = await db.execute(
-        select(TestCase.test_fingerprint)
-        .where(
-            TestCase.test_run_id == baseline.id,
-            TestCase.status.in_(["FAILED", "BROKEN"]),
+    # ── Baseline failures (fingerprint + name) ────────────────────────────────
+    # Fetch once with both columns and reuse for new-failure detection (set of
+    # fingerprints) AND resolved-failures (names) below. Previously this ran two
+    # SELECTs with identical WHERE clauses — one projecting fingerprint, one
+    # projecting fingerprint+name — a redundant round trip on the same rows.
+    baseline_failed_rows = (
+        await db.execute(
+            select(TestCase.test_fingerprint, TestCase.test_name)
+            .where(
+                TestCase.test_run_id == baseline.id,
+                TestCase.status.in_(["FAILED", "BROKEN"]),
+            )
         )
-    )
-    baseline_failed_fps = {row.test_fingerprint for row in baseline_failed_result.all()}
+    ).all()
+    baseline_failed_fps = {row.test_fingerprint for row in baseline_failed_rows}
 
     # New failures: in current but NOT in baseline
     new_failures = [
@@ -183,15 +189,10 @@ async def get_baseline_diff(
     )
     current_passing_fps = {row.test_fingerprint for row in current_passing_result.all()}
 
-    baseline_failed_names_result = await db.execute(
-        select(TestCase.test_fingerprint, TestCase.test_name)
-        .where(
-            TestCase.test_run_id == baseline.id,
-            TestCase.status.in_(["FAILED", "BROKEN"]),
-        )
-    )
+    # Reuse the single baseline-failures fetch from above (same WHERE clause) —
+    # no second query needed.
     resolved_failures = [
-        row.test_name for row in baseline_failed_names_result.all()
+        row.test_name for row in baseline_failed_rows
         if row.test_fingerprint in current_passing_fps
     ][:20]
 
