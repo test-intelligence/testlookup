@@ -42,7 +42,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import PerfBaseline, TestCase, TestRun, TestStatus
+from app.models.postgres import AppSetting, PerfBaseline, TestCase, TestRun, TestStatus
 
 logger = structlog.get_logger("services.perf_regression")
 
@@ -57,6 +57,38 @@ _SPIKE_SIGMA = 3.0
 # Cap on how many historic TestCase rows to sweep into a baseline per
 # refresh pass — keeps the nightly task bounded on huge tables.
 _REFRESH_BATCH_SIZE = 5000
+
+# app_settings key holding the high-watermark (max TestCase.created_at
+# already swept). Welford is additive — re-feeding a row inflates
+# sample_count and corrupts mean/stddev — so the sweep MUST process each
+# row exactly once. The cursor makes the nightly pass incremental.
+_REFRESH_CURSOR_KEY = "perf_baseline.refresh_cursor"
+
+
+async def _load_refresh_cursor(db: AsyncSession) -> Optional[datetime]:
+    row = await db.execute(
+        select(AppSetting).where(AppSetting.key == _REFRESH_CURSOR_KEY)
+    )
+    setting = row.scalar_one_or_none()
+    if setting and setting.value:
+        raw = setting.value.get("last_created_at")
+        if raw:
+            try:
+                return datetime.fromisoformat(raw)
+            except (ValueError, TypeError):
+                logger.warning("perf_baseline cursor unparseable", raw=raw)
+    return None
+
+
+async def _save_refresh_cursor(db: AsyncSession, value: datetime) -> None:
+    row = await db.execute(
+        select(AppSetting).where(AppSetting.key == _REFRESH_CURSOR_KEY)
+    )
+    setting = row.scalar_one_or_none()
+    if setting is None:
+        setting = AppSetting(key=_REFRESH_CURSOR_KEY)
+        db.add(setting)
+    setting.value = {"last_created_at": value.isoformat()}
 
 
 # ── Feature flag gate ─────────────────────────────────────────────────────
@@ -89,11 +121,17 @@ def _welford_update(
     current.m2 = float(current.m2 or 0.0) + (delta * delta2)
     if n >= 2:
         current.stddev_ms = math.sqrt(current.m2 / (n - 1))
+    else:
+        # Variance is undefined for a single sample. Set 0.0 explicitly:
+        # a freshly-constructed PerfBaseline has stddev_ms=None until its
+        # column default is applied at INSERT, and this runs before any
+        # flush — so without this the p95 line below does float(None).
+        current.stddev_ms = 0.0
     # p95 is approximated as mean + 1.645*stddev (one-tailed 95%
     # confidence under the normal distribution). Good enough for the
     # release-gate UI; callers wanting the true empirical p95 can query
     # TestCase directly.
-    current.p95_ms = float(current.mean_ms) + 1.645 * float(current.stddev_ms)
+    current.p95_ms = float(current.mean_ms or 0.0) + 1.645 * float(current.stddev_ms or 0.0)
     current.last_observed_ms = int(observation_ms)
     current.last_observed_at = datetime.now(timezone.utc)
 
@@ -182,21 +220,28 @@ async def refresh_baselines() -> dict[str, int]:
     baselines_touched: set[tuple[uuid.UUID, str]] = set()
 
     async with AsyncSessionLocal() as db:
-        # We walk distinct TestCase rows with the highest-cadence data
-        # first. A dedicated cursor would be nicer but the capped batch
-        # size keeps memory bounded even without it.
-        stmt = (
-            select(TestCase)
-            .where(
-                TestCase.duration_ms.is_not(None),
-                TestCase.duration_ms > 0,
-                TestCase.status.in_((TestStatus.PASSED.value, TestStatus.FAILED.value)),
-            )
-            .order_by(TestCase.created_at.desc())
-            .limit(_REFRESH_BATCH_SIZE)
+        # Incremental, exactly-once sweep: only rows created after the last
+        # watermark, oldest-first so the cursor advances monotonically and a
+        # backlog larger than one batch isn't stranded. ASC + ``created_at >
+        # cursor`` (rather than DESC top-N) is what makes re-runs idempotent —
+        # the previous code re-fed the most-recent rows every night.
+        cursor = await _load_refresh_cursor(db)
+        stmt = select(TestCase).where(
+            TestCase.duration_ms.is_not(None),
+            TestCase.duration_ms > 0,
+            TestCase.status.in_((TestStatus.PASSED.value, TestStatus.FAILED.value)),
         )
+        if cursor is not None:
+            stmt = stmt.where(TestCase.created_at > cursor)
+        stmt = stmt.order_by(TestCase.created_at.asc()).limit(_REFRESH_BATCH_SIZE)
+
         result = await db.execute(stmt)
+        max_created: Optional[datetime] = None
         for tc in result.scalars().all():
+            # Advance the watermark for every swept row, even ones we skip
+            # below (no fingerprint), so they aren't re-examined next run.
+            if tc.created_at and (max_created is None or tc.created_at > max_created):
+                max_created = tc.created_at
             if not tc.test_fingerprint:
                 continue
             await record_observation(
@@ -209,7 +254,8 @@ async def refresh_baselines() -> dict[str, int]:
             )
             observed += 1
             baselines_touched.add((tc.project_id, tc.test_fingerprint))
-        if observed:
+        if max_created is not None:
+            await _save_refresh_cursor(db, max_created)
             await db.commit()
 
     logger.info(
