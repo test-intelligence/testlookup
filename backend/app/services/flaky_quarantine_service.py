@@ -663,7 +663,7 @@ async def run_recheck_cycle() -> dict[str, int]:
 
     async with AsyncSessionLocal() as db:
         from app.models.postgres import TestCase, TestRun, TestStatus
-        from sqlalchemy import func as _func
+        from sqlalchemy import and_ as _and, func as _func, or_ as _or
         result = await db.execute(
             select(FlakyQuarantineRequest).where(
                 FlakyQuarantineRequest.status == FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
@@ -672,27 +672,58 @@ async def run_recheck_cycle() -> dict[str, int]:
         rows = list(result.scalars().all())
         now = datetime.now(timezone.utc)
 
-        for row in rows:
-            since = row.quarantine_start or (now - timedelta(days=row.quarantine_duration_days))
-            # MUST scope to the row's project: ``test_fingerprint`` is
-            # ``sha256(class::name)`` with no project salt (see
-            # ingestion.make_test_fingerprint), so two projects with a
-            # same-named test share a fingerprint. Without the project join
-            # the flip-rate would blend other tenants' executions and drive
-            # a wrong release/re-quarantine decision. TestCase carries the
-            # project only via TestRun, hence the join.
-            counts_stmt = select(
-                TestCase.status,
-                _func.count(TestCase.id).label("c"),
-            ).join(
-                TestRun, TestRun.id == TestCase.test_run_id,
-            ).where(
-                TestRun.project_id == row.project_id,
-                TestCase.test_fingerprint == row.test_fingerprint,
-                TestCase.created_at >= since,
-            ).group_by(TestCase.status)
+        # Batch the per-row flip-rate counts into ONE grouped query (was one
+        # COUNT query per RECHECK_SCHEDULED row). Each row has its own ``since``
+        # cutoff, so OR per-(project, fingerprint, since) conditions and group by
+        # (project, fingerprint, status). The partial unique index
+        # ``ux_fqr_live_per_fingerprint`` guarantees at most one LIVE row per
+        # (project_id, test_fingerprint) — RECHECK_SCHEDULED is a live state — so
+        # each result pair maps back to exactly one row and that row's cutoff is
+        # preserved. MUST keep the TestRun.project_id scope: ``test_fingerprint``
+        # is ``sha256(class::name)`` with no project salt, so two projects with a
+        # same-named test share a fingerprint and an unscoped count would blend
+        # tenants. The ``test_fingerprint IN (...)`` predicate is redundant with
+        # the OR (it only helps the planner use ix_test_cases_fingerprint).
+        buckets_by_pair: dict[tuple[Any, str], dict[str, int]] = {}
+        if rows:
+            since_by_pair: dict[tuple[Any, str], datetime] = {}
+            for row in rows:
+                since = row.quarantine_start or (
+                    now - timedelta(days=row.quarantine_duration_days)
+                )
+                since_by_pair[(row.project_id, row.test_fingerprint)] = since
+            conds = [
+                _and(
+                    TestRun.project_id == pid,
+                    TestCase.test_fingerprint == fp,
+                    TestCase.created_at >= since,
+                )
+                for (pid, fp), since in since_by_pair.items()
+            ]
+            counts_stmt = (
+                select(
+                    TestRun.project_id.label("project_id"),
+                    TestCase.test_fingerprint.label("fingerprint"),
+                    TestCase.status.label("status"),
+                    _func.count(TestCase.id).label("c"),
+                )
+                .join(TestRun, TestRun.id == TestCase.test_run_id)
+                .where(
+                    TestCase.test_fingerprint.in_([fp for _p, fp in since_by_pair]),
+                    _or(*conds),
+                )
+                .group_by(
+                    TestRun.project_id, TestCase.test_fingerprint, TestCase.status,
+                )
+            )
             counts_result = await db.execute(counts_stmt)
-            buckets = {r.status: int(r.c) for r in counts_result.all()}
+            for cr in counts_result.all():
+                buckets_by_pair.setdefault(
+                    (cr.project_id, cr.fingerprint), {}
+                )[cr.status] = int(cr.c)
+
+        for row in rows:
+            buckets = buckets_by_pair.get((row.project_id, row.test_fingerprint), {})
 
             passes = buckets.get(TestStatus.PASSED.value, 0)
             fails = (

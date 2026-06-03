@@ -76,9 +76,13 @@ async def test_recheck_cycle_count_query_is_project_scoped():
         updated_at=None,
     )
 
+    # Batched count query now also projects project_id + fingerprint (grouped
+    # across all recheck rows); results map back per (project_id, fingerprint).
     counts_rows = [
-        SimpleNamespace(status=_TestStatus.PASSED.value, c=20),
-        SimpleNamespace(status=_TestStatus.FAILED.value, c=1),
+        SimpleNamespace(project_id=project_id, fingerprint="deadbeefdeadbeef",
+                        status=_TestStatus.PASSED.value, c=20),
+        SimpleNamespace(project_id=project_id, fingerprint="deadbeefdeadbeef",
+                        status=_TestStatus.FAILED.value, c=1),
     ]
     captured = {}
 
@@ -110,6 +114,66 @@ async def test_recheck_cycle_count_query_is_project_scoped():
     # 20 pass / 1 fail → flip 0.048 < 0.10 → released (sanity that it ran).
     assert result["released"] == 1
     assert row.status == FlakyQuarantineStatus.RELEASED.value
+
+
+@pytest.mark.asyncio
+async def test_recheck_cycle_batches_counts_into_one_query():
+    """Perf refactor (perf/run-recheck-batch-counts): the per-row flip-rate
+    COUNT is batched — N recheck rows now issue ONE grouped count query (was N),
+    and each row's release/re-quarantine/insufficient decision is unchanged."""
+    now = svc.datetime.now(svc.timezone.utc)
+    p1, p2, p3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    def _row(pid, fp):
+        return SimpleNamespace(
+            id=uuid.uuid4(), project_id=pid, test_fingerprint=fp,
+            status=FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
+            quarantine_start=now - svc.timedelta(days=14), quarantine_duration_days=14,
+            quarantine_expires_at=None, recheck_at=None, flip_rate=None,
+            flip_window_size=None, pass_count=None, fail_count=None, updated_at=None,
+        )
+
+    rows = [_row(p1, "fpA"), _row(p2, "fpB"), _row(p3, "fpC")]
+    # fpA: 20 pass / 1 fail → released; fpB: 5 pass / 15 fail → re_quarantined;
+    # fpC: 3 pass / 1 fail → total<10 → insufficient.
+    counts_rows = [
+        SimpleNamespace(project_id=p1, fingerprint="fpA", status=_TestStatus.PASSED.value, c=20),
+        SimpleNamespace(project_id=p1, fingerprint="fpA", status=_TestStatus.FAILED.value, c=1),
+        SimpleNamespace(project_id=p2, fingerprint="fpB", status=_TestStatus.PASSED.value, c=5),
+        SimpleNamespace(project_id=p2, fingerprint="fpB", status=_TestStatus.BROKEN.value, c=15),
+        SimpleNamespace(project_id=p3, fingerprint="fpC", status=_TestStatus.PASSED.value, c=3),
+        SimpleNamespace(project_id=p3, fingerprint="fpC", status=_TestStatus.FAILED.value, c=1),
+    ]
+
+    class _FakeDB:
+        def __init__(self):
+            self.execute_calls = 0
+            self.count_queries = 0
+
+        async def execute(self, stmt):
+            self.execute_calls += 1
+            if self.execute_calls == 1:
+                return _ScalarsResult(rows)        # the RECHECK_SCHEDULED fetch
+            self.count_queries += 1
+            return _ScalarsResult(counts_rows)      # the single batched count
+
+        async def commit(self):
+            pass
+
+    db = _FakeDB()
+    with patch.object(svc, "_feature_enabled", AsyncMock(return_value=True)), \
+         patch.object(svc, "AsyncSessionLocal", lambda: _FakeCM(db)):
+        result = await svc.run_recheck_cycle()
+
+    # ONE batched count query for all 3 rows (was 3).
+    assert db.count_queries == 1
+    assert db.execute_calls == 2  # rows fetch + one batched count
+    # Per-row decisions preserved.
+    assert result == {"released": 1, "re_quarantined": 1, "insufficient_data": 1}
+    by_fp = {r.test_fingerprint: r for r in rows}
+    assert by_fp["fpA"].status == FlakyQuarantineStatus.RELEASED.value
+    assert by_fp["fpB"].status == FlakyQuarantineStatus.RE_QUARANTINED.value
+    assert by_fp["fpC"].status == FlakyQuarantineStatus.QUARANTINED.value  # insufficient → re-quarantined window
 
 
 @pytest.mark.asyncio
