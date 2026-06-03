@@ -128,6 +128,14 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `count(...).filter(status == 'FAILED')` in that same query; the function drops from 5 DB round
   trips to 4 with identical output (FILTER excludes NULL status just as the `status == 'FAILED'`
   WHERE did). Pinned by `tests/regression/test_audit_observability_single_runs_query.py`.
+- **`test_management_service.recompute_plan_counts` aggregates in SQL** (`auto/perf-20260603-2120`)
+  — it materialised every `TestPlanItem` row and ran five Python passes (len + 4 conditional
+  sums). Now one aggregate query with conditional counts. ``executed`` is derived as
+  ``total - count(status == 'not_run')`` (not `count(status != 'not_run')`) so a NULL
+  `execution_status` counts as executed, exactly matching the original
+  ``status not in ('not_run',)`` (the column is nullable); passed/failed/blocked use `== X`,
+  which excludes NULL in both. Constant one round trip, no row materialisation. Pinned by
+  `tests/regression/test_plan_counts_aggregate_query.py`.
 
 ### Performance (2026-06-03 — query batching, human-directed)
 

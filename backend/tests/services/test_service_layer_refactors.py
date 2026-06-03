@@ -205,14 +205,12 @@ async def test_apply_review_action_updates_review_and_test_case():
 
 @pytest.mark.asyncio
 async def test_recompute_plan_counts_updates_all_aggregates():
-    items = [
-        SimpleNamespace(execution_status="not_run"),
-        SimpleNamespace(execution_status="passed"),
-        SimpleNamespace(execution_status="failed"),
-        SimpleNamespace(execution_status="blocked"),
-    ]
+    # recompute_plan_counts now issues ONE aggregate query returning a single
+    # row (total / not_run / passed / failed / blocked); executed is derived as
+    # total - not_run. Same scenario as before: 4 items, one of each status.
+    agg = SimpleNamespace(total=4, not_run=1, passed=1, failed=1, blocked=1)
     plan = SimpleNamespace(id=uuid.uuid4(), total_cases=0, executed_cases=0, passed_cases=0, failed_cases=0, blocked_cases=0)
-    db = FakeAsyncDB([FakeExecuteResult(scalars=items)])
+    db = FakeAsyncDB([FakeExecuteResult(rows=[agg])])
 
     await test_management_service.recompute_plan_counts(db, plan)
 

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional, cast
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -434,12 +434,38 @@ async def get_plan_item_or_404(db: AsyncSession, plan_id: uuid.UUID, item_id: uu
 
 
 async def recompute_plan_counts(db: AsyncSession, plan: TestPlan) -> None:
-    items = (await db.execute(select(TestPlanItem).where(TestPlanItem.plan_id == plan.id))).scalars().all()
-    plan.total_cases = len(items)
-    plan.executed_cases = sum(1 for item in items if item.execution_status not in ("not_run",))
-    plan.passed_cases = sum(1 for item in items if item.execution_status == "passed")
-    plan.failed_cases = sum(1 for item in items if item.execution_status == "failed")
-    plan.blocked_cases = sum(1 for item in items if item.execution_status == "blocked")
+    # Aggregate the per-status counts in one query instead of materialising
+    # every TestPlanItem and running five Python passes. ``executed`` is
+    # derived as ``total - not_run`` (NOT count(status != 'not_run')) so a NULL
+    # execution_status counts as executed — matching the original
+    # ``status not in ('not_run',)`` (None is "not not_run"); the column is
+    # nullable. passed/failed/blocked use ``== X``, which excludes NULL in both
+    # the SQL and the original Python, so they match exactly.
+    row = (
+        await db.execute(
+            select(
+                func.count().label("total"),
+                func.count(
+                    case((TestPlanItem.execution_status == "not_run", 1))
+                ).label("not_run"),
+                func.count(
+                    case((TestPlanItem.execution_status == "passed", 1))
+                ).label("passed"),
+                func.count(
+                    case((TestPlanItem.execution_status == "failed", 1))
+                ).label("failed"),
+                func.count(
+                    case((TestPlanItem.execution_status == "blocked", 1))
+                ).label("blocked"),
+            ).where(TestPlanItem.plan_id == plan.id)
+        )
+    ).one()
+    total = int(row.total or 0)
+    plan.total_cases = total
+    plan.executed_cases = total - int(row.not_run or 0)
+    plan.passed_cases = int(row.passed or 0)
+    plan.failed_cases = int(row.failed or 0)
+    plan.blocked_cases = int(row.blocked or 0)
 
 
 async def list_test_plans(
