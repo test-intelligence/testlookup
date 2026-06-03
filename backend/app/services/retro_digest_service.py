@@ -86,9 +86,14 @@ async def _count_new_regressions(
     if not prev_passed_fps:
         return 0
 
-    # Among the same fingerprints, how many failed this week?
+    # Among the same fingerprints, how many failed this week? Count the
+    # distinct regressed fingerprints in SQL instead of materialising the rows
+    # and de-duping in Python. ``prev_passed_fps`` already holds only truthy
+    # fingerprints (filtered above) and is the IN-list here, so every matched
+    # row's fingerprint is non-empty — and COUNT(DISTINCT) skips NULL — making
+    # this exactly equal to the previous ``len({row[0] ... if row[0]})``.
     curr_failed = await db.execute(
-        select(TestCase.test_fingerprint)
+        select(func.count(func.distinct(TestCase.test_fingerprint)))
         .join(TestRun, TestRun.id == TestCase.test_run_id)
         .where(
             TestRun.project_id == project_id,
@@ -98,9 +103,8 @@ async def _count_new_regressions(
             ),
             TestCase.test_fingerprint.in_(prev_passed_fps),
         )
-        .distinct()
     )
-    return len({row[0] for row in curr_failed.all() if row[0]})
+    return int(curr_failed.scalar() or 0)
 
 
 async def _compose_narrative(
