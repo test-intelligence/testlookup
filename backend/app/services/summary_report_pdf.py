@@ -28,10 +28,15 @@ _BORDER = "#CBD5E1"
 
 
 def _safe(value: Any, max_len: int = 300) -> str:
-    s = html.escape(sanitize_for_report(str(value or "")))
+    # Truncate the sanitized text BEFORE escaping. Escaping first and then
+    # slicing can cut through an HTML entity (e.g. ``&lt;`` → ``&``), feeding a
+    # malformed token to ReportLab's Paragraph parser and 500-ing the PDF for
+    # any value with ``<``/``>``/``&`` near the boundary. Truncating the raw
+    # string keeps every escaped entity in the output well-formed.
+    s = sanitize_for_report(str(value or ""))
     if len(s) > max_len:
         s = s[: max_len - 1] + "…"
-    return s
+    return html.escape(s)
 
 
 def _fmt_pct(value: float | int | None) -> str:
