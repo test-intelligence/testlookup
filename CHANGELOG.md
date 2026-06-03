@@ -98,6 +98,12 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   batches all per-stage 24h failure counts into a single `GROUP BY` query. Constant DB
   round-trips regardless of failed-stage count; alert output unchanged. Pinned by
   `tests/regression/test_agent_cost_check_alerts_no_n_plus_1.py`.
+- **MinIO/sentinel ingest N+1 removed** (`auto/perf-20260603-0830`) — `ingestion.process_sentinel`
+  upserted parsed cases without prefetching, so `_upsert_test_case` issued one SELECT per case
+  (a 1000-test upload = 1000 extra round trips). It now prefetches existing rows in a single
+  batched query and passes `existing`/`fingerprint` through, mirroring
+  `ingestion_pipeline.ingest_test_results`. Pinned by
+  `tests/regression/test_ingestion_sentinel_prefetch_no_n_plus_1.py`.
 
 ## [0.0.1] - 2026-04-15
 

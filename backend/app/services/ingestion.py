@@ -137,8 +137,33 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                         existing_fps.add(fp)
 
             # ── Upsert test cases to PostgreSQL ────────────
-            for case_data in parsed_cases:
-                await _upsert_test_case(db, case_data, run)
+            # Prefetch existing rows in ONE query and pass them through so
+            # _upsert_test_case skips its per-row SELECT. Without this the
+            # MinIO/sentinel path was an N+1 — one SELECT per parsed case
+            # before each INSERT (a 1000-test upload = 1000 extra round
+            # trips). Mirrors the prefetch in
+            # ingestion_pipeline.ingest_test_results.
+            case_fps = [
+                make_test_fingerprint(c.get("test_name", ""), c.get("class_name"))
+                for c in parsed_cases
+            ]
+            existing_by_fp: dict[str, TestCase] = {}
+            if case_fps:
+                existing_rows = (
+                    await db.execute(
+                        select(TestCase).where(
+                            TestCase.test_run_id == run.id,
+                            TestCase.test_fingerprint.in_(case_fps),
+                        )
+                    )
+                ).scalars().all()
+                existing_by_fp = {r.test_fingerprint: r for r in existing_rows}
+            for case_data, fingerprint in zip(parsed_cases, case_fps):
+                await _upsert_test_case(
+                    db, case_data, run,
+                    existing=existing_by_fp.get(fingerprint),
+                    fingerprint=fingerprint,
+                )
 
             # ── Enrich with OCP metadata ───────────────────
             if sentinel.ocp_pod_name and sentinel.ocp_namespace:
