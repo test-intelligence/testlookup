@@ -17,7 +17,7 @@ from typing import Optional
 
 import structlog
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -339,13 +339,24 @@ async def update_phase(db: AsyncSession, release_id: str, phase_id: str, body) -
     for field, value in updates.items():
         setattr(phase, field, value)
 
-    # Check if all phases of this release are now completed/skipped
-    all_phases = (
+    # Check if all phases of this release are now completed/skipped. Count the
+    # NOT-done phases instead of fetching every row and scanning in Python
+    # (one aggregate vs an O(N) row fetch). A phase is "done" iff its status is
+    # in ("completed", "skipped"); NULL status counts as NOT done, matching the
+    # Python ``all(p.status in (...))`` semantics (status is nullable). Zero
+    # phases → 0 incomplete → all_done True (``all([]) is True``).
+    incomplete = (
         await db.execute(
-            select(ReleasePhase).where(ReleasePhase.release_id == uuid.UUID(release_id))
+            select(func.count(ReleasePhase.id)).where(
+                ReleasePhase.release_id == uuid.UUID(release_id),
+                or_(
+                    ReleasePhase.status.notin_(("completed", "skipped")),
+                    ReleasePhase.status.is_(None),
+                ),
+            )
         )
-    ).scalars().all()
-    all_done = all(p.status in ("completed", "skipped") for p in all_phases)
+    ).scalar() or 0
+    all_done = incomplete == 0
     return phase, all_done
 
 

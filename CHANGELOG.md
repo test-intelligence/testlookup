@@ -115,6 +115,13 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   partially_correct). Now one aggregate query with conditional counts
   (`count(case((rating == X, 1)))`); 3 round trips → 1, output identical. Pinned by
   `tests/regression/test_ai_eval_agreement_single_query.py`.
+- **`release_service.update_phase` all-phases-done check → COUNT** (`auto/perf-20260603-1837`) —
+  it fetched every `ReleasePhase` row for the release and scanned in Python
+  (`all(p.status in ('completed','skipped'))`) on each phase update. Now a single COUNT of
+  NOT-done phases (`status NOT IN ('completed','skipped') OR status IS NULL`) — `all_done` is
+  True iff the count is 0. O(N) row fetch → O(1) aggregate; behavior identical incl. the
+  NULL-status-is-incomplete and zero-phases (`all([]) is True`) edges. Pinned by
+  `tests/regression/test_release_phase_all_done_count.py`.
 
 ### Performance (2026-06-03 — query batching, human-directed)
 
