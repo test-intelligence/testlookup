@@ -171,8 +171,12 @@ jobs:
         # The deploy script already waits for rollout (5min timeout per
         # deployment); this probes the public ingress as a final sanity
         # check. Skipped when BACKEND_URL secret is unset.
-        if: ${{ secrets.BACKEND_URL != '' }}
         run: |
+          if [ -z "${{ secrets.BACKEND_URL }}" ]; then
+            echo "BACKEND_URL is not set; skipping smoke check."
+            exit 0
+          fi
+
           for i in 1 2 3 4 5; do
             if curl --fail --silent --show-error "${{ secrets.BACKEND_URL }}/health"; then
               echo "Health check passed on attempt $i"
