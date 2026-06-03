@@ -73,6 +73,13 @@ async def resolve_effective_policy(
     2. Active system default (project_id IS NULL) → "system"
     3. None → "hardcoded" (use config.py defaults)
     """
+    # NB: ``is_active`` has no DB-level single-active guarantee (the only
+    # unique constraint is (project_id, version), and publish_policy enforces
+    # "one active per scope" in application code). A concurrent publish race
+    # can therefore leave two active rows for a scope. Order by version desc so
+    # resolution is deterministic regardless — the latest published version
+    # wins, matching the /history endpoints' ordering — instead of an arbitrary
+    # row from an unordered LIMIT 1.
     if project_id:
         pid = uuid.UUID(str(project_id)) if not isinstance(project_id, uuid.UUID) else project_id
         result = await db.execute(
@@ -81,6 +88,7 @@ async def resolve_effective_policy(
                 ReleaseGatePolicy.project_id == pid,
                 ReleaseGatePolicy.is_active == True,  # noqa: E712
             )
+            .order_by(ReleaseGatePolicy.version.desc())
             .limit(1)
         )
         policy = result.scalar_one_or_none()
@@ -94,6 +102,7 @@ async def resolve_effective_policy(
             ReleaseGatePolicy.project_id.is_(None),
             ReleaseGatePolicy.is_active == True,  # noqa: E712
         )
+        .order_by(ReleaseGatePolicy.version.desc())
         .limit(1)
     )
     policy = result.scalar_one_or_none()
