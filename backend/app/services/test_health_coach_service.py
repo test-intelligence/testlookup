@@ -415,24 +415,71 @@ async def refresh_flaky_coach(
         delete(FlakyCoachResult).where(FlakyCoachResult.project_id == project_id)
     )
 
+    # Batch the per-fingerprint lookups that previously ran inside the loop —
+    # ``status_q`` + ``tc_q`` per candidate was a 2N N+1 on a request path
+    # (POST /flaky-coach/refresh). Two queries replace 2N:
+    #   * a windowed query for the top-30 history rows PER fingerprint, and
+    #   * a DISTINCT ON for the latest test name/suite PER fingerprint.
+    # Behavior-preserving: ROW_NUMBER() PARTITION BY fingerprint ORDER BY
+    # created_at DESC, kept where rn <= 30, reproduces the per-row
+    # ``ORDER BY created_at DESC LIMIT 30`` exactly — the top-30 drive
+    # failure_rate, flaky_since/last_failure_at and status_history[:10]. Rows
+    # are returned per fingerprint in the same created_at-desc order, so the
+    # downstream slicing/counting is unchanged. Both queries keep the project
+    # scope (join TestRun) — test_fingerprint is not project-salted.
+    fps = [row.test_fingerprint for row in all_fingerprints if row.test_fingerprint]
+    status_by_fp: dict = {}
+    tc_by_fp: dict = {}
+    if fps:
+        _rn = sa_func.row_number().over(
+            partition_by=TestCaseHistory.test_fingerprint,
+            order_by=TestCaseHistory.created_at.desc(),
+        ).label("rn")
+        _ranked = (
+            select(
+                TestCaseHistory.test_fingerprint.label("fp"),
+                TestCaseHistory.status.label("status"),
+                TestCaseHistory.created_at.label("created_at"),
+                _rn,
+            )
+            .join(TestRun, TestRun.id == TestCaseHistory.test_run_id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCaseHistory.test_fingerprint.in_(fps),
+                TestCaseHistory.created_at >= cutoff,
+            )
+            .subquery()
+        )
+        status_stmt = (
+            select(_ranked.c.fp, _ranked.c.status, _ranked.c.created_at)
+            .where(_ranked.c.rn <= 30)
+            .order_by(_ranked.c.fp, _ranked.c.created_at.desc())
+        )
+        for r in (await db.execute(status_stmt)).all():
+            status_by_fp.setdefault(r.fp, []).append(r)
+
+        tc_stmt = (
+            select(
+                TestCase.test_fingerprint.label("fp"),
+                TestCase.test_name,
+                TestCase.suite_name,
+            )
+            .where(TestCase.test_fingerprint.in_(fps))
+            .order_by(TestCase.test_fingerprint, TestCase.created_at.desc())
+            .distinct(TestCase.test_fingerprint)
+        )
+        for r in (await db.execute(tc_stmt)).all():
+            tc_by_fp[r.fp] = r
+
     count = 0
     for row in all_fingerprints:
         fp = row.test_fingerprint
         if not fp:
             continue
 
-        # Get detailed status history for this fingerprint
-        status_q = (
-            select(TestCaseHistory.status, TestCaseHistory.created_at)
-            .join(TestRun, TestRun.id == TestCaseHistory.test_run_id)
-            .where(TestRun.project_id == project_id)
-            .where(TestCaseHistory.test_fingerprint == fp)
-            .where(TestCaseHistory.created_at >= cutoff)
-            .order_by(TestCaseHistory.created_at.desc())
-            .limit(30)
-        )
-        status_result = await db.execute(status_q)
-        status_rows = status_result.all()
+        # Top-30 history rows for this fingerprint (prefetched above in one
+        # windowed query), most-recent-first.
+        status_rows = status_by_fp.get(fp, [])
 
         statuses = [str(s.status) for s in status_rows]
         total = len(statuses)
@@ -450,15 +497,8 @@ async def refresh_flaky_coach(
         quarantine_rec = _compute_quarantine_recommendation(failure_rate)
         impact = _compute_impact_score(failure_rate, total)
 
-        # Get test name from latest test case with this fingerprint
-        tc_q = (
-            select(TestCase.test_name, TestCase.suite_name)
-            .where(TestCase.test_fingerprint == fp)
-            .order_by(TestCase.created_at.desc())
-            .limit(1)
-        )
-        tc_result = await db.execute(tc_q)
-        tc_row = tc_result.first()
+        # Latest test name/suite for this fingerprint (prefetched above).
+        tc_row = tc_by_fp.get(fp)
         test_name = tc_row.test_name if tc_row else fp
         suite_name = tc_row.suite_name if tc_row else None
 

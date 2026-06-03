@@ -132,6 +132,16 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   the mapping is exact. Shorter DB-session hold on the beat worker. Pinned by
   `tests/regression/test_flaky_quarantine_recheck_project_scope.py` (one batched count for N
   rows; release/re-quarantine/insufficient decisions unchanged; query still project-scoped).
+- **`test_health_coach_service.refresh_flaky_coach` per-fingerprint N+1 batched** (`perf/flaky-coach-batch`)
+  — the flaky-coach refresh (request path: `POST /flaky-coach/refresh`, plus a scheduled task)
+  ran two queries per candidate fingerprint (`status_q` top-30 history + `tc_q` latest name), i.e.
+  `1 + 1 + 2N`. The per-fingerprint lookups are now two batched queries: a windowed
+  `ROW_NUMBER() OVER (PARTITION BY test_fingerprint ORDER BY created_at DESC) <= 30` (preserves
+  the per-row top-30 that drives `failure_rate`, `flaky_since`/`last_failure_at`, and
+  `status_history[:10]`) and a `DISTINCT ON (test_fingerprint)` for the latest name/suite. Round
+  trips drop to a constant `4`; classification unchanged. Both keep the project scope. Pinned by
+  `tests/regression/test_flaky_coach_batched_queries.py` (constant 4 round trips + failure-rate /
+  status-history-order / flaky-since / both-pass-and-fail-filter behavior).
 
 ### Fixed (2026-06-03)
 
