@@ -255,6 +255,9 @@ class TestCase(Base):
             name="uq_test_cases_run_fingerprint",
         ),
         Index("ix_test_cases_run_status", "test_run_id", "status"),
+        # Run-scoped suite-breakdown reads (coverage/summary/suite_history) —
+        # migration 0090. Sibling of ix_test_cases_run_status.
+        Index("ix_test_cases_run_suite", "test_run_id", "suite_name"),
         Index("ix_test_cases_fingerprint", "test_fingerprint"),
         Index("ix_test_cases_search", "search_vector", postgresql_using="gin"),
         Index("ix_test_cases_canonical", "canonical_test_case_id"),
@@ -830,6 +833,14 @@ class AgentPipelineRun(Base):
 class AgentStageResult(Base):
     """Per-stage result for an AgentPipelineRun."""
     __tablename__ = "agent_stage_results"
+    __table_args__ = (
+        # pipeline_run_id index created in migration 0004 (ix_stage_results_pipeline);
+        # declared here so the model reflects the real schema.
+        Index("ix_stage_results_pipeline", "pipeline_run_id"),
+        # (stage_name, status) backs agent_cost_service.check_alerts' 24h
+        # repeated-failure count — migration 0090.
+        Index("ix_agent_stage_results_stage_status", "stage_name", "status"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pipeline_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"), nullable=False)

@@ -146,6 +146,16 @@ branch per fix; see the per-entry branch for the full diff + regression test).
 
 ### Performance (2026-06-03 — query batching, human-directed)
 
+- **Two perf indexes added (migration 0090)** (`perf/index-agent-stage-results`) —
+  `ix_agent_stage_results_stage_status` on `agent_stage_results (stage_name, status)` (backs the
+  24h repeated-failure count in `agent_cost_service.check_alerts`) and `ix_test_cases_run_suite`
+  on `test_cases (test_run_id, suite_name)` (backs run-scoped suite-breakdown reads —
+  coverage/summary/suite_history — which previously had only a GIN trigram index on `suite_name`).
+  Both built `CREATE INDEX CONCURRENTLY` + `IF NOT EXISTS` (the migration-0082 pattern) so no
+  write lock on the hot `test_cases` table. The analyst's headline `agent_stage_results
+  (pipeline_run_id)` finding was a false positive — that index already exists (`ix_stage_results_pipeline`,
+  migration 0004); it was just absent from the ORM `__table_args__`, now declared for parity.
+  Pinned by `tests/test_migration_0090_indexes.py`.
 - **`suite_sync_service` per-suite query fan-out collapsed** (`perf/suite-sync-batch-membership`)
   — `sync_suite_membership` called `_sync_one_suite` per suite, and each call issued 3 SELECTs
   (managed cases, existing memberships, `<suite>-deleted` bucket), i.e. `1 + 3N` queries on the
