@@ -143,6 +143,13 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   Identical result: the IN-list (`prev_passed_fps`) already holds only truthy fingerprints and
   COUNT(DISTINCT) skips NULL, so the `if row[0]` filter was redundant. Pinned by
   `tests/regression/test_retro_count_new_regressions_scalar.py`.
+- **`feedback_service` total/unexported COUNTs collapsed** (`auto/perf-20260603-2300`) —
+  `get_feedback_stats` ran 3 COUNTs on AIFeedback (group-by ratings, total, unexported) and
+  `get_training_status` ran 2 (unexported, total). The total + unexported pair is now one
+  aggregate query with a conditional `count(...).filter(exported.is_(False))`: get_feedback_stats
+  3→2 round trips, get_training_status 2→1. Identical output — `FILTER (exported IS FALSE)`
+  matches the prior `WHERE exported.is_(False)` (NULL excluded by both). Pinned by
+  `tests/regression/test_feedback_stats_single_aggregate.py`.
 
 ### Performance (2026-06-03 — query batching, human-directed)
 
