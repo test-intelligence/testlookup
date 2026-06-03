@@ -164,6 +164,12 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   (a 0-commit service needs no allowlist entry; the `count==0` files are already skipped by the
   "commits must be allowlisted" guard). Test-only change; the four
   `test_architectural_transaction_boundaries` tests pass again.
+- **Incomplete `app.core.deps` test stub (failing CI gate)** (`fix/release-phases-deps-stub`) —
+  `test_release_phases.py` and `test_project_and_release.py` stub `app.core.deps` in `sys.modules`
+  but the stub omitted `require_release_access` and `require_run_access`, which
+  `routers/releases.py` imports — so every test in those files that imported the router failed at
+  collection with `ImportError: cannot import name 'require_release_access'` (19 failures across
+  the two files). Added both names to each stub. Test-only; both files now pass (33 + 22).
 
 ## [0.0.1] - 2026-04-15
 
