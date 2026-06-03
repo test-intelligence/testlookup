@@ -136,6 +136,13 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   ``status not in ('not_run',)`` (the column is nullable); passed/failed/blocked use `== X`,
   which excludes NULL in both. Constant one round trip, no row materialisation. Pinned by
   `tests/regression/test_plan_counts_aggregate_query.py`.
+- **`retro_digest_service._count_new_regressions` counts in SQL** (`auto/perf-20260603-2212`)
+  — the current-week regression count fetched the distinct fingerprints
+  (`SELECT DISTINCT test_fingerprint`) and did `len({row[0] ... if row[0]})` in Python. Now a
+  `COUNT(DISTINCT test_fingerprint)` consumed via `.scalar()` — no row transfer / Python dedup.
+  Identical result: the IN-list (`prev_passed_fps`) already holds only truthy fingerprints and
+  COUNT(DISTINCT) skips NULL, so the `if row[0]` filter was redundant. Pinned by
+  `tests/regression/test_retro_count_new_regressions_scalar.py`.
 
 ### Performance (2026-06-03 — query batching, human-directed)
 
