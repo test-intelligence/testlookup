@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, resolve_project_scope
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.models.schemas import (
@@ -34,6 +34,9 @@ async def ai_generate_cases(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Tenant guard — caller must be a member of the target project before we
+    # persist AI-generated cases into it (matches the /plans/ai-create pattern).
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     result = await generate_ai_cases(db, payload, current_user)
     await db.commit()
     return result
@@ -42,8 +45,11 @@ async def ai_generate_cases(
 @router.post("/cases/ai-generate/async", response_model=AITaskEnqueueResponse)
 async def ai_generate_cases_async(
     payload: AIGenerateTestCasesRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Verify access before queueing — the worker runs without request context.
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     return await enqueue_ai_case_generation(payload, current_user)
 
 
@@ -72,4 +78,7 @@ async def ai_coverage_analysis(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Tenant guard — coverage analysis reads the project's existing cases and
+    # sends their titles/objectives to the LLM; block cross-project access.
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     return await analyze_case_coverage(db, payload)
