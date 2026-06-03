@@ -15,7 +15,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role, require_run_access
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_current_active_user,
+    require_role,
+    require_run_access,
+)
 from app.db.postgres import get_db
 from app.models.postgres import AgentPipelineRun, AgentStageResult, TestRun, UserRole
 from app.models.schemas import (
@@ -119,6 +124,40 @@ async def _resolve_maybe_awaitable(value: Any) -> Any:
     return value
 
 
+async def _load_pipeline_or_404(
+    db: AsyncSession, pipeline_id: uuid.UUID,
+) -> AgentPipelineRun:
+    pipeline = (
+        await db.execute(
+            select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_id)
+        )
+    ).scalar_one_or_none()
+    if pipeline is None:
+        raise HTTPException(404, detail="Pipeline run not found")
+    return pipeline
+
+
+async def _require_pipeline_access(
+    db: AsyncSession, current_user: Any, pipeline: AgentPipelineRun,
+) -> None:
+    """Tenant gate for a single pipeline.
+
+    Pipelines carry no ``project_id`` of their own — access is derived from the
+    owning test run's project. Without this check every ``/pipelines/{id}/*``
+    read endpoint is a cross-tenant IDOR (status, stages, cost, decision
+    timeline, replay) since the only other guard is ``get_current_active_user``.
+    Mirrors the ``require_run_access`` chain used by the ``/runs/{id}/*`` siblings.
+    """
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is None:  # admin → all projects
+        return
+    run = await db.get(TestRun, pipeline.test_run_id)
+    if run is None or run.project_id not in accessible:
+        raise HTTPException(
+            403, detail="You do not have access to this pipeline run"
+        )
+
+
 @router.get("/pipelines", response_model=list[AgentPipelineResponse])
 async def list_pipelines(
     run_id: Optional[uuid.UUID] = Query(None),
@@ -126,16 +165,25 @@ async def list_pipelines(
     status: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    current_user: Any = Depends(get_current_active_user),
 ):
     """List agent pipeline runs, optionally filtered by test run, project, or status."""
+    # Tenant scope: non-admins only ever see pipelines whose run belongs to a
+    # project they can access. A caller-supplied ``project_id`` they don't have
+    # is rejected outright rather than silently returning an empty list.
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None and project_id is not None and project_id not in accessible:
+        raise HTTPException(403, detail="You do not have access to this project")
+
     q = select(AgentPipelineRun)
     if run_id:
         q = q.where(AgentPipelineRun.test_run_id == run_id)
-    if project_id:
-        q = q.join(TestRun, AgentPipelineRun.test_run_id == TestRun.id).where(
-            TestRun.project_id == project_id
-        )
+    if project_id is not None or accessible is not None:
+        q = q.join(TestRun, AgentPipelineRun.test_run_id == TestRun.id)
+        if project_id is not None:
+            q = q.where(TestRun.project_id == project_id)
+        if accessible is not None:
+            q = q.where(TestRun.project_id.in_(accessible))
     # NOTE: the ``status`` filter intentionally applies to the *stored*
     # status, not the derived one. If a caller asks for ``status=running``
     # we return the rows currently stored as running — and then derive the
@@ -166,15 +214,11 @@ async def list_pipelines(
 async def get_pipeline(
     pipeline_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    current_user: Any = Depends(get_current_active_user),
 ):
     """Get a single pipeline run with all stage results."""
-    result = await db.execute(
-        select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_id)
-    )
-    pipeline = result.scalar_one_or_none()
-    if not pipeline:
-        raise HTTPException(404, detail="Pipeline run not found")
+    pipeline = await _load_pipeline_or_404(db, pipeline_id)
+    await _require_pipeline_access(db, current_user, pipeline)
 
     failed_stage_ids = await _failed_stage_pipeline_ids(db, [pipeline.id])
     _apply_effective_status(
@@ -295,9 +339,11 @@ async def bulk_trigger_pipelines(
 async def get_pipeline_stages(
     pipeline_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    current_user: Any = Depends(get_current_active_user),
 ):
     """Get detailed stage results for a pipeline run."""
+    pipeline = await _load_pipeline_or_404(db, pipeline_id)
+    await _require_pipeline_access(db, current_user, pipeline)
     result = await db.execute(
         select(AgentStageResult)
         .where(AgentStageResult.pipeline_run_id == pipeline_id)
@@ -332,7 +378,7 @@ async def get_pipeline_stages(
 async def get_pipeline_timeline(
     pipeline_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    current_user: Any = Depends(get_current_active_user),
 ):
     """
     Get the full agent timeline with per-stage observability data:
@@ -346,14 +392,8 @@ async def get_pipeline_timeline(
     )
     from app.services.pipeline_event_log import get_pipeline_timeline as get_pipeline_events
 
-    # Verify pipeline exists
-    pipeline_result = await db.execute(
-        select(AgentPipelineRun).where(AgentPipelineRun.id == pipeline_id)
-    )
-    pipeline = pipeline_result.scalar_one_or_none()
-    if not pipeline:
-        from fastapi import HTTPException
-        raise HTTPException(404, detail="Pipeline run not found")
+    pipeline = await _load_pipeline_or_404(db, pipeline_id)
+    await _require_pipeline_access(db, current_user, pipeline)
 
     cost_summary = await _resolve_maybe_awaitable(
         get_pipeline_cost_summary(db, str(pipeline_id))
@@ -465,10 +505,13 @@ async def get_pipeline_event_log_health(
 async def get_pipeline_replay(
     pipeline_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    current_user: Any = Depends(get_current_active_user),
 ):
     """Return a deterministic replay document for audit reconstruction."""
     from app.services.pipeline_replay_service import build_pipeline_replay
+
+    pipeline = await _load_pipeline_or_404(db, pipeline_id)
+    await _require_pipeline_access(db, current_user, pipeline)
 
     replay = await build_pipeline_replay(db, pipeline_id)
     if replay is None:
