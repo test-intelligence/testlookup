@@ -66,6 +66,26 @@ _DRAIN_LOCK_KEY = "testlookup:live:drain_lock:{run_id}"
 _DRAIN_LOCK_TTL_SECONDS = 90
 
 
+def _resolved_started_at(state: dict, now: datetime) -> datetime:
+    """Real session start from the Redis live-state hash (stamped at
+    session-create as an ISO string), not the first-drain tick.
+
+    Close-time ``upsert_test_run`` only sets ``start_time`` when it CREATES the
+    TestRun row; on an already-existing row (one the drainer materialised) it
+    updates totals/end_time but leaves ``start_time`` untouched. So if the
+    drainer creates the row with ``now`` (the first 30s tick), that skewed-late
+    start persists through close — for exactly the long-running runs Phase 4.5
+    targets. Resolve the authoritative start here instead.
+    """
+    raw = state.get("started_at")
+    if raw:
+        try:
+            return datetime.fromisoformat(raw)
+        except (ValueError, TypeError):
+            pass
+    return now
+
+
 def _resolved_suite(event: dict, default_suite: Optional[str]) -> Optional[str]:
     """Mirror ``persist_live_session``'s suite_name resolution. SDKs send
     ``testlookup.suite`` once at session-create; per-event fields are
@@ -208,6 +228,7 @@ async def drain_run_buffer(
         agg_total = agg_total or (agg_passed + agg_failed + agg_skipped + agg_broken)
 
         session_suite = (suite_name or state.get("suite_name") or "").strip() or None
+        started_at = _resolved_started_at(state, now)
 
         async with AsyncSessionLocal() as db:
             run = (
@@ -228,7 +249,7 @@ async def drain_run_buffer(
                     broken_tests=agg_broken,
                     primary_suite_name=session_suite,
                     suite_names=[session_suite] if session_suite else None,
-                    start_time=now,
+                    start_time=started_at,
                     end_time=now,
                 )
                 db.add(run)
