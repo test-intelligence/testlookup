@@ -74,6 +74,31 @@ def _route_alert(alert: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_avg_pipeline_cost_stmt(*, days: int = 7):
+    """Statement: 7-day average of per-PIPELINE total cost.
+
+    Deliberately averages per-pipeline totals (sum of stage costs grouped by
+    ``pipeline_run_id``), NOT individual stage costs. Averaging stage costs
+    instead — the previous bug — set the baseline at the per-stage mean, so any
+    multi-stage pipeline (e.g. a 9-stage deep run) trivially exceeded
+    ``baseline * ALERT_COST_SPIKE_FACTOR`` and fired a spurious cost spike. The
+    spike check compares a single pipeline's TOTAL to this, so the baseline must
+    be a per-pipeline total too. Extracted so the grouping is regression-pinned.
+    """
+    per_pipeline_cost = (
+        select(func.sum(AgentStageResult.cost_usd).label("pipeline_cost"))
+        .join(AgentPipelineRun, AgentStageResult.pipeline_run_id == AgentPipelineRun.id)
+        .where(
+            AgentStageResult.cost_usd.isnot(None),
+            AgentPipelineRun.created_at >= datetime.now(timezone.utc) - timedelta(days=days),
+        )
+        .group_by(AgentStageResult.pipeline_run_id)
+        .having(func.sum(AgentStageResult.cost_usd) > 0)
+        .subquery()
+    )
+    return select(func.avg(per_pipeline_cost.c.pipeline_cost))
+
+
 def _stage_duration_seconds(stage: AgentStageResult) -> float | None:
     if not stage.started_at or not stage.completed_at:
         return None
@@ -306,16 +331,9 @@ async def check_alerts(
             },
         })
 
-    # 3. Check for cost spike vs rolling average
-    avg_result = await db.execute(
-        select(func.avg(AgentStageResult.cost_usd))
-        .join(AgentPipelineRun, AgentStageResult.pipeline_run_id == AgentPipelineRun.id)
-        .where(
-            AgentStageResult.cost_usd.isnot(None),
-            AgentStageResult.cost_usd > 0,
-            AgentPipelineRun.created_at >= datetime.now(timezone.utc) - timedelta(days=7),
-        )
-    )
+    # 3. Check for cost spike vs the rolling average PIPELINE cost (see
+    # _build_avg_pipeline_cost_stmt for why this must be a per-pipeline total).
+    avg_result = await db.execute(_build_avg_pipeline_cost_stmt())
     avg_cost = avg_result.scalar()
     if avg_cost and avg_cost > 0 and cost_summary["total_cost_usd"] > avg_cost * ALERT_COST_SPIKE_FACTOR:
         alerts.append({
