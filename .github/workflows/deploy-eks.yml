@@ -1,5 +1,3 @@
-name: Deploy to AWS EKS
-
 # Reference workflow for cloud deploys (Phase OS-Deploy follow-up — open-source
 # adoption smoother). The companion ``scripts/deploy-k8s.sh`` is intentionally
 # CLI-only and idempotent; this workflow just wires AWS-specific authentication
@@ -23,6 +21,8 @@ name: Deploy to AWS EKS
 # Trigger:
 #   * manual: workflow_dispatch with an explicit image tag (recommended)
 #   * automatic: push of a v*.*.* tag (mirrors deploy-production.yml on GCP)
+
+name: Deploy to AWS EKS
 
 on:
   workflow_dispatch:
@@ -145,14 +145,12 @@ jobs:
             --registry="$REGISTRY"
 
       - name: Smoke check
-        # The deploy script already runs ``kubectl rollout status`` on
-        # the backend + frontend deployments with a 5-min timeout; this
-        # step is a belt-and-braces health probe so the workflow fails
-        # loudly when the service responds with a non-2xx after rollout.
-        # Override BACKEND_URL via repo secret when the ingress host is
-        # known; otherwise this step is skipped.
-        if: ${{ secrets.BACKEND_URL != '' }}
         run: |
+          if [ -z "${{ secrets.BACKEND_URL }}" ]; then
+            echo "BACKEND_URL is not set; skipping smoke check."
+            exit 0
+          fi
+
           for i in 1 2 3 4 5; do
             if curl --fail --silent --show-error "${{ secrets.BACKEND_URL }}/health"; then
               echo "Health check passed on attempt $i"
