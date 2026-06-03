@@ -110,6 +110,11 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   both columns once and reuses the rows for new-failure detection and resolved-failures — one
   fewer round trip per baseline diff; output unchanged. Pinned by
   `tests/regression/test_run_diff_baseline_single_fetch.py`.
+- **`ai_eval_service.compute_agreement_rate` 3 COUNTs → 1** (`auto/perf-20260603-1830`) — it ran
+  three sequential COUNT queries over the same `created_at >= cutoff` window (total / correct /
+  partially_correct). Now one aggregate query with conditional counts
+  (`count(case((rating == X, 1)))`); 3 round trips → 1, output identical. Pinned by
+  `tests/regression/test_ai_eval_agreement_single_query.py`.
 
 ### Performance (2026-06-03 — query batching, human-directed)
 

@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -280,22 +280,25 @@ async def compute_agreement_rate(
     """Compute human-AI agreement rate from recent feedback."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    total_result = await db.execute(
-        select(func.count(AIFeedback.id)).where(AIFeedback.created_at >= cutoff)
-    )
-    total = total_result.scalar() or 0
-
-    correct_result = await db.execute(
-        select(func.count(AIFeedback.id))
-        .where(AIFeedback.created_at >= cutoff, AIFeedback.rating == "correct")
-    )
-    correct = correct_result.scalar() or 0
-
-    partial_result = await db.execute(
-        select(func.count(AIFeedback.id))
-        .where(AIFeedback.created_at >= cutoff, AIFeedback.rating == "partially_correct")
-    )
-    partial = partial_result.scalar() or 0
+    # Single aggregate query with conditional counts instead of three separate
+    # COUNTs over the same ``created_at >= cutoff`` window (3 round trips → 1).
+    # ``count(case((cond, 1)))`` counts only the rows matching cond (the CASE
+    # yields NULL otherwise, which COUNT skips) — identical to the per-rating
+    # filtered COUNTs.
+    row = (
+        await db.execute(
+            select(
+                func.count(AIFeedback.id).label("total"),
+                func.count(case((AIFeedback.rating == "correct", 1))).label("correct"),
+                func.count(
+                    case((AIFeedback.rating == "partially_correct", 1))
+                ).label("partial"),
+            ).where(AIFeedback.created_at >= cutoff)
+        )
+    ).one()
+    total = row.total or 0
+    correct = row.correct or 0
+    partial = row.partial or 0
 
     agreement = (correct + partial * 0.5) / total if total > 0 else None
 
