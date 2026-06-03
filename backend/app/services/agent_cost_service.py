@@ -292,18 +292,27 @@ async def check_alerts(
     )
     failed_stages = result.scalars().all()
 
-    for fs in failed_stages:
-        # Count recent consecutive failures for this stage
-        recent = await db.execute(
-            select(func.count(AgentStageResult.id))
+    # Batch the per-stage 24h failure counts into ONE grouped query instead of
+    # a COUNT per failed stage (was N+1 — one round trip per failed stage in
+    # the pipeline). Same window/filter/threshold as before; iterating
+    # ``failed_stages`` below preserves the exact prior alert list.
+    stage_names = list({fs.stage_name for fs in failed_stages})
+    recent_counts: dict[str, int] = {}
+    if stage_names:
+        counts_result = await db.execute(
+            select(AgentStageResult.stage_name, func.count(AgentStageResult.id))
             .join(AgentPipelineRun, AgentStageResult.pipeline_run_id == AgentPipelineRun.id)
             .where(
-                AgentStageResult.stage_name == fs.stage_name,
+                AgentStageResult.stage_name.in_(stage_names),
                 AgentStageResult.status == "failed",
                 AgentPipelineRun.created_at >= datetime.now(timezone.utc) - timedelta(hours=24),
             )
+            .group_by(AgentStageResult.stage_name)
         )
-        count = recent.scalar() or 0
+        recent_counts = {name: int(cnt or 0) for name, cnt in counts_result.all()}
+
+    for fs in failed_stages:
+        count = recent_counts.get(fs.stage_name, 0)
         if count >= ALERT_CONSECUTIVE_FAILURES:
             alerts.append({
                 "type": "repeated_failure",
