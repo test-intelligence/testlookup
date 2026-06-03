@@ -88,6 +88,17 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - WebSocket sessions enforce JWT expiry mid-connection (5-second grace) -- long-lived sockets no longer outlive their access token.
 - Per-connection audit trail (`access_audit_logs`) lets compliance reports answer "who connected to which project channel, when, and why did it disconnect."
 
+### Performance (2026-06-03 — Phase AUTO, autonomous loop)
+
+Changes below are produced by the autonomous hourly performance loop (one focused, reviewed
+branch per fix; see the per-entry branch for the full diff + regression test).
+
+- **`agent_cost_service.check_alerts` N+1 removed** (`auto/perf-20260603-0745`) — the
+  consecutive-failure check fired one `COUNT` query per failed stage in a pipeline; it now
+  batches all per-stage 24h failure counts into a single `GROUP BY` query. Constant DB
+  round-trips regardless of failed-stage count; alert output unchanged. Pinned by
+  `tests/regression/test_agent_cost_check_alerts_no_n_plus_1.py`.
+
 ## [0.0.1] - 2026-04-15
 
 ### Added
