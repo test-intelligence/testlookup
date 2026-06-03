@@ -111,6 +111,18 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   fewer round trip per baseline diff; output unchanged. Pinned by
   `tests/regression/test_run_diff_baseline_single_fetch.py`.
 
+### Performance (2026-06-03 — query batching, human-directed)
+
+- **`suite_sync_service` per-suite query fan-out collapsed** (`perf/suite-sync-batch-membership`)
+  — `sync_suite_membership` called `_sync_one_suite` per suite, and each call issued 3 SELECTs
+  (managed cases, existing memberships, `<suite>-deleted` bucket), i.e. `1 + 3N` queries on the
+  ingestion critical path. The three lookups are now batched across all suites in one query each
+  (`4` total, constant in suite count) and sliced per suite; `_sync_one_suite` performs no DB
+  reads. Behavior-preserving — suites are processed independently (disjoint `suite_name` /
+  `<suite>-deleted` rows), so prefetching the whole set up front matches the prior sequential
+  fetches. Pinned by `tests/regression/test_suite_sync_batched_queries.py` (constant 4 round
+  trips for N suites + add/unchanged/delete behavior across a multi-suite run).
+
 ## [0.0.1] - 2026-04-15
 
 ### Added

@@ -61,9 +61,71 @@ async def sync_suite_membership(
     for tc in run_cases:
         suites.setdefault(tc.suite_name, []).append(tc)
 
+    # Batch the three per-suite lookups across ALL suites in one round trip
+    # each (was 3 queries per suite — 3N total — on the ingestion critical
+    # path). The per-suite slices below are identical to what the per-suite
+    # queries returned: suites are processed independently (each touches only
+    # its own ``suite_name`` / ``<suite>-deleted`` rows), so prefetching the
+    # whole set up front is equivalent to the previous sequential fetches.
+    suite_names = list(suites.keys())
+    all_fingerprints = {
+        tc.test_fingerprint
+        for cases in suites.values()
+        for tc in cases
+        if tc.test_fingerprint
+    }
+
+    # 1. Managed test cases for auto-linking (fingerprint → managed id).
+    managed_map: dict[str, uuid.UUID] = {}
+    if all_fingerprints:
+        managed_result = await db.execute(
+            select(ManagedTestCase.id, ManagedTestCase.test_fingerprint).where(
+                and_(
+                    ManagedTestCase.project_id == project_id,
+                    ManagedTestCase.test_fingerprint.in_(list(all_fingerprints)),
+                    ManagedTestCase.status != "deprecated",
+                )
+            )
+        )
+        for row in managed_result.all():
+            managed_map[row.test_fingerprint] = row.id
+
+    # 2. Existing memberships for every run suite, grouped by suite_name.
+    existing_by_suite: dict[str, dict[str, SuiteMembership]] = {}
+    if suite_names:
+        existing_result = await db.execute(
+            select(SuiteMembership).where(
+                SuiteMembership.project_id == project_id,
+                SuiteMembership.suite_name.in_(suite_names),
+            )
+        )
+        for m in existing_result.scalars().all():
+            existing_by_suite.setdefault(m.suite_name, {})[m.test_fingerprint] = m
+
+    # 3. ``<suite>-deleted`` buckets for potential restorations, grouped back
+    #    to their base suite.
+    deleted_bucket_to_suite = {f"{s}-deleted": s for s in suite_names}
+    deleted_by_suite: dict[str, dict[str, SuiteMembership]] = {}
+    if deleted_bucket_to_suite:
+        deleted_result = await db.execute(
+            select(SuiteMembership).where(
+                SuiteMembership.project_id == project_id,
+                SuiteMembership.suite_name.in_(list(deleted_bucket_to_suite.keys())),
+            )
+        )
+        for m in deleted_result.scalars().all():
+            base = deleted_bucket_to_suite.get(m.suite_name)
+            if base is not None:
+                deleted_by_suite.setdefault(base, {})[m.test_fingerprint] = m
+
     summaries = []
     for suite_name, cases in suites.items():
-        summary = await _sync_one_suite(db, project_id, run_id, suite_name, cases)
+        summary = _sync_one_suite(
+            db, project_id, run_id, suite_name, cases,
+            managed_map=managed_map,
+            existing=existing_by_suite.get(suite_name, {}),
+            deleted_members=deleted_by_suite.get(suite_name, {}),
+        )
         summaries.append(summary)
 
     try:
@@ -83,14 +145,25 @@ async def sync_suite_membership(
     return summaries
 
 
-async def _sync_one_suite(
+def _sync_one_suite(
     db: AsyncSession,
     project_id: uuid.UUID,
     run_id: uuid.UUID,
     suite_name: str,
     run_cases: list[TestCase],
+    *,
+    managed_map: dict[str, uuid.UUID],
+    existing: dict[str, "SuiteMembership"],
+    deleted_members: dict[str, "SuiteMembership"],
 ) -> dict[str, Any]:
-    """Sync membership for a single suite from the run's test cases."""
+    """Sync membership for a single suite from the run's test cases.
+
+    ``managed_map`` (fingerprint → managed id), ``existing`` (this suite's
+    current memberships, fingerprint → row) and ``deleted_members`` (the
+    ``<suite>-deleted`` bucket, fingerprint → row) are prefetched in one
+    batched query each by the caller — see ``sync_suite_membership``. This
+    function performs no DB reads, only mutations + adds on the session.
+    """
     summary = {
         "suite_name": suite_name,
         "run_id": str(run_id),
@@ -107,39 +180,7 @@ async def _sync_one_suite(
         if tc.test_fingerprint:
             run_map[tc.test_fingerprint] = tc
 
-    # Batch-fetch managed test cases for auto-linking (avoids N+1 per-fingerprint queries)
-    managed_map: dict[str, uuid.UUID] = {}
-    if run_map:
-        managed_result = await db.execute(
-            select(ManagedTestCase.id, ManagedTestCase.test_fingerprint).where(
-                and_(
-                    ManagedTestCase.project_id == project_id,
-                    ManagedTestCase.test_fingerprint.in_(list(run_map.keys())),
-                    ManagedTestCase.status != "deprecated",
-                )
-            )
-        )
-        for row in managed_result.all():
-            managed_map[row.test_fingerprint] = row.id
-
-    # Fetch current memberships for this suite (active + deleted)
-    existing_result = await db.execute(
-        select(SuiteMembership).where(
-            SuiteMembership.project_id == project_id,
-            SuiteMembership.suite_name == suite_name,
-        )
-    )
-    existing = {m.test_fingerprint: m for m in existing_result.scalars().all()}
-
-    # Also check the -deleted bucket for potential restorations
     deleted_bucket = f"{suite_name}-deleted"
-    deleted_result = await db.execute(
-        select(SuiteMembership).where(
-            SuiteMembership.project_id == project_id,
-            SuiteMembership.suite_name == deleted_bucket,
-        )
-    )
-    deleted_members = {m.test_fingerprint: m for m in deleted_result.scalars().all()}
 
     # Process each test case in the run
     for fingerprint, tc in run_map.items():
