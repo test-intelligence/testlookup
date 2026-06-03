@@ -1,4 +1,3 @@
-from typing import Any
 
 """
 Run Intelligence Service.
@@ -1064,7 +1063,7 @@ def _render_executive_markdown(layer1: Any, layer2: Any) -> str:
 def get_pipeline_timeline(
     project_id: str,
     pipeline_run_id: str,
-    **_: Any,
+    **_: object,
 ) -> dict:
     """
     Return a pipeline timeline for a given project and pipeline run.
