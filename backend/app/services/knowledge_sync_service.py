@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import List
 from structlog.stdlib import get_logger
 
 logger = get_logger()

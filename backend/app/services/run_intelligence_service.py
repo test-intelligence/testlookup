@@ -1,3 +1,5 @@
+from typing import Any
+
 """
 Run Intelligence Service.
 
@@ -1057,7 +1059,6 @@ def _render_executive_markdown(layer1: Any, layer2: Any) -> str:
         )
     return "\n\n".join(s for s in sections if s).strip()
 
-from typing import Any
 
 
 def get_pipeline_timeline(

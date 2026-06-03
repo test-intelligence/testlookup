@@ -1,4 +1,3 @@
-from typing import Any
 from structlog.stdlib import get_logger
 
 logger = get_logger()
