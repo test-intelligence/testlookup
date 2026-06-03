@@ -133,6 +133,16 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `tests/regression/test_flaky_quarantine_recheck_project_scope.py` (one batched count for N
   rows; release/re-quarantine/insufficient decisions unchanged; query still project-scoped).
 
+### Fixed (2026-06-03)
+
+- **Stale commit-allowlist caps (failing CI gate)** (`fix/stale-commit-allowlist-caps`) —
+  `test_commit_allowlist_caps_are_accurate` was red on `main`: `knowledge_sync_service` (cap=6)
+  and `rag_generation_service` (cap=1) had been converted to stage-only (0 service-level
+  `commit()` calls) without updating the architectural allowlist. Removed both now-zero entries
+  (a 0-commit service needs no allowlist entry; the `count==0` files are already skipped by the
+  "commits must be allowlisted" guard). Test-only change; the four
+  `test_architectural_transaction_boundaries` tests pass again.
+
 ## [0.0.1] - 2026-04-15
 
 ### Added
