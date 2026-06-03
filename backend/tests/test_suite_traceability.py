@@ -256,20 +256,19 @@ class TestSyncOneSuite:
                 class_name="AuthTest",
             ),
         ]
-        db = _FakeAsyncSession(
-            [
-                _FakeResult(
-                    rows=[SimpleNamespace(id=managed_id, test_fingerprint="fp-login")]
-                ),
-                _FakeResult(scalars=[]),
-                _FakeResult(scalars=[]),
-            ]
+        db = _FakeAsyncSession([])
+
+        # Batched lookups are now performed by sync_suite_membership and passed
+        # in; _sync_one_suite itself does NO DB reads.
+        summary = _sync_one_suite(
+            db, project_id, run_id, "auth-suite", run_cases,
+            managed_map={"fp-login": managed_id},
+            existing={},
+            deleted_members={},
         )
 
-        summary = await _sync_one_suite(db, project_id, run_id, "auth-suite", run_cases)
-
         assert summary["added_count"] == 2
-        assert db.execute_calls == 3
+        assert db.execute_calls == 0  # no per-suite reads anymore
         added_members = [
             call.args[0]
             for call in db.add.call_args_list
