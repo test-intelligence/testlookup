@@ -29,6 +29,22 @@ def _content_to_text(value: Any) -> str:
     return str(value)
 
 
+def _redact_for_llm(text: str) -> str:
+    """Strip secrets/PII from caller-supplied content before the LLM call.
+
+    ``get_llm()`` resolves to a HOSTED provider (OpenAI/Gemini/Anthropic) when
+    ``AI_OFFLINE_MODE`` is off, so requirements text, test-case bodies, and
+    project context must not carry raw secrets across that boundary — the same
+    RAG-13 rule the grounded-generation path already applies via
+    ``redact_prompt``. Redaction is idempotent, so callers that already redacted
+    (e.g. rag_generation_service) are unaffected.
+    """
+    from app.services.rag_redaction_service import redact_prompt
+
+    redacted, _ = redact_prompt(text or "")
+    return redacted
+
+
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
 @tool
@@ -68,7 +84,7 @@ generate comprehensive test cases following best practices. Return ONLY valid JS
 }
 Generate 3-8 test cases covering: happy path, edge cases, error conditions, boundary values.""")
 
-    human = HumanMessage(content=f"Generate test cases for:\n\n{requirements}")
+    human = HumanMessage(content=f"Generate test cases for:\n\n{_redact_for_llm(requirements)}")
     try:
         response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
@@ -120,7 +136,7 @@ Evaluate the test case and return ONLY valid JSON:
 Criteria: Clear title, measurable steps, single responsibility, explicit expected results,
 proper test data definition, no UI-dependency in unit tests, reproducible.""")
 
-    human = HumanMessage(content=f"Review this test case:\n\n{test_case_json}")
+    human = HumanMessage(content=f"Review this test case:\n\n{_redact_for_llm(test_case_json)}")
     try:
         response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
@@ -160,7 +176,10 @@ Return ONLY valid JSON:
   "summary": "string"
 }""")
 
-    human = HumanMessage(content=f"Requirements:\n{requirements}\n\nExisting tests:\n{existing_tests_summary}")
+    human = HumanMessage(
+        content=f"Requirements:\n{_redact_for_llm(requirements)}\n\n"
+        f"Existing tests:\n{_redact_for_llm(existing_tests_summary)}"
+    )
     try:
         response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
@@ -209,7 +228,7 @@ Return ONLY valid JSON:
   "summary": "string - executive summary"
 }""")
 
-    human = HumanMessage(content=f"Create a test strategy for:\n\n{project_context}")
+    human = HumanMessage(content=f"Create a test strategy for:\n\n{_redact_for_llm(project_context)}")
     try:
         response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)
@@ -252,7 +271,10 @@ provide an optimized execution plan. Return ONLY valid JSON:
 }
 Prioritize: smoke tests first, critical path second, regression last. Group by feature area for parallel execution.""")
 
-    human = HumanMessage(content=f"Test cases:\n{test_cases_json}\n\nConstraints:\n{constraints}")
+    human = HumanMessage(
+        content=f"Test cases:\n{_redact_for_llm(test_cases_json)}\n\n"
+        f"Constraints:\n{_redact_for_llm(constraints)}"
+    )
     try:
         response = await llm.ainvoke([system, human])
         content = _content_to_text(response.content if hasattr(response, "content") else response)

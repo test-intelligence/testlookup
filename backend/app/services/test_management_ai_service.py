@@ -119,9 +119,17 @@ async def review_test_case_with_ai(
     case_id: uuid.UUID,
     current_user: User,
 ) -> dict:
-    from app.services.test_case_ai_agent import ai_review_test_case
+    from app.core.deps import resolve_project_scope
 
     test_case = await get_test_case_or_404(db, case_id)
+    # Tenant guard — get_test_case_or_404 is a bare by-id fetch; verify the
+    # caller can access the case's project before reading it into the LLM
+    # prompt and writing back an AI quality score (class-i IDOR otherwise).
+    # Done before importing the LLM tool so a denied request never touches it.
+    await resolve_project_scope(db, current_user, str(test_case.project_id))
+
+    from app.services.test_case_ai_agent import ai_review_test_case
+
     tc_dict = {
         "title": test_case.title,
         "objective": test_case.objective,

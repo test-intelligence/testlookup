@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, resolve_project_scope
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.models.schemas import (
@@ -48,6 +48,9 @@ async def ai_generate_strategy(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Tenant guard — caller must be a member of the target project before we
+    # persist an AI-generated strategy into it (matches /plans/ai-create).
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     strategy = await generate_ai_strategy(db, payload, current_user)
     await db.commit()
     await db.refresh(strategy)
@@ -57,8 +60,11 @@ async def ai_generate_strategy(
 @router.post("/strategies/ai-generate/async", response_model=AITaskEnqueueResponse)
 async def ai_generate_strategy_async(
     payload: AIGenerateStrategyRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Verify access before queueing — the worker runs without request context.
+    await resolve_project_scope(db, current_user, str(payload.project_id))
     return await enqueue_ai_strategy_generation(payload, current_user)
 
 

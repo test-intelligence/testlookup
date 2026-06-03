@@ -362,7 +362,9 @@ async def test_review_test_case_with_ai_creates_review_when_missing():
         ai_quality_score=None,
         ai_review_notes=None,
     )
-    user = SimpleNamespace(id=uuid.uuid4(), full_name="QA User", username="qa")
+    # role=ADMIN so the new tenant guard (resolve_project_scope) bypasses —
+    # this test exercises the review-creation flow, not access control.
+    user = SimpleNamespace(id=uuid.uuid4(), full_name="QA User", username="qa", role="ADMIN")
     db = FakeAsyncDB([FakeExecuteResult(scalars=[])])
 
     async def fake_flush():
