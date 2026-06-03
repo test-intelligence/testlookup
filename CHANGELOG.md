@@ -104,6 +104,12 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   batched query and passes `existing`/`fingerprint` through, mirroring
   `ingestion_pipeline.ingest_test_results`. Pinned by
   `tests/regression/test_ingestion_sentinel_prefetch_no_n_plus_1.py`.
+- **`run_diff_service.get_baseline_diff` redundant query removed** (`auto/perf-20260603-1531`) —
+  it ran two SELECTs against `test_cases` with identical WHERE clauses for the baseline run's
+  failures (one projecting `test_fingerprint`, one projecting `fingerprint`+`name`). Now fetches
+  both columns once and reuses the rows for new-failure detection and resolved-failures — one
+  fewer round trip per baseline diff; output unchanged. Pinned by
+  `tests/regression/test_run_diff_baseline_single_fetch.py`.
 
 ## [0.0.1] - 2026-04-15
 
