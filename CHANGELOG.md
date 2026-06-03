@@ -122,6 +122,16 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `<suite>-deleted` rows), so prefetching the whole set up front matches the prior sequential
   fetches. Pinned by `tests/regression/test_suite_sync_batched_queries.py` (constant 4 round
   trips for N suites + add/unchanged/delete behavior across a multi-suite run).
+- **`flaky_quarantine_service.run_recheck_cycle` per-row count batched** (`perf/run-recheck-batch-counts`)
+  — the recheck beat task issued one grouped `COUNT` query per `RECHECK_SCHEDULED` row (N
+  queries) to compute each test's post-quarantine flip rate. The counts are now computed in a
+  single grouped query that OR-chains per-`(project, fingerprint, since)` conditions and groups
+  by `(project, fingerprint, status)`, mapping results back per row. Each row's individual
+  `since` cutoff and the per-project scope are preserved; the partial unique index
+  `ux_fqr_live_per_fingerprint` guarantees `(project, fingerprint)` is unique among live rows so
+  the mapping is exact. Shorter DB-session hold on the beat worker. Pinned by
+  `tests/regression/test_flaky_quarantine_recheck_project_scope.py` (one batched count for N
+  rows; release/re-quarantine/insufficient decisions unchanged; query still project-scoped).
 
 ## [0.0.1] - 2026-04-15
 
