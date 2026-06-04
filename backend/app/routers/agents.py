@@ -522,7 +522,7 @@ async def get_pipeline_replay(
 @router.get("/active-runs")
 async def get_active_live_runs(
     db: AsyncSession = Depends(get_db),
-    _: Any = Depends(get_current_active_user),
+    current_user: Any = Depends(get_current_active_user),
 ):
     """Get all currently monitored live test runs.
 
@@ -532,6 +532,13 @@ async def get_active_live_runs(
     TestRun row doesn't exist yet — the Phase 4.5 incremental drain
     creates it within ~30s of the first event, so very-new active
     sessions fall through to the SDK ``build_number`` on the UI.
+
+    Tenant-scoped: a non-ADMIN caller only sees live runs whose project
+    they can access. ``RedisLiveRunState`` stores ``project_id`` on every
+    state row, so the filter is in-memory (no DB round trip). Without this,
+    the endpoint leaked every tenant's live run (slug, build number, counts,
+    timing) to any authenticated user — the ``/active-runs/{run_id}`` sibling
+    already gates on ``require_run_access`` but the list did not.
     """
     import uuid as _uuid
     from app.streams.live_run_state import RedisLiveRunState
@@ -539,6 +546,14 @@ async def get_active_live_runs(
     from app.services.runs_service import fetch_run_seq_map
 
     active = await RedisLiveRunState.get_all_active()
+
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None:  # None = ADMIN → unrestricted
+        allowed = {str(p) for p in accessible}
+        # Rows without a resolvable project_id are dropped for non-admins —
+        # we can't prove ownership, so we don't leak them.
+        active = [r for r in active if (r.get("project_id") or "") in allowed]
+
     if active:
         run_uuids: list[_uuid.UUID] = []
         slug_to_uuid: dict[str, str] = {}
