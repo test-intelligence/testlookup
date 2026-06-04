@@ -44,6 +44,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | **Run detail → test-case drill-down (summary / table / filter / stack trace)** | **`run-detail-drilldown.spec.ts`** ✨ | **deep, mocked** |
 | Tier 0-2 feature pages | `tier-0-2-features.spec.ts` | smoke |
 | Workflow timeline component | `workflow-visual-language.spec.ts` | smoke |
+| **Role-based access (VIEWER/QA_ENGINEER vs QA_LEAD management guard)** | **`role-based-access.spec.ts`** ✨ | **deep, mocked** |
 | 2026-05-19 regressions | `regression-2026-05-19.spec.ts` | medium |
 | Backlog API contracts | `backlog-pending-contracts.spec.ts` | API probe |
 
@@ -87,8 +88,10 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
   the mode chip updates the retrieval provenance footer.
 
 **Tier 3 — breadth/edge**
-- Role-based access (VIEWER/QA_ENGINEER vs ADMIN) — management routes hidden /
-  redirected; use `dev-login?role=` to mint each role's `storageState`.
+- ✅ Role-based access — done (`role-based-access.spec.ts`): VIEWER + QA_ENGINEER
+  are redirected from the management routes (`/users`, `/settings`, `/projects`)
+  to `/overview` while QA_LEAD is admitted. The session role is set by mocking
+  `GET /api/v1/auth/me` (deterministic, no dependence on dev-login `?role=`).
 - Table filter / sort / pagination on `/runs`, `/suites`, `/defects`.
 - Real-time polling freshness on `/live` and `/my-failures`.
 
