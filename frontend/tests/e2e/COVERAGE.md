@@ -31,6 +31,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | Runs list + run detail | `test-runs.spec.ts` | shallow |
 | Defect intake modal + failures | `defects-failures.spec.ts` | medium |
 | Settings pages (11 routes) | `settings.spec.ts` | smoke |
+| **Settings form saves (profile PATCH + AI-config mode PUT)** | **`settings-form-save.spec.ts`** ✨ | **deep, mocked** |
 | My-failures / suites / policies / ownership / value-metrics | `sprint-pages.spec.ts` | medium (mocked) |
 | Search / projects / releases / live / intelligence | `features.spec.ts` | smoke |
 | **API Keys CRUD (list / generate / revoke)** | **`api-keys.spec.ts`** ✨ | **deep, mocked** |
@@ -63,8 +64,10 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
   One catch-all mock over `/api/v1/runs**` honouring the `?status=` filter.
 
 **Tier 2 — core flows, shallow today**
-- Settings **form save** round-trips (profile edit, AI config mode switch) —
-  mock the `PUT` + assert the success toast and persisted value.
+- ✅ Settings **form save** round-trips — done (`settings-form-save.spec.ts`):
+  profile name + avatar `PATCH /api/v1/auth/me`, AI-config analysis-mode switch
+  `PUT /api/v1/settings/ai`, each asserting the success toast + the persisted
+  value forwarded to the backend.
 - Failure-investigation workflow — `/failures` drill-down → tag → assign.
 - Flaky quarantine — `/flaky-coach` recommendation → `/quarantine` approve/deny.
 - Faceted **search** — entity-type tabs + result navigation (mocked results).
