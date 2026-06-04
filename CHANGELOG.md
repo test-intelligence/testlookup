@@ -275,6 +275,21 @@ branch per fix; see the per-entry branch for the full diff + regression test).
 
 ### Fixed (2026-06-03)
 
+- **`secret_service` clobbered to a stub — whole-app import break (CI exit 2)** (`fix/secret-service-restore`) —
+  commit `e6c0348` ("Align secret masking implementation with tests") replaced the entire
+  `services/secret_service.py` module with a masking-only stub, deleting `store_secret`,
+  `read_secret`, `has_secret`, `get_masked`, `extract_secrets_from_config`,
+  `strip_secrets_from_config`, `is_secret_field`, `SECRET_FIELDS`, and the Fernet encryption
+  helpers, and renaming `mask_value` → `mask_secret`/`mask_api_key`. But `routers/app_settings.py`
+  imports those names at module top, and `bootstrap.py` imports `app_settings`, so the **whole app
+  failed to import** — pytest collection errored on `test_architectural_authorization`,
+  `test_llm_connectivity`, `test_route_ordering` (CI exit 2) and the app couldn't start. (The stub's
+  `mask_secret`/`mask_api_key` were dead code — no caller or test referenced them; the tests import
+  `mask_value`.) Restored the full module (the pre-clobber `e0d4fea` version), which already
+  satisfies the `mask_value` masking tests. Other callers restored too: `ai_config_resolver`,
+  `github_checks_service`, `webhook_service`. Regression:
+  `tests/regression/test_secret_service_public_api.py` pins the public surface + `mask_value` +
+  encrypt/decrypt round-trip so a future stub breaks loudly instead of taking down the import graph.
 - **Stale commit-allowlist caps (failing CI gate)** (`fix/stale-commit-allowlist-caps`) —
   `test_commit_allowlist_caps_are_accurate` was red on `main`: `knowledge_sync_service` (cap=6)
   and `rag_generation_service` (cap=1) had been converted to stage-only (0 service-level
