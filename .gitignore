@@ -91,6 +91,9 @@ workflows-compute-graph-README.md
 RUN_SUITE_COMPARISON_DESIGN.md
 CLAUDE_CODE_LOGO_MIGRATION.md
 
+# Local-only infra/deployment scratch notes (not product source)
+infra/aws/
+
 # Claude Code — keep local, never push to remote
 .claude/
 Product_Plan
