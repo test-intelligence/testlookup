@@ -30,6 +30,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | Overview / dashboard | `dashboard.spec.ts` | smoke |
 | Runs list + run detail | `test-runs.spec.ts` | shallow |
 | **Runs table filter / sort / pagination** | **`runs-table.spec.ts`** ✨ | **deep, mocked** |
+| **Defects table filter (status tabs + search) / sort** | **`defects-table.spec.ts`** ✨ | **deep, mocked** |
 | Defect intake modal + failures | `defects-failures.spec.ts` | medium |
 | **Failure investigation (defect create round-trip + failed-test reassign)** | **`failure-investigation.spec.ts`** ✨ | **deep, mocked** |
 | Settings pages (11 routes) | `settings.spec.ts` | smoke |
@@ -97,8 +98,10 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
 - ✅ Table filter / sort / pagination — done for `/runs`
   (`runs-table.spec.ts`): client-side pagination of the 500-run window
   (25/page), the Started column asc/desc sort reordering across the page
-  boundary, and the server-side status filter narrowing the table. `/suites`
-  and `/defects` would follow the same pattern if needed.
+  boundary, and the server-side status filter narrowing the table. Also done
+  for `/defects` (`defects-table.spec.ts`): client-side status tabs + search
+  filter + Status column sort (no pagination). `/suites` (TestManagementPage)
+  would follow the same client-side pattern.
 - ✅ Real-time polling freshness — done (`live-polling-freshness.spec.ts`):
   a counter-based mock of `/api/v1/stream/active` returns one session then two,
   and the "N active runs" hero ticks 1 → 2 on the SWR refresh interval with no
