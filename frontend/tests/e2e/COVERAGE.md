@@ -29,6 +29,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | Sidebar navigation | `navigation.spec.ts` | smoke |
 | Overview / dashboard | `dashboard.spec.ts` | smoke |
 | Runs list + run detail | `test-runs.spec.ts` | shallow |
+| **Runs table filter / sort / pagination** | **`runs-table.spec.ts`** ✨ | **deep, mocked** |
 | Defect intake modal + failures | `defects-failures.spec.ts` | medium |
 | **Failure investigation (defect create round-trip + failed-test reassign)** | **`failure-investigation.spec.ts`** ✨ | **deep, mocked** |
 | Settings pages (11 routes) | `settings.spec.ts` | smoke |
@@ -92,7 +93,11 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
   are redirected from the management routes (`/users`, `/settings`, `/projects`)
   to `/overview` while QA_LEAD is admitted. The session role is set by mocking
   `GET /api/v1/auth/me` (deterministic, no dependence on dev-login `?role=`).
-- Table filter / sort / pagination on `/runs`, `/suites`, `/defects`.
+- ✅ Table filter / sort / pagination — done for `/runs`
+  (`runs-table.spec.ts`): client-side pagination of the 500-run window
+  (25/page), the Started column asc/desc sort reordering across the page
+  boundary, and the server-side status filter narrowing the table. `/suites`
+  and `/defects` would follow the same pattern if needed.
 - Real-time polling freshness on `/live` and `/my-failures`.
 
 ## Conventions for new specs
