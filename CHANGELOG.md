@@ -244,6 +244,18 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   exploitability is negligible. More importantly, a private-range block would break legitimate
   on-prem Jira/Confluence **Server** deployments (which routinely run on private IPs). Left as a
   documented non-action rather than a regression.
+- **Input-length caps on persisted request models** (`sec/input-length-caps`, audit item S4 — OWASP
+  A03) — several `*Create`/`*Update` Pydantic models accepted arbitrarily long strings for fields
+  written to the DB, so a QA_ENGINEER+ could POST a multi-MB/GB value (test-case body, plan /
+  strategy free-text, descriptions) and exhaust memory / DB write capacity; `UserCreate.password`
+  was the sharpest — an unbounded password is hashed on the bcrypt path (CPU/memory DoS). Added
+  `Field(max_length=...)`: long-form `Text`-backed fields use a shared `MAX_LONG_TEXT` (50 000 —
+  generous, so realistic content is never rejected); `String(N)`-backed fields match `N` exactly
+  (an over-long value now returns a clean 422 instead of a DB-overflow 500); `password` capped at
+  128. Covers `ManagedTestCase`, `TestPlan`, `TestStrategy`, `TestSuite`, `TestCaseComment`,
+  `ChatSession`, `QualityGate`, `ReleaseGatePolicy`, `SavedView`, `AIEvalDataset`, `KnowledgeSource`,
+  `UserCreate`. Only `max_length` was added (no new `min_length`), so the change is
+  behaviour-preserving. Regression: `tests/regression/test_input_length_caps.py`.
 
 ### Fixed (2026-06-03)
 
