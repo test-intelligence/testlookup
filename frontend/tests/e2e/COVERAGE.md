@@ -33,6 +33,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | **Failure investigation (defect create round-trip + failed-test reassign)** | **`failure-investigation.spec.ts`** ✨ | **deep, mocked** |
 | Settings pages (11 routes) | `settings.spec.ts` | smoke |
 | **Settings form saves (profile PATCH + AI-config mode PUT)** | **`settings-form-save.spec.ts`** ✨ | **deep, mocked** |
+| **Flaky quarantine review (approve / reject / release)** | **`flaky-quarantine.spec.ts`** ✨ | **deep, mocked** |
 | My-failures / suites / policies / ownership / value-metrics | `sprint-pages.spec.ts` | medium (mocked) |
 | Search / projects / releases / live / intelligence | `features.spec.ts` | smoke |
 | **API Keys CRUD (list / generate / revoke)** | **`api-keys.spec.ts`** ✨ | **deep, mocked** |
@@ -75,7 +76,10 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
   failed-test **reassign** (`PUT /api/v1/me/assigned-failures/:id/reassign`,
   QA_LEAD+). The `/failures` analytics page itself stays read-only (Phase-2
   placeholder CTAs), so those surfaces carry the workflow.
-- Flaky quarantine — `/flaky-coach` recommendation → `/quarantine` approve/deny.
+- ✅ Flaky quarantine — done (`flaky-quarantine.spec.ts`): the QA_LEAD review
+  state machine on `/quarantine` — approve / reject a proposal and release an
+  active quarantine, each asserting the notes prompt + the POST to
+  `/api/v1/quarantine/:id/{approve,reject,release}` and the success toast.
 - Faceted **search** — entity-type tabs + result navigation (mocked results).
 
 **Tier 3 — breadth/edge**
