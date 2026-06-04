@@ -34,6 +34,8 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | My-failures / suites / policies / ownership / value-metrics | `sprint-pages.spec.ts` | medium (mocked) |
 | Search / projects / releases / live / intelligence | `features.spec.ts` | smoke |
 | **API Keys CRUD (list / generate / revoke)** | **`api-keys.spec.ts`** ✨ | **deep, mocked** |
+| **Project Data danger zone (typed-name reset)** | **`project-data-danger-zone.spec.ts`** ✨ | **deep, mocked** |
+| **Release-gate policy CRUD (list / new / validate / create)** | **`policies.spec.ts`** ✨ | **deep, mocked** |
 | Tier 0-2 feature pages | `tier-0-2-features.spec.ts` | smoke |
 | Workflow timeline component | `workflow-visual-language.spec.ts` | smoke |
 | 2026-05-19 regressions | `regression-2026-05-19.spec.ts` | medium |
@@ -45,13 +47,11 @@ npx playwright test --list    # compile/collect only (no server/browser)
 
 Built with `apiMock.ts` helpers; ordered by risk × frequency.
 
-**Tier 1 — high-risk, not yet covered**
-- `project-data` danger zone — typed-name confirmation gates the reset
-  (`/settings/project-data`); unit-tested (`ProjectDataPage.test.tsx`) but no
-  browser flow. Mock `POST /projects/{id}/reset`; assert button stays disabled
-  until the typed name matches.
-- Release **policy CRUD → release-gate** — `/policies` create/edit, dimension
-  weights summing to 1.0, then verify application on `/release-gate`.
+**Tier 1 — high-risk**
+- ✅ `project-data` danger zone — done (`project-data-danger-zone.spec.ts`).
+- ✅ Release **policy CRUD** — done (`policies.spec.ts`): list / new / validation
+  / create round-trip. _Still open:_ verify a created policy's **application on
+  `/release-gate`** (needs `getEffectivePolicy` mock + reading `ReleaseGatePage`).
 - Run **detail → test-case drill-down** — deeper assertions on
   `/runs/:runId` + `/runs/:runId/tests/:testId` with a mocked run payload
   (status counts, failure message, stack trace, history).
