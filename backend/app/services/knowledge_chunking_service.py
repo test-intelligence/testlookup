@@ -302,9 +302,13 @@ async def chunk_and_index(
                 metadatas=batch_meta,
             )
 
-        logger.info("Indexed %d chunks into ChromaDB for source %s", len(chunks), source.id)
+        logger.info("chromadb_chunks_indexed", chunk_count=len(chunks), source_id=str(source.id))
     except Exception as exc:
-        logger.warning("ChromaDB indexing failed for source %s: %s (chunks still saved to PG)", source.id, exc)
+        logger.warning(
+            "chromadb_indexing_failed_chunks_saved_to_pg",
+            source_id=str(source.id),
+            error=str(exc),
+        )
 
     # Persist chunk metadata to PostgreSQL
     for i, chunk in enumerate(chunks):
@@ -324,7 +328,7 @@ async def chunk_and_index(
         db.add(chunk_row)
 
     await db.flush()
-    logger.info("Persisted %d chunk metadata rows for source %s", len(chunks), source.id)
+    logger.info("chunk_metadata_persisted", chunk_count=len(chunks), source_id=str(source.id))
     return len(chunks)
 
 
@@ -346,6 +350,6 @@ async def retire_chunks_for_source(db: AsyncSession, source_id: uuid.UUID) -> in
                 where={"source_id": str(source_id)},
             )
         except Exception as exc:
-            logger.warning("ChromaDB delete failed for source %s: %s", source_id, exc)
+            logger.warning("chromadb_delete_failed", source_id=str(source_id), error=str(exc))
 
     return retired

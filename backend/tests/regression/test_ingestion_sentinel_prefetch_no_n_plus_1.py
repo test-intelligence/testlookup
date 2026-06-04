@@ -40,14 +40,20 @@ async def test_upsert_with_prefetched_existing_issues_no_select():
 
     run = SimpleNamespace(id=uuid.uuid4())
     existing = SimpleNamespace(
-        status=None, duration_ms=None, error_message=None,
+        id=uuid.uuid4(), status=None, duration_ms=None, error_message=None,
         test_fingerprint="fp", test_name="t1",
     )
     db = AsyncMock()
+    # The history-dedup probe (one SELECT on TestCaseHistory, added after this
+    # pin was first written) runs on the existing path; stub it to "no prior
+    # history row" so a fresh one is inserted.
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
 
     tc = await _upsert_test_case(db, _case(), run, existing=existing, fingerprint="fp")
 
-    db.execute.assert_not_awaited()   # no SELECT — the whole point of the prefetch
+    # The prefetch eliminates the per-case TestCase SELECT — the only remaining
+    # execute is the single history-dedup probe (not a per-row lookup + history).
+    assert db.execute.await_count == 1
     assert tc is existing             # updated the prefetched row in place
 
 
@@ -59,7 +65,7 @@ async def test_upsert_without_existing_falls_back_to_one_select():
 
     run = SimpleNamespace(id=uuid.uuid4())
     found = SimpleNamespace(
-        status=None, duration_ms=None, error_message=None,
+        id=uuid.uuid4(), status=None, duration_ms=None, error_message=None,
         test_fingerprint="fp", test_name="t1",
     )
     db = AsyncMock()
@@ -69,4 +75,6 @@ async def test_upsert_without_existing_falls_back_to_one_select():
 
     await _upsert_test_case(db, _case(), run)  # no existing/fingerprint
 
-    assert db.execute.await_count == 1  # the inline SELECT the prefetch avoids
+    # Legacy path issues the inline per-case TestCase SELECT (what the prefetch
+    # avoids) plus the history-dedup probe = two executes.
+    assert db.execute.await_count == 2

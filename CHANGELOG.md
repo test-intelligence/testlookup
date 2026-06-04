@@ -273,6 +273,29 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `UserCreate`. Only `max_length` was added (no new `min_length`), so the change is
   behaviour-preserving. Regression: `tests/regression/test_input_length_caps.py`.
 
+### Fixed (2026-06-04 — RAG/knowledge service stubs restore)
+
+- **`rag_generation_service` + `knowledge_sync_service` clobbered to stubs — RAG generation
+  and knowledge sync disabled, 47 backend tests red** (`fix/restore-rag-knowledge-services`) —
+  commit `51dd4bc` ("Fix structlog logger calls to use keyword args") replaced both full
+  modules with ~20-line placeholder stubs (rag 383→21 lines, knowledge_sync 424→35),
+  deleting `grounded_generate`, `_build_grounded_prompt`, `_stub_generated_cases`,
+  `_build_citations`, `_call_llm_generate`, `_map_coverage`, `MAX_CITATIONS_PER_CASE`,
+  `GroundedGenerationResult` (rag) and `get_connector`, `compute_staleness`,
+  `_effective_threshold` (knowledge_sync). Same incident class as the `secret_service`
+  clobber below. Restored the full modules from their last-good commits (`0804a22` /
+  `e0dc759`) and re-applied the intended structlog `%s`→kwargs cleanup the bad commit was
+  supposed to do (9 positional calls across the two files, plus 4 in
+  `knowledge_chunking_service.py:305/307/327/349` that were also raising
+  `BoundLoggerBase._proxy_to_logger()` TypeErrors). Reconciled five stale tests against
+  evolved code: secret-mask format now `****{last2}` (hardened in `e0dc759`/`e0d4fea`,
+  secrets-at-rest review — tests updated, impl unchanged); `get_pipeline_timeline()` param
+  `_`→`current_user` + new IDOR access gate; `_upsert_test_case` history-dedup probe changed
+  the prefetch-path execute count (1 history vs 2 for the legacy lookup+history path);
+  suite-trend routing pin granted project access for its random `project_id` (post-IDOR gate).
+  Regression coverage: `test_rag_services.py` + `test_rag_generation.py` +
+  `test_knowledge_sync_offline_gate.py` (158 pass locally).
+
 ### Fixed (2026-06-03)
 
 - **`secret_service` clobbered to a stub — whole-app import break (CI exit 2)** (`fix/secret-service-restore`) —
