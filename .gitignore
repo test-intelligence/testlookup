@@ -77,6 +77,20 @@ test-results.txt
 allure-results/
 allure-report/
 
+# Local scratch + design / AI-prototype hand-off artifacts (removed in
+# chore/repo-cleanup — these are mockups/notes, not product source)
+local_run.txt
+*.zip
+design_handoff_releases/
+intelligence-selector.html
+intelligence-selector.png
+intelligence-selector-README.md
+run-intelligence.html
+run-intelligence-README.md
+workflows-compute-graph-README.md
+RUN_SUITE_COMPARISON_DESIGN.md
+CLAUDE_CODE_LOGO_MIGRATION.md
+
 # Claude Code — keep local, never push to remote
 .claude/
 Product_Plan
