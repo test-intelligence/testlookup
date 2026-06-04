@@ -30,6 +30,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | Overview / dashboard | `dashboard.spec.ts` | smoke |
 | Runs list + run detail | `test-runs.spec.ts` | shallow |
 | Defect intake modal + failures | `defects-failures.spec.ts` | medium |
+| **Failure investigation (defect create round-trip + failed-test reassign)** | **`failure-investigation.spec.ts`** ✨ | **deep, mocked** |
 | Settings pages (11 routes) | `settings.spec.ts` | smoke |
 | **Settings form saves (profile PATCH + AI-config mode PUT)** | **`settings-form-save.spec.ts`** ✨ | **deep, mocked** |
 | My-failures / suites / policies / ownership / value-metrics | `sprint-pages.spec.ts` | medium (mocked) |
@@ -68,7 +69,12 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
   profile name + avatar `PATCH /api/v1/auth/me`, AI-config analysis-mode switch
   `PUT /api/v1/settings/ai`, each asserting the success toast + the persisted
   value forwarded to the backend.
-- Failure-investigation workflow — `/failures` drill-down → tag → assign.
+- ✅ Failure-investigation workflow — done (`failure-investigation.spec.ts`):
+  the real mutations behind triage — defect intake **create** round-trip
+  (`POST /api/v1/analytics/defects` with severity + failure_category) and
+  failed-test **reassign** (`PUT /api/v1/me/assigned-failures/:id/reassign`,
+  QA_LEAD+). The `/failures` analytics page itself stays read-only (Phase-2
+  placeholder CTAs), so those surfaces carry the workflow.
 - Flaky quarantine — `/flaky-coach` recommendation → `/quarantine` approve/deny.
 - Faceted **search** — entity-type tabs + result navigation (mocked results).
 
