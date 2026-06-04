@@ -504,6 +504,14 @@ class Settings(BaseSettings):
                 warnings.append("CRITICAL: DEV_AUTO_LOGIN_ENABLED is True in production — disable it")
             if self.SSO_ENABLED and self.SAML_BASE_URL == "http://localhost:8000":
                 warnings.append("WARNING: SAML_BASE_URL is set to localhost — update it for production")
+            # S4-audit S11: a wildcard CORS origin lets any site make
+            # credentialed cross-origin calls to the API. CORS_ORIGINS never
+            # defaults to '*' (it falls back to localhost), so this only fires
+            # when an operator set it explicitly.
+            if any("*" in origin for origin in self.CORS_ORIGINS):
+                warnings.append(
+                    "WARNING: CORS_ORIGINS contains a wildcard '*' — set explicit allowed origins"
+                )
         return warnings
 
     def critical_security_failures(self) -> list[str]:
