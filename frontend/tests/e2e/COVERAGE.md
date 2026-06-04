@@ -37,6 +37,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | **Flaky quarantine review (approve / reject / release)** | **`flaky-quarantine.spec.ts`** ✨ | **deep, mocked** |
 | My-failures / suites / policies / ownership / value-metrics | `sprint-pages.spec.ts` | medium (mocked) |
 | Search / projects / releases / live / intelligence | `features.spec.ts` | smoke |
+| **Live execution polling freshness (SWR refresh, no reload)** | **`live-polling-freshness.spec.ts`** ✨ | **deep, mocked** |
 | **Faceted search (scope facet re-query + result nav + mode facet)** | **`search-faceted.spec.ts`** ✨ | **deep, mocked** |
 | **API Keys CRUD (list / generate / revoke)** | **`api-keys.spec.ts`** ✨ | **deep, mocked** |
 | **Project Data danger zone (typed-name reset)** | **`project-data-danger-zone.spec.ts`** ✨ | **deep, mocked** |
@@ -98,7 +99,12 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
   (25/page), the Started column asc/desc sort reordering across the page
   boundary, and the server-side status filter narrowing the table. `/suites`
   and `/defects` would follow the same pattern if needed.
-- Real-time polling freshness on `/live` and `/my-failures`.
+- ✅ Real-time polling freshness — done (`live-polling-freshness.spec.ts`):
+  a counter-based mock of `/api/v1/stream/active` returns one session then two,
+  and the "N active runs" hero ticks 1 → 2 on the SWR refresh interval with no
+  reload. `/my-failures` uses the same pattern at a 30s cadence.
+
+_All roadmap items above are now covered._
 
 ## Conventions for new specs
 - Auth with `performRealLogin(page)` in `beforeEach`.
