@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.postgres import (
     FailureCategory,
@@ -2931,6 +2931,49 @@ class KnowledgeDomainAllowlistUpdate(BaseModel):
         ...,
         description="FQDN list, e.g. ['confluence.corp.com', 'jira.corp.com']",
     )
+
+    @field_validator("domains")
+    @classmethod
+    def _validate_domains(cls, value: List[str]) -> List[str]:
+        """S4-audit S8: the allowlist is the domain gate that complements the
+        url_connector SSRF guard, so each entry must be a real FQDN. Reject
+        wildcards / schemes / ports / paths / IP addresses — none of which the
+        ``hostname == d or hostname.endswith('.'+d)`` matcher honours anyway, so
+        rejecting them is behaviour-preserving. An empty list is allowed (it
+        clears the allowlist → permissive, the existing semantics)."""
+        import ipaddress as _ip
+        import re as _re
+
+        _fqdn = _re.compile(
+            r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$"
+        )
+        cleaned: List[str] = []
+        for raw in value:
+            d = raw.strip().lower()
+            if not d:
+                continue  # blank entries are dropped (clear-allowlist preserved)
+            if "://" in d or any(c in d for c in ("*", "/", ":", " ", "\t")):
+                raise ValueError(
+                    f"Invalid domain '{raw}': wildcards, schemes, ports, and "
+                    "paths are not allowed — use a bare FQDN like 'jira.corp.com'"
+                )
+            if "." not in d:
+                raise ValueError(
+                    f"Invalid domain '{raw}': must be a fully-qualified domain"
+                )
+            try:
+                _ip.ip_address(d)
+            except ValueError:
+                pass  # not an IP literal — good
+            else:
+                raise ValueError(
+                    f"Invalid domain '{raw}': IP addresses are not allowed, "
+                    "use a hostname"
+                )
+            if not _fqdn.match(d):
+                raise ValueError(f"Invalid domain '{raw}': not a valid domain name")
+            cleaned.append(d)
+        return cleaned
 
 
 # ── Knowledge Sync Events (RAG-4) ─────────────────────────────────────────────

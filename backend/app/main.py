@@ -131,6 +131,15 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
         "5/minute",
         "Too many registration attempts. Try again in a minute.",
     ),
+    # S4-audit S7: the refresh endpoint mints new access tokens from a refresh
+    # token, so an unthrottled it is a refresh-token-grinding / token-mint
+    # amplification vector. 30/min is well above any legitimate client's
+    # refresh cadence (access tokens live for minutes) while still blocking
+    # automated abuse.
+    "/api/v1/auth/refresh": (
+        "30/minute",
+        "Too many token refresh attempts. Try again in a minute.",
+    ),
 }
 
 

@@ -206,6 +206,22 @@ branch per fix; see the per-entry branch for the full diff + regression test).
 
 ### Security (2026-06-03)
 
+- **Tier-3 hardening — auth refresh rate-limit, allowlist validation, CORS wildcard warning**
+  (`sec/tier3-hardening`, audit items S7/S8/S11) — three small defense-in-depth fixes:
+  - **S7:** added `/api/v1/auth/refresh` to the `_AUTH_RATE_LIMITS` middleware (30/min prod) — the
+    token-mint endpoint was previously unthrottled (refresh-token grinding / token amplification).
+    `/login` (10/min) and `/register` (5/min) were already covered.
+  - **S8:** `KnowledgeDomainAllowlistUpdate.domains` now validates each entry is a real FQDN —
+    rejects wildcards (`*`), schemes, ports, paths, and IP literals. The allowlist is the domain
+    gate that complements the S1 SSRF guard, and the `hostname == d or endswith('.'+d)` matcher
+    never honoured those forms anyway, so rejecting them is behaviour-preserving. Empty list still
+    clears the allowlist (permissive), preserving existing semantics.
+  - **S11:** `Settings.validate_production_secrets()` now emits a startup WARNING when
+    `CORS_ORIGINS` contains a wildcard in production/staging (credentialed any-origin access).
+    `CORS_ORIGINS` never defaults to `*`, so this only fires on explicit operator misconfig.
+  - **Verified no-change:** S9 (ingest `status` already constrained by a regex pattern) and S10
+    (debug router already ADMIN-gated, no secret-bearing Celery args).
+  Regression: `tests/regression/test_tier3_hardening.py`.
 - **SSRF guard on the URL knowledge connector** (`sec/url-connector-ssrf-guard`, audit item S1) —
   `connectors/url_connector.fetch_content` validated only the URL *scheme* and an opt-in
   knowledge-source domain allowlist; neither blocks a host that resolves to a private / loopback /
