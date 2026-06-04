@@ -110,7 +110,7 @@ async def test_refresh_baselines_is_incremental_and_advances_cursor():
                         duration_ms=130, test_name="c", suite_name="s",
                         created_at=base + timedelta(minutes=3)),
     ]
-    captured_stmt = {}
+    captured_sql: list[str] = []
 
     class _Result:
         def scalars(self):
@@ -121,7 +121,7 @@ async def test_refresh_baselines_is_incremental_and_advances_cursor():
             self.commit = AsyncMock()
 
         async def execute(self, stmt):
-            captured_stmt["sql"] = str(stmt)
+            captured_sql.append(str(stmt).lower())
             return _Result()
 
         async def __aenter__(self):
@@ -144,9 +144,11 @@ async def test_refresh_baselines_is_incremental_and_advances_cursor():
     # cursor advanced to the newest swept row (incl. the skipped one)
     assert save_mock.await_args.args[1] == base + timedelta(minutes=3)
     # the sweep is bounded by the cursor and ordered oldest-first
-    sql = captured_stmt["sql"].lower()
-    assert "created_at >" in sql
-    assert "order by" in sql and "created_at asc" in sql
+    sweep = next((s for s in captured_sql if "test_cases" in s and "created_at >" in s), None)
+    assert sweep is not None, captured_sql
+    assert "order by" in sweep and "created_at asc" in sweep
+    # the per-row PerfBaseline SELECT is replaced by ONE batched IN prefetch
+    assert any("perf_baselines" in s and " in (" in s for s in captured_sql), captured_sql
 
 
 @pytest.mark.asyncio

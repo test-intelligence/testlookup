@@ -153,6 +153,17 @@ branch per fix; see the per-entry branch for the full diff + regression test).
 
 ### Performance (2026-06-03 — query batching, human-directed)
 
+- **`perf_regression_service.refresh_baselines` per-row baseline SELECT batched**
+  (`perf/refresh-baselines-batch`) — the nightly sweep called `record_observation` per swept
+  `TestCase` row, each issuing a `SELECT PerfBaseline WHERE (project_id, test_fingerprint)`
+  (`1 + N` queries, up to `_REFRESH_BATCH_SIZE` rows). It now prefetches the batch's baselines in
+  one `IN`×`IN` query and passes each through `record_observation(existing=...)`, caching the
+  returned (new or existing) baseline per pair. Behavior-preserving incl. the critical
+  repeated-`(project, fingerprint)` case: multiple rows for the same test still accumulate into
+  ONE baseline via Welford (the cache stands in for the old autoflush-visible just-created row),
+  so no duplicate row / `uq_perf_baseline_fingerprint` violation. Plain `IN` (no window /
+  composite-IN). Pinned by `tests/regression/test_refresh_baselines_batch.py` (repeated-fp → one
+  baseline n=2; existing reused not recreated; sweep + one prefetch only).
 - **Two perf indexes added (migration 0090)** (`perf/index-agent-stage-results`) —
   `ix_agent_stage_results_stage_status` on `agent_stage_results (stage_name, status)` (backs the
   24h repeated-failure count in `agent_cost_service.check_alerts`) and `ix_test_cases_run_suite`
