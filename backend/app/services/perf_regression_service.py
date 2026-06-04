@@ -158,6 +158,11 @@ def is_spike(
 # ── Refresh / upsert entry points ─────────────────────────────────────────
 
 
+# Sentinel for record_observation's ``existing`` param: distinguishes "caller
+# prefetched the baseline (possibly None → create)" from "not provided → query".
+_UNSET = object()
+
+
 async def record_observation(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -166,23 +171,32 @@ async def record_observation(
     duration_ms: int,
     test_name: Optional[str] = None,
     suite_name: Optional[str] = None,
+    existing=_UNSET,
 ) -> Optional[PerfBaseline]:
     """Upsert a baseline row with a single observation.
 
-    Used by ``refresh_perf_baselines`` when sweeping new TestCase
-    rows. Thread-safe via the (project_id, test_fingerprint) unique
-    constraint + row lock.
+    Used by ``refresh_perf_baselines`` when sweeping new TestCase rows.
+
+    ``existing`` lets a batched caller pass the already-prefetched
+    (project_id, test_fingerprint) baseline — or ``None`` when none exists —
+    to skip the per-row SELECT (``refresh_baselines`` prefetches the whole
+    batch in one query). When omitted (``_UNSET``) the baseline is queried
+    inline, as before. Thread-safe via the (project_id, test_fingerprint)
+    unique constraint.
     """
     if duration_ms is None or duration_ms <= 0:
         return None
 
-    result = await db.execute(
-        select(PerfBaseline).where(
-            PerfBaseline.project_id == project_id,
-            PerfBaseline.test_fingerprint == test_fingerprint,
+    if existing is _UNSET:
+        result = await db.execute(
+            select(PerfBaseline).where(
+                PerfBaseline.project_id == project_id,
+                PerfBaseline.test_fingerprint == test_fingerprint,
+            )
         )
-    )
-    baseline = result.scalar_one_or_none()
+        baseline = result.scalar_one_or_none()
+    else:
+        baseline = existing
     if baseline is None:
         baseline = PerfBaseline(
             project_id=project_id,
@@ -235,25 +249,54 @@ async def refresh_baselines() -> dict[str, int]:
             stmt = stmt.where(TestCase.created_at > cursor)
         stmt = stmt.order_by(TestCase.created_at.asc()).limit(_REFRESH_BATCH_SIZE)
 
-        result = await db.execute(stmt)
+        rows = list((await db.execute(stmt)).scalars().all())
+
+        # Prefetch the existing baselines for this batch in ONE query instead
+        # of a per-row SELECT inside record_observation (was a 1+N N+1 over the
+        # nightly sweep of up to _REFRESH_BATCH_SIZE rows). The IN x IN can
+        # over-fetch unrelated (project, fingerprint) combos, but we only ever
+        # look up the real batch pairs, so spurious dict entries are never read.
+        fingerprints = {tc.test_fingerprint for tc in rows if tc.test_fingerprint}
+        by_pair: dict[tuple[uuid.UUID, str], PerfBaseline] = {}
+        if fingerprints:
+            project_ids = {tc.project_id for tc in rows if tc.test_fingerprint}
+            existing_rows = (
+                await db.execute(
+                    select(PerfBaseline).where(
+                        PerfBaseline.project_id.in_(project_ids),
+                        PerfBaseline.test_fingerprint.in_(fingerprints),
+                    )
+                )
+            ).scalars().all()
+            by_pair = {(b.project_id, b.test_fingerprint): b for b in existing_rows}
+
         max_created: Optional[datetime] = None
-        for tc in result.scalars().all():
+        for tc in rows:
             # Advance the watermark for every swept row, even ones we skip
             # below (no fingerprint), so they aren't re-examined next run.
             if tc.created_at and (max_created is None or tc.created_at > max_created):
                 max_created = tc.created_at
             if not tc.test_fingerprint:
                 continue
-            await record_observation(
+            pair = (tc.project_id, tc.test_fingerprint)
+            baseline = await record_observation(
                 db,
                 tc.project_id,
                 tc.test_fingerprint,
                 duration_ms=int(tc.duration_ms),
                 test_name=tc.test_name,
                 suite_name=tc.suite_name,
+                existing=by_pair.get(pair),
             )
+            # Cache the (new or existing) baseline so a later row with the SAME
+            # (project, fingerprint) accumulates into it via Welford rather than
+            # creating a duplicate — the previous per-row SELECT relied on
+            # autoflush to see the just-created row; the unique constraint
+            # uq_perf_baseline_fingerprint would otherwise raise on commit.
+            if baseline is not None:
+                by_pair[pair] = baseline
             observed += 1
-            baselines_touched.add((tc.project_id, tc.test_fingerprint))
+            baselines_touched.add(pair)
         if max_created is not None:
             await _save_refresh_cursor(db, max_created)
             await db.commit()
