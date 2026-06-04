@@ -28,6 +28,7 @@ from app.core.config import settings
 from app.db.mongo import Collections, get_mongo_db
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AIAnalysis, AIFeedback, Defect, FeedbackRating, TestCase
+from app.services.privacy_service import sanitize_for_persistence
 
 logger = logging.getLogger("training.exporter")
 
@@ -209,13 +210,23 @@ class TrainingDataExporter:
             if not analysis.get("failure_category") or analysis.get("failure_category") == "UNKNOWN":
                 continue
 
+            # PII boundary: the reasoning track exports the raw user prompt +
+            # ReAct intermediate steps + analysis payload straight from Mongo
+            # into the MinIO fine-tune corpus. Those traces carry test names,
+            # stack traces, env URLs, emails, and secrets, so every free-text
+            # field is run through the [REDACTED] persistence boundary before
+            # it lands in the corpus. Redaction is idempotent — re-scrubbing
+            # already-clean text is a no-op.
             examples.append({
                 "messages": [
                     {"role": "system", "content": _REASONING_SYSTEM_PROMPT},
-                    {"role": "user", "content": doc.get("prompt", "")},
+                    {"role": "user", "content": sanitize_for_persistence(doc.get("prompt", ""))},
                     # Reconstruct the tool-calling chain as assistant turns
                     *self._format_reasoning_chain(doc.get("intermediate_steps", [])),
-                    {"role": "assistant", "content": json.dumps(analysis, indent=2)},
+                    {
+                        "role": "assistant",
+                        "content": sanitize_for_persistence(json.dumps(analysis, indent=2)),
+                    },
                 ]
             })
 
@@ -337,12 +348,20 @@ class TrainingDataExporter:
 
     @staticmethod
     def _format_reasoning_chain(steps: list) -> list[dict]:
-        """Convert stored intermediate_steps strings into assistant message turns."""
+        """Convert stored intermediate_steps strings into assistant message turns.
+
+        Each step is a raw ReAct trace (tool input/output) that can carry PII or
+        secrets, so it passes through the [REDACTED] persistence boundary before
+        being added to the fine-tune corpus.
+        """
         turns = []
         for step in steps:
             step_str = str(step)
             if step_str.strip():
-                turns.append({"role": "assistant", "content": step_str})
+                turns.append({
+                    "role": "assistant",
+                    "content": sanitize_for_persistence(step_str),
+                })
         return turns
 
     async def _write_jsonl(self, track: str, examples: list[dict]) -> int:
