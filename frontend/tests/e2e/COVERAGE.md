@@ -36,6 +36,8 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | **API Keys CRUD (list / generate / revoke)** | **`api-keys.spec.ts`** ✨ | **deep, mocked** |
 | **Project Data danger zone (typed-name reset)** | **`project-data-danger-zone.spec.ts`** ✨ | **deep, mocked** |
 | **Release-gate policy CRUD (list / new / validate / create)** | **`policies.spec.ts`** ✨ | **deep, mocked** |
+| **Release-gate policy *application* (badge + per-rule + hardcoded fallback)** | **`release-gate-policy.spec.ts`** ✨ | **deep, mocked** |
+| **Run detail → test-case drill-down (summary / table / filter / stack trace)** | **`run-detail-drilldown.spec.ts`** ✨ | **deep, mocked** |
 | Tier 0-2 feature pages | `tier-0-2-features.spec.ts` | smoke |
 | Workflow timeline component | `workflow-visual-language.spec.ts` | smoke |
 | 2026-05-19 regressions | `regression-2026-05-19.spec.ts` | medium |
@@ -50,11 +52,15 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
 **Tier 1 — high-risk**
 - ✅ `project-data` danger zone — done (`project-data-danger-zone.spec.ts`).
 - ✅ Release **policy CRUD** — done (`policies.spec.ts`): list / new / validation
-  / create round-trip. _Still open:_ verify a created policy's **application on
-  `/release-gate`** (needs `getEffectivePolicy` mock + reading `ReleaseGatePage`).
-- Run **detail → test-case drill-down** — deeper assertions on
-  `/runs/:runId` + `/runs/:runId/tests/:testId` with a mocked run payload
-  (status counts, failure message, stack trace, history).
+  / create round-trip.
+- ✅ Release **policy application** — done (`release-gate-policy.spec.ts`): the
+  policy badge (level + version), the per-rule "Policy Rules Evaluated"
+  breakdown, and the hardcoded-fallback → "system defaults" label. Mocks
+  `GET /api/v1/release-readiness/:runId`.
+- ✅ Run **detail → test-case drill-down** — done (`run-detail-drilldown.spec.ts`):
+  run summary header + per-test table, FAILED status-filter re-query, and the
+  row-click through to `/runs/:runId/tests/:testId` (stack trace + AI panel).
+  One catch-all mock over `/api/v1/runs**` honouring the `?status=` filter.
 
 **Tier 2 — core flows, shallow today**
 - Settings **form save** round-trips (profile edit, AI config mode switch) —
