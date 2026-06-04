@@ -17,6 +17,17 @@ from app.models.postgres import (
 )
 
 
+# Generous upper bound for long-form free-text fields backed by a Postgres
+# ``Text`` column (test-case bodies, plans, strategies, descriptions). These
+# columns have no DB length limit, so without a Pydantic cap a caller can POST a
+# multi-MB/GB string and exhaust memory / DB write capacity (audit item S4,
+# OWASP A03). 50 000 chars is far above any realistic human-authored test field
+# while still decisively blocking abuse — chosen to avoid rejecting legitimate
+# content (behaviour-preserving). Fields backed by ``String(N)`` instead match
+# ``N`` directly so an over-long value returns a clean 422 rather than a DB 500.
+MAX_LONG_TEXT = 50_000
+
+
 # ── Base ─────────────────────────────────────────────────────
 
 class TimestampMixin(BaseModel):
@@ -29,8 +40,10 @@ class TimestampMixin(BaseModel):
 class UserCreate(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
-    full_name: Optional[str] = None
-    password: str = Field(..., min_length=8)
+    full_name: Optional[str] = Field(None, max_length=255)
+    # Cap the password length: an unbounded value is hashed on the bcrypt path,
+    # so a multi-MB password is a cheap CPU/memory DoS (audit item S4).
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class UserResponse(TimestampMixin):
@@ -620,7 +633,7 @@ class QualityGateRule(BaseModel):
 
 
 class QualityGateCreate(BaseModel):
-    name: str
+    name: str = Field(..., max_length=255)
     rules: List[QualityGateRule]
 
 
@@ -1032,7 +1045,7 @@ class RunModeSummaryResponse(BaseModel):
 
 class ChatSessionCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
-    title: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=500)
 
 
 class ChatSessionResponse(BaseModel):
@@ -1078,21 +1091,21 @@ class TestCaseStepSchema(BaseModel):
 class ManagedTestCaseCreate(BaseModel):
     project_id: uuid.UUID
     title: str = Field(..., min_length=3, max_length=500)
-    description: Optional[str] = None
-    objective: Optional[str] = None
-    preconditions: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    preconditions: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     steps: Optional[List[dict]] = None
-    expected_result: Optional[str] = None
-    test_data: Optional[str] = None
+    expected_result: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    test_data: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     test_type: str = "functional"
     priority: str = "medium"
     severity: str = "major"
-    feature_area: Optional[str] = None
+    feature_area: Optional[str] = Field(None, max_length=500)
     # Free-text suite label (legacy). When set without ``test_suite_id``,
     # the service resolves-or-creates a matching TestSuite and populates
     # the FK so authored cases participate in the same catalog graph as
     # executed ones (migration 0087).
-    suite_name: Optional[str] = None
+    suite_name: Optional[str] = Field(None, max_length=500)
     tags: Optional[List[str]] = None
     estimated_duration_minutes: Optional[int] = None
     is_automated: bool = False
@@ -1101,22 +1114,22 @@ class ManagedTestCaseCreate(BaseModel):
 
 class ManagedTestCaseUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=3, max_length=500)
-    description: Optional[str] = None
-    objective: Optional[str] = None
-    preconditions: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    preconditions: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     steps: Optional[List[dict]] = None
-    expected_result: Optional[str] = None
-    test_data: Optional[str] = None
+    expected_result: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    test_data: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     test_type: Optional[str] = None
     priority: Optional[str] = None
     severity: Optional[str] = None
-    feature_area: Optional[str] = None
-    suite_name: Optional[str] = None
+    feature_area: Optional[str] = Field(None, max_length=500)
+    suite_name: Optional[str] = Field(None, max_length=500)
     tags: Optional[List[str]] = None
     estimated_duration_minutes: Optional[int] = None
     is_automated: Optional[bool] = None
     automation_status: Optional[str] = None
-    change_summary: Optional[str] = None
+    change_summary: Optional[str] = Field(None, max_length=500)
 
 
 class ManagedTestCaseResponse(BaseModel):
@@ -1214,7 +1227,7 @@ class ReviewActionRequest(BaseModel):
 
 
 class TestCaseCommentCreate(BaseModel):
-    content: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1, max_length=MAX_LONG_TEXT)
     comment_type: str = "general"
     parent_id: Optional[uuid.UUID] = None
     step_number: Optional[int] = None
@@ -1238,8 +1251,8 @@ class TestCaseCommentResponse(BaseModel):
 class TestPlanCreate(BaseModel):
     project_id: uuid.UUID
     name: str = Field(..., min_length=3, max_length=500)
-    description: Optional[str] = None
-    objective: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     planned_start_date: Optional[datetime] = None
     planned_end_date: Optional[datetime] = None
     assigned_to_id: Optional[uuid.UUID] = None
@@ -1248,8 +1261,8 @@ class TestPlanCreate(BaseModel):
 
 class TestPlanUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=3, max_length=500)
-    description: Optional[str] = None
-    objective: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     status: Optional[str] = None
     planned_start_date: Optional[datetime] = None
     planned_end_date: Optional[datetime] = None
@@ -1324,27 +1337,27 @@ class ExecuteTestPlanItemRequest(BaseModel):
 class TestStrategyCreate(BaseModel):
     project_id: uuid.UUID
     name: str = Field(..., min_length=3, max_length=500)
-    version_label: str = "v1.0"
-    objective: Optional[str] = None
-    scope: Optional[str] = None
-    test_approach: Optional[str] = None
+    version_label: str = Field("v1.0", max_length=50)
+    objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    scope: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    test_approach: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
 
 
 class TestStrategyUpdate(BaseModel):
-    name: Optional[str] = None
-    version_label: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=500)
+    version_label: Optional[str] = Field(None, max_length=50)
     status: Optional[str] = None
-    objective: Optional[str] = None
-    scope: Optional[str] = None
-    out_of_scope: Optional[str] = None
-    test_approach: Optional[str] = None
+    objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    scope: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    out_of_scope: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    test_approach: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     risk_assessment: Optional[List[dict]] = None
     test_types: Optional[List[dict]] = None
     entry_criteria: Optional[List[str]] = None
     exit_criteria: Optional[List[str]] = None
     environments: Optional[List[dict]] = None
-    automation_approach: Optional[str] = None
-    defect_management: Optional[str] = None
+    automation_approach: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
+    defect_management: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
 
 
 class TestStrategyResponse(BaseModel):
@@ -1452,7 +1465,7 @@ class SuiteSyncSummary(BaseModel):
 class TestSuiteCreate(BaseModel):
     project_id: uuid.UUID
     name: str = Field(..., min_length=1, max_length=500)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     tags: Optional[List[str]] = None
     # Optional owner picked at creation. When provided, the suite-owner
     # row is written immediately via ``set_suite_owner`` — which enforces
@@ -1465,7 +1478,7 @@ class TestSuiteCreate(BaseModel):
 class TestSuiteUpdate(BaseModel):
     """None = keep existing value."""
     name: Optional[str] = Field(None, min_length=1, max_length=500)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     tags: Optional[List[str]] = None
 
 
@@ -2506,14 +2519,14 @@ class ReleaseGatePolicyCreate(BaseModel):
     """Create a new draft policy."""
     project_id: Optional[uuid.UUID] = None  # None = system default
     name: str = Field(..., min_length=2, max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     rules: PolicyDocument = Field(default_factory=PolicyDocument)
 
 
 class ReleaseGatePolicyUpdate(BaseModel):
     """Update a draft policy (fails if already published)."""
     name: Optional[str] = Field(None, min_length=2, max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     rules: Optional[PolicyDocument] = None
 
 
@@ -2637,7 +2650,7 @@ class OwnershipResolution(BaseModel):
 class SavedViewCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     page: Optional[str] = Field(None, max_length=50)  # dashboard | trends | coverage | defects
     filters: dict = Field(default_factory=dict)
     is_shared: bool = False
@@ -2646,7 +2659,7 @@ class SavedViewCreate(BaseModel):
 
 class SavedViewUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     page: Optional[str] = Field(None, max_length=50)
     filters: Optional[dict] = None
     is_shared: Optional[bool] = None
@@ -2730,7 +2743,7 @@ class DigestContentResponse(BaseModel):
 
 class AIEvalDatasetCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     task_type: str = Field(..., pattern="^(classification|root_cause|release_decision|duplicate_detection)$")
     items: List[dict] = Field(default_factory=list)
 
@@ -2858,12 +2871,12 @@ class KnowledgeSourceCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     canonical_url: str = Field(..., min_length=1, max_length=2000)
     external_id: Optional[str] = Field(None, max_length=500)
-    classification: str = "internal"
+    classification: str = Field("internal", max_length=20)
 
 
 class KnowledgeSourceUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=500)
-    classification: Optional[str] = None
+    classification: Optional[str] = Field(None, max_length=20)
     is_archived: Optional[bool] = None
 
 
