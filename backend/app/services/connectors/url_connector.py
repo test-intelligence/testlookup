@@ -1,8 +1,10 @@
 """URL knowledge connector — fetches content from internal/external URLs via HTTP."""
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Optional
+from urllib.parse import urljoin
 
 import httpx
 import structlog
@@ -13,14 +15,37 @@ from app.services.connectors.base import (
     FetchedContent,
     KnowledgeConnectorBase,
 )
+from app.services.url_safety import is_safe_public_url
 
 logger = structlog.get_logger(__name__)
 
 # Max response size to prevent abuse (5 MB)
 _MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
+# Untrusted user-supplied URLs: cap redirect hops (matches the previous
+# follow_redirects max_redirects=5).
+_MAX_REDIRECTS = 5
+
 # Content types we can extract text from
 _TEXT_CONTENT_TYPES = {"text/html", "text/plain", "text/markdown", "application/json"}
+
+
+async def _assert_fetchable(url: str) -> None:
+    """SSRF + scheme guard for a single URL hop.
+
+    Raises ``ConnectorFetchError`` (not retryable) when the URL uses a blocked
+    scheme or resolves to a non-public address. Applied to the initial URL
+    *and* to every redirect ``Location`` before that hop is requested, so a
+    public host can't 30x us into cloud metadata / a private service.
+    """
+    from app.services.rag_redaction_service import validate_url_scheme
+    try:
+        validate_url_scheme(url)
+    except ValueError as exc:
+        raise ConnectorFetchError(str(exc))
+    safe, reason = await asyncio.to_thread(is_safe_public_url, url)
+    if not safe:
+        raise ConnectorFetchError(f"Refusing to fetch unsafe URL ({reason}): {url}")
 
 
 class URLConnector(KnowledgeConnectorBase):
@@ -45,31 +70,42 @@ class URLConnector(KnowledgeConnectorBase):
     ) -> FetchedContent:
         url = canonical_url
 
-        # RAG-13: Block dangerous URL schemes before fetching
-        from app.services.rag_redaction_service import validate_url_scheme
-        try:
-            validate_url_scheme(url)
-        except ValueError as exc:
-            raise ConnectorFetchError(str(exc))
+        # RAG-13 + SSRF guard: validate scheme AND reject non-public targets
+        # before fetching.
+        await _assert_fetchable(url)
 
         try:
-            # NB: the shared pooled client defaults to ``follow_redirects=False``
-            # and the default httpx redirect cap is 20. This connector fetches
-            # untrusted user-supplied URLs, so we deliberately cap redirects at
-            # 5 and have to construct a bespoke client to set that limit.
+            # NB: we deliberately disable httpx auto-redirect following and walk
+            # the redirect chain by hand. A public host can return a 30x whose
+            # Location points at cloud metadata / a private service, so every
+            # hop must pass the SSRF guard *before* we request it — automatic
+            # following would issue those requests for us, defeating the guard.
             async with httpx.AsyncClient(
                 timeout=20.0,
-                follow_redirects=True,
-                max_redirects=5,
+                follow_redirects=False,
                 verify=_http_verify(),
             ) as client:
-                resp = await client.get(
-                    url,
-                    headers={
-                        "User-Agent": "TestLookup-KnowledgeSync/1.0",
-                        "Accept": "text/html, text/plain, application/json, */*",
-                    },
-                )
+                current = url
+                for _hop in range(_MAX_REDIRECTS + 1):
+                    resp = await client.get(
+                        current,
+                        headers={
+                            "User-Agent": "TestLookup-KnowledgeSync/1.0",
+                            "Accept": "text/html, text/plain, application/json, */*",
+                        },
+                    )
+                    location = resp.headers.get("location")
+                    if resp.is_redirect and location:
+                        nxt = urljoin(current, location)
+                        await _assert_fetchable(nxt)  # re-resolve every hop
+                        current = nxt
+                        continue
+                    break
+                else:
+                    raise ConnectorFetchError(
+                        f"Too many redirects (>{_MAX_REDIRECTS}) fetching URL: {url}"
+                    )
+
                 if resp.status_code == 401 or resp.status_code == 403:
                     raise ConnectorFetchError(f"Access denied to URL ({resp.status_code}): {url}")
                 if resp.status_code == 404:
