@@ -36,6 +36,7 @@ npx playwright test --list    # compile/collect only (no server/browser)
 | **Flaky quarantine review (approve / reject / release)** | **`flaky-quarantine.spec.ts`** ✨ | **deep, mocked** |
 | My-failures / suites / policies / ownership / value-metrics | `sprint-pages.spec.ts` | medium (mocked) |
 | Search / projects / releases / live / intelligence | `features.spec.ts` | smoke |
+| **Faceted search (scope facet re-query + result nav + mode facet)** | **`search-faceted.spec.ts`** ✨ | **deep, mocked** |
 | **API Keys CRUD (list / generate / revoke)** | **`api-keys.spec.ts`** ✨ | **deep, mocked** |
 | **Project Data danger zone (typed-name reset)** | **`project-data-danger-zone.spec.ts`** ✨ | **deep, mocked** |
 | **Release-gate policy CRUD (list / new / validate / create)** | **`policies.spec.ts`** ✨ | **deep, mocked** |
@@ -80,7 +81,10 @@ Built with `apiMock.ts` helpers; ordered by risk × frequency.
   state machine on `/quarantine` — approve / reject a proposal and release an
   active quarantine, each asserting the notes prompt + the POST to
   `/api/v1/quarantine/:id/{approve,reject,release}` and the success toast.
-- Faceted **search** — entity-type tabs + result navigation (mocked results).
+- ✅ Faceted **search** — done (`search-faceted.spec.ts`): the scope chip
+  re-queries `GET /api/v1/search/global` with an `entity_types` filter (the
+  result set demonstrably narrows), a result row navigates to its entity, and
+  the mode chip updates the retrieval provenance footer.
 
 **Tier 3 — breadth/edge**
 - Role-based access (VIEWER/QA_ENGINEER vs ADMIN) — management routes hidden /
