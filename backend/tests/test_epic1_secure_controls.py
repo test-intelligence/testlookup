@@ -116,17 +116,19 @@ class TestSecretMasking:
     def test_mask_standard_value(self):
         from app.services.secret_service import mask_value
 
+        # Hardened in e0d4fea (secrets-at-rest review): mask_value never leaks a
+        # usable prefix — it reveals at most the last 2 chars and masks the rest.
         result = mask_value("sk-abcdef123456xyz")
-        assert result.startswith("sk-a")
-        assert result.endswith("xyz")
-        assert "..." in result
+        assert result == "****yz"
+        assert not result.startswith("sk-")
 
     def test_mask_long_api_key(self):
         from app.services.secret_service import mask_value
 
         key = "ghp_" + "x" * 40
         result = mask_value(key)
-        assert result.startswith("ghp_")
+        assert result == "****xx"
+        assert not result.startswith("ghp_")
         assert len(result) < len(key)
 
 

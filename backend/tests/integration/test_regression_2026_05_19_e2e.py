@@ -93,7 +93,12 @@ async def test_admin_maintenance_drain_admin_queues_task(client, auth_as):
 async def test_suite_trend_endpoint_routed(client, auth_as, fake_db):
     auth_as(role=UserRole.QA_ENGINEER)
     project_id = uuid.uuid4()
-    with patch("app.services.suite_history_service.compute_suite_trend",
+    # The route now enforces tenant access on a provided project_id (IDOR fix
+    # added after this routing pin was written) — grant the QA_ENGINEER access
+    # to the requested project so the routing assertion isn't masked by a 403.
+    with patch("app.core.deps.get_accessible_project_ids",
+               AsyncMock(return_value={project_id})), \
+         patch("app.services.suite_history_service.compute_suite_trend",
                AsyncMock(return_value=[])):
         resp = await client.get(
             f"/api/v1/test-management/suites/Auth/trend?days=14&project_id={project_id}",

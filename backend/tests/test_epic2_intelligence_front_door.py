@@ -364,7 +364,11 @@ class TestAgentTimelineRoute:
                     "detail": {"message": "Summary stage started"},
                 }
             ]))
-            response = await get_pipeline_timeline(pipeline_id, db=fake_db, _=object())
+            # The route now enforces tenant access (IDOR hardening) and takes a
+            # ``current_user`` param (was an ignored ``_``). Stub the access check
+            # so it doesn't consume a fake_db.execute result out of order.
+            m.setattr("app.routers.agents._require_pipeline_access", AsyncMock(return_value=None))
+            response = await get_pipeline_timeline(pipeline_id, db=fake_db, current_user=object())
 
         assert response["schema_version"] == 2
         assert response["pipeline_run_id"] == str(pipeline_id)

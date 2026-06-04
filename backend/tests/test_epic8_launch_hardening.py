@@ -67,7 +67,8 @@ class TestEpic1SecurityFlows:
         from app.services.secret_service import store_secret, read_secret, mask_value
         assert callable(store_secret)
         assert callable(read_secret)
-        assert mask_value("sk-abcdef12345678") == "sk-a...678"
+        # Hardened format (e0d4fea, secrets-at-rest review): last 2 chars only.
+        assert mask_value("sk-abcdef12345678") == "****78"
 
     def test_settings_audit_importable(self):
         from app.services.settings_audit_service import log_settings_change
