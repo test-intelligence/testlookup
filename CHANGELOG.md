@@ -221,6 +221,29 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `tests/regression/test_url_connector_ssrf_guard.py` (private/metadata/loopback initial target
   blocked with no GET; public→private redirect blocked on the hop; scheme block still first;
   public single-hop still fetches).
+- **Tenant-scoped `GET /api/v1/agents/active-runs`** (`sec/audit-remediation-2026-06`, audit item
+  S2 — IDOR) — the active-runs *list* endpoint had only `Depends(get_current_active_user)` and
+  returned `RedisLiveRunState.get_all_active()` verbatim, so any authenticated user (even a VIEWER
+  in one project) saw every other project's live runs: slug, build number, pass/fail counts,
+  timing, `project_id`. The `/active-runs/{run_id}` sibling already gated on `require_run_access`;
+  the list did not. Now filtered by `get_accessible_project_ids` (ADMIN → unrestricted) using the
+  `project_id` already on each Redis state row — in-memory, no DB round trip; rows without a
+  resolvable project are dropped for non-admins. Regression:
+  `tests/regression/test_active_runs_idor.py`.
+- **PII redaction in the reasoning-track fine-tune export** (`sec/audit-remediation-2026-06`, audit
+  item S3) — `training/exporter._export_reasoning` copied raw Mongo ReAct traces (`prompt` +
+  `intermediate_steps` + `analysis`) straight into the MinIO fine-tune corpus with no redaction;
+  those traces carry test names, stack traces, env URLs, emails, and secrets. Every free-text field
+  on a reasoning example now passes through `privacy_service.sanitize_for_persistence` (the
+  `[REDACTED]` boundary) — the prompt, each ReAct step in `_format_reasoning_chain`, and the
+  serialized analysis payload. Idempotent; structured labels (e.g. `PRODUCT_BUG`) are preserved.
+  Regression: `tests/regression/test_training_exporter_pii_redaction.py`.
+- **Deferred — S6 (connector base-URL SSRF):** verified and intentionally NOT applied. Jira /
+  Confluence base URLs come from `JIRA_DOMAIN` / `CONFLUENCE_DOMAIN`, settable only by ADMIN
+  (`PUT /api/v1/settings/integrations`, `require_role(ADMIN)`) — an ADMIN trust boundary, so SSRF
+  exploitability is negligible. More importantly, a private-range block would break legitimate
+  on-prem Jira/Confluence **Server** deployments (which routinely run on private IPs). Left as a
+  documented non-action rather than a regression.
 
 ### Fixed (2026-06-03)
 
