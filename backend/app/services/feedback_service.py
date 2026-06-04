@@ -64,9 +64,24 @@ async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
 async def get_feedback_stats(db: AsyncSession) -> dict:
     rows = await db.execute(select(AIFeedback.rating, func.count(AIFeedback.id)).group_by(AIFeedback.rating))
     counts = {str(row[0]): row[1] for row in rows.all()}
-    total = (await db.execute(select(func.count(AIFeedback.id)))).scalar_one()
-    unexported = (await db.execute(select(func.count(AIFeedback.id)).where(AIFeedback.exported.is_(False)))).scalar_one()
-    return {"total_feedback": total, "unexported": unexported, "by_rating": counts}
+    # total + unexported in one aggregate query instead of two separate COUNTs
+    # over the same table. FILTER (exported IS FALSE) matches the prior
+    # ``WHERE exported.is_(False)`` exactly (NULL is excluded by both).
+    totals = (
+        await db.execute(
+            select(
+                func.count(AIFeedback.id).label("total"),
+                func.count(AIFeedback.id)
+                .filter(AIFeedback.exported.is_(False))
+                .label("unexported"),
+            )
+        )
+    ).one()
+    return {
+        "total_feedback": totals.total,
+        "unexported": totals.unexported,
+        "by_rating": counts,
+    }
 
 
 def trigger_export() -> dict:
@@ -117,8 +132,19 @@ async def get_training_status(db: AsyncSession, settings) -> dict:
     from app.services.model_registry import ModelRegistry
 
     registry = await ModelRegistry.get_all_status()
-    unexported = (await db.execute(select(func.count(AIFeedback.id)).where(AIFeedback.exported.is_(False)))).scalar_one()
-    total = (await db.execute(select(func.count(AIFeedback.id)))).scalar_one()
+    # total + unexported in one aggregate query (was two separate COUNTs).
+    totals = (
+        await db.execute(
+            select(
+                func.count(AIFeedback.id).label("total"),
+                func.count(AIFeedback.id)
+                .filter(AIFeedback.exported.is_(False))
+                .label("unexported"),
+            )
+        )
+    ).one()
+    total = totals.total
+    unexported = totals.unexported
     return {
         "finetune_enabled": settings.FINETUNE_ENABLED,
         "feedback": {"total": total, "unexported": unexported},
