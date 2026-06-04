@@ -204,6 +204,24 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `tests/regression/test_flaky_coach_batched_queries.py` (constant 4 round trips + failure-rate /
   status-history-order / flaky-since / both-pass-and-fail-filter behavior).
 
+### Security (2026-06-03)
+
+- **SSRF guard on the URL knowledge connector** (`sec/url-connector-ssrf-guard`, audit item S1) —
+  `connectors/url_connector.fetch_content` validated only the URL *scheme* and an opt-in
+  knowledge-source domain allowlist; neither blocks a host that resolves to a private / loopback /
+  link-local / cloud-metadata address. A QA_ENGINEER+ creating an `external_url` knowledge source
+  could point sync at `http://169.254.169.254/...` (cloud metadata), `http://127.0.0.1:6379`
+  (Redis), or any RFC1918 host — a server-side fetch + response-exfiltration SSRF. Extracted the
+  existing webhook SSRF check into a shared `services/url_safety.is_safe_public_url` (resolve-then-
+  classify; unresolvable hosts allowed since they aren't reachable) and applied it in the connector
+  on the **initial URL and on every redirect hop** — auto-redirect following is now disabled and
+  the chain is walked by hand so a public host can't 30x the fetch into a private target. Redirect
+  cap unchanged (5). `webhook_service` now imports the shared guard (behaviour identical; the
+  `_is_safe_public_url` name is retained as an alias). Regression pins:
+  `tests/regression/test_url_connector_ssrf_guard.py` (private/metadata/loopback initial target
+  blocked with no GET; public→private redirect blocked on the hop; scheme block still first;
+  public single-hop still fetches).
+
 ### Fixed (2026-06-03)
 
 - **Stale commit-allowlist caps (failing CI gate)** (`fix/stale-commit-allowlist-caps`) —

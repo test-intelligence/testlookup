@@ -30,13 +30,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import ipaddress
 import json
-import socket
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -46,6 +43,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import Project, User, WebhookDelivery, WebhookSubscription
+# SSRF guard lives in the shared ``url_safety`` module (reused by the URL
+# knowledge connector). Aliased to the historical private name so the
+# create/update/delivery call sites + their regression tests stay stable.
+from app.services.url_safety import is_safe_public_url as _is_safe_public_url
 
 logger = structlog.get_logger("services.webhook")
 
@@ -90,59 +91,6 @@ def _secret_key(subscription_id: uuid.UUID | str) -> str:
 
 
 # ── SSRF guard ───────────────────────────────────────────────────────────────
-
-
-def _is_safe_public_url(url: str) -> tuple[bool, str]:
-    """Reject webhook targets that resolve to a non-public address.
-
-    Webhook delivery POSTs to a customer-supplied URL server-side and stores
-    the response, so an unvalidated target is an SSRF sink (cloud metadata
-    169.254.169.254, localhost admin ports, internal services). This blocks
-    any host that resolves to a private / loopback / link-local / reserved /
-    multicast / unspecified address.
-
-    A host that does NOT resolve is allowed: it can't be reached, so there's
-    no SSRF, and we don't want to reject a legitimate endpoint that isn't live
-    yet. The delivery then fails naturally at the HTTP layer.
-
-    Synchronous (does a DNS lookup); call via ``asyncio.to_thread`` from async
-    code.
-    """
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False, "URL could not be parsed"
-    if parsed.scheme not in ("http", "https"):
-        return False, "URL scheme must be http or https"
-    host = parsed.hostname
-    if not host:
-        return False, "URL has no host"
-    try:
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    except ValueError:
-        return False, "URL has an invalid port"
-    try:
-        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    except Exception:
-        # Unresolvable host — not reachable, so not an SSRF risk. Allow it;
-        # the actual POST will record a connection error if it's truly dead.
-        return True, ""
-    for info in infos:
-        addr = info[4][0]
-        try:
-            ip = ipaddress.ip_address(addr)
-        except ValueError:
-            continue
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            return False, f"target resolves to a non-public address ({addr})"
-    return True, ""
 
 
 async def _assert_safe_target_url(target_url: str) -> None:
