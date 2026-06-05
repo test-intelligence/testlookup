@@ -1,0 +1,2 @@
+# Sentinel so `COPY certs/` always has a populated dir in the build context.
+# Real interception CAs (*.crt) are dropped here by deploy-homelab.sh and are gitignored.

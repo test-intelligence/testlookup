@@ -1,10 +1,26 @@
 FROM node:20-alpine AS base
 WORKDIR /app
+
+# ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
+#    middlebox: Norton/NordVPN SSL scanning, corporate proxy) ─────────────
+# Without this, `npm install` can't verify registry.npmjs.org against the
+# public roots and fails with "unable to get local issuer certificate".
+# NODE_EXTRA_CA_CERTS *appends* the staged root CA to Node's built-in roots
+# (no apk / update-ca-certificates needed on Alpine). deploy-homelab.sh drops
+# the CA into frontend/certs/*.crt and builds with INSTALL_EXTRA_CA=1.
+# certs/ always exists (committed .keep); empty on CI → the conditional skips
+# and npm uses the public roots unchanged.
+ARG INSTALL_EXTRA_CA=0
+COPY certs/ /opt/extra-ca/
 COPY package*.json ./
 # npm install works whether or not package-lock.json is committed.
 # After running locally once, commit the generated package-lock.json and
 # change this line to `RUN npm ci` for faster, reproducible Docker builds.
-RUN npm install --prefer-offline || npm install
+RUN if [ "$INSTALL_EXTRA_CA" = "1" ] && ls /opt/extra-ca/*.crt >/dev/null 2>&1; then \
+      export NODE_EXTRA_CA_CERTS="$(ls /opt/extra-ca/*.crt | head -n1)"; \
+      echo "[frontend] trusting interception CA: $NODE_EXTRA_CA_CERTS"; \
+    fi; \
+    npm install --prefer-offline || npm install
 
 # Development stage
 FROM base AS development
