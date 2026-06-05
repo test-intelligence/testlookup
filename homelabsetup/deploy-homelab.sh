@@ -88,6 +88,72 @@ wait_for_pods() {
   }
 }
 
+# ── TLS-interception CA staging ─────────────────────────────
+# An HTTPS-inspecting middlebox on the build host (Norton/NordVPN SSL
+# scanning, corporate proxy) re-signs traffic with a private root CA. The
+# host trusts it, but the build containers (python:3.11-slim, node:20-alpine)
+# do not, so in-container pip/npm die with:
+#   "unable to get local issuer certificate".
+# We export that root CA from the host trust store into each build context's
+# certs/ dir and flip INSTALL_EXTRA_CA=1 so the Dockerfiles merge it. When no
+# interception is detected we leave INSTALL_EXTRA_CA at its 0 default and the
+# build uses the public roots unchanged (CI behaviour).
+#
+# Sources, in order:
+#   1. EXTRA_CA_CERT=/path/to/root.crt  — explicit override (any OS).
+#   2. Windows host  — auto-detect by probing pypi.org's cert issuer via
+#      PowerShell; if it's a private (non-public) CA, export it from the
+#      Windows cert store.
+CA_BUILD_ARG=()
+stage_tls_ca() {
+  local staged=""
+
+  if [ -n "${EXTRA_CA_CERT:-}" ] && [ -f "${EXTRA_CA_CERT}" ]; then
+    staged="${EXTRA_CA_CERT}"
+    log "Using TLS CA from \$EXTRA_CA_CERT: ${EXTRA_CA_CERT}"
+  elif command -v powershell.exe >/dev/null 2>&1; then
+    # Probe the cert pypi.org presents; if a private middlebox re-signed it,
+    # export that issuer's root from the Windows store to ./.tls-mitm-ca.crt.
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
+      $ErrorActionPreference = "SilentlyContinue"
+      try {
+        $tcp = [Net.Sockets.TcpClient]::new("pypi.org", 443)
+        $ssl = [Net.Security.SslStream]::new($tcp.GetStream(), $false, ({ $true }))
+        $ssl.AuthenticateAsClient("pypi.org")
+        $leaf = [Security.Cryptography.X509Certificates.X509Certificate2]$ssl.RemoteCertificate
+        $issuer = $leaf.Issuer
+        $ssl.Dispose(); $tcp.Close()
+      } catch { exit 0 }
+      if (-not $issuer) { exit 0 }
+      # Public CAs => no interception; nothing to export.
+      if ($issuer -match "Let.s Encrypt|DigiCert|Google Trust|Amazon|Sectigo|GlobalSign|ISRG|Microsoft|USERTrust|Baltimore") { exit 0 }
+      $ca = Get-ChildItem Cert:\LocalMachine\Root, Cert:\CurrentUser\Root, Cert:\LocalMachine\CA, Cert:\CurrentUser\CA |
+            Where-Object { $_.Subject -eq $issuer } | Select-Object -First 1
+      if (-not $ca) { exit 0 }
+      $pem = "-----BEGIN CERTIFICATE-----`n" + [Convert]::ToBase64String($ca.RawData, "InsertLineBreaks") + "`n-----END CERTIFICATE-----`n"
+      Set-Content -Path ".tls-mitm-ca.crt" -Value $pem -Encoding ascii -NoNewline
+    ' >/dev/null 2>&1 || true
+    if [ -s "$REPO_ROOT/.tls-mitm-ca.crt" ]; then
+      staged="$REPO_ROOT/.tls-mitm-ca.crt"
+    fi
+  fi
+
+  if [ -z "$staged" ]; then
+    log "No TLS-interception CA detected — building against public roots."
+    return 0
+  fi
+
+  warn "TLS-interception detected — staging host root CA so in-container pip/npm trust it."
+  local d
+  for d in backend frontend mcp; do
+    mkdir -p "$REPO_ROOT/$d/certs"
+    cp -f "$staged" "$REPO_ROOT/$d/certs/mitm-ca.crt"
+  done
+  rm -f "$REPO_ROOT/.tls-mitm-ca.crt"
+  CA_BUILD_ARG=(--build-arg INSTALL_EXTRA_CA=1)
+  log "Staged interception CA into backend/ frontend/ mcp/ certs/ (INSTALL_EXTRA_CA=1)."
+}
+
 # ── Teardown mode ───────────────────────────────────────────
 if [ "$TEARDOWN_ALL" = true ]; then
   header "TEARDOWN (DESTRUCTIVE) — Deleting namespace + all data"
@@ -316,6 +382,12 @@ if [ "$SKIP_BUILD" = false ]; then
 
   cd "$REPO_ROOT"
 
+  # Stage a TLS-interception root CA into the build contexts when the host
+  # runs an HTTPS-inspecting middlebox (Norton/NordVPN/corporate proxy), so
+  # in-container pip/npm don't fail with "unable to get local issuer
+  # certificate". No-op (and INSTALL_EXTRA_CA stays 0) on clean networks.
+  stage_tls_ca
+
   # Determine which registry address works for docker push
   if curl -sf --max-time 3 "http://registry.local:30500/v2/_catalog" >/dev/null 2>&1; then
     PUSH_REGISTRY="registry.local:30500"
@@ -361,6 +433,7 @@ if [ "$SKIP_BUILD" = false ]; then
 
   log "Building backend image (${BUILD_TAG})..."
   docker build -t "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}" \
+    ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
     --target production -f backend/Dockerfile backend/
 
   rm -rf "$STAGED_SDK"
@@ -372,10 +445,12 @@ if [ "$SKIP_BUILD" = false ]; then
   # layer (slow) stays cached when only frontend/src changes — Docker
   # invalidates downstream layers automatically when source files change.
   docker build --pull -t "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}" \
+    ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
     --target production -f frontend/Dockerfile frontend/
 
   log "Building MCP server image (${BUILD_TAG})..."
   docker build -t "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}" \
+    ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
     -f mcp/Dockerfile mcp/
 
   log "Pushing images to registry..."

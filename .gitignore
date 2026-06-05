@@ -16,6 +16,11 @@ homelabsetup/.homelab-credentials
 *.pem
 *.p12
 *.pfx
+# TLS-interception root CAs staged into build contexts by deploy-homelab.sh.
+# Host-specific (Norton/NordVPN/corporate proxy) — never commit. Keep the
+# committed .keep sentinels so `COPY certs/` still works in CI.
+**/certs/*.crt
+.tls-mitm-ca.crt
 *api_key*
 *apikey*
 # ─────────────────────────────────────────────────────────────────────────────

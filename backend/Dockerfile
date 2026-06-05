@@ -9,7 +9,10 @@ WORKDIR /app
 
 # Install system dependencies
 # procps provides `pgrep`, used by the Celery beat liveness probe (k8s/base/worker-deployments.yaml)
+# ca-certificates provides the OS trust bundle (/etc/ssl/certs/ca-certificates.crt) +
+# update-ca-certificates, used below to trust a TLS-interception root CA when present.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
     gcc \
     g++ \
@@ -20,6 +23,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user at UID 1000 to match the k8s securityContext (runAsUser: 1000),
 # so file ownership of /app lines up with the runtime user in-cluster.
 RUN groupadd -r -g 1000 testlookup && useradd -r -u 1000 -g testlookup testlookup
+
+# ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
+#    middlebox: Norton/NordVPN SSL scanning, corporate proxy) ─────────────
+# When the host re-signs TLS with a private root CA, in-container pip can't
+# verify pypi.org against the public roots and dies with
+#   "unable to get local issuer certificate".
+# deploy-homelab.sh exports that root CA into backend/certs/*.crt and builds
+# with --build-arg INSTALL_EXTRA_CA=1, which merges it into the OS bundle.
+# certs/ always exists (committed .keep). On CI the dir holds only .keep,
+# INSTALL_EXTRA_CA defaults to 0, and pip uses the public roots unchanged.
+ARG INSTALL_EXTRA_CA=0
+COPY certs/ /usr/local/share/ca-certificates/
+RUN if [ "$INSTALL_EXTRA_CA" = "1" ]; then update-ca-certificates; fi
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -84,12 +103,22 @@ WORKDIR /app
 
 # procps provides `pgrep`, used by the Celery beat liveness probe (k8s/base/worker-deployments.yaml)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
     libpq-dev \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r -g 1000 testlookup && useradd -r -u 1000 -g testlookup testlookup
+
+# Trust the same TLS-interception CA at runtime so outbound HTTPS (webhooks,
+# Jira, hosted LLM/eval) works through the middlebox. No-op when certs/ holds
+# only the .keep sentinel / INSTALL_EXTRA_CA=0. See the base stage for detail.
+ARG INSTALL_EXTRA_CA=0
+COPY certs/ /usr/local/share/ca-certificates/
+RUN if [ "$INSTALL_EXTRA_CA" = "1" ]; then update-ca-certificates; fi
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Copy only production dependencies
 COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
