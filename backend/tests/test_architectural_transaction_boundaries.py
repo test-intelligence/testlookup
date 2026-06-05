@@ -113,18 +113,30 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "populate — item #4). Worker-owned path makes service-level commits "
         "the pragmatic fit.",
     ),
-    # knowledge_sync_service.py removed 2026-06-03: it now has 0 service-level
-    # commits (converted to stage-only by a prior change), so it no longer
-    # needs an allowlist entry — the stale cap=6 was failing the accuracy guard.
+    "knowledge_sync_service.py": (
+        6,
+        "Worker-heavy sync pipeline with its own AsyncSessionLocal. "
+        "Converting would require splitting every sync step between a "
+        "request-scoped path and a worker-scoped path. Left as-is until "
+        "the worker session model is redesigned. Re-added 2026-06-04: the "
+        "module was wrongly clobbered to a 0-commit stub in 51dd4bc and has "
+        "been restored to its full form (fix/restore-rag-knowledge-services).",
+    ),
     "notification/manager.py": (
         1,
         "Called exclusively from Celery tasks (dispatch_run_notifications "
         "and siblings) via AsyncSessionLocal — not from request handlers.",
     ),
-    # rag_generation_service.py removed 2026-06-03: now 0 service-level commits
-    # (the 2026-06-02 review dropped the failure-path recommit, and the commit
-    # was subsequently removed entirely), so the stale cap=1 was failing the
-    # accuracy guard. No entry needed for a stage-only service.
+    "rag_generation_service.py": (
+        1,
+        "grounded_generate commits once at the end of the happy path. The "
+        "2026-06-02 review removed the failure-path rollback-then-recommit "
+        "recovery: it called rollback() on the injected request session (the "
+        "anti-pattern) and, because the batch was only flushed, persisted "
+        "nothing — the except now just re-raises and lets get_db roll back. "
+        "Ratcheted 2 -> 1. Re-added 2026-06-04 after the module was wrongly "
+        "clobbered to a 0-commit stub in 51dd4bc and restored.",
+    ),
     "run_diff_service.py": (
         1,
         "Dedicated write session for the diff-cache populate (CQS split, "
