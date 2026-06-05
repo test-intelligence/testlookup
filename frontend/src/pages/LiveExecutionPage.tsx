@@ -50,6 +50,7 @@ import { useLiveExecution } from '@/hooks/useLiveExecution'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import PageShell from '@/components/layout/PageShell'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
@@ -878,7 +879,7 @@ export default function LiveExecutionPage() {
   })()
 
   return (
-    <main className="max-w-[1480px] mx-auto p-6 space-y-5">
+    <PageShell className="space-y-5">
       {/* ════ Header ════ */}
       <header className="flex items-end justify-between gap-4 flex-wrap">
         <div>
@@ -1497,6 +1498,6 @@ export default function LiveExecutionPage() {
           </div>
         </details>
       </section>
-    </main>
+    </PageShell>
   )
 }

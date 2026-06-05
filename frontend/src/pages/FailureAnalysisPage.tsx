@@ -49,6 +49,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
@@ -2025,7 +2026,7 @@ export default function FailureAnalysisPage() {
   }
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
+    <PageShell>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
@@ -2257,7 +2258,7 @@ export default function FailureAnalysisPage() {
           </div>
         </div>
       )}
-    </main>
+    </PageShell>
   )
 }
 

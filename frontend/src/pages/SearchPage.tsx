@@ -45,6 +45,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import PageShell from '@/components/layout/PageShell'
 import Pagination from '@/components/ui/Pagination'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { searchService } from '@/services/searchService'
@@ -1278,7 +1279,7 @@ export default function SearchPage() {
   const projectLabel = project?.name ?? 'All Projects'
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
+    <PageShell>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
@@ -1445,7 +1446,7 @@ export default function SearchPage() {
       <div className="fixed bottom-4 left-4 lg:hidden text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen recommended for the full layout.
       </div>
-    </main>
+    </PageShell>
   )
 }
 
