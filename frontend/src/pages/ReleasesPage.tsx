@@ -681,7 +681,7 @@ export default function ReleasesPage() {
         />
       )}
 
-      <div className="mx-auto" style={{ maxWidth: 1320, padding: '4px 0 80px' }}>
+      <div className="w-full pb-10">
         <PageHeader
           title="Releases"
           subtitle={

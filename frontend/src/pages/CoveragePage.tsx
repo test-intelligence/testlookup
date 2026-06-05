@@ -46,6 +46,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
@@ -1608,10 +1609,7 @@ export default function CoveragePage() {
   })()
 
   return (
-    <main
-      className="mx-auto"
-      style={{ maxWidth: 1600, padding: '24px 28px 80px' }}
-    >
+    <PageShell>
       {/* Header */}
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
@@ -1824,7 +1822,7 @@ export default function CoveragePage() {
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full coverage layout. Some sections may overflow on narrow viewports.
       </div>
-    </main>
+    </PageShell>
   )
 }
 

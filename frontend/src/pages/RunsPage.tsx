@@ -46,6 +46,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
@@ -1931,7 +1932,7 @@ export default function RunsPage() {
   }
 
   return (
-    <main className="mx-auto" style={{ maxWidth: 1600, padding: '24px 28px 80px' }}>
+    <PageShell>
       <header className="flex items-end justify-between gap-3.5 mb-3.5 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-[24px] font-bold leading-[1.1] m-0 text-[var(--color-text)]" style={{ letterSpacing: '-0.01em' }}>
@@ -2126,6 +2127,6 @@ export default function RunsPage() {
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
-    </main>
+    </PageShell>
   )
 }
