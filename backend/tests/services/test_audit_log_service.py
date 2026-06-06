@@ -16,7 +16,7 @@ Pins:
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -116,15 +116,17 @@ async def test_record_outcome_adds_to_caller_session_without_committing():
 
 
 @pytest.mark.asyncio
-async def test_record_outcome_swallows_build_errors_and_warns(capfd):
+async def test_record_outcome_swallows_build_errors_and_warns():
     """If SettingsAuditLog construction fails for some reason (e.g. a
     field type bug), record_outcome must NOT raise into the caller —
     the audit is best-effort. The caller's primary mutation continues.
 
-    structlog's stdout handler binds the real ``sys.stdout`` stream at
-    logging-config time (before pytest swaps it), so ``capsys``
-    (Python-level) misses the line. ``capfd`` captures at the file-
-    descriptor level and sees it."""
+    We assert the warning by spying the service logger directly. Capturing
+    structlog's *output* (capfd/capsys) is order-fragile: ``configure_logging``
+    binds the stdlib StreamHandler to whichever ``sys.stdout`` was current the
+    first time it ran and caches loggers, so an earlier test in the full suite
+    can route this line to a stale stream that ``capfd`` never sees. Spying the
+    logger is independent of structlog config, streams, and test ordering."""
     from app.services.audit_log_service import record_outcome
 
     # A db that throws on .add() simulates "row build failed" — easier
@@ -132,15 +134,16 @@ async def test_record_outcome_swallows_build_errors_and_warns(capfd):
     db = MagicMock()
     db.add = MagicMock(side_effect=RuntimeError("model construction failed"))
 
-    await record_outcome(
-        db,
-        setting_key="project.42",
-        action="toggle",
-        actor_id=uuid.uuid4(),
-    )
+    with patch("app.services.audit_log_service.logger") as mock_logger:
+        await record_outcome(
+            db,
+            setting_key="project.42",
+            action="toggle",
+            actor_id=uuid.uuid4(),
+        )
 
-    captured = capfd.readouterr()
-    assert "audit_log_outcome_dropped" in (captured.out + captured.err)
+    mock_logger.warning.assert_called_once()
+    assert mock_logger.warning.call_args.args[0] == "audit_log_outcome_dropped"
 
 
 # ── record_attempt (fresh session) ───────────────────────────────────────────
@@ -206,13 +209,13 @@ async def test_record_attempt_does_not_retry_integrity_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_record_attempt_emits_warning_on_terminal_failure(monkeypatch, capfd):
-    """When retries are exhausted, a single structured WARNING lands
-    and the function returns normally (never raises).
+async def test_record_attempt_emits_warning_on_terminal_failure(monkeypatch):
+    """When retries are exhausted, a structured WARNING lands and the
+    function returns normally (never raises).
 
-    structlog's stdout handler binds the real ``sys.stdout`` stream at
-    logging-config time, so ``capfd`` (file-descriptor level) is needed
-    to capture the line — ``capsys`` (Python-level) misses it."""
+    Spy the service logger directly rather than capturing structlog output —
+    output capture (capfd/capsys) is order-fragile in the full suite (see the
+    note on ``test_record_outcome_swallows_build_errors_and_warns``)."""
     from app.services.audit_log_service import record_attempt
 
     _patch_fresh_session(
@@ -220,11 +223,14 @@ async def test_record_attempt_emits_warning_on_terminal_failure(monkeypatch, cap
         commit_side_effects=[_make_operational_error()] * 5,
     )
 
-    await record_attempt(
-        setting_key="x",
-        action="will_fail",
-        max_retries=2,
-    )
+    with patch("app.services.audit_log_service.logger") as mock_logger:
+        await record_attempt(
+            setting_key="x",
+            action="will_fail",
+            max_retries=2,
+        )
 
-    captured = capfd.readouterr()
-    assert "audit_log_attempt_dropped" in (captured.out + captured.err)
+    assert any(
+        call.args and call.args[0] == "audit_log_attempt_dropped"
+        for call in mock_logger.warning.call_args_list
+    )
