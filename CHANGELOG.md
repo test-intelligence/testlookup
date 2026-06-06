@@ -273,6 +273,31 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `UserCreate`. Only `max_length` was added (no new `min_length`), so the change is
   behaviour-preserving. Regression: `tests/regression/test_input_length_caps.py`.
 
+### Fixed (2026-06-06 — BUG-002 notification dispatch asyncpg race)
+
+- **`Notification dispatch failed: asyncpg.InterfaceError: cannot perform operation:
+  another operation is in progress`** (`auto/e2e-fix-agents-bug002`) — the
+  `dispatch_run_notifications` Celery task crashed under any run that fanned out to
+  multiple email recipients (live homelab run 493d5c1f, 2026-06-06, task
+  `f8236970-97a0-4134-ad25-cd50a2af3021`). Root cause:
+  `services/notification/manager._load_and_notify` fans deliveries out with
+  `asyncio.gather`, and the EMAIL channel resolved its SMTP config via
+  `email_service.send_notification` → `_get_smtp_cfg`, which opened its OWN
+  `AsyncSessionLocal` to read `smtp_config` from Postgres. With N concurrent email
+  recipients, N sessions opened simultaneously and raced on the shared engine
+  connection — asyncpg allows only one operation in flight per connection, so the
+  second coroutine's `transaction.start` raised "another operation is in progress".
+  Fix: `_load_and_notify` now resolves the SMTP config exactly once (only when at
+  least one plan targets email), before the gather, and threads it through
+  `_dispatch_to_channel` → `send_notification(..., smtp_cfg=...)`. No DB work runs
+  concurrently across the gathered coroutines. `send_notification` gained an optional
+  `smtp_cfg` param (falls back to `_get_smtp_cfg` for sequential single-call paths, so
+  the other two callers in `worker/tasks.py` are unchanged). Regression:
+  `tests/regression/test_notification_dispatch_no_shared_session.py` drives the dispatch
+  path with 5 concurrent email recipients through a single-connection guard that raises
+  the real asyncpg error on overlap — fails before the fix (`max_concurrency == 2`),
+  passes after (config read once, no overlap, all 5 served).
+
 ### Fixed (2026-06-04 — RAG/knowledge service stubs restore)
 
 - **`rag_generation_service` + `knowledge_sync_service` clobbered to stubs — RAG generation
