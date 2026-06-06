@@ -4,7 +4,7 @@ import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
   FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
-  ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
+  ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -54,7 +54,8 @@ const GROUPS: NavGroup[] = [
     to: '/runs',
     activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/defects', '/search', '/test-management', '/suite/', '/suites'],
     children: [
-      { to: '/live',            icon: Radio,       label: 'Live'       },
+      { to: '/live',            icon: Radio,       label: 'Live'          },
+      { to: '/runs?upload=1',   icon: Upload,      label: 'Upload Report' },
       { to: '/coverage',        icon: ShieldCheck, label: 'Coverage'   },
       { to: '/suites',          icon: FolderTree,  label: 'Suites'     },
       { to: '/failures',        icon: Bug,         label: 'Failures'   },
