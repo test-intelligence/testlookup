@@ -180,12 +180,22 @@ async def send_notification(
     body: str,
     event_type: str,
     metadata: dict | None = None,
+    smtp_cfg: dict[str, Any] | None = None,
 ) -> None:
     """
     Send an HTML + plain-text notification email via SMTP.
     Raises on delivery failure — caller is responsible for logging / retrying.
+
+    ``smtp_cfg`` lets the caller pass a pre-resolved SMTP configuration so the
+    DB-backed resolver (`_get_smtp_cfg`) is not re-run. This is required when
+    many emails are dispatched concurrently (e.g. the notification manager's
+    `asyncio.gather` fan-out): resolving the config once up front avoids each
+    concurrent coroutine opening its own `AsyncSessionLocal`, which under
+    asyncpg can surface as "another operation is in progress" when freshly
+    opened sessions race on a shared pooled connection. When omitted, the
+    config is resolved on demand (sequential single-call paths are unaffected).
     """
-    cfg = await _get_smtp_cfg()
+    cfg = smtp_cfg if smtp_cfg is not None else await _get_smtp_cfg()
 
     if not cfg.get("enabled"):
         logger.debug("SMTP disabled — skipping email to %s", to)
