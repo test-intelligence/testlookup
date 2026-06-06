@@ -21,198 +21,226 @@
   .testlookup-verdict-pulse { animation: none !important; }
 }
 
-/* ═══════════════════════════════════════════════════
-   Theme definitions — two professional dark themes
-   Toggle via data-theme attribute on <html>
-   ═══════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+   Multi-theme system — see design_handoff_theming.
+
+   RULE: a theme block defines every BASE token it wants to look different on
+   (surfaces, text, accent, the five status hues, two graph hues, fonts,
+   aurora). Everything else — alpha tints, gate/category/gradient/brand/compute
+   tokens — is DERIVED once in the shared :root below via var() + color-mix(),
+   so it adapts to the active theme automatically. That keeps every theme
+   complete (fixes the old "Classic" warm-status-on-navy bleed) without
+   repeating ~70 values six times.
+
+   Add a theme: one [data-theme] block here + one row in store/themeStore.ts.
+   ═══════════════════════════════════════════════════════════════════════ */
 
 @layer base {
-  /* ── Midnight (default) — GitHub-inspired dark theme with blue tints ── */
-  :root,
+  /* ── SIGNAL · deep-teal surfaces, cream type, lime accent (default) ── */
+  [data-theme="signal"] {
+    --color-bg:#0a1411; --color-bg-secondary:#0c1815; --color-bg-card:#0f1d19;
+    --color-bg-input:#0a1512; --color-bg-hover:#15241f;
+    --color-border:#1f322b; --color-border-light:#2a4339;
+    --color-text:#f1ece0; --color-text-secondary:#c8c3b4; --color-text-muted:#8e9389; --color-text-faint:#646b62;
+    --color-accent:#b8f24a; --color-accent-ink:#bdf25a;
+    --color-btn-primary-bg:#b8f24a; --color-btn-primary-text:#0a1411;
+    --status-passed:#7ce0a0; --status-failed:#ff8a6b; --status-broken:#ffb347; --status-skipped:#f5d76e; --status-flaky:#e0b3ff;
+    --color-purple:#e0b3ff; --color-cyan:#5ad1c4;
+    --grid-dot:rgba(255,255,255,0.030);
+    --font-display:'Sora', system-ui, sans-serif;
+    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono:'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+    --app-bg-image:
+      radial-gradient(60% 45% at 100% 0%, rgba(184,242,74,0.06), transparent 60%),
+      radial-gradient(55% 45% at 0% 100%, rgba(124,224,160,0.045), transparent 55%);
+  }
+
+  /* ── CONSOLE · near-black neutral, electric violet ── */
+  [data-theme="console"] {
+    --color-bg:#09090c; --color-bg-secondary:#0d0d12; --color-bg-card:#111118;
+    --color-bg-input:#08080b; --color-bg-hover:#17171f;
+    --color-border:#1f1f2b; --color-border-light:#2c2c3c;
+    --color-text:#ededf2; --color-text-secondary:#b6b7c4; --color-text-muted:#76778a; --color-text-faint:#4d4e60;
+    --color-accent:#7c5cff; --color-accent-ink:#a78bff;
+    --color-btn-primary-bg:#7c5cff; --color-btn-primary-text:#ffffff;
+    --status-passed:#43e0a0; --status-failed:#ff6b8b; --status-broken:#ffc24b; --status-skipped:#ffd24b; --status-flaky:#5cd4ff;
+    --color-purple:#a78bff; --color-cyan:#5cd4ff;
+    --grid-dot:rgba(255,255,255,0.035);
+    --font-display:'Space Grotesk', system-ui, sans-serif;
+    --font-sans:'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono:'JetBrains Mono', ui-monospace, monospace;
+    --app-bg-image:radial-gradient(90% 55% at 12% -10%, rgba(124,92,255,0.12), transparent 55%);
+  }
+
+  /* ── SLATE · cool grey, sky-blue accent ── */
+  [data-theme="slate"] {
+    --color-bg:#11151c; --color-bg-secondary:#181d27; --color-bg-card:#1b212c;
+    --color-bg-input:#11151c; --color-bg-hover:#222a36;
+    --color-border:#2e3744; --color-border-light:#3d4856;
+    --color-text:#eef2f7; --color-text-secondary:#c2cad6; --color-text-muted:#828c9c; --color-text-faint:#5a6473;
+    --color-accent:#56b6f0; --color-accent-ink:#7cc7f5;
+    --color-btn-primary-bg:#3d8bfd; --color-btn-primary-text:#ffffff;
+    --status-passed:#5fd38a; --status-failed:#fb7185; --status-broken:#fbbf45; --status-skipped:#fbd65f; --status-flaky:#c4a3f5;
+    --color-purple:#c4a3f5; --color-cyan:#5fd3ce;
+    --grid-dot:rgba(255,255,255,0.030);
+    --font-display:'Sora', system-ui, sans-serif;
+    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono:'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+    --app-bg-image:linear-gradient(180deg, rgba(255,255,255,0.03), transparent 40%);
+  }
+
+  /* ── EMBER · warm charcoal, amber accent ── */
+  [data-theme="ember"] {
+    --color-bg:#16110d; --color-bg-secondary:#1d1611; --color-bg-card:#211913;
+    --color-bg-input:#16110d; --color-bg-hover:#2a201a;
+    --color-border:#352a22; --color-border-light:#473930;
+    --color-text:#f5ede4; --color-text-secondary:#d6c8ba; --color-text-muted:#9c8c7d; --color-text-faint:#6e6155;
+    --color-accent:#ff9f45; --color-accent-ink:#ffb366;
+    --color-btn-primary-bg:#ff9f45; --color-btn-primary-text:#16110d;
+    --status-passed:#9bd07a; --status-failed:#f6685e; --status-broken:#ffc24b; --status-skipped:#ffd479; --status-flaky:#e89bd8;
+    --color-purple:#e89bd8; --color-cyan:#5ec8b0;
+    --grid-dot:rgba(255,255,255,0.030);
+    --font-display:'Sora', system-ui, sans-serif;
+    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono:'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+    --app-bg-image:radial-gradient(70% 50% at 100% 0%, rgba(255,159,69,0.06), transparent 60%);
+  }
+
+  /* ── LAB · LIGHT editorial, cobalt accent. Everything flips: dark ink on
+        light surfaces, darker status hues, dark grid dots. ── */
+  [data-theme="lab"] {
+    --color-bg:#f4f2ec; --color-bg-secondary:#efece4; --color-bg-card:#fbfaf6;
+    --color-bg-input:#eae7dd; --color-bg-hover:#e7e3d8;
+    --color-border:#ddd8cb; --color-border-light:#cfc9b9;
+    --color-text:#16140f; --color-text-secondary:#46433a; --color-text-muted:#7d796c; --color-text-faint:#a39e8f;
+    --color-accent:#1f3aff; --color-accent-ink:#1f3aff;
+    --color-btn-primary-bg:#1f3aff; --color-btn-primary-text:#ffffff;
+    --status-passed:#15803d; --status-failed:#b91c1c; --status-broken:#c2410c; --status-skipped:#a16207; --status-flaky:#6d28d9;
+    --color-purple:#6d28d9; --color-cyan:#0e7490;
+    --grid-dot:rgba(0,0,0,0.06);
+    --font-display:'Schibsted Grotesk', system-ui, sans-serif;
+    --font-sans:'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono:'IBM Plex Mono', ui-monospace, monospace;
+    --app-bg-image:radial-gradient(120% 70% at 50% -10%, rgba(31,58,255,0.05), transparent 60%);
+  }
+
+  /* ── MIDNIGHT · the original GitHub-derived dark (kept as a choice) ── */
   [data-theme="midnight"] {
-    --color-bg:           #0d1117;
-    --color-bg-secondary: #161b22;
-    --color-bg-card:      #151b23;
-    --color-bg-input:     #0d1117;
-    --color-bg-hover:     #1c2128;
-    --color-border:       #3d444d;
-    --color-border-light: #4a525c;
-    --color-text:         #f0f6fc;
-    --color-text-secondary: #c9d1d9;
-    --color-text-muted:   #9198a1;
-    --color-text-faint:   #656d76;
-    --color-accent:       #4493f8;
-    --color-accent-muted: rgba(68,147,248,0.12);
-    --color-accent-hover: rgba(68,147,248,0.20);
-    --color-btn-primary-bg: #238636;
-    --color-btn-primary-text: #ffffff;
-    --color-btn-primary-hover: #2ea043;
-    --color-sidebar-active-bg: rgba(68,147,248,0.12);
-    --color-sidebar-active-text: #4493f8;
-    --color-ring: #4493f8;
-    --color-scrollbar-track: #0d1117;
-    --color-scrollbar-thumb: #3d444d;
+    --color-bg:#0d1117; --color-bg-secondary:#161b22; --color-bg-card:#151b23;
+    --color-bg-input:#0d1117; --color-bg-hover:#1c2128;
+    --color-border:#3d444d; --color-border-light:#4a525c;
+    --color-text:#f0f6fc; --color-text-secondary:#c9d1d9; --color-text-muted:#9198a1; --color-text-faint:#656d76;
+    --color-accent:#4493f8; --color-accent-ink:#58a6ff;
+    --color-btn-primary-bg:#238636; --color-btn-primary-text:#ffffff;
+    --status-passed:#3fb950; --status-failed:#f85149; --status-broken:#d29922; --status-skipped:#d29922; --status-flaky:#a371f7;
+    --color-purple:#a371f7; --color-cyan:#39c5cf;
+    --grid-dot:rgba(255,255,255,0.025);
+    --font-display:'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono:'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    --app-bg-image:none;
   }
 
-  /* ── Classic — deep navy + vivid blue accent, high contrast ── */
-  [data-theme="classic"] {
-    --color-bg:           #0b1222;
-    --color-bg-secondary: #141d2e;
-    --color-bg-card:      #131c2b;
-    --color-bg-input:     #0b1222;
-    --color-bg-hover:     #1a2538;
-    --color-border:       #2d3a4d;
-    --color-border-light: #3b4a60;
-    --color-text:         #edf2f7;
-    --color-text-secondary: #c3cddb;
-    --color-text-muted:   #8b99ad;
-    --color-text-faint:   #5f6f85;
-    --color-accent:       #58a6ff;
-    --color-accent-muted: rgba(88,166,255,0.14);
-    --color-accent-hover: rgba(88,166,255,0.22);
-    --color-btn-primary-bg: #2563eb;
-    --color-btn-primary-text: #ffffff;
-    --color-btn-primary-hover: #3b82f6;
-    --color-sidebar-active-bg: rgba(88,166,255,0.14);
-    --color-sidebar-active-text: #58a6ff;
-    --color-ring: #58a6ff;
-    --color-scrollbar-track: #0b1222;
-    --color-scrollbar-thumb: #3b4a60;
-  }
-
-  /* ───────────────────────────────────────────────────────────────
-     Foundation tokens — theme-independent design system
-     Mirrors the canonical names in the TestLookup design system.
-     ─────────────────────────────────────────────────────────────── */
-
-  /* Brand teal — used in marketing accents + AppLogo gradient fallback.
-     Brand teal is NOT used for primary CTAs in product UI. */
+  /* ═══════════════════════════════════════════════════════════════════
+     DERIVED tokens — computed from the active theme's BASE tokens above.
+     Because they reference base tokens through var(), each one resolves to
+     the current theme's palette (no hard-coded colors leak across themes).
+     ═══════════════════════════════════════════════════════════════════ */
   :root {
-    --brand-50:  #f0fdfa;
-    --brand-100: #ccfbf1;
-    --brand-400: #2dd4bf;
-    --brand-500: #14b8a6;
-    --brand-600: #0d9488;
-    --brand-700: #0f766e;
-    --brand-900: #134e4a;
-  }
+    /* Default font stacks (a theme always overrides these; here as a safety net). */
+    --font-display: 'Sora', system-ui, sans-serif;
+    --font-sans:    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono:    'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
 
-  /* Semantic status colors (badges, charts, trend chips).
-     -bg / -bd suffixes mirror the badge palette for charts and inline tints. */
-  :root {
-    --status-passed:    #34d399;            /* emerald-400 */
-    --status-passed-bg: rgba(16,185,129,0.18);
-    --status-passed-bd: rgba(4,120,87,0.6);
-    --status-failed:    #fca5a5;            /* red-300 */
-    --status-failed-bg: rgba(127,29,29,0.5);
-    --status-failed-bd: rgba(185,28,28,0.6);
-    --status-broken:    #fdba74;            /* orange-300 */
-    --status-broken-bg: rgba(124,45,18,0.5);
-    --status-broken-bd: rgba(194,65,12,0.6);
-    --status-skipped:   #fcd34d;            /* amber-300 */
-    --status-skipped-bg: rgba(120,53,15,0.5);
-    --status-skipped-bd: rgba(180,83,9,0.6);
-    --status-flaky:     #d8b4fe;            /* purple-300 */
-    --status-flaky-bg:  rgba(88,28,135,0.5);
-    --status-flaky-bd:  rgba(126,34,206,0.6);
-  }
+    /* Accent tints + button hover + sidebar/ring/scrollbar */
+    --color-accent-muted:   color-mix(in srgb, var(--color-accent) 14%, transparent);
+    --color-accent-hover:   color-mix(in srgb, var(--color-accent) 22%, transparent);
+    --color-accent-bg-soft: color-mix(in srgb, var(--color-accent) 8%, transparent);
+    --color-btn-primary-hover: color-mix(in srgb, var(--color-btn-primary-bg) 85%, white);
+    --color-sidebar-active-bg:   color-mix(in srgb, var(--color-accent) 14%, transparent);
+    --color-sidebar-active-text: var(--color-accent-ink);
+    --color-ring: var(--color-accent);
+    --color-scrollbar-track: var(--color-bg);
+    --color-scrollbar-thumb: var(--color-border-light);
 
-  /* Release-gate semantic colors. */
-  :root {
-    --gate-go:          #22c55e;
-    --gate-conditional: #eab308;
-    --gate-no-go:       #ef4444;
+    /* Status fills + borders (badges, charts, trend chips) */
+    --status-passed-bg:  color-mix(in srgb, var(--status-passed) 16%, transparent);
+    --status-passed-bd:  color-mix(in srgb, var(--status-passed) 40%, transparent);
+    --status-passed-soft:    color-mix(in srgb, var(--status-passed) 16%, transparent);
+    --status-passed-bg-soft: color-mix(in srgb, var(--status-passed) 14%, transparent);
+    --status-failed-bg:  color-mix(in srgb, var(--status-failed) 15%, transparent);
+    --status-failed-bd:  color-mix(in srgb, var(--status-failed) 40%, transparent);
+    --status-failed-soft:    color-mix(in srgb, var(--status-failed) 18%, transparent);
+    --status-failed-bg-soft: color-mix(in srgb, var(--status-failed) 14%, transparent);
+    --status-broken-bg:  color-mix(in srgb, var(--status-broken) 15%, transparent);
+    --status-broken-bd:  color-mix(in srgb, var(--status-broken) 40%, transparent);
+    --status-broken-bg-soft: color-mix(in srgb, var(--status-broken) 14%, transparent);
+    --status-skipped-bg: color-mix(in srgb, var(--status-skipped) 14%, transparent);
+    --status-skipped-bd: color-mix(in srgb, var(--status-skipped) 40%, transparent);
+    --status-flaky-bg:   color-mix(in srgb, var(--status-flaky) 14%, transparent);
+    --status-flaky-bd:   color-mix(in srgb, var(--status-flaky) 40%, transparent);
 
-    /* Run Intelligence redesign tokens — soft fills for verdict / blocker
-       backgrounds and the green→amber→red risk-meter gradient. Defined
-       once so the page never reaches for raw rgba() literals. */
-    --gate-conditional-glow: rgba(245,158,11,0.10);
-    --alert-bg-soft:         rgba(239,68,68,0.10);
-    --alert-border-soft:     rgba(239,68,68,0.30);
-    --status-passed-soft:    rgba(34,197,94,0.18);
-    --gradient-risk:         linear-gradient(90deg, #22c55e, #fcd34d 50%, #ef4444);
-    /* Test-coverage health bar — mirror of --gradient-risk: red on the LOW
-       end and green on the HIGH end, since coverage scores are "more is
-       better" while risk scores are "more is worse". */
-    --gradient-health:       linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
-    /* Failure-analysis stability bar — same direction/colors as
-       --gradient-health (higher = better). Aliased so the failure page
-       reads semantically without leaking "health" into the variable name. */
-    --gradient-stability:    linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    /* Release gate (go=pass, conditional=broken/amber, no-go=fail) */
+    --gate-go:          var(--status-passed);
+    --gate-conditional: var(--status-broken);
+    --gate-no-go:       var(--status-failed);
+    --gate-go-glow:          color-mix(in srgb, var(--status-passed) 10%, transparent);
+    --gate-conditional-glow: color-mix(in srgb, var(--status-broken) 10%, transparent);
+    --gate-no-go-glow:       color-mix(in srgb, var(--status-failed) 10%, transparent);
+    --gate-conditional-bg-soft: color-mix(in srgb, var(--status-broken) 6%, transparent);
+    --gate-conditional-bg:      color-mix(in srgb, var(--status-broken) 16%, transparent);
+    --gate-conditional-border:  color-mix(in srgb, var(--status-broken) 28%, transparent);
 
-    /* Verdict-card glow tints. Used by the radial-gradient backdrop on
-       the failure-analysis verdict variants. */
-    --gate-no-go-glow:       rgba(239,68,68,0.10);
-    --gate-go-glow:          rgba(34,197,94,0.10);
+    /* Alert chrome */
+    --alert-bg-soft:     color-mix(in srgb, var(--status-failed) 10%, transparent);
+    --alert-border-soft: color-mix(in srgb, var(--status-failed) 30%, transparent);
 
-    /* Soft fills for stage / pill icon backgrounds. The "passed-soft"
-       was added with run-intelligence; "failed-soft" lands here for the
-       failure-analysis stage and pill chrome. */
-    --status-failed-soft:    rgba(239,68,68,0.18);
+    /* Meters / heat gradients. Risk: more = worse (pass→amber→fail). The
+       health/stability/confidence trio is the reverse (more = better). */
+    --gradient-risk:       linear-gradient(90deg, var(--status-passed), var(--status-broken) 50%, var(--status-failed));
+    --gradient-health:     linear-gradient(90deg, var(--status-failed), var(--status-broken) 50%, var(--status-passed));
+    --gradient-stability:  var(--gradient-health);
+    --gradient-confidence: var(--gradient-health);
+    --pattern-mixed-day:   linear-gradient(180deg, var(--status-passed) 0% 80%, var(--status-failed) 80% 100%);
 
-    /* Failure-category palette — promoted out of inline values for the
-       category distribution rows (Assertion / Timeout / Network / Infra
-       / Unknown). */
-    --cat-assertion: #ef4444;
-    --cat-timeout:   #f59e0b;
-    --cat-network:   #6366f1;
-    --cat-infra:     #06b6d4;
-    --cat-unknown:   #94a3b8;
+    /* Failure-category palette (Assertion / Timeout / Network / Infra / Unknown) */
+    --cat-assertion: var(--status-failed);
+    --cat-timeout:   var(--status-broken);
+    --cat-network:   var(--color-cyan);
+    --cat-infra:     var(--color-purple);
+    --cat-unknown:   var(--color-text-muted);
 
-    /* Trends redesign tokens. The confidence-bar gradient is the same
-       red→amber→green direction as --gradient-health / --gradient-stability;
-       aliased here so the trends page reads semantically without leaking
-       "health" or "stability" into a name that's about historical signal
-       confidence. */
-    --gradient-confidence:        linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
-    /* Mixed-result heatmap cell — pass green at the bottom, red stripe on
-       top per the design. */
-    --pattern-mixed-day:          linear-gradient(180deg, var(--status-passed) 0% 80%, #fca5a5 80% 100%);
-    /* Three intensities for the conditional-amber backdrop / pill / border
-       used on warn-tinted issue rows, the trends Schedule-Paused callout,
-       and the cadence gap annotation strip. */
-    --gate-conditional-bg-soft:   rgba(245,158,11,0.06);
-    --gate-conditional-bg:        rgba(245,158,11,0.16);
-    --gate-conditional-border:    rgba(245,158,11,0.28);
-    /* Soft accent fill for info-issue rows + Open-link chips. */
-    --color-accent-bg-soft:       rgba(68,147,248,0.06);
-
-    /* Display sizes used by the verdict headlines / hero numbers across
-       the dashboard, run-intelligence, and test-coverage redesigns. Kept
-       as tokens so a future scale tweak hits all three pages at once. */
-    --text-display-sm: 26px;  /* verdict headline (h2)             */
-    --text-display-md: 28px;  /* run-intelligence verdict headline */
-    --text-display-lg: 44px;  /* hero numeric — risk / health      */
-    --text-stat-lg:    24px;  /* KPI strip values                   */
-
-    /* Compute-graph tokens for the /agents Direction-C redesign.
-       Names follow the design handoff (--bg-3, --border-strong, soft fills,
-       cyan + purple accents) so the components can keep the prototype's CSS
-       variable names with one indirection here. Surfaces / borders / fg map
-       to the existing --color-* / --status-* tokens above; only the missing
-       hues land below. */
-    --bg-3:           #232a35;
-    --border-strong:  #4a5564;
-    --fg-faint:       #4a525c;
-    --status-passed-bg-soft: rgba(63,185,80,0.14);
-    --status-failed-bg-soft: rgba(248,81,73,0.14);
-    --status-broken-bg-soft: rgba(210,153,34,0.14);
-    --color-purple:        #a371f7;
-    --color-purple-soft:   rgba(163,113,247,0.14);
-    --color-purple-strong: rgba(163,113,247,0.50);
-    --color-cyan:          #39c5cf;
-    --color-cyan-soft:     rgba(57,197,207,0.14);
-    /* Dotted background for the compute canvas — 24px-on-center grid. */
+    /* Compute-graph (/agents Direction-C) surfaces + graph hues */
+    --bg-3:          var(--color-bg-hover);
+    --border-strong: var(--color-border-light);
+    --fg-faint:      var(--color-text-faint);
+    --color-purple-soft:   color-mix(in srgb, var(--color-purple) 14%, transparent);
+    --color-purple-strong: color-mix(in srgb, var(--color-purple) 50%, transparent);
+    --color-cyan-soft:     color-mix(in srgb, var(--color-cyan) 14%, transparent);
     --pattern-compute-grid:
-      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 1px) 0 0 / 24px 24px;
+      radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 1px) 0 0 / 24px 24px;
+
+    /* Brand scale — used by the AppLogo gradient fallback + rare accents.
+       Derived from the active accent so it follows every theme. */
+    --brand-50:  color-mix(in srgb, var(--color-accent) 12%, white);
+    --brand-100: color-mix(in srgb, var(--color-accent) 24%, white);
+    --brand-400: var(--color-accent);
+    --brand-500: color-mix(in srgb, var(--color-accent) 82%, black);
+    --brand-600: color-mix(in srgb, var(--color-accent) 64%, black);
+    --brand-700: color-mix(in srgb, var(--color-accent) 46%, black);
+    --brand-900: color-mix(in srgb, var(--color-accent) 28%, black);
   }
 
-  /* Typography scale — UI dense, optimised for data tables.
-     Reach via var(--text-*) when you need a one-off non-Tailwind size. */
+  /* Display-size + KPI tokens (verdict headlines / hero numbers). */
   :root {
-    --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+    --text-display-sm: 26px;
+    --text-display-md: 28px;
+    --text-display-lg: 44px;
+    --text-stat-lg:    24px;
+  }
 
+  /* Typography scale — UI dense, optimised for data tables. */
+  :root {
     --text-xs:   12px;
     --text-sm:   13px;
     --text-base: 14px;
@@ -233,7 +261,7 @@
     --tracking-wider:  0.08em;
   }
 
-  /* Spacing, radii, shadows. */
+  /* Spacing, radii, shadows — theme-invariant. */
   :root {
     --space-1:  4px;
     --space-2:  8px;
@@ -261,10 +289,23 @@
 
   body {
     background-color: var(--color-bg);
+    /* Per-theme aurora glow (deep teal/violet/amber… or none for Lab/Midnight). */
+    background-image: var(--app-bg-image, none);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
     color: var(--color-text);
     @apply font-sans antialiased;
     min-height: 100vh;
-    transition: background-color 0.2s ease, color 0.2s ease;
+    /* Short cross-fade so theme swaps don't snap. Body only — transitioning
+       every element feels laggy on large tables. */
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  /* Display type — the active theme's --font-display on headings + hero
+     numerals (use the `font-display` utility for one-off branded numbers). */
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.025em;
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -284,7 +325,8 @@
   .btn-primary {
     background: var(--color-btn-primary-bg);
     color: var(--color-btn-primary-text);
-    @apply px-4 py-2 rounded-lg font-medium text-sm transition-colors
+    /* Pill-shaped, semibold. */
+    @apply px-4 py-2 rounded-full font-semibold text-sm transition-colors
            focus:outline-none focus:ring-2 focus:ring-offset-2
            disabled:opacity-50 disabled:cursor-not-allowed;
     focus-ring-color: var(--color-ring);
@@ -297,7 +339,7 @@
     background: var(--color-bg-secondary);
     color: var(--color-text);
     border: 1px solid var(--color-border);
-    @apply px-4 py-2 rounded-lg font-medium text-sm transition-colors;
+    @apply px-4 py-2 rounded-full font-semibold text-sm transition-colors;
   }
   .btn-secondary:hover { background: var(--color-bg-hover); }
 

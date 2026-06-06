@@ -56,9 +56,12 @@ export default {
           'no-go': 'var(--gate-no-go)',
         },
       },
+      // Point Tailwind's font utilities at the per-theme CSS vars so switching
+      // theme swaps the type system too (each [data-theme] block sets --font-*).
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        display: ['var(--font-display)', 'Sora', 'system-ui', 'sans-serif'],
+        sans: ['var(--font-sans)', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['var(--font-mono)', 'IBM Plex Mono', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
         sm: 'var(--radius-sm)',
