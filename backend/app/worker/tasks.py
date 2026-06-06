@@ -25,6 +25,17 @@ def _run_async(coro):
     Fix: reset the module-level singletons before creating the new loop so
     that the first `get_redis()` call inside the coroutine creates a fresh
     client bound to the *current* loop.
+
+    BUG-003: the SQLAlchemy async engine has the same problem but worse — its
+    asyncpg connections are *pooled* across tasks via the ``@lru_cache``'d
+    ``get_engine()``. The pool stays bound to the loop that first built it; when
+    that loop is closed here, the pooled connections become attached to a dead
+    loop and asyncpg raises ``RuntimeError: Event loop is closed`` when it later
+    tries to terminate/GC them ("Exception terminating connection …"). That
+    surfaced as the AI pipeline reporting ``errors=1`` / status ``partial``.
+    Fix: dispose the engine *inside this loop* in the ``finally`` block (which
+    closes its connections on the loop that owns them) and clear the lazy-build
+    cache so the next task rebuilds a fresh engine on its own loop.
     """
     import app.db.redis_client as _redis_mod
     _redis_mod._pool = None
@@ -35,6 +46,14 @@ def _run_async(coro):
     try:
         return loop.run_until_complete(coro)
     finally:
+        try:
+            # Dispose the async engine on THIS loop before it closes, so its
+            # pooled asyncpg connections are torn down on the loop that owns
+            # them (BUG-003). Must run before shutdown_asyncgens / loop.close().
+            from app.db.postgres import dispose_engine_for_loop
+            loop.run_until_complete(dispose_engine_for_loop())
+        except Exception:
+            pass
         try:
             # Close all async generators and pending tasks cleanly
             loop.run_until_complete(loop.shutdown_asyncgens())

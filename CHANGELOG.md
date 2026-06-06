@@ -7,16 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
-### Fixed
-- **BUG-001 — ChromaDB anonymous telemetry disabled.** The AI worker logged
-  `Failed to send telemetry event ClientStartEvent: capture() takes 1 positional
-  argument but 3 were given` ~5× per pipeline (ChromaDB's bundled posthog
-  telemetry breaking against the installed posthog, and an unwanted phone-home in
-  an offline-first app). `app/core/config.py` now sets `ANONYMIZED_TELEMETRY=False`
-  at import (before any `chromadb.HttpClient`), and `k8s/base/configmap.yaml` sets
-  it in-cluster. Regression: `tests/regression/test_chromadb_telemetry_disabled.py`.
-  Found by live-homelab validation; tracked in `LIVE_APP_BUG_TRACKER.md`.
-
 ### Why we built this
 
 Engineering teams running automated tests get fragmented artifacts: JUnit XML, Allure outputs, flaky failures, pipeline status. Existing tools help visualise results, but teams still burn hours on manual triage, clustering, root-cause analysis, and release decisions. The problem is worse in regulated or private environments that can't depend on cloud-only AI services.
@@ -283,30 +273,25 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `UserCreate`. Only `max_length` was added (no new `min_length`), so the change is
   behaviour-preserving. Regression: `tests/regression/test_input_length_caps.py`.
 
-### Fixed (2026-06-06 — BUG-002 notification dispatch asyncpg race)
+### Fixed (2026-06-06 — worker event-loop engine teardown)
 
-- **`Notification dispatch failed: asyncpg.InterfaceError: cannot perform operation:
-  another operation is in progress`** (`auto/e2e-fix-agents-bug002`) — the
-  `dispatch_run_notifications` Celery task crashed under any run that fanned out to
-  multiple email recipients (live homelab run 493d5c1f, 2026-06-06, task
-  `f8236970-97a0-4134-ad25-cd50a2af3021`). Root cause:
-  `services/notification/manager._load_and_notify` fans deliveries out with
-  `asyncio.gather`, and the EMAIL channel resolved its SMTP config via
-  `email_service.send_notification` → `_get_smtp_cfg`, which opened its OWN
-  `AsyncSessionLocal` to read `smtp_config` from Postgres. With N concurrent email
-  recipients, N sessions opened simultaneously and raced on the shared engine
-  connection — asyncpg allows only one operation in flight per connection, so the
-  second coroutine's `transaction.start` raised "another operation is in progress".
-  Fix: `_load_and_notify` now resolves the SMTP config exactly once (only when at
-  least one plan targets email), before the gather, and threads it through
-  `_dispatch_to_channel` → `send_notification(..., smtp_cfg=...)`. No DB work runs
-  concurrently across the gathered coroutines. `send_notification` gained an optional
-  `smtp_cfg` param (falls back to `_get_smtp_cfg` for sequential single-call paths, so
-  the other two callers in `worker/tasks.py` are unchanged). Regression:
-  `tests/regression/test_notification_dispatch_no_shared_session.py` drives the dispatch
-  path with 5 concurrent email recipients through a single-connection guard that raises
-  the real asyncpg error on overlap — fails before the fix (`max_concurrency == 2`),
-  passes after (config read once, no overlap, all 5 served).
+- **BUG-003 (S2): `RuntimeError: Event loop is closed` when an asyncpg connection is
+  torn down in the Celery workers; the AI pipeline ended with `errors=1` / status
+  `partial` (which then hides it on `/agents`)** (`auto/e2e-fix-agents-bug003`) —
+  Each Celery task runs its coroutine in a private, short-lived event loop
+  (`worker/tasks.py::_run_async` → `asyncio.new_event_loop()` … `loop.close()`). The
+  `@lru_cache`'d `app.db.postgres.get_engine()` builds the async engine — and *pools*
+  its asyncpg connections — bound to whichever loop was current on first use. When that
+  loop closes at task end, the still-pooled connections stay attached to a dead loop; the
+  next task (or GC) then finalizes them on that dead loop and raises `RuntimeError: Event
+  loop is closed` ("Exception terminating connection …"), surfacing as the AI pipeline's
+  `errors=1` / `partial`. Fix: new `app.db.postgres.dispose_engine_for_loop()` disposes
+  the engine *within the task's own loop*, in `_run_async`'s `finally` block, before the
+  loop closes, then clears both lazy-build `lru_cache`s so the next task rebuilds a fresh
+  engine on its own loop — mirroring the existing Redis-singleton reset. Applied to both
+  `worker/tasks.py` and `worker/training_tasks.py`. The FastAPI request-path engine is
+  unaffected (it disposes via `close_db()` on shutdown and never closes the loop
+  mid-process). Regression: `backend/tests/regression/test_worker_loop_engine_dispose.py`.
 
 ### Fixed (2026-06-04 — RAG/knowledge service stubs restore)
 

@@ -164,3 +164,40 @@ async def init_db() -> None:
 async def close_db() -> None:
     """Dispose of the connection pool on shutdown."""
     await get_engine().dispose()
+
+
+async def dispose_engine_for_loop() -> None:
+    """Dispose the cached async engine *within the current event loop* and
+    clear the lazy-build caches so the next caller rebuilds a fresh engine.
+
+    Background (BUG-003): Celery tasks each run their coroutine in a private,
+    short-lived event loop (``worker/tasks.py::_run_async`` →
+    ``asyncio.new_event_loop()`` … ``loop.close()``). The ``@lru_cache``'d
+    ``get_engine()`` builds the async engine — and its pooled asyncpg
+    connections — bound to whichever loop was current on first use. When that
+    loop is closed at the end of the task, the still-pooled connections remain
+    attached to the now-dead loop. On the next task (or at GC) asyncpg tries to
+    finalize/terminate those connections on the dead loop and raises
+    ``RuntimeError: Event loop is closed`` ("Exception terminating
+    connection …"), which surfaces in the AI pipeline as ``errors=1`` / status
+    ``partial``.
+
+    This helper must be awaited from inside the task's loop, in a ``finally``
+    block, *before* the loop is closed. After disposing, both ``@lru_cache``'d
+    builders are cleared so the next ``_run_async`` invocation constructs a new
+    engine bound to its own fresh loop — mirroring the Redis-singleton reset
+    already done in ``_run_async``.
+
+    The request-path (FastAPI) engine is unaffected: the API process disposes
+    via ``close_db()`` on shutdown and never closes the loop mid-process, so
+    its long-lived engine keeps its pool. Only the worker calls this per task.
+    """
+    # ``get_engine`` may never have been built (a task that touched no DB).
+    # Inspect the cache without forcing a build.
+    if get_engine.cache_info().currsize:
+        engine = get_engine()
+        try:
+            await engine.dispose()
+        finally:
+            get_session_factory.cache_clear()
+            get_engine.cache_clear()
