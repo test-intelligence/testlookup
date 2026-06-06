@@ -7,10 +7,9 @@ import hashlib
 import logging
 from typing import Any, cast
 
-import chromadb
 from langchain_core.tools import tool
 
-from app.core.config import settings
+from app.db.chroma import get_chroma_client
 
 logger = logging.getLogger("tools.embed_and_cluster")
 
@@ -18,7 +17,7 @@ _COLLECTION = "failure_clusters"
 
 
 def _get_chroma_client() -> Any:
-    return chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
+    return get_chroma_client()
 
 
 def _simple_cluster(texts: list[str], threshold: float = 0.75) -> list[list[int]]:

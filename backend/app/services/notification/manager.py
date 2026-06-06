@@ -84,10 +84,18 @@ async def _dispatch_to_channel(
     body: str,
     event_type: NotificationEventType,
     metadata: dict,
+    smtp_cfg: Optional[dict] = None,
 ) -> tuple[str, Optional[str]]:
     """
     Send one notification through the channel specified by `pref`.
     Returns (status, error_detail).
+
+    ``smtp_cfg`` is the pre-resolved SMTP configuration. When several
+    deliveries run concurrently (``_load_and_notify`` fans out via
+    ``asyncio.gather``) the email path must NOT open its own DB session to
+    resolve the config — every concurrent coroutine doing so would race on the
+    shared engine pool and asyncpg raises "another operation is in progress".
+    The caller resolves the config once and threads it through here.
     """
     try:
         if pref.channel == NotificationChannel.EMAIL:
@@ -100,6 +108,7 @@ async def _dispatch_to_channel(
                 body=body,
                 event_type=event_type.value,
                 metadata=metadata,
+                smtp_cfg=smtp_cfg,
             )
 
         elif pref.channel == NotificationChannel.SLACK:
@@ -192,11 +201,23 @@ async def _load_and_notify(
         if not plans:
             return
 
+        # Resolve the DB-backed SMTP config exactly ONCE, before the
+        # fan-out, and only if at least one plan targets the email channel.
+        # Doing this inside the gather (one AsyncSessionLocal per concurrent
+        # email coroutine) is what triggered BUG-002: the freshly opened
+        # sessions raced on the shared engine pool and asyncpg raised
+        # "another operation is in progress". Resolving up front means no DB
+        # work happens concurrently across the gathered coroutines.
+        smtp_cfg = None
+        if any(pref.channel == NotificationChannel.EMAIL for (pref, *_rest) in plans):
+            smtp_cfg = await email_service._get_smtp_cfg()
+
         # Phase 2 — fan out all deliveries in parallel. A slow webhook no
-        # longer blocks the next recipient.
+        # longer blocks the next recipient. No coroutine here touches a DB
+        # session, so they cannot race on a shared connection.
         results = await asyncio.gather(
             *(
-                _dispatch_to_channel(pref, user_email, title, body, event, metadata)
+                _dispatch_to_channel(pref, user_email, title, body, event, metadata, smtp_cfg)
                 for (pref, user_email, event, title, body) in plans
             ),
             return_exceptions=False,

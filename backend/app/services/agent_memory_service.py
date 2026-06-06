@@ -30,7 +30,6 @@ from typing import Any, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.models.postgres import AgentMemoryEntry
 
 logger = logging.getLogger("services.agent_memory")
@@ -67,8 +66,8 @@ _CLOSED_DEFECT_STATUSES = {
 
 
 def _get_chroma_client():
-    import chromadb
-    return chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
+    from app.db.chroma import get_chroma_client
+    return get_chroma_client()
 
 
 async def _get_or_create_collection():

@@ -77,6 +77,10 @@ const STATUS_COLOUR: Record<string, string> = {
   pending: 'text-[var(--color-text-muted)]',
   running: 'text-[var(--color-text)]',
   completed: 'text-emerald-400',
+  // `partial` is a degraded-but-finished pipeline/stage (e.g. a stage errored,
+  // errors>=1). Render it as a visible amber warning state so the row never
+  // looks "missing" — see BUG-004.
+  partial: 'text-amber-400',
   failed: 'text-red-400',
   skipped: 'text-[var(--color-text-muted)]',
 }
@@ -85,6 +89,7 @@ const STATUS_BG: Record<string, string> = {
   pending: 'bg-[var(--color-bg-hover)]',
   running: 'bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border-light)]',
   completed: 'bg-emerald-900/20 border border-emerald-700/30',
+  partial: 'bg-amber-900/20 border border-amber-700/30',
   failed: 'bg-red-900/20 border border-red-700/30',
   skipped: 'bg-[var(--color-bg-secondary)]/80',
 }
@@ -156,6 +161,10 @@ function StructuredReportDetail({ markdown, hasPanel }: { markdown: string; hasP
 
 function StatusIcon({ status }: { status: string }) {
   if (status === 'completed') return <CheckCircle className="w-4 h-4 text-emerald-400" />
+  // `partial` = finished with errors (degraded). Amber warning triangle so the
+  // pipeline/stage stays visible instead of falling through to the neutral
+  // Clock fallback and looking "missing" — see BUG-004.
+  if (status === 'partial') return <AlertTriangle className="w-4 h-4 text-amber-400" />
   if (status === 'failed') return <XCircle className="w-4 h-4 text-red-400" />
   if (status === 'running') return <RefreshCw className="w-4 h-4 text-[var(--color-text)] animate-spin" />
   if (status === 'skipped') return <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />

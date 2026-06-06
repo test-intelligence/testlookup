@@ -27,6 +27,9 @@ data:
   LLM_PROVIDER: "ollama"
   LLM_MODEL: "qwen2.5:7b"
   AI_OFFLINE_MODE: "true"
+  # BUG-001: disable ChromaDB anonymous telemetry (posthog phone-home that errors
+  # against the installed posthog and floods AI-worker logs; also wrong offline).
+  ANONYMIZED_TELEMETRY: "False"
   AI_CONFIDENCE_THRESHOLD: "80"
   CELERY_WORKER_CONCURRENCY: "4"
   # IMPORTANT: override per environment via a kustomize overlay patch.
