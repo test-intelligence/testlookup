@@ -96,8 +96,14 @@ workflows-compute-graph-README.md
 RUN_SUITE_COMPARISON_DESIGN.md
 CLAUDE_CODE_LOGO_MIGRATION.md
 
-# Local-only infra/deployment scratch notes (not product source)
-infra/aws/
+# infra/aws — track the real AWS deployment IaC + scripts + docs, but keep the
+# local-only Q&A scratch note (deployment_instructions.md) and TF working
+# artifacts out. (.terraform/ etc. are handled by infra/aws/terraform/.gitignore.)
+infra/aws/*
+!infra/aws/terraform
+!infra/aws/scripts
+!infra/aws/README.md
+!infra/aws/STRATEGY.md
 
 # Claude Code — keep local, never push to remote
 .claude/
