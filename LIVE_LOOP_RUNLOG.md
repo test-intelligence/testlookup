@@ -10,6 +10,23 @@ next cycle. Termination: no S1/S2 bugs remaining, or 8h window elapsed.
 
 ---
 
+## ✅ FINAL SUMMARY — loop terminated 2026-06-06 ~07:57 UTC (no critical bugs remain)
+Ran 3 deploy→test→verify cycles against the live homelab. **All 4 bugs found are fixed, deployed, and verified live; 0 errors across all 7 deployments; no S1/S2 bugs remain.** Cron `4a860e49` self-deleted.
+
+| Bug | Sev | Fix | Verified live |
+|---|---|---|---|
+| BUG-002 notification asyncpg race | S2 | resolve SMTP config once before the `gather` | ✓ 0 occ (cycle 1) |
+| BUG-003 worker "Event loop is closed" | S2 | dispose async engine inside the task loop | ✓ 0 occ; pipeline `partial`→`completed` (cycle 1) |
+| BUG-004 `/agents` blank for partial runs | S2 | render `partial` as amber + BUG-003 makes pipelines `completed` | ✓ pipeline renders (cycle 1) |
+| BUG-001 ChromaDB telemetry noise | S3 | env var + explicit Settings both failed (chromadb 0.5.20 / posthog 7.18 incompat) → silence `chromadb.telemetry` logger | ✓ 0 occ (cycle 3) |
+
+All fixes on branch `auto/live-fixes` (deployed to homelab), each with a regression test + CHANGELOG entry. Nothing pushed to GitHub `main`. The homelab is healthy on the fixed build. Follow-ups for a human: review `auto/live-fixes` and merge to `main` when satisfied; the perf/security deep-audit was not run (queue separately). Exploratory coverage was a single regression scenario repeated — broader scenarios could surface more.
+
+## Cycle 3 — 2026-06-06 07:50–07:57 UTC  ·  DEPLOYED logger-silence + VERIFIED CLEAN
+- Gate ✓. Deployed `auto/live-fixes` (BUG-001 logger-silence), healthy rollout. Test session `5d0c555f`, 60 cases.
+- **BUG-001 → 0 telemetry occurrences → VERIFIED ✓.** Full scan: **all 7 deployments clean, 0 errors.** No new bugs.
+- Termination condition met (no S1/S2, nothing OPEN/NOT-FIXED) → final summary written, cron deleted.
+
 ## Cycle 2 — 2026-06-06 07:20–07:30 UTC  ·  DEPLOYED rework + RETESTED
 - **Gate:** all 200, kubectl OK, pods healthy. ✓
 - **Deployed** `auto/live-fixes` (BUG-001 explicit-`Settings` rework), image `build-20260606-072110`, healthy rollout, no rollback.

@@ -83,7 +83,7 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ## Noise / hygiene
 
-### BUG-001 — ChromaDB anonymous telemetry floods AI-worker logs  ·  S3  ·  LOGGER-SILENCED (in `auto/live-fixes`); verify next cycle
+### BUG-001 — ChromaDB anonymous telemetry floods AI-worker logs  ·  S3  ·  DEPLOYED + VERIFIED (cycle 3) — 0 occurrences after logger-silence deploy+retest ✓
 - **Cycle-2 finding:** the explicit `Settings(anonymized_telemetry=False)` rework was deployed (confirmed `app/db/chroma.py` in image `build-20260606-072110`) and STILL fired 7×. So **chromadb 0.5.20 attempts the `ClientStartEvent` posthog capture regardless of `anonymized_telemetry`** (env *and* per-client Settings), failing against **posthog 7.18.0** — a version incompatibility, purely cosmetic (pipelines complete fine).
 - **Definitive fix:** `backend/app/db/chroma.py` now `logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)` at import (before any client). Guaranteed to suppress the noise. Verify in cycle 3's log scan (target 0 occurrences).
 - **Cycle-1 verification:** `ANONYMIZED_TELEMETRY=False` IS present in the worker pod env, yet the telemetry error STILL fires 7×. The installed **chromadb 0.5.20 does not honor that env var** for the HttpClient telemetry path.
