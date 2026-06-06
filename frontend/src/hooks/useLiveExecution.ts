@@ -48,6 +48,37 @@ export function useActiveSessions(projectId?: string, suiteName?: string | null,
   )
 }
 
+// How long a locally-completed session is bridged across the WS-push → next
+// SWR poll race before the API response becomes authoritative for it. Must be
+// comfortably larger than the poll interval (≤10s) and small relative to the
+// shortest time window (24h) so narrowing the window still drops stale rows.
+export const SESSION_RACE_GRACE_MS = 90_000
+
+/**
+ * Merge the authoritative API session list with locally-tracked sessions.
+ *
+ * Only *just-completed* sessions (status `completed`, `completed_at` within
+ * {@link SESSION_RACE_GRACE_MS}) that the API hasn't returned yet are bridged —
+ * this covers the gap between a WebSocket `live_run_complete` push and the next
+ * poll. It is deliberately time-bounded: an unbounded merge re-adds every
+ * completed session ever seen in the component, so narrowing the time window
+ * (e.g. 30d → 24h) would never drop the now out-of-window rows and the /live
+ * table would appear not to filter (regression fixed 2026-06-05).
+ */
+export function mergeBridgedSessions(
+  prev: LiveSessionState[],
+  apiSessions: LiveSessionState[],
+  nowMs: number,
+): LiveSessionState[] {
+  const apiRunIds = new Set(apiSessions.map(s => s.run_id))
+  const localOnly = prev.filter(s => {
+    if (s.status !== 'completed' || apiRunIds.has(s.run_id)) return false
+    const completedAt = s.completed_at ? new Date(s.completed_at).getTime() : 0
+    return completedAt > 0 && nowMs - completedAt < SESSION_RACE_GRACE_MS
+  })
+  return [...apiSessions, ...localOnly]
+}
+
 // ── Full live execution hook (sessions + WebSocket) ────────────────────────
 
 export function useLiveExecution(projectId?: string, suiteName?: string | null, days?: number) {
@@ -75,13 +106,7 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
         if (!mountedRef.current) return
         // Merge: keep any locally-tracked completed sessions not yet in the API response
         // (race window between WS push and SWR re-fetch)
-        setSessions(prev => {
-          const apiRunIds = new Set(d.sessions.map((s: LiveSessionState) => s.run_id))
-          const localOnly = prev.filter(
-            s => s.status === 'completed' && !apiRunIds.has(s.run_id),
-          )
-          return [...d.sessions, ...localOnly]
-        })
+        setSessions(prev => mergeBridgedSessions(prev, d.sessions, Date.now()))
 
         // Seed the event feed from session data so the Workflow Event Feed
         // widget is populated on initial load (before any WebSocket events).
@@ -169,7 +194,15 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
       setSessions(prev =>
         prev.map(s =>
           s.run_id === event.run_id
-            ? { ...s, status: 'completed', pass_rate: event.pass_rate ?? s.pass_rate }
+            ? {
+                ...s,
+                status: 'completed',
+                // Stamp the completion time so the SWR-merge race-window bridge
+                // can time-box this row (see onSuccess). Without it the bridge
+                // can't tell a just-completed run from a stale one.
+                completed_at: s.completed_at ?? new Date().toISOString(),
+                pass_rate: event.pass_rate ?? s.pass_rate,
+              }
             : s,
         ),
       )
