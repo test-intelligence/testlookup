@@ -27,31 +27,34 @@
    ═══════════════════════════════════════════════════ */
 
 @layer base {
-  /* ── Midnight (default) — GitHub-inspired dark theme with blue tints ── */
+  /* ── Signal (default) — warm deep-teal surfaces, cream type, lime accent ──
+     Replaces the former GitHub-derived "midnight" palette. The data-theme key
+     stays "midnight" so the theme store / toggle keep working; only the values
+     changed (see design_handoff_signal_identity). ── */
   :root,
   [data-theme="midnight"] {
-    --color-bg:           #0d1117;
-    --color-bg-secondary: #161b22;
-    --color-bg-card:      #151b23;
-    --color-bg-input:     #0d1117;
-    --color-bg-hover:     #1c2128;
-    --color-border:       #3d444d;
-    --color-border-light: #4a525c;
-    --color-text:         #f0f6fc;
-    --color-text-secondary: #c9d1d9;
-    --color-text-muted:   #9198a1;
-    --color-text-faint:   #656d76;
-    --color-accent:       #4493f8;
-    --color-accent-muted: rgba(68,147,248,0.12);
-    --color-accent-hover: rgba(68,147,248,0.20);
-    --color-btn-primary-bg: #238636;
-    --color-btn-primary-text: #ffffff;
-    --color-btn-primary-hover: #2ea043;
-    --color-sidebar-active-bg: rgba(68,147,248,0.12);
-    --color-sidebar-active-text: #4493f8;
-    --color-ring: #4493f8;
-    --color-scrollbar-track: #0d1117;
-    --color-scrollbar-thumb: #3d444d;
+    --color-bg:           #0a1411;
+    --color-bg-secondary: #0c1815;
+    --color-bg-card:      #0f1d19;
+    --color-bg-input:     #0a1512;
+    --color-bg-hover:     #15241f;
+    --color-border:       #1f322b;
+    --color-border-light: #2a4339;
+    --color-text:         #f1ece0;
+    --color-text-secondary: #c8c3b4;
+    --color-text-muted:   #8e9389;
+    --color-text-faint:   #646b62;
+    --color-accent:       #b8f24a;
+    --color-accent-muted: rgba(184,242,74,0.14);
+    --color-accent-hover: rgba(184,242,74,0.22);
+    --color-btn-primary-bg: #b8f24a;
+    --color-btn-primary-text: #0a1411;
+    --color-btn-primary-hover: #c6f95e;
+    --color-sidebar-active-bg: rgba(184,242,74,0.14);
+    --color-sidebar-active-text: #bdf25a;
+    --color-ring: #b8f24a;
+    --color-scrollbar-track: #0a1411;
+    --color-scrollbar-thumb: #2a4339;
   }
 
   /* ── Classic — deep navy + vivid blue accent, high contrast ── */
@@ -88,94 +91,94 @@
   /* Brand teal — used in marketing accents + AppLogo gradient fallback.
      Brand teal is NOT used for primary CTAs in product UI. */
   :root {
-    --brand-50:  #f0fdfa;
-    --brand-100: #ccfbf1;
-    --brand-400: #2dd4bf;
-    --brand-500: #14b8a6;
-    --brand-600: #0d9488;
-    --brand-700: #0f766e;
-    --brand-900: #134e4a;
+    --brand-50:  #f3fde0;
+    --brand-100: #e4fbb8;
+    --brand-400: #b8f24a;
+    --brand-500: #9fdc3c;
+    --brand-600: #7eb52f;
+    --brand-700: #5f8a26;
+    --brand-900: #38531a;
   }
 
   /* Semantic status colors (badges, charts, trend chips).
      -bg / -bd suffixes mirror the badge palette for charts and inline tints. */
   :root {
-    --status-passed:    #34d399;            /* emerald-400 */
-    --status-passed-bg: rgba(16,185,129,0.18);
-    --status-passed-bd: rgba(4,120,87,0.6);
-    --status-failed:    #fca5a5;            /* red-300 */
-    --status-failed-bg: rgba(127,29,29,0.5);
-    --status-failed-bd: rgba(185,28,28,0.6);
-    --status-broken:    #fdba74;            /* orange-300 */
-    --status-broken-bg: rgba(124,45,18,0.5);
-    --status-broken-bd: rgba(194,65,12,0.6);
-    --status-skipped:   #fcd34d;            /* amber-300 */
-    --status-skipped-bg: rgba(120,53,15,0.5);
-    --status-skipped-bd: rgba(180,83,9,0.6);
-    --status-flaky:     #d8b4fe;            /* purple-300 */
-    --status-flaky-bg:  rgba(88,28,135,0.5);
-    --status-flaky-bd:  rgba(126,34,206,0.6);
+    --status-passed:    #7ce0a0;            /* signal green on teal */
+    --status-passed-bg: rgba(124,224,160,0.16);
+    --status-passed-bd: rgba(124,224,160,0.40);
+    --status-failed:    #ff8a6b;            /* warm coral */
+    --status-failed-bg: rgba(255,138,107,0.15);
+    --status-failed-bd: rgba(255,138,107,0.40);
+    --status-broken:    #ffb347;            /* amber */
+    --status-broken-bg: rgba(255,179,71,0.15);
+    --status-broken-bd: rgba(255,179,71,0.40);
+    --status-skipped:   #f5d76e;            /* gold */
+    --status-skipped-bg: rgba(245,215,110,0.14);
+    --status-skipped-bd: rgba(245,215,110,0.40);
+    --status-flaky:     #e0b3ff;            /* violet */
+    --status-flaky-bg:  rgba(224,179,255,0.14);
+    --status-flaky-bd:  rgba(224,179,255,0.40);
   }
 
   /* Release-gate semantic colors. */
   :root {
-    --gate-go:          #22c55e;
-    --gate-conditional: #eab308;
-    --gate-no-go:       #ef4444;
+    --gate-go:          #7ce0a0;
+    --gate-conditional: #ffb347;
+    --gate-no-go:       #ff7a5c;
 
     /* Run Intelligence redesign tokens — soft fills for verdict / blocker
        backgrounds and the green→amber→red risk-meter gradient. Defined
        once so the page never reaches for raw rgba() literals. */
-    --gate-conditional-glow: rgba(245,158,11,0.10);
-    --alert-bg-soft:         rgba(239,68,68,0.10);
-    --alert-border-soft:     rgba(239,68,68,0.30);
-    --status-passed-soft:    rgba(34,197,94,0.18);
-    --gradient-risk:         linear-gradient(90deg, #22c55e, #fcd34d 50%, #ef4444);
+    --gate-conditional-glow: rgba(255,179,71,0.10);
+    --alert-bg-soft:         rgba(255,138,107,0.10);
+    --alert-border-soft:     rgba(255,138,107,0.30);
+    --status-passed-soft:    rgba(124,224,160,0.16);
+    --gradient-risk:         linear-gradient(90deg, #7ce0a0, #ffb347 50%, #ff7a5c);
     /* Test-coverage health bar — mirror of --gradient-risk: red on the LOW
        end and green on the HIGH end, since coverage scores are "more is
        better" while risk scores are "more is worse". */
-    --gradient-health:       linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    --gradient-health:       linear-gradient(90deg, #ff7a5c, #ffb347 50%, #7ce0a0);
     /* Failure-analysis stability bar — same direction/colors as
        --gradient-health (higher = better). Aliased so the failure page
        reads semantically without leaking "health" into the variable name. */
-    --gradient-stability:    linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    --gradient-stability:    linear-gradient(90deg, #ff7a5c, #ffb347 50%, #7ce0a0);
 
     /* Verdict-card glow tints. Used by the radial-gradient backdrop on
        the failure-analysis verdict variants. */
-    --gate-no-go-glow:       rgba(239,68,68,0.10);
-    --gate-go-glow:          rgba(34,197,94,0.10);
+    --gate-no-go-glow:       rgba(255,122,92,0.10);
+    --gate-go-glow:          rgba(124,224,160,0.10);
 
     /* Soft fills for stage / pill icon backgrounds. The "passed-soft"
        was added with run-intelligence; "failed-soft" lands here for the
        failure-analysis stage and pill chrome. */
-    --status-failed-soft:    rgba(239,68,68,0.18);
+    --status-failed-soft:    rgba(255,138,107,0.18);
 
     /* Failure-category palette — promoted out of inline values for the
        category distribution rows (Assertion / Timeout / Network / Infra
        / Unknown). */
-    --cat-assertion: #ef4444;
-    --cat-timeout:   #f59e0b;
-    --cat-network:   #6366f1;
-    --cat-infra:     #06b6d4;
-    --cat-unknown:   #94a3b8;
+    --cat-assertion: #ff8a6b;
+    --cat-timeout:   #ffb347;
+    --cat-network:   #5ad1c4;
+    --cat-infra:     #e0b3ff;
+    --cat-unknown:   #8e9389;
 
     /* Trends redesign tokens. The confidence-bar gradient is the same
        red→amber→green direction as --gradient-health / --gradient-stability;
        aliased here so the trends page reads semantically without leaking
        "health" or "stability" into a name that's about historical signal
        confidence. */
-    --gradient-confidence:        linear-gradient(90deg, #ef4444, #fcd34d 50%, #22c55e);
+    --gradient-confidence:        linear-gradient(90deg, #ff7a5c, #ffb347 50%, #7ce0a0);
     /* Mixed-result heatmap cell — pass green at the bottom, red stripe on
        top per the design. */
-    --pattern-mixed-day:          linear-gradient(180deg, var(--status-passed) 0% 80%, #fca5a5 80% 100%);
+    --pattern-mixed-day:          linear-gradient(180deg, var(--status-passed) 0% 80%, #ff8a6b 80% 100%);
     /* Three intensities for the conditional-amber backdrop / pill / border
        used on warn-tinted issue rows, the trends Schedule-Paused callout,
        and the cadence gap annotation strip. */
-    --gate-conditional-bg-soft:   rgba(245,158,11,0.06);
-    --gate-conditional-bg:        rgba(245,158,11,0.16);
-    --gate-conditional-border:    rgba(245,158,11,0.28);
+    --gate-conditional-bg-soft:   rgba(255,179,71,0.06);
+    --gate-conditional-bg:        rgba(255,179,71,0.16);
+    --gate-conditional-border:    rgba(255,179,71,0.28);
     /* Soft accent fill for info-issue rows + Open-link chips. */
-    --color-accent-bg-soft:       rgba(68,147,248,0.06);
+    --color-accent-bg-soft:       rgba(184,242,74,0.07);
 
     /* Display sizes used by the verdict headlines / hero numbers across
        the dashboard, run-intelligence, and test-coverage redesigns. Kept
@@ -191,27 +194,28 @@
        variable names with one indirection here. Surfaces / borders / fg map
        to the existing --color-* / --status-* tokens above; only the missing
        hues land below. */
-    --bg-3:           #232a35;
-    --border-strong:  #4a5564;
-    --fg-faint:       #4a525c;
-    --status-passed-bg-soft: rgba(63,185,80,0.14);
-    --status-failed-bg-soft: rgba(248,81,73,0.14);
-    --status-broken-bg-soft: rgba(210,153,34,0.14);
-    --color-purple:        #a371f7;
-    --color-purple-soft:   rgba(163,113,247,0.14);
-    --color-purple-strong: rgba(163,113,247,0.50);
-    --color-cyan:          #39c5cf;
-    --color-cyan-soft:     rgba(57,197,207,0.14);
+    --bg-3:           #15241f;
+    --border-strong:  #3a5a4c;
+    --fg-faint:       #646b62;
+    --status-passed-bg-soft: rgba(124,224,160,0.14);
+    --status-failed-bg-soft: rgba(255,138,107,0.14);
+    --status-broken-bg-soft: rgba(255,179,71,0.14);
+    --color-purple:        #e0b3ff;
+    --color-purple-soft:   rgba(224,179,255,0.14);
+    --color-purple-strong: rgba(224,179,255,0.50);
+    --color-cyan:          #5ad1c4;
+    --color-cyan-soft:     rgba(90,209,196,0.14);
     /* Dotted background for the compute canvas — 24px-on-center grid. */
     --pattern-compute-grid:
-      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 1px) 0 0 / 24px 24px;
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.030) 1px, transparent 1px) 0 0 / 24px 24px;
   }
 
   /* Typography scale — UI dense, optimised for data tables.
      Reach via var(--text-*) when you need a one-off non-Tailwind size. */
   :root {
-    --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+    --font-display: 'Sora', system-ui, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 
     --text-xs:   12px;
     --text-sm:   13px;
@@ -261,10 +265,24 @@
 
   body {
     background-color: var(--color-bg);
+    /* Signal aurora: faint lime glow top-right + mint haze bottom-left, fixed
+       so it doesn't scroll with content. Replaces the dead-flat fill. */
+    background-image:
+      radial-gradient(60% 45% at 100% 0%, rgba(184,242,74,0.06), transparent 60%),
+      radial-gradient(55% 45% at 0% 100%, rgba(124,224,160,0.045), transparent 55%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
     color: var(--color-text);
     @apply font-sans antialiased;
     min-height: 100vh;
     transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  /* Signal display type — Sora on headings + hero numerals (use the
+     `font-display` utility for one-off branded numbers). */
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.025em;
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -284,7 +302,8 @@
   .btn-primary {
     background: var(--color-btn-primary-bg);
     color: var(--color-btn-primary-text);
-    @apply px-4 py-2 rounded-lg font-medium text-sm transition-colors
+    /* Signal: pill-shaped, semibold (lime fill + dark ink). */
+    @apply px-4 py-2 rounded-full font-semibold text-sm transition-colors
            focus:outline-none focus:ring-2 focus:ring-offset-2
            disabled:opacity-50 disabled:cursor-not-allowed;
     focus-ring-color: var(--color-ring);
@@ -297,7 +316,7 @@
     background: var(--color-bg-secondary);
     color: var(--color-text);
     border: 1px solid var(--color-border);
-    @apply px-4 py-2 rounded-lg font-medium text-sm transition-colors;
+    @apply px-4 py-2 rounded-full font-semibold text-sm transition-colors;
   }
   .btn-secondary:hover { background: var(--color-bg-hover); }
 

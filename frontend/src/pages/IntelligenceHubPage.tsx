@@ -240,7 +240,7 @@ export default function IntelligenceHubPage() {
   const topRun = visibleRuns[0]
 
   return (
-    <div className="space-y-3.5 max-w-[1360px]">
+    <div className="space-y-3.5">
       <PageHeader
         title="Run Intelligence"
         subtitle="AI analyzes every run · pick one to drill into, or follow the insights below"

@@ -57,8 +57,9 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        display: ['Sora', 'system-ui', 'sans-serif'],
+        sans: ['Plus Jakarta Sans', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['IBM Plex Mono', 'JetBrains Mono', 'ui-monospace', 'monospace'],
       },
       borderRadius: {
         sm: 'var(--radius-sm)',

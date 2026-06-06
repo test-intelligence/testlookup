@@ -10,8 +10,15 @@ export default function AppLayout() {
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <TopBar />
         <DegradedBanner />
-        <main className="flex-1 overflow-auto p-6">
-          <Outlet />
+        <main className="flex-1 overflow-auto">
+          {/* Single source of truth for page width: a centered, capped column
+              with responsive side gutters. Every routed page inherits this via
+              <Outlet />, so pages stay w-full and must NOT re-cap or re-center
+              (see PageShell). px scales 16→24→32→40 as the viewport grows;
+              py-6 preserves the old p-6 vertical padding. */}
+          <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

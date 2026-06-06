@@ -18,8 +18,10 @@ interface AppLogoProps {
  * ResetPasswordPage, ChatPage) keep their `import AppLogo from ...` line.
  */
 export default function AppLogo({ glyph = false, light = false, className = '' }: AppLogoProps) {
-  const bracketColor = light ? '#2563eb' : '#4493f8'
-  const wordColor    = light ? '#0d1117' : '#f0f6fc'
+  // Signal: lime bracket + cream wordmark on dark; keep dark text for the rare
+  // light-surface variant.
+  const bracketColor = light ? '#2563eb' : '#b8f24a'
+  const wordColor    = light ? '#0a1411' : '#f1ece0'
 
   if (glyph) {
     return (
