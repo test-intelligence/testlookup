@@ -20,12 +20,25 @@ to every client is the authoritative fix. ``config.py`` keeps the env
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from app.core.config import settings
+
+# Live verification (loop cycles 1-2) showed chromadb 0.5.20 attempts the
+# ``ClientStartEvent`` posthog capture REGARDLESS of ``anonymized_telemetry``
+# (env var AND explicit Settings, both deployed and tested) and fails against
+# the installed posthog 7.18 with "capture() takes 1 positional argument but 3
+# were given" — flooding the AI-worker logs ~7x per pipeline. It's a
+# chromadb/posthog version incompatibility, not an app fault and not functional
+# (pipelines complete fine). Since the setting can't suppress it in this
+# version, silence the telemetry logger outright. This runs at import (before
+# any client is constructed) and after ``import chromadb`` so it wins over
+# chromadb's own import-time logger setup.
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 
 __all__ = ["get_chroma_client"]
 
