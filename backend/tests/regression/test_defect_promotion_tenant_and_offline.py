@@ -17,8 +17,6 @@ Bugs pinned (review/defect-promotion-service, 2026-06-01):
 """
 from __future__ import annotations
 
-import sys
-import types
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -67,14 +65,15 @@ async def test_chroma_dedup_collection_is_per_project():
             captured["collection"] = name
             return _FakeColl()
 
-    fake_chromadb = types.ModuleType("chromadb")
-    fake_chromadb.HttpClient = MagicMock(return_value=_FakeClient())
-
+    # _find_duplicate_semantic builds its client via app.db.chroma.get_chroma_client
+    # (shared factory that disables ChromaDB telemetry). Patch that seam — the
+    # legacy ``sys.modules['chromadb']`` patch no longer intercepts the call,
+    # because app.db.chroma binds ``chromadb`` at its own import time.
     # Memory dedup must fall through (no entries) so the Chroma path runs.
     with patch(
         "app.services.agent_memory_service.find_duplicate_defect_memory",
         AsyncMock(return_value={}),
-    ), patch.dict(sys.modules, {"chromadb": fake_chromadb}):
+    ), patch("app.db.chroma.get_chroma_client", return_value=_FakeClient()):
         dup_id, found = await svc._find_duplicate_semantic(
             project_id=project_id, duplicate_hint="Checkout 500 error", db=db,
         )

@@ -184,10 +184,15 @@ def test_run_async_no_event_loop_closed_error_on_repeated_calls():
     ran on to prove cross-loop teardown never happens."""
     from app.worker import tasks
 
-    dispose_loops: list[object] = []
+    # Record (loop, closed-state) AT dispose time. Checking ``is_closed()``
+    # after the loop block always reads True, because ``_run_async`` closes
+    # each loop once its coroutine finishes. The contract under test is that
+    # dispose runs BEFORE the loop is closed, which can only be observed in-loop.
+    dispose_records: list[tuple[object, bool]] = []
 
     async def _fake_dispose() -> None:
-        dispose_loops.append(asyncio.get_event_loop())
+        loop = asyncio.get_event_loop()
+        dispose_records.append((loop, loop.is_closed()))
 
     async def _touch_db() -> int:
         # Simulate a task that "used" the DB.
@@ -200,7 +205,7 @@ def test_run_async_no_event_loop_closed_error_on_repeated_calls():
             assert tasks._run_async(_touch_db()) == 1
 
     # Three task invocations → three distinct loops, each disposed in-loop.
-    assert len(dispose_loops) == 3
-    assert len(set(id(loop) for loop in dispose_loops)) == 3
-    # Every dispose ran on a loop that was NOT yet closed.
-    assert all(not loop.is_closed() for loop in dispose_loops)
+    assert len(dispose_records) == 3
+    assert len(set(id(loop) for loop, _closed in dispose_records)) == 3
+    # Every dispose ran on a loop that was NOT yet closed (captured in-loop).
+    assert all(not closed_at_dispose for _loop, closed_at_dispose in dispose_records)
