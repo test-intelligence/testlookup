@@ -25,7 +25,7 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ## Functional / correctness
 
-### BUG-004 — `/agents` shows no pipeline for completed runs  ·  S2  ·  OPEN
+### BUG-004 — `/agents` shows no pipeline for completed runs  ·  S2  ·  FIX READY (`auto/e2e-fix-agents-bug004`, in `auto/live-fixes`)
 - **Symptom:** `http://testlookup.local/agents` displays no AI pipeline for new
   runs even though the pipeline ran. (User-reported 2026-06-06.)
 - **Evidence:** run `493d5c1f` produced pipeline `5c378cde`
@@ -55,7 +55,7 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ## Reliability / data integrity (backend workers)
 
-### BUG-002 — asyncpg "another operation is in progress" in notification dispatch  ·  S2  ·  OPEN
+### BUG-002 — asyncpg "another operation is in progress" in notification dispatch  ·  S2  ·  FIX READY (`auto/e2e-fix-agents-bug002`, in `auto/live-fixes`)
 - **Symptom:** `Notification dispatch failed: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) ... cannot perform operation: another operation is in progress`
 - **Evidence:** `testlookup-worker-default`, task `f8236970-97a0-4134-ad25-cd50a2af3021`, run `493d5c1f` (05:58:30Z).
 - **Root cause:** a single asyncpg connection/`AsyncSession` is driven by
@@ -67,7 +67,7 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   its own `AsyncSessionLocal`. Add a regression test that drives concurrent
   dispatch and asserts no InterfaceError.
 
-### BUG-003 — `RuntimeError: Event loop is closed` on asyncpg connection teardown  ·  S3→S2  ·  OPEN
+### BUG-003 — `RuntimeError: Event loop is closed` on asyncpg connection teardown  ·  S3→S2  ·  FIX READY (`auto/e2e-fix-agents-bug003`, in `auto/live-fixes`)
 - **Symptom:** `RuntimeError: Event loop is closed` while terminating an asyncpg
   connection; the AI pipeline reports `errors=1` and ends **status=partial**
   (which is what hides it on `/agents` — see BUG-004).
