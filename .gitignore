@@ -105,6 +105,18 @@ infra/aws/*
 !infra/aws/README.md
 !infra/aws/STRATEGY.md
 
+# Coding-agent instruction files — keep on local disk only, NEVER commit to any
+# branch. Untracked 2026-06-06; they still drive Claude Code / agents locally.
+# (Pattern without a leading slash matches at every depth: root + backend/ + frontend/.)
+CLAUDE.md
+AGENTS.md
+
+# Internal product / roadmap docs — archived on the local-only release/roadmap_docs
+# branch; must not live on main. (Leading slash = repo-root only.)
+/ROADMAP.md
+/opensource.md
+/deployment_and_testing_strategy.md
+
 # Claude Code — keep local, never push to remote
 .claude/
 Product_Plan
