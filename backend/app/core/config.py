@@ -3,11 +3,20 @@ TestLookup — Application Configuration
 All settings loaded from environment variables with sensible defaults.
 """
 import json as _json
+import os as _os
 from functools import lru_cache
 from typing import List, Literal, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Belt-and-suspenders: disable ChromaDB's anonymous telemetry via env var.
+# NOTE: the installed chromadb (0.5.20) does NOT reliably honour this env var
+# for HttpClient — it still emits "Failed to send telemetry event ..." errors.
+# The authoritative fix is to pass an explicit Settings(anonymized_telemetry=
+# False) to every client; see app/db/chroma.get_chroma_client(). This setdefault
+# is kept as a harmless additional safeguard.
+_os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 
 class Settings(BaseSettings):

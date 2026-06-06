@@ -593,10 +593,10 @@ class ConversationAgent:
         """ChromaDB semantic similarity search — wrapped in asyncio.to_thread to avoid blocking."""
         def _sync_search() -> str:
             try:
-                from chromadb import HttpClient
+                from app.db.chroma import get_chroma_client
                 from app.services.llm_factory import get_embedding_model
 
-                client = HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
+                client = get_chroma_client()
                 collection = client.get_or_create_collection(settings.CHROMA_COLLECTION)
                 if collection.count() == 0:
                     return ""
