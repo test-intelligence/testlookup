@@ -170,6 +170,7 @@ class TestRunSummary(BaseModel):
     build_number: str
     jenkins_job: Optional[str] = None
     trigger_source: Optional[str] = None
+    ingestion_source: Optional[str] = None
     branch: Optional[str] = None
     status: LaunchStatus
     total_tests: int

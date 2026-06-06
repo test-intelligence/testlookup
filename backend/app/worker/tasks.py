@@ -319,6 +319,7 @@ def persist_live_session(
                     project_id=proj_uuid,
                     build_number=build_number,
                     trigger_source="live_stream",
+                    ingestion_source="live",
                     branch=branch or None,
                     commit_hash=commit_hash or None,
                     status=run_status,
@@ -675,6 +676,7 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
                     framework=payload.get("framework"),
                     trigger_source=payload.get("trigger_source", "api"),
                     release_name=payload.get("release_name"),
+                    ingestion_source="sdk",
                 )
                 count = await ingest_test_results(db, run, payload["results"])
                 await db.commit()
@@ -750,6 +752,7 @@ def ingest_uploaded_file(
                     branch=branch,
                     commit_hash=commit_hash,
                     release_name=release_name,
+                    ingestion_source="upload",
                 )
                 count = await ingest_test_results(db, run, results)
                 await db.commit()

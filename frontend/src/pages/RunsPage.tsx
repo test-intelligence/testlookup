@@ -1164,6 +1164,19 @@ function RunsTable({
                     <Link to={`/runs/${r.id}`} className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline">
                       {r.run_seq != null ? `Run #${r.run_seq}` : `#${String(r.build_number)}`}
                     </Link>
+                    {r.ingestion_source === 'upload' && (
+                      <span
+                        className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-medium align-middle"
+                        style={{
+                          background: 'rgba(99,102,241,0.12)',
+                          border: '1px solid rgba(99,102,241,0.30)',
+                          color: '#a5b4fc',
+                        }}
+                        title="Results were manually uploaded from a report file"
+                      >
+                        Uploaded
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '8px 12px' }}>
                     <SuiteBadge

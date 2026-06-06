@@ -50,6 +50,11 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-06 — Run source tracking for manual report upload)
+
+- **`TestRun.ingestion_source`** (`live | sdk | upload | file | unknown`) records how a run's results entered TestLookup (migration `0091`, new `IngestionSource` enum). It's set at every run-creation site — live-stream stub/upsert/drainer/persist → `live`, SDK batch (`/api/v1/ingest`) → `sdk`, manual file upload (`/api/v1/ingest/file`) → `upload`, MinIO/sentinel webhook → `file` — and `create_run_from_payload` now threads a caller-supplied `ingestion_source`. Existing rows are backfilled by a best-effort heuristic (event_archive/live_stream → `live`; trigger_source `api` → `sdk`; minio_prefix → `file`; else `unknown`). The column is `NOT NULL` with `server_default='unknown'`; downgrade drops it.
+- **API + UI expose the source:** `TestRunSummary` carries `ingestion_source`, and the `/runs` table renders an **"Uploaded"** badge for `ingestion_source='upload'`. This is the first slice of the Manual Test Report Upload feature (see `docs/PRD-manual-report-upload.md`, tickets MRU-1/MRU-2/MRU-3); the backend file-ingestion path + parsers already existed and are unchanged.
+
 ### Added (2026-04-25/26 — Phase OS-Deploy)
 
 - **Multi-cloud Kubernetes overlays** -- `k8s/overlays/{aws-eks,gcp-gke,azure-aks,self-hosted}/` cover the four major deployment targets. All inherit the existing `prod` overlay so HPA tuning and CORS config stay shared; each only patches what's actually cloud-specific (Ingress class, StorageClass, image registry).

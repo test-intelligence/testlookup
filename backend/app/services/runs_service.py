@@ -303,6 +303,7 @@ def _synthesize_run_from_live_session(live) -> "TestRun":
         project_id=live.project_id,
         build_number=live.build_number or str(live.id)[:8],
         trigger_source="live_stream",
+        ingestion_source="live",
         status=LaunchStatus.IN_PROGRESS,
         total_tests=int(getattr(live, "total_tests", 0) or 0),
         passed_tests=0,

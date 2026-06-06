@@ -35,6 +35,7 @@ async def create_run_from_payload(
     trigger_source: str = "api",
     release_name: Optional[str] = None,
     framework: Optional[str] = None,
+    ingestion_source: str = "unknown",
 ) -> TestRun:
     """
     Create a TestRun record for API-ingested data.
@@ -70,6 +71,7 @@ async def create_run_from_payload(
         branch=branch,
         commit_hash=commit_hash,
         trigger_source=trigger_source,
+        ingestion_source=ingestion_source,
         status=LaunchStatus.IN_PROGRESS,
         total_tests=0,
         passed_tests=0,
