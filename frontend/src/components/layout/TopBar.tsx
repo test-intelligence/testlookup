@@ -7,7 +7,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { LogOut } from 'lucide-react'
 import { useUnreadCount, useNotificationHistory, invalidateNotifications } from '@/hooks/useNotifications'
 import { notificationService } from '@/services/notificationService'
-import ThemeToggle from '@/components/ui/ThemeToggle'
+import ThemePicker from '@/components/ui/ThemePicker'
 
 const AVATAR_BG: Record<string, string> = {
   slate: 'bg-slate-500', red: 'bg-red-500', orange: 'bg-orange-500',
@@ -252,8 +252,8 @@ export default function TopBar() {
         )}
       </div>
 
-      {/* Theme toggle */}
-      <ThemeToggle />
+      {/* Color-theme picker */}
+      <ThemePicker />
 
       {/* User profile — P4-1: single consolidated selector to prevent 3x re-renders */}
       <UserProfileDropdown />

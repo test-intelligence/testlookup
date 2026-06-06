@@ -18,10 +18,13 @@ interface AppLogoProps {
  * ResetPasswordPage, ChatPage) keep their `import AppLogo from ...` line.
  */
 export default function AppLogo({ glyph = false, light = false, className = '' }: AppLogoProps) {
-  // Signal: lime bracket + cream wordmark on dark; keep dark text for the rare
-  // light-surface variant.
-  const bracketColor = light ? '#2563eb' : '#b8f24a'
-  const wordColor    = light ? '#0a1411' : '#f1ece0'
+  // Theme-aware: the bracket follows the active accent, the wordmark follows the
+  // active text color — so the mark recolors with every theme (lime on Signal,
+  // violet on Console, cobalt on light Lab…) with no per-theme edits. The
+  // `light` prop is no longer needed — the active theme already encodes it.
+  void light
+  const bracketColor = 'var(--color-accent)'
+  const wordColor    = 'var(--color-text)'
 
   if (glyph) {
     return (
