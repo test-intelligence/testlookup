@@ -25,7 +25,7 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ## Functional / correctness
 
-### BUG-004 — `/agents` shows no pipeline for completed runs  ·  S2  ·  FIX READY (`auto/e2e-fix-agents-bug004`, in `auto/live-fixes`)
+### BUG-004 — `/agents` shows no pipeline for completed runs  ·  S2  ·  DEPLOYED (cycle 1) — pipeline now renders; `partial`-state fix shipped as defense. Run `c1d41ac4`'s pipeline came back **completed** (not partial) once BUG-003 landed.
 - **Symptom:** `http://testlookup.local/agents` displays no AI pipeline for new
   runs even though the pipeline ran. (User-reported 2026-06-06.)
 - **Evidence:** run `493d5c1f` produced pipeline `5c378cde`
@@ -55,7 +55,7 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ## Reliability / data integrity (backend workers)
 
-### BUG-002 — asyncpg "another operation is in progress" in notification dispatch  ·  S2  ·  FIX READY (`auto/e2e-fix-agents-bug002`, in `auto/live-fixes`)
+### BUG-002 — asyncpg "another operation is in progress" in notification dispatch  ·  S2  ·  DEPLOYED + VERIFIED (cycle 1) — 0 occurrences in worker-default after deploy+retest.
 - **Symptom:** `Notification dispatch failed: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) ... cannot perform operation: another operation is in progress`
 - **Evidence:** `testlookup-worker-default`, task `f8236970-97a0-4134-ad25-cd50a2af3021`, run `493d5c1f` (05:58:30Z).
 - **Root cause:** a single asyncpg connection/`AsyncSession` is driven by
@@ -67,7 +67,7 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
   its own `AsyncSessionLocal`. Add a regression test that drives concurrent
   dispatch and asserts no InterfaceError.
 
-### BUG-003 — `RuntimeError: Event loop is closed` on asyncpg connection teardown  ·  S3→S2  ·  FIX READY (`auto/e2e-fix-agents-bug003`, in `auto/live-fixes`)
+### BUG-003 — `RuntimeError: Event loop is closed` on asyncpg connection teardown  ·  S3→S2  ·  DEPLOYED + VERIFIED (cycle 1) — 0 occurrences in worker-ai/ingestion after deploy+retest; pipeline status went `partial` → `completed`.
 - **Symptom:** `RuntimeError: Event loop is closed` while terminating an asyncpg
   connection; the AI pipeline reports `errors=1` and ends **status=partial**
   (which is what hides it on `/agents` — see BUG-004).
@@ -83,7 +83,9 @@ Severity: **S1** breaks core flow · **S2** degraded/UX · **S3** noise/cosmetic
 
 ## Noise / hygiene
 
-### BUG-001 — ChromaDB anonymous telemetry floods AI-worker logs  ·  S3  ·  FIX READY (`auto/e2e-fix-20260606-0600`)
+### BUG-001 — ChromaDB anonymous telemetry floods AI-worker logs  ·  S3  ·  NOT-FIXED by env var → REWORKED (`auto/e2e-fix-bug001-rework-20260606-0207`, in `auto/live-fixes`); deploy+verify next cycle
+- **Cycle-1 verification:** `ANONYMIZED_TELEMETRY=False` IS present in the worker pod env, yet the telemetry error STILL fires 7×. The installed **chromadb 0.5.20 does not honor that env var** for the HttpClient telemetry path.
+- **Rework:** explicit `Settings(anonymized_telemetry=False)` via a shared `backend/app/db/chroma.py::get_chroma_client()` helper applied to all 8 `HttpClient` call sites (agent_memory, semantic_cache, semantic_search, knowledge_chunking, defect_promotion, conversation, embed_and_cluster). Env setdefault kept as belt-and-suspenders. Regression test 3/3.
 - **Symptom:** `Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given` (≈5× per pipeline) in `testlookup-worker-ai`.
 - **Root cause:** ChromaDB's bundled anonymous telemetry (posthog) is enabled by
   default and breaks against the installed posthog version. Multiple
