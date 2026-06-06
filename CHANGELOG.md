@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### Fixed
+- **BUG-001 — ChromaDB anonymous telemetry disabled.** The AI worker logged
+  `Failed to send telemetry event ClientStartEvent: capture() takes 1 positional
+  argument but 3 were given` ~5× per pipeline (ChromaDB's bundled posthog
+  telemetry breaking against the installed posthog, and an unwanted phone-home in
+  an offline-first app). `app/core/config.py` now sets `ANONYMIZED_TELEMETRY=False`
+  at import (before any `chromadb.HttpClient`), and `k8s/base/configmap.yaml` sets
+  it in-cluster. Regression: `tests/regression/test_chromadb_telemetry_disabled.py`.
+  Found by live-homelab validation; tracked in `LIVE_APP_BUG_TRACKER.md`.
+
 ### Why we built this
 
 Engineering teams running automated tests get fragmented artifacts: JUnit XML, Allure outputs, flaky failures, pipeline status. Existing tools help visualise results, but teams still burn hours on manual triage, clustering, root-cause analysis, and release decisions. The problem is worse in regulated or private environments that can't depend on cloud-only AI services.
