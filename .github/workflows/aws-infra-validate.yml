@@ -1,0 +1,86 @@
+name: aws-infra-validate
+
+# Offline quality gate for the AWS deployment (infra/aws). No AWS account or
+# credentials are used — everything is static analysis / dry-run / render.
+# Runs on Linux runners where terraform's plugin mTLS is not intercepted.
+
+on:
+  pull_request:
+    paths:
+      - "infra/aws/**"
+      - "k8s/overlays/aws-eks/**"
+      - ".github/workflows/aws-infra-validate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/aws/**"
+      - "k8s/overlays/aws-eks/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/aws/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+
+      - name: fmt
+        run: terraform fmt -check -recursive
+
+      - name: init (no backend, no AWS)
+        run: terraform init -backend=false -input=false
+
+      - name: validate
+        run: terraform validate
+
+      - name: tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - run: tflint --recursive
+
+      - name: tfsec (IaC security)
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: infra/aws/terraform
+          soft_fail: true
+
+  kustomize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: render aws-eks overlay
+        run: |
+          curl -sfLo /usr/local/bin/kustomize.tgz \
+            https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz
+          tar -xzf /usr/local/bin/kustomize.tgz -C /usr/local/bin
+          kustomize build k8s/overlays/aws-eks > /dev/null
+          echo "aws-eks overlay renders cleanly"
+
+  dockerfiles:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dockerfile: [backend/Dockerfile, frontend/Dockerfile, mcp/Dockerfile]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          failure-threshold: error
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck deployment scripts
+        run: shellcheck infra/aws/scripts/*.sh

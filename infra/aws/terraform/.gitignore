@@ -1,0 +1,15 @@
+# Terraform working artifacts — never commit
+.terraform/
+.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Real var files may contain account ids / CIDRs — commit only *.example and environments/*.tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
