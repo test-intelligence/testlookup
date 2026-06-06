@@ -72,24 +72,9 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - **`CLAUDE.md` cleanup** -- fixed stale MCP/CLI counts (24 → 48 tools), slimmed Coding Conventions to 9 cross-cutting rules (was 24+7 bullets duplicated from subdir CLAUDE.md files), trimmed Known Pitfalls 31 → 14, replaced static feature-flag table with pointer to live inventory. 324 → 267 lines.
 - **Homelab K3s overlay** -- now ships `netpol-homelab.yaml` (allows colocated data stores + Traefik ingress) and `frontend-nginx-configmap.yaml` (pre-rendered nginx config, mounted via subPath, with `command: [nginx, -g, "daemon off;"]` to bypass `/docker-entrypoint.sh`).
 
-### Fixed (2026-06-06 — agents page partial-pipeline rendering)
+### Fixed (2026-06-06 — BUG-001 ChromaDB telemetry log spam)
 
-- **BUG-004 (S2): `/agents` page showed NO pipeline for completed/partial runs** —
-  a persisted AI pipeline with `status='partial'` (what a pipeline gets when a stage
-  errors, e.g. `errors>=1` — very common, e.g. live homelab run `493d5c1f` →
-  `agent_pipeline_runs` row `5c378cde`) rendered blank/iconless and looked "missing".
-  Root cause was FRONTEND: `frontend/src/pages/AgentStatusPage.tsx` status maps
-  `STATUS_COLOUR` / `STATUS_BG` and the `StatusIcon` component handled
-  running/completed/failed/skipped but had no `partial` case, so a partial pipeline
-  fell through to the neutral fallback with no badge colour/background and no icon.
-  Fix: `partial` is now a visible amber/degraded state everywhere status is rendered
-  for pipelines AND stages — `STATUS_COLOUR.partial = text-amber-400`,
-  `STATUS_BG.partial = bg-amber-900/20 border border-amber-700/30`, and `StatusIcon`
-  renders an amber `AlertTriangle` for `partial`. The `.toUpperCase()` status badges in
-  `PipelineCard` / `StageCard` already key off `STATUS_COLOUR` so they pick up the new
-  tone automatically. Project-scoping in `usePipelines` was confirmed correct and left
-  unchanged. Regression test: `frontend/src/pages/AgentStatusPage.partial.test.tsx`
-  (`?raw` source-grep — fails before, passes after).
+- **ChromaDB anonymous telemetry flooded the AI-worker logs** with `Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given` (~7x per pipeline). The prior attempt — `os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")` plus the k8s configmap `ANONYMIZED_TELEMETRY: "False"` — was **insufficient**: the env var was verified present in the worker pod (`printenv` → `False`) yet chromadb 0.5.20's `HttpClient` ignores it and still emits the telemetry error. Authoritative fix: a shared `app/db/chroma.get_chroma_client()` helper that passes an explicit `Settings(anonymized_telemetry=False)` to every client. All 8 `chromadb.HttpClient(...)` call sites (agent_memory_service, semantic_cache, semantic_search, knowledge_chunking_service, defect_promotion_service, conversation agent, embed_and_cluster tool) now route through it. The env `setdefault` is retained in `config.py` as a harmless additional safeguard. Regression test: `tests/regression/test_chromadb_client_telemetry_off.py`.
 
 ### Fixed (2026-04-25/26 — Phase OS-Deploy)
 
@@ -291,26 +276,6 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `ChatSession`, `QualityGate`, `ReleaseGatePolicy`, `SavedView`, `AIEvalDataset`, `KnowledgeSource`,
   `UserCreate`. Only `max_length` was added (no new `min_length`), so the change is
   behaviour-preserving. Regression: `tests/regression/test_input_length_caps.py`.
-
-### Fixed (2026-06-06 — worker event-loop engine teardown)
-
-- **BUG-003 (S2): `RuntimeError: Event loop is closed` when an asyncpg connection is
-  torn down in the Celery workers; the AI pipeline ended with `errors=1` / status
-  `partial` (which then hides it on `/agents`)** (`auto/e2e-fix-agents-bug003`) —
-  Each Celery task runs its coroutine in a private, short-lived event loop
-  (`worker/tasks.py::_run_async` → `asyncio.new_event_loop()` … `loop.close()`). The
-  `@lru_cache`'d `app.db.postgres.get_engine()` builds the async engine — and *pools*
-  its asyncpg connections — bound to whichever loop was current on first use. When that
-  loop closes at task end, the still-pooled connections stay attached to a dead loop; the
-  next task (or GC) then finalizes them on that dead loop and raises `RuntimeError: Event
-  loop is closed` ("Exception terminating connection …"), surfacing as the AI pipeline's
-  `errors=1` / `partial`. Fix: new `app.db.postgres.dispose_engine_for_loop()` disposes
-  the engine *within the task's own loop*, in `_run_async`'s `finally` block, before the
-  loop closes, then clears both lazy-build `lru_cache`s so the next task rebuilds a fresh
-  engine on its own loop — mirroring the existing Redis-singleton reset. Applied to both
-  `worker/tasks.py` and `worker/training_tasks.py`. The FastAPI request-path engine is
-  unaffected (it disposes via `close_db()` on shutdown and never closes the loop
-  mid-process). Regression: `backend/tests/regression/test_worker_loop_engine_dispose.py`.
 
 ### Fixed (2026-06-04 — RAG/knowledge service stubs restore)
 

@@ -600,10 +600,8 @@ async def _find_duplicate_semantic(
         _DEFECT_COLLECTION = f"open_defects_{project_id}"
 
         def _chroma_dedup() -> Optional[str]:
-            import chromadb
-            client = chromadb.HttpClient(
-                host=settings.CHROMA_HOST, port=settings.CHROMA_PORT
-            )
+            from app.db.chroma import get_chroma_client
+            client = get_chroma_client()
             coll = client.get_or_create_collection(_DEFECT_COLLECTION)
             # Upsert current open defects
             ids = [str(d.id) for d in open_defects if d.title]

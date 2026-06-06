@@ -24,8 +24,8 @@ _COLLECTION_NAME = "test_case_search"
 
 
 def _get_chroma_client():
-    import chromadb
-    return chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
+    from app.db.chroma import get_chroma_client
+    return get_chroma_client()
 
 
 async def _get_or_create_collection():
