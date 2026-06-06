@@ -72,6 +72,25 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - **`CLAUDE.md` cleanup** -- fixed stale MCP/CLI counts (24 → 48 tools), slimmed Coding Conventions to 9 cross-cutting rules (was 24+7 bullets duplicated from subdir CLAUDE.md files), trimmed Known Pitfalls 31 → 14, replaced static feature-flag table with pointer to live inventory. 324 → 267 lines.
 - **Homelab K3s overlay** -- now ships `netpol-homelab.yaml` (allows colocated data stores + Traefik ingress) and `frontend-nginx-configmap.yaml` (pre-rendered nginx config, mounted via subPath, with `command: [nginx, -g, "daemon off;"]` to bypass `/docker-entrypoint.sh`).
 
+### Fixed (2026-06-06 — agents page partial-pipeline rendering)
+
+- **BUG-004 (S2): `/agents` page showed NO pipeline for completed/partial runs** —
+  a persisted AI pipeline with `status='partial'` (what a pipeline gets when a stage
+  errors, e.g. `errors>=1` — very common, e.g. live homelab run `493d5c1f` →
+  `agent_pipeline_runs` row `5c378cde`) rendered blank/iconless and looked "missing".
+  Root cause was FRONTEND: `frontend/src/pages/AgentStatusPage.tsx` status maps
+  `STATUS_COLOUR` / `STATUS_BG` and the `StatusIcon` component handled
+  running/completed/failed/skipped but had no `partial` case, so a partial pipeline
+  fell through to the neutral fallback with no badge colour/background and no icon.
+  Fix: `partial` is now a visible amber/degraded state everywhere status is rendered
+  for pipelines AND stages — `STATUS_COLOUR.partial = text-amber-400`,
+  `STATUS_BG.partial = bg-amber-900/20 border border-amber-700/30`, and `StatusIcon`
+  renders an amber `AlertTriangle` for `partial`. The `.toUpperCase()` status badges in
+  `PipelineCard` / `StageCard` already key off `STATUS_COLOUR` so they pick up the new
+  tone automatically. Project-scoping in `usePipelines` was confirmed correct and left
+  unchanged. Regression test: `frontend/src/pages/AgentStatusPage.partial.test.tsx`
+  (`?raw` source-grep — fails before, passes after).
+
 ### Fixed (2026-04-25/26 — Phase OS-Deploy)
 
 - **WebSocket connection failed immediately after handshake** -- `OAuth2PasswordBearer.__call__() missing 1 required positional argument: 'request'` from chained dependencies. Root cause: HTTP-only auth dep applied to a WebSocket route at the router level.
