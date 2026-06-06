@@ -21,6 +21,14 @@ def _run_async(coro):
     try:
         return loop.run_until_complete(coro)
     finally:
+        # BUG-003: dispose the pooled async engine on this loop before closing
+        # it, otherwise asyncpg connections stay bound to a dead loop and raise
+        # "Event loop is closed" when later terminated/GC'd.
+        try:
+            from app.db.postgres import dispose_engine_for_loop
+            loop.run_until_complete(dispose_engine_for_loop())
+        except Exception:
+            pass
         loop.close()
 
 

@@ -273,6 +273,26 @@ branch per fix; see the per-entry branch for the full diff + regression test).
   `UserCreate`. Only `max_length` was added (no new `min_length`), so the change is
   behaviour-preserving. Regression: `tests/regression/test_input_length_caps.py`.
 
+### Fixed (2026-06-06 — worker event-loop engine teardown)
+
+- **BUG-003 (S2): `RuntimeError: Event loop is closed` when an asyncpg connection is
+  torn down in the Celery workers; the AI pipeline ended with `errors=1` / status
+  `partial` (which then hides it on `/agents`)** (`auto/e2e-fix-agents-bug003`) —
+  Each Celery task runs its coroutine in a private, short-lived event loop
+  (`worker/tasks.py::_run_async` → `asyncio.new_event_loop()` … `loop.close()`). The
+  `@lru_cache`'d `app.db.postgres.get_engine()` builds the async engine — and *pools*
+  its asyncpg connections — bound to whichever loop was current on first use. When that
+  loop closes at task end, the still-pooled connections stay attached to a dead loop; the
+  next task (or GC) then finalizes them on that dead loop and raises `RuntimeError: Event
+  loop is closed` ("Exception terminating connection …"), surfacing as the AI pipeline's
+  `errors=1` / `partial`. Fix: new `app.db.postgres.dispose_engine_for_loop()` disposes
+  the engine *within the task's own loop*, in `_run_async`'s `finally` block, before the
+  loop closes, then clears both lazy-build `lru_cache`s so the next task rebuilds a fresh
+  engine on its own loop — mirroring the existing Redis-singleton reset. Applied to both
+  `worker/tasks.py` and `worker/training_tasks.py`. The FastAPI request-path engine is
+  unaffected (it disposes via `close_db()` on shutdown and never closes the loop
+  mid-process). Regression: `backend/tests/regression/test_worker_loop_engine_dispose.py`.
+
 ### Fixed (2026-06-04 — RAG/knowledge service stubs restore)
 
 - **`rag_generation_service` + `knowledge_sync_service` clobbered to stubs — RAG generation
