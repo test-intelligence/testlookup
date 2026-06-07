@@ -50,6 +50,11 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Fixed (2026-06-07 — Manual upload: MRU-15/16/17 review)
+
+- **Failure metrics no longer undercount:** the retry-exhausted terminal (outer task handler) set a FAILED status but emitted no metric (the `_emit_failed` closure is scoped to the inner coroutine). It now emits `uploads_total{state=failed}` + `upload_failures_total{code=infra_error}` (distinct from the parse-time `ingest_error`), so the counters balance the terminal-status writes.
+- Clarified `upload_processing_seconds` help (success-only by design) and added the backend tests the prior entry referenced (migration 0092 chain/downgrade + metrics label sets).
+
 ### Added (2026-06-07 — Manual upload: metrics, in-app help, rollout flag (MRU-15/16/17))
 
 - **MRU-17 — rollout flag.** The upload UI (the `/runs` "Upload report" button, the sidebar "Upload Report" item, and the `/runs?upload=1` deep-link) is gated behind a new `manual_upload` feature flag (migration 0092, **default OFF**) — an ADMIN enables it per environment/project/role from Settings › Feature Flags, mirroring `cypress_ingest`/`playwright_ingest`. A new `useFeatureEnabled(key)` hook resolves the flag for the active project. The `POST /api/v1/ingest/file` endpoint itself is not gated (API/CI clients unaffected).

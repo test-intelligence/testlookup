@@ -888,9 +888,17 @@ def ingest_uploaded_file(
                 _run_async(upload_status.set_status(
                     task_id, run_id=run_id, project_id=project_id,
                     state=upload_status.STATE_FAILED,
-                    error={"code": "ingest_error",
+                    error={"code": "infra_error",
                            "message": "Ingestion failed after retries. Please try again."},
                 ))
+            except Exception:
+                pass
+            # This is a real terminal — count it so failure metrics balance the
+            # status writes (the inner _emit_failed closure isn't in scope here).
+            try:
+                from app.core import metrics as _m
+                _m.uploads_total.labels(state="failed", format=file_format).inc()
+                _m.upload_failures_total.labels(code="infra_error").inc()
             except Exception:
                 pass
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))

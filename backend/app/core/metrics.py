@@ -45,7 +45,7 @@ upload_failures_total = Counter(
 
 upload_processing_seconds = Histogram(
     "testlookup_upload_processing_seconds",
-    "Wall-clock time to parse + ingest a manual upload (worker side)",
+    "Wall-clock time to parse + ingest a SUCCESSFUL manual upload (worker side)",
     buckets=[0.5, 1, 2, 5, 15, 30, 60, 120],
 )
 
