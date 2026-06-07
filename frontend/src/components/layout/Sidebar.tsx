@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { useAIConfig } from '@/hooks/useAIConfig'
 import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailures'
 import AppLogo from '@/components/ui/AppLogo'
@@ -174,6 +175,8 @@ function SidebarGroup({ group }: { group: NavGroup }) {
 export default function Sidebar() {
   const { canAccessManagement } = usePermissions()
   const { data: aiConfig } = useAIConfig()
+  // Rollout gate (MRU-17): hide the Upload Report item until the flag is on.
+  const uploadEnabled = useFeatureEnabled('manual_upload')
 
   // Show a mode badge on the AI Reports group when in rules or ML mode
   const aiModeBadge =
@@ -182,9 +185,14 @@ export default function Sidebar() {
     aiConfig.analysis_mode === 'ml' ? 'ml' :
     undefined
 
-  const groups = GROUPS.map(g =>
-    g.key === 'intelligence' && aiModeBadge ? { ...g, badge: aiModeBadge } : g
-  )
+  const groups = GROUPS.map(g => {
+    let group = g.key === 'intelligence' && aiModeBadge ? { ...g, badge: aiModeBadge } : g
+    if (!uploadEnabled) {
+      const children = group.children.filter(c => c.to !== '/runs?upload=1')
+      if (children.length !== group.children.length) group = { ...group, children }
+    }
+    return group
+  })
 
   return (
     <aside className="w-56 flex-shrink-0 border-r flex flex-col" style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}>

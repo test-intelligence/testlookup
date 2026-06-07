@@ -50,6 +50,13 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-07 — Manual upload: metrics, in-app help, rollout flag (MRU-15/16/17))
+
+- **MRU-17 — rollout flag.** The upload UI (the `/runs` "Upload report" button, the sidebar "Upload Report" item, and the `/runs?upload=1` deep-link) is gated behind a new `manual_upload` feature flag (migration 0092, **default OFF**) — an ADMIN enables it per environment/project/role from Settings › Feature Flags, mirroring `cypress_ingest`/`playwright_ingest`. A new `useFeatureEnabled(key)` hook resolves the flag for the active project. The `POST /api/v1/ingest/file` endpoint itself is not gated (API/CI clients unaffected).
+- **MRU-15 — metrics.** Prometheus counters/histogram for uploads: `testlookup_uploads_total{state,format}`, `testlookup_upload_failures_total{code}`, and `testlookup_upload_processing_seconds`, emitted at each worker terminal (succeeded / parse_error / empty_report / ingest_error / zip safety codes).
+- **MRU-16 — in-app help.** The upload modal has a "Supported formats & how to export" expandable listing each framework's export (JUnit/TestNG XML, Allure JSON or zip, Playwright `--reporter=json`, Cypress Mochawesome, multi-file). (Kept in-app since `docs/` is gitignored.)
+- Tests: Sidebar flag-gate (hidden off / shown on); migration 0092 chains + downgrade; metrics import.
+
 ### Added (2026-06-07 — Manual upload: raw archival + skip-AI toggle (MRU-9 / MRU-8))
 
 - **MRU-9 — Raw uploaded files are archived** (byte-exact) to the storage backend under `uploads/{project_id}/{run_id}/{filename}` for audit/replay; the key is linked onto the run's `minio_prefix`. Best-effort — a storage hiccup never fails the ingest.

@@ -745,7 +745,16 @@ def ingest_uploaded_file(
         """Returns True on success, False on a non-retryable parse/empty error
         (which is recorded as a failed status, not raised, so Celery doesn't
         retry a file that will never parse)."""
+        import time as _time
+
+        from app.core import metrics as _m
         from app.db.postgres import AsyncSessionLocal
+
+        _t0 = _time.monotonic()
+
+        def _emit_failed(code: str) -> None:
+            _m.uploads_total.labels(state="failed", format=file_format).inc()
+            _m.upload_failures_total.labels(code=code).inc()
 
         await upload_status.set_status(
             task_id, run_id=run_id, project_id=project_id,
@@ -774,6 +783,7 @@ def ingest_uploaded_file(
                 state=upload_status.STATE_FAILED,
                 error={"code": exc.code, "message": exc.message},
             )
+            _emit_failed(exc.code)
             return False
         except Exception as exc:  # noqa: BLE001
             logger.warning("upload_parse_error task=%s file=%s error=%s", task_id, file_name, exc)
@@ -783,6 +793,7 @@ def ingest_uploaded_file(
                 error={"code": "parse_error",
                        "message": f"Could not parse the {file_format} report: {str(exc)[:300]}"},
             )
+            _emit_failed("parse_error")
             return False
 
         if not results:
@@ -793,6 +804,7 @@ def ingest_uploaded_file(
                        "message": "No test results were found in the file. "
                                   "Check that the format matches the file contents."},
             )
+            _emit_failed("empty_report")
             return False
 
         await upload_status.set_status(
@@ -837,6 +849,7 @@ def ingest_uploaded_file(
                 error={"code": "ingest_error",
                        "message": "Parsed the report but no test results could be stored."},
             )
+            _emit_failed("ingest_error")
             return False
 
         await finalize_run(
@@ -854,6 +867,8 @@ def ingest_uploaded_file(
             task_id, run_id=run_id, project_id=project_id,
             state=upload_status.STATE_SUCCEEDED, result=summary,
         )
+        _m.uploads_total.labels(state="succeeded", format=file_format).inc()
+        _m.upload_processing_seconds.observe(_time.monotonic() - _t0)
         return True
 
     logger.info("[Task %s] Processing uploaded file: %s (%s)", task_id, file_name, file_format)

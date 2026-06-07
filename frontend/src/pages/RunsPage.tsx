@@ -57,6 +57,7 @@ import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
 import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
@@ -1647,6 +1648,9 @@ export default function RunsPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { isQaEngineer } = usePermissions()
+  // Rollout gate (MRU-17): the upload UI is hidden until an admin enables the
+  // `manual_upload` feature flag.
+  const uploadEnabled = useFeatureEnabled('manual_upload')
 
   // Manual report upload (PRD MRU-4). Opens from the header button or via the
   // sidebar deep-link ``/runs?upload=1``. Disabled in All-Projects mode — an
@@ -1654,8 +1658,8 @@ export default function RunsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [uploadOpen, setUploadOpen] = useState(false)
   useEffect(() => {
-    if (searchParams.get('upload') === '1' && !isAllProjects) setUploadOpen(true)
-  }, [searchParams, isAllProjects])
+    if (searchParams.get('upload') === '1' && !isAllProjects && uploadEnabled) setUploadOpen(true)
+  }, [searchParams, isAllProjects, uploadEnabled])
   const closeUpload = () => {
     setUploadOpen(false)
     if (searchParams.has('upload')) {
@@ -1986,20 +1990,22 @@ export default function RunsPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <GhostBtn
-            onClick={() => setUploadOpen(true)}
-            disabled={!isQaEngineer || isAllProjects}
-            title={
-              !isQaEngineer
-                ? 'QA Engineer role required'
-                : isAllProjects
-                  ? 'Select a single project to upload a report into'
-                  : 'Upload a JUnit / TestNG / Allure / Playwright / Cypress report file'
-            }
-          >
-            <Upload className="h-3.5 w-3.5" />
-            Upload report
-          </GhostBtn>
+          {uploadEnabled && (
+            <GhostBtn
+              onClick={() => setUploadOpen(true)}
+              disabled={!isQaEngineer || isAllProjects}
+              title={
+                !isQaEngineer
+                  ? 'QA Engineer role required'
+                  : isAllProjects
+                    ? 'Select a single project to upload a report into'
+                    : 'Upload a JUnit / TestNG / Allure / Playwright / Cypress report file'
+              }
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Upload report
+            </GhostBtn>
+          )}
           <DangerBtn
             onClick={handleTriggerAllFailed}
             disabled={!isQaEngineer || model.failedRuns === 0}
@@ -2173,7 +2179,7 @@ export default function RunsPage() {
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
 
-      {uploadOpen && !isAllProjects && activeProjectId && (
+      {uploadOpen && uploadEnabled && !isAllProjects && activeProjectId && (
         <UploadReportModal
           projectId={activeProjectId}
           onClose={closeUpload}

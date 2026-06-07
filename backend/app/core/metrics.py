@@ -29,6 +29,26 @@ ingestion_duration_seconds = Histogram(
     buckets=[1, 5, 15, 30, 60, 120, 300],
 )
 
+# ── Manual report upload (MRU-15) ───────────────────────────────────────────────
+
+uploads_total = Counter(
+    "testlookup_uploads_total",
+    "Manual report uploads by outcome and detected format",
+    ["state", "format"],  # state: succeeded|failed; format: junit|testng|allure|archive|cypress|playwright
+)
+
+upload_failures_total = Counter(
+    "testlookup_upload_failures_total",
+    "Manual report upload failures by error code",
+    ["code"],  # parse_error|empty_report|ingest_error|zip_bomb|unsafe_path|nested_zip|...
+)
+
+upload_processing_seconds = Histogram(
+    "testlookup_upload_processing_seconds",
+    "Wall-clock time to parse + ingest a manual upload (worker side)",
+    buckets=[0.5, 1, 2, 5, 15, 30, 60, 120],
+)
+
 # ── AI Pipeline ───────────────────────────────────────────────────────────────
 
 ai_analyses_total = Counter(

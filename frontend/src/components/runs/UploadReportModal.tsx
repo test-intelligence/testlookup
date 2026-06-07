@@ -398,6 +398,20 @@ export default function UploadReportModal({
                 <span className="text-xs text-[var(--color-text-muted)]">(faster — run it later from the run page)</span>
               </label>
 
+              {/* Supported formats & how to export (MRU-16) */}
+              <details className="text-xs text-[var(--color-text-muted)]">
+                <summary className="cursor-pointer hover:text-[var(--color-text)] select-none">
+                  Supported formats &amp; how to export
+                </summary>
+                <ul className="mt-2 space-y-1 pl-1 leading-relaxed">
+                  <li><b>JUnit / TestNG</b> — <code>.xml</code> (Maven Surefire, Gradle, pytest <code>--junitxml</code>, TestNG <code>testng-results.xml</code>)</li>
+                  <li><b>Allure</b> — a single <code>*-result.json</code>, or a <code>.zip</code> of the <code>allure-results/</code> folder</li>
+                  <li><b>Playwright</b> — <code>--reporter=json</code> output</li>
+                  <li><b>Cypress</b> — Mochawesome merged <code>.json</code></li>
+                  <li><b>Multiple files</b> — select several (zipped automatically) or upload one <code>.zip</code></li>
+                </ul>
+              </details>
+
               {/* Advanced metadata */}
               <button
                 type="button"
