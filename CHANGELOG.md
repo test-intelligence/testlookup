@@ -50,6 +50,11 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-06 — Manual upload: Allure-zip spike PoC (MRU-11))
+
+- **Spike for Allure ZIP upload resolved (GO)** with a proof-of-concept (not yet wired to the endpoint — that's MRU-12). `app/services/safe_archive.py` adds a hardened, in-memory `safe_extract_zip` that enforces concrete limits — 200 MB uncompressed total, 5 000 entries, 50 MB/entry, 100× ratio — and rejects path traversal/absolute/UNC, symlinks, and nested archives, streaming each entry with a running byte cap (never trusting `ZipInfo.file_size`); each violation raises `UnsafeZipError(code)` (`zip_bomb`/`zip_too_large`/`too_many_entries`/`unsafe_path`/`nested_zip`/`bad_zip`).
+- `allure_parser.parse_allure_zip(files, run_id, s3_prefix)` reuses `parse_allure_result` per `*-result.json`, backfills `suite_name` from `*-container.json` hierarchy (only when no suite label), and collapses retries by `historyId` to the latest attempt with `is_flaky`/`retry_count`. Decision note + concrete limits table recorded in `docs/PRD-manual-report-upload.md` §9.1. Tests: `test_allure_zip_spike.py` (12 — parse + every modelled attack). Green on py3.11.
+
 ### Fixed (2026-06-06 — Manual upload: MRU-5/6 review hardening)
 
 Multi-pass review (4 lenses, adversarially verified) of the status/parse-error slice found 15 issues; the highs/mediums + quick wins are fixed:
