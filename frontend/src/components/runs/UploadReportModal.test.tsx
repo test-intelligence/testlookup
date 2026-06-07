@@ -27,6 +27,15 @@ vi.mock('react-hot-toast', () => ({
 import UploadReportModal from './UploadReportModal'
 import { MAX_UPLOAD_BYTES } from '@/services/reportUploadService'
 
+// jsdom's File lacks arrayBuffer() (standard in real browsers) — polyfill it so
+// the multi-file client-zip path can read each File's bytes.
+if (typeof File !== 'undefined' && !File.prototype.arrayBuffer) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(File.prototype as any).arrayBuffer = function () {
+    return Promise.resolve(new ArrayBuffer(0))
+  }
+}
+
 function setup() {
   const onClose = vi.fn()
   const onSuccess = vi.fn()
@@ -102,5 +111,26 @@ describe('UploadReportModal', () => {
     fireEvent.click(uploadBtn())
 
     expect(await screen.findByText(/could not parse the junit report/i, {}, { timeout: 4000 })).toBeInTheDocument()
+  })
+
+  it('zips multiple selected files into one .zip before upload (MRU-13)', async () => {
+    mockGetStatus.mockResolvedValue({
+      task_id: 't1', run_id: 'run-123', state: 'succeeded',
+      result: { total: 2, passed: 2, failed: 0 },
+    })
+    const { uploadBtn, input } = setup()
+    fireEvent.change(input, { target: { files: [
+      new File(['<testsuite/>'], 'a.xml', { type: 'text/xml' }),
+      new File(['{}'], 'b.json', { type: 'application/json' }),
+    ] } })
+    expect(screen.getByText(/2 files selected/i)).toBeInTheDocument()
+    expect(uploadBtn()).toBeEnabled()
+
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalled())
+    const arg = mockUpload.mock.calls[0][0]
+    expect(arg.file).toBeInstanceOf(File)
+    expect(arg.file.name).toMatch(/\.zip$/)
+    expect(arg.file.type).toBe('application/zip')
   })
 })

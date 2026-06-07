@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { zipSync } from 'fflate'
 import toast from 'react-hot-toast'
 import {
   MAX_UPLOAD_BYTES,
@@ -55,7 +56,7 @@ export default function UploadReportModal({
   onSuccess,
 }: UploadReportModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [format, setFormat] = useState<ReportFormat>('auto')
   const [buildNumber, setBuildNumber] = useState('')
   const [branch, setBranch] = useState('')
@@ -125,26 +126,28 @@ export default function UploadReportModal({
     }
   }, [phase, taskId])
 
-  const rejectFile = (msg: string) => {
-    // Clear any previously-accepted file so the Upload button disables and the
-    // user can't submit a stale file while an error about a new one is shown.
-    setFile(null)
+  const rejectFiles = (msg: string) => {
+    // Clear any prior selection so Upload disables and the user can't submit a
+    // stale file while an error about a new one is shown.
+    setFiles([])
     if (fileInputRef.current) fileInputRef.current.value = ''
     setErrorMsg(msg)
     setPhase('error')
   }
 
-  const pickFile = useCallback((f: File | null) => {
-    if (!f) return
-    if (!isAcceptedFile(f.name)) {
-      rejectFile('Unsupported file type. Upload a .xml (JUnit/TestNG), .json (Allure/Playwright/Cypress), or a .zip (Allure results).')
+  const pickFiles = useCallback((picked: File[]) => {
+    if (!picked.length) return
+    const bad = picked.find((f) => !isAcceptedFile(f.name))
+    if (bad) {
+      rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG), .json (Allure/Playwright/Cypress), or .zip files.`)
       return
     }
-    if (f.size > MAX_UPLOAD_BYTES) {
-      rejectFile(`File is ${humanSize(f.size)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
+    const total = picked.reduce((n, f) => n + f.size, 0)
+    if (total > MAX_UPLOAD_BYTES) {
+      rejectFiles(`Selection is ${humanSize(total)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
       return
     }
-    setFile(f)
+    setFiles(picked)
     setErrorMsg('')
     setPhase('idle')
   }, [])
@@ -154,20 +157,36 @@ export default function UploadReportModal({
       e.preventDefault()
       setDragActive(false)
       if (busy) return
-      pickFile(e.dataTransfer.files?.[0] ?? null)
+      pickFiles(Array.from(e.dataTransfer.files ?? []))
     },
-    [busy, pickFile],
+    [busy, pickFiles],
   )
 
   const handleSubmit = useCallback(async () => {
-    if (!file || busy) return
+    if (!files.length || busy) return
     setPhase('uploading')
     setProgress(0)
     setErrorMsg('')
     try {
+      // Multiple files → bundle into one .zip client-side; the backend's
+      // archive path (tier-2) parses each entry. A single file uploads as-is.
+      let upload: File
+      if (files.length === 1) {
+        upload = files[0]
+      } else {
+        const entries: Record<string, Uint8Array> = {}
+        const seen = new Set<string>()
+        for (const f of files) {
+          let key = f.name
+          for (let i = 2; seen.has(key); i++) key = `${i}-${f.name}` // de-dup names
+          seen.add(key)
+          entries[key] = new Uint8Array(await f.arrayBuffer())
+        }
+        upload = new File([zipSync(entries) as BlobPart], 'reports-bundle.zip', { type: 'application/zip' })
+      }
       const res = await reportUploadService.upload({
         projectId,
-        file,
+        file: upload,
         buildNumber,
         format,
         branch,
@@ -193,7 +212,7 @@ export default function UploadReportModal({
       )
       setPhase('error')
     }
-  }, [file, busy, projectId, buildNumber, format, branch, commitHash, releaseName])
+  }, [files, busy, projectId, buildNumber, format, branch, commitHash, releaseName])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
@@ -288,20 +307,29 @@ export default function UploadReportModal({
                   ref={fileInputRef}
                   type="file"
                   accept={ACCEPT}
+                  multiple
                   className="hidden"
-                  onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => pickFiles(Array.from(e.target.files ?? []))}
                 />
-                {file ? (
+                {files.length === 1 ? (
                   <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
                     <FileText className="h-4 w-4 text-[var(--color-text-muted)]" />
-                    <span className="font-medium">{file.name}</span>
-                    <span className="text-[var(--color-text-muted)]">({humanSize(file.size)})</span>
+                    <span className="font-medium">{files[0].name}</span>
+                    <span className="text-[var(--color-text-muted)]">({humanSize(files[0].size)})</span>
+                  </div>
+                ) : files.length > 1 ? (
+                  <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+                    <FileText className="h-4 w-4 text-[var(--color-text-muted)]" />
+                    <span className="font-medium">{files.length} files selected</span>
+                    <span className="text-[var(--color-text-muted)]">
+                      ({humanSize(files.reduce((n, f) => n + f.size, 0))}, zipped on upload)
+                    </span>
                   </div>
                 ) : (
                   <>
                     <UploadCloud className="h-7 w-7 text-[var(--color-text-muted)]" />
-                    <p className="text-sm text-[var(--color-text)]">Drop a report file or click to browse</p>
-                    <p className="text-xs text-[var(--color-text-muted)]">.xml, .json, or .zip · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
+                    <p className="text-sm text-[var(--color-text)]">Drop report file(s) or click to browse</p>
+                    <p className="text-xs text-[var(--color-text-muted)]">.xml, .json, or .zip · multiple allowed · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
                   </>
                 )}
               </div>
@@ -396,7 +424,7 @@ export default function UploadReportModal({
               </button>
               <button
                 onClick={handleSubmit}
-                disabled={!file || busy}
+                disabled={!files.length || busy}
                 className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />}
