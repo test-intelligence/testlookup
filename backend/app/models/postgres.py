@@ -52,6 +52,22 @@ class LaunchStatus(str, PyEnum):
     STOPPED = "STOPPED"
 
 
+class IngestionSource(str, PyEnum):
+    """How a TestRun's results entered TestLookup.
+
+    * ``live``   — SDK live-stream session (events buffered in Redis, drained).
+    * ``sdk``    — SDK/CI batch POST to /api/v1/ingest (JSON results).
+    * ``upload`` — operator manually uploaded a report file via the UI.
+    * ``file``   — Allure/TestNG file landed via the MinIO webhook (sentinel) path.
+    * ``unknown``— pre-migration rows whose origin couldn't be inferred.
+    """
+    LIVE = "live"
+    SDK = "sdk"
+    UPLOAD = "upload"
+    FILE = "file"
+    UNKNOWN = "unknown"
+
+
 class FailureCategory(str, PyEnum):
     PRODUCT_BUG = "PRODUCT_BUG"
     INFRASTRUCTURE = "INFRASTRUCTURE"
@@ -195,6 +211,12 @@ class TestRun(Base):
     branch: Mapped[Optional[str]] = mapped_column(String(255))
     commit_hash: Mapped[Optional[str]] = mapped_column(String(64))
     status: Mapped[LaunchStatus] = mapped_column(String(20), default=LaunchStatus.IN_PROGRESS)
+    # How this run's results entered TestLookup (live | sdk | upload | file |
+    # unknown). Drives the "Uploaded" badge and lets dashboards distinguish
+    # manual uploads from CI-driven runs. See IngestionSource. (migration 0091)
+    ingestion_source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=IngestionSource.UNKNOWN.value, server_default="unknown"
+    )
 
     # Aggregated counts
     total_tests: Mapped[int] = mapped_column(Integer, default=0)

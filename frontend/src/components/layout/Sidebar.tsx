@@ -4,10 +4,11 @@ import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
   FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
   Network, Package, Radio, Rocket, Search, Settings, Shield,
-  ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, UsersRound, UserCircle2,
+  ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { useAIConfig } from '@/hooks/useAIConfig'
 import { useMyFailuresCountUnscoped } from '@/hooks/useMyFailures'
 import AppLogo from '@/components/ui/AppLogo'
@@ -54,7 +55,8 @@ const GROUPS: NavGroup[] = [
     to: '/runs',
     activePrefixes: ['/runs', '/run/', '/live', '/coverage', '/failures', '/trends', '/defects', '/search', '/test-management', '/suite/', '/suites'],
     children: [
-      { to: '/live',            icon: Radio,       label: 'Live'       },
+      { to: '/live',            icon: Radio,       label: 'Live'          },
+      { to: '/runs?upload=1',   icon: Upload,      label: 'Upload Report' },
       { to: '/coverage',        icon: ShieldCheck, label: 'Coverage'   },
       { to: '/suites',          icon: FolderTree,  label: 'Suites'     },
       { to: '/failures',        icon: Bug,         label: 'Failures'   },
@@ -173,6 +175,8 @@ function SidebarGroup({ group }: { group: NavGroup }) {
 export default function Sidebar() {
   const { canAccessManagement } = usePermissions()
   const { data: aiConfig } = useAIConfig()
+  // Rollout gate (MRU-17): hide the Upload Report item until the flag is on.
+  const uploadEnabled = useFeatureEnabled('manual_upload')
 
   // Show a mode badge on the AI Reports group when in rules or ML mode
   const aiModeBadge =
@@ -181,9 +185,14 @@ export default function Sidebar() {
     aiConfig.analysis_mode === 'ml' ? 'ml' :
     undefined
 
-  const groups = GROUPS.map(g =>
-    g.key === 'intelligence' && aiModeBadge ? { ...g, badge: aiModeBadge } : g
-  )
+  const groups = GROUPS.map(g => {
+    let group = g.key === 'intelligence' && aiModeBadge ? { ...g, badge: aiModeBadge } : g
+    if (!uploadEnabled) {
+      const children = group.children.filter(c => c.to !== '/runs?upload=1')
+      if (children.length !== group.children.length) group = { ...group, children }
+    }
+    return group
+  })
 
   return (
     <aside className="w-56 flex-shrink-0 border-r flex flex-col" style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}>

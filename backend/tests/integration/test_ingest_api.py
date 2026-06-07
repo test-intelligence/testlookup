@@ -209,3 +209,129 @@ async def test_ingest_file_invalid_uuid_rejected(
     data = {"project_id": "garbage", "build_number": "b-1"}
     resp = await client.post("/api/v1/ingest/file", files=files, data=data)
     assert resp.status_code == 400
+
+
+# ── Upload status endpoint (MRU-5) — IDOR / auth surface ─────────────────────
+
+
+async def test_upload_status_not_found(client, auth_as):
+    """Unknown / expired task_id → 404."""
+    auth_as(accessible_projects={uuid.uuid4()})
+    with patch("app.services.upload_status.get_status", AsyncMock(return_value=None)):
+        resp = await client.get("/api/v1/ingest/uploads/task-x")
+    assert resp.status_code == 404
+
+
+async def test_upload_status_member_ok_and_no_project_leak(client, auth_as):
+    """A member of the record's project gets the status; project_id is not leaked."""
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+    record = {
+        "task_id": "t1", "run_id": "r1", "project_id": str(pid),
+        "state": "succeeded", "result": {"total": 3, "passed": 2, "failed": 1},
+    }
+    with patch("app.services.upload_status.get_status", AsyncMock(return_value=record)):
+        resp = await client.get("/api/v1/ingest/uploads/t1")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "succeeded"
+    assert body["run_id"] == "r1"
+    assert body["result"]["total"] == 3
+    assert "project_id" not in body  # internal field not exposed
+
+
+async def test_upload_status_non_member_forbidden(client, auth_as):
+    """A guessed task_id for ANOTHER tenant's run → 403 (no IDOR leak)."""
+    auth_as(accessible_projects={uuid.uuid4()})  # caller's project
+    record = {
+        "task_id": "t1", "run_id": "r1", "project_id": str(uuid.uuid4()),  # other project
+        "state": "succeeded", "result": {"total": 1},
+    }
+    with patch("app.services.upload_status.get_status", AsyncMock(return_value=record)):
+        resp = await client.get("/api/v1/ingest/uploads/t1")
+    assert resp.status_code == 403
+
+
+# ── Archive (zip) upload routing (MRU-12) ────────────────────────────────────
+
+
+@pytest.mark.parametrize("requested_format", ["auto", "allure", "cypress"])
+async def test_ingest_file_zip_routes_to_archive(client, auth_as, requested_format):
+    """A .zip upload is detected by magic bytes and dispatched as file_format=
+    'archive' with base64 content — REGARDLESS of the requested format (so it is
+    never mis-parsed as a single file and never 503s on the cypress gate)."""
+    import base64
+    import io
+    import zipfile
+    from unittest.mock import AsyncMock, patch
+
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("a1-result.json", b'{"uuid":"a1","name":"T","status":"passed"}')
+    zip_bytes = buf.getvalue()
+
+    captured: dict = {}
+
+    def _delay(**kw):
+        captured.update(kw)
+        return type("T", (), {"id": "task-zip-1"})()
+
+    file_task = AsyncMock()
+    file_task.delay = _delay
+    with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
+         patch("app.services.feature_flags.is_enabled", AsyncMock(return_value=False)), \
+         patch("app.services.upload_status.set_status", AsyncMock()):
+        files = {"file": ("allure.zip", zip_bytes, "application/zip")}
+        data = {"project_id": str(pid), "build_number": "b-zip", "format": requested_format}
+        resp = await client.post("/api/v1/ingest/file", files=files, data=data)
+
+    assert resp.status_code == 202, resp.text  # never 503, even for format=cypress
+    assert captured["file_format"] == "archive"
+    # content is base64 of the original zip (PK magic after decode)
+    assert base64.b64decode(captured["file_content"])[:4] == b"PK\x03\x04"
+    # cypress/playwright disabled (is_enabled=False) → set passed to the worker to gate
+    assert set(captured["disabled_formats"]) == {"cypress", "playwright"}
+
+
+# ── run_ai flag (MRU-8) — archival happens in the worker, not the router ──────
+
+
+async def test_ingest_file_run_ai_flag_forwarded(client, auth_as):
+    """run_ai=false flows from the form into the worker task kwargs."""
+    from unittest.mock import AsyncMock, patch
+
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+
+    captured: dict = {}
+    file_task = AsyncMock()
+    file_task.delay = lambda **kw: captured.update(kw) or type("T", (), {"id": "t"})()
+    with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
+         patch("app.services.upload_status.set_status", AsyncMock()):
+        files = {"file": ("x.xml", _MIN_JUNIT_XML, "application/xml")}
+        data = {"project_id": str(pid), "build_number": "b", "run_ai": "false"}
+        resp = await client.post("/api/v1/ingest/file", files=files, data=data)
+
+    assert resp.status_code == 202, resp.text
+    assert captured["run_ai"] is False
+    assert "raw_archive_key" not in captured  # router no longer archives
+
+
+async def test_ingest_file_run_ai_defaults_true(client, auth_as):
+    from unittest.mock import AsyncMock, patch
+
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+    captured: dict = {}
+    file_task = AsyncMock()
+    file_task.delay = lambda **kw: captured.update(kw) or type("T", (), {"id": "t"})()
+    with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
+         patch("app.services.upload_status.set_status", AsyncMock()):
+        files = {"file": ("x.xml", _MIN_JUNIT_XML, "application/xml")}
+        resp = await client.post("/api/v1/ingest/file", files=files,
+                                 data={"project_id": str(pid), "build_number": "b"})
+    assert resp.status_code == 202
+    assert captured["run_ai"] is True

@@ -319,6 +319,7 @@ def persist_live_session(
                     project_id=proj_uuid,
                     build_number=build_number,
                     trigger_source="live_stream",
+                    ingestion_source="live",
                     branch=branch or None,
                     commit_hash=commit_hash or None,
                     status=run_status,
@@ -675,6 +676,7 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
                     framework=payload.get("framework"),
                     trigger_source=payload.get("trigger_source", "api"),
                     release_name=payload.get("release_name"),
+                    ingestion_source="sdk",
                 )
                 count = await ingest_test_results(db, run, payload["results"])
                 await db.commit()
@@ -723,6 +725,8 @@ def ingest_uploaded_file(
     commit_hash: str = None,
     release_name: str = None,
     user_id: str = None,
+    disabled_formats: list = None,
+    run_ai: bool = True,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -733,12 +737,80 @@ def ingest_uploaded_file(
         finalize_run,
         ingest_test_results,
     )
+    from app.services import upload_status
 
-    async def _run():
+    task_id = self.request.id
+
+    async def _run() -> bool:
+        """Returns True on success, False on a non-retryable parse/empty error
+        (which is recorded as a failed status, not raised, so Celery doesn't
+        retry a file that will never parse)."""
+        import time as _time
+
+        from app.core import metrics as _m
         from app.db.postgres import AsyncSessionLocal
 
-        # Parse file into normalized result dicts
-        results = _parse_file_to_results(file_content, file_format, file_name, run_id)
+        _t0 = _time.monotonic()
+
+        def _emit_failed(code: str) -> None:
+            _m.uploads_total.labels(state="failed", format=file_format).inc()
+            _m.upload_failures_total.labels(code=code).inc()
+
+        await upload_status.set_status(
+            task_id, run_id=run_id, project_id=project_id,
+            state=upload_status.STATE_PARSING,
+        )
+
+        # Archive the raw upload for audit/replay (MRU-9) — off the request path,
+        # before parsing, so even a parse failure leaves the original recoverable.
+        archive_prefix = await _archive_raw_upload(
+            file_content, file_format, file_name, project_id, run_id,
+        )
+
+        # Parse — any parser exception or an empty result is a user-fixable
+        # problem, surfaced as a failed status rather than a silent empty run.
+        from app.services.safe_archive import UnsafeZipError
+        try:
+            results = _parse_file_to_results(
+                file_content, file_format, file_name, run_id, disabled_formats=disabled_formats,
+            )
+        except UnsafeZipError as exc:
+            # Archive safety violation — surface the specific code (zip_bomb,
+            # unsafe_path, …) so the UI explains exactly what was rejected.
+            logger.warning("upload_unsafe_archive task=%s file=%s code=%s", task_id, file_name, exc.code)
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": exc.code, "message": exc.message},
+            )
+            _emit_failed(exc.code)
+            return False
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("upload_parse_error task=%s file=%s error=%s", task_id, file_name, exc)
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": "parse_error",
+                       "message": f"Could not parse the {file_format} report: {str(exc)[:300]}"},
+            )
+            _emit_failed("parse_error")
+            return False
+
+        if not results:
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": "empty_report",
+                       "message": "No test results were found in the file. "
+                                  "Check that the format matches the file contents."},
+            )
+            _emit_failed("empty_report")
+            return False
+
+        await upload_status.set_status(
+            task_id, run_id=run_id, project_id=project_id,
+            state=upload_status.STATE_INGESTING, progress={"total": len(results)},
+        )
 
         async with AsyncSessionLocal() as db:
             try:
@@ -750,52 +822,247 @@ def ingest_uploaded_file(
                     branch=branch,
                     commit_hash=commit_hash,
                     release_name=release_name,
+                    ingestion_source="upload",
+                    # Manual uploads must never merge into an unrelated run on a
+                    # build-label collision — always create a fresh run so the
+                    # 202 run_id is authoritative and aggregates aren't blended.
+                    reuse_existing=False,
                 )
+                if archive_prefix:
+                    run.minio_prefix = archive_prefix  # link the archived raw upload (dir prefix)
                 count = await ingest_test_results(db, run, results)
                 await db.commit()
                 logger.info(
                     "[Task %s] File ingested: %d cases from %s (%s)",
-                    self.request.id, count, file_name, file_format,
+                    task_id, count, file_name, file_format,
                 )
             except Exception:
                 await db.rollback()
                 raise
+
+        # All rows failed to upsert despite a non-empty parse — surface as a
+        # failure rather than a misleading "succeeded, 0 tests".
+        if count == 0:
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": "ingest_error",
+                       "message": "Parsed the report but no test results could be stored."},
+            )
+            _emit_failed("ingest_error")
+            return False
 
         await finalize_run(
             run_id=run_id,
             project_id=project_id,
             build_number=build_number,
             release_name=release_name,
+            run_ai=run_ai,
         )
+        # Counts reflect what was actually ingested (total=count); per-status
+        # breakdown is computed case-insensitively because parsers disagree on
+        # casing (testng/allure emit lowercase; cypress/playwright uppercase).
+        summary = _summarize_upload(results, ingested=count)
+        await upload_status.set_status(
+            task_id, run_id=run_id, project_id=project_id,
+            state=upload_status.STATE_SUCCEEDED, result=summary,
+        )
+        _m.uploads_total.labels(state="succeeded", format=file_format).inc()
+        _m.upload_processing_seconds.observe(_time.monotonic() - _t0)
+        return True
 
-    logger.info("[Task %s] Processing uploaded file: %s (%s)", self.request.id, file_name, file_format)
+    logger.info("[Task %s] Processing uploaded file: %s (%s)", task_id, file_name, file_format)
     try:
-        _run_async(_run())
-        try:
-            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
-        except Exception:
-            pass
+        ok = _run_async(_run())
+        if ok:
+            try:
+                reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+            except Exception:
+                pass
     except Exception as exc:
-        logger.error("[Task %s] File ingest failed: %s", self.request.id, exc, exc_info=True)
+        # A transient/infra failure (DB, Redis) — retry, and only surface a
+        # failed status once retries are exhausted so the UI doesn't flap.
+        logger.error("[Task %s] File ingest failed: %s", task_id, exc, exc_info=True)
+        if self.request.retries >= self.max_retries:
+            try:
+                _run_async(upload_status.set_status(
+                    task_id, run_id=run_id, project_id=project_id,
+                    state=upload_status.STATE_FAILED,
+                    error={"code": "infra_error",
+                           "message": "Ingestion failed after retries. Please try again."},
+                ))
+            except Exception:
+                pass
+            # This is a real terminal — count it so failure metrics balance the
+            # status writes (the inner _emit_failed closure isn't in scope here).
+            try:
+                from app.core import metrics as _m
+                _m.uploads_total.labels(state="failed", format=file_format).inc()
+                _m.upload_failures_total.labels(code="infra_error").inc()
+            except Exception:
+                pass
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
 
 
-def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -> list[dict]:
+def _parse_archive_to_results(
+    b64_content: str, filename: str, run_id: str, disabled_formats: list = None,
+) -> list[dict]:
+    """Parse an uploaded report ZIP (base64 string) into normalized results.
+
+    Safety-extracts in memory (raises UnsafeZipError on any limit violation),
+    then dispatches:
+      * tier 1 — Allure results dir (any ``*-result.json``) → parse_allure_zip
+      * tier 2 — heterogeneous archive (e.g. N JUnit XMLs) → per-entry detect +
+        the existing single-file parsers, concatenated.
+
+    ``disabled_formats`` (resolved at the router from the cypress/playwright
+    feature flags) are skipped in tier 2 so zipping a gated report can't bypass
+    the admin's flag.
+    """
+    import base64
+    import posixpath
+
+    from app.core.config import settings
+    from app.services.allure_parser import parse_allure_zip
+    from app.services.safe_archive import safe_extract_zip
+
+    def _basename(n: str) -> str:
+        return posixpath.basename(n)
+
+    def _is_noise(n: str) -> bool:
+        # macOS resource-fork / dotfile noise — skipped before decompression.
+        return "__MACOSX" in n or _basename(n).startswith(".")
+
+    raw = base64.b64decode(b64_content)
+    files = safe_extract_zip(
+        raw,
+        max_total=settings.MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+        max_entries=settings.MAX_ARCHIVE_ENTRIES,
+        max_entry=settings.MAX_ARCHIVE_ENTRY_BYTES,
+        max_ratio=settings.MAX_ARCHIVE_RATIO,
+        skip_name=_is_noise,
+    )
+    del raw  # free the compressed copy; the decompressed map is bounded by limits
+
+    gated_hit: set = set()  # formats skipped purely because their flag is off
+
+    # Tier 1 — Allure results directory.
+    if any(_basename(n).lower().endswith("-result.json") for n in files):
+        results = parse_allure_zip(files, run_id, s3_prefix=f"uploads/{run_id}")
+    else:
+        # Tier 2 — heterogeneous archive: detect + parse each entry.
+        from app.routers.ingest import _detect_format  # lazy: avoid import cycle
+
+        disabled = set(disabled_formats or [])
+        results = []
+        for name, data in files.items():
+            base = _basename(name)
+            try:
+                entry_fmt = _detect_format(base, data)
+                if entry_fmt in disabled:
+                    # Admin disabled this format — don't let a zip bypass the gate.
+                    gated_hit.add(entry_fmt)
+                    logger.warning("archive_entry_format_disabled entry=%s fmt=%s", base, entry_fmt)
+                    continue
+                text = data.decode("utf-8", errors="replace")
+                results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
+            except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
+                logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
+                continue
+
+    if files and not results:
+        # A zip whose only candidates were admin-disabled formats gets a message
+        # matching the single-file 503, not a misleading "unparseable".
+        if gated_hit:
+            raise ValueError(
+                f"Ingestion is disabled for: {', '.join(sorted(gated_hit))}. "
+                "Ask an admin to enable the feature flag."
+            )
+        # Otherwise: had candidate files but none parsed (distinct from a truly
+        # empty/noise-only archive, which returns [] → empty_report).
+        raise ValueError(
+            f"Archive contained {len(files)} file(s) but none could be parsed as a "
+            "supported report (JUnit/TestNG XML, or Allure/Playwright/Cypress JSON)."
+        )
+    return results
+
+
+async def _archive_raw_upload(
+    file_content: str, file_format: str, file_name: str, project_id: str, run_id: str,
+):
+    """Archive the byte-exact raw upload to storage for audit/replay (MRU-9).
+
+    Best-effort: a storage failure logs and returns None (the ingest proceeds;
+    run.minio_prefix stays NULL). Returns the DIRECTORY prefix (trailing slash)
+    — matching the sentinel-path convention for ``minio_prefix`` — under which
+    the object is stored.
+    """
+    import base64
+
+    from app.db.storage import get_storage_provider
+
+    try:
+        safe_name = (file_name or "report").replace("/", "_").replace("\\", "_").lstrip(".") or "report"
+        prefix = f"uploads/{project_id}/{run_id}/"
+        raw = (
+            base64.b64decode(file_content)
+            if file_format == "archive"
+            else file_content.encode("utf-8", errors="replace")
+        )
+        await get_storage_provider().put_object(
+            prefix + safe_name, raw, content_type="application/octet-stream",
+        )
+        return prefix
+    except Exception as exc:  # noqa: BLE001 — archival is advisory
+        logger.warning("upload_raw_archive_failed run=%s error=%s", run_id, exc)
+        return None
+
+
+def _summarize_upload(results: list[dict], *, ingested: int) -> dict:
+    """Build the SUCCEEDED-status result summary.
+
+    ``total`` reflects rows actually ingested (not parsed) so the UI count
+    matches the run. Per-status counts are case-insensitive because parsers
+    disagree on casing: testng/allure emit lowercase, cypress/playwright upper.
+    """
+    counts: dict[str, int] = {}
+    for r in results:
+        key = str(r.get("status") or "").upper()
+        counts[key] = counts.get(key, 0) + 1
+    return {
+        "total": ingested,
+        "passed": counts.get("PASSED", 0),
+        "failed": counts.get("FAILED", 0),
+        "skipped": counts.get("SKIPPED", 0),
+        "broken": counts.get("BROKEN", 0),
+    }
+
+
+def _parse_file_to_results(
+    content: str, fmt: str, filename: str, run_id: str, disabled_formats: list = None,
+) -> list[dict]:
     """Parse a test result file into normalized result dicts.
 
     Dispatch table — each parser returns ``list[dict]`` matching the
     TestLookup ingestion contract. New frameworks register here and add
     their content-sniff rules in ``routers/ingest._detect_format``.
+
+    For ``fmt == "archive"`` ``content`` is a base64-encoded zip (Celery's JSON
+    serializer can't carry raw bytes); see ``_parse_archive_to_results``.
     """
     import json as _json
+
+    if fmt == "archive":
+        return _parse_archive_to_results(content, filename, run_id, disabled_formats=disabled_formats)
 
     if fmt == "allure":
         from app.services.allure_parser import parse_allure_result
         try:
             raw = _json.loads(content)
-        except _json.JSONDecodeError:
-            logger.warning("Invalid JSON in allure file: %s", filename)
-            return []
+        except _json.JSONDecodeError as exc:
+            # Surface as a parse error (the upload task turns this into a
+            # 'parse_error' status) instead of a silent empty run.
+            raise ValueError(f"invalid JSON in Allure file '{filename}': {exc}") from exc
         items = raw if isinstance(raw, list) else [raw]
         results = []
         for item in items:
@@ -815,6 +1082,10 @@ def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -
     if fmt == "playwright":
         from app.services.playwright_parser import parse_playwright_json
         return parse_playwright_json(content, run_id)
+
+    if fmt == "pytest":
+        from app.services.pytest_parser import parse_pytest_json
+        return parse_pytest_json(content, run_id)
 
     # junit (default) — reuse testng_parser which handles standard JUnit XML too
     from app.services.testng_parser import parse_testng_xml

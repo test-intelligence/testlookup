@@ -23,11 +23,32 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => mockPermissions,
 }))
 
+// Control the manual_upload rollout flag (MRU-17).
+const mockUpload = vi.hoisted(() => ({ enabled: false }))
+vi.mock('@/hooks/useFeatureFlags', () => ({
+  useFeatureEnabled: () => mockUpload.enabled,
+  useFeatureFlags: () => ({ flags: [], isLoading: false, isError: false, refresh: vi.fn() }),
+}))
+
 describe('Sidebar', () => {
   beforeEach(() => {
     mockPermissions.role = 'ADMIN'
     mockPermissions.canAccessManagement = true
     mockPermissions.canViewSettings = true
+    mockUpload.enabled = false
+  })
+
+  it('hides Upload Report when the manual_upload flag is off, shows it when on', () => {
+    // Render within a Testing route so that group is expanded (children render).
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/runs']}><Sidebar /></MemoryRouter>,
+    )
+    expect(screen.getByRole('link', { name: /Coverage/ })).toBeInTheDocument()  // group is open
+    expect(screen.queryByRole('link', { name: /Upload Report/ })).not.toBeInTheDocument()
+
+    mockUpload.enabled = true
+    rerender(<MemoryRouter initialEntries={['/runs']}><Sidebar /></MemoryRouter>)
+    expect(screen.getByRole('link', { name: /Upload Report/ })).toBeInTheDocument()
   })
 
   it('renders branding and top-level group links', () => {

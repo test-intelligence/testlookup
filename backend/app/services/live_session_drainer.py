@@ -241,6 +241,7 @@ async def drain_run_buffer(
                     project_id=proj_uuid,
                     build_number=build_number or state.get("build_number") or run_id[:8],
                     trigger_source="live_stream",
+                    ingestion_source="live",
                     status=LaunchStatus.IN_PROGRESS,
                     total_tests=agg_total,
                     passed_tests=agg_passed,

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import User
-from app.models.schemas import IngestPayload, IngestResponse
+from app.models.schemas import IngestPayload, IngestResponse, UploadStatusResponse
 
 router = APIRouter(prefix="/api/v1/ingest", tags=["Ingest"])
 logger = structlog.get_logger("routers.ingest")
@@ -123,7 +123,7 @@ async def ingest_batch(
     )
 
 
-_SUPPORTED_FORMATS = {"auto", "junit", "testng", "allure", "cypress", "playwright"}
+_SUPPORTED_FORMATS = {"auto", "junit", "testng", "allure", "cypress", "playwright", "pytest"}
 
 
 @router.post(
@@ -140,6 +140,7 @@ async def ingest_file(
     commit_hash: str = Form(None),
     release_name: str = Form(None),
     format: str = Form("auto"),
+    run_ai: bool = Form(True),
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
 ):
@@ -181,43 +182,83 @@ async def ingest_file(
     # server by POSTing a multi-gigabyte file.
     content = await _read_upload_bounded(file, MAX_FILE_SIZE)
 
-    detected_format = format
-    if format == "auto":
-        detected_format = _detect_format(file.filename or "", content)
+    # A ZIP is binary — detect it by magic bytes / extension BEFORE the utf-8
+    # decode below (which would corrupt it), and route it to the archive parser
+    # regardless of the requested format. The worker safe-extracts + dispatches.
+    from app.services.safe_archive import looks_like_zip
+    is_archive = looks_like_zip(content) or (file.filename or "").lower().endswith(".zip")
 
-    # Feature-flag gate: refuse parser invocations for flags that aren't
-    # enabled for this project. The flags are seeded by migration 0064 and
-    # default to OFF, so existing deployments are unaffected until an ADMIN
-    # toggles them from Settings > Feature Flags.
-    if detected_format in ("cypress", "playwright"):
-        from app.services.feature_flags import is_enabled
-        flag_key = f"{detected_format}_ingest"
-        if not await is_enabled(
-            flag_key,
-            db=db,
-            project_id=target_project_id,
-            user=current_user,
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    f"{detected_format.title()} ingestion is disabled. "
-                    f"Ask an admin to enable the '{flag_key}' feature flag."
-                ),
-            )
+    # Feature-flag gate: cypress/playwright ingestion is admin-gated (flags seeded
+    # by migration 0064, default OFF). For single files we reject up-front; for a
+    # zip we can't know its contents here, so resolve which gated formats are
+    # DISABLED and pass that set to the worker, which skips matching tier-2
+    # entries — otherwise zipping a Cypress/Playwright report would bypass the gate.
+    from app.services.feature_flags import is_enabled
+
+    disabled_formats: list[str] = []
+    if is_archive:
+        detected_format = "archive"
+        for gated in ("cypress", "playwright"):
+            if not await is_enabled(
+                f"{gated}_ingest", db=db, project_id=target_project_id, user=current_user,
+            ):
+                disabled_formats.append(gated)
+    else:
+        detected_format = format
+        if format == "auto":
+            detected_format = _detect_format(file.filename or "", content)
+
+        if detected_format in ("cypress", "playwright"):
+            flag_key = f"{detected_format}_ingest"
+            if not await is_enabled(
+                flag_key,
+                db=db,
+                project_id=target_project_id,
+                user=current_user,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        f"{detected_format.title()} ingestion is disabled. "
+                        f"Ask an admin to enable the '{flag_key}' feature flag."
+                    ),
+                )
+
+    # Celery's JSON serializer can't carry raw bytes — base64-encode a zip;
+    # decode text otherwise. The worker branches on file_format == "archive".
+    if is_archive:
+        import base64
+        file_content_arg = base64.b64encode(content).decode("ascii")
+    else:
+        file_content_arg = content.decode("utf-8", errors="replace")
 
     run_id = str(uuid.uuid4())
+
+    # NB: the raw upload is archived in the worker (off the request path), which
+    # already receives the bytes — see _archive_raw_upload. Keeps the 202 fast.
     task = ingest_uploaded_file.delay(
         run_id=run_id,
-        file_content=content.decode("utf-8", errors="replace"),
+        file_content=file_content_arg,
         file_name=file.filename or "unknown",
         file_format=detected_format,
-        project_id=project_id,
+        # Canonical UUID string so the worker's status writes match the seeded
+        # 'pending' record and the project-scoped-key check in the status poll.
+        project_id=str(target_project_id),
         build_number=build_number,
         branch=branch,
         commit_hash=commit_hash,
         release_name=release_name,
         user_id=str(current_user.id),
+        disabled_formats=disabled_formats,
+        run_ai=run_ai,
+    )
+
+    # Seed a 'pending' status so the very first client poll (which may land
+    # before the worker starts) gets a record instead of a 404.
+    from app.services import upload_status
+    await upload_status.set_status(
+        task.id, run_id=run_id, project_id=str(target_project_id),
+        state=upload_status.STATE_PENDING,
     )
 
     logger.info(
@@ -234,6 +275,55 @@ async def ingest_file(
         run_id=run_id,
         task_id=task.id,
         total_results=0,  # unknown until parsed
+    )
+
+
+@router.get(
+    "/uploads/{task_id}",
+    response_model=UploadStatusResponse,
+    summary="Poll the status of an uploaded report's async processing",
+)
+async def get_upload_status(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: "tuple[User, uuid.UUID | None]" = Depends(get_api_key_context),
+):
+    """Return the async parse/ingest status for an upload task.
+
+    Project-scoped: 404 if unknown/expired, 403 if the caller can't access the
+    run's project (so a leaked/guessed task_id can't reveal another tenant's
+    run).
+    """
+    from app.services import upload_status
+
+    record = await upload_status.get_status(task_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Upload task not found or expired",
+        )
+
+    current_user, bound_project_id = auth
+    record_project_id = record.get("project_id")
+
+    # Project-scoped API key: must match the record's project.
+    if bound_project_id is not None and str(bound_project_id) != str(record_project_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is restricted to a different project",
+        )
+
+    # Tenant isolation: caller must be a member of the run's project (403 else).
+    if record_project_id:
+        await resolve_project_scope(db, current_user, str(record_project_id))
+
+    return UploadStatusResponse(
+        task_id=record.get("task_id", task_id),
+        run_id=record.get("run_id"),
+        state=record.get("state", "pending"),
+        progress=record.get("progress"),
+        result=record.get("result"),
+        error=record.get("error"),
     )
 
 
@@ -273,6 +363,15 @@ def _detect_format(filename: str, content: bytes) -> str:
     # ``tests``/``passes``/``failures`` + a ``results`` array keyed by spec
     # ``file``. No other supported format has ``stats`` + ``passes`` at
     # the root, so this is an unambiguous marker.
+    # pytest-json-report (`pytest --json-report`): top-level "exitcode" + "root"
+    # — both unique to it among supported formats (playwright=config/projects,
+    # cypress=stats/passes, allure=uuid/name, junit/testng=XML) and both emitted
+    # at the very TOP of the doc. We deliberately do NOT require "summary": it is
+    # emitted AFTER the (unbounded) "environment" block, which on package-heavy
+    # CI images pushes it past the 4 KB sniff window → false-negative.
+    if looks_like_json and '"exitcode"' in stripped[:4096] and '"root"' in stripped[:4096]:
+        return "pytest"
+
     if looks_like_json and (
         '"stats"' in stripped[:2048]
         and '"passes"' in stripped[:2048]
