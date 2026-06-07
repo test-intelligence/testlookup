@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Clock,
   FileText,
   Loader2,
   UploadCloud,
@@ -97,14 +98,22 @@ export default function UploadReportModal({
           setPhase('error')
           return
         }
-      } catch {
-        // 404 before the status record is written, or a transient blip — keep
-        // polling; we only give up after MAX_POLLS.
+      } catch (e) {
+        // A 403 means access was lost (e.g. JWT expired mid-poll) — stop and
+        // surface it rather than masking it as success. A 404 (record not yet
+        // written / expired) or transient/5xx blip → keep polling to MAX_POLLS.
+        const code = (e as { response?: { status?: number } })?.response?.status
+        if (active && code === 403) {
+          setErrorMsg('You no longer have access to this upload.')
+          setPhase('error')
+          return
+        }
       }
       if (active && attempts < MAX_POLLS) {
         timer = setTimeout(tick, POLL_INTERVAL_MS)
       } else if (active) {
         // Took too long to confirm — the run is still processing server-side.
+        // Render as a neutral "still processing" state (see body), not success.
         setResult(null)
         setPhase('success')
       }
@@ -223,7 +232,11 @@ export default function UploadReportModal({
             </div>
           ) : phase === 'success' ? (
             <div className="flex flex-col items-center text-center gap-3 py-4">
-              <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+              {result ? (
+                <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+              ) : (
+                <Clock className="h-10 w-10 text-[var(--color-text-muted)]" />
+              )}
               <div>
                 {result ? (
                   <>

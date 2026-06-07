@@ -50,6 +50,17 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Fixed (2026-06-06 — Manual upload: MRU-5/6 review hardening)
+
+Multi-pass review (4 lenses, adversarially verified) of the status/parse-error slice found 15 issues; the highs/mediums + quick wins are fixed:
+
+- **Success count is no longer always "0 passed · 0 failed"** (was: high). The per-status summary compared UPPERCASE while the JUnit/TestNG/Allure parsers emit lowercase — fixed with a case-insensitive `_summarize_upload` helper. `total` now reflects rows **actually ingested** (not parsed), and an all-rows-failed ingest reports `failed` instead of "succeeded, 0 tests".
+- **The status endpoint's IDOR/auth surface is now tested** (was: high coverage gap) — 404 unknown, 403 cross-project, 200 member (+ asserts `project_id` isn't leaked in the response).
+- **No spurious 403 on the status poll** — the worker is now enqueued with the canonical UUID so its status writes match the seeded `pending` record and the project-scoped-key check.
+- **`get_status` is now best-effort** (symmetric with `set_status`): a Redis outage degrades to a clean 404/"still processing" instead of a 500; non-dict payloads return None.
+- **Frontend poll** now treats a 403 as a real error (stops, surfaces it) instead of masking it as success after timeout, and the ~60s timeout fallback renders a neutral "still processing" (clock) state rather than a green check.
+- Annotation fix on the new endpoint (`tuple[User, uuid.UUID | None]`). Tests added: casing/total summary, malformed-Allure-raises, endpoint 404/403/200.
+
 ### Added (2026-06-06 — Manual upload: async status + parse-error feedback)
 
 - **Upload no longer fails silently** (PRD MRU-5/6). A new Redis-backed status record (`app/services/upload_status.py`, 24h TTL) is updated by the `ingest_uploaded_file` task at each stage (`pending → parsing → ingesting → succeeded | failed`) and exposed via **`GET /api/v1/ingest/uploads/{task_id}`** (project-scoped — 404 if unknown/expired, 403 if the caller can't access the run's project, so a guessed task_id can't leak another tenant's run).

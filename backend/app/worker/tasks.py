@@ -774,16 +774,9 @@ def ingest_uploaded_file(
             )
             return False
 
-        summary = {
-            "total": len(results),
-            "passed": sum(1 for r in results if r.get("status") == "PASSED"),
-            "failed": sum(1 for r in results if r.get("status") == "FAILED"),
-            "skipped": sum(1 for r in results if r.get("status") == "SKIPPED"),
-            "broken": sum(1 for r in results if r.get("status") == "BROKEN"),
-        }
         await upload_status.set_status(
             task_id, run_id=run_id, project_id=project_id,
-            state=upload_status.STATE_INGESTING, progress={"total": summary["total"]},
+            state=upload_status.STATE_INGESTING, progress={"total": len(results)},
         )
 
         async with AsyncSessionLocal() as db:
@@ -812,12 +805,27 @@ def ingest_uploaded_file(
                 await db.rollback()
                 raise
 
+        # All rows failed to upsert despite a non-empty parse — surface as a
+        # failure rather than a misleading "succeeded, 0 tests".
+        if count == 0:
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": "ingest_error",
+                       "message": "Parsed the report but no test results could be stored."},
+            )
+            return False
+
         await finalize_run(
             run_id=run_id,
             project_id=project_id,
             build_number=build_number,
             release_name=release_name,
         )
+        # Counts reflect what was actually ingested (total=count); per-status
+        # breakdown is computed case-insensitively because parsers disagree on
+        # casing (testng/allure emit lowercase; cypress/playwright uppercase).
+        summary = _summarize_upload(results, ingested=count)
         await upload_status.set_status(
             task_id, run_id=run_id, project_id=project_id,
             state=upload_status.STATE_SUCCEEDED, result=summary,
@@ -847,6 +855,26 @@ def ingest_uploaded_file(
             except Exception:
                 pass
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+def _summarize_upload(results: list[dict], *, ingested: int) -> dict:
+    """Build the SUCCEEDED-status result summary.
+
+    ``total`` reflects rows actually ingested (not parsed) so the UI count
+    matches the run. Per-status counts are case-insensitive because parsers
+    disagree on casing: testng/allure emit lowercase, cypress/playwright upper.
+    """
+    counts: dict[str, int] = {}
+    for r in results:
+        key = str(r.get("status") or "").upper()
+        counts[key] = counts.get(key, 0) + 1
+    return {
+        "total": ingested,
+        "passed": counts.get("PASSED", 0),
+        "failed": counts.get("FAILED", 0),
+        "skipped": counts.get("SKIPPED", 0),
+        "broken": counts.get("BROKEN", 0),
+    }
 
 
 def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -> list[dict]:

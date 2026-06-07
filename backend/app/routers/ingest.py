@@ -212,7 +212,9 @@ async def ingest_file(
         file_content=content.decode("utf-8", errors="replace"),
         file_name=file.filename or "unknown",
         file_format=detected_format,
-        project_id=project_id,
+        # Canonical UUID string so the worker's status writes match the seeded
+        # 'pending' record and the project-scoped-key check in the status poll.
+        project_id=str(target_project_id),
         build_number=build_number,
         branch=branch,
         commit_hash=commit_hash,
@@ -253,7 +255,7 @@ async def ingest_file(
 async def get_upload_status(
     task_id: str,
     db: AsyncSession = Depends(get_db),
-    auth: tuple[User, None] = Depends(get_api_key_context),
+    auth: "tuple[User, uuid.UUID | None]" = Depends(get_api_key_context),
 ):
     """Return the async parse/ingest status for an upload task.
 

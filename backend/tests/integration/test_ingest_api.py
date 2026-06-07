@@ -209,3 +209,44 @@ async def test_ingest_file_invalid_uuid_rejected(
     data = {"project_id": "garbage", "build_number": "b-1"}
     resp = await client.post("/api/v1/ingest/file", files=files, data=data)
     assert resp.status_code == 400
+
+
+# ── Upload status endpoint (MRU-5) — IDOR / auth surface ─────────────────────
+
+
+async def test_upload_status_not_found(client, auth_as):
+    """Unknown / expired task_id → 404."""
+    auth_as(accessible_projects={uuid.uuid4()})
+    with patch("app.services.upload_status.get_status", AsyncMock(return_value=None)):
+        resp = await client.get("/api/v1/ingest/uploads/task-x")
+    assert resp.status_code == 404
+
+
+async def test_upload_status_member_ok_and_no_project_leak(client, auth_as):
+    """A member of the record's project gets the status; project_id is not leaked."""
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+    record = {
+        "task_id": "t1", "run_id": "r1", "project_id": str(pid),
+        "state": "succeeded", "result": {"total": 3, "passed": 2, "failed": 1},
+    }
+    with patch("app.services.upload_status.get_status", AsyncMock(return_value=record)):
+        resp = await client.get("/api/v1/ingest/uploads/t1")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "succeeded"
+    assert body["run_id"] == "r1"
+    assert body["result"]["total"] == 3
+    assert "project_id" not in body  # internal field not exposed
+
+
+async def test_upload_status_non_member_forbidden(client, auth_as):
+    """A guessed task_id for ANOTHER tenant's run → 403 (no IDOR leak)."""
+    auth_as(accessible_projects={uuid.uuid4()})  # caller's project
+    record = {
+        "task_id": "t1", "run_id": "r1", "project_id": str(uuid.uuid4()),  # other project
+        "state": "succeeded", "result": {"total": 1},
+    }
+    with patch("app.services.upload_status.get_status", AsyncMock(return_value=record)):
+        resp = await client.get("/api/v1/ingest/uploads/t1")
+    assert resp.status_code == 403

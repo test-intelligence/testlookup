@@ -68,6 +68,35 @@ async def test_set_status_swallows_redis_errors():
         await upload_status.set_status("t1", state=upload_status.STATE_PARSING)
 
 
+def test_summarize_upload_is_case_insensitive_and_uses_ingested_total():
+    """Parsers disagree on status casing (testng/allure lowercase,
+    cypress/playwright uppercase); the summary must count case-insensitively,
+    and total must reflect rows actually ingested, not parsed."""
+    from app.worker.tasks import _summarize_upload
+
+    results = [
+        {"status": "passed"}, {"status": "passed"},  # lowercase (testng/allure)
+        {"status": "FAILED"},                          # uppercase (cypress/pw)
+        {"status": "broken"}, {"status": "skipped"},
+    ]
+    summary = _summarize_upload(results, ingested=4)  # one row failed to upsert
+
+    assert summary["total"] == 4         # ingested, NOT len(results)=5
+    assert summary["passed"] == 2
+    assert summary["failed"] == 1
+    assert summary["broken"] == 1
+    assert summary["skipped"] == 1
+
+
+def test_parse_file_malformed_allure_raises():
+    """Malformed Allure JSON must raise (→ parse_error status), not silently
+    return [] (which would yield a misleading empty run)."""
+    from app.worker.tasks import _parse_file_to_results
+
+    with pytest.raises(ValueError):
+        _parse_file_to_results("not valid json", "allure", "x.json", "run-1")
+
+
 @pytest.mark.asyncio
 async def test_failed_status_carries_structured_error():
     fake, _ = _fake_redis_with_store()

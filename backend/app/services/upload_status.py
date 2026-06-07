@@ -66,14 +66,26 @@ async def set_status(
 
 
 async def get_status(task_id: str) -> Optional[dict[str, Any]]:
-    """Return the parsed status record, or None if absent/expired."""
+    """Return the parsed status record, or None if absent/expired.
+
+    Best-effort and symmetric with set_status: a Redis outage returns None
+    (so the endpoint degrades to a clean 404 / "still processing") rather than
+    surfacing a 500 to the polling client.
+    """
     from app.db.redis_client import get_redis
 
-    redis = get_redis()
-    raw = await redis.get(_key(task_id))
+    try:
+        redis = get_redis()
+        raw = await redis.get(_key(task_id))
+    except Exception as exc:  # noqa: BLE001 — read is advisory; degrade gracefully
+        logger.warning("upload_status_read_failed", task_id=task_id, error=str(exc))
+        return None
     if not raw:
         return None
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return None
+    # Only an object is a valid record; anything else (bare number/list) → None
+    # so the endpoint's record.get(...) can't raise.
+    return parsed if isinstance(parsed, dict) else None
