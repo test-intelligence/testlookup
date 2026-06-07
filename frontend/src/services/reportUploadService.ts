@@ -52,6 +52,8 @@ export interface UploadReportParams {
   branch?: string
   commitHash?: string
   releaseName?: string
+  /** Run the AI analysis pipeline on the upload (default true). */
+  runAi?: boolean
   /** 0–100 upload progress callback (multipart transfer, not parse progress). */
   onProgress?: (percent: number) => void
 }
@@ -73,6 +75,7 @@ export const reportUploadService = {
     branch,
     commitHash,
     releaseName,
+    runAi = true,
     onProgress,
   }: UploadReportParams): Promise<UploadReportResponse> => {
     const form = new FormData()
@@ -80,6 +83,7 @@ export const reportUploadService = {
     form.append('project_id', projectId)
     form.append('build_number', buildNumber?.trim() || defaultBuildLabel())
     form.append('format', format)
+    form.append('run_ai', runAi ? 'true' : 'false')
     if (branch?.trim()) form.append('branch', branch.trim())
     if (commitHash?.trim()) form.append('commit_hash', commitHash.trim())
     if (releaseName?.trim()) form.append('release_name', releaseName.trim())

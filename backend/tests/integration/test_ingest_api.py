@@ -294,3 +294,58 @@ async def test_ingest_file_zip_routes_to_archive(client, auth_as, requested_form
     assert base64.b64decode(captured["file_content"])[:4] == b"PK\x03\x04"
     # cypress/playwright disabled (is_enabled=False) → set passed to the worker to gate
     assert set(captured["disabled_formats"]) == {"cypress", "playwright"}
+
+
+# ── run_ai flag + raw archival (MRU-8 / MRU-9) ───────────────────────────────
+
+
+async def test_ingest_file_run_ai_flag_and_archival(client, auth_as):
+    """run_ai=false flows to the worker; the raw upload is archived to storage
+    and its key is passed to the worker (best-effort)."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+
+    captured: dict = {}
+
+    def _delay(**kw):
+        captured.update(kw)
+        return type("T", (), {"id": "task-1"})()
+
+    file_task = AsyncMock()
+    file_task.delay = _delay
+    provider = MagicMock()
+    provider.put_object = AsyncMock()
+
+    with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
+         patch("app.db.storage.get_storage_provider", return_value=provider), \
+         patch("app.services.upload_status.set_status", AsyncMock()):
+        files = {"file": ("x.xml", _MIN_JUNIT_XML, "application/xml")}
+        data = {"project_id": str(pid), "build_number": "b", "run_ai": "false"}
+        resp = await client.post("/api/v1/ingest/file", files=files, data=data)
+
+    assert resp.status_code == 202, resp.text
+    assert captured["run_ai"] is False
+    assert captured["raw_archive_key"] and captured["raw_archive_key"].endswith("x.xml")
+    provider.put_object.assert_awaited_once()
+
+
+async def test_ingest_file_run_ai_defaults_true(client, auth_as):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+    captured: dict = {}
+    file_task = AsyncMock()
+    file_task.delay = lambda **kw: captured.update(kw) or type("T", (), {"id": "t"})()
+    provider = MagicMock()
+    provider.put_object = AsyncMock()
+    with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
+         patch("app.db.storage.get_storage_provider", return_value=provider), \
+         patch("app.services.upload_status.set_status", AsyncMock()):
+        files = {"file": ("x.xml", _MIN_JUNIT_XML, "application/xml")}
+        resp = await client.post("/api/v1/ingest/file", files=files,
+                                 data={"project_id": str(pid), "build_number": "b"})
+    assert resp.status_code == 202
+    assert captured["run_ai"] is True

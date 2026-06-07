@@ -726,6 +726,8 @@ def ingest_uploaded_file(
     release_name: str = None,
     user_id: str = None,
     disabled_formats: list = None,
+    run_ai: bool = True,
+    raw_archive_key: str = None,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -809,6 +811,8 @@ def ingest_uploaded_file(
                     # 202 run_id is authoritative and aggregates aren't blended.
                     reuse_existing=False,
                 )
+                if raw_archive_key:
+                    run.minio_prefix = raw_archive_key  # link the archived raw upload
                 count = await ingest_test_results(db, run, results)
                 await db.commit()
                 logger.info(
@@ -835,6 +839,7 @@ def ingest_uploaded_file(
             project_id=project_id,
             build_number=build_number,
             release_name=release_name,
+            run_ai=run_ai,
         )
         # Counts reflect what was actually ingested (total=count); per-status
         # breakdown is computed case-insensitively because parsers disagree on

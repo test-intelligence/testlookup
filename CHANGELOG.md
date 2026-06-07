@@ -50,6 +50,12 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-07 — Manual upload: raw archival + skip-AI toggle (MRU-9 / MRU-8))
+
+- **MRU-9 — Raw uploaded files are archived** (byte-exact) to the storage backend under `uploads/{project_id}/{run_id}/{filename}` for audit/replay; the key is linked onto the run's `minio_prefix`. Best-effort — a storage hiccup never fails the ingest.
+- **MRU-8 — "Skip AI analysis" toggle** in the upload modal. When checked, `finalize_run(run_ai=False)` skips the agent-pipeline enqueue (faster ingest, no LLM cost) while everything else (clustering inputs, owners, aggregates) still runs; the user can trigger AI later from the run page. `run_ai` defaults to true and threads endpoint → task → `finalize_run` (the SDK-batch and webhook paths are unaffected — they keep the default).
+- Tests: router asserts `run_ai` flows + the raw file is archived (`put_object` called, key passed); service asserts the `run_ai` field; modal toggle wired.
+
 ### Added (2026-06-07 — Manual upload: multi-file selection (MRU-13))
 
 - **Upload several report files at once.** The modal now accepts multiple files; when more than one is selected they're **zipped client-side** (via `fflate`) into a single `reports-bundle.zip` and sent through the existing archive path (the backend tier-2 detects + parses each entry), so "N JUnit XMLs" or a mixed set ingest as one run. A single file still uploads as-is. Duplicate filenames in a bundle are de-duplicated; total selection is size-capped client-side. Test: selecting 2 files produces one `application/zip` upload.

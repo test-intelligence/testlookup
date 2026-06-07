@@ -239,6 +239,7 @@ async def finalize_run(
     project_id: str,
     build_number: str,
     release_name: Optional[str] = None,
+    run_ai: bool = True,
 ) -> None:
     """
     Post-ingestion steps: update aggregates, auto-tag, link release,
@@ -458,18 +459,22 @@ async def finalize_run(
     except Exception as e:
         logger.warning("notification_enqueue_failed", error=str(e))
 
-    # Trigger agent pipeline
-    try:
-        from app.worker.tasks import run_agent_pipeline as _pipeline
-        _pipeline.delay(
-            test_run_id=str(rid),
-            project_id=str(pid),
-            build_number=build_number,
-            workflow_type="offline",
-        )
-        logger.info("agent_pipeline_queued", run_id=run_id)
-    except Exception as e:
-        logger.warning("agent_pipeline_queue_failed", error=str(e))
+    # Trigger agent pipeline (unless the caller opted out, e.g. a manual upload
+    # with "skip AI analysis" or a bulk historical import).
+    if run_ai:
+        try:
+            from app.worker.tasks import run_agent_pipeline as _pipeline
+            _pipeline.delay(
+                test_run_id=str(rid),
+                project_id=str(pid),
+                build_number=build_number,
+                workflow_type="offline",
+            )
+            logger.info("agent_pipeline_queued", run_id=run_id)
+        except Exception as e:
+            logger.warning("agent_pipeline_queue_failed", error=str(e))
+    else:
+        logger.info("agent_pipeline_skipped", run_id=run_id)
 
     # Precompute latest-vs-previous suite comparison reports so the default
     # nightly view is ready before users arrive in the morning. This is

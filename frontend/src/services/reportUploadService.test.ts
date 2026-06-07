@@ -33,6 +33,16 @@ describe('reportUploadService.upload', () => {
     expect(config.headers['Content-Type']).toBeUndefined()
   })
 
+  it('sends run_ai (default true; false when opted out)', async () => {
+    const file = new File(['{}'], 'a.json')
+    await reportUploadService.upload({ projectId: 'p1', file })
+    expect((mockPost.mock.calls[0][1] as FormData).get('run_ai')).toBe('true')
+
+    mockPost.mockClear()
+    await reportUploadService.upload({ projectId: 'p1', file, runAi: false })
+    expect((mockPost.mock.calls[0][1] as FormData).get('run_ai')).toBe('false')
+  })
+
   it('defaults the build label and omits empty optional fields', async () => {
     const file = new File(['{}'], 'a.json')
     await reportUploadService.upload({ projectId: 'p1', file })

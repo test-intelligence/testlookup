@@ -140,6 +140,7 @@ async def ingest_file(
     commit_hash: str = Form(None),
     release_name: str = Form(None),
     format: str = Form("auto"),
+    run_ai: bool = Form(True),
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
 ):
@@ -232,6 +233,23 @@ async def ingest_file(
         file_content_arg = content.decode("utf-8", errors="replace")
 
     run_id = str(uuid.uuid4())
+
+    # Archive the raw upload (byte-exact) for audit / replay (MRU-9). Best-effort
+    # — a storage hiccup must not fail the ingest; the worker links the key onto
+    # the run's minio_prefix.
+    raw_archive_key = None
+    try:
+        from app.db.storage import get_storage_provider
+        safe_name = (file.filename or "report").replace("/", "_").replace("\\", "_")
+        raw_archive_key = f"uploads/{target_project_id}/{run_id}/{safe_name}"
+        await get_storage_provider().put_object(
+            raw_archive_key, content,
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except Exception as exc:  # noqa: BLE001 — archival is advisory
+        logger.warning("upload_raw_archive_failed", run_id=run_id, error=str(exc))
+        raw_archive_key = None
+
     task = ingest_uploaded_file.delay(
         run_id=run_id,
         file_content=file_content_arg,
@@ -246,6 +264,8 @@ async def ingest_file(
         release_name=release_name,
         user_id=str(current_user.id),
         disabled_formats=disabled_formats,
+        run_ai=run_ai,
+        raw_archive_key=raw_archive_key,
     )
 
     # Seed a 'pending' status so the very first client poll (which may land

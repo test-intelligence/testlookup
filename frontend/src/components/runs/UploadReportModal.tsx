@@ -75,6 +75,7 @@ export default function UploadReportModal({
   const [branch, setBranch] = useState('')
   const [commitHash, setCommitHash] = useState('')
   const [releaseName, setReleaseName] = useState('')
+  const [runAi, setRunAi] = useState(true)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [dragActive, setDragActive] = useState(false)
 
@@ -226,6 +227,7 @@ export default function UploadReportModal({
         branch,
         commitHash,
         releaseName,
+        runAi,
         onProgress: setProgress,
       })
       setNewRunId(res.run_id)
@@ -246,7 +248,7 @@ export default function UploadReportModal({
       )
       setPhase('error')
     }
-  }, [files, busy, projectId, buildNumber, format, branch, commitHash, releaseName])
+  }, [files, busy, projectId, buildNumber, format, branch, commitHash, releaseName, runAi])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
@@ -382,6 +384,19 @@ export default function UploadReportModal({
                   ))}
                 </select>
               </div>
+
+              {/* Skip AI toggle (MRU-8) */}
+              <label className="flex items-center gap-2 text-sm text-[var(--color-text)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!runAi}
+                  disabled={busy}
+                  onChange={(e) => setRunAi(!e.target.checked)}
+                  className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+                />
+                Skip AI analysis
+                <span className="text-xs text-[var(--color-text-muted)]">(faster — run it later from the run page)</span>
+              </label>
 
               {/* Advanced metadata */}
               <button
