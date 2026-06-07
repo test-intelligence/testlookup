@@ -34,13 +34,13 @@ type Phase = 'idle' | 'uploading' | 'processing' | 'success' | 'error'
 const POLL_INTERVAL_MS = 1500
 const MAX_POLLS = 40 // ~60s, then fall back to "still processing"
 
-// Backend accepts XML (JUnit/TestNG) and JSON (Allure/Playwright/Cypress) as a
-// single file. Allure zip/dir + multi-file are a later slice (PRD MRU-12/13).
-const ACCEPT = '.xml,.json'
+// Backend accepts XML (JUnit/TestNG), JSON (Allure/Playwright/Cypress), or a
+// .zip (an Allure results dir, or several reports zipped together — MRU-12).
+const ACCEPT = '.xml,.json,.zip'
 
 function isAcceptedFile(name: string): boolean {
   const lower = name.toLowerCase()
-  return lower.endsWith('.xml') || lower.endsWith('.json')
+  return lower.endsWith('.xml') || lower.endsWith('.json') || lower.endsWith('.zip')
 }
 
 function humanSize(bytes: number): string {
@@ -137,7 +137,7 @@ export default function UploadReportModal({
   const pickFile = useCallback((f: File | null) => {
     if (!f) return
     if (!isAcceptedFile(f.name)) {
-      rejectFile('Unsupported file type. Upload a JUnit/TestNG .xml or an Allure/Playwright/Cypress .json file.')
+      rejectFile('Unsupported file type. Upload a .xml (JUnit/TestNG), .json (Allure/Playwright/Cypress), or a .zip (Allure results).')
       return
     }
     if (f.size > MAX_UPLOAD_BYTES) {
@@ -301,7 +301,7 @@ export default function UploadReportModal({
                   <>
                     <UploadCloud className="h-7 w-7 text-[var(--color-text-muted)]" />
                     <p className="text-sm text-[var(--color-text)]">Drop a report file or click to browse</p>
-                    <p className="text-xs text-[var(--color-text-muted)]">.xml or .json · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
+                    <p className="text-xs text-[var(--color-text-muted)]">.xml, .json, or .zip · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
                   </>
                 )}
               </div>

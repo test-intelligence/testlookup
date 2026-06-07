@@ -250,3 +250,42 @@ async def test_upload_status_non_member_forbidden(client, auth_as):
     with patch("app.services.upload_status.get_status", AsyncMock(return_value=record)):
         resp = await client.get("/api/v1/ingest/uploads/t1")
     assert resp.status_code == 403
+
+
+# ── Archive (zip) upload routing (MRU-12) ────────────────────────────────────
+
+
+async def test_ingest_file_zip_routes_to_archive(client, auth_as):
+    """A .zip upload is detected by magic bytes and dispatched as file_format=
+    'archive' with base64-encoded content (binary-safe Celery transport)."""
+    import base64
+    import io
+    import zipfile
+    from unittest.mock import AsyncMock, patch
+
+    pid = uuid.uuid4()
+    auth_as(accessible_projects={pid})
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("a1-result.json", b'{"uuid":"a1","name":"T","status":"passed"}')
+    zip_bytes = buf.getvalue()
+
+    captured: dict = {}
+
+    def _delay(**kw):
+        captured.update(kw)
+        return type("T", (), {"id": "task-zip-1"})()
+
+    file_task = AsyncMock()
+    file_task.delay = _delay
+    with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
+         patch("app.services.upload_status.set_status", AsyncMock()):
+        files = {"file": ("allure.zip", zip_bytes, "application/zip")}
+        data = {"project_id": str(pid), "build_number": "b-zip"}
+        resp = await client.post("/api/v1/ingest/file", files=files, data=data)
+
+    assert resp.status_code == 202, resp.text
+    assert captured["file_format"] == "archive"
+    # content is base64 of the original zip (PK magic after decode)
+    assert base64.b64decode(captured["file_content"])[:4] == b"PK\x03\x04"

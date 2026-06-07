@@ -50,6 +50,11 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-06 — Manual upload: Allure-zip ingestion wired (MRU-12))
+
+- **Upload an Allure results ZIP (or a zip of several reports) from the UI.** The endpoint now detects a zip by `PK` magic / `.zip` **before** the utf-8 decode (binary-safe), base64-encodes it for the Celery JSON transport, and dispatches `file_format="archive"`. The worker's `_parse_archive_to_results` safe-extracts in memory (the MRU-11 `safe_extract_zip` with config-driven limits) then dispatches **tier-1** (any `*-result.json` → `parse_allure_zip`) or **tier-2** (heterogeneous, e.g. N JUnit XMLs → per-entry detect + existing parsers), filtering `__MACOSX`/dotfile noise. A zip-safety violation surfaces as the specific `error.code` (`zip_bomb`/`unsafe_path`/…) in the upload status, not a generic failure.
+- Archive limits are configurable: `MAX_ARCHIVE_UNCOMPRESSED_BYTES` (200 MB), `MAX_ARCHIVE_ENTRIES` (5 000), `MAX_ARCHIVE_ENTRY_BYTES` (50 MB), `MAX_ARCHIVE_RATIO` (100×). The modal now accepts `.zip`. Tests: `test_archive_upload.py` (tier-1/tier-2 dispatch, noise filtering, zip-bomb propagation) + a router test asserting zip → `archive` + base64. Green on py3.11.
+
 ### Added (2026-06-06 — Manual upload: Allure-zip spike PoC (MRU-11))
 
 - **Spike for Allure ZIP upload resolved (GO)** with a proof-of-concept (not yet wired to the endpoint — that's MRU-12). `app/services/safe_archive.py` adds a hardened, in-memory `safe_extract_zip` that enforces concrete limits — 200 MB uncompressed total, 5 000 entries, 50 MB/entry, 100× ratio — and rejects path traversal/absolute/UNC, symlinks, and nested archives, streaming each entry with a running byte cap (never trusting `ZipInfo.file_size`); each violation raises `UnsafeZipError(code)` (`zip_bomb`/`zip_too_large`/`too_many_entries`/`unsafe_path`/`nested_zip`/`bad_zip`).

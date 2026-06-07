@@ -752,8 +752,19 @@ def ingest_uploaded_file(
 
         # Parse — any parser exception or an empty result is a user-fixable
         # problem, surfaced as a failed status rather than a silent empty run.
+        from app.services.safe_archive import UnsafeZipError
         try:
             results = _parse_file_to_results(file_content, file_format, file_name, run_id)
+        except UnsafeZipError as exc:
+            # Archive safety violation — surface the specific code (zip_bomb,
+            # unsafe_path, …) so the UI explains exactly what was rejected.
+            logger.warning("upload_unsafe_archive", task_id=task_id, file=file_name, code=exc.code)
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": exc.code, "message": exc.message},
+            )
+            return False
         except Exception as exc:  # noqa: BLE001
             logger.warning("upload_parse_error", task_id=task_id, file=file_name, error=str(exc))
             await upload_status.set_status(
@@ -857,6 +868,60 @@ def ingest_uploaded_file(
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
 
 
+def _parse_archive_to_results(b64_content: str, filename: str, run_id: str) -> list[dict]:
+    """Parse an uploaded report ZIP (base64 string) into normalized results.
+
+    Safety-extracts in memory (raises UnsafeZipError on any limit violation),
+    then dispatches:
+      * tier 1 — Allure results dir (any ``*-result.json``) → parse_allure_zip
+      * tier 2 — heterogeneous archive (e.g. N JUnit XMLs) → per-entry detect +
+        the existing single-file parsers, concatenated.
+    """
+    import base64
+    import posixpath
+
+    from app.core.config import settings
+    from app.services.allure_parser import parse_allure_zip
+    from app.services.safe_archive import safe_extract_zip
+
+    raw = base64.b64decode(b64_content)
+    files = safe_extract_zip(
+        raw,
+        max_total=settings.MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+        max_entries=settings.MAX_ARCHIVE_ENTRIES,
+        max_entry=settings.MAX_ARCHIVE_ENTRY_BYTES,
+        max_ratio=settings.MAX_ARCHIVE_RATIO,
+    )
+
+    def _basename(n: str) -> str:
+        return posixpath.basename(n)
+
+    # Skip macOS resource-fork / dotfile noise common in zips.
+    files = {
+        n: d for n, d in files.items()
+        if "__MACOSX" not in n and not _basename(n).startswith(".")
+    }
+
+    # Tier 1 — Allure results directory.
+    if any(_basename(n).lower().endswith("-result.json") for n in files):
+        return parse_allure_zip(files, run_id, s3_prefix=f"uploads/{run_id}")
+
+    # Tier 2 — heterogeneous archive: detect + parse each entry.
+    from app.routers.ingest import _detect_format  # lazy: avoid import cycle
+
+    results: list[dict] = []
+    for name, data in files.items():
+        base = _basename(name)
+        try:
+            entry_fmt = _detect_format(base, data)
+            text = data.decode("utf-8", errors="replace")
+            results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
+        except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
+            logger.warning("archive_entry_parse_failed", entry=base, error=str(exc))
+            continue
+    return results
+
+
 def _summarize_upload(results: list[dict], *, ingested: int) -> dict:
     """Build the SUCCEEDED-status result summary.
 
@@ -883,8 +948,14 @@ def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -
     Dispatch table — each parser returns ``list[dict]`` matching the
     TestLookup ingestion contract. New frameworks register here and add
     their content-sniff rules in ``routers/ingest._detect_format``.
+
+    For ``fmt == "archive"`` ``content`` is a base64-encoded zip (Celery's JSON
+    serializer can't carry raw bytes); see ``_parse_archive_to_results``.
     """
     import json as _json
+
+    if fmt == "archive":
+        return _parse_archive_to_results(content, filename, run_id)
 
     if fmt == "allure":
         from app.services.allure_parser import parse_allure_result

@@ -181,35 +181,52 @@ async def ingest_file(
     # server by POSTing a multi-gigabyte file.
     content = await _read_upload_bounded(file, MAX_FILE_SIZE)
 
-    detected_format = format
-    if format == "auto":
-        detected_format = _detect_format(file.filename or "", content)
+    # A ZIP is binary — detect it by magic bytes / extension BEFORE the utf-8
+    # decode below (which would corrupt it), and route it to the archive parser
+    # regardless of the requested format. The worker safe-extracts + dispatches.
+    from app.services.safe_archive import looks_like_zip
+    is_archive = looks_like_zip(content) or (file.filename or "").lower().endswith(".zip")
 
-    # Feature-flag gate: refuse parser invocations for flags that aren't
-    # enabled for this project. The flags are seeded by migration 0064 and
-    # default to OFF, so existing deployments are unaffected until an ADMIN
-    # toggles them from Settings > Feature Flags.
-    if detected_format in ("cypress", "playwright"):
-        from app.services.feature_flags import is_enabled
-        flag_key = f"{detected_format}_ingest"
-        if not await is_enabled(
-            flag_key,
-            db=db,
-            project_id=target_project_id,
-            user=current_user,
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    f"{detected_format.title()} ingestion is disabled. "
-                    f"Ask an admin to enable the '{flag_key}' feature flag."
-                ),
-            )
+    if is_archive:
+        detected_format = "archive"
+    else:
+        detected_format = format
+        if format == "auto":
+            detected_format = _detect_format(file.filename or "", content)
+
+        # Feature-flag gate: refuse parser invocations for flags that aren't
+        # enabled for this project. The flags are seeded by migration 0064 and
+        # default to OFF, so existing deployments are unaffected until an ADMIN
+        # toggles them from Settings > Feature Flags.
+        if detected_format in ("cypress", "playwright"):
+            from app.services.feature_flags import is_enabled
+            flag_key = f"{detected_format}_ingest"
+            if not await is_enabled(
+                flag_key,
+                db=db,
+                project_id=target_project_id,
+                user=current_user,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        f"{detected_format.title()} ingestion is disabled. "
+                        f"Ask an admin to enable the '{flag_key}' feature flag."
+                    ),
+                )
+
+    # Celery's JSON serializer can't carry raw bytes — base64-encode a zip;
+    # decode text otherwise. The worker branches on file_format == "archive".
+    if is_archive:
+        import base64
+        file_content_arg = base64.b64encode(content).decode("ascii")
+    else:
+        file_content_arg = content.decode("utf-8", errors="replace")
 
     run_id = str(uuid.uuid4())
     task = ingest_uploaded_file.delay(
         run_id=run_id,
-        file_content=content.decode("utf-8", errors="replace"),
+        file_content=file_content_arg,
         file_name=file.filename or "unknown",
         file_format=detected_format,
         # Canonical UUID string so the worker's status writes match the seeded
