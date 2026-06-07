@@ -50,6 +50,16 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Fixed (2026-06-06 — Manual upload: review-driven hardening + collision policy)
+
+A multi-pass review (5 lenses, adversarially verified) of the upload feature surfaced 16 confirmed issues; the highs/mediums + quick wins are fixed here (pulling MRU-7's collision policy forward):
+
+- **Uploads no longer merge into an unrelated run on a build-label collision** (was: high — silent data corruption). `create_run_from_payload` gained `reuse_existing` (default True keeps SDK/CI retry-idempotency); the manual-upload task passes `reuse_existing=False`, so an upload **always creates a fresh run**, auto-suffixing the build label (`-2`, `-3`, … then a random token) via `_unique_build_number` when it collides. This also makes the 202 `run_id` authoritative, fixing the **"View run" → 404** where a merged run discarded the response id.
+- **SDK/CI reuse no longer risks clobbering `ingestion_source`** — the reuse branch returns the existing run untouched (pinned by a new test: a `live` run reused by an `sdk` ingest stays `live`).
+- **Default build label is now millisecond + random** (was per-second), so back-to-back / concurrent blank-label uploads don't collide.
+- **Modal: a rejected file now clears any prior valid selection** (was: could submit a stale file under a new file's error) and resets the input; **422 `detail` arrays no longer render as `[object Object]`** (string-guarded); **Space on the dropzone no longer scrolls the modal** (`preventDefault`).
+- Tests: backend collision/reuse/suffix cases + `UploadReportModal.test.tsx` (gating, validation rejection + clear, success → `onSuccess`). All green on the py3.11 venv.
+
 ### Added (2026-06-06 — Manual report upload UI)
 
 - **Upload a test report from the UI** (PRD MRU-4). New `UploadReportModal` + `reportUploadService` wire the existing `POST /api/v1/ingest/file` endpoint to a drag-and-drop modal: pick a JUnit/TestNG `.xml` or Allure/Playwright/Cypress `.json` file, choose a format (default auto-detect), optionally set build label / release / branch / commit, and upload with a live progress bar. On accept (202) the user is deep-linked to the new run; uploaded runs carry `ingestion_source='upload'` and show the "Uploaded" badge. Client-side guards: 50 MB cap (matches backend), extension allow-list, and All-Projects mode disables upload (a run must target one project). Entry points: an "Upload report" button on `/runs` and an "Upload Report" item in the Testing sidebar group (`/runs?upload=1` deep-link). Gated to QA-engineer+. Errors (incl. a 503 for a disabled Cypress/Playwright feature flag) surface inline. Async parse status feedback is the next slice (MRU-5).

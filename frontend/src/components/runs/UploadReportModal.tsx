@@ -66,16 +66,23 @@ export default function UploadReportModal({
 
   const busy = phase === 'uploading'
 
+  const rejectFile = (msg: string) => {
+    // Clear any previously-accepted file so the Upload button disables and the
+    // user can't submit a stale file while an error about a new one is shown.
+    setFile(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    setErrorMsg(msg)
+    setPhase('error')
+  }
+
   const pickFile = useCallback((f: File | null) => {
     if (!f) return
     if (!isAcceptedFile(f.name)) {
-      setErrorMsg('Unsupported file type. Upload a JUnit/TestNG .xml or an Allure/Playwright/Cypress .json file.')
-      setPhase('error')
+      rejectFile('Unsupported file type. Upload a JUnit/TestNG .xml or an Allure/Playwright/Cypress .json file.')
       return
     }
     if (f.size > MAX_UPLOAD_BYTES) {
-      setErrorMsg(`File is ${humanSize(f.size)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
-      setPhase('error')
+      rejectFile(`File is ${humanSize(f.size)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
       return
     }
     setFile(f)
@@ -115,9 +122,12 @@ export default function UploadReportModal({
     } catch (err: unknown) {
       // The axios interceptor already toasts 4xx/5xx, but surface a precise
       // inline message too (e.g. a 503 for a disabled Cypress/Playwright flag).
-      const anyErr = err as { response?: { data?: { detail?: string } }; message?: string }
+      const anyErr = err as { response?: { data?: { detail?: unknown } }; message?: string }
+      // FastAPI 422 returns `detail` as an array of objects, not a string —
+      // only use it when it's actually a string so we never render [object Object].
+      const detail = anyErr?.response?.data?.detail
       setErrorMsg(
-        anyErr?.response?.data?.detail ||
+        (typeof detail === 'string' && detail) ||
           anyErr?.message ||
           'Upload failed. Check the file and try again.',
       )
@@ -168,7 +178,12 @@ export default function UploadReportModal({
                 role="button"
                 tabIndex={0}
                 onClick={() => !busy && fileInputRef.current?.click()}
-                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && !busy && fileInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ' ') && !busy) {
+                    e.preventDefault() // Space would otherwise scroll the modal body
+                    fileInputRef.current?.click()
+                  }
+                }}
                 onDragOver={(e) => { e.preventDefault(); if (!busy) setDragActive(true) }}
                 onDragLeave={() => setDragActive(false)}
                 onDrop={onDrop}

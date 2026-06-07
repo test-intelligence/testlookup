@@ -24,6 +24,31 @@ from app.services.ingestion import (
 logger = structlog.get_logger("services.ingestion_pipeline")
 
 
+async def _unique_build_number(db: AsyncSession, project_id: uuid.UUID, base: str) -> str:
+    """Return a build label unique within the project, suffixing ``-N`` (then a
+    short random token as a final backstop) when ``base`` is already taken.
+
+    Used by the manual-upload path so a colliding label creates a distinct run
+    instead of merging. The DB UNIQUE(project_id, build_number, jenkins_job)
+    constraint remains the ultimate guard against a concurrent race.
+    """
+    candidate = base
+    for n in range(2, 51):
+        taken = (
+            await db.execute(
+                select(TestRun.id).where(
+                    TestRun.project_id == project_id,
+                    TestRun.build_number == candidate,
+                )
+            )
+        ).first()
+        if not taken:
+            return candidate
+        candidate = f"{base}-{n}"
+    # Pathological: 50 collisions — fall back to a guaranteed-unique token.
+    return f"{base}-{uuid.uuid4().hex[:8]}"
+
+
 async def create_run_from_payload(
     db: AsyncSession,
     *,
@@ -36,13 +61,22 @@ async def create_run_from_payload(
     release_name: Optional[str] = None,
     framework: Optional[str] = None,
     ingestion_source: str = "unknown",
+    reuse_existing: bool = True,
 ) -> TestRun:
     """
     Create a TestRun record for API-ingested data.
 
-    Upserts on (project_id, build_number) — if a run with the same build
-    already exists for this project, it is reused (and new test cases are
-    added to it).
+    When ``reuse_existing`` is True (default — the SDK/CI batch path), this
+    upserts on (project_id, build_number): a run with the same build is reused
+    so a CI retry adds cases to the same run (idempotent re-ingest).
+
+    When ``reuse_existing`` is False (the manual-upload path), it must NEVER
+    merge into a pre-existing run — an operator-typed or timestamp-defaulted
+    build label could collide with an unrelated live/sdk/file run and silently
+    blend datasets (and rewrite that run's aggregates). Instead we always
+    create a fresh run, auto-suffixing the build label to keep
+    (project_id, build_number) unique. The returned run's ``id`` is therefore
+    authoritative for the caller's 202 response and ``View run`` navigation.
     """
     pid = uuid.UUID(project_id)
 
@@ -52,22 +86,35 @@ async def create_run_from_payload(
     if not project:
         raise ValueError(f"Project {project_id} not found")
 
-    # Check for existing run with same build_number
-    result = await db.execute(
-        select(TestRun).where(
-            TestRun.project_id == pid,
-            TestRun.build_number == build_number,
+    effective_build = build_number
+    if reuse_existing:
+        # Check for existing run with same build_number
+        result = await db.execute(
+            select(TestRun).where(
+                TestRun.project_id == pid,
+                TestRun.build_number == build_number,
+            )
         )
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        logger.info("Reusing existing run", run_id=str(existing.id), build=build_number)
-        return existing
+        existing = result.scalar_one_or_none()
+        if existing:
+            logger.info("Reusing existing run", run_id=str(existing.id), build=build_number)
+            return existing
+    else:
+        # Never reuse — resolve a unique build label so the create below can't
+        # collide with (or merge into) an unrelated run.
+        effective_build = await _unique_build_number(db, pid, build_number)
+        if effective_build != build_number:
+            logger.info(
+                "build_label_collision_suffixed",
+                project=project_id,
+                requested=build_number,
+                resolved=effective_build,
+            )
 
     run = TestRun(
         id=uuid.UUID(run_id) if run_id else uuid.uuid4(),
         project_id=pid,
-        build_number=build_number,
+        build_number=effective_build,
         branch=branch,
         commit_hash=commit_hash,
         trigger_source=trigger_source,

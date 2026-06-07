@@ -753,6 +753,10 @@ def ingest_uploaded_file(
                     commit_hash=commit_hash,
                     release_name=release_name,
                     ingestion_source="upload",
+                    # Manual uploads must never merge into an unrelated run on a
+                    # build-label collision — always create a fresh run so the
+                    # 202 run_id is authoritative and aggregates aren't blended.
+                    reuse_existing=False,
                 )
                 count = await ingest_test_results(db, run, results)
                 await db.commit()

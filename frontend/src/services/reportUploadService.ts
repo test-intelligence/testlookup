@@ -46,8 +46,11 @@ export interface UploadReportParams {
 }
 
 export function defaultBuildLabel(): string {
-  // e.g. upload-2026-06-06T17-44-05
-  return `upload-${new Date().toISOString().slice(0, 19).replace(/[:]/g, '-')}`
+  // e.g. upload-2026-06-06T17-44-05-123-a1b2 — millisecond + random suffix so
+  // back-to-back / concurrent blank-label uploads don't collide on the label.
+  const ts = new Date().toISOString().slice(0, 23).replace(/[:.]/g, '-')
+  const rand = Math.random().toString(36).slice(2, 6)
+  return `upload-${ts}-${rand}`
 }
 
 export const reportUploadService = {
