@@ -103,6 +103,51 @@ def test_archive_tier2_gate_skips_disabled_format():
     assert "cy1" not in gated_names            # gated entry skipped
 
 
+@pytest.mark.asyncio
+async def test_archive_raw_upload_stores_and_returns_dir_prefix():
+    """MRU-9: byte-exact archive to a DIR prefix (trailing slash, matching the
+    sentinel-path minio_prefix convention)."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.worker.tasks import _archive_raw_upload
+
+    provider = MagicMock()
+    provider.put_object = AsyncMock()
+    with patch("app.db.storage.get_storage_provider", return_value=provider):
+        prefix = await _archive_raw_upload("<x/>", "junit", "r.xml", "proj", "run1")
+
+    assert prefix == "uploads/proj/run1/"
+    provider.put_object.assert_awaited_once()
+    args = provider.put_object.await_args.args
+    assert args[0] == "uploads/proj/run1/r.xml"   # object key = prefix + name
+    assert args[1] == b"<x/>"                       # byte-exact text
+
+
+@pytest.mark.asyncio
+async def test_archive_raw_upload_decodes_base64_for_archive():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.worker.tasks import _archive_raw_upload
+
+    provider = MagicMock()
+    provider.put_object = AsyncMock()
+    b64 = base64.b64encode(b"PK\x03\x04zipbytes").decode("ascii")
+    with patch("app.db.storage.get_storage_provider", return_value=provider):
+        await _archive_raw_upload(b64, "archive", "a.zip", "proj", "run1")
+
+    assert provider.put_object.await_args.args[1] == b"PK\x03\x04zipbytes"
+
+
+@pytest.mark.asyncio
+async def test_archive_raw_upload_is_best_effort():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.worker.tasks import _archive_raw_upload
+
+    provider = MagicMock()
+    provider.put_object = AsyncMock(side_effect=RuntimeError("storage down"))
+    with patch("app.db.storage.get_storage_provider", return_value=provider):
+        prefix = await _archive_raw_upload("<x/>", "junit", "r.xml", "proj", "run1")
+    assert prefix is None  # never raises; ingest proceeds, minio_prefix stays NULL
+
+
 def test_archive_gated_only_raises_disabled_message():
     """A zip whose only candidate is an admin-disabled format fails with a
     'disabled' message (matching the single-file 503), not 'unparseable'."""

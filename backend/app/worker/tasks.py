@@ -727,7 +727,6 @@ def ingest_uploaded_file(
     user_id: str = None,
     disabled_formats: list = None,
     run_ai: bool = True,
-    raw_archive_key: str = None,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -751,6 +750,12 @@ def ingest_uploaded_file(
         await upload_status.set_status(
             task_id, run_id=run_id, project_id=project_id,
             state=upload_status.STATE_PARSING,
+        )
+
+        # Archive the raw upload for audit/replay (MRU-9) — off the request path,
+        # before parsing, so even a parse failure leaves the original recoverable.
+        archive_prefix = await _archive_raw_upload(
+            file_content, file_format, file_name, project_id, run_id,
         )
 
         # Parse — any parser exception or an empty result is a user-fixable
@@ -811,8 +816,8 @@ def ingest_uploaded_file(
                     # 202 run_id is authoritative and aggregates aren't blended.
                     reuse_existing=False,
                 )
-                if raw_archive_key:
-                    run.minio_prefix = raw_archive_key  # link the archived raw upload
+                if archive_prefix:
+                    run.minio_prefix = archive_prefix  # link the archived raw upload (dir prefix)
                 count = await ingest_test_results(db, run, results)
                 await db.commit()
                 logger.info(
@@ -957,6 +962,37 @@ def _parse_archive_to_results(
             "supported report (JUnit/TestNG XML, or Allure/Playwright/Cypress JSON)."
         )
     return results
+
+
+async def _archive_raw_upload(
+    file_content: str, file_format: str, file_name: str, project_id: str, run_id: str,
+):
+    """Archive the byte-exact raw upload to storage for audit/replay (MRU-9).
+
+    Best-effort: a storage failure logs and returns None (the ingest proceeds;
+    run.minio_prefix stays NULL). Returns the DIRECTORY prefix (trailing slash)
+    — matching the sentinel-path convention for ``minio_prefix`` — under which
+    the object is stored.
+    """
+    import base64
+
+    from app.db.storage import get_storage_provider
+
+    try:
+        safe_name = (file_name or "report").replace("/", "_").replace("\\", "_").lstrip(".") or "report"
+        prefix = f"uploads/{project_id}/{run_id}/"
+        raw = (
+            base64.b64decode(file_content)
+            if file_format == "archive"
+            else file_content.encode("utf-8", errors="replace")
+        )
+        await get_storage_provider().put_object(
+            prefix + safe_name, raw, content_type="application/octet-stream",
+        )
+        return prefix
+    except Exception as exc:  # noqa: BLE001 — archival is advisory
+        logger.warning("upload_raw_archive_failed run=%s error=%s", run_id, exc)
+        return None
 
 
 def _summarize_upload(results: list[dict], *, ingested: int) -> dict:
