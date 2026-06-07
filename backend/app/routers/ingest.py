@@ -187,19 +187,27 @@ async def ingest_file(
     from app.services.safe_archive import looks_like_zip
     is_archive = looks_like_zip(content) or (file.filename or "").lower().endswith(".zip")
 
+    # Feature-flag gate: cypress/playwright ingestion is admin-gated (flags seeded
+    # by migration 0064, default OFF). For single files we reject up-front; for a
+    # zip we can't know its contents here, so resolve which gated formats are
+    # DISABLED and pass that set to the worker, which skips matching tier-2
+    # entries — otherwise zipping a Cypress/Playwright report would bypass the gate.
+    from app.services.feature_flags import is_enabled
+
+    disabled_formats: list[str] = []
     if is_archive:
         detected_format = "archive"
+        for gated in ("cypress", "playwright"):
+            if not await is_enabled(
+                f"{gated}_ingest", db=db, project_id=target_project_id, user=current_user,
+            ):
+                disabled_formats.append(gated)
     else:
         detected_format = format
         if format == "auto":
             detected_format = _detect_format(file.filename or "", content)
 
-        # Feature-flag gate: refuse parser invocations for flags that aren't
-        # enabled for this project. The flags are seeded by migration 0064 and
-        # default to OFF, so existing deployments are unaffected until an ADMIN
-        # toggles them from Settings > Feature Flags.
         if detected_format in ("cypress", "playwright"):
-            from app.services.feature_flags import is_enabled
             flag_key = f"{detected_format}_ingest"
             if not await is_enabled(
                 flag_key,
@@ -237,6 +245,7 @@ async def ingest_file(
         commit_hash=commit_hash,
         release_name=release_name,
         user_id=str(current_user.id),
+        disabled_formats=disabled_formats,
     )
 
     # Seed a 'pending' status so the very first client poll (which may land

@@ -50,6 +50,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Fixed (2026-06-06 — Manual upload: MRU-12 review hardening)
+
+Multi-pass review (3 lenses, adversarially verified) of the zip wiring found 9 issues; the high + quick wins are fixed:
+
+- **Closed a feature-flag bypass** (was: high — all 3 review highs). Zipping a Cypress/Playwright report skipped the admin-gated `cypress_ingest`/`playwright_ingest` flag (the router only gated single files). The router now resolves the disabled gated formats and passes `disabled_formats` to the worker, which **skips matching tier-2 entries** — a zip can't re-enable a disabled parser. Covered by a test (gated → skipped, allowed → parsed) and a parametrized router test (`format=cypress` + zip → `archive`, never 503).
+- **Fixed a latent crash** — several worker `logger.warning(..., key=val)` calls used structlog-style kwargs, but `worker/tasks.py`'s `logger` is **stdlib** (`%s` positional), so the parse-error/archive paths would have raised `TypeError` mid-handler. Converted to `%s` style.
+- Freed the compressed `raw` bytes after extraction (memory peak); added tests for noise-only zip → empty, and `UnsafeZipError` propagating through the `archive` dispatch.
+
 ### Added (2026-06-06 — Manual upload: Allure-zip ingestion wired (MRU-12))
 
 - **Upload an Allure results ZIP (or a zip of several reports) from the UI.** The endpoint now detects a zip by `PK` magic / `.zip` **before** the utf-8 decode (binary-safe), base64-encodes it for the Celery JSON transport, and dispatches `file_format="archive"`. The worker's `_parse_archive_to_results` safe-extracts in memory (the MRU-11 `safe_extract_zip` with config-driven limits) then dispatches **tier-1** (any `*-result.json` → `parse_allure_zip`) or **tier-2** (heterogeneous, e.g. N JUnit XMLs → per-entry detect + existing parsers), filtering `__MACOSX`/dotfile noise. A zip-safety violation surfaces as the specific `error.code` (`zip_bomb`/`unsafe_path`/…) in the upload status, not a generic failure.

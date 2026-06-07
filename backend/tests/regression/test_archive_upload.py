@@ -62,3 +62,37 @@ def test_archive_zip_bomb_propagates_unsafe_error():
     with pytest.raises(UnsafeZipError) as ei:
         _parse_archive_to_results(_b64_zip({"bomb.json": bomb}), "x.zip", "run-1")
     assert ei.value.code == "zip_bomb"
+
+
+def test_archive_zip_bomb_propagates_through_dispatch():
+    """UnsafeZipError must propagate up through _parse_file_to_results (where the
+    task's _run catches it → failed status with the specific code)."""
+    from app.worker.tasks import _parse_file_to_results
+
+    bomb = b"\x00" * (2 * 1024 * 1024)
+    with pytest.raises(UnsafeZipError):
+        _parse_file_to_results(_b64_zip({"bomb.json": bomb}), "archive", "x.zip", "run-1")
+
+
+def test_archive_noise_only_returns_empty():
+    rows = _parse_archive_to_results(
+        _b64_zip({"__MACOSX/._x": b"junk", ".DS_Store": b"junk"}), "x.zip", "run-1")
+    assert rows == []
+
+
+def test_archive_tier2_gate_skips_disabled_format():
+    """A zipped Cypress report must NOT bypass the cypress_ingest flag: with
+    'cypress' in disabled_formats the entry is skipped; without it, parsed."""
+    from unittest.mock import patch
+
+    # JSON with stats+passes+results → _detect_format classifies it cypress.
+    cy = json.dumps({"stats": {"passes": 1, "failures": 0}, "results": []}).encode()
+    b64 = _b64_zip({"mocha.json": cy})
+
+    with patch("app.services.cypress_parser.parse_cypress_json",
+               return_value=[{"test_name": "cy1", "status": "PASSED", "class_name": None}]):
+        allowed = _parse_archive_to_results(b64, "x.zip", "run-1")
+        gated = _parse_archive_to_results(b64, "x.zip", "run-1", disabled_formats=["cypress"])
+
+    assert any(r["test_name"] == "cy1" for r in allowed)  # parsed when allowed
+    assert gated == []                                     # skipped when disabled

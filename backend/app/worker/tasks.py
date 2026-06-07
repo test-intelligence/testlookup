@@ -725,6 +725,7 @@ def ingest_uploaded_file(
     commit_hash: str = None,
     release_name: str = None,
     user_id: str = None,
+    disabled_formats: list = None,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -754,11 +755,13 @@ def ingest_uploaded_file(
         # problem, surfaced as a failed status rather than a silent empty run.
         from app.services.safe_archive import UnsafeZipError
         try:
-            results = _parse_file_to_results(file_content, file_format, file_name, run_id)
+            results = _parse_file_to_results(
+                file_content, file_format, file_name, run_id, disabled_formats=disabled_formats,
+            )
         except UnsafeZipError as exc:
             # Archive safety violation — surface the specific code (zip_bomb,
             # unsafe_path, …) so the UI explains exactly what was rejected.
-            logger.warning("upload_unsafe_archive", task_id=task_id, file=file_name, code=exc.code)
+            logger.warning("upload_unsafe_archive task=%s file=%s code=%s", task_id, file_name, exc.code)
             await upload_status.set_status(
                 task_id, run_id=run_id, project_id=project_id,
                 state=upload_status.STATE_FAILED,
@@ -766,7 +769,7 @@ def ingest_uploaded_file(
             )
             return False
         except Exception as exc:  # noqa: BLE001
-            logger.warning("upload_parse_error", task_id=task_id, file=file_name, error=str(exc))
+            logger.warning("upload_parse_error task=%s file=%s error=%s", task_id, file_name, exc)
             await upload_status.set_status(
                 task_id, run_id=run_id, project_id=project_id,
                 state=upload_status.STATE_FAILED,
@@ -868,7 +871,9 @@ def ingest_uploaded_file(
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
 
 
-def _parse_archive_to_results(b64_content: str, filename: str, run_id: str) -> list[dict]:
+def _parse_archive_to_results(
+    b64_content: str, filename: str, run_id: str, disabled_formats: list = None,
+) -> list[dict]:
     """Parse an uploaded report ZIP (base64 string) into normalized results.
 
     Safety-extracts in memory (raises UnsafeZipError on any limit violation),
@@ -876,6 +881,10 @@ def _parse_archive_to_results(b64_content: str, filename: str, run_id: str) -> l
       * tier 1 — Allure results dir (any ``*-result.json``) → parse_allure_zip
       * tier 2 — heterogeneous archive (e.g. N JUnit XMLs) → per-entry detect +
         the existing single-file parsers, concatenated.
+
+    ``disabled_formats`` (resolved at the router from the cypress/playwright
+    feature flags) are skipped in tier 2 so zipping a gated report can't bypass
+    the admin's flag.
     """
     import base64
     import posixpath
@@ -892,6 +901,7 @@ def _parse_archive_to_results(b64_content: str, filename: str, run_id: str) -> l
         max_entry=settings.MAX_ARCHIVE_ENTRY_BYTES,
         max_ratio=settings.MAX_ARCHIVE_RATIO,
     )
+    del raw  # free the compressed copy; the decompressed map is bounded by limits
 
     def _basename(n: str) -> str:
         return posixpath.basename(n)
@@ -909,15 +919,20 @@ def _parse_archive_to_results(b64_content: str, filename: str, run_id: str) -> l
     # Tier 2 — heterogeneous archive: detect + parse each entry.
     from app.routers.ingest import _detect_format  # lazy: avoid import cycle
 
+    disabled = set(disabled_formats or [])
     results: list[dict] = []
     for name, data in files.items():
         base = _basename(name)
         try:
             entry_fmt = _detect_format(base, data)
+            if entry_fmt in disabled:
+                # Admin disabled this format's ingestion — don't let a zip bypass it.
+                logger.warning("archive_entry_format_disabled entry=%s fmt=%s", base, entry_fmt)
+                continue
             text = data.decode("utf-8", errors="replace")
             results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
         except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
-            logger.warning("archive_entry_parse_failed", entry=base, error=str(exc))
+            logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
             continue
     return results
 
@@ -942,7 +957,9 @@ def _summarize_upload(results: list[dict], *, ingested: int) -> dict:
     }
 
 
-def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -> list[dict]:
+def _parse_file_to_results(
+    content: str, fmt: str, filename: str, run_id: str, disabled_formats: list = None,
+) -> list[dict]:
     """Parse a test result file into normalized result dicts.
 
     Dispatch table — each parser returns ``list[dict]`` matching the
@@ -955,7 +972,7 @@ def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -
     import json as _json
 
     if fmt == "archive":
-        return _parse_archive_to_results(content, filename, run_id)
+        return _parse_archive_to_results(content, filename, run_id, disabled_formats=disabled_formats)
 
     if fmt == "allure":
         from app.services.allure_parser import parse_allure_result
