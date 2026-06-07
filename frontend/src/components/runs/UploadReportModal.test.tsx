@@ -113,6 +113,16 @@ describe('UploadReportModal', () => {
     expect(await screen.findByText(/could not parse the junit report/i, {}, { timeout: 4000 })).toBeInTheDocument()
   })
 
+  it('rejects mixing a .zip with other files (would nest a zip)', () => {
+    const { uploadBtn, input } = setup()
+    fireEvent.change(input, { target: { files: [
+      new File(['<testsuite/>'], 'a.xml', { type: 'text/xml' }),
+      new File([new Uint8Array([0x50, 0x4b, 3, 4])], 'b.zip', { type: 'application/zip' }),
+    ] } })
+    expect(screen.getByText(/on its own/i)).toBeInTheDocument()
+    expect(uploadBtn()).toBeDisabled()
+  })
+
   it('zips multiple selected files into one .zip before upload (MRU-13)', async () => {
     mockGetStatus.mockResolvedValue({
       task_id: 't1', run_id: 'run-123', state: 'succeeded',

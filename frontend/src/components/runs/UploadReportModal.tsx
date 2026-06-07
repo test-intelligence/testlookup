@@ -142,6 +142,12 @@ export default function UploadReportModal({
       rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG), .json (Allure/Playwright/Cypress), or .zip files.`)
       return
     }
+    // A .zip can only be uploaded on its own — bundling it with others would
+    // nest a zip inside the client-side bundle, which the backend rejects.
+    if (picked.length > 1 && picked.some((f) => f.name.toLowerCase().endsWith('.zip'))) {
+      rejectFiles('Upload a .zip archive on its own, or select multiple .xml/.json files (not both).')
+      return
+    }
     const total = picked.reduce((n, f) => n + f.size, 0)
     if (total > MAX_UPLOAD_BYTES) {
       rejectFiles(`Selection is ${humanSize(total)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
