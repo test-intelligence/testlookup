@@ -1789,6 +1789,19 @@ class IngestResponse(BaseModel):
     total_results: int
 
 
+class UploadStatusResponse(BaseModel):
+    """Async status of an uploaded report (GET /api/v1/ingest/uploads/{task_id}).
+
+    state: pending | parsing | ingesting | succeeded | failed.
+    """
+    task_id: str
+    run_id: Optional[str] = None
+    state: str
+    progress: Optional[dict] = None
+    result: Optional[dict] = None
+    error: Optional[dict] = None
+
+
 class LiveSessionState(BaseModel):
     """Live state of an active or recently completed session."""
     run_id: str

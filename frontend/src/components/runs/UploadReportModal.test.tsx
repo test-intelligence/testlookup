@@ -13,10 +13,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUpload = vi.hoisted(() => vi.fn())
+const mockGetStatus = vi.hoisted(() => vi.fn())
 
 vi.mock('@/services/reportUploadService', async (importActual) => {
   const actual = await importActual<typeof import('@/services/reportUploadService')>()
-  return { ...actual, reportUploadService: { upload: mockUpload } }
+  return { ...actual, reportUploadService: { upload: mockUpload, getStatus: mockGetStatus } }
 })
 
 vi.mock('react-hot-toast', () => ({
@@ -40,7 +41,11 @@ function selectFile(input: HTMLInputElement, file: File) {
 }
 
 describe('UploadReportModal', () => {
-  beforeEach(() => mockUpload.mockReset())
+  beforeEach(() => {
+    mockUpload.mockReset()
+    mockGetStatus.mockReset()
+    mockUpload.mockResolvedValue({ run_id: 'run-123', task_id: 't1', total_results: 0 })
+  })
 
   it('disables Upload until a valid file is selected', () => {
     const { uploadBtn, input } = setup()
@@ -69,23 +74,33 @@ describe('UploadReportModal', () => {
     expect(uploadBtn()).toBeDisabled() // stale valid file was cleared
   })
 
-  it('uploads, shows the accepted state, and View run calls onSuccess', async () => {
-    mockUpload.mockResolvedValue({ run_id: 'run-123', task_id: 't1', total_results: 0 })
+  it('uploads, polls to success with result counts, and View run calls onSuccess', async () => {
+    mockGetStatus.mockResolvedValue({
+      task_id: 't1', run_id: 'run-123', state: 'succeeded',
+      result: { total: 3, passed: 2, failed: 1, skipped: 0, broken: 0 },
+    })
     const { uploadBtn, input, onSuccess } = setup()
     selectFile(input, new File(['<testsuite/>'], 'junit.xml', { type: 'text/xml' }))
     fireEvent.click(uploadBtn())
 
-    await waitFor(() => expect(screen.getByText(/upload accepted/i)).toBeInTheDocument())
+    expect(await screen.findByText(/processed 3 tests/i, {}, { timeout: 4000 })).toBeInTheDocument()
+    expect(screen.getByText(/2 passed/i)).toBeInTheDocument()
     expect(mockUpload).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1' }))
+    expect(mockGetStatus).toHaveBeenCalledWith('t1')
 
     fireEvent.click(screen.getByRole('button', { name: /view run/i }))
     expect(onSuccess).toHaveBeenCalledWith('run-123')
   })
 
-  // NOTE: a backend-rejection test (mockUpload.mockRejectedValue → inline
-  // detail) is intentionally omitted. handleSubmit's try/catch handles it
-  // correctly in production, but vitest flags the mock's async rejection as an
-  // unhandled rejection from React's non-awaited onClick even when caught. The
-  // SAME inline error banner is exercised by the two validation tests above, and
-  // the network/error-shape layer is covered by reportUploadService.test.ts.
+  it('surfaces a parse failure from the status poll', async () => {
+    mockGetStatus.mockResolvedValue({
+      task_id: 't1', run_id: 'run-123', state: 'failed',
+      error: { code: 'parse_error', message: 'Could not parse the junit report.' },
+    })
+    const { uploadBtn, input } = setup()
+    selectFile(input, new File(['<bad/>'], 'junit.xml', { type: 'text/xml' }))
+    fireEvent.click(uploadBtn())
+
+    expect(await screen.findByText(/could not parse the junit report/i, {}, { timeout: 4000 })).toBeInTheDocument()
+  })
 })

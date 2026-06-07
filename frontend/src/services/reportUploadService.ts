@@ -9,6 +9,17 @@ export interface UploadReportResponse {
   total_results: number
 }
 
+export type UploadState = 'pending' | 'parsing' | 'ingesting' | 'succeeded' | 'failed'
+
+export interface UploadStatus {
+  task_id: string
+  run_id?: string | null
+  state: UploadState
+  progress?: { total?: number; parsed?: number } | null
+  result?: { total?: number; passed?: number; failed?: number; skipped?: number; broken?: number } | null
+  error?: { code?: string; message?: string } | null
+}
+
 export type ReportFormat =
   | 'auto'
   | 'junit'
@@ -87,4 +98,8 @@ export const reportUploadService = {
       })
       .then(({ data }) => data)
   },
+
+  /** Poll the async parse/ingest status of an upload (GET /ingest/uploads/{id}). */
+  getStatus: (taskId: string): Promise<UploadStatus> =>
+    api.get<UploadStatus>(`/api/v1/ingest/uploads/${taskId}`).then(({ data }) => data),
 }

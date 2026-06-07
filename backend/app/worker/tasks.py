@@ -735,12 +735,56 @@ def ingest_uploaded_file(
         finalize_run,
         ingest_test_results,
     )
+    from app.services import upload_status
 
-    async def _run():
+    task_id = self.request.id
+
+    async def _run() -> bool:
+        """Returns True on success, False on a non-retryable parse/empty error
+        (which is recorded as a failed status, not raised, so Celery doesn't
+        retry a file that will never parse)."""
         from app.db.postgres import AsyncSessionLocal
 
-        # Parse file into normalized result dicts
-        results = _parse_file_to_results(file_content, file_format, file_name, run_id)
+        await upload_status.set_status(
+            task_id, run_id=run_id, project_id=project_id,
+            state=upload_status.STATE_PARSING,
+        )
+
+        # Parse — any parser exception or an empty result is a user-fixable
+        # problem, surfaced as a failed status rather than a silent empty run.
+        try:
+            results = _parse_file_to_results(file_content, file_format, file_name, run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("upload_parse_error", task_id=task_id, file=file_name, error=str(exc))
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": "parse_error",
+                       "message": f"Could not parse the {file_format} report: {str(exc)[:300]}"},
+            )
+            return False
+
+        if not results:
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED,
+                error={"code": "empty_report",
+                       "message": "No test results were found in the file. "
+                                  "Check that the format matches the file contents."},
+            )
+            return False
+
+        summary = {
+            "total": len(results),
+            "passed": sum(1 for r in results if r.get("status") == "PASSED"),
+            "failed": sum(1 for r in results if r.get("status") == "FAILED"),
+            "skipped": sum(1 for r in results if r.get("status") == "SKIPPED"),
+            "broken": sum(1 for r in results if r.get("status") == "BROKEN"),
+        }
+        await upload_status.set_status(
+            task_id, run_id=run_id, project_id=project_id,
+            state=upload_status.STATE_INGESTING, progress={"total": summary["total"]},
+        )
 
         async with AsyncSessionLocal() as db:
             try:
@@ -762,7 +806,7 @@ def ingest_uploaded_file(
                 await db.commit()
                 logger.info(
                     "[Task %s] File ingested: %d cases from %s (%s)",
-                    self.request.id, count, file_name, file_format,
+                    task_id, count, file_name, file_format,
                 )
             except Exception:
                 await db.rollback()
@@ -774,16 +818,34 @@ def ingest_uploaded_file(
             build_number=build_number,
             release_name=release_name,
         )
+        await upload_status.set_status(
+            task_id, run_id=run_id, project_id=project_id,
+            state=upload_status.STATE_SUCCEEDED, result=summary,
+        )
+        return True
 
-    logger.info("[Task %s] Processing uploaded file: %s (%s)", self.request.id, file_name, file_format)
+    logger.info("[Task %s] Processing uploaded file: %s (%s)", task_id, file_name, file_format)
     try:
-        _run_async(_run())
-        try:
-            reindex_search.apply_async(kwargs={"full": False}, countdown=5)
-        except Exception:
-            pass
+        ok = _run_async(_run())
+        if ok:
+            try:
+                reindex_search.apply_async(kwargs={"full": False}, countdown=5)
+            except Exception:
+                pass
     except Exception as exc:
-        logger.error("[Task %s] File ingest failed: %s", self.request.id, exc, exc_info=True)
+        # A transient/infra failure (DB, Redis) — retry, and only surface a
+        # failed status once retries are exhausted so the UI doesn't flap.
+        logger.error("[Task %s] File ingest failed: %s", task_id, exc, exc_info=True)
+        if self.request.retries >= self.max_retries:
+            try:
+                _run_async(upload_status.set_status(
+                    task_id, run_id=run_id, project_id=project_id,
+                    state=upload_status.STATE_FAILED,
+                    error={"code": "ingest_error",
+                           "message": "Ingestion failed after retries. Please try again."},
+                ))
+            except Exception:
+                pass
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
 
 
@@ -800,9 +862,10 @@ def _parse_file_to_results(content: str, fmt: str, filename: str, run_id: str) -
         from app.services.allure_parser import parse_allure_result
         try:
             raw = _json.loads(content)
-        except _json.JSONDecodeError:
-            logger.warning("Invalid JSON in allure file: %s", filename)
-            return []
+        except _json.JSONDecodeError as exc:
+            # Surface as a parse error (the upload task turns this into a
+            # 'parse_error' status) instead of a silent empty run.
+            raise ValueError(f"invalid JSON in Allure file '{filename}': {exc}") from exc
         items = raw if isinstance(raw, list) else [raw]
         results = []
         for item in items:

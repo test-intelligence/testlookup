@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import User
-from app.models.schemas import IngestPayload, IngestResponse
+from app.models.schemas import IngestPayload, IngestResponse, UploadStatusResponse
 
 router = APIRouter(prefix="/api/v1/ingest", tags=["Ingest"])
 logger = structlog.get_logger("routers.ingest")
@@ -220,6 +220,14 @@ async def ingest_file(
         user_id=str(current_user.id),
     )
 
+    # Seed a 'pending' status so the very first client poll (which may land
+    # before the worker starts) gets a record instead of a 404.
+    from app.services import upload_status
+    await upload_status.set_status(
+        task.id, run_id=run_id, project_id=str(target_project_id),
+        state=upload_status.STATE_PENDING,
+    )
+
     logger.info(
         "file_ingest_accepted",
         run_id=run_id,
@@ -234,6 +242,55 @@ async def ingest_file(
         run_id=run_id,
         task_id=task.id,
         total_results=0,  # unknown until parsed
+    )
+
+
+@router.get(
+    "/uploads/{task_id}",
+    response_model=UploadStatusResponse,
+    summary="Poll the status of an uploaded report's async processing",
+)
+async def get_upload_status(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    auth: tuple[User, None] = Depends(get_api_key_context),
+):
+    """Return the async parse/ingest status for an upload task.
+
+    Project-scoped: 404 if unknown/expired, 403 if the caller can't access the
+    run's project (so a leaked/guessed task_id can't reveal another tenant's
+    run).
+    """
+    from app.services import upload_status
+
+    record = await upload_status.get_status(task_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Upload task not found or expired",
+        )
+
+    current_user, bound_project_id = auth
+    record_project_id = record.get("project_id")
+
+    # Project-scoped API key: must match the record's project.
+    if bound_project_id is not None and str(bound_project_id) != str(record_project_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is restricted to a different project",
+        )
+
+    # Tenant isolation: caller must be a member of the run's project (403 else).
+    if record_project_id:
+        await resolve_project_scope(db, current_user, str(record_project_id))
+
+    return UploadStatusResponse(
+        task_id=record.get("task_id", task_id),
+        run_id=record.get("run_id"),
+        state=record.get("state", "pending"),
+        progress=record.get("progress"),
+        result=record.get("result"),
+        error=record.get("error"),
     )
 
 

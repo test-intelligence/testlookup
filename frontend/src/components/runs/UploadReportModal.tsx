@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -17,6 +17,7 @@ import {
   defaultBuildLabel,
   reportUploadService,
   type ReportFormat,
+  type UploadStatus,
 } from '@/services/reportUploadService'
 
 interface UploadReportModalProps {
@@ -27,7 +28,10 @@ interface UploadReportModalProps {
   onSuccess: (runId: string) => void
 }
 
-type Phase = 'idle' | 'uploading' | 'success' | 'error'
+type Phase = 'idle' | 'uploading' | 'processing' | 'success' | 'error'
+
+const POLL_INTERVAL_MS = 1500
+const MAX_POLLS = 40 // ~60s, then fall back to "still processing"
 
 // Backend accepts XML (JUnit/TestNG) and JSON (Allure/Playwright/Cypress) as a
 // single file. Allure zip/dir + multi-file are a later slice (PRD MRU-12/13).
@@ -63,8 +67,54 @@ export default function UploadReportModal({
   const [progress, setProgress] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
   const [newRunId, setNewRunId] = useState<string | null>(null)
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [result, setResult] = useState<UploadStatus['result']>(null)
 
-  const busy = phase === 'uploading'
+  const busy = phase === 'uploading' || phase === 'processing'
+
+  // Poll the async parse/ingest status once the upload is accepted, so the user
+  // sees a real outcome (parsed N tests / parse error) instead of a silent run.
+  useEffect(() => {
+    if (phase !== 'processing' || !taskId) return
+    let active = true
+    let attempts = 0
+    let timer: ReturnType<typeof setTimeout>
+
+    const tick = async () => {
+      if (!active) return
+      attempts += 1
+      try {
+        const st = await reportUploadService.getStatus(taskId)
+        if (!active) return
+        if (st.state === 'succeeded') {
+          setResult(st.result ?? null)
+          setPhase('success')
+          toast.success('Report processed')
+          return
+        }
+        if (st.state === 'failed') {
+          setErrorMsg(st.error?.message || 'The report could not be processed.')
+          setPhase('error')
+          return
+        }
+      } catch {
+        // 404 before the status record is written, or a transient blip — keep
+        // polling; we only give up after MAX_POLLS.
+      }
+      if (active && attempts < MAX_POLLS) {
+        timer = setTimeout(tick, POLL_INTERVAL_MS)
+      } else if (active) {
+        // Took too long to confirm — the run is still processing server-side.
+        setResult(null)
+        setPhase('success')
+      }
+    }
+    timer = setTimeout(tick, POLL_INTERVAL_MS)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [phase, taskId])
 
   const rejectFile = (msg: string) => {
     // Clear any previously-accepted file so the Upload button disables and the
@@ -117,8 +167,9 @@ export default function UploadReportModal({
         onProgress: setProgress,
       })
       setNewRunId(res.run_id)
-      setPhase('success')
-      toast.success('Report uploaded — processing the run')
+      setTaskId(res.task_id)
+      // Move to processing; the poll effect resolves it to success/error.
+      setPhase('processing')
     } catch (err: unknown) {
       // The axios interceptor already toasts 4xx/5xx, but surface a precise
       // inline message too (e.g. a 503 for a disabled Cypress/Playwright flag).
@@ -160,15 +211,40 @@ export default function UploadReportModal({
 
         {/* Body */}
         <div className="px-6 py-4 overflow-y-auto space-y-4">
-          {phase === 'success' ? (
+          {phase === 'processing' ? (
+            <div className="flex flex-col items-center text-center gap-3 py-6">
+              <Loader2 className="h-8 w-8 text-[var(--color-text-muted)] animate-spin" />
+              <div>
+                <p className="text-sm font-medium text-[var(--color-text)]">Processing report…</p>
+                <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
+                  Parsing and ingesting the test results.
+                </p>
+              </div>
+            </div>
+          ) : phase === 'success' ? (
             <div className="flex flex-col items-center text-center gap-3 py-4">
               <CheckCircle2 className="h-10 w-10 text-emerald-400" />
               <div>
-                <p className="text-sm font-medium text-[var(--color-text)]">Upload accepted</p>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
-                  The report is being parsed in the background. The run will populate
-                  on its detail page within a few moments.
-                </p>
+                {result ? (
+                  <>
+                    <p className="text-sm font-medium text-[var(--color-text)]">
+                      Processed {result.total ?? 0} test{(result.total ?? 0) === 1 ? '' : 's'}
+                    </p>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                      {result.passed ?? 0} passed · {result.failed ?? 0} failed
+                      {result.broken ? ` · ${result.broken} broken` : ''}
+                      {result.skipped ? ` · ${result.skipped} skipped` : ''}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium text-[var(--color-text)]">Upload accepted</p>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
+                      The report is still being processed in the background. The run will
+                      populate on its detail page shortly.
+                    </p>
+                  </>
+                )}
               </div>
             </div>
           ) : (
@@ -288,6 +364,14 @@ export default function UploadReportModal({
                 View run
               </button>
             </>
+          ) : phase === 'processing' ? (
+            // Run continues server-side if the user closes mid-processing.
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+            >
+              Close
+            </button>
           ) : (
             <>
               <button

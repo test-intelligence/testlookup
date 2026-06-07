@@ -50,6 +50,13 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-06 — Manual upload: async status + parse-error feedback)
+
+- **Upload no longer fails silently** (PRD MRU-5/6). A new Redis-backed status record (`app/services/upload_status.py`, 24h TTL) is updated by the `ingest_uploaded_file` task at each stage (`pending → parsing → ingesting → succeeded | failed`) and exposed via **`GET /api/v1/ingest/uploads/{task_id}`** (project-scoped — 404 if unknown/expired, 403 if the caller can't access the run's project, so a guessed task_id can't leak another tenant's run).
+- **Parse failures and empty reports are now surfaced, not swallowed.** A parser exception → `failed` with `error.code=parse_error`; a valid-but-zero-tests file → `failed` with `empty_report`; malformed Allure JSON now raises instead of silently producing an empty run. Parse/empty failures are **not retried** (the file won't parse on retry); only transient infra errors retry, surfacing `ingest_error` once exhausted.
+- **The upload modal polls the status** after the 202 and shows a real outcome: a "Processing…" spinner, then **"Processed N tests (P passed, F failed)"** with **View run**, or the parse error inline with retry. Falls back to "still processing" after ~60s.
+- Tests: `test_upload_status.py` (roundtrip, TTL, missing→None, error-swallowing) + modal polling success/parse-failure. All green on the py3.11 venv.
+
 ### Fixed (2026-06-06 — Manual upload: review-driven hardening + collision policy)
 
 A multi-pass review (5 lenses, adversarially verified) of the upload feature surfaced 16 confirmed issues; the highs/mediums + quick wins are fixed here (pulling MRU-7's collision policy forward):
