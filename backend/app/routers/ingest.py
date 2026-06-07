@@ -364,13 +364,12 @@ def _detect_format(filename: str, content: bytes) -> str:
     # ``file``. No other supported format has ``stats`` + ``passes`` at
     # the root, so this is an unambiguous marker.
     # pytest-json-report (`pytest --json-report`): top-level "exitcode" + "root"
-    # + "summary" + a "tests" array of {nodeid, outcome}. "exitcode"/"root" are
-    # unique to it among supported formats, so this is unambiguous.
-    if looks_like_json and (
-        '"exitcode"' in stripped[:4096]
-        and '"summary"' in stripped[:4096]
-        and '"root"' in stripped[:4096]
-    ):
+    # — both unique to it among supported formats (playwright=config/projects,
+    # cypress=stats/passes, allure=uuid/name, junit/testng=XML) and both emitted
+    # at the very TOP of the doc. We deliberately do NOT require "summary": it is
+    # emitted AFTER the (unbounded) "environment" block, which on package-heavy
+    # CI images pushes it past the 4 KB sniff window → false-negative.
+    if looks_like_json and '"exitcode"' in stripped[:4096] and '"root"' in stripped[:4096]:
         return "pytest"
 
     if looks_like_json and (

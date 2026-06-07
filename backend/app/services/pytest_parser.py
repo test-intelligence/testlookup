@@ -110,18 +110,37 @@ def _normalize(t: object, test_run_id: str) -> Optional[dict]:
 
 
 def _split_nodeid(nodeid: str):
-    """``tests/test_x.py::TestClass::test_m[p]`` →
-    (suite='tests/test_x.py', class='TestClass', name='test_m[p]').
-    Function-level tests (no class) → class None, name=test_func."""
-    parts = nodeid.split("::")
-    file_path = parts[0] if parts else nodeid
+    """Split a pytest nodeid into (suite_name, class_name, test_name).
+
+    ``tests/test_x.py::TestClass::test_m[p]`` →
+      suite='tests/test_x.py', class='tests/test_x.py::TestClass', name='test_m[p]'.
+    ``tests/test_x.py::test_func`` →
+      suite='tests/test_x.py', class='tests/test_x.py', name='test_func'.
+
+    The FILE is folded into ``class_name`` (not just ``suite_name``) because the
+    dedup fingerprint is ``sha256(class_name::test_name)`` — without the file,
+    same-named tests in different files (``test_smoke`` everywhere) would collide
+    and overwrite each other. This matches the playwright/cypress parsers, which
+    set ``class_name = file``. ``suite_name`` stays the bare file for grouping.
+
+    A trailing parametrize suffix ``[...]`` is split off first so a ``::`` INSIDE
+    a param id (e.g. ``test_m[a::b]``) doesn't corrupt the split.
+    """
+    param = ""
+    base = nodeid
+    lb = nodeid.find("[")
+    if lb != -1 and nodeid.endswith("]"):
+        base, param = nodeid[:lb], nodeid[lb:]
+
+    parts = base.split("::")
+    file_path = parts[0] if parts else base
     if len(parts) >= 3:
-        class_name: Optional[str] = "::".join(parts[1:-1])
-        test_name = parts[-1]
+        class_name: Optional[str] = "::".join(parts[:-1])   # file + class path
+        test_name = parts[-1] + param
     elif len(parts) == 2:
-        class_name = None
-        test_name = parts[1]
+        class_name = file_path                               # function-level: file as class
+        test_name = parts[1] + param
     else:
         class_name = None
-        test_name = nodeid
+        test_name = (base + param) or nodeid
     return (file_path or None), class_name, (test_name or nodeid)

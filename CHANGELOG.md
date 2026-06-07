@@ -50,6 +50,13 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Fixed (2026-06-07 — Manual upload: MRU-14 review)
+
+Review found 2 high + 1 low; fixed before they shipped:
+- **Auto-detect no longer misses real CI reports:** the pytest sniffer required `"summary"`, which sits *after* pytest-json-report's unbounded `environment` block and is pushed past the 4 KB detection window on package-heavy CI images (→ silently mis-parsed as Allure → empty run). Now keys on `exitcode`+`root` alone (both top-of-doc + unique).
+- **No more cross-file fingerprint collisions:** function/class tests folded the file only into `suite_name`, but the dedup fingerprint is `class_name::test_name` — so `test_a.py::test_smoke` and `test_b.py::test_smoke` collided and one silently overwrote the other. The file is now folded into `class_name` (matching the playwright/cypress parsers); `suite_name` stays the bare file for grouping.
+- Parametrized nodeids with `::` inside the `[...]` id (`test_q[a::b]`) split correctly. Tests added for all three.
+
 ### Added (2026-06-07 — Manual upload: pytest-json-report parser (MRU-14))
 
 - **Native `pytest --json-report` support.** A new `pytest_parser` ingests the pytest-json-report plugin's JSON: each `tests[]` entry's `nodeid` → suite (file) + class + name, `outcome` → status (passed→PASSED, failed→FAILED, error→BROKEN, skipped/xfailed→SKIPPED, xpassed→PASSED), duration = setup+call+teardown (s→ms), and the failing phase's `longrepr` → error message. Auto-detected by the distinctive top-level `exitcode`+`root`+`summary` markers; also selectable as "pytest JSON" in the modal and accepted via `format=pytest`. (pytest's JUnit XML continues to work via the JUnit parser.) Works inside a zip too (tier-2). Tests: parser status/nodeid/duration mapping, malformed→empty, and format detection.
