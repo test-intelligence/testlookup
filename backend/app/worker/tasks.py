@@ -893,6 +893,13 @@ def _parse_archive_to_results(
     from app.services.allure_parser import parse_allure_zip
     from app.services.safe_archive import safe_extract_zip
 
+    def _basename(n: str) -> str:
+        return posixpath.basename(n)
+
+    def _is_noise(n: str) -> bool:
+        # macOS resource-fork / dotfile noise — skipped before decompression.
+        return "__MACOSX" in n or _basename(n).startswith(".")
+
     raw = base64.b64decode(b64_content)
     files = safe_extract_zip(
         raw,
@@ -900,40 +907,40 @@ def _parse_archive_to_results(
         max_entries=settings.MAX_ARCHIVE_ENTRIES,
         max_entry=settings.MAX_ARCHIVE_ENTRY_BYTES,
         max_ratio=settings.MAX_ARCHIVE_RATIO,
+        skip_name=_is_noise,
     )
     del raw  # free the compressed copy; the decompressed map is bounded by limits
 
-    def _basename(n: str) -> str:
-        return posixpath.basename(n)
-
-    # Skip macOS resource-fork / dotfile noise common in zips.
-    files = {
-        n: d for n, d in files.items()
-        if "__MACOSX" not in n and not _basename(n).startswith(".")
-    }
-
     # Tier 1 — Allure results directory.
     if any(_basename(n).lower().endswith("-result.json") for n in files):
-        return parse_allure_zip(files, run_id, s3_prefix=f"uploads/{run_id}")
+        results = parse_allure_zip(files, run_id, s3_prefix=f"uploads/{run_id}")
+    else:
+        # Tier 2 — heterogeneous archive: detect + parse each entry.
+        from app.routers.ingest import _detect_format  # lazy: avoid import cycle
 
-    # Tier 2 — heterogeneous archive: detect + parse each entry.
-    from app.routers.ingest import _detect_format  # lazy: avoid import cycle
-
-    disabled = set(disabled_formats or [])
-    results: list[dict] = []
-    for name, data in files.items():
-        base = _basename(name)
-        try:
-            entry_fmt = _detect_format(base, data)
-            if entry_fmt in disabled:
-                # Admin disabled this format's ingestion — don't let a zip bypass it.
-                logger.warning("archive_entry_format_disabled entry=%s fmt=%s", base, entry_fmt)
+        disabled = set(disabled_formats or [])
+        results = []
+        for name, data in files.items():
+            base = _basename(name)
+            try:
+                entry_fmt = _detect_format(base, data)
+                if entry_fmt in disabled:
+                    # Admin disabled this format — don't let a zip bypass the gate.
+                    logger.warning("archive_entry_format_disabled entry=%s fmt=%s", base, entry_fmt)
+                    continue
+                text = data.decode("utf-8", errors="replace")
+                results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
+            except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
+                logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
                 continue
-            text = data.decode("utf-8", errors="replace")
-            results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
-        except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
-            logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
-            continue
+
+    # Distinguish a truly empty/noise-only archive (→ empty_report) from one that
+    # HAD candidate files but none parsed (→ parse_error with a clear message).
+    if files and not results:
+        raise ValueError(
+            f"Archive contained {len(files)} file(s) but none could be parsed as a "
+            "supported report (JUnit/TestNG XML, or Allure/Playwright/Cypress JSON)."
+        )
     return results
 
 

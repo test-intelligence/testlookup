@@ -22,6 +22,7 @@ import io
 import posixpath
 import stat
 import zipfile
+from typing import Callable, Optional
 
 # Defaults — the caller (worker) may override from settings. Compressed wire
 # size is already capped upstream by _read_upload_bounded (50 MB); these bound
@@ -70,8 +71,13 @@ def safe_extract_zip(
     max_entries: int = DEFAULT_MAX_ENTRIES,
     max_entry: int = DEFAULT_MAX_ENTRY_UNCOMPRESSED,
     max_ratio: int = DEFAULT_MAX_RATIO,
+    skip_name: Optional[Callable[[str], bool]] = None,
 ) -> dict[str, bytes]:
     """Extract a ZIP from ``raw`` bytes to ``{normalized_name: content}``.
+
+    ``skip_name(name)`` (optional) is consulted per entry BEFORE any bytes are
+    read — matching entries (e.g. ``__MACOSX``/dotfile noise) are ignored
+    entirely, so they don't decompress or count toward the size budget.
 
     Raises ``UnsafeZipError`` on any limit/safety violation.
     """
@@ -94,6 +100,8 @@ def safe_extract_zip(
         name = zi.filename
         if zi.is_dir():
             continue
+        if skip_name is not None and skip_name(name):
+            continue  # noise (e.g. __MACOSX/dotfiles) — never read/decompress
         if _is_unsafe_path(name):
             raise UnsafeZipError("unsafe_path", f"Unsafe entry path: {name!r}")
 

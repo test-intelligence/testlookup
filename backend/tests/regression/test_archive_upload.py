@@ -82,17 +82,29 @@ def test_archive_noise_only_returns_empty():
 
 def test_archive_tier2_gate_skips_disabled_format():
     """A zipped Cypress report must NOT bypass the cypress_ingest flag: with
-    'cypress' in disabled_formats the entry is skipped; without it, parsed."""
+    'cypress' in disabled_formats the cypress entry is skipped while the allowed
+    JUnit entry still parses."""
     from unittest.mock import patch
 
     # JSON with stats+passes+results → _detect_format classifies it cypress.
     cy = json.dumps({"stats": {"passes": 1, "failures": 0}, "results": []}).encode()
-    b64 = _b64_zip({"mocha.json": cy})
+    junit = b'<testsuite name="S"><testcase name="jt" classname="C"/></testsuite>'
+    b64 = _b64_zip({"mocha.json": cy, "results.xml": junit})
 
     with patch("app.services.cypress_parser.parse_cypress_json",
                return_value=[{"test_name": "cy1", "status": "PASSED", "class_name": None}]):
         allowed = _parse_archive_to_results(b64, "x.zip", "run-1")
         gated = _parse_archive_to_results(b64, "x.zip", "run-1", disabled_formats=["cypress"])
 
-    assert any(r["test_name"] == "cy1" for r in allowed)  # parsed when allowed
-    assert gated == []                                     # skipped when disabled
+    allowed_names = {r["test_name"] for r in allowed}
+    gated_names = {r["test_name"] for r in gated}
+    assert {"cy1", "jt"} <= allowed_names      # both parse when allowed
+    assert "jt" in gated_names                 # allowed entry still parses
+    assert "cy1" not in gated_names            # gated entry skipped
+
+
+def test_archive_with_files_but_none_parsable_raises():
+    """A zip that has candidate files but none parse → ValueError (→ parse_error
+    status), distinct from a truly empty/noise-only zip (→ empty_report)."""
+    with pytest.raises(ValueError):
+        _parse_archive_to_results(_b64_zip({"junk.xml": b"not xml at all"}), "x.zip", "run-1")
