@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { zipSync } from 'fflate'
+import { zip as zipAsync, zipSync } from 'fflate'
 import toast from 'react-hot-toast'
 import {
   MAX_UPLOAD_BYTES,
@@ -48,6 +48,19 @@ function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// Bundle files into a zip off the main thread (fflate's async zip uses a Web
+// Worker). Falls back to the synchronous zip where Worker isn't available
+// (e.g. jsdom in tests).
+async function bundleZip(entries: Record<string, Uint8Array>): Promise<Uint8Array> {
+  try {
+    return await new Promise<Uint8Array>((resolve, reject) =>
+      zipAsync(entries, (err, data) => (err ? reject(err) : resolve(data))),
+    )
+  } catch {
+    return zipSync(entries)
+  }
 }
 
 export default function UploadReportModal({
@@ -148,9 +161,17 @@ export default function UploadReportModal({
       rejectFiles('Upload a .zip archive on its own, or select multiple .xml/.json files (not both).')
       return
     }
+    // Each single file must fit the upload cap; the multi-file BUNDLE is checked
+    // post-zip in handleSubmit (zip may compress well below the raw sum). The
+    // raw-sum bound here is only an in-browser memory guard.
+    const oversize = picked.find((f) => f.size > MAX_UPLOAD_BYTES)
+    if (oversize) {
+      rejectFiles(`${oversize.name} is ${humanSize(oversize.size)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
+      return
+    }
     const total = picked.reduce((n, f) => n + f.size, 0)
-    if (total > MAX_UPLOAD_BYTES) {
-      rejectFiles(`Selection is ${humanSize(total)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
+    if (total > MAX_UPLOAD_BYTES * 4) {
+      rejectFiles(`Selection is too large to bundle in the browser (${humanSize(total)}).`)
       return
     }
     setFiles(picked)
@@ -188,7 +209,14 @@ export default function UploadReportModal({
           seen.add(key)
           entries[key] = new Uint8Array(await f.arrayBuffer())
         }
-        upload = new File([zipSync(entries) as BlobPart], 'reports-bundle.zip', { type: 'application/zip' })
+        upload = new File([await bundleZip(entries) as BlobPart], 'reports-bundle.zip', { type: 'application/zip' })
+      }
+      // The server caps the COMPRESSED upload; check the actual bundle size here
+      // (the raw-sum pre-check can't predict the zip size).
+      if (upload.size > MAX_UPLOAD_BYTES) {
+        setErrorMsg(`The zipped bundle is ${humanSize(upload.size)} — the limit is ${humanSize(MAX_UPLOAD_BYTES)}.`)
+        setPhase('error')
+        return
       }
       const res = await reportUploadService.upload({
         projectId,

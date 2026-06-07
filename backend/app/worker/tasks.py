@@ -911,6 +911,8 @@ def _parse_archive_to_results(
     )
     del raw  # free the compressed copy; the decompressed map is bounded by limits
 
+    gated_hit: set = set()  # formats skipped purely because their flag is off
+
     # Tier 1 — Allure results directory.
     if any(_basename(n).lower().endswith("-result.json") for n in files):
         results = parse_allure_zip(files, run_id, s3_prefix=f"uploads/{run_id}")
@@ -926,6 +928,7 @@ def _parse_archive_to_results(
                 entry_fmt = _detect_format(base, data)
                 if entry_fmt in disabled:
                     # Admin disabled this format — don't let a zip bypass the gate.
+                    gated_hit.add(entry_fmt)
                     logger.warning("archive_entry_format_disabled entry=%s fmt=%s", base, entry_fmt)
                     continue
                 text = data.decode("utf-8", errors="replace")
@@ -934,9 +937,16 @@ def _parse_archive_to_results(
                 logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
                 continue
 
-    # Distinguish a truly empty/noise-only archive (→ empty_report) from one that
-    # HAD candidate files but none parsed (→ parse_error with a clear message).
     if files and not results:
+        # A zip whose only candidates were admin-disabled formats gets a message
+        # matching the single-file 503, not a misleading "unparseable".
+        if gated_hit:
+            raise ValueError(
+                f"Ingestion is disabled for: {', '.join(sorted(gated_hit))}. "
+                "Ask an admin to enable the feature flag."
+            )
+        # Otherwise: had candidate files but none parsed (distinct from a truly
+        # empty/noise-only archive, which returns [] → empty_report).
         raise ValueError(
             f"Archive contained {len(files)} file(s) but none could be parsed as a "
             "supported report (JUnit/TestNG XML, or Allure/Playwright/Cypress JSON)."

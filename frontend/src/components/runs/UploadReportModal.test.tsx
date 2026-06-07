@@ -27,12 +27,18 @@ vi.mock('react-hot-toast', () => ({
 import UploadReportModal from './UploadReportModal'
 import { MAX_UPLOAD_BYTES } from '@/services/reportUploadService'
 
-// jsdom's File lacks arrayBuffer() (standard in real browsers) — polyfill it so
-// the multi-file client-zip path can read each File's bytes.
+// jsdom's File lacks arrayBuffer() (standard in real browsers) — polyfill it via
+// FileReader so the multi-file client-zip path reads each File's REAL bytes
+// (enables a content round-trip assertion below).
 if (typeof File !== 'undefined' && !File.prototype.arrayBuffer) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(File.prototype as any).arrayBuffer = function () {
-    return Promise.resolve(new ArrayBuffer(0))
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader()
+      fr.onload = () => resolve(fr.result as ArrayBuffer)
+      fr.onerror = () => reject(fr.error)
+      fr.readAsArrayBuffer(this)
+    })
   }
 }
 
@@ -142,5 +148,22 @@ describe('UploadReportModal', () => {
     expect(arg.file).toBeInstanceOf(File)
     expect(arg.file.name).toMatch(/\.zip$/)
     expect(arg.file.type).toBe('application/zip')
+  })
+
+  it('de-duplicates identical filenames in the bundle (real round-trip)', async () => {
+    mockGetStatus.mockResolvedValue({
+      task_id: 't1', run_id: 'run-123', state: 'succeeded', result: { total: 2 },
+    })
+    const { uploadBtn, input } = setup()
+    fireEvent.change(input, { target: { files: [
+      new File(['<a/>'], 'dup.xml', { type: 'text/xml' }),
+      new File(['<b/>'], 'dup.xml', { type: 'text/xml' }),
+    ] } })
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalled())
+
+    const bytes = new Uint8Array(await mockUpload.mock.calls[0][0].file.arrayBuffer())
+    const { unzipSync } = await import('fflate')
+    expect(Object.keys(unzipSync(bytes)).sort()).toEqual(['2-dup.xml', 'dup.xml'])
   })
 })

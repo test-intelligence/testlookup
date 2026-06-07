@@ -103,6 +103,15 @@ def test_archive_tier2_gate_skips_disabled_format():
     assert "cy1" not in gated_names            # gated entry skipped
 
 
+def test_archive_gated_only_raises_disabled_message():
+    """A zip whose only candidate is an admin-disabled format fails with a
+    'disabled' message (matching the single-file 503), not 'unparseable'."""
+    cy = json.dumps({"stats": {"passes": 1, "failures": 0}, "results": []}).encode()
+    with pytest.raises(ValueError, match="disabled"):
+        _parse_archive_to_results(
+            _b64_zip({"mocha.json": cy}), "x.zip", "run-1", disabled_formats=["cypress"])
+
+
 def test_archive_with_files_but_none_parsable_raises():
     """A zip that has candidate files but none parse → ValueError (→ parse_error
     status), distinct from a truly empty/noise-only zip (→ empty_report)."""
