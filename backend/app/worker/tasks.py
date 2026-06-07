@@ -1083,6 +1083,10 @@ def _parse_file_to_results(
         from app.services.playwright_parser import parse_playwright_json
         return parse_playwright_json(content, run_id)
 
+    if fmt == "pytest":
+        from app.services.pytest_parser import parse_pytest_json
+        return parse_pytest_json(content, run_id)
+
     # junit (default) — reuse testng_parser which handles standard JUnit XML too
     from app.services.testng_parser import parse_testng_xml
     return parse_testng_xml(content, run_id)

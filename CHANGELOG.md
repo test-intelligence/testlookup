@@ -50,6 +50,10 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-07 — Manual upload: pytest-json-report parser (MRU-14))
+
+- **Native `pytest --json-report` support.** A new `pytest_parser` ingests the pytest-json-report plugin's JSON: each `tests[]` entry's `nodeid` → suite (file) + class + name, `outcome` → status (passed→PASSED, failed→FAILED, error→BROKEN, skipped/xfailed→SKIPPED, xpassed→PASSED), duration = setup+call+teardown (s→ms), and the failing phase's `longrepr` → error message. Auto-detected by the distinctive top-level `exitcode`+`root`+`summary` markers; also selectable as "pytest JSON" in the modal and accepted via `format=pytest`. (pytest's JUnit XML continues to work via the JUnit parser.) Works inside a zip too (tier-2). Tests: parser status/nodeid/duration mapping, malformed→empty, and format detection.
+
 ### Fixed (2026-06-07 — Manual upload: MRU-15/16/17 review)
 
 - **Failure metrics no longer undercount:** the retry-exhausted terminal (outer task handler) set a FAILED status but emitted no metric (the `_emit_failed` closure is scoped to the inner coroutine). It now emits `uploads_total{state=failed}` + `upload_failures_total{code=infra_error}` (distinct from the parse-time `ingest_error`), so the counters balance the terminal-status writes.

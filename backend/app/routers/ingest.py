@@ -123,7 +123,7 @@ async def ingest_batch(
     )
 
 
-_SUPPORTED_FORMATS = {"auto", "junit", "testng", "allure", "cypress", "playwright"}
+_SUPPORTED_FORMATS = {"auto", "junit", "testng", "allure", "cypress", "playwright", "pytest"}
 
 
 @router.post(
@@ -363,6 +363,16 @@ def _detect_format(filename: str, content: bytes) -> str:
     # ``tests``/``passes``/``failures`` + a ``results`` array keyed by spec
     # ``file``. No other supported format has ``stats`` + ``passes`` at
     # the root, so this is an unambiguous marker.
+    # pytest-json-report (`pytest --json-report`): top-level "exitcode" + "root"
+    # + "summary" + a "tests" array of {nodeid, outcome}. "exitcode"/"root" are
+    # unique to it among supported formats, so this is unambiguous.
+    if looks_like_json and (
+        '"exitcode"' in stripped[:4096]
+        and '"summary"' in stripped[:4096]
+        and '"root"' in stripped[:4096]
+    ):
+        return "pytest"
+
     if looks_like_json and (
         '"stats"' in stripped[:2048]
         and '"passes"' in stripped[:2048]

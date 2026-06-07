@@ -408,6 +408,7 @@ export default function UploadReportModal({
                   <li><b>Allure</b> — a single <code>*-result.json</code>, or a <code>.zip</code> of the <code>allure-results/</code> folder</li>
                   <li><b>Playwright</b> — <code>--reporter=json</code> output</li>
                   <li><b>Cypress</b> — Mochawesome merged <code>.json</code></li>
+                  <li><b>pytest</b> — <code>--junitxml</code> (XML), or <code>pytest --json-report</code> (JSON)</li>
                   <li><b>Multiple files</b> — select several (zipped automatically) or upload one <code>.zip</code></li>
                 </ul>
               </details>

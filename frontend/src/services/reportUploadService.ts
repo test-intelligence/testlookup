@@ -27,6 +27,7 @@ export type ReportFormat =
   | 'allure'
   | 'cypress'
   | 'playwright'
+  | 'pytest'
 
 /** Formats the backend `/ingest/file` endpoint accepts. Cypress/Playwright are
  *  feature-flagged server-side and may 503 if disabled for the project. */
@@ -37,6 +38,7 @@ export const SUPPORTED_FORMATS: ReadonlyArray<{ value: ReportFormat; label: stri
   { value: 'allure', label: 'Allure JSON' },
   { value: 'playwright', label: 'Playwright JSON' },
   { value: 'cypress', label: 'Cypress (Mochawesome) JSON' },
+  { value: 'pytest', label: 'pytest JSON (json-report)' },
 ]
 
 /** 50 MB — must match the backend MAX_FILE_SIZE cap in routers/ingest.py. */
