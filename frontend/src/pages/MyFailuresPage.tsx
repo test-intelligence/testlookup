@@ -21,6 +21,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
+import { formatRunWhen } from '@/utils/formatters'
 import { useMyFailures } from '@/hooks/useMyFailures'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -362,10 +363,13 @@ function FailureRow({
             suite) incremental ``Run #N``; falls back to the raw SDK
             build_number for pre-run_seq rows. The short test_run_id slug
             is shown underneath as a copy/correlation aid. */}
+        {/* Absolute run datetime on hover — "Run #N" repeats per (project,
+            suite), so the precise timestamp disambiguates same-numbered runs
+            (the column also shows a relative age). */}
         {item.run_seq != null ? (
-          <span className="text-[var(--color-text)]">Run #{item.run_seq}</span>
+          <span className="text-[var(--color-text)]" title={formatRunWhen(item.created_at) || undefined}>Run #{item.run_seq}</span>
         ) : item.build_number ? (
-          <span className="text-[var(--color-text)]">{item.build_number}</span>
+          <span className="text-[var(--color-text)]" title={formatRunWhen(item.created_at) || undefined}>{item.build_number}</span>
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
