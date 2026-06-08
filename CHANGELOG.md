@@ -50,6 +50,10 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-08 — run identifiers show when the run was generated)
+
+"Run #N" repeats per (project, suite) and across projects, so the same label can point at many different executions — on `/live` ("Run #1") and elsewhere it was impossible to tell same-numbered rows apart. Added a shared, null-safe `formatRunWhen(iso)` helper (`utils/formatters.ts`, compact `MMM dd, HH:mm`; returns `''` for missing/invalid timestamps so legacy rows never render "Invalid Date"). Wired into the `/live` sessions table — each run now shows its start time beside the build/run id. (Remaining run-label sites — `/runs`, `/my-failures`, `/intelligence`, `/deep-investigation`, run-compare, the `/agents` live card — are being threaded through the same helper in follow-up commits on this branch.) Tests: `utils/formatters.test.ts` (format, ISO input, null/empty/invalid → '').
+
 ### Fixed (2026-06-07 — Manual upload: MRU-14 review)
 
 Review found 2 high + 1 low; fixed before they shipped:

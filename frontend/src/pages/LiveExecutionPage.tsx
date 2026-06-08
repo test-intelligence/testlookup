@@ -54,6 +54,7 @@ import PageShell from '@/components/layout/PageShell'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { formatRunWhen } from '@/utils/formatters'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { isActivelyRunning, isStaleRunning } from '@/utils/liveSessionFreshness'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -1113,8 +1114,11 @@ export default function LiveExecutionPage() {
                               ? `Run #${s.run_seq}`
                               : s.build_number || s.run_id.slice(0, 8)}
                           </Link>
+                          {/* "Run #N" repeats per (project, suite); show when the
+                              run started so same-numbered rows are distinguishable. */}
                           <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
                             {s.build_number || s.run_id.slice(0, 8)}
+                            {formatRunWhen(s.started_at) && <> · {formatRunWhen(s.started_at)}</>}
                           </div>
                         </div>
                       </div>
