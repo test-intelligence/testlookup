@@ -319,6 +319,7 @@ async def _upsert_test_run(db, sentinel: SentinelFile, minio_prefix: str) -> Tes
             build_number=sentinel.build_number,
             jenkins_job=sentinel.jenkins_job,
             trigger_source=sentinel.trigger_source,
+            ingestion_source="file",
             branch=sentinel.branch,
             commit_hash=sentinel.commit_hash,
             ocp_pod_name=sentinel.ocp_pod_name,

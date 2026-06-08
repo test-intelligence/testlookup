@@ -24,6 +24,9 @@ export interface TestRun {
   release_name?: string
   release_id?: string
   trigger_source?: string
+  /** How the run entered TestLookup: 'live' | 'sdk' | 'upload' | 'file' | 'unknown'.
+   *  Drives the "Uploaded" badge. Optional for older API responses. */
+  ingestion_source?: string | null
   primary_suite_name?: string | null
   suite_names?: string[] | null
   /** Human-readable, per-(project, primary_suite_name) run number, 1-based.

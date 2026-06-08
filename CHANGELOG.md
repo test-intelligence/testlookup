@@ -50,6 +50,101 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Tested (2026-06-08 — /releases delete: cascade contract regression)
+
+Pinned the cascade contract behind the `/releases` **Delete** button (backend `DELETE /api/v1/releases/{id}` → `release_service.delete_release` → bare `db.delete(release)`). Audit confirmed the end-to-end delete path already exists (ADMIN-gated, project-scoped endpoint; UI button + confirm + toast + SWR refetch), so no behaviour change — added the missing guard tests:
+- `Release.phases` and `Release.test_run_links` must stay `delete-orphan` (dropping it would 500 any delete of a release that has phases or linked runs via an FK `IntegrityError`).
+- Deleting a release must **not** cascade into `TestRun` — `Release` holds no relationship to `TestRun`, and the link's `test_run_id`/`release_id` FKs are `ON DELETE CASCADE` (run-removal clears the link, never the reverse). Runs survive release deletion.
+- `backend/tests/regression/test_release_delete_cascade.py` (4 tests, mapper-introspection — no DB needed).
+
+### Fixed (2026-06-07 — Manual upload: MRU-14 review)
+
+Review found 2 high + 1 low; fixed before they shipped:
+- **Auto-detect no longer misses real CI reports:** the pytest sniffer required `"summary"`, which sits *after* pytest-json-report's unbounded `environment` block and is pushed past the 4 KB detection window on package-heavy CI images (→ silently mis-parsed as Allure → empty run). Now keys on `exitcode`+`root` alone (both top-of-doc + unique).
+- **No more cross-file fingerprint collisions:** function/class tests folded the file only into `suite_name`, but the dedup fingerprint is `class_name::test_name` — so `test_a.py::test_smoke` and `test_b.py::test_smoke` collided and one silently overwrote the other. The file is now folded into `class_name` (matching the playwright/cypress parsers); `suite_name` stays the bare file for grouping.
+- Parametrized nodeids with `::` inside the `[...]` id (`test_q[a::b]`) split correctly. Tests added for all three.
+
+### Added (2026-06-07 — Manual upload: pytest-json-report parser (MRU-14))
+
+- **Native `pytest --json-report` support.** A new `pytest_parser` ingests the pytest-json-report plugin's JSON: each `tests[]` entry's `nodeid` → suite (file) + class + name, `outcome` → status (passed→PASSED, failed→FAILED, error→BROKEN, skipped/xfailed→SKIPPED, xpassed→PASSED), duration = setup+call+teardown (s→ms), and the failing phase's `longrepr` → error message. Auto-detected by the distinctive top-level `exitcode`+`root`+`summary` markers; also selectable as "pytest JSON" in the modal and accepted via `format=pytest`. (pytest's JUnit XML continues to work via the JUnit parser.) Works inside a zip too (tier-2). Tests: parser status/nodeid/duration mapping, malformed→empty, and format detection.
+
+### Fixed (2026-06-07 — Manual upload: MRU-15/16/17 review)
+
+- **Failure metrics no longer undercount:** the retry-exhausted terminal (outer task handler) set a FAILED status but emitted no metric (the `_emit_failed` closure is scoped to the inner coroutine). It now emits `uploads_total{state=failed}` + `upload_failures_total{code=infra_error}` (distinct from the parse-time `ingest_error`), so the counters balance the terminal-status writes.
+- Clarified `upload_processing_seconds` help (success-only by design) and added the backend tests the prior entry referenced (migration 0092 chain/downgrade + metrics label sets).
+
+### Added (2026-06-07 — Manual upload: metrics, in-app help, rollout flag (MRU-15/16/17))
+
+- **MRU-17 — rollout flag.** The upload UI (the `/runs` "Upload report" button, the sidebar "Upload Report" item, and the `/runs?upload=1` deep-link) is gated behind a new `manual_upload` feature flag (migration 0092, **default OFF**) — an ADMIN enables it per environment/project/role from Settings › Feature Flags, mirroring `cypress_ingest`/`playwright_ingest`. A new `useFeatureEnabled(key)` hook resolves the flag for the active project. The `POST /api/v1/ingest/file` endpoint itself is not gated (API/CI clients unaffected).
+- **MRU-15 — metrics.** Prometheus counters/histogram for uploads: `testlookup_uploads_total{state,format}`, `testlookup_upload_failures_total{code}`, and `testlookup_upload_processing_seconds`, emitted at each worker terminal (succeeded / parse_error / empty_report / ingest_error / zip safety codes).
+- **MRU-16 — in-app help.** The upload modal has a "Supported formats & how to export" expandable listing each framework's export (JUnit/TestNG XML, Allure JSON or zip, Playwright `--reporter=json`, Cypress Mochawesome, multi-file). (Kept in-app since `docs/` is gitignored.)
+- Tests: Sidebar flag-gate (hidden off / shown on); migration 0092 chains + downgrade; metrics import.
+
+### Added (2026-06-07 — Manual upload: raw archival + skip-AI toggle (MRU-9 / MRU-8))
+
+- **MRU-9 — Raw uploaded files are archived** (byte-exact) to the storage backend under `uploads/{project_id}/{run_id}/{filename}` for audit/replay; the key is linked onto the run's `minio_prefix`. Best-effort — a storage hiccup never fails the ingest.
+- **MRU-8 — "Skip AI analysis" toggle** in the upload modal. When checked, `finalize_run(run_ai=False)` skips the agent-pipeline enqueue (faster ingest, no LLM cost) while everything else (clustering inputs, owners, aggregates) still runs; the user can trigger AI later from the run page. `run_ai` defaults to true and threads endpoint → task → `finalize_run` (the SDK-batch and webhook paths are unaffected — they keep the default).
+- Tests: router asserts `run_ai` flows + the raw file is archived (`put_object` called, key passed); service asserts the `run_ai` field; modal toggle wired.
+
+### Added (2026-06-07 — Manual upload: multi-file selection (MRU-13))
+
+- **Upload several report files at once.** The modal now accepts multiple files; when more than one is selected they're **zipped client-side** (via `fflate`) into a single `reports-bundle.zip` and sent through the existing archive path (the backend tier-2 detects + parses each entry), so "N JUnit XMLs" or a mixed set ingest as one run. A single file still uploads as-is. Duplicate filenames in a bundle are de-duplicated; total selection is size-capped client-side. Test: selecting 2 files produces one `application/zip` upload.
+
+### Fixed (2026-06-06 — Manual upload: MRU-12 review hardening)
+
+Multi-pass review (3 lenses, adversarially verified) of the zip wiring found 9 issues; the high + quick wins are fixed:
+
+- **Closed a feature-flag bypass** (was: high — all 3 review highs). Zipping a Cypress/Playwright report skipped the admin-gated `cypress_ingest`/`playwright_ingest` flag (the router only gated single files). The router now resolves the disabled gated formats and passes `disabled_formats` to the worker, which **skips matching tier-2 entries** — a zip can't re-enable a disabled parser. Covered by a test (gated → skipped, allowed → parsed) and a parametrized router test (`format=cypress` + zip → `archive`, never 503).
+- **Fixed a latent crash** — several worker `logger.warning(..., key=val)` calls used structlog-style kwargs, but `worker/tasks.py`'s `logger` is **stdlib** (`%s` positional), so the parse-error/archive paths would have raised `TypeError` mid-handler. Converted to `%s` style.
+- Freed the compressed `raw` bytes after extraction (memory peak); added tests for noise-only zip → empty, and `UnsafeZipError` propagating through the `archive` dispatch.
+
+### Added (2026-06-06 — Manual upload: Allure-zip ingestion wired (MRU-12))
+
+- **Upload an Allure results ZIP (or a zip of several reports) from the UI.** The endpoint now detects a zip by `PK` magic / `.zip` **before** the utf-8 decode (binary-safe), base64-encodes it for the Celery JSON transport, and dispatches `file_format="archive"`. The worker's `_parse_archive_to_results` safe-extracts in memory (the MRU-11 `safe_extract_zip` with config-driven limits) then dispatches **tier-1** (any `*-result.json` → `parse_allure_zip`) or **tier-2** (heterogeneous, e.g. N JUnit XMLs → per-entry detect + existing parsers), filtering `__MACOSX`/dotfile noise. A zip-safety violation surfaces as the specific `error.code` (`zip_bomb`/`unsafe_path`/…) in the upload status, not a generic failure.
+- Archive limits are configurable: `MAX_ARCHIVE_UNCOMPRESSED_BYTES` (200 MB), `MAX_ARCHIVE_ENTRIES` (5 000), `MAX_ARCHIVE_ENTRY_BYTES` (50 MB), `MAX_ARCHIVE_RATIO` (100×). The modal now accepts `.zip`. Tests: `test_archive_upload.py` (tier-1/tier-2 dispatch, noise filtering, zip-bomb propagation) + a router test asserting zip → `archive` + base64. Green on py3.11.
+
+### Added (2026-06-06 — Manual upload: Allure-zip spike PoC (MRU-11))
+
+- **Spike for Allure ZIP upload resolved (GO)** with a proof-of-concept (not yet wired to the endpoint — that's MRU-12). `app/services/safe_archive.py` adds a hardened, in-memory `safe_extract_zip` that enforces concrete limits — 200 MB uncompressed total, 5 000 entries, 50 MB/entry, 100× ratio — and rejects path traversal/absolute/UNC, symlinks, and nested archives, streaming each entry with a running byte cap (never trusting `ZipInfo.file_size`); each violation raises `UnsafeZipError(code)` (`zip_bomb`/`zip_too_large`/`too_many_entries`/`unsafe_path`/`nested_zip`/`bad_zip`).
+- `allure_parser.parse_allure_zip(files, run_id, s3_prefix)` reuses `parse_allure_result` per `*-result.json`, backfills `suite_name` from `*-container.json` hierarchy (only when no suite label), and collapses retries by `historyId` to the latest attempt with `is_flaky`/`retry_count`. Decision note + concrete limits table recorded in `docs/PRD-manual-report-upload.md` §9.1. Tests: `test_allure_zip_spike.py` (12 — parse + every modelled attack). Green on py3.11.
+
+### Fixed (2026-06-06 — Manual upload: MRU-5/6 review hardening)
+
+Multi-pass review (4 lenses, adversarially verified) of the status/parse-error slice found 15 issues; the highs/mediums + quick wins are fixed:
+
+- **Success count is no longer always "0 passed · 0 failed"** (was: high). The per-status summary compared UPPERCASE while the JUnit/TestNG/Allure parsers emit lowercase — fixed with a case-insensitive `_summarize_upload` helper. `total` now reflects rows **actually ingested** (not parsed), and an all-rows-failed ingest reports `failed` instead of "succeeded, 0 tests".
+- **The status endpoint's IDOR/auth surface is now tested** (was: high coverage gap) — 404 unknown, 403 cross-project, 200 member (+ asserts `project_id` isn't leaked in the response).
+- **No spurious 403 on the status poll** — the worker is now enqueued with the canonical UUID so its status writes match the seeded `pending` record and the project-scoped-key check.
+- **`get_status` is now best-effort** (symmetric with `set_status`): a Redis outage degrades to a clean 404/"still processing" instead of a 500; non-dict payloads return None.
+- **Frontend poll** now treats a 403 as a real error (stops, surfaces it) instead of masking it as success after timeout, and the ~60s timeout fallback renders a neutral "still processing" (clock) state rather than a green check.
+- Annotation fix on the new endpoint (`tuple[User, uuid.UUID | None]`). Tests added: casing/total summary, malformed-Allure-raises, endpoint 404/403/200.
+
+### Added (2026-06-06 — Manual upload: async status + parse-error feedback)
+
+- **Upload no longer fails silently** (PRD MRU-5/6). A new Redis-backed status record (`app/services/upload_status.py`, 24h TTL) is updated by the `ingest_uploaded_file` task at each stage (`pending → parsing → ingesting → succeeded | failed`) and exposed via **`GET /api/v1/ingest/uploads/{task_id}`** (project-scoped — 404 if unknown/expired, 403 if the caller can't access the run's project, so a guessed task_id can't leak another tenant's run).
+- **Parse failures and empty reports are now surfaced, not swallowed.** A parser exception → `failed` with `error.code=parse_error`; a valid-but-zero-tests file → `failed` with `empty_report`; malformed Allure JSON now raises instead of silently producing an empty run. Parse/empty failures are **not retried** (the file won't parse on retry); only transient infra errors retry, surfacing `ingest_error` once exhausted.
+- **The upload modal polls the status** after the 202 and shows a real outcome: a "Processing…" spinner, then **"Processed N tests (P passed, F failed)"** with **View run**, or the parse error inline with retry. Falls back to "still processing" after ~60s.
+- Tests: `test_upload_status.py` (roundtrip, TTL, missing→None, error-swallowing) + modal polling success/parse-failure. All green on the py3.11 venv.
+
+### Fixed (2026-06-06 — Manual upload: review-driven hardening + collision policy)
+
+A multi-pass review (5 lenses, adversarially verified) of the upload feature surfaced 16 confirmed issues; the highs/mediums + quick wins are fixed here (pulling MRU-7's collision policy forward):
+
+- **Uploads no longer merge into an unrelated run on a build-label collision** (was: high — silent data corruption). `create_run_from_payload` gained `reuse_existing` (default True keeps SDK/CI retry-idempotency); the manual-upload task passes `reuse_existing=False`, so an upload **always creates a fresh run**, auto-suffixing the build label (`-2`, `-3`, … then a random token) via `_unique_build_number` when it collides. This also makes the 202 `run_id` authoritative, fixing the **"View run" → 404** where a merged run discarded the response id.
+- **SDK/CI reuse no longer risks clobbering `ingestion_source`** — the reuse branch returns the existing run untouched (pinned by a new test: a `live` run reused by an `sdk` ingest stays `live`).
+- **Default build label is now millisecond + random** (was per-second), so back-to-back / concurrent blank-label uploads don't collide.
+- **Modal: a rejected file now clears any prior valid selection** (was: could submit a stale file under a new file's error) and resets the input; **422 `detail` arrays no longer render as `[object Object]`** (string-guarded); **Space on the dropzone no longer scrolls the modal** (`preventDefault`).
+- Tests: backend collision/reuse/suffix cases + `UploadReportModal.test.tsx` (gating, validation rejection + clear, success → `onSuccess`). All green on the py3.11 venv.
+
+### Added (2026-06-06 — Manual report upload UI)
+
+- **Upload a test report from the UI** (PRD MRU-4). New `UploadReportModal` + `reportUploadService` wire the existing `POST /api/v1/ingest/file` endpoint to a drag-and-drop modal: pick a JUnit/TestNG `.xml` or Allure/Playwright/Cypress `.json` file, choose a format (default auto-detect), optionally set build label / release / branch / commit, and upload with a live progress bar. On accept (202) the user is deep-linked to the new run; uploaded runs carry `ingestion_source='upload'` and show the "Uploaded" badge. Client-side guards: 50 MB cap (matches backend), extension allow-list, and All-Projects mode disables upload (a run must target one project). Entry points: an "Upload report" button on `/runs` and an "Upload Report" item in the Testing sidebar group (`/runs?upload=1` deep-link). Gated to QA-engineer+. Errors (incl. a 503 for a disabled Cypress/Playwright feature flag) surface inline. Async parse status feedback is the next slice (MRU-5).
+
+### Added (2026-06-06 — Run source tracking for manual report upload)
+
+- **`TestRun.ingestion_source`** (`live | sdk | upload | file | unknown`) records how a run's results entered TestLookup (migration `0091`, new `IngestionSource` enum). It's set at every run-creation site — live-stream stub/upsert/drainer/persist → `live`, SDK batch (`/api/v1/ingest`) → `sdk`, manual file upload (`/api/v1/ingest/file`) → `upload`, MinIO/sentinel webhook → `file` — and `create_run_from_payload` now threads a caller-supplied `ingestion_source`. Existing rows are backfilled by a best-effort heuristic (event_archive/live_stream → `live`; trigger_source `api` → `sdk`; minio_prefix → `file`; else `unknown`). The column is `NOT NULL` with `server_default='unknown'`; downgrade drops it.
+- **API + UI expose the source:** `TestRunSummary` carries `ingestion_source`, and the `/runs` table renders an **"Uploaded"** badge for `ingestion_source='upload'`. This is the first slice of the Manual Test Report Upload feature (see `docs/PRD-manual-report-upload.md`, tickets MRU-1/MRU-2/MRU-3); the backend file-ingestion path + parsers already existed and are unchanged.
+
 ### Added (2026-04-25/26 — Phase OS-Deploy)
 
 - **Multi-cloud Kubernetes overlays** -- `k8s/overlays/{aws-eks,gcp-gke,azure-aks,self-hosted}/` cover the four major deployment targets. All inherit the existing `prod` overlay so HPA tuning and CORS config stay shared; each only patches what's actually cloud-specific (Ingress class, StorageClass, image registry).

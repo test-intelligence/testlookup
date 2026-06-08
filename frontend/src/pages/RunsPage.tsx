@@ -37,11 +37,11 @@
  * agentService.bulkTriggerPipelines call.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle, AlertTriangle, ArrowRight, BarChart3, Check, ChevronRight,
   Clock, Code as CodeIcon, GitBranch, GitCompare, Layers, Search, ShieldCheck,
-  Sparkles, Stethoscope, TrendingUp, Wrench, XCircle, Zap,
+  Sparkles, Stethoscope, TrendingUp, Upload, Wrench, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -51,11 +51,13 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import UploadReportModal from '@/components/runs/UploadReportModal'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
 import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
@@ -1164,6 +1166,19 @@ function RunsTable({
                     <Link to={`/runs/${r.id}`} className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline">
                       {r.run_seq != null ? `Run #${r.run_seq}` : `#${String(r.build_number)}`}
                     </Link>
+                    {r.ingestion_source === 'upload' && (
+                      <span
+                        className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-medium align-middle"
+                        style={{
+                          background: 'rgba(99,102,241,0.12)',
+                          border: '1px solid rgba(99,102,241,0.30)',
+                          color: '#a5b4fc',
+                        }}
+                        title="Results were manually uploaded from a report file"
+                      >
+                        Uploaded
+                      </span>
+                    )}
                   </td>
                   <td style={{ padding: '8px 12px' }}>
                     <SuiteBadge
@@ -1633,6 +1648,26 @@ export default function RunsPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { isQaEngineer } = usePermissions()
+  // Rollout gate (MRU-17): the upload UI is hidden until an admin enables the
+  // `manual_upload` feature flag.
+  const uploadEnabled = useFeatureEnabled('manual_upload')
+
+  // Manual report upload (PRD MRU-4). Opens from the header button or via the
+  // sidebar deep-link ``/runs?upload=1``. Disabled in All-Projects mode — an
+  // upload must target one concrete project.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [uploadOpen, setUploadOpen] = useState(false)
+  useEffect(() => {
+    if (searchParams.get('upload') === '1' && !isAllProjects && uploadEnabled) setUploadOpen(true)
+  }, [searchParams, isAllProjects, uploadEnabled])
+  const closeUpload = () => {
+    setUploadOpen(false)
+    if (searchParams.has('upload')) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('upload')
+      setSearchParams(next, { replace: true })
+    }
+  }
 
   // Global shared time-window preference — selection here propagates
   // to every other window-filtered page (and vice versa). Snapped to
@@ -1955,6 +1990,22 @@ export default function RunsPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {uploadEnabled && (
+            <GhostBtn
+              onClick={() => setUploadOpen(true)}
+              disabled={!isQaEngineer || isAllProjects}
+              title={
+                !isQaEngineer
+                  ? 'QA Engineer role required'
+                  : isAllProjects
+                    ? 'Select a single project to upload a report into'
+                    : 'Upload a JUnit / TestNG / Allure / Playwright / Cypress report file'
+              }
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Upload report
+            </GhostBtn>
+          )}
           <DangerBtn
             onClick={handleTriggerAllFailed}
             disabled={!isQaEngineer || model.failedRuns === 0}
@@ -2127,6 +2178,17 @@ export default function RunsPage() {
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
+
+      {uploadOpen && uploadEnabled && !isAllProjects && activeProjectId && (
+        <UploadReportModal
+          projectId={activeProjectId}
+          onClose={closeUpload}
+          onSuccess={(runId) => {
+            closeUpload()
+            navigate(`/runs/${runId}`)
+          }}
+        />
+      )}
     </PageShell>
   )
 }

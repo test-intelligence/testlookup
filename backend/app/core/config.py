@@ -105,6 +105,15 @@ class Settings(BaseSettings):
     # See docs/SCALABLE_INGESTION_DESIGN.md. Both limits operate per
     # project, per minute. Set to 0 to disable.
     INGEST_RATE_LIMIT_PER_MINUTE: int = 200       # batches per project per minute
+
+    # ── Manual upload: archive (zip) safety limits (MRU-12) ───
+    # Bound the DECOMPRESSED footprint of an uploaded report zip (the
+    # compressed wire size is already capped by the 50MB multipart limit).
+    # Enforced by services.safe_archive.safe_extract_zip.
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES: int = 200 * 1024 * 1024  # 200 MB total
+    MAX_ARCHIVE_ENTRIES: int = 5_000
+    MAX_ARCHIVE_ENTRY_BYTES: int = 50 * 1024 * 1024          # 50 MB per entry
+    MAX_ARCHIVE_RATIO: int = 100                             # uncompressed/compressed
     # Adaptive Redis-memory backpressure. When ``maxmemory`` is set on
     # Redis, the percentage gate fires; when it isn't, the absolute
     # byte gate kicks in instead. Both 0 disables the check entirely.
