@@ -120,6 +120,58 @@ async def test_no_flakes_at_all_returns_empty_so_hard_regression_copy_is_valid()
 
 
 @pytest.mark.asyncio
+async def test_manual_query_is_tenant_scoped_by_allowed_project_ids():
+    """The merged manual query must carry the same tenant scope as the auto one —
+    when scoped by membership (project_id=None + allowed_project_ids), the manual
+    query's bound params must include the allowed-id placeholders (defence in
+    depth via ``_tenant_filter``)."""
+    import uuid as _uuid
+    pid = _uuid.uuid4()
+    auto = [_row(test_fingerprint="A", test_name="a", suite_name="s",
+                 class_name="C", project_name="p", total_runs=10, fail_count=3,
+                 pass_count=7, failure_rate_pct=30.0, last_seen=None)]
+    db = _db(auto, [])
+    await analytics_service.flaky_tests(
+        db, None, 30, 20, allowed_project_ids=[pid],
+    )
+    assert db.execute.await_count == 2          # auto + manual both ran
+    manual_params = db.execute.await_args_list[1].args[1]
+    assert manual_params.get("pid_0") == str(pid)   # manual query is scoped too
+    assert "flaky_status" in manual_params          # ...and it is the manual query
+
+
+@pytest.mark.asyncio
+async def test_manual_query_passes_through_suite_filter():
+    """A suite filter on /failures must bind on the manual query too, so manual
+    flakes are scoped to the same suite the user is looking at."""
+    auto = [_row(test_fingerprint="A", test_name="a", suite_name="API",
+                 class_name="C", project_name="p", total_runs=10, fail_count=3,
+                 pass_count=7, failure_rate_pct=30.0, last_seen=None)]
+    db = _db(auto, [])
+    await analytics_service.flaky_tests(db, "proj", 30, 20, suite_name="API Tests")
+    manual_params = db.execute.await_args_list[1].args[1]
+    assert manual_params.get("suite_name") == "api tests"   # normalised + bound
+
+
+@pytest.mark.asyncio
+async def test_manual_row_with_null_fingerprint_is_skipped():
+    """A manual row with a NULL/empty fingerprint must never enter the merged
+    list (it can't be deduped or routed to a test)."""
+    auto = []
+    manual = [
+        _row(test_fingerprint=None, test_name="x", suite_name="s",
+             class_name="C", project_name="p", total_runs=1, fail_count=1,
+             pass_count=0, failure_rate_pct=100.0, last_seen=None),
+        _row(test_fingerprint="B", test_name="b", suite_name="s",
+             class_name="C", project_name="p", total_runs=2, fail_count=2,
+             pass_count=0, failure_rate_pct=100.0, last_seen=None),
+    ]
+    out = await analytics_service.flaky_tests(_db(auto, manual), "proj", 30, 20)
+    fps = {i["test_fingerprint"] for i in out["items"]}
+    assert fps == {"B"}                         # null one dropped
+
+
+@pytest.mark.asyncio
 async def test_merged_results_respect_the_limit():
     """auto + manual combined is capped at ``limit``."""
     auto = [_row(test_fingerprint=f"A{i}", test_name="a", suite_name="s",

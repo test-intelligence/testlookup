@@ -217,7 +217,10 @@ async def flaky_tests(
         )
         for row in (await db.execute(manual_query, manual_params)).fetchall():
             data = dict(row._mapping)
-            if data["test_fingerprint"] in seen:
+            # Defensive: the SQL already filters NULL fingerprints, but never
+            # let a null/empty fingerprint through the Python merge either (it
+            # would dedup-collide and isn't routable to a test).
+            if not data["test_fingerprint"] or data["test_fingerprint"] in seen:
                 continue
             seen.add(data["test_fingerprint"])
             data["source"] = "manual"
