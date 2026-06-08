@@ -50,6 +50,10 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-08 — /agents: AI report expanded by default)
+
+The `/agents` (AI Pipelines) page now shows the **AI report by default** once a pipeline run is selected — it's the headline output, so users no longer have to click "View AI report" to see it. `showSummary` defaults to `true` (and stays expanded when switching between runs); the toggle still collapses it ("Hide report"). The report is still lazy-fetched, now triggered as soon as a pipeline is picked. Tests: a new `AgentStatusPage.test.tsx` case asserts the report content renders without a click and the toggle reads "Hide report"; updated three existing tests that previously had to click "View AI report". (Per-run/suite *context* on each pipeline card is a follow-up in the same branch.)
+
 ### Fixed (2026-06-07 — Manual upload: MRU-14 review)
 
 Review found 2 high + 1 low; fixed before they shipped:

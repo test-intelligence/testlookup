@@ -180,13 +180,84 @@ describe('AgentStatusPage', () => {
       </MemoryRouter>,
     )
 
+    // Selecting a pipeline is enough — the AI report is expanded by default now
+    // (no "View AI report" click required).
     fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
-    fireEvent.click(screen.getByRole('button', { name: /view ai report/i }))
 
     await waitFor(() => {
       expect(screen.getAllByText('Executive Summary').length).toBeGreaterThan(0)
     })
     expect(screen.getAllByText(/DB timeout regression/i).length).toBeGreaterThan(0)
+  })
+
+  it('shows the AI report by default (expanded) once a pipeline is selected', async () => {
+    const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } = await import('@/hooks/useAgentRuns')
+
+    ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
+    ;(usePipelines as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: [
+        {
+          id: 'pipe-1',
+          test_run_id: 'run-1',
+          workflow_type: 'offline',
+          status: 'completed',
+          started_at: '2026-03-31T10:00:00Z',
+          completed_at: '2026-03-31T10:01:00Z',
+          error: null,
+          created_at: '2026-03-31T10:00:00Z',
+        },
+      ],
+      isLoading: false,
+    })
+    ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: [
+        {
+          stage_name: 'summary',
+          status: 'completed',
+          started_at: '2026-03-31T10:00:10Z',
+          completed_at: '2026-03-31T10:00:20Z',
+          result_data: { summary_length: 120 },
+          error: null,
+        },
+      ],
+      isLoading: false,
+    })
+    ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
+    ;(useRunSummary as ReturnType<typeof vi.fn>).mockImplementation((runId: string | null) => ({
+      data: runId === 'run-1'
+        ? {
+            test_run_id: 'run-1',
+            project_id: 'proj-1',
+            build_number: '42',
+            executive_summary: 'Default-expanded AI report content.',
+            markdown_report: '## Executive Summary\nDefault-expanded AI report content.',
+            anomaly_count: 0,
+            is_regression: false,
+            analysis_count: 1,
+            generated_at: '2026-03-31T10:01:00Z',
+          }
+        : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <Routes>
+          <Route path="/agents" element={<AgentStatusPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
+
+    // Report content is visible WITHOUT any "View AI report" click...
+    await waitFor(() => {
+      expect(screen.getAllByText(/Default-expanded AI report content/i).length).toBeGreaterThan(0)
+    })
+    // ...and the toggle now offers to HIDE it (proving it starts expanded).
+    expect(screen.getByRole('button', { name: /hide report/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /view ai report/i })).not.toBeInTheDocument()
   })
 
   it('surfaces the summary stage error when the report endpoint fails', async () => {
@@ -268,7 +339,7 @@ describe('AgentStatusPage', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
-    fireEvent.click(screen.getByRole('button', { name: /view ai report/i }))
+    // AI report is expanded by default — no "View AI report" click needed.
 
     expect(screen.getByText('The AI report could not be loaded.')).toBeInTheDocument()
     expect(screen.getAllByText(/model 'qwen2.5:7b' not found/i).length).toBeGreaterThan(0)
@@ -599,7 +670,7 @@ describe('AgentStatusPage', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
-    fireEvent.click(screen.getByRole('button', { name: /view ai report/i }))
+    // AI report is expanded by default — no "View AI report" click needed.
 
     await waitFor(() => {
       expect(screen.getAllByText('Executive Summary').length).toBeGreaterThan(0)

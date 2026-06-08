@@ -478,7 +478,12 @@ export default function AgentStatusPage() {
   const navigate = useNavigate()
   const [selectedPipeline, setSelectedPipeline] = useState<string | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
-  const [showSummary, setShowSummary] = useState(false)
+  // The AI report is shown by default (expanded) once a pipeline is selected —
+  // it's the headline output of the pipeline, so users shouldn't have to click
+  // "View AI report" to see it. The toggle still lets them collapse it. The
+  // ``useRunSummary`` fetch below is gated on this, so default-true means the
+  // report fetches as soon as a pipeline is picked.
+  const [showSummary, setShowSummary] = useState(true)
   const { data: aiConfig } = useAIConfig()
   // Recent runs feed the suite+build dropdown so users can browse pipelines
   // across runs instead of only the one in the URL. Size matches the
@@ -492,7 +497,10 @@ export default function AgentStatusPage() {
   useProjectChangeReset(() => {
     setSelectedPipeline(null)
     setSelectedRunId(null)
-    setShowSummary(false)
+    // Stay expanded-by-default: the next pipeline the user picks shows its
+    // report without a click. (No pipeline is selected right after a reset, so
+    // nothing renders until then anyway.)
+    setShowSummary(true)
   })
 
   const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines(runId)
@@ -711,7 +719,8 @@ export default function AgentStatusPage() {
                 onSelect={() => {
                   setSelectedPipeline(p.id)
                   setSelectedRunId(p.test_run_id)
-                  setShowSummary(false)
+                  // Keep the AI report expanded by default when switching runs.
+                  setShowSummary(true)
                 }}
               />
             ))
