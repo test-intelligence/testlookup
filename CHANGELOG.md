@@ -50,6 +50,13 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Tested (2026-06-08 — /releases delete: cascade contract regression)
+
+Pinned the cascade contract behind the `/releases` **Delete** button (backend `DELETE /api/v1/releases/{id}` → `release_service.delete_release` → bare `db.delete(release)`). Audit confirmed the end-to-end delete path already exists (ADMIN-gated, project-scoped endpoint; UI button + confirm + toast + SWR refetch), so no behaviour change — added the missing guard tests:
+- `Release.phases` and `Release.test_run_links` must stay `delete-orphan` (dropping it would 500 any delete of a release that has phases or linked runs via an FK `IntegrityError`).
+- Deleting a release must **not** cascade into `TestRun` — `Release` holds no relationship to `TestRun`, and the link's `test_run_id`/`release_id` FKs are `ON DELETE CASCADE` (run-removal clears the link, never the reverse). Runs survive release deletion.
+- `backend/tests/regression/test_release_delete_cascade.py` (4 tests, mapper-introspection — no DB needed).
+
 ### Fixed (2026-06-07 — Manual upload: MRU-14 review)
 
 Review found 2 high + 1 low; fixed before they shipped:
