@@ -99,3 +99,63 @@ async def test_empty_pipeline_list_fires_no_query():
         await agents._attach_run_context(db, [])
     db.execute.assert_not_awaited()
     seq.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_testrun_exists_but_run_seq_unavailable_yields_none_run_seq():
+    """A run whose seq can't be computed (e.g. fetch_run_seq_map returns {})
+    still gets its build/suite, with run_seq None — the card falls back to
+    'Build <n>'."""
+    run_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_Result([
+        SimpleNamespace(id=run_id, build_number="b-77", primary_suite_name="Smoke"),
+    ]))
+    p = _pipeline(run_id)
+
+    with patch.object(agents.runs_service, "fetch_run_seq_map",
+                      AsyncMock(return_value={})):   # no seq for this run
+        await agents._attach_run_context(db, [p])
+
+    assert p.build_number == "b-77"
+    assert p.suite_name == "Smoke"
+    assert p.run_seq is None
+
+
+def test_response_schema_serializes_non_mapped_context_attrs():
+    """The linchpin: build_number/run_seq/suite_name are set as NON-mapped attrs
+    on the ORM row by _attach_run_context, and AgentPipelineResponse (from_attributes)
+    must surface them in the serialized payload. If from_attributes were dropped
+    or the fields removed, the /agents cards would silently lose their context."""
+    from datetime import datetime, timezone
+
+    from app.models.postgres import AgentPipelineRun
+    from app.models.schemas import AgentPipelineResponse
+
+    row = AgentPipelineRun(
+        id=uuid.uuid4(),
+        test_run_id=uuid.uuid4(),
+        workflow_type="offline",
+        status="completed",
+        created_at=datetime(2026, 6, 8, tzinfo=timezone.utc),
+    )
+    # Exactly what _attach_run_context does (non-mapped attribute assignment).
+    row.build_number = "build-99"
+    row.suite_name = "Checkout Regression"
+    row.run_seq = 12
+
+    payload = AgentPipelineResponse.model_validate(row).model_dump()
+    assert payload["build_number"] == "build-99"
+    assert payload["suite_name"] == "Checkout Regression"
+    assert payload["run_seq"] == 12
+
+    # And a row WITHOUT the attrs set serializes them as None (legacy rows).
+    bare = AgentPipelineRun(
+        id=uuid.uuid4(), test_run_id=uuid.uuid4(),
+        workflow_type="offline", status="completed",
+        created_at=datetime(2026, 6, 8, tzinfo=timezone.utc),
+    )
+    bare_payload = AgentPipelineResponse.model_validate(bare).model_dump()
+    assert bare_payload["build_number"] is None
+    assert bare_payload["run_seq"] is None
+    assert bare_payload["suite_name"] is None
