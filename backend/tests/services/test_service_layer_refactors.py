@@ -671,13 +671,17 @@ async def test_analytics_service_flaky_tests_returns_items_and_total():
             }
         )
     ]
-    db = FakeAsyncDB([FakeExecuteResult(rows=rows)])
+    # flaky_tests now issues a SECOND query for manually-triaged FLAKY_TEST
+    # tests (merged so /failures agrees with /flaky-coach). No manual triage
+    # here → empty second result.
+    db = FakeAsyncDB([FakeExecuteResult(rows=rows), FakeExecuteResult(rows=[])])
 
     result = await analytics_service.flaky_tests(db, "project-1", 30, 20)
 
     assert result["total"] == 1
     assert result["period_days"] == 30
     assert result["items"][0]["test_name"] == "test_checkout"
+    assert result["items"][0]["source"] == "auto"
 
 
 @pytest.mark.asyncio

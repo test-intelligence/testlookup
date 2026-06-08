@@ -358,9 +358,15 @@ function computeStabilityModel({
     : 0
 
   const flakyCount = flaky.length
-  const flakeFreeScore = flakyCount === 0
+  // Manually-triaged flakes carry failure_rate_pct=100 as a "human-flagged"
+  // marker, not a measured rate. Exclude them from the flake-free *score* —
+  // otherwise a single human-flagged test pins the score to 0 regardless of the
+  // actual measured intermittency. They still count toward flakyCount/verdict
+  // (a known flake is a known flake).
+  const autoFlakes = flaky.filter(f => f.source !== 'manual')
+  const flakeFreeScore = autoFlakes.length === 0
     ? 100
-    : Math.max(0, 100 - Math.max(...flaky.map(f => f.failure_rate_pct)))
+    : Math.max(0, 100 - Math.max(...autoFlakes.map(f => f.failure_rate_pct)))
 
   const repeatFailures = topFailing.filter(t => t.fail_count >= 2)
 
@@ -1449,10 +1455,30 @@ function FlakinessCard({ flaky, repeatFailures }: { flaky: FlakyTestItem[]; repe
         </p>
       ) : (
         <>
-          <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-            {flaky.length} test{flaky.length === 1 ? '' : 's'} show intermittent pass/fail patterns on the same SHA. Re-runs
-            won't fix these — investigate the underlying race or fixture issue.
-          </p>
+          {(() => {
+            // Manual-triage entries (source==='manual') are human-flagged, not
+            // measured intermittents, so the "intermittent pass/fail" copy only
+            // applies to auto-detected ones. Describe each present source.
+            const autoCount = flaky.filter(f => f.source !== 'manual').length
+            const manualCount = flaky.length - autoCount
+            return (
+              <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                {autoCount > 0 && (
+                  <>
+                    {autoCount} test{autoCount === 1 ? '' : 's'} show intermittent pass/fail patterns on the same SHA. Re-runs
+                    won't fix these — investigate the underlying race or fixture issue.
+                  </>
+                )}
+                {autoCount > 0 && manualCount > 0 && ' '}
+                {manualCount > 0 && (
+                  <>
+                    {manualCount} test{manualCount === 1 ? '' : 's'} {manualCount === 1 ? 'was' : 'were'} manually flagged as
+                    flaky on /my-failures{autoCount > 0 ? ' as well' : ''}.
+                  </>
+                )}
+              </p>
+            )
+          })()}
           <div className="flex flex-col gap-1.5 mt-3">
             {flaky.slice(0, 5).map(f => (
               <div
@@ -1461,7 +1487,11 @@ function FlakinessCard({ flaky, repeatFailures }: { flaky: FlakyTestItem[]; repe
                 style={{ gridTemplateColumns: '1fr auto', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
               >
                 <span className="font-mono text-[11.5px] text-[var(--color-text)] truncate">{f.test_name}</span>
-                <span className="tabular-nums" style={{ color: '#fcd34d' }}>{Math.round(f.failure_rate_pct)}% flake</span>
+                {f.source === 'manual' ? (
+                  <span className="tabular-nums" style={{ color: '#93c5fd' }} title="Manually triaged as flaky on /my-failures">Flagged</span>
+                ) : (
+                  <span className="tabular-nums" style={{ color: '#fcd34d' }}>{Math.round(f.failure_rate_pct)}% flake</span>
+                )}
               </div>
             ))}
             {flaky.length > 5 && (

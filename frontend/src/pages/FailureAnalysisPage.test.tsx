@@ -75,6 +75,49 @@ describe('FailureAnalysisPage', () => {
     expect(screen.getAllByText(/Failure Analysis/i).length).toBeGreaterThan(0)
   })
 
+  it('treats a manually-triaged flake as a flake (not a "hard regression") and labels it "Flagged"', async () => {
+    // Regression for the /failures vs /flaky-coach disagreement: when the only
+    // flaky signal is a human-triaged FLAKY_TEST (source==='manual', the 100
+    // marker), the page must (a) NOT render "flake detector found zero
+    // intermittents / treat as a hard regression", and (b) render the entry as
+    // "Flagged" rather than a misleading "100% flake".
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ test_name: 'login_flow', test_fingerprint: 'mfp-1', failure_rate_pct: 100, source: 'manual' }] },
+      isLoading: false,
+    })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    // A repeat failure exists — without the manual flake this would be a
+    // REPEAT_FAILURE verdict and show the "hard regression" copy.
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ test_name: 'login_flow', fail_count: 4 }] },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-04-01', passed: 6, failed: 4, skipped: 0, broken: 0, pass_rate: 60 }] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    render(
+      <MemoryRouter initialEntries={['/failure-analysis']}>
+        <Routes>
+          <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // Verdict flipped to FLAKY → the contradictory copy is gone.
+    expect(screen.queryByText(/zero intermittents/i)).not.toBeInTheDocument()
+    // Manual entry rendered distinctly, not as "100% flake".
+    expect(await screen.findByText(/^Flagged$/)).toBeInTheDocument()
+    expect(screen.queryByText(/100% flake/i)).not.toBeInTheDocument()
+    // Lede explains it was manually flagged.
+    expect(screen.getByText(/manually flagged as flaky/i)).toBeInTheDocument()
+  })
+
   it('shows a per-test-data-pending warning instead of "no failures" when trend reports failures but top-failing is empty', async () => {
     // Regression test for the "pass rate < 100% but What's failing says
     // 'No failures'" bug — caused by per-test rows not landing for
