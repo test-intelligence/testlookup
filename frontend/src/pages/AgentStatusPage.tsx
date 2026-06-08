@@ -7,6 +7,7 @@ import {
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import { formatRunWhen } from '@/utils/formatters'
 import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } from '@/hooks/useAgentRuns'
@@ -371,6 +372,16 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
           {run.run_seq != null ? `Run #${run.run_seq}` : `Build ${run.build_number}`}
         </span>
         <SuiteBadge primary={run.suite_name} all={run.suite_name ? [run.suite_name] : null} />
+        {/* When this run started — "Run #N" repeats per (project, suite), so
+            the timestamp is what tells two same-numbered live runs apart. */}
+        {(() => {
+          const when = formatRunWhen(run.started_at)
+          return when ? (
+            <span className="text-[10px] font-mono text-[var(--color-text-faint)] shrink-0 whitespace-nowrap">
+              {when}
+            </span>
+          ) : null
+        })()}
         <span className="ml-auto text-xs bg-[var(--color-bg-secondary)]/60 text-[var(--color-text)] px-2 py-0.5 rounded-full">
           LIVE
         </span>

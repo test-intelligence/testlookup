@@ -61,6 +61,7 @@ import { deepInvestigationService } from '@/services/deepInvestigationService'
 import type { FailureCluster, DeepFinding } from '@/types/deep-investigation'
 import type { TestRun } from '@/types/runs'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import { formatRunWhen } from '@/utils/formatters'
 
 // ── Verdict ──────────────────────────────────────────────────────────────
 type Verdict = 'READY' | 'NO_FAILURES' | 'NO_SOURCES' | 'RUNNING' | 'FAILED' | 'PENDING'
@@ -408,7 +409,9 @@ function buildModel({
       suiteLabel: r.primary_suite_name ?? r.suite_names?.[0] ?? null,
       suiteNames: r.suite_names ?? null,
       whenRel: ageRel,
-      whenAbs: new Date(r.created_at).toLocaleDateString(),
+      // Date + time (was date-only) so two runs on the same day are
+      // distinguishable; shared compact format with /live + /agents.
+      whenAbs: formatRunWhen(r.created_at),
       failures: r.failed_tests ?? 0,
       clusters: status === 'failed' ? 0 : isFocus ? clusters.length : Math.max(1, Math.round((r.failed_tests ?? 0) / 12)),
       defects: status === 'failed' ? 0 : isFocus ? findings.length : Math.max(1, Math.round((r.failed_tests ?? 0) / 14)),

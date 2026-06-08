@@ -4,6 +4,23 @@ export const formatDate = (d: string | Date) => format(new Date(d), 'MMM dd, yyy
 export const formatDateTime = (d: string | Date) => format(new Date(d), 'MMM dd, HH:mm')
 export const fromNow = (d: string | Date) => formatDistanceToNow(new Date(d), { addSuffix: true })
 
+/**
+ * Compact, null-safe run timestamp for disambiguating runs that share a
+ * human-readable number. "Run #1" repeats per (project, suite) and across
+ * projects, so the same label can point at many different executions — pairing
+ * it with *when the run was generated* makes each row identifiable at a glance.
+ *
+ * Returns '' for missing/invalid input (callers can `&&`-guard the suffix) so a
+ * legacy row with no timestamp never renders "Invalid Date". Formatted in the
+ * browser's LOCAL timezone (matching `formatDate`/`formatDateTime`).
+ */
+export const formatRunWhen = (d?: string | Date | null): string => {
+  if (!d) return ''
+  const date = new Date(d)
+  if (Number.isNaN(date.getTime())) return ''
+  return format(date, 'MMM dd, HH:mm')
+}
+
 export const formatDuration = (ms?: number | null): string => {
   if (!ms) return '—'
   if (ms < 1000) return `${ms}ms`

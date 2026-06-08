@@ -21,6 +21,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
+import { formatRunWhen } from '@/utils/formatters'
 import { useMyFailures } from '@/hooks/useMyFailures'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -369,6 +370,15 @@ function FailureRow({
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
+        {/* When the run was generated — shown INLINE (matching /live and the
+            /agents live card) so same-numbered "Run #N" rows are distinguishable
+            at a glance, not only on hover. */}
+        {(() => {
+          const when = formatRunWhen(item.created_at)
+          return when ? (
+            <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">{when}</div>
+          ) : null
+        })()}
         {item.test_run_id && (
           <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">
             {item.test_run_id.slice(0, 8)}

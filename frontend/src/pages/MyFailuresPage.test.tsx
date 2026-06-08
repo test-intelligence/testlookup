@@ -154,6 +154,28 @@ describe('MyFailuresPage', () => {
     expect(screen.getByText('42')).toBeInTheDocument()
   })
 
+  it('shows the run datetime inline beside the run identifier', async () => {
+    // "Run #N" repeats per (project, suite); the run's start datetime is shown
+    // inline (not just on hover) so same-numbered runs are distinguishable.
+    // Built from local parts so the expected label is timezone-independent.
+    const created = new Date(2026, 5, 8, 14, 30) // Jun 8 2026, 14:30 local
+    mockList.mockResolvedValue(makeResponse([
+      {
+        id: 'cc9', test_name: 'test_checkout', suite_name: 'PaySuite',
+        status: 'FAILED', severity: 'major', error_message: 'boom',
+        created_at: created.toISOString(),
+        test_run_id: 'run-9', build_number: '99', run_seq: 5,
+        project_id: 'p1', project_name: 'P', navigation_url: '/runs/run-9/tests/cc9',
+        class_name: null, failure_category: null, duration_ms: null,
+      },
+    ]))
+
+    renderPage()
+
+    expect(await screen.findByText('Run #5')).toBeInTheDocument()
+    expect(screen.getByText('Jun 08, 14:30')).toBeInTheDocument()
+  })
+
   it('re-fetches when the user picks a different days window', async () => {
     mockList.mockResolvedValue(makeResponse([]))
 
