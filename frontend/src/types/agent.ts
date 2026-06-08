@@ -149,6 +149,12 @@ export interface AgentPipelineRun {
   created_at: string
   execution_metadata: Record<string, unknown> | null
   provenance_metadata: Record<string, unknown> | null
+  // Owning-run context (which run/suite this pipeline analysed), attached by the
+  // backend so the /agents cards show "Run #N · <suite>" not just a workflow
+  // type. Null for legacy rows whose TestRun is missing / run_seq uncomputable.
+  build_number?: string | null
+  run_seq?: number | null
+  suite_name?: string | null
 }
 
 export interface RunSummary {

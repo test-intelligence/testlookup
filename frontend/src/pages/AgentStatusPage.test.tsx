@@ -260,6 +260,82 @@ describe('AgentStatusPage', () => {
     expect(screen.queryByRole('button', { name: /view ai report/i })).not.toBeInTheDocument()
   })
 
+  it('shows run/suite context (Run #N + suite) on each pipeline card', async () => {
+    const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } = await import('@/hooks/useAgentRuns')
+
+    ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
+    ;(usePipelines as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: [
+        {
+          id: 'pipe-1',
+          test_run_id: 'run-1',
+          workflow_type: 'offline',
+          status: 'completed',
+          started_at: '2026-03-31T10:00:00Z',
+          completed_at: '2026-03-31T10:01:00Z',
+          error: null,
+          created_at: '2026-03-31T10:00:00Z',
+          build_number: 'build-42',
+          run_seq: 7,
+          suite_name: 'API Regression',
+        },
+      ],
+      isLoading: false,
+    })
+    ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false })
+    ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
+    ;(useRunSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false, error: undefined })
+
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <Routes>
+          <Route path="/agents" element={<AgentStatusPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    // Context is visible on the card without selecting it.
+    expect(await screen.findByText('Run #7')).toBeInTheDocument()
+    expect(screen.getByText('API Regression')).toBeInTheDocument()
+  })
+
+  it('falls back to Build <n> on a pipeline card when run_seq is absent', async () => {
+    const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } = await import('@/hooks/useAgentRuns')
+
+    ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
+    ;(usePipelines as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: [
+        {
+          id: 'pipe-2',
+          test_run_id: 'run-2',
+          workflow_type: 'offline',
+          status: 'completed',
+          started_at: '2026-03-31T10:00:00Z',
+          completed_at: '2026-03-31T10:01:00Z',
+          error: null,
+          created_at: '2026-03-31T10:00:00Z',
+          build_number: 'nightly-9',
+          run_seq: null,
+          suite_name: null,
+        },
+      ],
+      isLoading: false,
+    })
+    ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false })
+    ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
+    ;(useRunSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false, error: undefined })
+
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <Routes>
+          <Route path="/agents" element={<AgentStatusPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Build nightly-9')).toBeInTheDocument()
+  })
+
   it('surfaces the summary stage error when the report endpoint fails', async () => {
     const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } = await import('@/hooks/useAgentRuns')
 

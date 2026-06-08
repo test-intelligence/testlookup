@@ -332,6 +332,22 @@ function PipelineCard({
           {pipeline.status.toUpperCase()}
         </span>
       </div>
+      {/* Run context: which run / suite this pipeline analysed. ``run_seq`` is
+          the same per-(project, suite) "Run #N" shown on /runs + /live; falls
+          back to the SDK build number, then to the raw run id, so there's
+          always something identifying. */}
+      <div className="flex items-center gap-2 mb-1 pl-5 flex-wrap">
+        <span className="text-xs font-semibold text-[var(--color-text-secondary)]">
+          {pipeline.run_seq != null
+            ? `Run #${pipeline.run_seq}`
+            : pipeline.build_number
+              ? `Build ${pipeline.build_number}`
+              : `Run ${pipeline.test_run_id.slice(0, 8)}`}
+        </span>
+        {pipeline.suite_name && (
+          <SuiteBadge primary={pipeline.suite_name} all={[pipeline.suite_name]} />
+        )}
+      </div>
       <p className="text-xs text-[var(--color-text-muted)] pl-5">{started}</p>
       {duration !== null && (
         <p className="text-xs text-[var(--color-text-muted)] pl-5">Duration: {duration}s</p>

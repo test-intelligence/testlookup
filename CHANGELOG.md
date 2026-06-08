@@ -50,6 +50,10 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-08 — /agents: run/suite context on each pipeline card)
+
+Each AI-pipeline card on `/agents` now shows **which run/suite it analysed** — previously it showed only a workflow type, so users couldn't tell what a pipeline was for. The `GET /api/v1/agents/pipelines` (+ `/pipelines/{id}`) responses gained `build_number`, `run_seq`, and `suite_name`, attached from the owning `TestRun` on the read path (`_attach_run_context`, in-place like `_apply_effective_status`); `run_seq` reuses the shared per-(project, primary_suite_name) "Run #N" numbering (`runs_service.fetch_run_seq_map`) so the label matches `/runs` and `/live`. The card renders `Run #N · <suite>`, falling back to `Build <n>` then a short run-id when `run_seq`/suite are absent (legacy rows stay `null`, never error). The TestRun lookup is bounded to the already-tenant-scoped pipeline ids. Tests: backend `_attach_run_context` (attach, legacy-null, run_seq-independent-of-suite, empty-no-query) + two `AgentStatusPage` card-render cases.
+
 ### Changed (2026-06-08 — /agents: AI report expanded by default)
 
 The `/agents` (AI Pipelines) page now shows the **AI report by default** once a pipeline run is selected — it's the headline output, so users no longer have to click "View AI report" to see it. `showSummary` defaults to `true` (and stays expanded when switching between runs); the toggle still collapses it ("Hide report"). The report is still lazy-fetched, now triggered as soon as a pipeline is picked. Tests: a new `AgentStatusPage.test.tsx` case asserts the report content renders without a click and the toggle reads "Hide report"; updated three existing tests that previously had to click "View AI report". (Per-run/suite *context* on each pipeline card is a follow-up in the same branch.)

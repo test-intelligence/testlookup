@@ -33,6 +33,7 @@ from app.models.schemas import (
     PipelineTimelineEventResponse,
     TriggerPipelineRequest,
 )
+from app.services import runs_service
 from app.services.run_summary_service import build_fallback_summary, normalize_summary_doc
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,38 @@ def _apply_effective_status(
             continue
         if p.id in failed_stage_ids or _is_stale_running(p, now=now):
             p.status = "failed"
+
+
+async def _attach_run_context(
+    db: AsyncSession, pipelines: list[AgentPipelineRun],
+) -> None:
+    """Attach owning-run context (build number, Run #N, suite) to each pipeline.
+
+    The /agents cards otherwise show only a workflow type — users can't tell
+    which run or suite a pipeline analysed. We set non-mapped attributes on the
+    ORM rows (same in-place pattern as ``_apply_effective_status``); the
+    ``from_attributes`` response model reads them straight off. ``run_seq`` uses
+    the same per-(project, primary_suite_name) numbering as /runs and /live so
+    "Run #N" matches everywhere. All fields stay None for legacy rows whose
+    TestRun is missing. The TestRun lookup is bounded to the ids of the
+    already-tenant-scoped pipelines, so it adds no cross-tenant exposure.
+    """
+    run_ids = list({p.test_run_id for p in pipelines})
+    if not run_ids:
+        return
+    rows = (
+        await db.execute(
+            select(TestRun.id, TestRun.build_number, TestRun.primary_suite_name)
+            .where(TestRun.id.in_(run_ids))
+        )
+    ).all()
+    ctx = {r.id: r for r in rows}
+    seq_map = await runs_service.fetch_run_seq_map(db, run_ids)
+    for p in pipelines:
+        row = ctx.get(p.test_run_id)
+        p.build_number = row.build_number if row else None
+        p.suite_name = row.primary_suite_name if row else None
+        p.run_seq = seq_map.get(str(p.test_run_id))
 
 
 async def _resolve_maybe_awaitable(value: Any) -> Any:
@@ -207,6 +240,7 @@ async def list_pipelines(
     _apply_effective_status(
         pipelines, failed_stage_ids, now=datetime.now(timezone.utc),
     )
+    await _attach_run_context(db, pipelines)
     return pipelines
 
 
@@ -224,6 +258,7 @@ async def get_pipeline(
     _apply_effective_status(
         [pipeline], failed_stage_ids, now=datetime.now(timezone.utc),
     )
+    await _attach_run_context(db, [pipeline])
     return pipeline
 
 
