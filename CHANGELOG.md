@@ -50,6 +50,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Fixed (2026-06-08 — /failures vs /flaky-coach disagreed on what's flaky)
+
+`/failures` rendered *"Not a flake — flake detector found zero intermittents. Treat as a hard regression, not a re-run candidate."* for projects where `/flaky-coach` **did** list flaky tests. Root cause: two endpoints with two different flaky definitions. `/flaky-coach` (`test_health_coach_service`) has merged human-triaged `FLAKY_TEST` rows (from `/my-failures`) on top of auto-detection since 2026-05-18; `/failures` (`analytics_service.flaky_tests`) was auto-detect **only** (intermittent `test_case_history`, ≥3 runs, both pass+fail) and ignored manual triage entirely — so `flakyCount` came back 0 and the page declared a hard regression, contradicting `/flaky-coach`.
+
+- `analytics_service.flaky_tests` now merges the same manually-triaged `FLAKY_TEST` fingerprints (same tenant + suite scoping; deduped by fingerprint with auto winning since it carries a real ratio; capped at `limit`). Each row is tagged `source` (`auto`/`manual`); manual entries use `failure_rate_pct=100` as the "human-flagged" marker, mirroring flaky-coach's `failure_rate=1.0`. Additive field — existing consumers (dashboard widgets) are unaffected.
+- Frontend `FlakyTestItem` type gains optional `source`/`class_name` so the UI can render manual entries distinctly.
+- Tests: `backend/tests/regression/test_flaky_failures_consistency.py` (merge, auto-wins dedup, limit-skips-manual, empty-stays-empty, combined-limit) + updated the existing `flaky_tests` service test for the new second query.
+
 ### Fixed (2026-06-07 — Manual upload: MRU-14 review)
 
 Review found 2 high + 1 low; fixed before they shipped:

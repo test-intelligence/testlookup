@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Defect, Project, TestCase, TestRun
+from app.models.postgres import Defect, Project, TestCase, TestRun, TriageStatus
 
 
 def _period_start(days: int) -> datetime:
@@ -161,8 +161,71 @@ async def flaky_tests(
         """
     )
     result = await db.execute(query, params)
-    rows = result.fetchall()
-    return {"items": [dict(row._mapping) for row in rows], "period_days": days, "total": len(rows)}
+    items = [dict(row._mapping) for row in result.fetchall()]
+    for it in items:
+        it["source"] = "auto"
+    seen = {it["test_fingerprint"] for it in items}
+
+    # Merge tests humans have manually triaged as FLAKY_TEST (via /my-failures),
+    # so /failures agrees with /flaky-coach. The auto-detector above only fires
+    # on >=3-run intermittents (both pass AND fail in the window); a test a human
+    # recognises as flaky before the detector has signal — or one that currently
+    # always fails — is invisible to it. Without this merge, /failures returned 0
+    # flakes and rendered "flake detector found zero intermittents — treat as a
+    # hard regression", directly contradicting the /flaky-coach list (which has
+    # merged manual triage since 2026-05-18). Same tenant + suite scoping; auto
+    # rows win on dedup (they carry a real ratio). ``source`` lets the UI render
+    # manual entries distinctly; it's additive, so existing consumers are unchanged.
+    if len(items) < limit:
+        manual_params: dict = {
+            "period_start": _period_start(days),
+            "flaky_status": TriageStatus.FLAKY_TEST.value,
+            "limit": limit,
+        }
+        m_project_filter = _tenant_filter(
+            manual_params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+        )
+        m_suite_filter = _add_suite_param(manual_params, suite_name)
+        manual_query = text(
+            f"""
+            SELECT
+                tc.test_fingerprint,
+                MAX(tc.test_name)  AS test_name,
+                MAX(tc.suite_name) AS suite_name,
+                MAX(tc.class_name) AS class_name,
+                MAX(p.name)        AS project_name,
+                COUNT(*)           AS total_runs,
+                COUNT(*)           AS fail_count,
+                0                  AS pass_count,
+                -- 100.0 mirrors flaky-coach's 1.0 "human-flagged" marker (manual
+                -- triage has no measured ratio); ``source='manual'`` is the real
+                -- signal the UI keys on.
+                100.0              AS failure_rate_pct,
+                MAX(tc.triage_updated_at) AS last_seen
+            FROM test_cases tc
+            JOIN test_runs tr   ON tr.id = tc.test_run_id
+            LEFT JOIN projects p ON p.id = tr.project_id
+            WHERE tc.triage_status = :flaky_status
+              AND tc.triage_updated_at >= :period_start
+              AND tc.test_fingerprint IS NOT NULL
+              {m_project_filter}
+              {m_suite_filter}
+            GROUP BY tc.test_fingerprint
+            ORDER BY last_seen DESC
+            LIMIT :limit
+            """
+        )
+        for row in (await db.execute(manual_query, manual_params)).fetchall():
+            data = dict(row._mapping)
+            if data["test_fingerprint"] in seen:
+                continue
+            seen.add(data["test_fingerprint"])
+            data["source"] = "manual"
+            items.append(data)
+            if len(items) >= limit:
+                break
+
+    return {"items": items, "period_days": days, "total": len(items)}
 
 
 async def failure_categories(

@@ -29,9 +29,14 @@ export interface FlakyTestItem {
   test_fingerprint: string
   test_name: string
   suite_name?: string
+  class_name?: string
   total_runs: number
   fail_count: number
   failure_rate_pct: number
+  // 'auto' = intermittent pass/fail detected from history; 'manual' = a human
+  // triaged it FLAKY_TEST on /my-failures (merged so /failures agrees with
+  // /flaky-coach). Manual entries carry failure_rate_pct=100 as a marker.
+  source?: 'auto' | 'manual'
 }
 
 export interface FailureCategoryItem {
