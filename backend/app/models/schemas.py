@@ -731,6 +731,13 @@ class AgentPipelineResponse(BaseModel):
     created_at: Any
     execution_metadata: Optional[Any] = None
     provenance_metadata: Optional[Any] = None
+    # Run context (which run/suite this pipeline analysed) — attached by the
+    # router from the owning TestRun so the /agents cards can show "Run #N ·
+    # <suite>" instead of just a workflow type. All optional/None for legacy
+    # rows whose TestRun is missing or whose run_seq can't be computed.
+    build_number: Optional[str] = None
+    run_seq: Optional[int] = None
+    suite_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
