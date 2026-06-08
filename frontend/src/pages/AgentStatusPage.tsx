@@ -358,11 +358,14 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
         <SuiteBadge primary={run.suite_name} all={run.suite_name ? [run.suite_name] : null} />
         {/* When this run started — "Run #N" repeats per (project, suite), so
             the timestamp is what tells two same-numbered live runs apart. */}
-        {formatRunWhen(run.started_at) && (
-          <span className="text-[10px] font-mono text-[var(--color-text-faint)]">
-            {formatRunWhen(run.started_at)}
-          </span>
-        )}
+        {(() => {
+          const when = formatRunWhen(run.started_at)
+          return when ? (
+            <span className="text-[10px] font-mono text-[var(--color-text-faint)] shrink-0 whitespace-nowrap">
+              {when}
+            </span>
+          ) : null
+        })()}
         <span className="ml-auto text-xs bg-[var(--color-bg-secondary)]/60 text-[var(--color-text)] px-2 py-0.5 rounded-full">
           LIVE
         </span>

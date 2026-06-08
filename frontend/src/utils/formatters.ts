@@ -11,7 +11,8 @@ export const fromNow = (d: string | Date) => formatDistanceToNow(new Date(d), { 
  * it with *when the run was generated* makes each row identifiable at a glance.
  *
  * Returns '' for missing/invalid input (callers can `&&`-guard the suffix) so a
- * legacy row with no timestamp never renders "Invalid Date".
+ * legacy row with no timestamp never renders "Invalid Date". Formatted in the
+ * browser's LOCAL timezone (matching `formatDate`/`formatDateTime`).
  */
 export const formatRunWhen = (d?: string | Date | null): string => {
   if (!d) return ''

@@ -1118,7 +1118,10 @@ export default function LiveExecutionPage() {
                               run started so same-numbered rows are distinguishable. */}
                           <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
                             {s.build_number || s.run_id.slice(0, 8)}
-                            {formatRunWhen(s.started_at) && <> · {formatRunWhen(s.started_at)}</>}
+                            {(() => {
+                              const when = formatRunWhen(s.started_at)
+                              return when ? <> · {when}</> : null
+                            })()}
                           </div>
                         </div>
                       </div>

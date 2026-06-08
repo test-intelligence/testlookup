@@ -363,16 +363,22 @@ function FailureRow({
             suite) incremental ``Run #N``; falls back to the raw SDK
             build_number for pre-run_seq rows. The short test_run_id slug
             is shown underneath as a copy/correlation aid. */}
-        {/* Absolute run datetime on hover — "Run #N" repeats per (project,
-            suite), so the precise timestamp disambiguates same-numbered runs
-            (the column also shows a relative age). */}
         {item.run_seq != null ? (
-          <span className="text-[var(--color-text)]" title={formatRunWhen(item.created_at) || undefined}>Run #{item.run_seq}</span>
+          <span className="text-[var(--color-text)]">Run #{item.run_seq}</span>
         ) : item.build_number ? (
-          <span className="text-[var(--color-text)]" title={formatRunWhen(item.created_at) || undefined}>{item.build_number}</span>
+          <span className="text-[var(--color-text)]">{item.build_number}</span>
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
+        {/* When the run was generated — shown INLINE (matching /live and the
+            /agents live card) so same-numbered "Run #N" rows are distinguishable
+            at a glance, not only on hover. */}
+        {(() => {
+          const when = formatRunWhen(item.created_at)
+          return when ? (
+            <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">{when}</div>
+          ) : null
+        })()}
         {item.test_run_id && (
           <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">
             {item.test_run_id.slice(0, 8)}
