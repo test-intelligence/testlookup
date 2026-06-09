@@ -85,6 +85,19 @@ def test_get_session_factory_uses_get_engine_and_is_cached():
     assert factory_a.kw["bind"] is get_engine()
 
 
+def _drop_leaked_lazy_attrs(pg):
+    """``engine`` / ``AsyncSessionLocal`` are served by PEP 562 ``__getattr__``;
+    they are NOT real module attributes. Pytest's ``monkeypatch.setattr`` (used
+    widely across the suite to inject a fake session factory) restores by
+    *setattr*, not delattr, so on teardown it leaves a REAL attribute behind that
+    shadows the lazy hook and pins a stale factory/engine. Combined with the
+    BUG-003 ``dispose_engine_for_loop`` rebuild, ``pg.AsyncSessionLocal`` then no
+    longer matches the live ``get_session_factory()``. Drop the leaked names so
+    these tests exercise the lazy hook itself, not cross-test leakage."""
+    pg.__dict__.pop("engine", None)
+    pg.__dict__.pop("AsyncSessionLocal", None)
+
+
 def test_module_level_engine_attribute_resolves_via_lazy_hook():
     """PEP 562 ``__getattr__`` preserves ``from app.db.postgres import engine``
     for backward compatibility. The accessor returns the same cached
@@ -92,6 +105,7 @@ def test_module_level_engine_attribute_resolves_via_lazy_hook():
     import app.db.postgres as pg
     from app.db.postgres import get_engine
 
+    _drop_leaked_lazy_attrs(pg)
     assert pg.engine is get_engine()
 
 
@@ -101,6 +115,7 @@ def test_module_level_async_session_local_attribute_resolves_via_lazy_hook():
     import app.db.postgres as pg
     from app.db.postgres import get_session_factory
 
+    _drop_leaked_lazy_attrs(pg)
     assert pg.AsyncSessionLocal is get_session_factory()
 
 

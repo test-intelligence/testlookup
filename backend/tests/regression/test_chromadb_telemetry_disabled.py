@@ -15,6 +15,30 @@ process-level guard so a refactor of config.py can't silently re-enable it.
 import importlib
 import os
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_config_singleton_after_reload():
+    """``importlib.reload(app.core.config)`` (used below to re-run the import-time
+    telemetry guard) rebinds the module's ``settings`` and ``get_settings`` to
+    BRAND-NEW objects. Every other module that already did
+    ``from app.core.config import settings`` keeps the ORIGINAL instance, so a
+    leaked reload decouples ``config.settings`` from what the app actually reads:
+    later tests that ``monkeypatch.setattr(config.settings, ...)`` then patch a
+    dead object while the code reads defaults — silently poisoning ~13 unrelated
+    "feature-disabled / offline" tests downstream in the full-suite run. Snapshot
+    and restore the canonical module singletons so the reload can't escape."""
+    import app.core.config as config
+
+    saved_settings = config.settings
+    saved_get_settings = config.get_settings
+    try:
+        yield
+    finally:
+        config.settings = saved_settings
+        config.get_settings = saved_get_settings
+
 
 def test_importing_config_disables_chroma_telemetry(monkeypatch):
     # Simulate a fresh process with the var unset, then re-import config.

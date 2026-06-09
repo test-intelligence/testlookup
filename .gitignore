@@ -136,6 +136,7 @@ backend/__client_sdks_staged/
 # Local virtual environments (any variant beyond the already-ignored .venv/)
 .venv_local/
 .venv-*/
+.venv[0-9]*/
 
 # Generated lint, typecheck, and test artifact dumps
 *_lint.txt
