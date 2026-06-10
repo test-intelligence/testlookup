@@ -3,51 +3,70 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
+def _orm_stub():
+    """A generic ORM-model stand-in: an empty ``__table__.columns`` is all the
+    import path touches for a model that runs_service only imports by name."""
+    return SimpleNamespace(__table__=SimpleNamespace(columns=[]))
+
+
+class _FakeModelsModule(SimpleNamespace):
+    """Stand-in for ``app.models.postgres`` when we force-reimport runs_service.
+
+    Models whose *attributes* are read at import time (e.g.
+    ``TestRun.primary_suite_name`` in a module-level expression) are defined
+    explicitly by the caller. Any other model that runs_service merely *imports
+    by name* — ``TestStep``, ``TestAttachment``, ``CanonicalTestCase``, and
+    whatever a future phase adds — is auto-provided here. That keeps this test
+    from re-breaking with an ``ImportError`` (unrelated to what it asserts)
+    every time runs_service grows a new ``from app.models.postgres import X``.
+    """
+
+    def __getattr__(self, name):  # only fires for names not set in __init__
+        # Let dunders fall through so the import machinery sees a normal module.
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        stub = _orm_stub()
+        setattr(self, name, stub)  # cache so identity is stable across reads
+        return stub
+
+
 # ── runs_service ──────────────────────────────────────────────────────────────
 
 def test_list_project_runs_no_filter_builds_correct_query():
-    """When project_id is None, no WHERE clause for project_id should be added."""
-    captured_queries = []
+    """``list_project_runs`` imports under stubbed ORM models and exposes
+    ``project_id`` as optional (``str | None``) — the all-projects contract.
 
-    class FakeResult:
-        def scalars(self):
-            return self
-
-        def all(self):
-            return []
-
-        def scalar(self):
-            return 0
-
-    class FakeDB:
-        async def execute(self, query, *args, **kwargs):
-            captured_queries.append(str(query))
-            return FakeResult()
-
-    # Patch the ORM models so we can import the service
+    The function builds its SQL lazily from SQLAlchemy column expressions, so
+    actually executing it would require column-like mocks; this test pins the
+    public signature that lets a caller pass ``project_id=None``. The runtime
+    "omit the project_id WHERE clause when None" behaviour is covered by the
+    analytics SQL tests further down and by the integration suite.
+    """
     import importlib
     import sys
 
     fake_release = SimpleNamespace(id=None, name=None)
-    fake_models = SimpleNamespace(
+    # Only models whose attributes are accessed at import time need explicit
+    # shapes; everything else is auto-stubbed by _FakeModelsModule.
+    fake_models = _FakeModelsModule(
         Release=fake_release,
         ReleaseTestRunLink=SimpleNamespace(
             test_run_id=None,
             release_id=None,
             __table__=SimpleNamespace(columns=[]),
         ),
-        TestCase=SimpleNamespace(__table__=SimpleNamespace(columns=[])),
+        TestCase=_orm_stub(),
         TestRun=SimpleNamespace(
             __table__=SimpleNamespace(columns=[]),
             project_id=None,
             id=None,
             status=None,
             created_at=None,
-            # New module-level expression in runs_service evaluates
+            # A module-level expression in runs_service evaluates
             # ``func.lower(func.trim(func.coalesce(TestRun.primary_suite_name, "")))``
-            # at IMPORT time for the run-sequence helper. Must exist on
-            # the stub or the module-level expression raises AttributeError
-            # before the test body runs.
+            # at IMPORT time for the run-sequence helper, so this attribute must
+            # exist or the module-level expression raises AttributeError before
+            # the test body runs.
             primary_suite_name=None,
         ),
         Project=SimpleNamespace(
@@ -55,19 +74,12 @@ def test_list_project_runs_no_filter_builds_correct_query():
             id=None,
             name=None,
         ),
-        # Imported at module top by runs_service for the granular-steps
-        # read path (get_test_steps_tree). Not used by list_project_runs,
-        # but must exist on the stub or the `from app.models.postgres
-        # import (..., TestStep, TestAttachment)` raises ImportError.
-        TestStep=SimpleNamespace(__table__=SimpleNamespace(columns=[])),
-        TestAttachment=SimpleNamespace(__table__=SimpleNamespace(columns=[])),
     )
 
     with patch.dict("sys.modules", {"app.models.postgres": fake_models}, clear=False):
         # Re-import to pick up mocked models if cached
         if "app.services.runs_service" in sys.modules:
             del sys.modules["app.services.runs_service"]
-        import importlib
         runs_service = importlib.import_module("app.services.runs_service")
 
     # The function signature now accepts str | None
