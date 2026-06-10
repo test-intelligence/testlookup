@@ -112,6 +112,83 @@ def test_cypress_parser_rejects_malformed_json():
     assert parse_cypress_json('{"results": "not-a-list"}', "run-1") == []
 
 
+def test_cypress_parser_emits_assertion_step_with_structured_expected_actual():
+    """Cypress is the only in-scope framework with a structured diff
+    (err.expected / err.actual). The emitted common-shape assertion step must
+    populate the dedicated expected/actual fields plus message + trace."""
+    content = json.dumps({
+        "stats": {},
+        "results": [
+            {
+                "file": "cypress/e2e/cart.cy.ts",
+                "suites": [
+                    {
+                        "title": "Cart",
+                        "tests": [
+                            {
+                                "title": "totals match",
+                                "state": "failed",
+                                "fail": True,
+                                "duration": 130,
+                                "err": {
+                                    "message": "expected 42 to equal 41",
+                                    "estack": "AssertionError: expected 42 to equal 41\n    at cart.cy.ts:9",
+                                    "expected": 41,
+                                    "actual": 42,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    })
+
+    results = parse_cypress_json(content, str(uuid.uuid4()))
+    assert len(results) == 1
+    case = results[0]
+
+    # Case-level stack trace is persisted (previously dropped).
+    assert "AssertionError" in case["stack_trace"]
+
+    steps = case["steps"]
+    assert len(steps) == 1
+    step = steps[0]
+    assert step["name"] == "assertion"
+    assert step["status"] == "FAILED"
+    assert step["assertion_message"] == "expected 42 to equal 41"
+    assert "AssertionError" in step["assertion_trace"]
+    # The unique structured-diff fields are populated (stringified).
+    assert step["expected"] == "41"
+    assert step["actual"] == "42"
+    assert step["duration_ms"] == 130
+    # Common-shape contract keys are all present.
+    for key in ("keyword", "start_ms", "parameters", "attachments", "steps"):
+        assert key in step
+
+
+def test_cypress_parser_passing_test_emits_single_passed_assertion_step():
+    content = json.dumps({
+        "stats": {},
+        "results": [
+            {
+                "file": "smoke.cy.ts",
+                "tests": [
+                    {"title": "smoke passes", "state": "passed", "pass": True, "duration": 10}
+                ],
+            }
+        ],
+    })
+    results = parse_cypress_json(content, "run-1")
+    assert len(results) == 1
+    steps = results[0]["steps"]
+    assert len(steps) == 1
+    assert steps[0]["status"] == "PASSED"
+    assert steps[0]["expected"] is None
+    assert steps[0]["actual"] is None
+    assert steps[0]["assertion_message"] is None
+
+
 def test_cypress_parser_unknown_state_becomes_broken():
     content = json.dumps({
         "stats": {},
@@ -264,3 +341,204 @@ def test_playwright_parser_rejects_malformed_json():
     assert parse_playwright_json("not json", "run-1") == []
     assert parse_playwright_json('"scalar"', "run-1") == []
     assert parse_playwright_json('{"suites": "not-a-list"}', "run-1") == []
+
+
+# ── Playwright granular step dict (Phase 3) ──────────────────────────────────
+
+
+def _common_step_keys():
+    return {
+        "name", "keyword", "status", "start_ms", "duration_ms",
+        "assertion_message", "assertion_trace", "expected", "actual",
+        "parameters", "attachments", "steps",
+    }
+
+
+def _collect_assertion_messages(steps):
+    out = []
+    for s in steps:
+        if s.get("assertion_message"):
+            out.append(s["assertion_message"])
+        out.extend(_collect_assertion_messages(s.get("steps") or []))
+    return out
+
+
+def test_playwright_parser_emits_nested_common_step_dict():
+    """Native results[].steps[] map recursively to the common step dict:
+    title->name, category->keyword, duration->duration_ms, error.message->
+    assertion_message, error.stack->assertion_trace, error.snippet->expected.
+    A step is FAILED iff it carries an error; otherwise PASSED."""
+    content = json.dumps({
+        "config": {},
+        "suites": [
+            {
+                "title": "tests/checkout.spec.ts",
+                "file": "tests/checkout.spec.ts",
+                "specs": [
+                    {
+                        "title": "completes checkout",
+                        "file": "tests/checkout.spec.ts",
+                        "line": 7,
+                        "tests": [
+                            {
+                                "projectName": "chromium",
+                                "status": "unexpected",
+                                "results": [
+                                    {
+                                        "status": "failed",
+                                        "duration": 2100,
+                                        "retry": 0,
+                                        "steps": [
+                                            {
+                                                "title": "navigate to cart",
+                                                "category": "test.step",
+                                                "duration": 300,
+                                                "steps": [
+                                                    {
+                                                        "title": "expect cart visible",
+                                                        "category": "expect",
+                                                        "duration": 120,
+                                                        "error": {
+                                                            "message": "expect(locator).toBeVisible failed",
+                                                            "stack": "Error: at checkout.spec.ts:11",
+                                                            "snippet": "  9 | await expect(cart)",
+                                                        },
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                        "errors": [
+                                            {
+                                                "message": "expect(locator).toBeVisible failed",
+                                                "stack": "Error: at checkout.spec.ts:11",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    })
+
+    results = parse_playwright_json(content, str(uuid.uuid4()))
+    assert len(results) == 1
+    case = results[0]
+
+    # Case-level: stack_trace is persisted (was previously dropped).
+    assert case["status"] == "FAILED"
+    assert "toBeVisible failed" in case["error_message"]
+    assert "checkout.spec.ts:11" in case["stack_trace"]
+
+    steps = case["steps"]
+    assert len(steps) == 1
+    top = steps[0]
+    # Every emitted step carries the full common step dict shape.
+    assert _common_step_keys().issubset(set(top.keys()))
+    assert top["name"] == "navigate to cart"
+    assert top["keyword"] == "test.step"
+    assert top["duration_ms"] == 300
+    assert top["status"] == "PASSED"  # no error on this node
+
+    child = top["steps"][0]
+    assert child["name"] == "expect cart visible"
+    assert child["keyword"] == "expect"
+    assert child["status"] == "FAILED"
+    assert "toBeVisible failed" in child["assertion_message"]
+    assert "checkout.spec.ts:11" in child["assertion_trace"]
+    # error.snippet surfaces as expected-context.
+    assert "await expect(cart)" in child["expected"]
+
+
+def test_playwright_parser_keeps_all_errors_not_just_first():
+    """ALL results[].errors[] are surfaced. Errors not represented in the step
+    tree become synthetic top-level step entries; the one already attached to a
+    step is NOT duplicated."""
+    content = json.dumps({
+        "config": {},
+        "suites": [
+            {
+                "title": "multi.spec.ts",
+                "file": "multi.spec.ts",
+                "specs": [
+                    {
+                        "title": "two soft assertions fail",
+                        "file": "multi.spec.ts",
+                        "tests": [
+                            {
+                                "projectName": "chromium",
+                                "status": "unexpected",
+                                "results": [
+                                    {
+                                        "status": "failed",
+                                        "duration": 400,
+                                        "steps": [
+                                            {
+                                                "title": "check A",
+                                                "category": "expect",
+                                                "error": {"message": "soft assertion A failed"},
+                                            }
+                                        ],
+                                        "errors": [
+                                            {"message": "soft assertion A failed"},
+                                            {"message": "soft assertion B failed",
+                                             "stack": "Error: B at multi.spec.ts:20"},
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    })
+
+    results = parse_playwright_json(content, "run-1")
+    case = results[0]
+    messages = _collect_assertion_messages(case["steps"])
+    # Both errors present; A only once (already on a step, not re-added).
+    assert messages.count("soft assertion A failed") == 1
+    assert "soft assertion B failed" in messages
+    # The synthetic error step carries the second error's trace.
+    b_step = next(
+        s for s in case["steps"]
+        if s.get("assertion_message") == "soft assertion B failed"
+    )
+    assert "multi.spec.ts:20" in b_step["assertion_trace"]
+
+
+def test_playwright_parser_flaky_from_both_pass_and_fail_attempts():
+    """is_flaky is true when a test has BOTH a failed and a passed attempt,
+    even when the top-level status label is absent. retry_count = len-1."""
+    content = json.dumps({
+        "config": {},
+        "suites": [
+            {
+                "title": "flaky2.spec.ts",
+                "file": "flaky2.spec.ts",
+                "specs": [
+                    {
+                        "title": "eventually passes",
+                        "tests": [
+                            {
+                                "projectName": "chromium",
+                                # NOTE: no top-level "flaky" label.
+                                "status": "expected",
+                                "results": [
+                                    {"status": "failed", "duration": 50},
+                                    {"status": "passed", "duration": 40},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    })
+    case = parse_playwright_json(content, "run-1")[0]
+    assert case["status"] == "PASSED"
+    assert case["is_flaky"] is True
+    assert case["retry_count"] == 1

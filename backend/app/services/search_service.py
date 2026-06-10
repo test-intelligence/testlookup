@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models.postgres import TestCase, TestRun
+from app.models.postgres import TestCase, TestRun, TestStep
 from app.services.sql_utils import like_contains
 
 
@@ -20,6 +20,23 @@ def build_search_filters(
     allowed_project_ids: Iterable[uuid.UUID] | None = None,
 ):
     pattern = like_contains(q)
+    # Granular-step text match (Phase 3 surfacing). A failing step name or its
+    # assertion message must make the test findable — e.g. searching the text
+    # of a failed assertion lands on the test that produced it. Steps live in
+    # ``test_steps`` anchored to the project-scoped ``canonical_test_cases``
+    # identity, linked from the per-run row via ``TestCase.canonical_test_case_id``.
+    # Correlated EXISTS keeps this offline-safe (pure SQL, no embeddings) and
+    # tenant-safe: the join is on the test's OWN canonical anchor (project-scoped),
+    # and the outer query is already bounded by ``TestRun.project_id`` below, so a
+    # match cannot surface a step from another project. (NULL canonical link =
+    # no snapshot yet → the EXISTS is simply false, never a leak.)
+    step_match = select(TestStep.id).where(
+        TestStep.canonical_test_case_id == TestCase.canonical_test_case_id,
+        or_(
+            TestStep.name.ilike(pattern, escape="\\"),
+            TestStep.assertion_message.ilike(pattern, escape="\\"),
+        ),
+    ).correlate(TestCase).exists()
     filters = [
         or_(
             TestCase.test_name.ilike(pattern, escape="\\"),
@@ -32,6 +49,7 @@ def build_search_filters(
             # part of that suite.
             TestRun.primary_suite_name.ilike(pattern, escape="\\"),
             TestCase.error_message.ilike(pattern, escape="\\"),
+            step_match,
         )
     ]
     if project_id:

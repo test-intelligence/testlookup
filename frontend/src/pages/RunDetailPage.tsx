@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, GitCompare, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, ChevronDown, ChevronRight, ChevronUp, GitCommit, GitCompare, ListTree, Loader2, Package, PencilLine, RotateCcw, Stethoscope, TrendingDown, X, Check, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import StatusBadge from '@/components/ui/StatusBadge'
@@ -30,6 +30,10 @@ interface TestCase {
   status: string
   duration_ms?: number
   failure_category?: string
+  // Phase 1 granular steps: # of top-level steps captured for this test's
+  // latest-run snapshot. null when no parser emitted a step tree for this
+  // producer; 0 when the parser ran but the test had no steps.
+  step_count?: number | null
 }
 
 const STATUSES = ['', 'FAILED', 'BROKEN', 'PASSED', 'SKIPPED']
@@ -576,7 +580,18 @@ export default function RunDetailPage() {
                     onClick={() => navigate(`/runs/${runId}/tests/${tc.id}`)}
                   >
                     <td className="td max-w-[280px]">
-                      <p className="truncate text-[var(--color-text)] text-sm font-medium">{tc.test_name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-[var(--color-text)] text-sm font-medium">{tc.test_name}</p>
+                        {typeof tc.step_count === 'number' && tc.step_count > 0 && (
+                          <span
+                            title={`${tc.step_count} captured step${tc.step_count === 1 ? '' : 's'} — open to view the step tree`}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] flex-shrink-0 tabular-nums"
+                          >
+                            <ListTree className="h-3 w-3" />
+                            {tc.step_count}
+                          </span>
+                        )}
+                      </div>
                       {tc.class_name && <p className="truncate text-xs text-[var(--color-text-muted)] font-mono mt-0.5">{tc.class_name}</p>}
                     </td>
                     <td className="td text-[var(--color-text-muted)] text-sm truncate max-w-[160px]">{tc.suite_name ?? '—'}</td>

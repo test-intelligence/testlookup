@@ -69,6 +69,50 @@ _STATUS_MAP = {
 }
 
 
+def _build_cypress_steps(
+    *,
+    status: str,
+    error_message: Optional[str],
+    stack_trace: Optional[str],
+    expected: Optional[Any],
+    actual: Optional[Any],
+    start_ms: Optional[int],
+    duration_ms: Optional[int],
+) -> List[dict]:
+    """Emit the common step-dict tree for one Cypress/Mochawesome test.
+
+    Mochawesome does not expose per-command sub-steps in its JSON, so we emit a
+    SINGLE synthetic assertion step that carries the test's verification outcome
+    in the cross-framework common shape (matching ``allure_parser``). Cypress is
+    the only in-scope framework that surfaces a STRUCTURED diff
+    (``err.expected`` / ``err.actual``); we populate the dedicated ``expected`` /
+    ``actual`` fields from it so the read path can render a side-by-side diff.
+
+    Bounded by construction (exactly one node), so no depth/node cap is needed
+    here — the shared ``ingestion._insert_step`` re-caps depth/nodes and redacts
+    PII regardless.
+
+    For passing tests with no assertion diff we still emit one ``PASSED``
+    assertion step so the test detail consistently shows at least one node.
+    """
+    return [
+        {
+            "name": "assertion",
+            "keyword": None,
+            "status": status,
+            "start_ms": start_ms,
+            "duration_ms": duration_ms,
+            "assertion_message": error_message,
+            "assertion_trace": stack_trace,
+            "expected": expected,
+            "actual": actual,
+            "parameters": [],
+            "attachments": [],
+            "steps": [],
+        }
+    ]
+
+
 def parse_cypress_json(content: str, test_run_id: str) -> List[dict]:
     """Parse a Cypress Mochawesome JSON report into normalized test cases.
 
@@ -202,6 +246,8 @@ def _normalize_test(
     err = test.get("err") or {}
     error_message: Optional[str] = None
     stack_trace: Optional[str] = None
+    expected: Optional[Any] = None
+    actual: Optional[Any] = None
     if isinstance(err, dict):
         raw_message = err.get("message")
         if raw_message:
@@ -209,6 +255,15 @@ def _normalize_test(
         raw_estack = err.get("estack") or err.get("stack")
         if raw_estack:
             stack_trace = str(raw_estack)[:10000]
+        # Mochawesome uniquely surfaces a STRUCTURED diff for failed
+        # assertions (chai ``expected`` vs ``actual``). Cypress is the only
+        # in-scope framework that does this — carry both into the dedicated
+        # common-step ``expected`` / ``actual`` fields (bounded; the shared
+        # ingestion._insert_step redacts PII + truncates on persist).
+        if "expected" in err and err.get("expected") is not None:
+            expected = str(err["expected"])[:2000]
+        if "actual" in err and err.get("actual") is not None:
+            actual = str(err["actual"])[:2000]
 
     full_title = str(test.get("fullTitle") or title)
 
@@ -222,8 +277,24 @@ def _normalize_test(
         "status": status,
         "duration_ms": duration_ms,
         "error_message": error_message,
+        # Case-level stack trace — previously the value was extracted but only
+        # the assertion step now carries it through; keep it on the case too so
+        # the run/test summary surfaces it without expanding the step tree.
         "stack_trace": stack_trace,
         "attachments": [],
-        "steps": [],
+        # Granular common-shape step tree: one synthetic assertion step. Cypress
+        # has no per-command sub-steps in the JSON report, but we emit the
+        # assertion node so expected/actual (structured diff) + message + trace
+        # flow through the existing _upsert_test_case / _insert_step persistence
+        # unchanged (Phase 1 machinery — no new migration / persistence code).
+        "steps": _build_cypress_steps(
+            status=status,
+            error_message=error_message,
+            stack_trace=stack_trace,
+            expected=expected,
+            actual=actual,
+            start_ms=None,
+            duration_ms=duration_ms,
+        ),
         "framework": "cypress",
     }

@@ -16,6 +16,7 @@ INSERT surface ``_upsert_test_case`` + ``get_or_create_canonical`` touch.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -171,6 +172,74 @@ def test_allure_step_tree_depth_and_node_caps():
         return sum(1 + _count(s["steps"]) for s in steps)
 
     assert _count(parsed_wide["steps"]) <= ap._MAX_STEP_NODES
+
+
+def test_testng_failure_vs_error_status_mapping():
+    """TestNG has no native steps; the synthesized outcome pseudo-step MUST
+    preserve the ``<failure>`` (assertion → FAILED) vs ``<error>`` (unexpected
+    exception → BROKEN) distinction, carrying message→assertion_message and
+    stack→assertion_trace. Producer<->consumer vocab discipline."""
+    from app.services.testng_parser import parse_testng_xml
+
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <testsuite name="LoginSuite">
+      <testcase name="testAssert" classname="com.acme.LoginTest" time="0.5">
+        <failure message="expected:&lt;200&gt; but was:&lt;500&gt;">org.testng.AssertionError: expected:&lt;200&gt; but was:&lt;500&gt;
+        at com.acme.LoginTest.testAssert(LoginTest.java:42)</failure>
+        <reporter-output>
+          <line>Navigated to /login</line>
+          <line>Submitted credentials</line>
+        </reporter-output>
+      </testcase>
+      <testcase name="testException" classname="com.acme.LoginTest" time="0.1">
+        <error message="NullPointerException">java.lang.NullPointerException
+        at com.acme.LoginTest.testException(LoginTest.java:88)</error>
+      </testcase>
+      <testcase name="testSkipped" classname="com.acme.LoginTest" time="0">
+        <skipped message="depends on testAssert"/>
+      </testcase>
+      <testcase name="testPass" classname="com.acme.LoginTest" time="0.2"/>
+    </testsuite>"""
+
+    cases = {c["test_name"]: c for c in parse_testng_xml(xml, "run-1")}
+    assert set(cases) == {"testAssert", "testException", "testSkipped", "testPass"}
+
+    valid = {"PASSED", "FAILED", "SKIPPED", "BROKEN", "UNKNOWN"}
+
+    # <failure> → case status "failed", outcome step FAILED, message + trace carried.
+    fail = cases["testAssert"]
+    assert fail["status"] == "failed"
+    fstep = fail["steps"][0]
+    assert fstep["keyword"] == "failure"
+    assert fstep["status"] == "FAILED"
+    assert fstep["assertion_message"] == "expected:<200> but was:<500>"
+    assert "AssertionError" in fstep["assertion_trace"]
+    # reporter-output surfaced as a coarse PASSED log pseudo-step.
+    log = fail["steps"][1]
+    assert log["keyword"] == "log"
+    assert log["status"] == "PASSED"
+    assert "Navigated to /login" in log["assertion_trace"]
+    assert "Submitted credentials" in log["assertion_trace"]
+
+    # <error> → case status "broken", outcome step BROKEN (NOT FAILED).
+    err = cases["testException"]
+    assert err["status"] == "broken"
+    estep = err["steps"][0]
+    assert estep["keyword"] == "error"
+    assert estep["status"] == "BROKEN"
+    assert estep["assertion_message"] == "NullPointerException"
+    assert "NullPointerException" in estep["assertion_trace"]
+
+    # <skipped> → SKIPPED; pass → no synthesized steps.
+    assert cases["testSkipped"]["status"] == "skipped"
+    assert cases["testSkipped"]["steps"][0]["status"] == "SKIPPED"
+    assert cases["testPass"]["status"] == "passed"
+    assert cases["testPass"]["steps"] == []
+
+    # Status vocab guard — every synthesized step status is in the strict set.
+    for c in cases.values():
+        for s in c["steps"]:
+            assert s["status"] in valid
 
 
 # ─────────────────────────── Fake DB harness ───────────────────────────
@@ -462,6 +531,148 @@ async def test_snapshot_skipped_when_no_steps_or_attachments():
     assert db.attachments == []
     assert db.canonicals == []
     assert tc.step_count == 0  # "steps" key present but empty
+
+
+# ──────────────── Phase 3: parser-emitted dicts persist via _upsert_test_case ────────────────
+# These are the integration-style proofs the QA checklist asks for: a fixture is
+# run through the REAL Phase 3 parser, and the resulting common-step dict is fed
+# unchanged through ``_upsert_test_case`` → ``_persist_step_snapshot`` →
+# ``_insert_step`` (the shared Phase 1 persistence) and the materialised TestStep
+# rows are read back. No new persistence code is exercised — the point is that
+# the OTHER parsers' output flows through the existing path identically to Allure.
+
+
+async def _persist_parser_case(case: dict):
+    """Run one parser-emitted common-step dict through the shared snapshot path
+    and return (db, tc) so the test can read the materialised steps back."""
+    project_id = uuid.uuid4()
+    run = SimpleNamespace(id=uuid.uuid4(), project_id=project_id)
+    db = _FakeDB(project_id)
+    tc = TestCase(
+        test_run_id=run.id,
+        test_fingerprint="fp1",
+        test_name=case.get("test_name", "t"),
+    )
+    with patch(
+        "app.services.privacy_service.sanitize_for_persistence",
+        side_effect=lambda s: s,
+    ):
+        await svc._upsert_test_case(db, case, run, existing=tc, fingerprint="fp1")
+    return db, tc
+
+
+@pytest.mark.asyncio
+async def test_cypress_parser_dict_persists_expected_actual_via_upsert():
+    """Cypress's structured diff (expected/actual) must survive the full
+    parse → _upsert_test_case → TestStep persistence round-trip."""
+    from app.services.cypress_parser import parse_cypress_json
+
+    content = json.dumps({
+        "stats": {},
+        "results": [{
+            "file": "cart.cy.ts",
+            "suites": [{
+                "title": "Cart",
+                "tests": [{
+                    "title": "totals match", "state": "failed", "fail": True,
+                    "duration": 130,
+                    "err": {
+                        "message": "expected 42 to equal 41",
+                        "estack": "AssertionError: at cart.cy.ts:9",
+                        "expected": 41, "actual": 42,
+                    },
+                }],
+            }],
+        }],
+    })
+    case = parse_cypress_json(content, "run-1")[0]
+    db, tc = await _persist_parser_case(case)
+
+    assert len(db.steps) == 1
+    step = db.steps[0]
+    assert step.name == "assertion"
+    assert step.status == "FAILED"
+    # Structured diff persisted onto the TestStep row (expected/actual columns).
+    assert step.expected_value == "41"
+    assert step.actual_value == "42"
+    assert "expected 42 to equal 41" in (step.assertion_message or "")
+    assert tc.step_count == 1
+
+
+@pytest.mark.asyncio
+async def test_playwright_parser_dict_persists_nested_tree_via_upsert():
+    """Playwright's nested native step tree must materialise as parent/child
+    TestStep rows with depth + parent linkage through the shared path."""
+    from app.services.playwright_parser import parse_playwright_json
+
+    content = json.dumps({
+        "config": {},
+        "suites": [{
+            "title": "tests/checkout.spec.ts", "file": "tests/checkout.spec.ts",
+            "specs": [{
+                "title": "completes checkout", "file": "tests/checkout.spec.ts", "line": 7,
+                "tests": [{
+                    "projectName": "chromium", "status": "unexpected",
+                    "results": [{
+                        "status": "failed", "duration": 2100, "retry": 0,
+                        "steps": [{
+                            "title": "navigate to cart", "category": "test.step", "duration": 300,
+                            "steps": [{
+                                "title": "expect cart visible", "category": "expect", "duration": 120,
+                                "error": {
+                                    "message": "toBeVisible failed",
+                                    "stack": "Error: at checkout.spec.ts:11",
+                                },
+                            }],
+                        }],
+                        "errors": [{"message": "toBeVisible failed",
+                                    "stack": "Error: at checkout.spec.ts:11"}],
+                    }],
+                }],
+            }],
+        }],
+    })
+    case = parse_playwright_json(content, "run-1")[0]
+    db, tc = await _persist_parser_case(case)
+
+    by_name = {s.name: s for s in db.steps}
+    assert "navigate to cart" in by_name
+    assert "expect cart visible" in by_name
+    parent = by_name["navigate to cart"]
+    child = by_name["expect cart visible"]
+    assert parent.depth == 0 and child.depth == 1
+    assert child.parent_step_id == parent.id
+    assert parent.status == "PASSED"   # no error on this node
+    assert child.status == "FAILED"    # error → FAILED
+    assert child.keyword == "expect"
+    # Flaky/retry metadata flows onto the per-run TestCase row too.
+    assert tc.step_count == 1          # one top-level step
+    assert tc.retry_count == 0
+
+
+@pytest.mark.asyncio
+async def test_testng_parser_dict_persists_failure_vs_error_status_via_upsert():
+    """TestNG's synthesized outcome pseudo-step (FAILED vs BROKEN) must persist
+    with the right status onto the TestStep row through the shared path."""
+    from app.services.testng_parser import parse_testng_xml
+
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <testsuite name="LoginSuite">
+      <testcase name="testException" classname="com.acme.LoginTest" time="0.1">
+        <error message="NullPointerException">java.lang.NullPointerException
+        at com.acme.LoginTest.testException(LoginTest.java:88)</error>
+      </testcase>
+    </testsuite>"""
+    case = parse_testng_xml(xml, "run-1")[0]
+    db, tc = await _persist_parser_case(case)
+
+    assert len(db.steps) == 1
+    step = db.steps[0]
+    # <error> → BROKEN (not FAILED) survives onto the persisted step.
+    assert step.status == "BROKEN"
+    assert step.keyword == "error"
+    assert "NullPointerException" in (step.assertion_message or "")
+    assert tc.step_count == 1
 
 
 # ─────────────────────────── Read-endpoint service ───────────────────────────

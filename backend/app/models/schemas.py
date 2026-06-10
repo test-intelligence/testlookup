@@ -222,6 +222,13 @@ class TestCaseSummary(BaseModel):
     feature: Optional[str] = None
     failure_category: Optional[str] = None
     has_attachments: bool = False
+    # Number of top-level granular steps captured in the latest-run snapshot
+    # (Phase 1 granular steps). NULL when no parser emitted a step tree for this
+    # producer; 0 when the parser ran but the test had no steps. The run-detail
+    # list renders a small badge from this so a test's granularity is visible
+    # without opening the per-test steps panel. Live-buffer fallback rows omit
+    # it (defaults to None).
+    step_count: Optional[int] = None
     created_at: datetime
     # Auto-assigned at ingest for FAILED/BROKEN cases (migration 0080).
     # Resolves to the suite owner → default QA lead → manager → NULL.
