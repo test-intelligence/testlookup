@@ -5,6 +5,7 @@ from enum import Enum as PyEnum
 from typing import Any, Optional
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -362,6 +363,19 @@ class TestCase(Base):
         nullable=True,
     )
 
+    # ── Per-run granular metadata (migration 0093) ──────────────────
+    # Nullable, populated by the Allure/pytest parsers for the run that
+    # produced this row. Unlike the step/attachment snapshot (which is
+    # latest-run-only on the canonical anchor), these live on each per-run
+    # ``test_cases`` row. retry_count = # of retries Allure recorded;
+    # is_flaky_run = the run-level flaky flag the framework reported;
+    # stack_trace = full failure trace (error_message is the short head);
+    # step_count = # of top-level steps captured for the snapshot.
+    retry_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    is_flaky_run: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    stack_trace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    step_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     # S3 reference
     minio_s3_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
     has_attachments: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -620,6 +634,122 @@ class CanonicalTestCase(Base):
     test_suite: Mapped["TestSuite"] = relationship("TestSuite", back_populates="canonical_test_cases")
     test_cases: Mapped[list["TestCase"]] = relationship("TestCase", back_populates="canonical_test_case")
     managed_test_case: Mapped[Optional["ManagedTestCase"]] = relationship("ManagedTestCase")
+    # Latest-run-only granular snapshot (migration 0093). delete-orphan so the
+    # ingestion delete-then-insert overwrite clears the prior snapshot when the
+    # collection is reassigned; CASCADE in the DB covers canonical-row deletion.
+    steps: Mapped[list["TestStep"]] = relationship(
+        "TestStep",
+        back_populates="canonical_test_case",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+    attachments: Mapped[list["TestAttachment"]] = relationship(
+        "TestAttachment",
+        back_populates="canonical_test_case",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+
+
+class TestStep(Base):
+    """One granular step in the LATEST-RUN-ONLY snapshot for a logical test.
+
+    LOCKED retention model (migration 0093): steps anchor to the project-scoped
+    ``canonical_test_cases`` identity — exactly ONE snapshot per
+    ``(project_id, test_fingerprint)`` — NOT to the per-run ``test_cases`` rows
+    that accumulate. On ingest of a newer run, ingestion DELETEs this canonical
+    test's steps and INSERTs the new ones inside the ingestion-pipeline
+    transaction. ``source_test_run_id`` is provenance only (which run produced
+    the snapshot). ``parent_step_id`` (self-FK, CASCADE) models nested steps.
+    """
+    __tablename__ = "test_steps"
+    __table_args__ = (
+        Index("ix_test_steps_canonical_ordinal", "canonical_test_case_id", "ordinal"),
+        Index("ix_test_steps_parent", "parent_step_id"),
+        Index("ix_test_steps_source_run", "source_test_run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    canonical_test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("canonical_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    source_test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    parent_step_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_steps.id", ondelete="CASCADE"), nullable=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    name: Mapped[str] = mapped_column(String(2000), nullable=False)
+    keyword: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    start_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    assertion_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    assertion_trace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expected_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    actual_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parameters: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    canonical_test_case: Mapped["CanonicalTestCase"] = relationship(
+        "CanonicalTestCase", back_populates="steps"
+    )
+    # Self-referential nesting. delete-orphan + CASCADE so trimming a parent's
+    # children (delete-then-insert) cleans up the subtree.
+    children: Mapped[list["TestStep"]] = relationship(
+        "TestStep",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+    parent: Mapped[Optional["TestStep"]] = relationship(
+        "TestStep", back_populates="children", remote_side="TestStep.id"
+    )
+    attachments: Mapped[list["TestAttachment"]] = relationship(
+        "TestAttachment",
+        back_populates="test_step",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+
+
+class TestAttachment(Base):
+    """Index-only attachment metadata for the latest-run snapshot.
+
+    Phase 1 stores references (``source_ref``) only — bytes are not proxied.
+    Anchored to the canonical test (CASCADE) like steps; ``test_step_id``
+    (CASCADE, nullable) links a step-scoped attachment, NULL = test-level.
+    Migration 0093.
+    """
+    __tablename__ = "test_attachments"
+    __table_args__ = (
+        Index("ix_test_attachments_canonical", "canonical_test_case_id"),
+        Index("ix_test_attachments_step", "test_step_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    canonical_test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("canonical_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    test_step_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_steps.id", ondelete="CASCADE"), nullable=True
+    )
+    source_test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_ref: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    media_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    canonical_test_case: Mapped["CanonicalTestCase"] = relationship(
+        "CanonicalTestCase", back_populates="attachments"
+    )
+    test_step: Mapped[Optional["TestStep"]] = relationship(
+        "TestStep", back_populates="attachments"
+    )
 
 
 class TestCaseHistory(Base):

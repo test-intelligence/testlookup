@@ -101,12 +101,53 @@ def _normalize(t: object, test_run_id: str) -> Optional[dict]:
         "status": status,
         "duration_ms": duration_ms,
         "error_message": error_message,
-        "stack_trace": None,
+        "stack_trace": error_message,
         "tags": [],
         "attachments": [],
-        "steps": [],
+        # Synthesize one pseudo-step per pytest phase (setup/call/teardown) so
+        # the granular snapshot mirrors the framework's own execution phases.
+        "steps": _phase_steps(t),
         "framework": "pytest",
     }
+
+
+def _phase_steps(t: dict) -> List[dict]:
+    """Build setup/call/teardown pseudo-steps in the common step dict shape.
+
+    pytest has no nested user steps in ``--json-report``; the three execution
+    phases are the natural granularity. Each phase carries its own outcome,
+    duration (s → ms) and ``longrepr``/``crash`` trace. Phases that pytest did
+    not report (missing key) are skipped; a reported phase with no duration
+    still emits a step so the UI shows the phase ran.
+    """
+    out: List[dict] = []
+    for phase in ("setup", "call", "teardown"):
+        p = t.get(phase)
+        if not isinstance(p, dict):
+            continue
+        dur = p.get("duration")
+        duration_ms = int(float(dur) * 1000) if isinstance(dur, (int, float)) else None
+        outcome = str(p.get("outcome") or "").lower()
+        trace = None
+        if outcome in ("failed", "error"):
+            lr = p.get("longrepr") or p.get("crash")
+            if lr:
+                trace = str(lr)[:8000]
+        out.append({
+            "name": phase,
+            "keyword": phase,
+            "status": _OUTCOME_MAP.get(outcome, "UNKNOWN"),
+            "start_ms": None,
+            "duration_ms": duration_ms,
+            "assertion_message": (str(trace)[:2000] if trace else None),
+            "assertion_trace": trace,
+            "expected": None,
+            "actual": None,
+            "parameters": [],
+            "attachments": [],
+            "steps": [],
+        })
+    return out
 
 
 def _split_nodeid(nodeid: str):

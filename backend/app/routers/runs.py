@@ -223,6 +223,28 @@ async def get_test_case(
     return test_case
 
 
+@router.get("/{run_id}/tests/{test_id}/steps")
+async def get_test_case_steps(
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Granular step/attachment tree for one test (LATEST-RUN-ONLY snapshot).
+
+    Lazy / separate from the test-case detail payload — the detail endpoint
+    stays unchanged and clients fetch steps on demand. Guarded by
+    ``require_run_access`` which verifies the PROVIDED ``run_id`` (IDOR ratchet).
+    Returns the ordered, nested step tree with per-step + test-level attachments.
+    """
+    from app.services.runs_service import get_test_steps_tree
+
+    tree = await get_test_steps_tree(db, run_id, test_id)
+    if tree is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return tree
+
+
 @router.get("/{run_id}/regression-diff")
 async def get_regression_diff(
     run_id: uuid.UUID,

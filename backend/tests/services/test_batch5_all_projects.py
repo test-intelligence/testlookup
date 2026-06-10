@@ -55,6 +55,12 @@ def test_list_project_runs_no_filter_builds_correct_query():
             id=None,
             name=None,
         ),
+        # Imported at module top by runs_service for the granular-steps
+        # read path (get_test_steps_tree). Not used by list_project_runs,
+        # but must exist on the stub or the `from app.models.postgres
+        # import (..., TestStep, TestAttachment)` raises ImportError.
+        TestStep=SimpleNamespace(__table__=SimpleNamespace(columns=[])),
+        TestAttachment=SimpleNamespace(__table__=SimpleNamespace(columns=[])),
     )
 
     with patch.dict("sys.modules", {"app.models.postgres": fake_models}, clear=False):

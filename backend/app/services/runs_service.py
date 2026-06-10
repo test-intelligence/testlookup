@@ -6,7 +6,15 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Project, Release, ReleaseTestRunLink, TestCase, TestRun
+from app.models.postgres import (
+    Project,
+    Release,
+    ReleaseTestRunLink,
+    TestAttachment,
+    TestCase,
+    TestRun,
+    TestStep,
+)
 
 
 def serialize_run(run: TestRun) -> dict:
@@ -456,3 +464,111 @@ async def _live_buffer_test_cases(
     start = (page - 1) * size
     page_items = deduped[start:start + size]
     return page_items, total, pages
+
+
+async def get_test_steps_tree(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+) -> dict | None:
+    """Return the nested step/attachment tree for a TestCase in a run.
+
+    The granular snapshot is LATEST-RUN-ONLY and anchored to the test's
+    project-scoped ``CanonicalTestCase`` (NOT the per-run ``test_cases`` row),
+    so the snapshot reflects whichever run most recently ingested this logical
+    test — even if that's a newer run than ``run_id``. The ``test_id`` is
+    resolved to its canonical anchor; the steps are fetched by that anchor.
+
+    Returns ``None`` when the TestCase doesn't belong to the run (404 at the
+    router), or an empty-tree dict when the case has no captured steps yet.
+    """
+    tc = (
+        await db.execute(
+            select(TestCase).where(
+                TestCase.id == test_id,
+                TestCase.test_run_id == run_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if tc is None:
+        return None
+
+    canonical_id = tc.canonical_test_case_id
+    steps_rows: list[TestStep] = []
+    att_rows: list[TestAttachment] = []
+    if canonical_id is not None:
+        steps_rows = list(
+            (
+                await db.execute(
+                    select(TestStep)
+                    .where(TestStep.canonical_test_case_id == canonical_id)
+                    .order_by(TestStep.ordinal)
+                )
+            ).scalars().all()
+        )
+        att_rows = list(
+            (
+                await db.execute(
+                    select(TestAttachment).where(
+                        TestAttachment.canonical_test_case_id == canonical_id
+                    )
+                )
+            ).scalars().all()
+        )
+
+    # Index attachments by owning step id (NULL = test-level).
+    att_by_step: dict[uuid.UUID | None, list[dict]] = {}
+    for a in att_rows:
+        att_by_step.setdefault(a.test_step_id, []).append({
+            "id": a.id,
+            "test_step_id": a.test_step_id,
+            "name": a.name,
+            "source_ref": a.source_ref,
+            "media_type": a.media_type,
+            "created_at": a.created_at,
+        })
+
+    # Build the step nodes, then nest by parent_step_id preserving ordinal order.
+    node_by_id: dict[uuid.UUID, dict] = {}
+    for s in steps_rows:
+        node_by_id[s.id] = {
+            "id": s.id,
+            "parent_step_id": s.parent_step_id,
+            "ordinal": s.ordinal,
+            "depth": s.depth,
+            "name": s.name,
+            "keyword": s.keyword,
+            "status": s.status,
+            "duration_ms": s.duration_ms,
+            "start_ms": s.start_ms,
+            "assertion_message": s.assertion_message,
+            "assertion_trace": s.assertion_trace,
+            "expected_value": s.expected_value,
+            "actual_value": s.actual_value,
+            "parameters": s.parameters,
+            "created_at": s.created_at,
+            "steps": [],
+            "attachments": att_by_step.get(s.id, []),
+        }
+
+    roots: list[dict] = []
+    for s in steps_rows:  # steps_rows is ordinal-ordered → children keep order
+        node = node_by_id[s.id]
+        parent = node_by_id.get(s.parent_step_id) if s.parent_step_id else None
+        if parent is not None:
+            parent["steps"].append(node)
+        else:
+            roots.append(node)
+
+    return {
+        "run_id": str(run_id),
+        "test_id": str(test_id),
+        "test_name": tc.test_name,
+        "status": tc.status,
+        "step_count": tc.step_count,
+        "retry_count": tc.retry_count,
+        "is_flaky_run": tc.is_flaky_run,
+        "stack_trace": tc.stack_trace,
+        "steps": roots,
+        "attachments": att_by_step.get(None, []),
+    }

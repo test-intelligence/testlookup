@@ -249,6 +249,51 @@ class TestCaseListResponse(BaseModel):
     pages: int
 
 
+# ── Granular step / attachment snapshot (migration 0093) ──────────────────
+# Latest-run-only snapshot anchored to the canonical (project, fingerprint)
+# test identity. TestStepResponse is recursive (nested steps), so it must be
+# rebuilt after definition (model_rebuild()).
+
+
+class TestAttachmentResponse(BaseModel):
+    """Index-only attachment metadata (Phase 1 stores refs, not bytes)."""
+    id: uuid.UUID
+    test_step_id: Optional[uuid.UUID] = None
+    name: str
+    source_ref: Optional[str] = None
+    media_type: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestStepResponse(BaseModel):
+    """One granular step in a logical test's latest-run snapshot.
+
+    ``steps`` carries the nested child steps (Allure before/after + sub-steps).
+    """
+    id: uuid.UUID
+    parent_step_id: Optional[uuid.UUID] = None
+    ordinal: int
+    depth: int
+    name: str
+    keyword: Optional[str] = None
+    status: TestStatus
+    duration_ms: Optional[int] = None
+    start_ms: Optional[int] = None
+    assertion_message: Optional[str] = None
+    assertion_trace: Optional[str] = None
+    expected_value: Optional[str] = None
+    actual_value: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    steps: List["TestStepResponse"] = Field(default_factory=list)
+    attachments: List[TestAttachmentResponse] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
+TestStepResponse.model_rebuild()
+
+
 # ── Test Execution Review (migration 0081) ────────────────────────────────
 
 

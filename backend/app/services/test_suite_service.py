@@ -216,6 +216,78 @@ async def get_or_create_suite_by_name(
     return suite
 
 
+async def get_or_create_canonical(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    *,
+    test_fingerprint: str,
+    test_name: str,
+    class_name: Optional[str],
+    suite_name: Optional[str],
+) -> CanonicalTestCase:
+    """Resolve (and create if absent) the project-scoped CanonicalTestCase for a
+    ``(project_id, test_fingerprint)`` — the LATEST-RUN-ONLY snapshot anchor for
+    granular steps/attachments.
+
+    Called from ``_upsert_test_case`` during ingestion so the step snapshot has
+    a stable anchor *before* the later ``sync_canonical_test_cases`` pass runs.
+    That pass re-selects by fingerprint and updates idempotently, so pre-creating
+    the row here is safe — it just wins the get-or-create and the sync step finds
+    and updates it. Uses the same SAVEPOINT race pattern as the sibling helpers.
+    """
+    existing = (
+        await db.execute(
+            select(CanonicalTestCase).where(
+                CanonicalTestCase.project_id == project_id,
+                CanonicalTestCase.test_fingerprint == test_fingerprint,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.last_seen_run_id = run_id
+        return existing
+
+    # Resolve the owning suite: named suite (materialise if missing) or the
+    # project's default suite for NULL/empty suite_name.
+    if suite_name and suite_name.strip():
+        target_suite = await get_or_create_suite_by_name(db, project_id, suite_name)
+    else:
+        project = (
+            await db.execute(select(Project).where(Project.id == project_id))
+        ).scalar_one_or_none()
+        if project is None:
+            raise ValueError(f"Project not found: {project_id}")
+        target_suite = await get_or_create_default_suite(db, project)
+
+    canonical = CanonicalTestCase(
+        project_id=project_id,
+        test_suite_id=target_suite.id,
+        test_fingerprint=test_fingerprint,
+        test_name=test_name or "Unknown",
+        class_name=class_name,
+        status="active",
+        source="execution",
+        first_seen_run_id=run_id,
+        last_seen_run_id=run_id,
+    )
+    try:
+        async with db.begin_nested():
+            db.add(canonical)
+            await db.flush()
+    except IntegrityError:
+        canonical = (
+            await db.execute(
+                select(CanonicalTestCase).where(
+                    CanonicalTestCase.project_id == project_id,
+                    CanonicalTestCase.test_fingerprint == test_fingerprint,
+                )
+            )
+        ).scalar_one()
+        canonical.last_seen_run_id = run_id
+    return canonical
+
+
 async def sync_canonical_test_cases(
     db: AsyncSession,
     project_id: uuid.UUID,

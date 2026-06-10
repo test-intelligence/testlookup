@@ -5,6 +5,7 @@ import StatusBadge from '@/components/ui/StatusBadge'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import LogViewer from '@/components/ai/LogViewer'
 import AIAnalysisPanel from '@/components/ai/AIAnalysisPanel'
+import TestStepsPanel from '@/components/runs/TestStepsPanel'
 import { useTestCase } from '@/hooks/useRuns'
 import { formatDuration, formatDateTime } from '@/utils/formatters'
 import { useProjectStore } from '@/store/projectStore'
@@ -103,6 +104,12 @@ export default function TestCasePage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Granular step timeline (latest-run-only snapshot) */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Steps</h3>
+        <TestStepsPanel runId={runId} testId={testId} />
       </div>
     </div>
   )

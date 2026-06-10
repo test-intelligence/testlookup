@@ -64,3 +64,59 @@ export interface RunTestCase {
 }
 
 export type RunTestCaseListResponse = PaginatedResponse<RunTestCase>
+
+/**
+ * Index-only attachment reference captured alongside a granular step snapshot
+ * (Phase 1: metadata only — ``source_ref`` is a reference, bytes are not
+ * proxied). ``test_step_id`` is null for test-level (non-step) attachments.
+ */
+export interface TestAttachment {
+  id: string
+  test_step_id: string | null
+  name: string
+  source_ref: string | null
+  media_type: string | null
+  created_at: string
+}
+
+/**
+ * One node in the granular step tree for a logical test. The snapshot is
+ * latest-run-only per (project, fingerprint), so the steps reflect whichever
+ * run most recently ingested this test — which may be newer than the run being
+ * viewed. ``parameters`` is whatever the parser stored (Allure emits a list of
+ * ``{name, value}``); the endpoint has no response_model so it is untyped JSON.
+ */
+export interface TestStep {
+  id: string
+  parent_step_id: string | null
+  ordinal: number
+  depth: number
+  name: string
+  keyword?: string | null
+  status: string
+  duration_ms?: number | null
+  start_ms?: number | null
+  assertion_message?: string | null
+  assertion_trace?: string | null
+  expected_value?: string | null
+  actual_value?: string | null
+  parameters?: unknown
+  created_at: string
+  steps: TestStep[]
+  attachments: TestAttachment[]
+}
+
+/** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/steps``. */
+export interface TestStepsTree {
+  run_id: string
+  test_id: string
+  test_name: string
+  status: string
+  step_count: number | null
+  retry_count: number | null
+  is_flaky_run: boolean | null
+  stack_trace: string | null
+  steps: TestStep[]
+  /** Test-level attachments (those with ``test_step_id === null``). */
+  attachments: TestAttachment[]
+}
