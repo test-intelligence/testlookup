@@ -24,7 +24,7 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - **Flaky quarantine** -- detection, QA Lead approval, active quarantine, nightly recheck, release/re-quarantine state machine
 - **Perf regression detection** -- per-test duration baselines (Welford algorithm) with 3-sigma spike detection
 - **Feature flags** -- per-project / per-role / rollout-percent gates with audit history
-- **MCP server** -- 36 tools, 9 resources, 6 prompt workflows for AI assistant integration
+- **MCP server** -- 48 tools, 9 resources, 6 prompt workflows for AI assistant integration
 - **CLI** -- 11 command groups, multi-profile auth, table/JSON/YAML output
 - **Dashboards** -- 30+ customizable analytics widgets with drag-and-drop layout
 - **Live streaming** -- real-time WebSocket dashboard during test execution
@@ -49,6 +49,21 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Team value metrics split via service ownership rules
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
+
+### Fixed (2026-06-09 — MCP tool-name collision: 2 of 48 tools were unreachable)
+
+Two MCP tool *names* were each declared in two different modules with different signatures, and both modules are registered in `server.py`. FastMCP registers tools by function name, so the later registration silently shadowed the earlier one — leaving two implementations as dead code and only **46** of the 48 declared tools actually reachable:
+- `check_release_readiness` — `tools/release.py` (project-level, `project_id`/`days`, GREEN/AMBER/RED) was shadowed by `tools/reports.py` (single-run, `run_id`, GO/CONDITIONAL_GO/NO_GO).
+- `search_tests` — `tools/analysis.py` (full status/date-filtered search) was shadowed by `tools/search.py` (legacy two-arg test-case search).
+
+In both cases the documented contract (and the prompt-workflow templates) already described the *shadowed* richer version, so the runtime was contradicting the docs. Fix renames the two shadowing duplicates to distinct names so all **48** tools are reachable and the docs match runtime:
+- `tools/reports.py`: `check_release_readiness` → **`check_run_release_readiness`** (single-run assessment).
+- `tools/search.py`: `search_tests` → **`search_test_cases`** (legacy keyword search).
+- `check_release_readiness` and `search_tests` now resolve to their documented project-level / full-filter implementations.
+- `mcp/tests/test_mcp_tool_name_collisions.py` (3 tests, AST-based) guards against any future duplicate tool name and pins both former-collision pairs as distinct.
+- Tool/resource/prompt counts corrected to **48 / 9 / 6** across `README.md`, `README_FULL.md`, `ARCHITECTURE.md`, and `mcp/README.md` (previously variously 24/36/48 tools, 10 resources); added the two newly-distinct tools to the `mcp/README.md` reference table.
+
+> Behaviour note: clients that called `check_release_readiness` with a `run_id` should switch to `check_run_release_readiness`; `check_release_readiness` is now project-scoped.
 
 ### Tested (2026-06-08 — /releases delete: cascade contract regression)
 
