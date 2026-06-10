@@ -55,3 +55,15 @@ export function useTestSteps(runId?: string, testId?: string) {
     () => runsService.getTestSteps(runId as string, testId as string)
   )
 }
+
+/**
+ * Cross-run pass/fail history + flakiness + metadata for a logical test. Lazy —
+ * fetched separately from the test-case detail so the detail renders immediately
+ * and the (project-scoped) history timeline streams in. Read-only.
+ */
+export function useTestCaseHistory(runId?: string, testId?: string) {
+  return useSWR(
+    runId && testId ? ['test-case-history', runId, testId] : null,
+    () => runsService.getTestHistory(runId as string, testId as string)
+  )
+}

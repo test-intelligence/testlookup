@@ -6,6 +6,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import LogViewer from '@/components/ai/LogViewer'
 import AIAnalysisPanel from '@/components/ai/AIAnalysisPanel'
 import TestStepsPanel from '@/components/runs/TestStepsPanel'
+import TestHistoryPanel from '@/components/runs/TestHistoryPanel'
 import { useTestCase } from '@/hooks/useRuns'
 import { formatDuration, formatDateTime } from '@/utils/formatters'
 import { useProjectStore } from '@/store/projectStore'
@@ -106,10 +107,20 @@ export default function TestCasePage() {
         </div>
       </div>
 
-      {/* Granular step timeline (latest-run-only snapshot) */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Steps</h3>
-        <TestStepsPanel runId={runId} testId={testId} />
+      {/* History / flakiness / metadata (cross-run, project-scoped) + steps */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">
+            History &amp; Flakiness
+          </h3>
+          <TestHistoryPanel runId={runId} testId={testId} />
+        </div>
+
+        {/* Granular step timeline (latest-run-only snapshot) */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Steps</h3>
+          <TestStepsPanel runId={runId} testId={testId} />
+        </div>
       </div>
     </div>
   )

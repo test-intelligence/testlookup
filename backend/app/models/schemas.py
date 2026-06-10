@@ -2296,6 +2296,74 @@ class FlakyCoachResponse(BaseModel):
     entries: List[FlakyCoachEntry] = []
 
 
+# ── Granular test-case history / flakiness / metadata (Phase 2) ──────────────
+
+
+class TestCaseHistoryPointResponse(BaseModel):
+    """One cross-run point in a logical test's timeline (most-recent-first)."""
+    model_config = ConfigDict(from_attributes=True)
+
+    run_id: Optional[str] = None
+    run_label: str
+    build_number: Optional[str] = None
+    run_seq: Optional[int] = None
+    status: str
+    duration_ms: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+
+class TestCaseFlakinessResponse(BaseModel):
+    """Computed flakiness for the in-window timeline.
+
+    ``failure_rate``/``failure_rate_pct`` match ``analytics_service.flaky_tests``;
+    ``classification`` + ``impact_score`` reuse ``test_health_coach_service``
+    thresholds (no new formula).
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    is_flaky: bool = False
+    failure_rate: float = 0.0
+    failure_rate_pct: float = 0.0
+    impact_score: float = 0.0
+    classification: str = "HEALTHY"
+    window_days: int = 30
+    total_runs: int = 0
+    passed: int = 0
+    failed: int = 0
+
+
+class TestCaseMetadataResponse(BaseModel):
+    """Identity metadata: owner, effective suite, first/last seen, timestamps."""
+    model_config = ConfigDict(from_attributes=True)
+
+    owner: Optional[str] = None
+    assigned_to_user_id: Optional[str] = None
+    suite: Optional[str] = None
+    severity: Optional[str] = None
+    feature: Optional[str] = None
+    first_seen_run_id: Optional[str] = None
+    first_seen_run_label: Optional[str] = None
+    first_seen_at: Optional[datetime] = None
+    last_seen_run_id: Optional[str] = None
+    last_seen_run_label: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class TestCaseHistoryResponse(BaseModel):
+    """Wrapper for GET /runs/{run_id}/tests/{test_id}/history."""
+    model_config = ConfigDict(from_attributes=True)
+
+    run_id: str
+    test_id: str
+    test_fingerprint: Optional[str] = None
+    test_name: str
+    history: List[TestCaseHistoryPointResponse] = []
+    flakiness: TestCaseFlakinessResponse
+    metadata: TestCaseMetadataResponse
+
+
 # ── SSO / SAML / SCIM Schemas (ENT-01) ──────────────────────────────────────
 
 

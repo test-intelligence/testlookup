@@ -1,6 +1,7 @@
 import type {
   RunTestCase,
   RunTestCaseListResponse,
+  TestCaseHistory,
   TestRun,
   TestRunListResponse,
   TestStepsTree,
@@ -27,6 +28,11 @@ export const runsService = {
    *  granular detail was captured (non-Allure/pytest runs). */
   getTestSteps: (runId: string, testId: string) =>
     getData<TestStepsTree>(`/api/v1/runs/${runId}/tests/${testId}/steps`),
+
+  /** Cross-run pass/fail history + flakiness + metadata for a logical test.
+   *  Project-scoped server-side; lazy/separate from the test-case detail. */
+  getTestHistory: (runId: string, testId: string) =>
+    getData<TestCaseHistory>(`/api/v1/runs/${runId}/tests/${testId}/history`),
 
   setRelease: (runId: string, releaseName: string) =>
     postData(`/api/v1/runs/${runId}/release`, { release_name: releaseName }),

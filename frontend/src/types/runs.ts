@@ -106,6 +106,58 @@ export interface TestStep {
   attachments: TestAttachment[]
 }
 
+/** One run in the cross-run pass/fail timeline (most-recent-first, capped 50). */
+export interface TestCaseHistoryPoint {
+  run_id: string | null
+  run_label: string
+  build_number: string | null
+  run_seq: number | null
+  status: string
+  duration_ms: number | null
+  created_at: string | null
+}
+
+/** Flakiness signal — reuses analytics_service thresholds + test_health_coach impact/classification. */
+export interface TestCaseFlakiness {
+  is_flaky: boolean
+  failure_rate: number
+  failure_rate_pct: number
+  impact_score: number
+  classification: string
+  window_days: number
+  total_runs: number
+  passed: number
+  failed: number
+}
+
+/** Test-case metadata block (owner, suite, first/last seen, timestamps). */
+export interface TestCaseMetadata {
+  owner: string | null
+  assigned_to_user_id: string | null
+  suite: string | null
+  severity: string | null
+  feature: string | null
+  first_seen_run_id: string | null
+  first_seen_run_label: string | null
+  first_seen_at: string | null
+  last_seen_run_id: string | null
+  last_seen_run_label: string | null
+  last_seen_at: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/history``. */
+export interface TestCaseHistory {
+  run_id: string
+  test_id: string
+  test_fingerprint: string | null
+  test_name: string
+  history: TestCaseHistoryPoint[]
+  flakiness: TestCaseFlakiness
+  metadata: TestCaseMetadata
+}
+
 /** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/steps``. */
 export interface TestStepsTree {
   run_id: string
