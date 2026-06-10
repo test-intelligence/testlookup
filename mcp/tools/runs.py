@@ -23,6 +23,50 @@ def _status(s: Optional[str]) -> str:
     return f"{_STATUS_EMOJI.get(s, '')} {s}"
 
 
+def _render_step_rows(nodes: list, out: list, depth: int = 0) -> None:
+    """Recursively flatten the nested step tree into markdown table rows.
+
+    Mirrors the LATEST-RUN-ONLY snapshot shape from
+    ``GET /runs/{run_id}/tests/{test_id}/steps`` (``runs_service.get_test_steps_tree``):
+    each node has ``name``/``status``/``duration_ms``/``assertion_message`` and a
+    nested ``steps`` list. Indentation encodes depth; ``ordinal`` (1-based here)
+    numbers the steps in document order.
+    """
+    for node in nodes or []:
+        indent = "··" * depth
+        name = (node.get("name") or "(unnamed)").replace("\n", " ")[:60]
+        dur_ms = node.get("duration_ms") or 0
+        msg = (node.get("assertion_message") or "").replace("\n", " ").strip()
+        if len(msg) > 60:
+            msg = msg[:60] + "…"
+        out.append(
+            f"| {len(out) + 1} "
+            f"| {indent}{name} "
+            f"| {_status(node.get('status'))} "
+            f"| {dur_ms / 1000:.2f}s "
+            f"| {msg or '-'} |"
+        )
+        _render_step_rows(node.get("steps") or [], out, depth + 1)
+
+
+def _render_step_tree(tree: dict) -> list:
+    """Render the step tree dict as readable markdown lines (best-effort)."""
+    roots = tree.get("steps") or []
+    if not roots:
+        return ["", "### Steps", "_No granular step data captured for this test._"]
+
+    rows: list = []
+    _render_step_rows(roots, rows)
+    lines = [
+        "",
+        f"### Steps ({tree.get('step_count') or len(rows)})",
+        "| # | Step | Status | Duration | Assertion |",
+        "|---|------|--------|----------|-----------|",
+    ]
+    lines += rows
+    return lines
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
@@ -187,13 +231,21 @@ def register(mcp) -> None:  # noqa: ANN001
         return "\n".join(lines)
 
     @mcp.tool()
-    async def get_test_case(run_id: str, test_id: str) -> str:
+    async def get_test_case(
+        run_id: str,
+        test_id: str,
+        include_steps: bool = False,
+    ) -> str:
         """
         Get full details of a single test case including error message, labels, and metadata.
 
         Args:
             run_id: Test run UUID.
             test_id: Test case UUID (from list_test_cases).
+            include_steps: When True, also fetch and render the granular step tree
+                (step #/indent, name, status, duration, assertion message) from the
+                LATEST-RUN-ONLY snapshot. Best-effort — older runs have no steps and
+                the default output is unchanged when omitted.
         """
         t = await api.get(f"/api/v1/runs/{run_id}/tests/{test_id}")
 
@@ -226,6 +278,16 @@ def register(mcp) -> None:  # noqa: ANN001
                 t["error_message"][:3000],
                 f"```",
             ]
+
+        if include_steps:
+            try:
+                tree = await api.get(f"/api/v1/runs/{run_id}/tests/{test_id}/steps")
+                if isinstance(tree, dict):
+                    lines += _render_step_tree(tree)
+            except Exception:
+                # Best-effort: degrade gracefully if steps are unavailable
+                # (older runs have none / endpoint 404) — keep core detail intact.
+                lines += ["", "### Steps", "_Granular step data unavailable._"]
 
         lines += [
             "",

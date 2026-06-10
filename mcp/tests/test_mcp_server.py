@@ -157,3 +157,84 @@ class TestSearchTools:
     def test_calls_global_search_endpoint(self):
         content = (MCP_DIR / "tools" / "search.py").read_text(encoding="utf-8")
         assert "/search/global" in content
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Phase 6: Granular steps surfaced in MCP (runs / analysis / search)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestGranularStepsRuns:
+    """get_test_case gains an include_steps option that renders the step tree."""
+
+    def test_get_test_case_has_include_steps_option(self):
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "include_steps" in content
+
+    def test_fetches_steps_endpoint(self):
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "/tests/{test_id}/steps" in content
+
+    def test_renders_step_table_header(self):
+        """A markdown step table must be emitted when steps are included."""
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "### Steps" in content
+        assert "| # | Step | Status | Duration | Assertion |" in content
+
+    def test_has_step_tree_renderers(self):
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "_render_step_tree" in content
+        assert "_render_step_rows" in content
+
+    def test_step_renderers_are_recursive_over_nested_steps(self):
+        """Nested children (node['steps']) must be walked for the tree."""
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert 'node.get("steps")' in content
+
+    def test_default_output_unchanged_when_steps_omitted(self):
+        """include_steps must default to False so existing output is preserved."""
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "include_steps: bool = False" in content
+
+
+class TestGranularStepsAnalysis:
+    """trigger_ai_analysis surfaces 'step N failed: <assertion>' evidence."""
+
+    def test_has_first_failed_step_helper(self):
+        content = (MCP_DIR / "tools" / "analysis.py").read_text(encoding="utf-8")
+        assert "_first_failed_step_evidence" in content
+
+    def test_evidence_phrase_present(self):
+        content = (MCP_DIR / "tools" / "analysis.py").read_text(encoding="utf-8")
+        assert "step {i} failed" in content
+
+    def test_picks_failed_or_broken_step(self):
+        content = (MCP_DIR / "tools" / "analysis.py").read_text(encoding="utf-8")
+        assert '"FAILED"' in content and '"BROKEN"' in content
+
+    def test_fetches_steps_endpoint(self):
+        content = (MCP_DIR / "tools" / "analysis.py").read_text(encoding="utf-8")
+        assert "/tests/" in content and "/steps" in content
+
+    def test_best_effort_run_id_optional(self):
+        """run_id is optional — step evidence is skipped gracefully without it."""
+        content = (MCP_DIR / "tools" / "analysis.py").read_text(encoding="utf-8")
+        assert "run_id: Optional[str] = None" in content
+
+
+class TestGranularStepsSearch:
+    """search_tests notes when a result likely matched on step text."""
+
+    def test_has_step_match_note_helper(self):
+        content = (MCP_DIR / "tools" / "search.py").read_text(encoding="utf-8")
+        assert "_step_match_note" in content
+
+    def test_subtitle_mentions_step_match(self):
+        content = (MCP_DIR / "tools" / "search.py").read_text(encoding="utf-8")
+        # The note is honest that it can't distinguish error-message from step
+        # matches (the search payload exposes neither field).
+        assert "may match error/step text" in content
+
+    def test_step_note_applied_to_results(self):
+        content = (MCP_DIR / "tools" / "search.py").read_text(encoding="utf-8")
+        assert "_step_match_note(" in content
