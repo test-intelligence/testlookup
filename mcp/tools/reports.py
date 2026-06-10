@@ -8,11 +8,14 @@ import client as api  # type: ignore[import]
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
-    async def check_release_readiness(run_id: str) -> str:
+    async def check_run_release_readiness(run_id: str) -> str:
         """
-        Get the release readiness assessment for a test run.
+        Get the release readiness assessment for a single test run.
         Returns: recommendation (GO/CONDITIONAL_GO/NO_GO), risk score,
         blocking issues, and conditions for GO.
+
+        For a project-level rollup over a time window, use
+        ``check_release_readiness`` instead.
         """
         data = await api.get(f"/api/v1/release-readiness/{run_id}")
 

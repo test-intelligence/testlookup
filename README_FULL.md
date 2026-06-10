@@ -45,7 +45,7 @@ It also ships a first-class **MCP (Model Context Protocol) server** so AI assist
 | **Global Search** | Multi-entity search (6 types) · keyword + semantic (ChromaDB) + hybrid modes |
 | **Observability** | OpenTelemetry tracing → Jaeger · Prometheus metrics endpoint · Grafana dashboards · deep health checks with dependency status |
 | **Security** | JWT-based authentication with role-based access control (RBAC) · scoped API keys · PII redaction |
-| **MCP Server** | 24 tools · 10 resources · 6 prompt workflows for AI assistant integration |
+| **MCP Server** | 48 tools · 9 resources · 6 prompt workflows for AI assistant integration |
 | **Run Intelligence** | Single-pane view: 4-layer summary, release gate, cluster cards, role actions, regression diff |
 | **Regression Watchman** | Classifies failure clusters: new_regression / known_flaky_recurrence / environmental_anomaly |
 | **Defect Commander** | Auto-promotes clusters to Jira using 7-dimension severity scoring + duplicate dedup |
@@ -161,8 +161,8 @@ graph TD
 
     subgraph MCP_Layer [MCP Integration]
         MCP[MCP Server port 8002]
-        MCP_TOOLS[20 Tools]
-        MCP_RES[10 Resources]
+        MCP_TOOLS[48 Tools]
+        MCP_RES[9 Resources]
         MCP_PROMPTS[6 Prompt Workflows]
     end
 
@@ -737,7 +737,7 @@ testlookup/
 │   │   │   └── userManagementService.ts     # Users, invitations, API keys API calls
 │   │   ├── hooks/
 │   │   │   └── useDeepInvestigation.ts      # useFailureClusters, useDeepFindings, useReleaseDecision
-│   │   ├── store/              # Zustand state management (authStore)
+│   │   ├── store/              # Zustand client state (authStore, projectStore, themeStore, timeWindowStore)
 │   │   ├── components/layout/
 │   │   │   └── Sidebar.tsx     # Navigation: Main | AI Agents | Management | Settings
 │   │   └── utils/              # Helpers and formatters
