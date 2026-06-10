@@ -31,6 +31,15 @@ export interface SummarySuiteRow {
   pass_rate_pct: number
   weighted_pass_rate_pct: number
   last_run_at: string | null
+  /**
+   * Step-level success rate for this suite (% of captured steps that passed),
+   * where granular step data exists (Phase 5 enrichment). Optional + defaults
+   * to None on the backend — absent for suites whose tests have no captured
+   * steps. ``passed_steps`` / ``total_steps`` back the percentage.
+   */
+  step_success_rate?: number | null
+  passed_steps?: number | null
+  total_steps?: number | null
 }
 
 export interface SummaryTopFailingTest {

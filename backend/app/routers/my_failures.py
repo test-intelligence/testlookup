@@ -162,6 +162,7 @@ async def list_my_assigned_failures(
             TestCase.duration_ms,
             TestCase.created_at,
             TestCase.test_run_id,
+            TestCase.canonical_test_case_id,
             TestCase.triage_status,
             TestCase.triage_notes,
             TestRun.build_number,
@@ -206,9 +207,21 @@ async def list_my_assigned_failures(
     # Per-(project, suite) run sequence so the inbox can show "Run #N"
     # instead of the opaque SDK-supplied build_number. The map is bulk-
     # fetched once for every distinct test_run_id on the page.
-    from app.services.runs_service import fetch_run_seq_map
+    from app.services.runs_service import (
+        fetch_run_seq_map,
+        first_failed_step_by_canonical,
+    )
     distinct_run_ids = list({r.test_run_id for r in rows})
     run_seq_map = await fetch_run_seq_map(db, distinct_run_ids)
+
+    # Granular enrichment (Phase 5): the first FAILED/BROKEN step name per
+    # failure, read from the LATEST-RUN-ONLY snapshot anchored to the test's
+    # canonical id. Batched once for the whole page → no N+1. Tests without a
+    # captured snapshot (or without a failing step) are simply absent → None.
+    canonical_ids = [
+        r.canonical_test_case_id for r in rows if r.canonical_test_case_id is not None
+    ]
+    step_by_canonical = await first_failed_step_by_canonical(db, canonical_ids)
 
     items: list[MyFailureItem] = []
     for r in rows:
@@ -238,6 +251,7 @@ async def list_my_assigned_failures(
             triage_notes=r.triage_notes,
             run_seq=run_seq_map.get(str(r.test_run_id)),
             failure_count=count_by_key.get(key, 1),
+            last_failure_step=step_by_canonical.get(r.canonical_test_case_id),
         ))
 
     pages = math.ceil(total / size) if size > 0 else 0

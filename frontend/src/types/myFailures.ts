@@ -48,6 +48,13 @@ export interface MyFailureItem {
    * offenders without a follow-up fetch. Defaults to 1 for older payloads.
    */
   failure_count?: number
+  /**
+   * Name of the first FAILED/BROKEN step for this failure, when granular
+   * step data exists for the test's latest-run snapshot (Phase 5 enrichment).
+   * Optional + defaults to None on the backend — absent for tests without
+   * captured steps, so rendering must tolerate its absence.
+   */
+  last_failure_step?: string | null
 }
 
 export interface MyFailureListResponse {

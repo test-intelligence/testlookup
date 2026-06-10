@@ -8,6 +8,8 @@ before the PDF endpoint 500s in production.
 """
 from __future__ import annotations
 
+import pytest
+
 
 def _sample_payload() -> dict:
     return {
@@ -179,3 +181,111 @@ def test_render_summary_report_pdf_wraps_long_suite_names_in_breakdown():
 
     assert long_pdf.startswith(b"%PDF-")
     assert len(long_pdf) > len(short_pdf)
+
+
+def test_render_summary_report_pdf_includes_step_breakdown_section():
+    """Phase 5: failing tests with a captured step snapshot get an
+    engineering step-breakdown section in the PDF.
+
+    reportlab is NOT installed in the local dev venv (PDF render-path tests
+    skip locally, pass in CI), so guard the render with importorskip.
+    """
+    pytest.importorskip("reportlab")
+    from app.services.summary_report_pdf import render_summary_report_pdf
+
+    base = _sample_payload()
+
+    # Same payload WITHOUT step data — the section must not appear.
+    without_steps = render_summary_report_pdf(base)
+
+    # Enrich the first failing test with a granular step snapshot (the shape
+    # ``summary_report_service._enrich_failure_steps`` produces).
+    with_payload = _sample_payload()
+    with_payload["top_failing_tests"][0]["failure_step"] = "POST /charge returns 200"
+    with_payload["top_failing_tests"][0]["step_breakdown"] = [
+        {"name": "setup test data", "status": "passed", "assertion_message": None},
+        {"name": "open checkout page", "status": "passed", "assertion_message": None},
+        {
+            "name": "POST /charge returns 200",
+            "status": "failed",
+            "assertion_message": "AssertionError: expected 200 but got 402 Payment Required",
+        },
+        {"name": "verify receipt email", "status": "skipped", "assertion_message": None},
+    ]
+    with_steps = render_summary_report_pdf(with_payload)
+
+    assert with_steps.startswith(b"%PDF-")
+    assert without_steps.startswith(b"%PDF-")
+    # The extra engineering section (heading + per-step table) makes the
+    # document meaningfully larger than the same report without step data.
+    assert len(with_steps) > len(without_steps), (
+        "step-breakdown section should add layout when step data exists"
+    )
+
+
+def test_select_pdf_steps_bounds_window_around_failure():
+    """``_select_pdf_steps`` caps a long step list to ``_MAX_PDF_STEPS`` rows
+    centred on the first FAILED/BROKEN step (pure logic — no reportlab)."""
+    from app.services.summary_report_pdf import _MAX_PDF_STEPS, _select_pdf_steps
+
+    # 2000-step test (the ingestion ``_MAX_STEP_NODES`` worst case), the only
+    # failed step sits deep in the middle.
+    steps = [{"name": f"s{i}", "status": "PASSED"} for i in range(2000)]
+    steps[1200]["status"] = "FAILED"
+    selected = _select_pdf_steps(steps)
+
+    assert len(selected) == _MAX_PDF_STEPS  # bounded, not ~2000
+    orig_indices = [i for i, _ in selected]
+    # The failing step is included in the rendered window (failure location).
+    assert 1200 in orig_indices
+    # Original indices are preserved + contiguous so the "#" column is correct.
+    assert orig_indices == list(range(orig_indices[0], orig_indices[0] + _MAX_PDF_STEPS))
+
+
+def test_select_pdf_steps_returns_all_when_under_cap():
+    from app.services.summary_report_pdf import _select_pdf_steps
+
+    steps = [{"name": f"s{i}", "status": "PASSED"} for i in range(5)]
+    selected = _select_pdf_steps(steps)
+    assert [i for i, _ in selected] == [0, 1, 2, 3, 4]
+
+
+def test_render_summary_report_pdf_bounds_huge_step_breakdown():
+    """A 2000-step failing test must not render ~2000 table rows — the
+    engineering section caps per-test steps (render-guarded; reportlab in CI)."""
+    pytest.importorskip("reportlab")
+    from app.services.summary_report_pdf import render_summary_report_pdf
+
+    payload = _sample_payload()
+    big = [
+        {"name": f"step {i}", "status": "passed", "assertion_message": None}
+        for i in range(2000)
+    ]
+    big[900] = {
+        "name": "the failing assertion",
+        "status": "failed",
+        "assertion_message": "boom",
+    }
+    payload["top_failing_tests"][0]["failure_step"] = "the failing assertion"
+    payload["top_failing_tests"][0]["step_breakdown"] = big
+    pdf = render_summary_report_pdf(payload)
+    assert pdf.startswith(b"%PDF-")
+    # A truly unbounded render (2000 rows) would be enormous; the capped
+    # window keeps it modest. Generous ceiling that an uncapped render blows.
+    assert len(pdf) < 200_000
+
+
+def test_render_summary_report_pdf_skips_step_breakdown_when_no_steps():
+    """No failing test carries a step snapshot → no crash, no section,
+    output identical to the unenriched render (graceful skip)."""
+    pytest.importorskip("reportlab")
+    from app.services.summary_report_pdf import render_summary_report_pdf
+
+    payload = _sample_payload()
+    # Explicit Nones mirror the enrichment helper's "no snapshot" output.
+    for t in payload["top_failing_tests"]:
+        t["failure_step"] = None
+        t["step_breakdown"] = None
+    pdf = render_summary_report_pdf(payload)
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 2_000

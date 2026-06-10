@@ -412,6 +412,14 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
     return copy
   }, [rows, sortKey, sortDir])
 
+  // Step success-rate is a Phase 5 enrichment that may be absent (no
+  // captured step data). Only surface the column when at least one suite
+  // carries it, so legacy/no-step projects keep the original layout.
+  const hasStepData = useMemo(
+    () => rows.some(r => r.step_success_rate != null),
+    [rows],
+  )
+
   if (sorted.length === 0) {
     return <p className="text-[12.5px] text-[var(--color-text-muted)]">No suites with executions in this window.</p>
   }
@@ -435,6 +443,14 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Skip</th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Broken</th>
             <th className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Pass %</th>
+            {hasStepData && (
+              <th
+                className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider"
+                title="Share of captured test steps that passed (where step data exists)"
+              >
+                Step %
+              </th>
+            )}
             <th
               className="px-4 py-2.5 text-right text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider cursor-pointer select-none hover:text-[var(--color-text)]"
               onClick={() => handleSort('last_run')}
@@ -464,6 +480,18 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
               <td className="px-4 py-2.5 text-right text-xs tabular-nums">
                 <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium', passPctClass(s.pass_rate_pct))}>{fmtPct(s.pass_rate_pct)}</span>
               </td>
+              {hasStepData && (
+                <td
+                  className="px-4 py-2.5 text-right text-[11px] text-[var(--color-text-muted)] tabular-nums"
+                  title={
+                    s.total_steps != null
+                      ? `${fmtInt(s.passed_steps)} / ${fmtInt(s.total_steps)} steps passed`
+                      : undefined
+                  }
+                >
+                  {s.step_success_rate != null ? fmtPct(s.step_success_rate) : '—'}
+                </td>
+              )}
               <td className="px-4 py-2.5 text-right text-[11px] text-[var(--color-text-muted)]">{fmtDateTime(s.last_run_at)}</td>
             </tr>
           ))}

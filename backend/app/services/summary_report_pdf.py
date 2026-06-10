@@ -49,6 +49,48 @@ def _fmt_int(value: int | None) -> str:
     return f"{int(value or 0):,}"
 
 
+# Cap the per-test step rows rendered into the engineering PDF section. A
+# single test can carry up to ``ingestion._MAX_STEP_NODES`` (2000) steps, and
+# the outer loop renders up to 10 top-failing tests — an unbounded render would
+# build ~20K ReportLab rows into one in-memory flowable. The failure-location
+# goal only needs the failing step + surrounding context, so we render a window
+# of at most this many steps centred on the first failed/broken step.
+_MAX_PDF_STEPS = 50
+
+
+def _select_pdf_steps(
+    steps: list[dict],
+) -> list[tuple[int, dict]]:
+    """Pick a bounded window of steps to render, preserving original indices.
+
+    Returns ``[(orig_index, step), ...]`` (``orig_index`` is 0-based into
+    ``steps``). If the test has ``<= _MAX_PDF_STEPS`` steps, all are returned.
+    Otherwise a window of ``_MAX_PDF_STEPS`` steps is centred on the first
+    FAILED/BROKEN step (the failure location), so the failing step and its
+    neighbouring context are always shown; when no failed step is found the
+    head of the list is used.
+    """
+    n = len(steps)
+    if n <= _MAX_PDF_STEPS:
+        return list(enumerate(steps))
+
+    pivot = next(
+        (
+            i
+            for i, s in enumerate(steps)
+            if str(s.get("status") or "").upper() in ("FAILED", "BROKEN")
+        ),
+        0,
+    )
+    half = _MAX_PDF_STEPS // 2
+    start = max(0, pivot - half)
+    end = start + _MAX_PDF_STEPS
+    if end > n:
+        end = n
+        start = max(0, end - _MAX_PDF_STEPS)
+    return [(i, steps[i]) for i in range(start, end)]
+
+
 def render_summary_report_pdf(payload: dict) -> bytes:
     """Render the Summary Report JSON envelope into PDF bytes."""
     from reportlab.lib import colors
@@ -322,6 +364,115 @@ def render_summary_report_pdf(payload: dict) -> bytes:
             )
         )
         story.append(top_tbl)
+
+    # ── Engineering: failure step breakdown ─────────────────────────────
+    # Phase 5: for failing tests that have a captured granular step snapshot
+    # (LATEST-RUN-ONLY), show where the test broke — the ordered step list
+    # with status, and the first failed/broken step's assertion message
+    # (truncated). Skips gracefully when no test in the report has steps.
+    step_style = ParagraphStyle(
+        "StepCellWrap",
+        parent=styles["Normal"],
+        fontSize=8,
+        leading=10,
+        wordWrap="CJK",
+    )
+    tests_with_steps = [
+        t for t in top if t.get("step_breakdown")
+    ]
+    if tests_with_steps:
+        story.append(Paragraph("Engineering — failure step breakdown", h2))
+        story.append(
+            Paragraph(
+                "Where each failing test broke. The first failed/broken step "
+                "is the failure location; status legend: PASSED / FAILED / "
+                "BROKEN / SKIPPED.",
+                small,
+            )
+        )
+        for t in tests_with_steps:
+            story.append(Spacer(1, 2 * mm))
+            heading = _safe(t.get("test_name"), max_len=200)
+            failure_step = t.get("failure_step")
+            if failure_step:
+                heading += (
+                    f" &nbsp;—&nbsp; failed at: <b>{_safe(failure_step, 160)}</b>"
+                )
+            story.append(Paragraph(heading, body))
+
+            # Bound the rendered steps per test. ``step_breakdown`` carries the
+            # FULL snapshot (up to ``_MAX_STEP_NODES`` = 2000 steps per test from
+            # ingestion), so an unbounded render could build ~20K ReportLab rows
+            # (10 tests × 2000) into one in-memory flowable. The failure-location
+            # goal only needs the failing step + nearby context, so we render a
+            # window centred on the first failed/broken step (or the head when
+            # none is found), capped at ``_MAX_PDF_STEPS`` rows, with a footer
+            # noting how many steps were elided. ``orig_idx`` preserves the real
+            # step number so the "#" column stays meaningful.
+            all_steps = list(t.get("step_breakdown") or [])
+            rendered = _select_pdf_steps(all_steps)
+            step_rows = [["#", "Step", "Status", "Message"]]
+            for orig_idx, s in rendered:
+                status = str(s.get("status") or "").upper()
+                # Only the failed/broken steps carry a useful message; keep
+                # the cell tidy for passing steps.
+                msg = (
+                    s.get("assertion_message")
+                    if status in ("FAILED", "BROKEN")
+                    else ""
+                )
+                step_rows.append(
+                    [
+                        str(orig_idx + 1),
+                        Paragraph(_safe(s.get("name"), max_len=200), step_style),
+                        status or "—",
+                        Paragraph(_safe(msg or "", max_len=240), step_style),
+                    ]
+                )
+            elided = len(all_steps) - len(rendered)
+            if elided > 0:
+                step_rows.append(
+                    [
+                        "…",
+                        Paragraph(
+                            f"… {elided} more step{'s' if elided != 1 else ''} "
+                            "not shown (truncated)",
+                            step_style,
+                        ),
+                        "—",
+                        Paragraph("", step_style),
+                    ]
+                )
+            step_tbl = Table(step_rows, colWidths=[22, 175, 55, 178])
+            step_styles = [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(_HEADER_BG)),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(_BORDER)),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor(_LIGHT_BG)]),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ]
+            # Colour the status cell red for failed/broken rows so the
+            # failure location pops in the engineering view. Iterate the
+            # RENDERED subset (row index aligns to the table, not the full
+            # snapshot) so the colour lands on the right row after truncation.
+            for r_idx, (_orig, s) in enumerate(rendered, start=1):
+                st = str(s.get("status") or "").upper()
+                if st in ("FAILED", "BROKEN"):
+                    step_styles.append(
+                        ("TEXTCOLOR", (2, r_idx), (2, r_idx), colors.HexColor(_BAD))
+                    )
+                elif st == "PASSED":
+                    step_styles.append(
+                        ("TEXTCOLOR", (2, r_idx), (2, r_idx), colors.HexColor(_GOOD))
+                    )
+            step_tbl.setStyle(TableStyle(step_styles))
+            story.append(step_tbl)
 
     doc.build(story)
     return buf.getvalue()

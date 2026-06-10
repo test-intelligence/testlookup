@@ -118,6 +118,83 @@ async def test_get_summary_report_returns_service_envelope():
 
 
 @pytest.mark.asyncio
+async def test_get_summary_report_preserves_phase5_step_fields():
+    """Regression: the Phase 5 granular step enrichment must SURVIVE the
+    ``SummaryReportResponse`` round-trip the router performs.
+
+    Pydantic v2 defaults ``extra='ignore'`` — before the response models
+    declared the optional step fields, the service's per-suite
+    ``step_success_rate`` / ``passed_steps`` / ``total_steps`` and the
+    per-test ``failure_step`` / ``step_breakdown`` were silently STRIPPED from
+    the JSON the frontend consumes (only the /pdf path, which renders the raw
+    payload, was unaffected). This drives the full router path and asserts the
+    fields land on the validated response model.
+    """
+    from app.routers.summary_report import get_summary_report
+
+    project_id = uuid.uuid4()
+    user = SimpleNamespace(id=uuid.uuid4())
+    db = AsyncMock()
+
+    payload = _envelope(project_id)
+    payload["suites"] = [
+        {
+            "suite_name": "Checkout",
+            "total": 4, "passed": 3, "failed": 1, "skipped": 0, "broken": 0,
+            "pass_rate_pct": 75.0, "weighted_pass_rate_pct": 75.0,
+            "last_run_at": None,
+            "step_success_rate": 88.0, "passed_steps": 8, "total_steps": 9,
+        },
+        {
+            # A suite with no captured step data keeps None (additive/optional).
+            "suite_name": "Smoke",
+            "total": 2, "passed": 2, "failed": 0, "skipped": 0, "broken": 0,
+            "pass_rate_pct": 100.0, "weighted_pass_rate_pct": 100.0,
+            "last_run_at": None,
+            "step_success_rate": None, "passed_steps": None, "total_steps": None,
+        },
+    ]
+    payload["top_failing_tests"] = [
+        {
+            "suite_name": "Checkout", "class_name": "CartTest",
+            "test_name": "test_apply_coupon", "failures": 3,
+            "failure_step": "submit invalid coupon",
+            "step_breakdown": [
+                {"name": "open cart", "status": "PASSED", "assertion_message": None},
+                {"name": "submit invalid coupon", "status": "FAILED",
+                 "assertion_message": "expected 200 got 400"},
+            ],
+        },
+    ]
+
+    with patch(
+        "app.routers.summary_report.get_accessible_project_ids",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "app.services.summary_report_service.build_summary_report",
+        new=AsyncMock(return_value=payload),
+    ):
+        result = await get_summary_report(
+            project_id=project_id, days=7, mode="window",
+            db=db, current_user=user,
+        )
+
+    # Per-suite step success-rate survives validation (Critical/High findings).
+    checkout = next(s for s in result.suites if s.suite_name == "Checkout")
+    assert checkout.step_success_rate == 88.0
+    assert checkout.passed_steps == 8
+    assert checkout.total_steps == 9
+    smoke = next(s for s in result.suites if s.suite_name == "Smoke")
+    assert smoke.step_success_rate is None
+    # Per-test failure location + step breakdown survive validation.
+    top = result.top_failing_tests[0]
+    assert top.failure_step == "submit invalid coupon"
+    assert top.step_breakdown is not None
+    assert top.step_breakdown[1].status == "FAILED"
+    assert top.step_breakdown[1].name == "submit invalid coupon"
+
+
+@pytest.mark.asyncio
 async def test_get_summary_report_works_with_no_project_id():
     """Omitted project_id must NOT 500 — service returns an empty envelope."""
     from app.routers.summary_report import get_summary_report

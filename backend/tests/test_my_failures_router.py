@@ -27,14 +27,43 @@ import pytest
 # ``execute.side_effect`` list and trip StopAsyncIteration. Patch it to
 # an empty dict for tests that don't care about the sequence value —
 # dedicated coverage lives in ``tests/services/test_run_seq_map.py``.
+class _StackedPatch:
+    """Apply several context-manager patches as one ``with`` block."""
+
+    def __init__(self, *patches):
+        self._patches = patches
+
+    def __enter__(self):
+        for p in self._patches:
+            p.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.__exit__(*exc)
+        return False
+
+
 def _patch_run_seq_map():
-    """Patch at the source — the router imports the helper lazily inside
+    """Patch at the source — the router imports the helpers lazily inside
     the function (``from app.services.runs_service import
-    fetch_run_seq_map``), so a patch on the router-side name wouldn't
-    intercept the local-import lookup."""
-    return patch(
-        "app.services.runs_service.fetch_run_seq_map",
-        AsyncMock(return_value={}),
+    fetch_run_seq_map, first_failed_step_by_canonical``), so a patch on the
+    router-side name wouldn't intercept the local-import lookup.
+
+    Phase 5: the list endpoint also batch-resolves the first-failed-step name
+    via ``first_failed_step_by_canonical``. Patch it to an empty map so tests
+    that don't exercise step enrichment don't need a 4th ``execute``
+    side_effect; dedicated coverage lives in ``tests/test_granular_reports.py``.
+    """
+    return _StackedPatch(
+        patch(
+            "app.services.runs_service.fetch_run_seq_map",
+            AsyncMock(return_value={}),
+        ),
+        patch(
+            "app.services.runs_service.first_failed_step_by_canonical",
+            AsyncMock(return_value={}),
+        ),
     )
 
 
@@ -122,6 +151,7 @@ async def test_list_hydrates_rows_and_builds_navigation_url():
         duration_ms=420,
         created_at=datetime.now(timezone.utc),
         test_run_id=run_id,
+        canonical_test_case_id=uuid.uuid4(),
         build_number=2029,
         project_id=project_id,
         project_name="GoogleSearch",
@@ -179,6 +209,7 @@ async def test_list_truncates_long_error_message():
         duration_ms=None,
         created_at=datetime.now(timezone.utc),
         test_run_id=uuid.uuid4(),
+        canonical_test_case_id=uuid.uuid4(),
         build_number=None,
         project_id=uuid.uuid4(),
         project_name="P",
@@ -227,6 +258,7 @@ async def test_list_attaches_per_test_failure_count_from_grouping_query():
         duration_ms=None,
         created_at=datetime.now(timezone.utc),
         test_run_id=uuid.uuid4(),
+        canonical_test_case_id=uuid.uuid4(),
         build_number=None,
         project_id=project_id,
         project_name="P",

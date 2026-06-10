@@ -1056,6 +1056,18 @@ function WhatsFailingCard({
               <span>· of {totalRuns} total in window</span>
               <span>· per-test owner data not yet available</span>
             </div>
+            {topFailingTest.failure_step && (
+              <div
+                className="text-[11.5px] mt-1"
+                style={{ color: 'var(--color-text-muted)' }}
+                title={`Failed at step: ${topFailingTest.failure_step}`}
+              >
+                failed at:{' '}
+                <span className="font-mono" style={{ color: '#fca5a5' }}>
+                  {topFailingTest.failure_step}
+                </span>
+              </div>
+            )}
           </div>
           <div className="text-[12px]" style={{ color: '#fca5a5', fontWeight: 600, whiteSpace: 'nowrap' }}>
             {topFailingTest.fail_count} failed

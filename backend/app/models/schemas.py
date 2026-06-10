@@ -435,6 +435,13 @@ class SummaryTotals(BaseModel):
     weighted_pass_rate_pct: float
 
 
+class SummaryStepBreakdownRow(BaseModel):
+    """One captured granular step for a failing test (Phase 5 enrichment)."""
+    name: Optional[str] = None
+    status: Optional[str] = None
+    assertion_message: Optional[str] = None
+
+
 class SummarySuiteRow(BaseModel):
     suite_name: str
     total: int
@@ -445,6 +452,13 @@ class SummarySuiteRow(BaseModel):
     pass_rate_pct: float
     weighted_pass_rate_pct: float
     last_run_at: Optional[str] = None
+    # Phase 5 granular STEP success-rate (additive/optional). Populated only
+    # for suites whose tests have captured step data (LATEST-RUN-ONLY
+    # snapshot); ``None`` otherwise so existing consumers are unaffected.
+    # Flat shape matches the frontend ``SummarySuiteRow`` contract.
+    step_success_rate: Optional[float] = None
+    passed_steps: Optional[int] = None
+    total_steps: Optional[int] = None
 
 
 class SummaryTopFailingTest(BaseModel):
@@ -452,6 +466,12 @@ class SummaryTopFailingTest(BaseModel):
     class_name: Optional[str] = None
     test_name: str
     failures: int
+    # Phase 5 FAILURE LOCATION (additive/optional). ``failure_step`` is the
+    # first FAILED/BROKEN step name from the LATEST-RUN-ONLY snapshot;
+    # ``step_breakdown`` is the ordered step list (for the PDF engineering
+    # section). Both ``None`` when no snapshot exists for the test.
+    failure_step: Optional[str] = None
+    step_breakdown: Optional[List[SummaryStepBreakdownRow]] = None
 
 
 class SummaryReportResponse(BaseModel):
@@ -513,6 +533,11 @@ class MyFailureItem(BaseModel):
     # failed for this user inside the active time window. Lets the inbox row
     # show "× 7 in 7 days" so repeat offenders are visible at a glance.
     failure_count: int = 1
+    # Granular step enrichment (Phase 5). Name of the FIRST FAILED/BROKEN step
+    # in this test's latest-run snapshot, when step data was captured.
+    # ``None`` when the test has no granular step snapshot or no failing step —
+    # additive/optional so existing clients are unaffected.
+    last_failure_step: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

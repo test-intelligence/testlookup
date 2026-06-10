@@ -348,6 +348,14 @@ function FailureRow({
             {item.error_message}
           </div>
         )}
+        {item.last_failure_step && (
+          <div
+            className="text-[10.5px] text-[var(--color-text-faint)] truncate max-w-[360px]"
+            title={`Failed at step: ${item.last_failure_step}`}
+          >
+            failed at: <span className="font-mono text-[var(--color-text-muted)]">{item.last_failure_step}</span>
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)] align-middle">
         {item.suite_name ? (
