@@ -1,6 +1,7 @@
 import useSWR from 'swr'
 import { testManagementService, usersService } from '@/services/testManagementService'
 import type { UserSummary } from '@/services/testManagementService'
+import type { DuplicateBand, DuplicateCandidateStatus } from '@/types/test-management'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
 
@@ -91,6 +92,25 @@ export function useUsers() {
     refreshInterval: 0,
     revalidateOnFocus: false,
   })
+}
+
+/**
+ * Duplicate-candidate review queue for one project (Phase 4).
+ *
+ * Lazy: pass ``undefined`` (e.g. All-Projects mode or no selection) and the
+ * hook short-circuits — no request fires until a concrete project id is given.
+ * Reads only; mutations (detect/dismiss/merge) go through the service and the
+ * caller revalidates via the returned ``mutate``.
+ */
+export function useDuplicateCandidates(
+  projectId?: string,
+  params?: { band?: DuplicateBand; status?: DuplicateCandidateStatus; page?: number; size?: number },
+) {
+  return useSWR(
+    projectId ? ['tm-duplicates', projectId, params] : null,
+    () => testManagementService.getDuplicateCandidates(projectId as string, params),
+    { refreshInterval: 60_000 },
+  )
 }
 
 export function useAuditLog(params?: { entity_type?: string; action?: string; page?: number; size?: number }) {

@@ -231,3 +231,64 @@ export interface AICoverageResponse {
   recommended_new_tests?: Array<{ title: string; priority: string; rationale: string }>
   summary?: string
 }
+
+// ── Duplicate Detection (Phase 4) ──────────────────────────────────────────
+// Mirrors backend ``app.models.schemas`` Duplicate* models exactly.
+
+export type DuplicateBand = 'exact' | 'strong' | 'possible'
+export type DuplicateMethod = 'fingerprint' | 'structural' | 'semantic'
+export type DuplicateCandidateStatus = 'open' | 'merged' | 'dismissed'
+
+/** Minimal reference to one ManagedTestCase in a duplicate pair. */
+export interface DuplicateCaseRef {
+  id: string
+  title: string
+  suite_name?: string | null
+  status?: string | null
+}
+
+/** One detected near-duplicate pair with its explainable score breakdown. */
+export interface DuplicateCandidate {
+  id: string
+  project_id: string
+  band: DuplicateBand
+  score: number
+  reason?: string | null
+  method: DuplicateMethod
+  component_scores?: Record<string, number> | null
+  status: DuplicateCandidateStatus
+  detected_at: string
+  case_a: DuplicateCaseRef
+  case_b: DuplicateCaseRef
+}
+
+/** Paginated list of duplicate candidates for a project's review queue. */
+export interface DuplicateCandidateList {
+  items: DuplicateCandidate[]
+  total: number
+  open_count: number
+}
+
+/** Non-destructive merge request body. */
+export interface DuplicateMergeRequest {
+  candidate_id: string
+  keep_case_id: string
+  deprecate_loser?: boolean
+}
+
+/** Result of a dismiss / merge action on a candidate pair. */
+export interface DuplicateActionResult {
+  candidate_id: string
+  status: DuplicateCandidateStatus
+  deprecated_case_id?: string | null
+}
+
+/** Summary of a triggered detection sweep over a project's authored cases. */
+export interface DuplicateDetectionRunResult {
+  project_id: string
+  candidates_created: number
+  candidates_total: number
+  cases_scanned: number
+  sampled: boolean
+  note?: string | null
+}

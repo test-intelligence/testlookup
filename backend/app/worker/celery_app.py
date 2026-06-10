@@ -243,6 +243,17 @@ celery_app.conf.update(
             "task": "app.worker.tasks.auto_recover_completed_live_runs",
             "schedule": timedelta(minutes=2),
         },
+        # Phase 4 — tiered duplicate authored-test-case detection. Sweeps every
+        # project nightly at 06:00 UTC (downstream of the 05:30 canonical-
+        # deletion reconcile so the catalog is settled first) and upserts
+        # ``duplicate_test_case_candidates`` for the /test-management Duplicates
+        # review queue. Offline-first + idempotent — the worker task owns the
+        # per-project commit; the detection service stages only. Can also be
+        # triggered ad-hoc per project from the router.
+        "nightly-duplicate-detection": {
+            "task": "app.worker.tasks.run_duplicate_detection",
+            "schedule": crontab(hour=6, minute=0),
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,

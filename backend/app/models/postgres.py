@@ -1264,6 +1264,7 @@ class ManagedTestCase(Base):
         Index("ix_mtc_project_status", "project_id", "status"),
         Index("ix_mtc_author", "author_id"),
         Index("ix_mtc_fingerprint", "test_fingerprint"),
+        Index("ix_mtc_dup_fingerprint", "dup_fingerprint"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1307,6 +1308,11 @@ class ManagedTestCase(Base):
     is_automated: Mapped[bool] = mapped_column(Boolean, default=False)
     automation_status: Mapped[str] = mapped_column(String(30), default="not_automated")  # not_automated|in_progress|automated|broken
     test_fingerprint: Mapped[Optional[str]] = mapped_column(String(64))  # Links to executed TestCase
+
+    # Duplicate detection (Phase 4, migration 0094). Normalised content hash
+    # used as the Tier-0 exact-match blocking key; nullable + indexed
+    # (ix_mtc_dup_fingerprint). Populated lazily by the detector — no backfill.
+    dup_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # AI metadata
     ai_generated: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -1417,6 +1423,80 @@ class TestCaseComment(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class DuplicateTestCaseCandidate(Base):
+    """One detected near-duplicate PAIR of authored ManagedTestCases (Phase 4).
+
+    Tiered, offline-first, per-project duplicate detection (migration 0094).
+    Exactly one row per logical pair: the producer enforces canonical ordering
+    ``case_a_id < case_b_id`` (also a DB CHECK), and the pair is idempotent on
+    ``(project_id, case_a_id, case_b_id)``.
+
+    EXPLAINABILITY is first-class: every row carries the component breakdown
+    (``component_scores``), an aggregate ``score`` (0.0-1.0), a human-readable
+    ``reason``, the detection ``method`` (fingerprint|structural|semantic), and a
+    ``band`` (exact|strong|possible).
+
+    MERGE IS NON-DESTRUCTIVE this phase: resolving a pair only flips ``status``
+    (open → merged|dismissed) and may set a soft deprecate flag on the losing
+    case. It never deletes cases or redirects ``test_fingerprint``.
+    """
+    __tablename__ = "duplicate_test_case_candidates"
+    __table_args__ = (
+        UniqueConstraint("project_id", "case_a_id", "case_b_id", name="uq_dup_candidate_pair"),
+        CheckConstraint("case_a_id < case_b_id", name="ck_dup_candidate_canonical_order"),
+        Index("ix_dup_candidate_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    case_a_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    case_b_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    band: Mapped[str] = mapped_column(String(20), nullable=False)        # exact|strong|possible
+    score: Mapped[float] = mapped_column(Float, nullable=False)          # 0.0-1.0
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # human-readable explanation
+    method: Mapped[str] = mapped_column(String(20), nullable=False)      # fingerprint|structural|semantic
+    component_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", server_default=text("'open'"))
+
+
+class DismissedDuplicatePair(Base):
+    """Suppression record so a dismissed duplicate pair stays dismissed (Phase 4).
+
+    Consulted by the detector before staging a candidate so a re-detection run
+    never resurfaces a pair the user already dismissed. Same canonical ordering
+    (``case_a_id < case_b_id``, DB CHECK) + uniqueness on
+    ``(project_id, case_a_id, case_b_id)`` as the candidate table.
+    """
+    __tablename__ = "dismissed_duplicate_pairs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "case_a_id", "case_b_id", name="uq_dismissed_dup_pair"),
+        CheckConstraint("case_a_id < case_b_id", name="ck_dismissed_dup_canonical_order"),
+        Index("ix_dismissed_dup_project", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    case_a_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    case_b_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("managed_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    dismissed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class TestPlan(Base):

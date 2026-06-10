@@ -3,6 +3,12 @@ import type {
   AIGenerateResponse,
   AIReviewResult,
   AuditLogEntry,
+  DuplicateActionResult,
+  DuplicateBand,
+  DuplicateCandidateList,
+  DuplicateCandidateStatus,
+  DuplicateDetectionRunResult,
+  DuplicateMergeRequest,
   ManagedTestCase,
   PaginatedResponse,
   TestCaseComment,
@@ -313,6 +319,35 @@ export const testManagementService = {
       `/api/v1/test-management/suite-reviews/by-run/${testRunId}/${encodeURIComponent(suiteName)}`,
       { state, note },
     ),
+
+  // ── Duplicate Detection (Phase 4) ─────────────────────────────────────
+  // Project-scoped routes under /api/v1/projects/{project_id}/...
+
+  getDuplicateCandidates: (
+    projectId: string,
+    params?: { band?: DuplicateBand; status?: DuplicateCandidateStatus; page?: number; size?: number },
+  ): Promise<DuplicateCandidateList> =>
+    getData(`/api/v1/projects/${projectId}/duplicate-candidates`, { params }),
+
+  runDuplicateDetection: (
+    projectId: string,
+    opts?: { enable_semantic?: boolean },
+  ): Promise<DuplicateDetectionRunResult> =>
+    postData(
+      `/api/v1/projects/${projectId}/duplicate-candidates/detect`,
+      undefined,
+      { params: opts?.enable_semantic != null ? { enable_semantic: opts.enable_semantic } : {} },
+    ),
+
+  dismissDuplicate: (projectId: string, candidateId: string): Promise<DuplicateActionResult> =>
+    postData(`/api/v1/projects/${projectId}/duplicate-candidates/${candidateId}/dismiss`),
+
+  mergeDuplicate: (
+    projectId: string,
+    candidateId: string,
+    body: DuplicateMergeRequest,
+  ): Promise<DuplicateActionResult> =>
+    postData(`/api/v1/projects/${projectId}/duplicate-candidates/${candidateId}/merge`, body),
 }
 
 export type SuiteReviewState = 'pending' | 'confirmed' | 'acknowledged' | 'review_later'

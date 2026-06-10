@@ -301,6 +301,81 @@ class TestStepResponse(BaseModel):
 TestStepResponse.model_rebuild()
 
 
+# ── Duplicate authored-test-case detection (Phase 4, migration 0094) ──────
+
+# Detection bands and methods. Kept in sync with the ORM ``String(N)`` columns
+# on ``DuplicateTestCaseCandidate`` (band / method) so a value drift returns a
+# clean 422 rather than silently emptying the UI.
+DuplicateBand = Literal["exact", "strong", "possible"]
+DuplicateMethod = Literal["fingerprint", "structural", "semantic"]
+DuplicateCandidateStatus = Literal["open", "merged", "dismissed"]
+
+
+class DuplicateCaseRef(BaseModel):
+    """Minimal reference to one ManagedTestCase in a duplicate pair."""
+    id: uuid.UUID
+    title: str
+    suite_name: Optional[str] = None
+    status: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DuplicateCandidateResponse(BaseModel):
+    """One detected near-duplicate pair with its explainable score breakdown."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    band: DuplicateBand
+    score: float
+    reason: Optional[str] = None
+    method: DuplicateMethod
+    component_scores: Optional[Dict[str, Any]] = None
+    status: DuplicateCandidateStatus
+    detected_at: datetime
+    case_a: DuplicateCaseRef
+    case_b: DuplicateCaseRef
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DuplicateCandidateListResponse(BaseModel):
+    """Paginated list of duplicate candidates for a project's review queue."""
+    items: List[DuplicateCandidateResponse] = Field(default_factory=list)
+    total: int = 0
+    open_count: int = 0
+
+
+class DuplicateDismissRequest(BaseModel):
+    """Dismiss a candidate pair so it stays suppressed across re-detection runs."""
+    candidate_id: uuid.UUID
+
+
+class DuplicateMergeRequest(BaseModel):
+    """Non-destructive merge: flip the candidate to ``merged`` and optionally
+    soft-deprecate the losing case. NEVER deletes a case this phase.
+    """
+    candidate_id: uuid.UUID
+    # The case to keep; the other case in the pair becomes the merge loser and
+    # may be soft-deprecated. Must be one of the pair's two case ids.
+    keep_case_id: uuid.UUID
+    deprecate_loser: bool = True
+
+
+class DuplicateActionResponse(BaseModel):
+    """Result of a dismiss / merge action on a candidate pair."""
+    candidate_id: uuid.UUID
+    status: DuplicateCandidateStatus
+    deprecated_case_id: Optional[uuid.UUID] = None
+
+
+class DuplicateDetectionRunResponse(BaseModel):
+    """Summary of a triggered detection sweep over a project's authored cases."""
+    project_id: uuid.UUID
+    candidates_created: int = 0
+    candidates_total: int = 0
+    cases_scanned: int = 0
+    sampled: bool = False  # True when the project was too large and detection was capped
+    note: Optional[str] = None
+
+
 # ── Test Execution Review (migration 0081) ────────────────────────────────
 
 
