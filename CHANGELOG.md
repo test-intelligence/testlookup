@@ -24,7 +24,7 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - **Flaky quarantine** -- detection, QA Lead approval, active quarantine, nightly recheck, release/re-quarantine state machine
 - **Perf regression detection** -- per-test duration baselines (Welford algorithm) with 3-sigma spike detection
 - **Feature flags** -- per-project / per-role / rollout-percent gates with audit history
-- **MCP server** -- 36 tools, 9 resources, 6 prompt workflows for AI assistant integration
+- **MCP server** -- 48 tools, 9 resources, 6 prompt workflows for AI assistant integration
 - **CLI** -- 11 command groups, multi-profile auth, table/JSON/YAML output
 - **Dashboards** -- 30+ customizable analytics widgets with drag-and-drop layout
 - **Live streaming** -- real-time WebSocket dashboard during test execution

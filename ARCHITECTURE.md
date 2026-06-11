@@ -3,29 +3,34 @@
 ## System overview
 
 ```
-                                    Browser / CLI / MCP Client
-                                              |
-                                    +---------+---------+
-                                    |                   |
-                              React SPA            MCP Server
-                            (port 3000)           (port 8002)
-                                    |                   |
-                                    +-----+   +---------+
-                                          |   |
-                                    FastAPI Backend
-                                     (port 8000)
-                                          |
-                    +----------+----------+----------+----------+
-                    |          |          |          |          |
-               PostgreSQL   MongoDB    Redis      MinIO    ChromaDB
-                (5433)                (6379)     (9001)    (optional)
-                    |
-               Celery Workers
-              (queues: critical > ingestion > ai_analysis > default)
-                    |
-                 Ollama
-               (optional, port 11434)
+        Browser            CLI (Typer)         AI assistant / IDE / CI
+           |                   |                          |
+      React SPA                |                     MCP Server
+     (port 3000)               |              (port 8002 SSE · or stdio)
+           |                   |                          |
+           +-------------------+--------------------------+
+                               |
+                       FastAPI Backend
+                        (port 8000)
+                               |
+        +----------+----------+----------+----------+-----------+
+        |          |          |          |          |           |
+   PostgreSQL   MongoDB     Redis      MinIO     ChromaDB    Prometheus
+     (5433)      (v7)      (6379)   (9000/9001) (8001, opt)  / Jaeger / Grafana
+        |                     |
+        |              Celery Workers + Beat
+        |    queues: critical > ingestion (+ per-shard) > ai_analysis > default
+        |                     |
+        |                  Ollama
+        |              (optional, 11434)
 ```
+
+> Ports above are the Docker Compose host mappings. PostgreSQL is published on
+> **5433** (container 5432) to avoid colliding with a local Postgres; ChromaDB on
+> **8001** (container 8000); MinIO exposes **9000** (S3 API) and **9001** (console).
+> Under high ingestion volume the single `ingestion` queue fans out into
+> per-shard queues (`ingestion.shard.<i>`) for fairness — see the ingestion
+> redesign notes.
 
 ## Components
 
@@ -35,7 +40,7 @@
 | **Frontend** | React 18 + Vite + TypeScript + Tailwind + Zustand + SWR | Dashboard, analytics widgets, admin pages |
 | **Workers** | Celery + Redis broker | AI triage, quality gates, fine-tuning, webhook delivery, nightly maintenance |
 | **AI engine** | LangChain ReAct + LangGraph + scikit-learn HistGradientBoosting + rules engine | Multi-mode analysis: rules / ML / LLM / auto fallback |
-| **MCP server** | Python (stdio + SSE transports) | 24 tools, 10 resources, 6 prompts for AI assistant integration |
+| **MCP server** | Python (stdio + SSE transports) | 48 tools, 9 resources, 6 prompts for AI assistant integration |
 | **CLI** | Typer + Rich + httpx | 11 command groups, multi-profile auth |
 | **PostgreSQL** | v16 | Primary relational store (runs, tests, projects, users, configs, audit) |
 | **MongoDB** | v7 | Pipeline event logs, workflow state, immutable audit streams |
@@ -66,8 +71,8 @@ Test runner (pytest / JUnit / Allure / Cypress / Playwright)
 POST /api/v1/ingest (JSON batch) or POST /api/v1/ingest/file (file upload)
     |
     v
-Ingestion pipeline:
-    create_run_from_payload() --> upsert_test_results() --> finalize_run()
+Ingestion pipeline (services/ingestion_pipeline.py):
+    create_run_from_payload() --> ingest_test_results() --> finalize_run()
     |
     v
 Post-ingestion orchestration (each step runs in its own session):
@@ -108,21 +113,22 @@ backend/
     core/                         -- config, security (JWT), deps (role guards), logging, tracing, metrics
     db/                           -- async clients: postgres, mongo, minio, redis
     models/                       -- SQLAlchemy ORM (postgres.py) + Pydantic v2 (schemas.py)
-    routers/                      -- thin HTTP routers
-    services/                     -- business logic (ingestion, analysis, feature flags, ...)
-    agents/                       -- LangGraph multi-agent pipelines
+    routers/                      -- thin HTTP routers (~71)
+    services/                     -- business logic (~139 modules: ingestion, analysis, flags, ...)
+    agents/                       -- LangGraph multi-agent pipelines (~15 agents)
     tools/                        -- LangChain agent tools
     worker/                       -- Celery app + tasks
-  migrations/                     -- Alembic versions (0001-0070)
+  migrations/versions/            -- Alembic versions (0001 through 0092)
   tests/                          -- pytest (unit + integration + architectural ratchets)
 
 frontend/
   src/
-    pages/                        -- route-level components
+    pages/                        -- route-level components (~65)
     components/                   -- shared UI (analytics widgets, RAG, layout)
-    services/                     -- API service layer (single Axios base)
+    services/                     -- API service layer (single Axios base in api.ts)
     hooks/                        -- SWR data-fetching hooks
-    store/                        -- Zustand (authStore + projectStore only)
+    store/                        -- Zustand client state: authStore, projectStore,
+                                     themeStore, timeWindowStore (server data uses SWR)
   tests/e2e/                      -- Playwright specs
 
 cli/                              -- Typer + Rich CLI (11 command groups)

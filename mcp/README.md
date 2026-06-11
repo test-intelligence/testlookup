@@ -1,6 +1,6 @@
 # TestLookup MCP Server
 
-The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **36 tools**, **9 resources**, and **6 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
+The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **48 tools**, **9 resources**, and **6 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
 
 ## Quick start
 
@@ -130,7 +130,7 @@ Show the LLM cost budget overview -- which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (36 tools)
+## Tool reference (48 tools)
 
 ### Auth and health
 
@@ -172,6 +172,7 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_top_failing_tests` | `project_id`, `days?`, `limit?` | Highest raw failure count |
 | `get_coverage_report` | `project_id`, `days?` | Suite coverage: unique tests, per-suite pass rates |
 | `get_defects` | `project_id`, `resolution_status?`, `page?`, `size?` | Defects with Jira links |
+| `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list reads (lightweight, limit-based) |
 | `get_ai_analysis_summary` | `project_id`, `days?` | AI triage coverage and confidence distribution |
 
 ### AI root-cause analysis
@@ -179,7 +180,8 @@ List open quarantine proposals and approve the one with the highest flip rate
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `trigger_ai_analysis` | `test_case_id`, `service_name?`, `ocp_pod_name?` | LangChain ReAct agent (10-60s) |
-| `search_tests` | `query`, `project_id?`, `status?`, `days?` | Full-text search across tests |
+| `search_tests` | `query`, `project_id?`, `status?`, `days?` | Full-text search across tests (status/date filters, paginated) |
+| `search_test_cases` | `query`, `project_id?` | Legacy test-case-only keyword search |
 
 ### Run intelligence and deep investigation
 
@@ -203,7 +205,8 @@ List open quarantine proposals and approve the one with the highest flip rate
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `check_release_readiness` | `project_id`, `days?` | GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
+| `check_release_readiness` | `project_id`, `days?` | Project-level GREEN/AMBER/RED rollup over a time window |
+| `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
 | `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for run reports |
 
 ### Decision trail

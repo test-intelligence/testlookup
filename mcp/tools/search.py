@@ -33,10 +33,13 @@ def _step_match_note(result: dict, query: str) -> str:
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
-    async def search_tests(query: str, project_id: str | None = None) -> str:
+    async def search_test_cases(query: str, project_id: str | None = None) -> str:
         """
-        Search test cases by name, error message, or suite.
-        Uses the legacy test-case-only search endpoint.
+        Search test cases by name, error message, or suite (legacy
+        test-case-only search endpoint).
+
+        For the richer status/date-filtered search, use ``search_tests``;
+        for cross-entity search use ``global_search``.
         """
         params = {"q": query, "search_type": "keyword", "size": 15}
         if project_id:
