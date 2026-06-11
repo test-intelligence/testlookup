@@ -297,7 +297,26 @@ async def top_failing_tests(
         """
     )
     result = await db.execute(query, params)
-    return {"items": [dict(row._mapping) for row in result.fetchall()], "period_days": days}
+    items = [dict(row._mapping) for row in result.fetchall()]
+
+    # Granular enrichment (Phase 5): FAILURE LOCATION — the first FAILED/BROKEN
+    # step name for each failing test, read from the LATEST-RUN-ONLY snapshot
+    # anchored to the test's canonical id. Batched once for all rows → no N+1.
+    # Only resolvable when a single project is in scope (the snapshot anchor is
+    # project-scoped and ``test_fingerprint`` is not salted); unscoped / multi-
+    # tenant views leave ``failure_step`` as None to avoid cross-tenant reads.
+    if project_id and items:
+        from app.services.runs_service import first_failed_step_by_fingerprint
+
+        fingerprints = [i["test_fingerprint"] for i in items if i.get("test_fingerprint")]
+        step_by_fp = await first_failed_step_by_fingerprint(db, project_id, fingerprints)
+        for i in items:
+            i["failure_step"] = step_by_fp.get(i.get("test_fingerprint"))
+    else:
+        for i in items:
+            i["failure_step"] = None
+
+    return {"items": items, "period_days": days}
 
 
 async def coverage_stats(

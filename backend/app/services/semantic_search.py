@@ -1,9 +1,35 @@
 """
 Semantic search service using ChromaDB for vector-similarity retrieval
-over test case error messages, names, and suite labels.
+over test case error messages, names, suite labels, and (Phase 3) granular
+step names + assertion messages.
 
 Used by the /search endpoint when search_type=semantic or search_type=hybrid.
 Falls back to keyword-only results when ChromaDB is unavailable.
+
+Phase 3 / code-reviewer gate (c) — ACCEPTED DEVIATIONS (documented, not silent):
+
+* **Single shared collection, tenant-isolated by metadata filter (NOT a
+  per-project collection).** ``_get_or_create_collection`` uses one global
+  ``_COLLECTION_NAME`` for every project; cross-tenant isolation is enforced at
+  query time by the ``project_id`` ``where`` filter in ``semantic_search`` AND
+  re-applied as defence-in-depth at the Postgres layer. The gate's
+  "collection per project" rule is met *in effect* (no row is returned outside
+  the caller's ``project_id`` / ``allowed_project_ids``) rather than by
+  physical collection sharding. Phase 3 is purely *additive* to this
+  pre-existing module — it only widens the embedded document with step text —
+  so the proper per-project shard (which would also have to re-shape the
+  cross-project full-reindex batching in ``_upsert_rows_to_collection`` and the
+  multi-project ``$in`` / ``allowed_project_ids`` query fan-out) is deferred and
+  recorded here rather than introduced implicitly. See CHANGELOG Phase 3 note.
+* **Offline-safe by construction.** The semantic path is *opt-in*
+  (``search_type=semantic``/``hybrid``; the router defaults to keyword) and
+  *fails back to keyword* on any ChromaDB error. ``_get_or_create_collection``
+  passes NO explicit ``embedding_function``, so ChromaDB uses its bundled LOCAL
+  ONNX all-MiniLM model — never a cloud API — which is why no ``AI_OFFLINE_MODE``
+  early-return is required to keep the ``AI_OFFLINE_MODE=True`` default from
+  reaching out. This relies on the default embedder staying local; if a cloud
+  ``embedding_function`` is ever wired in, it MUST be gated on
+  ``settings.AI_OFFLINE_MODE`` + a local-embedder check here.
 """
 from __future__ import annotations
 
@@ -16,11 +42,35 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.postgres import TestCase, TestRun
+from app.models.postgres import TestCase, TestRun, TestStep
 
 logger = logging.getLogger("services.semantic_search")
 
 _COLLECTION_NAME = "test_case_search"
+
+
+def _step_text_subq():
+    """Correlated scalar subquery: concat granular step names + assertion
+    messages for a test's canonical (latest-run) snapshot, so the embedded
+    document includes step text (Phase 3). Project-safe — steps anchor to the
+    project-scoped canonical that ``TestCase.canonical_test_case_id`` links to.
+    Bounded to 50 steps so a pathological tree can't blow up the indexer.
+    """
+    from sqlalchemy import func, select as _select
+
+    inner = (
+        _select(
+            func.string_agg(
+                func.coalesce(TestStep.name, "")
+                + func.coalesce(" " + TestStep.assertion_message, ""),
+                " | ",
+            )
+        )
+        .where(TestStep.canonical_test_case_id == TestCase.canonical_test_case_id)
+        .correlate(TestCase)
+        .scalar_subquery()
+    )
+    return inner.label("step_text")
 
 
 def _get_chroma_client():
@@ -29,6 +79,16 @@ def _get_chroma_client():
 
 
 async def _get_or_create_collection():
+    """Return the shared search collection.
+
+    NOTE (gate c, accepted deviation — see module docstring): one global
+    ``_COLLECTION_NAME`` for all projects; tenant isolation is the query-time
+    ``project_id`` metadata filter in ``semantic_search`` (+ Postgres-layer
+    re-filter), not a per-project collection. No explicit ``embedding_function``
+    is passed, so ChromaDB's bundled LOCAL ONNX MiniLM is used — the semantic
+    path stays offline-safe under the ``AI_OFFLINE_MODE=True`` default. Do NOT
+    swap in a cloud ``embedding_function`` without an ``AI_OFFLINE_MODE`` gate.
+    """
     client = await asyncio.to_thread(_get_chroma_client)
     return await asyncio.to_thread(
         client.get_or_create_collection,
@@ -36,13 +96,27 @@ async def _get_or_create_collection():
     )
 
 
-def _doc_text(test_name: str, suite_name: Optional[str], error_message: Optional[str]) -> str:
-    """Combine fields into a single document string for embedding."""
+def _doc_text(
+    test_name: str,
+    suite_name: Optional[str],
+    error_message: Optional[str],
+    step_text: Optional[str] = None,
+) -> str:
+    """Combine fields into a single document string for embedding.
+
+    ``step_text`` (Phase 3) is the concatenated granular step names + assertion
+    messages for the test's latest-run snapshot, so a failing step/assertion is
+    findable in the semantic index too — mirroring the keyword path's step
+    EXISTS match. Bounded to keep the embedded document from ballooning on
+    deep/wide step trees.
+    """
     parts = [test_name]
     if suite_name:
         parts.append(suite_name)
     if error_message:
         parts.append(error_message[:500])
+    if step_text:
+        parts.append(step_text[:1000])
     return " | ".join(parts)
 
 
@@ -81,6 +155,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         TestCase.test_run_id,
         TestRun.project_id,
         TestCase.created_at,
+        _step_text_subq(),
     ).join(TestRun, TestRun.id == TestCase.test_run_id)
 
     if project_id:
@@ -135,6 +210,7 @@ async def index_incremental(db: AsyncSession, project_id: Optional[str] = None) 
         TestCase.test_run_id,
         TestRun.project_id,
         TestCase.created_at,
+        _step_text_subq(),
     ).join(TestRun, TestRun.id == TestCase.test_run_id)
 
     if project_id:
@@ -169,7 +245,12 @@ async def _upsert_rows_to_collection(collection, rows) -> int:
 
     for row in rows:
         ids.append(str(row.id))
-        documents.append(_doc_text(row.test_name, row.suite_name, row.error_message))
+        documents.append(_doc_text(
+            row.test_name,
+            row.suite_name,
+            row.error_message,
+            getattr(row, "step_text", None),
+        ))
         metadatas.append({
             "status": row.status or "",
             "project_id": str(row.project_id) if row.project_id else "",

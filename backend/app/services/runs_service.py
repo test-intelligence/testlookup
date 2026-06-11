@@ -3,10 +3,24 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Project, Release, ReleaseTestRunLink, TestCase, TestRun
+from app.models.postgres import (
+    CanonicalTestCase,
+    Project,
+    Release,
+    ReleaseTestRunLink,
+    TestAttachment,
+    TestCase,
+    TestRun,
+    TestStep,
+)
+
+# Step status vocab (strict TestStatus values, see ingestion._map_step_status).
+# A step "failed" if it ended FAILED or BROKEN; a step "passed" if PASSED.
+_STEP_FAILED_STATUSES = ("FAILED", "BROKEN")
+_STEP_PASSED_STATUS = "PASSED"
 
 
 def serialize_run(run: TestRun) -> dict:
@@ -456,3 +470,226 @@ async def _live_buffer_test_cases(
     start = (page - 1) * size
     page_items = deduped[start:start + size]
     return page_items, total, pages
+
+
+async def get_test_steps_tree(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+) -> dict | None:
+    """Return the nested step/attachment tree for a TestCase in a run.
+
+    The granular snapshot is LATEST-RUN-ONLY and anchored to the test's
+    project-scoped ``CanonicalTestCase`` (NOT the per-run ``test_cases`` row),
+    so the snapshot reflects whichever run most recently ingested this logical
+    test — even if that's a newer run than ``run_id``. The ``test_id`` is
+    resolved to its canonical anchor; the steps are fetched by that anchor.
+
+    Returns ``None`` when the TestCase doesn't belong to the run (404 at the
+    router), or an empty-tree dict when the case has no captured steps yet.
+    """
+    tc = (
+        await db.execute(
+            select(TestCase).where(
+                TestCase.id == test_id,
+                TestCase.test_run_id == run_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if tc is None:
+        return None
+
+    canonical_id = tc.canonical_test_case_id
+    steps_rows: list[TestStep] = []
+    att_rows: list[TestAttachment] = []
+    if canonical_id is not None:
+        steps_rows = list(
+            (
+                await db.execute(
+                    select(TestStep)
+                    .where(TestStep.canonical_test_case_id == canonical_id)
+                    .order_by(TestStep.ordinal)
+                )
+            ).scalars().all()
+        )
+        att_rows = list(
+            (
+                await db.execute(
+                    select(TestAttachment).where(
+                        TestAttachment.canonical_test_case_id == canonical_id
+                    )
+                )
+            ).scalars().all()
+        )
+
+    # Index attachments by owning step id (NULL = test-level).
+    att_by_step: dict[uuid.UUID | None, list[dict]] = {}
+    for a in att_rows:
+        att_by_step.setdefault(a.test_step_id, []).append({
+            "id": a.id,
+            "test_step_id": a.test_step_id,
+            "name": a.name,
+            "source_ref": a.source_ref,
+            "media_type": a.media_type,
+            "created_at": a.created_at,
+        })
+
+    # Build the step nodes, then nest by parent_step_id preserving ordinal order.
+    node_by_id: dict[uuid.UUID, dict] = {}
+    for s in steps_rows:
+        node_by_id[s.id] = {
+            "id": s.id,
+            "parent_step_id": s.parent_step_id,
+            "ordinal": s.ordinal,
+            "depth": s.depth,
+            "name": s.name,
+            "keyword": s.keyword,
+            "status": s.status,
+            "duration_ms": s.duration_ms,
+            "start_ms": s.start_ms,
+            "assertion_message": s.assertion_message,
+            "assertion_trace": s.assertion_trace,
+            "expected_value": s.expected_value,
+            "actual_value": s.actual_value,
+            "parameters": s.parameters,
+            "created_at": s.created_at,
+            "steps": [],
+            "attachments": att_by_step.get(s.id, []),
+        }
+
+    roots: list[dict] = []
+    for s in steps_rows:  # steps_rows is ordinal-ordered → children keep order
+        node = node_by_id[s.id]
+        parent = node_by_id.get(s.parent_step_id) if s.parent_step_id else None
+        if parent is not None:
+            parent["steps"].append(node)
+        else:
+            roots.append(node)
+
+    return {
+        "run_id": str(run_id),
+        "test_id": str(test_id),
+        "test_name": tc.test_name,
+        "status": tc.status,
+        "step_count": tc.step_count,
+        "retry_count": tc.retry_count,
+        "is_flaky_run": tc.is_flaky_run,
+        "stack_trace": tc.stack_trace,
+        "steps": roots,
+        "attachments": att_by_step.get(None, []),
+    }
+
+
+# ── Granular-step batched read helpers (Phase 5 enrichment) ─────────────────
+#
+# The LATEST-RUN-ONLY step snapshot is anchored to ``canonical_test_cases``
+# (one snapshot per project + test_fingerprint). These helpers batch the read
+# by a *set* of canonical ids so report/coverage/my-failures surfaces never
+# N+1 over individual tests. They are pure reads — no staging, no commit.
+
+
+async def first_failed_step_by_canonical(
+    db: AsyncSession,
+    canonical_ids: list[uuid.UUID] | set[uuid.UUID],
+) -> dict[uuid.UUID, str]:
+    """Map ``canonical_test_case_id -> first FAILED/BROKEN step name``.
+
+    "First" = lowest ``ordinal`` among the failing steps of that canonical
+    test's snapshot (ordinal is the depth-first insertion order, so the first
+    failing step in document order). Canonical ids with no captured steps — or
+    no failing step — are simply absent from the result, so callers default to
+    ``None``.
+
+    Batched: ONE query keyed by the whole set of canonical ids (expanding IN),
+    NOT a per-test lookup. The snapshot is project-scoped by construction (the
+    canonical anchor carries ``project_id``), so passing only the canonical ids
+    the caller already resolved for its tenant keeps the read scoped.
+    """
+    ids = [c for c in {*canonical_ids} if c is not None]
+    if not ids:
+        return {}
+
+    # Pull (canonical_id, ordinal, name) for failing steps only, ordered so the
+    # lowest ordinal per canonical wins. A single pass over the ordered rows
+    # keeps the FIRST seen per canonical.
+    stmt = (
+        select(TestStep.canonical_test_case_id, TestStep.ordinal, TestStep.name)
+        .where(
+            TestStep.canonical_test_case_id.in_(ids),
+            TestStep.status.in_(_STEP_FAILED_STATUSES),
+        )
+        .order_by(TestStep.canonical_test_case_id, TestStep.ordinal)
+    )
+    out: dict[uuid.UUID, str] = {}
+    for cid, _ordinal, name in (await db.execute(stmt)).all():
+        if cid not in out:  # ordered by ordinal asc → first row is the first fail
+            out[cid] = name
+    return out
+
+
+async def first_failed_step_by_fingerprint(
+    db: AsyncSession,
+    project_id: uuid.UUID | str,
+    fingerprints: list[str] | set[str],
+) -> dict[str, str]:
+    """Map ``test_fingerprint -> first failed step name`` within a project.
+
+    Resolves each fingerprint to its project-scoped ``CanonicalTestCase`` anchor
+    (``test_fingerprint`` is not salted, so the project filter is what scopes
+    the tenant), then reuses :func:`first_failed_step_by_canonical`. Two batched
+    queries total — no N+1. Fingerprints without a snapshot (or without a
+    failing step) are absent so callers default to ``None``.
+    """
+    fps = [f for f in {*fingerprints} if f]
+    if not fps:
+        return {}
+
+    anchor_rows = (
+        await db.execute(
+            select(CanonicalTestCase.id, CanonicalTestCase.test_fingerprint).where(
+                CanonicalTestCase.project_id == project_id,
+                CanonicalTestCase.test_fingerprint.in_(fps),
+            )
+        )
+    ).all()
+    fp_by_canonical: dict[uuid.UUID, str] = {cid: fp for cid, fp in anchor_rows}
+    if not fp_by_canonical:
+        return {}
+
+    by_canonical = await first_failed_step_by_canonical(db, list(fp_by_canonical))
+    return {
+        fp_by_canonical[cid]: name
+        for cid, name in by_canonical.items()
+        if cid in fp_by_canonical
+    }
+
+
+async def step_success_by_canonical(
+    db: AsyncSession,
+    canonical_ids: list[uuid.UUID] | set[uuid.UUID],
+) -> dict[uuid.UUID, tuple[int, int]]:
+    """Map ``canonical_test_case_id -> (passed_steps, total_steps)``.
+
+    Counts leaf+nested steps from the LATEST-RUN-ONLY snapshot. ``passed`` is
+    the count of ``PASSED`` steps; ``total`` is every captured step. Canonical
+    ids with no captured steps are absent (so a suite/test that has no step data
+    yields ``None`` step-success at the caller). Batched single query.
+    """
+    ids = [c for c in {*canonical_ids} if c is not None]
+    if not ids:
+        return {}
+
+    passed_col = func.sum(
+        case((TestStep.status == _STEP_PASSED_STATUS, 1), else_=0)
+    ).label("passed")
+    total_col = func.count(TestStep.id).label("total")
+    stmt = (
+        select(TestStep.canonical_test_case_id, passed_col, total_col)
+        .where(TestStep.canonical_test_case_id.in_(ids))
+        .group_by(TestStep.canonical_test_case_id)
+    )
+    return {
+        cid: (int(passed or 0), int(total or 0))
+        for cid, passed, total in (await db.execute(stmt)).all()
+        if int(total or 0) > 0
+    }

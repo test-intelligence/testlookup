@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_accessible_project_ids, get_current_active_user, require_run_access
 from app.db.postgres import get_db
 from app.models.postgres import LaunchStatus, TestCase, TestRun, User
-from app.models.schemas import TestCaseListResponse
+from app.models.schemas import TestCaseHistoryResponse, TestCaseListResponse
 from app.services.runs_service import get_run_with_release, list_project_runs, list_run_test_cases
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Test Runs"])
@@ -221,6 +221,53 @@ async def get_test_case(
     if not test_case:
         raise HTTPException(status_code=404, detail="Test case not found")
     return test_case
+
+
+@router.get("/{run_id}/tests/{test_id}/steps")
+async def get_test_case_steps(
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Granular step/attachment tree for one test (LATEST-RUN-ONLY snapshot).
+
+    Lazy / separate from the test-case detail payload — the detail endpoint
+    stays unchanged and clients fetch steps on demand. Guarded by
+    ``require_run_access`` which verifies the PROVIDED ``run_id`` (IDOR ratchet).
+    Returns the ordered, nested step tree with per-step + test-level attachments.
+    """
+    from app.services.runs_service import get_test_steps_tree
+
+    tree = await get_test_steps_tree(db, run_id, test_id)
+    if tree is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return tree
+
+
+@router.get("/{run_id}/tests/{test_id}/history", response_model=TestCaseHistoryResponse)
+async def get_test_case_history_endpoint(
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Cross-run history + flakiness + metadata for one logical test (Phase 2).
+
+    READ-ONLY. Resolves the test's ``test_fingerprint`` + project via the
+    PROVIDED ``run_id`` (verified by ``require_run_access`` — IDOR ratchet), then
+    returns a project-scoped timeline (``test_fingerprint`` is not salted, so the
+    history query JOINs ``test_runs`` on ``project_id`` — no cross-project
+    leakage), the computed flakiness value (reusing
+    ``analytics_service``/``test_health_coach`` thresholds), and identity
+    metadata (owner / first-last seen / suite / timestamps). No DB writes.
+    """
+    from app.services.test_case_history_service import get_test_case_history
+
+    payload = await get_test_case_history(db, run_id, test_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return payload
 
 
 @router.get("/{run_id}/regression-diff")

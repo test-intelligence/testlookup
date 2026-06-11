@@ -43,3 +43,27 @@ export function useTestCase(runId?: string, testId?: string) {
     () => runsService.getTest(runId as string, testId as string)
   )
 }
+
+/**
+ * Granular step/attachment tree for a test. Lazy — fetched separately from the
+ * test-case detail so the detail view renders immediately and the (potentially
+ * larger) step snapshot streams in. Latest-run-only snapshot per logical test.
+ */
+export function useTestSteps(runId?: string, testId?: string) {
+  return useSWR(
+    runId && testId ? ['test-steps', runId, testId] : null,
+    () => runsService.getTestSteps(runId as string, testId as string)
+  )
+}
+
+/**
+ * Cross-run pass/fail history + flakiness + metadata for a logical test. Lazy —
+ * fetched separately from the test-case detail so the detail renders immediately
+ * and the (project-scoped) history timeline streams in. Read-only.
+ */
+export function useTestCaseHistory(runId?: string, testId?: string) {
+  return useSWR(
+    runId && testId ? ['test-case-history', runId, testId] : null,
+    () => runsService.getTestHistory(runId as string, testId as string)
+  )
+}

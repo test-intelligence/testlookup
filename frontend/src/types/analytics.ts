@@ -55,6 +55,13 @@ export interface TopFailingItem {
   failure_category?: string | null
   /** ISO timestamp of the most recent failure in the window. */
   last_failed?: string | null
+  /**
+   * FAILURE LOCATION (Phase 5): name of the first FAILED/BROKEN granular step
+   * for this test, read from the LATEST-RUN-ONLY snapshot. Optional + may be
+   * null when the test has no captured step data (or in unscoped/multi-tenant
+   * views where the snapshot anchor can't be resolved).
+   */
+  failure_step?: string | null
 }
 
 export interface CoverageSummary {

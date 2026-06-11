@@ -30,6 +30,36 @@ def _confidence_label(score: int) -> str:
     return "Unknown"
 
 
+def _flatten_steps(nodes: list) -> list:
+    """Depth-first flatten of the nested step tree, preserving document order."""
+    flat: list = []
+    for node in nodes or []:
+        flat.append(node)
+        flat.extend(_flatten_steps(node.get("steps") or []))
+    return flat
+
+
+def _first_failed_step_evidence(tree: dict) -> Optional[str]:
+    """Return ``"step N failed: <assertion>"`` for the first FAILED/BROKEN step.
+
+    "First" = first in document (depth-first / ordinal) order. Returns ``None``
+    when the snapshot has no captured steps or no failing step (best-effort;
+    older runs have no granular data).
+    """
+    flat = _flatten_steps(tree.get("steps") or [])
+    for i, node in enumerate(flat, 1):
+        if (node.get("status") or "").upper() in ("FAILED", "BROKEN"):
+            name = (node.get("name") or "(unnamed)").replace("\n", " ").strip()
+            msg = (
+                node.get("assertion_message")
+                or node.get("expected_value")
+                or ""
+            ).replace("\n", " ").strip()
+            detail = f"{name}: {msg}" if msg else name
+            return f"step {i} failed: {detail[:200]}"
+    return None
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
@@ -38,6 +68,7 @@ def register(mcp) -> None:  # noqa: ANN001
         service_name: Optional[str] = None,
         ocp_pod_name: Optional[str] = None,
         ocp_namespace: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> str:
         """
         Trigger a LangChain ReAct AI agent to perform root-cause analysis on a
@@ -52,6 +83,9 @@ def register(mcp) -> None:  # noqa: ANN001
             service_name: Backend service name for Splunk log correlation (optional).
             ocp_pod_name: OpenShift pod name for infrastructure correlation (optional).
             ocp_namespace: OpenShift namespace (optional, uses project default if omitted).
+            run_id: Run UUID of the failing test (optional). When supplied, the granular
+                step snapshot is fetched and the first FAILED/BROKEN step is added to the
+                Evidence References as "step N failed: <assertion>" (best-effort).
         """
         body: dict = {"test_case_id": test_case_id}
         if service_name:
@@ -91,9 +125,25 @@ def register(mcp) -> None:  # noqa: ANN001
             for i, action in enumerate(actions, 1):
                 lines.append(f"{i}. {action}")
 
+        # Best-effort: surface the first failing granular step as an extra
+        # evidence reference. Requires run_id (the analyze response carries only
+        # test_case_id); degrades silently if steps are absent/unavailable.
+        step_evidence: Optional[str] = None
+        if run_id:
+            try:
+                tree = await api.get(
+                    f"/api/v1/runs/{run_id}/tests/{test_case_id}/steps"
+                )
+                if isinstance(tree, dict):
+                    step_evidence = _first_failed_step_evidence(tree)
+            except Exception:
+                step_evidence = None
+
         refs = data.get("evidence_references", [])
-        if refs:
+        if refs or step_evidence:
             lines += ["", "### Evidence References"]
+            if step_evidence:
+                lines.append(f"- **steps** `{test_case_id}`: {step_evidence}")
             for ref in refs:
                 lines.append(
                     f"- **{ref.get('source', 'unknown')}** `{ref.get('reference_id', '')}`: "

@@ -222,6 +222,13 @@ class TestCaseSummary(BaseModel):
     feature: Optional[str] = None
     failure_category: Optional[str] = None
     has_attachments: bool = False
+    # Number of top-level granular steps captured in the latest-run snapshot
+    # (Phase 1 granular steps). NULL when no parser emitted a step tree for this
+    # producer; 0 when the parser ran but the test had no steps. The run-detail
+    # list renders a small badge from this so a test's granularity is visible
+    # without opening the per-test steps panel. Live-buffer fallback rows omit
+    # it (defaults to None).
+    step_count: Optional[int] = None
     created_at: datetime
     # Auto-assigned at ingest for FAILED/BROKEN cases (migration 0080).
     # Resolves to the suite owner → default QA lead → manager → NULL.
@@ -247,6 +254,126 @@ class TestCaseListResponse(BaseModel):
     page: int
     size: int
     pages: int
+
+
+# ── Granular step / attachment snapshot (migration 0093) ──────────────────
+# Latest-run-only snapshot anchored to the canonical (project, fingerprint)
+# test identity. TestStepResponse is recursive (nested steps), so it must be
+# rebuilt after definition (model_rebuild()).
+
+
+class TestAttachmentResponse(BaseModel):
+    """Index-only attachment metadata (Phase 1 stores refs, not bytes)."""
+    id: uuid.UUID
+    test_step_id: Optional[uuid.UUID] = None
+    name: str
+    source_ref: Optional[str] = None
+    media_type: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TestStepResponse(BaseModel):
+    """One granular step in a logical test's latest-run snapshot.
+
+    ``steps`` carries the nested child steps (Allure before/after + sub-steps).
+    """
+    id: uuid.UUID
+    parent_step_id: Optional[uuid.UUID] = None
+    ordinal: int
+    depth: int
+    name: str
+    keyword: Optional[str] = None
+    status: TestStatus
+    duration_ms: Optional[int] = None
+    start_ms: Optional[int] = None
+    assertion_message: Optional[str] = None
+    assertion_trace: Optional[str] = None
+    expected_value: Optional[str] = None
+    actual_value: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    steps: List["TestStepResponse"] = Field(default_factory=list)
+    attachments: List[TestAttachmentResponse] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
+TestStepResponse.model_rebuild()
+
+
+# ── Duplicate authored-test-case detection (Phase 4, migration 0094) ──────
+
+# Detection bands and methods. Kept in sync with the ORM ``String(N)`` columns
+# on ``DuplicateTestCaseCandidate`` (band / method) so a value drift returns a
+# clean 422 rather than silently emptying the UI.
+DuplicateBand = Literal["exact", "strong", "possible"]
+DuplicateMethod = Literal["fingerprint", "structural", "semantic"]
+DuplicateCandidateStatus = Literal["open", "merged", "dismissed"]
+
+
+class DuplicateCaseRef(BaseModel):
+    """Minimal reference to one ManagedTestCase in a duplicate pair."""
+    id: uuid.UUID
+    title: str
+    suite_name: Optional[str] = None
+    status: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DuplicateCandidateResponse(BaseModel):
+    """One detected near-duplicate pair with its explainable score breakdown."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    band: DuplicateBand
+    score: float
+    reason: Optional[str] = None
+    method: DuplicateMethod
+    component_scores: Optional[Dict[str, Any]] = None
+    status: DuplicateCandidateStatus
+    detected_at: datetime
+    case_a: DuplicateCaseRef
+    case_b: DuplicateCaseRef
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DuplicateCandidateListResponse(BaseModel):
+    """Paginated list of duplicate candidates for a project's review queue."""
+    items: List[DuplicateCandidateResponse] = Field(default_factory=list)
+    total: int = 0
+    open_count: int = 0
+
+
+class DuplicateDismissRequest(BaseModel):
+    """Dismiss a candidate pair so it stays suppressed across re-detection runs."""
+    candidate_id: uuid.UUID
+
+
+class DuplicateMergeRequest(BaseModel):
+    """Non-destructive merge: flip the candidate to ``merged`` and optionally
+    soft-deprecate the losing case. NEVER deletes a case this phase.
+    """
+    candidate_id: uuid.UUID
+    # The case to keep; the other case in the pair becomes the merge loser and
+    # may be soft-deprecated. Must be one of the pair's two case ids.
+    keep_case_id: uuid.UUID
+    deprecate_loser: bool = True
+
+
+class DuplicateActionResponse(BaseModel):
+    """Result of a dismiss / merge action on a candidate pair."""
+    candidate_id: uuid.UUID
+    status: DuplicateCandidateStatus
+    deprecated_case_id: Optional[uuid.UUID] = None
+
+
+class DuplicateDetectionRunResponse(BaseModel):
+    """Summary of a triggered detection sweep over a project's authored cases."""
+    project_id: uuid.UUID
+    candidates_created: int = 0
+    candidates_total: int = 0
+    cases_scanned: int = 0
+    sampled: bool = False  # True when the project was too large and detection was capped
+    note: Optional[str] = None
 
 
 # ── Test Execution Review (migration 0081) ────────────────────────────────
@@ -308,6 +435,13 @@ class SummaryTotals(BaseModel):
     weighted_pass_rate_pct: float
 
 
+class SummaryStepBreakdownRow(BaseModel):
+    """One captured granular step for a failing test (Phase 5 enrichment)."""
+    name: Optional[str] = None
+    status: Optional[str] = None
+    assertion_message: Optional[str] = None
+
+
 class SummarySuiteRow(BaseModel):
     suite_name: str
     total: int
@@ -318,6 +452,13 @@ class SummarySuiteRow(BaseModel):
     pass_rate_pct: float
     weighted_pass_rate_pct: float
     last_run_at: Optional[str] = None
+    # Phase 5 granular STEP success-rate (additive/optional). Populated only
+    # for suites whose tests have captured step data (LATEST-RUN-ONLY
+    # snapshot); ``None`` otherwise so existing consumers are unaffected.
+    # Flat shape matches the frontend ``SummarySuiteRow`` contract.
+    step_success_rate: Optional[float] = None
+    passed_steps: Optional[int] = None
+    total_steps: Optional[int] = None
 
 
 class SummaryTopFailingTest(BaseModel):
@@ -325,6 +466,12 @@ class SummaryTopFailingTest(BaseModel):
     class_name: Optional[str] = None
     test_name: str
     failures: int
+    # Phase 5 FAILURE LOCATION (additive/optional). ``failure_step`` is the
+    # first FAILED/BROKEN step name from the LATEST-RUN-ONLY snapshot;
+    # ``step_breakdown`` is the ordered step list (for the PDF engineering
+    # section). Both ``None`` when no snapshot exists for the test.
+    failure_step: Optional[str] = None
+    step_breakdown: Optional[List[SummaryStepBreakdownRow]] = None
 
 
 class SummaryReportResponse(BaseModel):
@@ -386,6 +533,11 @@ class MyFailureItem(BaseModel):
     # failed for this user inside the active time window. Lets the inbox row
     # show "× 7 in 7 days" so repeat offenders are visible at a glance.
     failure_count: int = 1
+    # Granular step enrichment (Phase 5). Name of the FIRST FAILED/BROKEN step
+    # in this test's latest-run snapshot, when step data was captured.
+    # ``None`` when the test has no granular step snapshot or no failing step —
+    # additive/optional so existing clients are unaffected.
+    last_failure_step: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -2249,6 +2401,74 @@ class FlakyCoachResponse(BaseModel):
     total_flaky: int = 0
     quarantine_candidates: int = 0
     entries: List[FlakyCoachEntry] = []
+
+
+# ── Granular test-case history / flakiness / metadata (Phase 2) ──────────────
+
+
+class TestCaseHistoryPointResponse(BaseModel):
+    """One cross-run point in a logical test's timeline (most-recent-first)."""
+    model_config = ConfigDict(from_attributes=True)
+
+    run_id: Optional[str] = None
+    run_label: str
+    build_number: Optional[str] = None
+    run_seq: Optional[int] = None
+    status: str
+    duration_ms: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+
+class TestCaseFlakinessResponse(BaseModel):
+    """Computed flakiness for the in-window timeline.
+
+    ``failure_rate``/``failure_rate_pct`` match ``analytics_service.flaky_tests``;
+    ``classification`` + ``impact_score`` reuse ``test_health_coach_service``
+    thresholds (no new formula).
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    is_flaky: bool = False
+    failure_rate: float = 0.0
+    failure_rate_pct: float = 0.0
+    impact_score: float = 0.0
+    classification: str = "HEALTHY"
+    window_days: int = 30
+    total_runs: int = 0
+    passed: int = 0
+    failed: int = 0
+
+
+class TestCaseMetadataResponse(BaseModel):
+    """Identity metadata: owner, effective suite, first/last seen, timestamps."""
+    model_config = ConfigDict(from_attributes=True)
+
+    owner: Optional[str] = None
+    assigned_to_user_id: Optional[str] = None
+    suite: Optional[str] = None
+    severity: Optional[str] = None
+    feature: Optional[str] = None
+    first_seen_run_id: Optional[str] = None
+    first_seen_run_label: Optional[str] = None
+    first_seen_at: Optional[datetime] = None
+    last_seen_run_id: Optional[str] = None
+    last_seen_run_label: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class TestCaseHistoryResponse(BaseModel):
+    """Wrapper for GET /runs/{run_id}/tests/{test_id}/history."""
+    model_config = ConfigDict(from_attributes=True)
+
+    run_id: str
+    test_id: str
+    test_fingerprint: Optional[str] = None
+    test_name: str
+    history: List[TestCaseHistoryPointResponse] = []
+    flakiness: TestCaseFlakinessResponse
+    metadata: TestCaseMetadataResponse
 
 
 # ── SSO / SAML / SCIM Schemas (ENT-01) ──────────────────────────────────────

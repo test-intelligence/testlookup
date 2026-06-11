@@ -171,6 +171,10 @@ async def test_window_mode_aggregates_runs_and_emits_per_suite_breakdown():
             _top_row(suite_name="checkout-api", class_name="CheckoutTests", test_name="test_pay", failures=8),
             _top_row(suite_name="auth-api",     class_name="AuthTests",     test_name="test_login", failures=2),
         ]),
+        # _enrich_failure_steps: canonical lookup. Empty → no snapshot match,
+        # helper short-circuits before the steps fetch (no further execute).
+        _all([]),
+        _all([]),                                        # _per_suite_step_success
     ])
 
     result = await svc.build_summary_report(db, project_id=project_id, days=7, mode="window")
@@ -191,6 +195,62 @@ async def test_window_mode_aggregates_runs_and_emits_per_suite_breakdown():
     assert result["suites"][1]["pass_rate_pct"] == pytest.approx(85.0, abs=0.1)
     # Top failing tests carry the failure count straight through.
     assert result["top_failing_tests"][0]["failures"] == 8
+    # Phase 5 enrichment fields are present and default to None when the
+    # failing test has no captured granular step snapshot.
+    assert result["top_failing_tests"][0]["failure_step"] is None
+    assert result["top_failing_tests"][0]["step_breakdown"] is None
+
+
+@pytest.mark.asyncio
+async def test_enrich_failure_steps_attaches_breakdown_and_failure_location():
+    """``_enrich_failure_steps`` resolves each top-failing test to its
+    canonical anchor and attaches the ordered step breakdown + the first
+    failed/broken step as the failure location. Batched: one canonical
+    lookup + one steps fetch."""
+    from app.services import summary_report_service as svc
+
+    project_id = uuid.uuid4()
+    canon_id = uuid.uuid4()
+    top = [
+        {"suite_name": "checkout-api", "class_name": "CheckoutTests",
+         "test_name": "test_pay", "failures": 8},
+        {"suite_name": "auth-api", "class_name": "AuthTests",
+         "test_name": "test_login", "failures": 2},
+    ]
+
+    def _canon(id_, name, cls):
+        return SimpleNamespace(id=id_, test_name=name, class_name=cls)
+
+    def _step(canon, ordinal, name, status, msg=None):
+        return SimpleNamespace(
+            canonical_test_case_id=canon, ordinal=ordinal, name=name,
+            status=status, assertion_message=msg,
+        )
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        # canonical lookup — only test_pay resolves
+        _all([_canon(canon_id, "test_pay", "CheckoutTests")]),
+        # steps fetch for the matched canonical
+        _all([
+            _step(canon_id, 0, "arrange cart", "PASSED"),
+            _step(canon_id, 1, "POST /charge", "FAILED",
+                  "expected 200 got 402"),
+            _step(canon_id, 2, "verify email", "SKIPPED"),
+        ]),
+    ])
+
+    await svc._enrich_failure_steps(db, project_id, top)
+
+    # test_pay got its snapshot + failure location (first failed step).
+    assert top[0]["failure_step"] == "POST /charge"
+    assert [s["status"] for s in top[0]["step_breakdown"]] == [
+        "PASSED", "FAILED", "SKIPPED"
+    ]
+    assert top[0]["step_breakdown"][1]["assertion_message"] == "expected 200 got 402"
+    # test_login had no canonical match → graceful None defaults.
+    assert top[1]["failure_step"] is None
+    assert top[1]["step_breakdown"] is None
 
 
 @pytest.mark.asyncio
@@ -204,7 +264,8 @@ async def test_latest_mode_uses_per_suite_snapshot_and_sets_no_runs_per_day():
         _one(_totals_row(runs=2, total=50, passed=45, failed=5, latest=None)),  # _latest_totals
         _all([_suite_row(suite_name="smoke", total=50, passed=45, failed=5)]), # _per_suite_breakdown_latest
         _scalar(0),                                                          # flaky
-        _all([]),                                                            # top failing
+        _all([]),                                                            # top failing (enrich short-circuits — empty)
+        _all([]),                                                            # _per_suite_step_success
     ])
 
     result = await svc.build_summary_report(
@@ -230,7 +291,8 @@ async def test_zero_totals_produce_safe_pct_math():
         _one(_uniq_row()),         # _window_totals unique-fingerprint — all zeros
         _all([]),                  # no suites
         _scalar(0),                # no flaky
-        _all([]),                  # no top failing
+        _all([]),                  # no top failing (enrich short-circuits — empty)
+        _all([]),                  # _per_suite_step_success
     ])
 
     result = await svc.build_summary_report(

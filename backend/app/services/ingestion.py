@@ -19,10 +19,12 @@ from app.db.mongo import Collections, get_mongo_db
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
     LaunchStatus,
+    TestAttachment,
     TestCase,
     TestCaseHistory,
     TestRun,
     TestStatus,
+    TestStep,
 )
 from app.models.schemas import SentinelFile
 from app.services.allure_parser import parse_allure_result
@@ -440,7 +442,198 @@ async def _upsert_test_case(
             duration_ms=case_data.get("duration_ms"),
         ))
 
+    # ── Per-run granular metadata + latest-run-only step/attachment snapshot ──
+    raw_steps = case_data.get("steps") or []
+    raw_attachments = case_data.get("attachments") or []
+    tc.retry_count = case_data.get("retry_count")
+    tc.is_flaky_run = case_data.get("is_flaky") if case_data.get("is_flaky") is not None else None
+    tc.stack_trace = _sanitize(case_data.get("stack_trace") or "") or None
+    tc.step_count = len(raw_steps) if raw_steps else (0 if "steps" in case_data else None)
+
+    if raw_steps or raw_attachments:
+        await _persist_step_snapshot(
+            db, run, fingerprint, case_data, tc,
+            steps=raw_steps, attachments=raw_attachments,
+        )
+
     return cast(TestCase, tc)
+
+
+async def _persist_step_snapshot(
+    db,
+    run: TestRun,
+    fingerprint: str,
+    case_data: dict,
+    tc: TestCase,
+    *,
+    steps: list,
+    attachments: list,
+) -> None:
+    """Materialise the LATEST-RUN-ONLY granular snapshot for a logical test.
+
+    Anchored to the project-scoped ``CanonicalTestCase`` (one snapshot per
+    ``(project_id, test_fingerprint)``). On every ingest we DELETE the prior
+    snapshot's steps + attachments for this anchor and INSERT the new ones —
+    delete-then-insert overwrite — so the snapshot always reflects the latest
+    run. Everything is staged inside the caller's ingestion-pipeline
+    transaction; this function NEVER commits (router owns the commit).
+
+    Idempotent on re-ingest of the same run: the delete clears any rows a prior
+    pass for this fingerprint inserted, so re-running yields the same final set.
+    """
+    from app.services.test_suite_service import get_or_create_canonical  # noqa: PLC0415
+    from app.services.privacy_service import sanitize_for_persistence as _sanitize  # noqa: PLC0415
+    from sqlalchemy import delete as _sql_delete  # noqa: PLC0415
+
+    canonical = await get_or_create_canonical(
+        db,
+        run.project_id,
+        run.id,
+        test_fingerprint=fingerprint,
+        test_name=case_data.get("test_name", "Unknown"),
+        class_name=case_data.get("class_name"),
+        suite_name=case_data.get("suite_name"),
+    )
+
+    # Link the per-run TestCase to its canonical anchor at WRITE time. The read
+    # path (``runs_service.get_test_steps_tree``) resolves the snapshot via
+    # ``tc.canonical_test_case_id``; otherwise that column is only populated by
+    # the later ``sync_canonical_test_cases`` pass, which runs ONLY inside
+    # ``ingestion_pipeline.finalize_run`` — NOT on the MinIO/sentinel
+    # (``process_sentinel``) ingest path. Setting it here makes the steps
+    # endpoint self-consistent regardless of ingest path (sentinel + pipeline),
+    # and closes the transient-NULL window on the pipeline path between the
+    # ingest commit and the separately-committed canonical sync. The later sync
+    # re-selects this same canonical and is an idempotent no-op confirm.
+    tc.canonical_test_case_id = canonical.id
+
+    # Delete-then-insert: drop the prior snapshot for this anchor. Attachments
+    # FK steps with ON DELETE CASCADE, but step-level rows also reference the
+    # canonical directly — delete attachments first, then steps (children before
+    # parents is handled by the self-FK CASCADE on parent_step_id).
+    await db.execute(
+        _sql_delete(TestAttachment).where(
+            TestAttachment.canonical_test_case_id == canonical.id
+        )
+    )
+    await db.execute(
+        _sql_delete(TestStep).where(
+            TestStep.canonical_test_case_id == canonical.id
+        )
+    )
+    await db.flush()
+
+    # Test-level attachments (no owning step).
+    for att in attachments:
+        if not isinstance(att, dict):
+            continue
+        db.add(TestAttachment(
+            canonical_test_case_id=canonical.id,
+            test_step_id=None,
+            source_test_run_id=run.id,
+            name=_sanitize(str(att.get("name") or "attachment"))[:500],
+            source_ref=(_sanitize(str(att["source_ref"]))[:1000] if att.get("source_ref") else None),
+            media_type=(str(att["media_type"])[:100] if att.get("media_type") else None),
+        ))
+
+    # Recursively insert the step tree (depth-first, preserving ordinal order).
+    counter = {"ordinal": 0}
+    for node in steps:
+        if isinstance(node, dict):
+            await _insert_step(db, canonical.id, run.id, node, None, 0, counter)
+
+
+# Defensive write-side cap, mirroring the parser cap in allure_parser. Even
+# though the in-scope parsers cap the tree, _insert_step takes the common step
+# dict from ANY producer; a hostile/large tree must not blow Python's recursion
+# limit or materialise an unbounded number of test_steps rows + flushes inside
+# the single ingestion transaction. Stop once the per-test node budget / depth
+# cap is hit; the remainder is dropped (snapshot is best-effort, not an audit).
+_MAX_STEP_DEPTH = 20
+_MAX_STEP_NODES = 2000
+
+
+async def _insert_step(
+    db,
+    canonical_id,
+    run_id,
+    node: dict,
+    parent_id,
+    depth: int,
+    counter: dict,
+) -> None:
+    """Insert one step (and its children/attachments) from the common step dict."""
+    from app.services.privacy_service import sanitize_for_persistence as _sanitize  # noqa: PLC0415
+    from app.services.redaction_service import redact_dict as _redact_dict  # noqa: PLC0415
+
+    if depth > _MAX_STEP_DEPTH or counter["ordinal"] >= _MAX_STEP_NODES:
+        return  # depth/node budget exhausted — truncate the rest of the tree
+
+    status = _map_step_status(node.get("status"))
+    ordinal = counter["ordinal"]
+    counter["ordinal"] += 1
+    params = node.get("parameters")
+    step = TestStep(
+        canonical_test_case_id=canonical_id,
+        source_test_run_id=run_id,
+        parent_step_id=parent_id,
+        ordinal=ordinal,
+        depth=depth,
+        name=str(node.get("name") or "step")[:2000],
+        keyword=(str(node["keyword"])[:50] if node.get("keyword") else None),
+        status=status,
+        duration_ms=node.get("duration_ms"),
+        start_ms=node.get("start_ms"),
+        assertion_message=_sanitize(node.get("assertion_message") or "") or None,
+        assertion_trace=_sanitize(node.get("assertion_trace") or "") or None,
+        # expected/actual frequently echo response bodies → PII; redact them at
+        # the same boundary as assertion_message/trace above.
+        expected_value=(_sanitize(str(node["expected"])) if node.get("expected") is not None else None),
+        actual_value=(_sanitize(str(node["actual"])) if node.get("actual") is not None else None),
+        # ``parameters`` carry test INPUT data (fixtures) — emails/tokens/keys/
+        # passwords land here; recursively redact via redact_dict before persist.
+        parameters=(
+            _redact_dict_or_list(params, _redact_dict)
+            if isinstance(params, (list, dict)) and params else None
+        ),
+    )
+    db.add(step)
+    await db.flush()  # assign step.id for child + attachment FKs
+
+    for att in (node.get("attachments") or []):
+        if not isinstance(att, dict):
+            continue
+        db.add(TestAttachment(
+            canonical_test_case_id=canonical_id,
+            test_step_id=step.id,
+            source_test_run_id=run_id,
+            name=_sanitize(str(att.get("name") or "attachment"))[:500],
+            source_ref=(_sanitize(str(att["source_ref"]))[:1000] if att.get("source_ref") else None),
+            media_type=(str(att["media_type"])[:100] if att.get("media_type") else None),
+        ))
+
+    for child in (node.get("steps") or []):
+        if isinstance(child, dict):
+            await _insert_step(db, canonical_id, run_id, child, step.id, depth + 1, counter)
+
+
+def _redact_dict_or_list(value, redact_dict):
+    """Redact a step ``parameters`` value (Allure = list[{name,value}]; pytest /
+    others may use a dict). ``redact_dict`` only takes a dict, so wrap a list:
+    redact each dict item, leave non-dict items as-is (mirrors redact_dict's own
+    list branch)."""
+    if isinstance(value, dict):
+        return redact_dict(value)
+    if isinstance(value, list):
+        return [redact_dict(item) if isinstance(item, dict) else item for item in value]
+    return value
+
+
+def _map_step_status(raw) -> str:
+    """Map any parser step status string into the strict TestStatus vocab."""
+    valid = {"PASSED", "FAILED", "SKIPPED", "BROKEN", "UNKNOWN"}
+    s = str(raw or "").upper()
+    return s if s in valid else "UNKNOWN"
 
 
 async def _store_raw_allure(case_data: dict, raw_json: dict) -> None:

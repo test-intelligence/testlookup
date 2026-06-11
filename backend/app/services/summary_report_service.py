@@ -31,7 +31,15 @@ from typing import Literal, Optional
 from sqlalchemy import case, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Project, TestCase, TestRun, TestStatus
+from app.models.postgres import (
+    CanonicalTestCase,
+    Project,
+    TestCase,
+    TestRun,
+    TestStatus,
+    TestStep,
+)
+from app.services.analytics_service import _effective_suite_sql
 from app.services.metrics_service import _count_flaky_tests
 
 
@@ -103,6 +111,32 @@ async def build_summary_report(
 
     flaky_count = await _count_flaky_tests(db, str(project_id), None)
     top_failing = await _top_failing_tests(db, project_id, period_start, now, limit=10)
+    # Phase 5 enrichment (additive, no migration): attach the LATEST-RUN-ONLY
+    # granular step snapshot to each top-failing test so reports/PDF can show
+    # where the test failed. Batched — one canonical lookup + one steps fetch.
+    await _enrich_failure_steps(db, project_id, top_failing)
+
+    # Phase 5 enrichment (additive): per-suite granular STEP success-rate over
+    # the LATEST-RUN-ONLY snapshot. Each suite dict gets OPTIONAL FLAT keys
+    # (``step_success_rate`` / ``passed_steps`` / ``total_steps``) — populated
+    # only where the suite has captured step data, ``None`` otherwise — so
+    # existing consumers are unaffected. The flat shape matches the response
+    # model (``SummarySuiteRow``) and the frontend contract; same
+    # ``_effective_suite_sql()`` grouping as the breakdown so labels line up.
+    step_success_by_suite = await _per_suite_step_success(
+        db, project_id, period_start, now
+    )
+    for s in suites:
+        m = step_success_by_suite.get(s.get("suite_name"))
+        if m:
+            s["step_success_rate"] = m["step_pass_rate_pct"]
+            s["passed_steps"] = m["passed_steps"]
+            s["total_steps"] = m["total_steps"]
+        else:
+            s["step_success_rate"] = None
+            s["passed_steps"] = None
+            s["total_steps"] = None
+
     runs_per_day = round(run_count / max(1, days), 2) if mode == "window" else None
 
     return {
@@ -681,6 +715,87 @@ def _suite_row_to_dict(r) -> dict:
     }
 
 
+async def _per_suite_step_success(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    start: datetime,
+    end: datetime,
+) -> dict[str, dict]:
+    """Per-suite granular STEP success-rate (Phase 5 enrichment).
+
+    Returns ``{suite_name -> {"passed_steps", "total_steps",
+    "step_pass_rate_pct", "tests_with_steps"}}`` over the LATEST-RUN-ONLY step
+    snapshot, considering ONLY canonical tests that actually have captured
+    steps. Suites without any step data are absent from the map → the caller
+    leaves the suite's ``step_success`` field ``None`` (additive/optional).
+
+    Suite grouping uses the SAME ``_effective_suite_sql()`` expression as the
+    breakdowns so the labels line up: each canonical test is attributed to its
+    effective suite from its window test_cases rows, then its snapshot steps are
+    summed. One batched query — no N+1 over tests.
+    """
+    effective_suite = _effective_suite_sql()
+    query = text(
+        f"""
+        WITH tests_in_suite AS (
+            -- One (suite, canonical) pair per logical test in the window.
+            -- DISTINCT collapses the multiple test_cases executions of the
+            -- same canonical down to a single attribution; the snapshot is
+            -- latest-run-only anchored on the canonical, so summing its steps
+            -- once per canonical is correct.
+            SELECT DISTINCT
+                {effective_suite} AS suite_name,
+                tc.canonical_test_case_id AS canonical_id
+            FROM test_cases tc
+            JOIN test_runs tr ON tr.id = tc.test_run_id
+            WHERE tr.project_id = :project_id
+              AND tr.created_at >= :start
+              AND tr.created_at < :end
+              AND tc.canonical_test_case_id IS NOT NULL
+              AND {effective_suite} IS NOT NULL
+        ),
+        step_counts AS (
+            -- Per-canonical step tallies, only for tests that HAVE steps.
+            SELECT
+                ts.canonical_test_case_id AS canonical_id,
+                COUNT(*) FILTER (WHERE ts.status = 'PASSED') AS passed_steps,
+                COUNT(*) AS total_steps
+            FROM test_steps ts
+            JOIN tests_in_suite tis
+                ON tis.canonical_id = ts.canonical_test_case_id
+            GROUP BY ts.canonical_test_case_id
+        )
+        SELECT
+            tis.suite_name,
+            SUM(sc.passed_steps) AS passed_steps,
+            SUM(sc.total_steps)  AS total_steps,
+            COUNT(*)             AS tests_with_steps
+        FROM tests_in_suite tis
+        JOIN step_counts sc ON sc.canonical_id = tis.canonical_id
+        GROUP BY tis.suite_name
+        """
+    )
+    rows = (
+        await db.execute(
+            query,
+            {"project_id": str(project_id), "start": start, "end": end},
+        )
+    ).all()
+    out: dict[str, dict] = {}
+    for r in rows:
+        total_steps = int(r.total_steps or 0)
+        if total_steps <= 0:
+            continue
+        passed_steps = int(r.passed_steps or 0)
+        out[r.suite_name] = {
+            "passed_steps": passed_steps,
+            "total_steps": total_steps,
+            "step_pass_rate_pct": round(passed_steps / total_steps * 100.0, 1),
+            "tests_with_steps": int(r.tests_with_steps or 0),
+        }
+    return out
+
+
 async def _top_failing_tests(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -738,3 +853,119 @@ async def _top_failing_tests(
         }
         for r in rows
     ]
+
+
+# Step statuses that mean "this is where the test broke" — same vocab as
+# ``TestStatus`` (ingestion writes step.status from the common step dict).
+_FAILED_STEP_STATUSES = (TestStatus.FAILED.value, TestStatus.BROKEN.value)
+
+
+async def _enrich_failure_steps(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    top_failing: list[dict],
+) -> None:
+    """Attach the granular step snapshot to each top-failing test (in place).
+
+    Phase 5 enrichment. The LATEST-RUN-ONLY snapshot (migration 0093) anchors
+    to the project-scoped ``CanonicalTestCase``; we resolve each top-failing
+    test (keyed by ``test_name`` + ``class_name``) to its canonical anchor and
+    read its steps via that anchor — so this stays project-scoped (no
+    cross-tenant leak) and reuses the same write-side anchor the step-read
+    helper (``runs_service.get_test_steps_tree``) reads.
+
+    Adds two OPTIONAL keys to each entry (existing consumers unaffected):
+      * ``failure_step``: name of the FIRST failed/broken step (failure
+        location), or ``None`` when no step data / no failed step.
+      * ``step_breakdown``: ordered ``[{name, status, assertion_message}]`` for
+        the failing test, or ``None`` when no snapshot exists.
+
+    Batched: ONE canonical lookup for all entries, then ONE steps fetch for the
+    matched canonical ids — no N+1.
+    """
+    if not top_failing:
+        return
+
+    # Initialise the optional fields up front so every entry carries them even
+    # when no snapshot resolves (stable contract for the PDF/UI consumers).
+    for t in top_failing:
+        t.setdefault("failure_step", None)
+        t.setdefault("step_breakdown", None)
+
+    # Build the set of (test_name, class_name) keys we need to resolve. The
+    # snapshot is one-per-logical-test, so matching by name+class is exact for
+    # the project; if two suites share a (name, class) the first canonical wins
+    # (acceptable — the snapshot itself is per-fingerprint, not per-suite).
+    wanted = {(t["test_name"], t.get("class_name")) for t in top_failing}
+
+    names = {n for (n, _c) in wanted}
+    canon_rows = (
+        await db.execute(
+            select(
+                CanonicalTestCase.id,
+                CanonicalTestCase.test_name,
+                CanonicalTestCase.class_name,
+            ).where(
+                CanonicalTestCase.project_id == project_id,
+                CanonicalTestCase.test_name.in_(names),
+            )
+        )
+    ).all()
+
+    # Map (name, class) → canonical id. Prefer an exact class match; fall back
+    # to a name-only match when the top-failing row has no class.
+    canon_by_key: dict[tuple, uuid.UUID] = {}
+    for cr in canon_rows:
+        canon_by_key.setdefault((cr.test_name, cr.class_name), cr.id)
+    canon_ids = [
+        canon_by_key.get(key) or canon_by_key.get((key[0], None))
+        for key in wanted
+    ]
+    canon_ids = [cid for cid in {c for c in canon_ids} if cid is not None]
+    if not canon_ids:
+        return
+
+    step_rows = (
+        await db.execute(
+            select(
+                TestStep.canonical_test_case_id,
+                TestStep.ordinal,
+                TestStep.name,
+                TestStep.status,
+                TestStep.assertion_message,
+            )
+            .where(TestStep.canonical_test_case_id.in_(canon_ids))
+            .order_by(TestStep.canonical_test_case_id, TestStep.ordinal)
+        )
+    ).all()
+
+    steps_by_canon: dict[uuid.UUID, list[dict]] = {}
+    for sr in step_rows:
+        steps_by_canon.setdefault(sr.canonical_test_case_id, []).append(
+            {
+                "name": sr.name,
+                "status": sr.status,
+                "assertion_message": sr.assertion_message,
+            }
+        )
+
+    for t in top_failing:
+        key = (t["test_name"], t.get("class_name"))
+        cid = canon_by_key.get(key) or canon_by_key.get((key[0], None))
+        steps = steps_by_canon.get(cid) if cid is not None else None
+        if not steps:
+            t["failure_step"] = None
+            t["step_breakdown"] = None
+            continue
+        t["step_breakdown"] = steps
+        # Persisted step.status is upper-cased by ``ingestion._map_step_status``;
+        # compare case-insensitively to be robust to any producer drift.
+        failing = next(
+            (
+                s
+                for s in steps
+                if str(s["status"] or "").upper() in _FAILED_STEP_STATUSES
+            ),
+            None,
+        )
+        t["failure_step"] = failing["name"] if failing else None

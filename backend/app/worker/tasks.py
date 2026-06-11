@@ -3163,3 +3163,116 @@ def flush_ai_pipeline_queue(self) -> dict:
             self.request.id, exc,
         )
         return {"drained": 0, "error": str(exc)}
+
+
+@celery_app.task(
+    name="app.worker.tasks.run_duplicate_detection",
+    bind=True,
+    queue="default",
+    time_limit=900,
+)
+def run_duplicate_detection(
+    self,
+    project_id: str | None = None,
+    enable_semantic: bool | None = None,
+) -> dict:
+    """Phase 4 — tiered duplicate authored-test-case detection per project.
+
+    Two modes:
+
+    * **Sweep (``project_id`` is None — the nightly beat entry).** Loads every
+      project id and FANS OUT one ``run_duplicate_detection.delay(project_id=…)``
+      sub-task per project, so each project gets its OWN 900s time budget and a
+      single slow/large project cannot starve the tail of the project list under
+      the task's hard ``time_limit`` (previously the whole sweep ran in ONE task
+      and a global timeout SIGKILLed the worker mid-loop, silently skipping every
+      project after the kill point — always the same later-listed projects).
+      Semantic is left OFF for the sweep (cheaper + deterministic); it is run on
+      demand from the router instead.
+    * **Single project (``project_id`` given — the fan-out sub-task or an ad-hoc
+      call).** Runs ``detect_duplicates_for_project`` for that one project. This
+      worker task is the COMMIT OWNER — the detection service never commits.
+
+    Idempotent: candidates are upserted on ``(project_id, case_a_id, case_b_id)``
+    and dismissed pairs are suppressed, so repeated runs converge.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import select
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services.duplicate_detection_service import (
+        detect_duplicates_for_project,
+    )
+
+    # Default semantic OFF for the sweep / unspecified; the router passes True
+    # explicitly for ad-hoc single-project runs.
+    semantic = bool(enable_semantic) if enable_semantic is not None else False
+
+    async def _list_project_ids() -> list:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(Project.id))).all()
+            return [row[0] for row in rows]
+
+    # ── Fan-out sweep: no project_id → enqueue one sub-task per project. ──
+    if project_id is None:
+        project_ids = _run_async(_list_project_ids())
+        enqueued = 0
+        for pid in project_ids:
+            run_duplicate_detection.delay(project_id=str(pid))
+            enqueued += 1
+        logger.info(
+            "[Task %s] run_duplicate_detection sweep fanned out %d project sub-task(s)",
+            self.request.id, enqueued,
+        )
+        return {
+            "mode": "fan_out",
+            "projects_enqueued": enqueued,
+        }
+
+    # ── Single-project run (fan-out sub-task or ad-hoc call). ──
+    async def _run_one(pid) -> dict:
+        totals = {
+            "projects_scanned": 0,
+            "candidates_created": 0,
+            "cases_scanned": 0,
+            "sampled_projects": 0,
+            "errors": 0,
+        }
+        async with AsyncSessionLocal() as project_db:
+            try:
+                result = await detect_duplicates_for_project(
+                    project_db, pid, enable_semantic=semantic
+                )
+                await project_db.commit()
+                totals["projects_scanned"] += 1
+                totals["candidates_created"] += int(result.get("candidates_created", 0))
+                totals["cases_scanned"] += int(result.get("cases_scanned", 0))
+                if result.get("sampled"):
+                    totals["sampled_projects"] += 1
+            except Exception as exc:
+                await project_db.rollback()
+                totals["errors"] += 1
+                logger.warning(
+                    "run_duplicate_detection project failed",
+                    extra={
+                        "event": "duplicate_detection_failed",
+                        "project_id": str(pid),
+                        "error": str(exc),
+                    },
+                )
+        return totals
+
+    pid = _uuid.UUID(str(project_id))
+    logger.info(
+        "[Task %s] run_duplicate_detection starting (project=%s, semantic=%s)",
+        self.request.id, pid, semantic,
+    )
+    result = cast(dict[str, Any], _run_async(_run_one(pid)))
+    logger.info(
+        "[Task %s] run_duplicate_detection done: scanned=%d created=%d cases=%d sampled=%d errors=%d",
+        self.request.id,
+        result["projects_scanned"], result["candidates_created"],
+        result["cases_scanned"], result["sampled_projects"], result["errors"],
+    )
+    return result

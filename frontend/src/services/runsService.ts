@@ -1,4 +1,11 @@
-import type { RunTestCase, RunTestCaseListResponse, TestRun, TestRunListResponse } from '@/types/runs'
+import type {
+  RunTestCase,
+  RunTestCaseListResponse,
+  TestCaseHistory,
+  TestRun,
+  TestRunListResponse,
+  TestStepsTree,
+} from '@/types/runs'
 import { getData, postData } from './http'
 
 export const runsService = {
@@ -15,6 +22,17 @@ export const runsService = {
 
   getTest: (runId: string, testId: string) =>
     getData<RunTestCase>(`/api/v1/runs/${runId}/tests/${testId}`),
+
+  /** Granular step/attachment tree for a test (latest-run-only snapshot).
+   *  Lazy/separate from the test-case detail payload; empty arrays when no
+   *  granular detail was captured (non-Allure/pytest runs). */
+  getTestSteps: (runId: string, testId: string) =>
+    getData<TestStepsTree>(`/api/v1/runs/${runId}/tests/${testId}/steps`),
+
+  /** Cross-run pass/fail history + flakiness + metadata for a logical test.
+   *  Project-scoped server-side; lazy/separate from the test-case detail. */
+  getTestHistory: (runId: string, testId: string) =>
+    getData<TestCaseHistory>(`/api/v1/runs/${runId}/tests/${testId}/history`),
 
   setRelease: (runId: string, releaseName: string) =>
     postData(`/api/v1/runs/${runId}/release`, { release_name: releaseName }),

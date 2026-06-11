@@ -24,6 +24,7 @@ from app.routers import (
     debug,
     decision_trail,
     digests,
+    duplicates,
     feature_flags as feature_flags_router,
     feedback,
     flaky_quarantine,
@@ -147,6 +148,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     my_failures.router,                # 0080: per-user "My Failures" inbox of auto-assigned failures
     test_execution_reviews.router,     # 0081: per-TestCase human review transitions
     summary_report.router,             # Per-project consolidated summary report + PDF export
+    duplicates.router,                 # Phase 4: per-project duplicate authored-test-case review queue
 )
 
 

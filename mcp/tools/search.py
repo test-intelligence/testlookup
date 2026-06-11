@@ -5,6 +5,31 @@ from __future__ import annotations
 import client as api  # type: ignore[import]
 
 
+def _step_match_note(result: dict, query: str) -> str:
+    """Best-effort note when a result matched on something other than its
+    visible name/suite.
+
+    The keyword search (Phase 3) also matches a test's failing step name /
+    assertion message and its error message, but the search payload exposes
+    only the test name and suite — not the error message or step text — so we
+    cannot tell *which* hidden field matched. Heuristic: if the query text
+    isn't visible in the test name or suite, the hit came from the error
+    message or step text; note it (without over-asserting which) so the user
+    understands why the result surfaced. Empty string when the query is
+    plainly visible or absent.
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return ""
+    haystack = " ".join(
+        str(result.get(k) or "")
+        for k in ("test_name", "suite_name")
+    ).lower()
+    if q not in haystack:
+        return " · may match error/step text"
+    return ""
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
@@ -26,7 +51,11 @@ def register(mcp) -> None:  # noqa: ANN001
 
         lines = [f"## Search Results ({data.get('total', 0)} matches)"]
         for r in items[:10]:
-            lines.append(f"- **{r.get('test_name', '?')}** — {r.get('suite_name', 'no suite')} [{r.get('status', '?')}]")
+            note = _step_match_note(r, query)
+            lines.append(
+                f"- **{r.get('test_name', '?')}** — {r.get('suite_name', 'no suite')} "
+                f"[{r.get('status', '?')}]{note}"
+            )
         return "\n".join(lines)
 
     @mcp.tool()

@@ -68,7 +68,8 @@ async def test_flaky_rate_clamped_to_100():
                              skipped=0, broken=0)),
         _all([]),                                                # _per_suite_breakdown_window
         _scalar(10),                                             # _count_flaky_tests → 10 (all-time)
-        _all([]),                                                # _top_failing_tests
+        _all([]),                                                # _top_failing_tests (enrich short-circuits — empty)
+        _all([]),                                                # _per_suite_step_success
     ])
 
     result = await svc.build_summary_report(db, project_id, days=1, mode="window")

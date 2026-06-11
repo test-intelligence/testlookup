@@ -64,3 +64,111 @@ export interface RunTestCase {
 }
 
 export type RunTestCaseListResponse = PaginatedResponse<RunTestCase>
+
+/**
+ * Index-only attachment reference captured alongside a granular step snapshot
+ * (Phase 1: metadata only — ``source_ref`` is a reference, bytes are not
+ * proxied). ``test_step_id`` is null for test-level (non-step) attachments.
+ */
+export interface TestAttachment {
+  id: string
+  test_step_id: string | null
+  name: string
+  source_ref: string | null
+  media_type: string | null
+  created_at: string
+}
+
+/**
+ * One node in the granular step tree for a logical test. The snapshot is
+ * latest-run-only per (project, fingerprint), so the steps reflect whichever
+ * run most recently ingested this test — which may be newer than the run being
+ * viewed. ``parameters`` is whatever the parser stored (Allure emits a list of
+ * ``{name, value}``); the endpoint has no response_model so it is untyped JSON.
+ */
+export interface TestStep {
+  id: string
+  parent_step_id: string | null
+  ordinal: number
+  depth: number
+  name: string
+  keyword?: string | null
+  status: string
+  duration_ms?: number | null
+  start_ms?: number | null
+  assertion_message?: string | null
+  assertion_trace?: string | null
+  expected_value?: string | null
+  actual_value?: string | null
+  parameters?: unknown
+  created_at: string
+  steps: TestStep[]
+  attachments: TestAttachment[]
+}
+
+/** One run in the cross-run pass/fail timeline (most-recent-first, capped 50). */
+export interface TestCaseHistoryPoint {
+  run_id: string | null
+  run_label: string
+  build_number: string | null
+  run_seq: number | null
+  status: string
+  duration_ms: number | null
+  created_at: string | null
+}
+
+/** Flakiness signal — reuses analytics_service thresholds + test_health_coach impact/classification. */
+export interface TestCaseFlakiness {
+  is_flaky: boolean
+  failure_rate: number
+  failure_rate_pct: number
+  impact_score: number
+  classification: string
+  window_days: number
+  total_runs: number
+  passed: number
+  failed: number
+}
+
+/** Test-case metadata block (owner, suite, first/last seen, timestamps). */
+export interface TestCaseMetadata {
+  owner: string | null
+  assigned_to_user_id: string | null
+  suite: string | null
+  severity: string | null
+  feature: string | null
+  first_seen_run_id: string | null
+  first_seen_run_label: string | null
+  first_seen_at: string | null
+  last_seen_run_id: string | null
+  last_seen_run_label: string | null
+  last_seen_at: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/history``. */
+export interface TestCaseHistory {
+  run_id: string
+  test_id: string
+  test_fingerprint: string | null
+  test_name: string
+  history: TestCaseHistoryPoint[]
+  flakiness: TestCaseFlakiness
+  metadata: TestCaseMetadata
+}
+
+/** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/steps``. */
+export interface TestStepsTree {
+  run_id: string
+  test_id: string
+  test_name: string
+  status: string
+  step_count: number | null
+  retry_count: number | null
+  is_flaky_run: boolean | null
+  stack_trace: string | null
+  steps: TestStep[]
+  /** Test-level attachments (those with ``test_step_id === null``). */
+  attachments: TestAttachment[]
+}
