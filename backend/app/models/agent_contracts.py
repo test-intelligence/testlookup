@@ -27,6 +27,7 @@ class AgentContractMetadata(BaseModel):
     evidence_count: int = 0
     evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
     decision_reason: str = ""
+    confidence_breakdown: Optional[dict[str, Any]] = None
     output_keys: list[str] = Field(default_factory=list)
     generated_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -150,8 +151,33 @@ def validate_agent_contract(
     confidence: Optional[int] = None,
     evidence_refs: Optional[list[dict[str, Any]]] = None,
     decision_reason: str = "",
+    structured_evidence: Optional[list] = None,
 ) -> dict[str, Any]:
-    """Validate an agent payload and append audit-friendly contract metadata."""
+    """Validate an agent payload and append audit-friendly contract metadata.
+
+    When ``structured_evidence`` (a list of ``EvidenceRef``) is supplied, the
+    confidence is derived from ``aggregate_confidence`` and a
+    ``confidence_breakdown`` is stamped onto the metadata. An explicit
+    ``confidence`` kwarg still wins; if the caller passed no ``evidence_refs``,
+    they are auto-populated from the structured evidence. Kept entirely inside
+    the existing try/except so it never raises.
+    """
+    confidence_breakdown: Optional[dict[str, Any]] = None
+    if structured_evidence:
+        # Lazy import to avoid a models -> agents import cycle (evidence.py
+        # lives under app/agents/ and imports from app/models/).
+        from app.agents.evidence import aggregate_confidence
+
+        final_confidence, confidence_breakdown = aggregate_confidence(structured_evidence)
+        if confidence is None:
+            confidence = final_confidence
+        if not evidence_refs:
+            evidence_refs = [
+                ref.as_legacy_dict()
+                for ref in structured_evidence
+                if hasattr(ref, "as_legacy_dict")
+            ]
+
     metadata = AgentContractMetadata(
         agent_name=agent_name,
         agent_version=agent_version,
@@ -161,6 +187,7 @@ def validate_agent_contract(
         evidence_count=len(evidence_refs or []),
         evidence_refs=evidence_refs or [],
         decision_reason=decision_reason,
+        confidence_breakdown=confidence_breakdown,
         output_keys=sorted(k for k in payload.keys() if k != "agent_contracts"),
     )
     try:

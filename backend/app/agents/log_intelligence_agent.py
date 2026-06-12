@@ -7,6 +7,7 @@ import json
 
 import structlog
 
+from app.agents.evidence import EvidenceRef
 from app.models.agent_contracts import (
     LogIntelligenceAgentOutput,
     validate_agent_contract,
@@ -75,16 +76,27 @@ class LogIntelligenceAgent:
 
         trace_ok = "error" not in evidence.get("distributed_trace", {})
         anomaly_ok = "error" not in evidence.get("log_anomaly", {})
-        evidence_refs = []
+        structured_evidence: list[EvidenceRef] = []
         if trace_ok:
-            evidence_refs.append({"type": "distributed_trace", "id": service_name})
+            structured_evidence.append(EvidenceRef(
+                source="distributed_trace",
+                ref_id=service_name,
+                excerpt=trace_summary,
+                strength="medium",
+                contribution=70,
+            ))
         if anomaly_ok:
-            evidence_refs.append({"type": "log_anomaly", "id": service_name})
+            structured_evidence.append(EvidenceRef(
+                source="log_anomaly",
+                ref_id=service_name,
+                excerpt=anomaly_assessment,
+                strength="medium",
+                contribution=70,
+            ))
         fallback_used = not (trace_ok and anomaly_ok)
         return validate_agent_contract(
             LogIntelligenceAgentOutput, evidence, agent_name="log_intelligence",
             agent_version="v1", fallback_used=fallback_used,
-            confidence=80 if (trace_ok and anomaly_ok) else (40 if (trace_ok or anomaly_ok) else 0),
-            evidence_refs=evidence_refs,
+            structured_evidence=structured_evidence,
             decision_reason="log_evidence_gathered" if not fallback_used else "partial_log_evidence",
         )

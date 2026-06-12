@@ -40,6 +40,7 @@ from app.agents.consistency import (
     check_release_consistency,
     log_consistency_failures,
 )
+from app.agents.evidence import EvidenceRef
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import ReleaseRiskAgentOutput, validate_agent_contract
@@ -158,15 +159,27 @@ class ReleaseRiskAgent(BaseAgent):
         consistency_report = check_release_consistency(decision)
         log_consistency_failures(consistency_report, pipeline_run_id=pipeline_run_id)
 
+        structured_evidence = [
+            EvidenceRef(
+                source="score_model",
+                ref_id=str(decision.get("score_model_version", SCORE_MODEL_VERSION) or "v1"),
+                strength="strong",
+                contribution=max(0, min(100, int(100 - decision.get("risk_score", 50)))),
+            ),
+        ]
+        if consistency_report is not None:
+            structured_evidence.append(EvidenceRef(
+                source="consistency_report",
+                ref_id=consistency_report.agent,
+                strength="weak",
+                contribution=100 if consistency_report.all_passed else 0,
+            ))
+
         return validate_agent_contract(
             ReleaseRiskAgentOutput,
             {"release_decision": decision},
             agent_name=self.stage_name,
-            confidence=max(0, min(100, int(100 - decision.get("risk_score", 50)))),
-            evidence_refs=[
-                {"type": "score_model", "id": str(decision.get("score_model_version", SCORE_MODEL_VERSION))},
-                consistency_report.evidence_ref(),
-            ],
+            structured_evidence=structured_evidence,
             decision_reason=(
                 f"Deterministic release score produced {decision['recommendation']} "
                 f"at risk {decision['risk_score']}"

@@ -47,6 +47,10 @@ INFRA_ALLOWLIST: frozenset[str] = frozenset({
     # reports for other agents to fold into their contracts; not itself an
     # analytic agent with a contracted output.
     "consistency.py",
+    # Shared evidence + confidence-scoring helper (AIQ-P3): EvidenceRef model
+    # and aggregate_confidence() folded into other agents' contracts; not
+    # itself an analytic agent with a contracted output.
+    "evidence.py",
 })
 
 AGENTS_DIR = Path(__file__).resolve().parents[1] / "app" / "agents"
@@ -160,6 +164,41 @@ def test_contract_metadata_has_required_fields() -> None:
         "ratchet floor is 12. Removing a contracted output model regresses "
         "agent-contract coverage."
     )
+
+
+def test_contract_metadata_exposes_confidence_breakdown() -> None:
+    """AIQ-P3: the contract metadata must expose ``confidence_breakdown`` so
+    structured-evidence consumers can read the aggregation rationale.
+    """
+    from app.models.agent_contracts import AgentContractMetadata
+
+    assert "confidence_breakdown" in AgentContractMetadata.model_fields, (
+        "AgentContractMetadata must expose 'confidence_breakdown' for "
+        "structured-evidence confidence aggregation (AIQ-P3)."
+    )
+
+
+def test_confidence_cap_invariant_holds() -> None:
+    """AIQ-P3: a high raw confidence backed by insufficient strength caps to
+    70; a single strong source clears the bar.
+    """
+    from app.agents.evidence import EvidenceRef, aggregate_confidence
+
+    # Two weak refs at 100 -> raw 100 but insufficient strength -> capped to 70.
+    capped, breakdown = aggregate_confidence([
+        EvidenceRef(source="a", strength="weak", contribution=100),
+        EvidenceRef(source="b", strength="weak", contribution=100),
+    ])
+    assert capped == 70
+    assert breakdown["cap_applied"] is True
+    assert breakdown["raw_confidence"] == 100
+
+    # One strong ref at 100 clears the cap.
+    cleared, cleared_breakdown = aggregate_confidence([
+        EvidenceRef(source="a", strength="strong", contribution=100),
+    ])
+    assert cleared == 100
+    assert cleared_breakdown["cap_applied"] is False
 
 
 def test_validator_stamps_required_fields_and_never_raises() -> None:
