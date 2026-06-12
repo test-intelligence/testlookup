@@ -15,7 +15,7 @@ State of record across recurring headless sessions. Updated + pushed every run.
 |-------|--------|-------|
 | AIQ-P1 Structured agent contracts | done | run 1: contracts model + RunCompare/LogIntelligence/RegressionWatchman wrapped; ratchet + behavioral tests green |
 | AIQ-P2 Self-critique / verification pass | done | run 2: consistency.py self-critique layer wired into Summary/ReleaseRisk/Analysis before validate_agent_contract; full SDLC (design→code→review+adversarial→bugfix→QA→verify→docs). 1 Blocker (never-raise) + 3 Majors fixed & regression-tested. 92 targeted tests green; 10 architectural ratchets + 15-guard quality gate green. |
-| AIQ-P3 Evidence + confidence scoring | pending | |
+| AIQ-P3 Evidence + confidence scoring | done | run 3: EvidenceRef{source,ref_id,excerpt(redact+trunc 240),strength,contribution} + aggregate_confidence (weighted mean weak1/med2/strong3, cap>70 needs >=1 strong or >=2 medium). Optional confidence_breakdown on AgentContractMetadata; opt-in structured_evidence param (backward compatible, never-raises). Adopters: log_intelligence (2 medium@80) + release_risk (strong score_model + weak consistency). Full SDLC: design→code→review+adversarial(2 Majors fixed: non-iterable + inf never-raise)→QA(46 tests)→regression(log_intel 80) →smoke→docs. 81 tests + quality gate(15 guards) green. Pushed f013d48 + this. |
 | AIQ-P4 Gap-detection + report-refinement agents | pending | |
 | AIQ-P5 Report-quality eval harness | pending | |
 | FLK-P1 Intermittency + error-signature analysis | pending | |
@@ -26,17 +26,25 @@ State of record across recurring headless sessions. Updated + pushed every run.
 | FINAL delivery review + PR | pending | |
 
 ## Last done
-Run 2: (a) CORRECTED FLK-P5 from no-go→pending (granular stack confirmed on
-origin/main, PR #169) and updated plan; committed+pushed (a77c6e6). (b) AIQ-P2
-(self-critique / verification pass) full SDLC complete — DESIGN/CODE/REVIEW+
-adversarial/BUGFIX/QA/VERIFY/DOCS. New consistency.py + wiring in 3 agents, 4 new
-confidence rules, 92 targeted tests green, architectural ratchets + quality gate
-green. Committed+pushed (4da838b), verified on origin.
+Run 3: AIQ-P3 (Evidence + confidence scoring) full SDLC complete —
+DESIGN(go)/CODE/REVIEW+adversarial/BUGFIX/QA/VERIFY/DOCS. New
+backend/app/agents/evidence.py (EvidenceRef + aggregate_confidence, pure-local,
+never-raises), confidence_breakdown on AgentContractMetadata, opt-in
+structured_evidence on validate_agent_contract (backward compatible). Adopters:
+log_intelligence + release_risk. Reviewer found 2 Majors (non-iterable arg, inf
+OverflowError) — both fixed + regression-tested. QA added 46-test
+test_evidence_confidence.py; log_intelligence contribution set to 80 to preserve
+prior confidence-80 contract. Runtime smoke confirmed cap/redaction/back-compat.
+evidence.py added to quality_gate support-files + ratchet INFRA_ALLOWLIST. 81
+tests + 15-guard quality gate green. Commits 5e1b777, 4c2aca6, f013d48 + this;
+all verified on origin.
 
 ## Next up
-AIQ-P3 Evidence + confidence scoring (EvidenceRef{source,ref_id,excerpt,strength,
-contribution}; weighted aggregate confidence with cap; conf>70 requires >=2
-medium or 1 strong source; surface the breakdown).
+AIQ-P4 Gap-detection + report-refinement agents (new gap_detection_agent: what
+was NOT analyzed — unanalyzed/inconclusive/no-evidence + reason; referential
+integrity analyzed+skipped+errored==failed_count. New report_refinement_agent:
+resolve contradictions across parallel anomaly/analysis/cluster signals; dedup a
+test analyzed by two routes. Wire optionally into workflow.py).
 
 ## No-go rationale log
 - FLK-P5 (RESOLVED 2026-06-12, run 2): granular step-level intermittency +

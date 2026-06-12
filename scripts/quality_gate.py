@@ -550,6 +550,10 @@ _SUPPORT_AGENT_FILES = {
     # consistency.py holds the AIQ-P2 self-critique Pydantic models + pure-local
     # checker functions; it has no agent class and no observability contract.
     "consistency.py",
+    # evidence.py holds the AIQ-P3 EvidenceRef model + aggregate_confidence
+    # helper; it is a pure-local scoring utility with no agent class and no
+    # observability contract.
+    "evidence.py",
 }
 
 
