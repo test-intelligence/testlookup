@@ -6,6 +6,128 @@ because the repo's `docs/` tree is gitignored.)
 
 ---
 
+## AIQ-P4 — Gap-detection + report-refinement agents  *(delivered 2026-06-12)*
+
+### What it does
+Two new **pure-local, offline-safe, never-raise** agents close out the analytic
+deep workflow by auditing and reconciling its output:
+
+- **GapDetectionAgent** answers *"what did we NOT analyze?"* — for every failed
+  test it classifies whether the test was analyzed, skipped, or errored, and
+  enforces a referential-integrity invariant so coverage can be trusted.
+- **ReportRefinementAgent** answers *"do our parallel signals agree?"* — it
+  dedups any test analyzed by more than one route and resolves contradictions
+  across the anomaly / analysis / cluster signals.
+
+Both are wired **OPTIONALLY** into the DEEP workflow behind a default-off flag,
+so there is **zero runtime impact until enabled**.
+
+### How it works
+- `backend/app/agents/gap_detection_agent.py` — `GapDetectionAgent`. Audits
+  every failed test and emits a validated `GapDetectionAgentOutput`.
+- `backend/app/agents/report_refinement_agent.py` — `ReportRefinementAgent`.
+  Reconciles parallel signals and emits a validated
+  `ReportRefinementAgentOutput`.
+- Both are deterministic in-memory reconciliation over already-computed state:
+  **no LLM, no network, no DB**. Any malformed / non-dict input degrades to a
+  fallback contract — **they never raise**.
+- Contracts live in `backend/app/models/agent_contracts.py` (Pydantic v2,
+  `extra="ignore"`, all coercion in `field_validator(mode="before")`, nested
+  reports self-recompute their invariants in a non-raising `@model_validator`).
+
+### Contracts
+
+**GapDetectionAgentOutput.gap_report** (`GapReport`):
+
+| Field | Meaning |
+|-------|---------|
+| `failed_count` | number of failed tests audited |
+| `analyzed_count` / `skipped_count` / `errored_count` | per-bucket disposition counts |
+| `coverage_ratio` | analyzed share, clamped `[0,1]`; forced to `1.0` when `failed_count == 0` |
+| `integrity_ok` | re-derived: `analyzed + skipped + errored == failed_count` |
+| `inconclusive_count` / `no_evidence_count` | quality-gap tallies |
+| `gaps` | list of `GapItem` (one per gap) |
+
+`GapItem`: `test_id`, `reason` ∈ {`unanalyzed`, `errored`, `inconclusive`,
+`no_evidence`, `low_confidence`} (`GapReason`), `detail` (structural tokens
+only, truncated), `bucket` ∈ {`analyzed`, `skipped`, `errored`}.
+
+**ReportRefinementAgentOutput.refined_report** (`RefinedReport`):
+
+| Field | Meaning |
+|-------|---------|
+| `dedup_count` | tests deduped because ≥2 routes analyzed them |
+| `contradictions` | list of `Contradiction` |
+| `contradictions_resolved` / `unresolved_count` | re-derived from the contradiction list (`flag_for_review` ⇒ unresolved) |
+| `multi_route_test_ids` | ids analyzed by more than one route |
+| `reconciled_tests` | per-test reconciled view after dedup/resolution |
+
+`Contradiction`: `test_id`, `type` ∈ {`flaky_vs_regression`,
+`category_disagreement`, `confidence_split`} (`ContradictionType`), `routes`
+(subset of `analysis` / `anomaly` / `cluster`), `resolution` ∈
+{`prefer_analysis`, `prefer_anomaly`, `merge`, `flag_for_review`}
+(`ResolutionStrategy`), `detail`.
+
+### Referential-integrity invariant
+The gap report holds `analyzed_count + skipped_count + errored_count ==
+failed_count`. The `GapReport.@model_validator` **recomputes** `integrity_ok`
+from the counts (and forces `coverage_ratio = 1.0` when there are no failures),
+so a caller cannot stamp `integrity_ok=True` over inconsistent counts.
+
+### Contradiction taxonomy + resolution
+- **Dedup** — a test analyzed by ≥2 routes is collapsed using a **deterministic
+  precedence: `analysis > anomaly > cluster`**.
+- **Detection** — a `flaky_vs_regression` contradiction is raised when analysis
+  says `is_flaky` but the test is a fresh regression; `category_disagreement`
+  and `confidence_split` cover the other cross-route conflicts.
+- **Resolution** — each contradiction is resolved as `prefer_analysis`,
+  `prefer_anomaly`, `merge`, or `flag_for_review`; `RefinedReport`'s
+  `@model_validator` derives `contradictions_resolved` / `unresolved_count` from
+  the list (anything left at `flag_for_review` counts as unresolved).
+
+### Where they sit in the deep workflow
+Wired into the DEEP graph (`backend/app/agents/workflow.py`) behind
+**`AIQ_GAP_REFINEMENT_ENABLED`** (default `False`, in
+`backend/app/core/config.py`). The **graph topology is identical whether the
+flag is on or off** — when off the nodes early-return a skip delta
+(`skipped_stages`). When on, the chain is:
+
+```
+summary → (triage) → gap_detection → report_refinement → flaky_sentinel → test_health → release_risk → END
+```
+
+Both stages are added to `DEEP_OPTIONAL_STAGES` (`workflow.py`) and to the
+agent_planner's `_DEEP_STAGES` (`backend/app/services/agent_planner.py`),
+flag-gated.
+
+### Guarantees / non-goals
+- **Pure-local, offline-safe**: no LLM, no network, no DB; `AI_OFFLINE_MODE=True`
+  (default) semantics untouched.
+- **Never-raise**: any malformed / non-dict input degrades to a fallback
+  contract.
+- **No behavior change** with the flag off (topology identical, skip delta only).
+- **No migration** — pure in-memory, no new DB columns. No outbound calls, no new
+  service commits. `detail` fields carry structural tokens only (no PII).
+
+### Tests / ratchets
+- `backend/tests/test_gap_detection_agent.py` — integrity invariant, bucket
+  classification, gap-reason mapping, coverage ratio, never-raise.
+- `backend/tests/test_report_refinement_agent.py` — dedup precedence,
+  contradiction taxonomy + resolution, resolved/unresolved derivation,
+  never-raise.
+- `backend/tests/test_aiq_p4_workflow_wiring.py` — flag-on vs flag-off topology
+  identity and the skip-delta wiring.
+- Contracted-output-model ratchet floor raised `12 → 14` in
+  `backend/tests/test_architectural_agent_contracts.py`.
+
+### Rollout / deploy
+**Default-off ⇒ zero runtime impact until enabled.** Enable per-environment by
+setting `AIQ_GAP_REFINEMENT_ENABLED=True`. **No migration required** (pure
+in-memory, no new DB columns); rollback = unset the flag (or revert the commit),
+with no data to unwind.
+
+---
+
 ## AIQ-P2 — Self-critique / verification pass  *(delivered 2026-06-12)*
 
 ### What it does
