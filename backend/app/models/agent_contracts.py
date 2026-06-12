@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional, TypeVar
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = structlog.get_logger("models.agent_contracts")
 
@@ -23,12 +23,19 @@ class AgentContractMetadata(BaseModel):
     agent_version: str = "v1"
     fallback_used: bool = False
     confidence: Optional[int] = None
+    confidence_score: int = 0
+    evidence_count: int = 0
     evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
     decision_reason: str = ""
     output_keys: list[str] = Field(default_factory=list)
     generated_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+
+    @field_validator("confidence_score")
+    @classmethod
+    def _clamp_confidence_score(cls, v: int) -> int:
+        return max(0, min(100, int(v)))
 
 
 class ContractedAgentOutput(BaseModel):
@@ -101,6 +108,35 @@ class ReleaseRiskAgentOutput(ContractedAgentOutput):
     release_decision: Optional[dict[str, Any]] = None
 
 
+class RunCompareAgentOutput(ContractedAgentOutput):
+    model_config = ConfigDict(extra="allow")
+    status: str = "ready"
+    executive_summary: Optional[str] = None
+    risk_level: Optional[str] = None
+    key_differences: list[str] = Field(default_factory=list)
+    new_risks: list[str] = Field(default_factory=list)
+    resolved_risks: list[str] = Field(default_factory=list)
+    duration_concerns: list[str] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+    confidence: int = 0
+    confidence_reason: str = ""
+    fallback_used: bool = False
+    markdown_report: Optional[str] = None
+
+
+class LogIntelligenceAgentOutput(ContractedAgentOutput):
+    distributed_trace: dict[str, Any] = Field(default_factory=dict)
+    log_anomaly: dict[str, Any] = Field(default_factory=dict)
+    log_summary: str = ""
+
+
+class RegressionWatchmanAgentOutput(ContractedAgentOutput):
+    regression_classification: dict[str, Any] = Field(default_factory=dict)
+    completed_stages: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    current_stage: str = "defect_commander"
+
+
 TContract = TypeVar("TContract", bound=ContractedAgentOutput)
 
 
@@ -121,6 +157,8 @@ def validate_agent_contract(
         agent_version=agent_version,
         fallback_used=fallback_used,
         confidence=confidence,
+        confidence_score=max(0, min(100, int(confidence if confidence is not None else 0))),
+        evidence_count=len(evidence_refs or []),
         evidence_refs=evidence_refs or [],
         decision_reason=decision_reason,
         output_keys=sorted(k for k in payload.keys() if k != "agent_contracts"),

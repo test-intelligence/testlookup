@@ -6,6 +6,7 @@ from typing import Any
 
 import structlog
 
+from app.models.agent_contracts import RunCompareAgentOutput, validate_agent_contract
 from app.services.llm_json_parser import parse_llm_json
 
 logger = structlog.get_logger("agents.run_compare")
@@ -77,7 +78,16 @@ class RunCompareAgent:
             parsed["status"] = "ready"
             parsed["fallback_used"] = bool(err)
             parsed["markdown_report"] = _markdown_from_report(parsed)
-            return parsed
+            return validate_agent_contract(
+                RunCompareAgentOutput,
+                parsed,
+                agent_name="run_compare",
+                agent_version="v1",
+                fallback_used=bool(parsed.get("fallback_used")),
+                confidence=int(parsed.get("confidence") or 0),
+                evidence_refs=[{"type": "risk_level", "id": str(parsed.get("risk_level"))}],
+                decision_reason=str(parsed.get("confidence_reason") or "run_compare_ai_report"),
+            )
         except Exception as exc:
             # structlog's BoundLogger doesn't accept positional ``%s``-style
             # args; passing them raises TypeError mid-except, which would
@@ -87,7 +97,16 @@ class RunCompareAgent:
             fallback["status"] = "ready"
             fallback["fallback_used"] = True
             fallback["markdown_report"] = _markdown_from_report(fallback)
-            return fallback
+            return validate_agent_contract(
+                RunCompareAgentOutput,
+                fallback,
+                agent_name="run_compare",
+                agent_version="v1",
+                fallback_used=True,
+                confidence=int(fallback.get("confidence") or 0),
+                evidence_refs=[{"type": "risk_level", "id": str(fallback.get("risk_level"))}],
+                decision_reason="run_compare_deterministic_fallback",
+            )
 
 
 def _top_deltas(compare_payload: dict[str, Any], classification: str, limit: int = 8) -> list[dict[str, Any]]:

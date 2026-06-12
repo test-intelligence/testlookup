@@ -30,6 +30,10 @@ from sqlalchemy import func, select
 from app.agents.base import BaseAgent
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
+from app.models.agent_contracts import (
+    RegressionWatchmanAgentOutput,
+    validate_agent_contract,
+)
 from app.models.postgres import FailureCategory, TestCase, TestRun, TestStatus
 from app.services.category_normalizer import normalize_category
 from app.models.llm_schemas import ClusterClassification, validate_llm_output
@@ -116,12 +120,21 @@ class RegressionWatchman(BaseAgent):
                 error=str(exc),
                 error_category="classification_error",
             )
-            return {
-                "regression_classification": {},
-                "completed_stages": ["regression_watchman"],
-                "errors": [str(exc)],
-                "current_stage": "defect_commander",
-            }
+            return validate_agent_contract(
+                RegressionWatchmanAgentOutput,
+                {
+                    "regression_classification": {},
+                    "completed_stages": ["regression_watchman"],
+                    "errors": [str(exc)],
+                    "current_stage": "defect_commander",
+                },
+                agent_name=self.stage_name,
+                agent_version="v1",
+                fallback_used=True,
+                confidence=0,
+                evidence_refs=[],
+                decision_reason=f"classification_error: {exc}",
+            )
 
         await self.mark_stage_done(
             pipeline_run_id,
@@ -132,12 +145,25 @@ class RegressionWatchman(BaseAgent):
             {"status": "completed", "message": f"Classified {len(classification)} failure clusters"},
         )
 
-        return {
-            "regression_classification": classification,
-            "completed_stages": ["regression_watchman"],
-            "errors": [],
-            "current_stage": "defect_commander",
-        }
+        return validate_agent_contract(
+            RegressionWatchmanAgentOutput,
+            {
+                "regression_classification": classification,
+                "completed_stages": ["regression_watchman"],
+                "errors": [],
+                "current_stage": "defect_commander",
+            },
+            agent_name=self.stage_name,
+            agent_version="v1",
+            fallback_used=False,
+            confidence=(
+                int(sum(int(v.get("confidence", 0)) for v in classification.values()) / len(classification))
+                if classification
+                else 100
+            ),
+            evidence_refs=[{"type": "cluster", "id": str(cid)} for cid in list(classification)[:10]],
+            decision_reason=f"Classified {len(classification)} failure clusters",
+        )
 
     # -- Classification logic --------------------------------------------------
 

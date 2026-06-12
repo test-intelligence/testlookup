@@ -1,0 +1,131 @@
+"""
+Behavioral coverage for AIQ-P1 structured agent contracts.
+
+The static ratchet (``test_architectural_agent_contracts.py``) guarantees that
+every analytic agent *calls* ``validate_agent_contract``. These tests exercise
+the *runtime* wrapping for the agents whose contract wiring was added in
+AIQ-P1 and that lack a dedicated behavioral test of the contracted output
+(``LogIntelligenceAgent`` and ``RegressionWatchman``), so a changed source
+file is not left without a matching test.
+
+DB-free: the LogIntelligence tools are patched and the RegressionWatchman
+output shape is validated directly against its contract model.
+"""
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+def _tool_returning(value):
+    """A stand-in for a langchain StructuredTool whose ainvoke returns value."""
+    tool = MagicMock()
+    tool.ainvoke = AsyncMock(return_value=value)
+    return tool
+
+
+def _tool_raising(exc):
+    tool = MagicMock()
+    tool.ainvoke = AsyncMock(side_effect=exc)
+    return tool
+
+from app.models.agent_contracts import (
+    RegressionWatchmanAgentOutput,
+    validate_agent_contract,
+)
+
+
+@pytest.mark.asyncio
+async def test_log_intelligence_investigate_wraps_contract_on_success():
+    """A successful investigate() stamps a high-confidence contract with both
+    evidence refs and preserves the original evidence keys (no behavior change).
+    """
+    from app.agents.log_intelligence_agent import LogIntelligenceAgent
+
+    trace_payload = json.dumps({"causal_summary": "A -> B timeout"})
+    anomaly_payload = json.dumps({"assessment": "spike at T0"})
+
+    with patch(
+        "app.agents.log_intelligence_agent.reconstruct_distributed_trace",
+        new=_tool_returning(trace_payload),
+    ), patch(
+        "app.agents.log_intelligence_agent.detect_log_rate_anomaly",
+        new=_tool_returning(anomaly_payload),
+    ):
+        result = await LogIntelligenceAgent().investigate(
+            service_name="checkout",
+            timestamp_utc="2026-06-12T00:00:00Z",
+        )
+
+    # Original keys preserved (superset, no behavior change).
+    assert result["distributed_trace"] == {"causal_summary": "A -> B timeout"}
+    assert result["log_anomaly"] == {"assessment": "spike at T0"}
+    assert "log_summary" in result
+
+    contract = result["agent_contracts"]["log_intelligence"]
+    assert contract["fallback_used"] is False
+    assert contract["confidence_score"] == 80
+    assert contract["evidence_count"] == 2
+    assert contract["decision_reason"] == "log_evidence_gathered"
+
+
+@pytest.mark.asyncio
+async def test_log_intelligence_investigate_marks_fallback_on_tool_error():
+    """When both tools fail, the contract degrades to a zero-confidence
+    fallback with no evidence refs but still never raises.
+    """
+    from app.agents.log_intelligence_agent import LogIntelligenceAgent
+
+    with patch(
+        "app.agents.log_intelligence_agent.reconstruct_distributed_trace",
+        new=_tool_raising(RuntimeError("trace down")),
+    ), patch(
+        "app.agents.log_intelligence_agent.detect_log_rate_anomaly",
+        new=_tool_raising(RuntimeError("anomaly down")),
+    ):
+        result = await LogIntelligenceAgent().investigate(
+            service_name="checkout",
+            timestamp_utc="2026-06-12T00:00:00Z",
+        )
+
+    contract = result["agent_contracts"]["log_intelligence"]
+    assert contract["fallback_used"] is True
+    assert contract["confidence_score"] == 0
+    assert contract["evidence_count"] == 0
+    assert contract["decision_reason"] == "partial_log_evidence"
+
+
+def test_regression_watchman_output_shape_matches_contract():
+    """The exact dict shape RegressionWatchman.run() returns validates against
+    its contract model and preserves every workflow key.
+    """
+    classification = {
+        "cluster-1": {"confidence": 90, "verdict": "regression"},
+        "cluster-2": {"confidence": 70, "verdict": "flaky"},
+    }
+    payload = {
+        "regression_classification": classification,
+        "completed_stages": ["regression_watchman"],
+        "errors": [],
+        "current_stage": "defect_commander",
+    }
+    result = validate_agent_contract(
+        RegressionWatchmanAgentOutput,
+        payload,
+        agent_name="regression_watchman",
+        confidence=80,
+        evidence_refs=[{"type": "cluster", "id": "cluster-1"}],
+        decision_reason="Classified 2 failure clusters",
+    )
+
+    # Workflow keys preserved verbatim.
+    assert result["regression_classification"] == classification
+    assert result["completed_stages"] == ["regression_watchman"]
+    assert result["current_stage"] == "defect_commander"
+
+    contract = result["agent_contracts"]["regression_watchman"]
+    assert contract["confidence_score"] == 80
+    assert contract["evidence_count"] == 1
+    assert contract["decision_reason"] == "Classified 2 failure clusters"

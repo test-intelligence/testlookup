@@ -7,6 +7,10 @@ import json
 
 import structlog
 
+from app.models.agent_contracts import (
+    LogIntelligenceAgentOutput,
+    validate_agent_contract,
+)
 from app.tools.detect_log_anomaly import detect_log_rate_anomaly
 from app.tools.reconstruct_trace import reconstruct_distributed_trace
 
@@ -69,4 +73,18 @@ class LogIntelligenceAgent:
         anomaly_assessment = evidence.get("log_anomaly", {}).get("assessment", "Anomaly check unavailable.")
         evidence["log_summary"] = f"Trace: {trace_summary} | Anomaly: {anomaly_assessment}"
 
-        return evidence
+        trace_ok = "error" not in evidence.get("distributed_trace", {})
+        anomaly_ok = "error" not in evidence.get("log_anomaly", {})
+        evidence_refs = []
+        if trace_ok:
+            evidence_refs.append({"type": "distributed_trace", "id": service_name})
+        if anomaly_ok:
+            evidence_refs.append({"type": "log_anomaly", "id": service_name})
+        fallback_used = not (trace_ok and anomaly_ok)
+        return validate_agent_contract(
+            LogIntelligenceAgentOutput, evidence, agent_name="log_intelligence",
+            agent_version="v1", fallback_used=fallback_used,
+            confidence=80 if (trace_ok and anomaly_ok) else (40 if (trace_ok or anomaly_ok) else 0),
+            evidence_refs=evidence_refs,
+            decision_reason="log_evidence_gathered" if not fallback_used else "partial_log_evidence",
+        )
