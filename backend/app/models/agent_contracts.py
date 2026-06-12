@@ -164,19 +164,30 @@ def validate_agent_contract(
     """
     confidence_breakdown: Optional[dict[str, Any]] = None
     if structured_evidence:
-        # Lazy import to avoid a models -> agents import cycle (evidence.py
-        # lives under app/agents/ and imports from app/models/).
-        from app.agents.evidence import aggregate_confidence
+        # Defense-in-depth: aggregate_confidence is contracted never-raise, but
+        # keep the derivation guarded so this helper cannot raise even if a
+        # future evidence change regresses that invariant.
+        try:
+            # Lazy import to avoid a models -> agents import cycle (evidence.py
+            # lives under app/agents/ and imports from app/models/).
+            from app.agents.evidence import aggregate_confidence
 
-        final_confidence, confidence_breakdown = aggregate_confidence(structured_evidence)
-        if confidence is None:
-            confidence = final_confidence
-        if not evidence_refs:
-            evidence_refs = [
-                ref.as_legacy_dict()
-                for ref in structured_evidence
-                if hasattr(ref, "as_legacy_dict")
-            ]
+            final_confidence, confidence_breakdown = aggregate_confidence(structured_evidence)
+            if confidence is None:
+                confidence = final_confidence
+            if not evidence_refs:
+                evidence_refs = [
+                    ref.as_legacy_dict()
+                    for ref in structured_evidence
+                    if hasattr(ref, "as_legacy_dict")
+                ]
+        except Exception as exc:  # pragma: no cover - invariant backstop
+            logger.warning(
+                "structured evidence aggregation failed; continuing without breakdown",
+                agent_name=agent_name,
+                error=str(exc),
+            )
+            confidence_breakdown = None
 
     metadata = AgentContractMetadata(
         agent_name=agent_name,

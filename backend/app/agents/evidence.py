@@ -61,9 +61,11 @@ class EvidenceRef(BaseModel):
     @field_validator("contribution", mode="before")
     @classmethod
     def _clamp_contribution(cls, value) -> int:
+        # OverflowError guards float('inf')/-inf; bare Exception mirrors
+        # _coerce_strength so no input shape can crash construction.
         try:
             number = int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 0
         return max(0, min(100, number))
 
@@ -103,7 +105,11 @@ def aggregate_confidence(refs: list[EvidenceRef]) -> tuple[int, dict]:
     ``_CAP_THRESHOLD``. Empty / all-invalid input yields ``(0, zero-breakdown)``.
     Filters out non-``EvidenceRef`` items and never raises.
     """
-    valid = [r for r in (refs or []) if isinstance(r, EvidenceRef)]
+    # Guard against a non-iterable argument (e.g. an int): the helper must
+    # never raise on any input shape, per its advertised invariant.
+    if not isinstance(refs, (list, tuple, set)):
+        return 0, _zero_breakdown()
+    valid = [r for r in refs if isinstance(r, EvidenceRef)]
     if not valid:
         return 0, _zero_breakdown()
 
