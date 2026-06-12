@@ -523,3 +523,39 @@ def _evaluate_rules(
     })
 
     return rules
+
+
+def evaluate_agent_report_quality_rules(report: dict) -> list[dict]:
+    """Turn an ``AgentEvalReport`` dict into gate rule results (AIQ-P5).
+
+    Pure, DB-free, never-raising. Emits one ``{"rule", "passed", "detail"}`` row
+    per scored metric (coherence/completeness/actionability/brier/ece) using the
+    report's ``per_metric_pass`` map, plus an overall ``agent_report_quality``
+    rule mirroring the report's ``passed``. Matches the ``rule_results`` shape
+    produced by ``_evaluate_rules``.
+    """
+    report = report if isinstance(report, dict) else {}
+    per_metric = report.get("per_metric_pass")
+    per_metric = per_metric if isinstance(per_metric, dict) else {}
+
+    rules: list[dict] = []
+    for metric in ("coherence", "completeness", "actionability", "brier", "ece"):
+        passed = bool(per_metric.get(metric, False))
+        value = report.get(metric)
+        rules.append({
+            "rule": f"agent_{metric}",
+            "passed": passed,
+            "detail": f"{metric}={value} ({'pass' if passed else 'fail'})",
+        })
+
+    sample_count = report.get("sample_count", 0)
+    overall_passed = bool(report.get("passed", False))
+    rules.append({
+        "rule": "agent_report_quality",
+        "passed": overall_passed,
+        "detail": (
+            f"agent report {'passed' if overall_passed else 'failed'} "
+            f"on {sample_count} sample(s)"
+        ),
+    })
+    return rules
