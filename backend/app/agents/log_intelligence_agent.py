@@ -83,7 +83,7 @@ class LogIntelligenceAgent:
                 ref_id=service_name,
                 excerpt=trace_summary,
                 strength="medium",
-                contribution=70,
+                contribution=80,
             ))
         if anomaly_ok:
             structured_evidence.append(EvidenceRef(
@@ -91,7 +91,7 @@ class LogIntelligenceAgent:
                 ref_id=service_name,
                 excerpt=anomaly_assessment,
                 strength="medium",
-                contribution=70,
+                contribution=80,
             ))
         fallback_used = not (trace_ok and anomaly_ok)
         return validate_agent_contract(
