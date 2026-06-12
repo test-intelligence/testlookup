@@ -14,7 +14,7 @@ State of record across recurring headless sessions. Updated + pushed every run.
 | Phase | Status | Notes |
 |-------|--------|-------|
 | AIQ-P1 Structured agent contracts | done | run 1: contracts model + RunCompare/LogIntelligence/RegressionWatchman wrapped; ratchet + behavioral tests green |
-| AIQ-P2 Self-critique / verification pass | pending | |
+| AIQ-P2 Self-critique / verification pass | done | run 2: consistency.py self-critique layer wired into Summary/ReleaseRisk/Analysis before validate_agent_contract; full SDLC (design→code→review+adversarial→bugfix→QA→verify→docs). 1 Blocker (never-raise) + 3 Majors fixed & regression-tested. 92 targeted tests green; 10 architectural ratchets + 15-guard quality gate green. |
 | AIQ-P3 Evidence + confidence scoring | pending | |
 | AIQ-P4 Gap-detection + report-refinement agents | pending | |
 | AIQ-P5 Report-quality eval harness | pending | |
@@ -26,12 +26,17 @@ State of record across recurring headless sessions. Updated + pushed every run.
 | FINAL delivery review + PR | pending | |
 
 ## Last done
-Run 1: bootstrap pushed/verified; AIQ-P1 (structured agent contracts) full SDLC
-complete — DESIGN/CODE/REVIEW/TEST/VERIFY/DOCS. Contracts model extended,
-3 agents wrapped, 2 new test files green, CHANGELOG + AIQ_FLK_FEATURES.md.
+Run 2: (a) CORRECTED FLK-P5 from no-go→pending (granular stack confirmed on
+origin/main, PR #169) and updated plan; committed+pushed (a77c6e6). (b) AIQ-P2
+(self-critique / verification pass) full SDLC complete — DESIGN/CODE/REVIEW+
+adversarial/BUGFIX/QA/VERIFY/DOCS. New consistency.py + wiring in 3 agents, 4 new
+confidence rules, 92 targeted tests green, architectural ratchets + quality gate
+green. Committed+pushed (4da838b), verified on origin.
 
 ## Next up
-AIQ-P2 Self-critique / verification pass.
+AIQ-P3 Evidence + confidence scoring (EvidenceRef{source,ref_id,excerpt,strength,
+contribution}; weighted aggregate confidence with cap; conf>70 requires >=2
+medium or 1 strong source; surface the breakdown).
 
 ## No-go rationale log
 - FLK-P5 (RESOLVED 2026-06-12, run 2): granular step-level intermittency +
