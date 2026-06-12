@@ -105,6 +105,12 @@ class WorkflowState(TypedDict):
     # ── Stage: Test Health ────────────────────────────────────────
     test_health_findings: list[dict]    # [{test_case_id, health_score, violations, recommendation}]
 
+    # ── Stage: Gap Detection (deep workflow, AIQ-P4, optional) ────
+    gap_report: Optional[dict]          # coverage/integrity gap report (last-writer-wins)
+
+    # ── Stage: Report Refinement (deep workflow, AIQ-P4, optional) ─
+    refined_report: Optional[dict]      # dedup/contradiction reconciliation report (last-writer-wins)
+
     # ── Stage 6: Release Risk Agent ──────────────────────────────
     release_decision: Optional[dict]    # {recommendation, risk_score, blocking_issues, reasoning}
 

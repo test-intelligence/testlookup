@@ -23,12 +23,17 @@ _DEEP_STAGES = (
     "root_cause_analysis",
     "summary",
     "triage",
+    "gap_detection",
+    "report_refinement",
     "flaky_sentinel",
     "test_health",
     "release_risk",
 )
 _FAILURE_ONLY_STAGES = {"anomaly_detection", "failure_clustering", "root_cause_analysis"}
 _CORE_STAGES = {"ingestion", "summary"}
+# AIQ-P4 optional stages: present in the deep topology but only execute when
+# AIQ_GAP_REFINEMENT_ENABLED is on; otherwise they early-return a skip delta.
+_GAP_REFINEMENT_STAGES = {"gap_detection", "report_refinement"}
 
 
 def _stage_order(workflow_type: str) -> tuple[str, ...]:
@@ -206,7 +211,13 @@ def build_workflow_plan(
         planned = True
         rationale = "required core workflow stage" if required else "stage adds diagnostic value"
 
-        if stage in _FAILURE_ONLY_STAGES and all_green:
+        if stage in _GAP_REFINEMENT_STAGES:
+            if settings.AIQ_GAP_REFINEMENT_ENABLED:
+                rationale = "AIQ-P4 gap/refinement stage enabled by feature flag"
+            else:
+                planned = False
+                rationale = "AIQ_GAP_REFINEMENT_ENABLED is off — stage skipped"
+        elif stage in _FAILURE_ONLY_STAGES and all_green:
             planned = False
             rationale = "all-green run has no failed tests for this specialist stage"
         elif stage == "triage":

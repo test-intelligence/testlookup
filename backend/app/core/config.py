@@ -229,6 +229,7 @@ class Settings(BaseSettings):
     # ── AI Agent ─────────────────────────────────────────────
     AI_OFFLINE_MODE: bool = True
     AI_CONFIDENCE_THRESHOLD: int = 80
+    AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
     AI_MAX_RETRIES: int = 3
     AI_TIMEOUT_SECONDS: int = 300
     AI_ANALYSIS_CACHE_TTL: int = 3600                # seconds — Redis cache TTL for analysis results

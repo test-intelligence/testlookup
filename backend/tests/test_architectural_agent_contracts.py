@@ -159,9 +159,9 @@ def test_contract_metadata_has_required_fields() -> None:
             "(inherit from ContractedAgentOutput)."
         )
 
-    assert len(subclasses) >= 12, (
+    assert len(subclasses) >= 14, (
         f"Only {len(subclasses)} contracted output models found — the "
-        "ratchet floor is 12. Removing a contracted output model regresses "
+        "ratchet floor is 14. Removing a contracted output model regresses "
         "agent-contract coverage."
     )
 

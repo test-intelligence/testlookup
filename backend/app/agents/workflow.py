@@ -23,8 +23,10 @@ from app.agents.analysis_agent import AnalysisAgent
 from app.agents.anomaly_agent import AnomalyDetectionAgent
 from app.agents.cluster_agent import ClusterAgent
 from app.agents.flaky_sentinel_agent import FlakySentinelAgent
+from app.agents.gap_detection_agent import GapDetectionAgent
 from app.agents.ingestion_agent import IngestionAgent
 from app.agents.release_risk_agent import ReleaseRiskAgent
+from app.agents.report_refinement_agent import ReportRefinementAgent
 from app.agents.state import WorkflowState
 from app.agents.summary_agent import SummaryAgent
 from app.agents.test_health_agent import TestHealthAgent
@@ -43,7 +45,7 @@ import structlog
 
 # WF-3: Stage classification for partial-completion logic
 DEEP_REQUIRED_STAGES = frozenset({"ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis", "summary"})
-DEEP_OPTIONAL_STAGES = frozenset({"triage", "flaky_sentinel", "test_health", "release_risk"})
+DEEP_OPTIONAL_STAGES = frozenset({"triage", "gap_detection", "report_refinement", "flaky_sentinel", "test_health", "release_risk"})
 
 logger = structlog.get_logger("agents.workflow")
 
@@ -54,6 +56,8 @@ _analysis      = AnalysisAgent()
 _summary       = SummaryAgent()
 _triage        = DefectTriageAgent()
 _cluster       = ClusterAgent()
+_gap_detection = GapDetectionAgent()
+_report_refinement = ReportRefinementAgent()
 _flaky_sentinel = FlakySentinelAgent()
 _test_health   = TestHealthAgent()
 _release_risk  = ReleaseRiskAgent()
@@ -177,6 +181,44 @@ async def cluster_node(state: WorkflowState) -> dict:
             "current_stage": "summary",
         }
     return await _cluster.run(cast(dict[str, Any], state))
+
+
+async def gap_detection_node(state: WorkflowState) -> dict:
+    # AIQ-P4 optional stage. The node is always present so the graph topology is
+    # identical whether the flag is on or off; when off it early-returns a skip
+    # delta and the deterministic agent never runs.
+    if not settings.AIQ_GAP_REFINEMENT_ENABLED:
+        pipeline_run_id = state.get("pipeline_run_id", "")
+        await _write_stage_skipped(
+            pipeline_run_id,
+            "gap_detection",
+            skipped_reason="AIQ_GAP_REFINEMENT_ENABLED is off — gap detection not run",
+            execution_path=ExecutionPath.CONDITIONAL_SKIP,
+        )
+        return {
+            "completed_stages": ["gap_detection"],
+            "skipped_stages": ["gap_detection"],
+            "current_stage": "report_refinement",
+        }
+    return await _gap_detection.run(cast(dict[str, Any], state))
+
+
+async def report_refinement_node(state: WorkflowState) -> dict:
+    # AIQ-P4 optional stage. See gap_detection_node for the flag-gate rationale.
+    if not settings.AIQ_GAP_REFINEMENT_ENABLED:
+        pipeline_run_id = state.get("pipeline_run_id", "")
+        await _write_stage_skipped(
+            pipeline_run_id,
+            "report_refinement",
+            skipped_reason="AIQ_GAP_REFINEMENT_ENABLED is off — report refinement not run",
+            execution_path=ExecutionPath.CONDITIONAL_SKIP,
+        )
+        return {
+            "completed_stages": ["report_refinement"],
+            "skipped_stages": ["report_refinement"],
+            "current_stage": "flaky_sentinel",
+        }
+    return await _report_refinement.run(cast(dict[str, Any], state))
 
 
 async def flaky_sentinel_node(state: WorkflowState) -> dict:
@@ -433,6 +475,8 @@ def _build_deep_graph() -> StateGraph:
     graph.add_node("root_cause_analysis",  _make_checkpointed_node(analysis_node, "root_cause_analysis"))
     graph.add_node("summary",              _make_checkpointed_node(summary_node, "summary"))
     graph.add_node("triage",               _make_checkpointed_node(triage_node, "triage"))
+    graph.add_node("gap_detection",        _make_checkpointed_node(gap_detection_node, "gap_detection"))
+    graph.add_node("report_refinement",    _make_checkpointed_node(report_refinement_node, "report_refinement"))
     graph.add_node("flaky_sentinel",       _make_checkpointed_node(flaky_sentinel_node, "flaky_sentinel"))
     graph.add_node("test_health",          _make_checkpointed_node(test_health_node, "test_health"))
     graph.add_node("release_risk",         _make_checkpointed_node(release_risk_node, "release_risk"))
@@ -459,19 +503,24 @@ def _build_deep_graph() -> StateGraph:
     graph.add_edge("root_cause_analysis", "summary")
     graph.add_edge("failure_clustering",  "summary")
 
-    # After summary: triage if triageable, else jump to flaky_sentinel
-    # (specialist stages always run in the deep pipeline)
+    # After summary: triage if triageable, else jump to gap_detection
+    # (specialist stages always run in the deep pipeline). AIQ-P4 inserts
+    # gap_detection → report_refinement ahead of flaky_sentinel; both are
+    # flag-gated optional stages that early-return a skip delta when off, so the
+    # topology is identical whether AIQ_GAP_REFINEMENT_ENABLED is on or off.
     graph.add_conditional_edges(
         "summary",
         _route_after_summary_deep,
         {
             "triage":         "triage",
-            "flaky_sentinel": "flaky_sentinel",
+            "flaky_sentinel": "gap_detection",
         },
     )
 
     # Specialist stages run sequentially after triage (or directly after summary)
-    graph.add_edge("triage",         "flaky_sentinel")
+    graph.add_edge("triage",            "gap_detection")
+    graph.add_edge("gap_detection",     "report_refinement")
+    graph.add_edge("report_refinement", "flaky_sentinel")
     graph.add_edge("flaky_sentinel",  "test_health")
     graph.add_edge("test_health",     "release_risk")
     graph.add_edge("release_risk",    END)
@@ -1092,7 +1141,8 @@ _PIPELINE_STAGES = [
 ]
 _DEEP_PIPELINE_STAGES = [
     "ingestion", "anomaly_detection", "failure_clustering", "root_cause_analysis",
-    "summary", "triage", "flaky_sentinel", "test_health", "release_risk",
+    "summary", "triage", "gap_detection", "report_refinement",
+    "flaky_sentinel", "test_health", "release_risk",
 ]
 _LIVE_PIPELINE_STAGES = [
     "ingestion", "summary",

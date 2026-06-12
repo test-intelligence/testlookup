@@ -7,14 +7,25 @@ contract metadata added under ``agent_contracts`` for audit/replay consumers.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional, TypeVar
+from enum import Enum
+from typing import Any, Literal, Optional, TypeVar
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 logger = structlog.get_logger("models.agent_contracts")
 
 AGENT_CONTRACT_SCHEMA_VERSION = 1
+
+# Max detail length carried on a gap/contradiction item (chars). Structural
+# tokens only — never raw error/log text.
+_ITEM_DETAIL_MAX = 240
 
 
 class AgentContractMetadata(BaseModel):
@@ -41,6 +52,131 @@ class AgentContractMetadata(BaseModel):
 
 class ContractedAgentOutput(BaseModel):
     contract: AgentContractMetadata
+
+
+# ── AIQ-P4 shared item/enum models ────────────────────────────────────────────
+# Defined here (import-light module) and imported into the gap_detection /
+# report_refinement agents to avoid a models -> agents import cycle. All
+# coercion lives in ``field_validator(mode="before")`` so a malformed field
+# degrades to a default rather than crashing.
+
+
+class GapReason(str, Enum):
+    UNANALYZED = "unanalyzed"
+    ERRORED = "errored"
+    INCONCLUSIVE = "inconclusive"
+    NO_EVIDENCE = "no_evidence"
+    LOW_CONFIDENCE = "low_confidence"
+
+
+class GapItem(BaseModel):
+    """One coverage/quality gap for a single failed test. Structural only."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    test_id: str = ""
+    reason: GapReason = GapReason.UNANALYZED
+    detail: str = ""
+    bucket: Literal["analyzed", "skipped", "errored"] = "skipped"
+
+    @field_validator("test_id", mode="before")
+    @classmethod
+    def _coerce_test_id(cls, value) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _coerce_reason(cls, value):
+        try:
+            lowered = str(value).lower()
+        except Exception:
+            return GapReason.UNANALYZED
+        try:
+            return GapReason(lowered)
+        except ValueError:
+            return GapReason.UNANALYZED
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _truncate_detail(cls, value) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        return text[:_ITEM_DETAIL_MAX]
+
+
+class ContradictionType(str, Enum):
+    FLAKY_VS_REGRESSION = "flaky_vs_regression"
+    CATEGORY_DISAGREEMENT = "category_disagreement"
+    CONFIDENCE_SPLIT = "confidence_split"
+
+
+class ResolutionStrategy(str, Enum):
+    PREFER_ANALYSIS = "prefer_analysis"
+    PREFER_ANOMALY = "prefer_anomaly"
+    MERGE = "merge"
+    FLAG_FOR_REVIEW = "flag_for_review"
+
+
+class Contradiction(BaseModel):
+    """A cross-route disagreement for a single multi-route test. Structural only."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    test_id: str = ""
+    type: ContradictionType = ContradictionType.CATEGORY_DISAGREEMENT
+    routes: list[str] = Field(default_factory=list)
+    resolution: ResolutionStrategy = ResolutionStrategy.FLAG_FOR_REVIEW
+    detail: str = ""
+
+    @field_validator("test_id", mode="before")
+    @classmethod
+    def _coerce_test_id(cls, value) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _coerce_type(cls, value):
+        try:
+            lowered = str(value).lower()
+        except Exception:
+            return ContradictionType.CATEGORY_DISAGREEMENT
+        try:
+            return ContradictionType(lowered)
+        except ValueError:
+            return ContradictionType.CATEGORY_DISAGREEMENT
+
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def _coerce_resolution(cls, value):
+        try:
+            lowered = str(value).lower()
+        except Exception:
+            return ResolutionStrategy.FLAG_FOR_REVIEW
+        try:
+            return ResolutionStrategy(lowered)
+        except ValueError:
+            return ResolutionStrategy.FLAG_FOR_REVIEW
+
+    @field_validator("routes", mode="before")
+    @classmethod
+    def _coerce_routes(cls, value) -> list[str]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        allowed = {"analysis", "anomaly", "cluster"}
+        return [str(r) for r in value if str(r) in allowed]
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _truncate_detail(cls, value) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        return text[:_ITEM_DETAIL_MAX]
 
 
 class IngestionAgentOutput(ContractedAgentOutput):
@@ -136,6 +272,64 @@ class RegressionWatchmanAgentOutput(ContractedAgentOutput):
     completed_stages: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     current_stage: str = "defect_commander"
+
+
+class GapDetectionAgentOutput(ContractedAgentOutput):
+    failed_count: int = Field(default=0, ge=0)
+    analyzed_count: int = Field(default=0, ge=0)
+    skipped_count: int = Field(default=0, ge=0)
+    errored_count: int = Field(default=0, ge=0)
+    coverage_ratio: float = 0.0
+    integrity_ok: bool = True
+    gaps: list[GapItem] = Field(default_factory=list)
+    inconclusive_count: int = Field(default=0, ge=0)
+    no_evidence_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _recompute_invariants(self) -> "GapDetectionAgentOutput":
+        # Defensive: recompute integrity + clamp coverage. MUST NOT raise.
+        try:
+            self.integrity_ok = (
+                self.analyzed_count + self.skipped_count + self.errored_count
+                == self.failed_count
+            )
+            ratio = float(self.coverage_ratio)
+            self.coverage_ratio = max(0.0, min(1.0, ratio))
+            if self.failed_count == 0:
+                self.coverage_ratio = 1.0
+        except Exception:  # pragma: no cover — invariant backstop
+            pass
+        return self
+
+
+class ReportRefinementAgentOutput(ContractedAgentOutput):
+    dedup_count: int = Field(default=0, ge=0)
+    contradictions_resolved: int = Field(default=0, ge=0)
+    contradictions: list[Contradiction] = Field(default_factory=list)
+    reconciled_tests: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    multi_route_test_ids: list[str] = Field(default_factory=list)
+    unresolved_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _recompute_resolution_counts(self) -> "ReportRefinementAgentOutput":
+        # Defensive: derive resolved/unresolved from the contradiction list.
+        # MUST NOT raise.
+        try:
+            resolved = sum(
+                1
+                for c in self.contradictions
+                if c.resolution != ResolutionStrategy.FLAG_FOR_REVIEW
+            )
+            unresolved = sum(
+                1
+                for c in self.contradictions
+                if c.resolution == ResolutionStrategy.FLAG_FOR_REVIEW
+            )
+            self.contradictions_resolved = resolved
+            self.unresolved_count = unresolved
+        except Exception:  # pragma: no cover — invariant backstop
+            pass
+        return self
 
 
 TContract = TypeVar("TContract", bound=ContractedAgentOutput)
