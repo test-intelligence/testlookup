@@ -89,8 +89,11 @@ class GapItem(BaseModel):
     @field_validator("reason", mode="before")
     @classmethod
     def _coerce_reason(cls, value):
+        if isinstance(value, GapReason):
+            return value
+        raw = getattr(value, "value", value)
         try:
-            lowered = str(value).lower()
+            lowered = str(raw).lower()
         except Exception:
             return GapReason.UNANALYZED
         try:
@@ -141,8 +144,11 @@ class Contradiction(BaseModel):
     @field_validator("type", mode="before")
     @classmethod
     def _coerce_type(cls, value):
+        if isinstance(value, ContradictionType):
+            return value
+        raw = getattr(value, "value", value)
         try:
-            lowered = str(value).lower()
+            lowered = str(raw).lower()
         except Exception:
             return ContradictionType.CATEGORY_DISAGREEMENT
         try:
@@ -153,8 +159,11 @@ class Contradiction(BaseModel):
     @field_validator("resolution", mode="before")
     @classmethod
     def _coerce_resolution(cls, value):
+        if isinstance(value, ResolutionStrategy):
+            return value
+        raw = getattr(value, "value", value)
         try:
-            lowered = str(value).lower()
+            lowered = str(raw).lower()
         except Exception:
             return ResolutionStrategy.FLAG_FOR_REVIEW
         try:
@@ -274,7 +283,11 @@ class RegressionWatchmanAgentOutput(ContractedAgentOutput):
     current_stage: str = "defect_commander"
 
 
-class GapDetectionAgentOutput(ContractedAgentOutput):
+class GapReport(BaseModel):
+    """Nested coverage/integrity report matching the gap_detection payload."""
+
+    model_config = ConfigDict(extra="ignore")
+
     failed_count: int = Field(default=0, ge=0)
     analyzed_count: int = Field(default=0, ge=0)
     skipped_count: int = Field(default=0, ge=0)
@@ -286,7 +299,7 @@ class GapDetectionAgentOutput(ContractedAgentOutput):
     no_evidence_count: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
-    def _recompute_invariants(self) -> "GapDetectionAgentOutput":
+    def _recompute_invariants(self) -> "GapReport":
         # Defensive: recompute integrity + clamp coverage. MUST NOT raise.
         try:
             self.integrity_ok = (
@@ -302,7 +315,17 @@ class GapDetectionAgentOutput(ContractedAgentOutput):
         return self
 
 
-class ReportRefinementAgentOutput(ContractedAgentOutput):
+class GapDetectionAgentOutput(ContractedAgentOutput):
+    gap_report: GapReport = Field(default_factory=GapReport)
+    completed_stages: list[str] = Field(default_factory=list)
+    current_stage: str = "report_refinement"
+
+
+class RefinedReport(BaseModel):
+    """Nested dedup/contradiction report matching the report_refinement payload."""
+
+    model_config = ConfigDict(extra="ignore")
+
     dedup_count: int = Field(default=0, ge=0)
     contradictions_resolved: int = Field(default=0, ge=0)
     contradictions: list[Contradiction] = Field(default_factory=list)
@@ -311,7 +334,7 @@ class ReportRefinementAgentOutput(ContractedAgentOutput):
     unresolved_count: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
-    def _recompute_resolution_counts(self) -> "ReportRefinementAgentOutput":
+    def _recompute_resolution_counts(self) -> "RefinedReport":
         # Defensive: derive resolved/unresolved from the contradiction list.
         # MUST NOT raise.
         try:
@@ -330,6 +353,12 @@ class ReportRefinementAgentOutput(ContractedAgentOutput):
         except Exception:  # pragma: no cover — invariant backstop
             pass
         return self
+
+
+class ReportRefinementAgentOutput(ContractedAgentOutput):
+    refined_report: RefinedReport = Field(default_factory=RefinedReport)
+    completed_stages: list[str] = Field(default_factory=list)
+    current_stage: str = "flaky_sentinel"
 
 
 TContract = TypeVar("TContract", bound=ContractedAgentOutput)

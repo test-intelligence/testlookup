@@ -37,10 +37,13 @@ class GapDetectionAgent(BaseAgent):
     stage_name = "gap_detection"
 
     async def run(self, state: dict) -> dict:
-        pipeline_run_id: str = state.get("pipeline_run_id", "")
-        project_id: str = state.get("project_id", "")
+        pipeline_run_id: str = ""
+        project_id: str = ""
 
         try:
+            pipeline_run_id = state.get("pipeline_run_id", "")
+            project_id = state.get("project_id", "")
+
             await self.mark_stage_running(pipeline_run_id)
             await self.broadcast_progress(
                 project_id,
@@ -63,7 +66,6 @@ class GapDetectionAgent(BaseAgent):
             no_evidence_count = 0
 
             for tid in sorted(universe):
-                entry = analysis_keys.get(tid)
                 if tid not in analysis_keys:
                     skipped_count += 1
                     gaps.append(GapItem(
@@ -74,6 +76,7 @@ class GapDetectionAgent(BaseAgent):
                     ))
                     continue
 
+                entry = analysis_keys.get(tid)
                 entry = entry if isinstance(entry, dict) else {}
                 if entry.get("error") or entry.get("timed_out"):
                     errored_count += 1

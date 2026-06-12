@@ -39,10 +39,13 @@ class ReportRefinementAgent(BaseAgent):
     stage_name = "report_refinement"
 
     async def run(self, state: dict) -> dict:
-        pipeline_run_id: str = state.get("pipeline_run_id", "")
-        project_id: str = state.get("project_id", "")
+        pipeline_run_id: str = ""
+        project_id: str = ""
 
         try:
+            pipeline_run_id = state.get("pipeline_run_id", "")
+            project_id = state.get("project_id", "")
+
             await self.mark_stage_running(pipeline_run_id)
             await self.broadcast_progress(
                 project_id,
