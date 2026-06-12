@@ -6,6 +6,103 @@ because the repo's `docs/` tree is gitignored.)
 
 ---
 
+## AIQ-P5 — Report-quality eval harness for agent outputs  *(delivered 2026-06-12)*
+
+### What it does
+A **pure-local, offline-safe, never-raise** scorer for **recorded** agent
+outputs, plus a golden-set **CI gate** that fails the build if an agent change
+regresses report quality. It answers *"are our agents' reports still coherent,
+complete, actionable, accurate, and well-calibrated?"* — measured, not asserted.
+
+The harness scores 5 report-quality metrics over a list of `AgentEvalSample`
+(recorded verdict + confidence + evidence + suggested action + ground truth),
+returns an `AgentEvalReport` with a per-metric pass map and an overall verdict,
+and a CI test runs it over a checked-in golden set so a calibration/evidence/
+action/accuracy regression turns the build red.
+
+### How it works
+- `backend/app/services/agent_eval_harness.py` — `evaluate_agent_outputs(samples)
+  -> AgentEvalReport`. Pure in-memory scoring over **already-recorded** agent
+  outputs: **no LLM, no network, no DB**, no outbound/LLM imports (offline by
+  construction). Any malformed input degrades to a fail-closed result — it
+  **never raises**.
+- `backend/app/services/golden_agent_outputs.py` — a small golden set of recorded
+  agent outputs + ground truth (passes all thresholds, accuracy `0.889`), plus
+  negative fixtures and an always-wrong under-confident fixture.
+- `backend/app/services/ai_eval_service.py` — `compute_agent_report_quality(
+  samples) -> dict` (additive helper).
+- `backend/app/services/eval_gate_service.py` — `evaluate_agent_report_quality_rules(
+  report) -> list` of gate rule dicts (6 metric rules + an overall
+  `agent_report_quality` rule).
+
+### The 5 metrics
+
+| Metric | Definition | Pass when |
+|--------|-----------|-----------|
+| **coherence** | per-sample internal invariants hold | `>= 0.90` |
+| **completeness** | evidence is present whenever `confidence >= 60` | `>= 0.90` |
+| **actionability** | a fix / action is present whenever the verdict is non-flaky | `>= 0.85` |
+| **accuracy** | `verdict == ground truth` | `>= 0.70` |
+| **calibration — Brier** | `mean((conf/100 - outcome)^2)` | `<= 0.20` |
+| **calibration — ECE** | `sum over 10 bins of (|S_b|/N) * |acc_b - conf_b|` | `<= 0.15` |
+
+Where `outcome ∈ {0,1}` is whether the verdict matched ground truth, and the ECE
+bins are the 10 equal-width confidence bins; `acc_b` / `conf_b` are the
+accuracy / mean-confidence within bin `b`, `|S_b|` the bin population, `N` the
+sample count.
+
+### Thresholds + gate
+`PASS_THRESHOLDS`:
+
+```
+coherence     >= 0.90
+completeness  >= 0.90
+actionability >= 0.85
+accuracy      >= 0.70
+brier         <= 0.20
+ece           <= 0.15
+```
+
+`MIN_SAMPLES = 5` — fewer than 5 samples **fails** (insufficient data is not a
+pass). `evaluate_agent_outputs` returns an `AgentEvalReport` with `per_metric_pass`
+and an overall `passed` that is the AND of every metric.
+
+### Why accuracy is in the gate (design note)
+An **adversarial review** found that a **calibration-only** gate let an
+**under-confident, always-wrong** agent pass: by reporting low confidence on
+every (wrong) verdict, an agent can keep Brier/ECE inside threshold while being
+useless. The **accuracy** metric (`>= 0.70`) was added specifically to close that
+bypass — an honestly-uncertain-but-always-wrong agent now fails the gate.
+
+### How it plugs into CI
+- `backend/tests/test_architectural_agent_eval_harness.py` is the **CI GATE** —
+  it runs inside the **existing backend-test pytest job** (no new CI job), scores
+  the golden set, and fails CI if an agent change regresses calibration /
+  evidence / actions / accuracy.
+- `backend/tests/services/test_agent_eval_harness.py` is the unit suite (metric
+  math, threshold edges, never-raise, the under-confident-always-wrong fixture).
+
+### Run it locally
+```
+cd backend
+pytest tests/test_architectural_agent_eval_harness.py     # the CI gate
+pytest tests/services/test_agent_eval_harness.py          # unit suite
+```
+
+### Guarantees / non-goals
+- **Offline by construction**: no LLM, no network, no DB; no outbound/LLM imports
+  in the harness. `AI_OFFLINE_MODE=True` (default) semantics untouched.
+- **Never-raise**: malformed input degrades to a fail-closed result.
+- Scores **recorded** outputs only — it does not invoke agents, so it adds no
+  runtime cost to the analytic pipeline.
+- **No migration, no outbound calls.**
+
+### Rollout
+Pure code + tests. No infra, no env, no migration. The gate ships inside the
+existing pytest job; rollback = revert the commit, with no data to unwind.
+
+---
+
 ## AIQ-P4 — Gap-detection + report-refinement agents  *(delivered 2026-06-12)*
 
 ### What it does
