@@ -35,16 +35,18 @@ refined-report + engineering-intelligence solid, stable, high-quality.
 
 ## FEATURE 2 — FLK (Flaky-Test Intelligence)
 Make flaky-test identification a SOLID signal via data-analysis + ML + Agentic
-AI. CONSTRAINT: origin/main has NO granular columns (retry_count, is_flaky_run,
-stack_trace, step_count, test_steps) — use origin/main primitives only
-(test_case_history status sequences, error_message, failure_category, run
-timestamps); granular-dependent ideas are DEFERRED.
+AI. UPDATE 2026-06-12 (run 2): the granular stack IS NOW MERGED to origin/main
+(PR #169). Columns retry_count, is_flaky_run, stack_trace, step_count and the
+test_steps table ARE available on the baseline (verified via git grep on
+origin/main:backend/app/models/postgres.py). USE these granular signals wherever
+they strengthen the flaky verdict; FLK-P5 is no longer deferred.
 
 - **FLK-P1 Intermittency + error-signature analysis** (no migration): add
   `status_volatility = flips/(runs-1)` and `error_signature_diversity = unique
   error prefixes/fail_count` to refresh_flaky_coach; discriminate
   high-volatility flakiness from low-volatility regression and single-error
-  breakage.
+  breakage. Also fold in retry_count (framework self-retry within a run = strong
+  in-run flaky signal) and stack_trace-signature variety now that they exist.
 - **FLK-P2 Statistical confidence** (migration): binomial/Wilson 95% CI on the
   failure ratio; store `flaky_confidence_low/high`; rank by statistical strength
   (30/100 >> 3/10). Closed-form Wilson (no scipy dep); small Alembic migration
@@ -52,15 +54,22 @@ timestamps); granular-dependent ideas are DEFERRED.
 - **FLK-P3 ML flakiness-confidence classifier**: train HistGradientBoosting
   (`is_flaky_confidence` in [0,1]) on features {failure_rate, status_volatility,
   flip_count, error_signature_diversity, failure_rate_trend,
-  run_interval_variance}; ground truth from quarantine approvals/rejections;
+  run_interval_variance, retry_count, stack_trace_signature_diversity}; ground
+  truth from quarantine approvals/rejections;
   reuse existing ML infra; rank/quarantine only high-confidence flakes.
 - **FLK-P4 Agentic flaky investigator**: upgrade `flaky_sentinel_agent` to a
   multi-step agent that confirms the verdict and EXPLAINS it: cluster recent
-  failure messages, inspect build/run metadata, emit structured `{is_flaky,
+  failure messages + stack traces, inspect build/run metadata, emit structured `{is_flaky,
   confidence, likely_cause, evidence[]}` (per AIQ-P1/P3). Surface the new signal
   on /flaky-coach and /failures.
-- **FLK-P5 DEFERRED** (do NOT build; record as future): granular step-level
-  intermittency + stack-trace fingerprinting (needs granular stack on main).
+- **FLK-P5 ACTIVE** (granular IS on main now — BUILD it): granular step-level
+  intermittency + stack-trace fingerprinting. Step-level flip analysis over the
+  test_steps table (which assertion/step flips across runs => surgical fix vs
+  whole-test quarantine); stack_trace fingerprinting (SHA over first ~500 chars
+  => many unique traces per flaky test = environmental/race, one trace =
+  deterministic code bug). Surface on the test-case / flaky views. Migration only
+  if a new stored column is genuinely needed (fresh down_revision, real
+  downgrade).
 
 ## FINAL — cross-feature delivery review
 Confirm every acceptance criterion; full backend + frontend suites green;
