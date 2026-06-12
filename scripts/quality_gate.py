@@ -547,6 +547,9 @@ _BASE_AGENT_RE = re.compile(r"class\s+\w+\s*\(\s*BaseAgent\s*[,)]")
 _SUPPORT_AGENT_FILES = {
     # Support modules in app/agents/ that are NOT agent implementations.
     "__init__.py", "state.py", "workflow.py", "conversation.py", "base.py",
+    # consistency.py holds the AIQ-P2 self-critique Pydantic models + pure-local
+    # checker functions; it has no agent class and no observability contract.
+    "consistency.py",
 }
 
 

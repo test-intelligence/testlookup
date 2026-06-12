@@ -36,6 +36,10 @@ import structlog
 import uuid
 
 from app.agents.base import BaseAgent
+from app.agents.consistency import (
+    check_release_consistency,
+    log_consistency_failures,
+)
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import ReleaseRiskAgentOutput, validate_agent_contract
@@ -151,17 +155,22 @@ class ReleaseRiskAgent(BaseAgent):
             "risk_score": decision["risk_score"],
         })
 
+        consistency_report = check_release_consistency(decision)
+        log_consistency_failures(consistency_report, pipeline_run_id=pipeline_run_id)
+
         return validate_agent_contract(
             ReleaseRiskAgentOutput,
             {"release_decision": decision},
             agent_name=self.stage_name,
             confidence=max(0, min(100, int(100 - decision.get("risk_score", 50)))),
             evidence_refs=[
-                {"type": "score_model", "id": str(decision.get("score_model_version", SCORE_MODEL_VERSION))}
+                {"type": "score_model", "id": str(decision.get("score_model_version", SCORE_MODEL_VERSION))},
+                consistency_report.evidence_ref(),
             ],
             decision_reason=(
                 f"Deterministic release score produced {decision['recommendation']} "
                 f"at risk {decision['risk_score']}"
+                + consistency_report.decision_suffix()
             ),
         )
 

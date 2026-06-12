@@ -30,6 +30,10 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.agents.base import BaseAgent
+from app.agents.consistency import (
+    check_analysis_consistency,
+    log_consistency_failures,
+)
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import AnalysisAgentOutput, validate_agent_contract
@@ -327,6 +331,10 @@ class AnalysisAgent(BaseAgent):
             {"type": "analysis", "id": str(test_id)}
             for test_id in sorted(analyses.keys())
         ]
+        consistency_report = check_analysis_consistency(analyses, failed_ids)
+        log_consistency_failures(consistency_report, pipeline_run_id=pipeline_run_id)
+        evidence_refs.append(consistency_report.evidence_ref())
+
         return validate_agent_contract(
             AnalysisAgentOutput,
             {
@@ -348,7 +356,7 @@ class AnalysisAgent(BaseAgent):
             decision_reason=(
                 "root_cause_analysis_completed"
                 if stage_quality == "normal" else f"root_cause_analysis_{stage_quality}"
-            ),
+            ) + consistency_report.decision_suffix(),
         )
 
     def _prioritize_tests(
@@ -801,6 +809,14 @@ class AnalysisAgent(BaseAgent):
         except (TypeError, ValueError):
             confidence = 0
 
+        # Capture the LLM's ORIGINAL signals BEFORE any cap/correction below
+        # mutates them. Two self-consistency rules (flaky_contradicts_history,
+        # evidence_count_vs_confidence) reason about what the LLM *claimed*, not
+        # about the already-corrected state — otherwise earlier caps mask them
+        # and they become dead code.
+        raw_is_flaky = analysis.get("is_flaky") is True
+        raw_confidence_clamped = confidence
+
         evidence = analysis.get("evidence_references") or []
         summary = analysis.get("root_cause_summary") or ""
         has_tools = bool(analysis.get("tools_used"))
@@ -871,6 +887,70 @@ class AnalysisAgent(BaseAgent):
                 "reason": f"{len(evidence)} evidence references — +5 trust bonus",
             })
 
+        # AIQ-P2 C1: self-consistency corrections (only ever LOWER/correct).
+        # Cap: an UNKNOWN category cannot carry high confidence.
+        if (
+            self._stringify_value(analysis.get("failure_category")).upper()
+            == self.UNKNOWN_CATEGORY
+            and confidence > 40
+        ):
+            adjustments.append({
+                "rule": "category_unknown_high_confidence",
+                "from": confidence,
+                "to": 40,
+                "reason": "UNKNOWN failure_category cannot carry high confidence",
+            })
+            confidence = min(confidence, 40)
+
+        # Correction: a never-passing history contradicts a flaky verdict.
+        # Reason about the LLM's ORIGINAL flaky claim (``raw_is_flaky``): the
+        # P2-6 block above may have already cleared the flag, but the desync
+        # between what the LLM asserted and what history shows is exactly what
+        # this rule must record. Ensure the corrected state is False.
+        if (
+            flakiness_data
+            and flakiness_data.get("pass_count", 0) == 0
+            and flakiness_data.get("fail_count", 0) > 0
+            and raw_is_flaky
+        ):
+            analysis["is_flaky"] = False
+            adjustments.append({
+                "rule": "flaky_contradicts_history",
+                "from": confidence,
+                "to": confidence,
+                "reason": "history has only failures — cleared flaky flag",
+            })
+
+        # Floor: an analysis carrying an error cannot assert any confidence.
+        if analysis.get("error") and confidence > 0:
+            adjustments.append({
+                "rule": "error_present_zero_confidence_floor",
+                "from": confidence,
+                "to": 0,
+                "reason": "analysis carries an error — forced confidence to 0",
+            })
+            confidence = 0
+
+        # Cap: a RAW 60-80 LLM confidence with zero evidence and no tools is
+        # unjustified. Reason about ``raw_confidence_clamped`` — the LLM's
+        # ORIGINAL number — not the live ``confidence`` (the no_evidence_references
+        # cap above already lowered it to 50 in exactly this case, which is what
+        # previously made this rule dead code). Record the desync, and only ever
+        # LOWER the final number (never raise it back to 60).
+        if (
+            60 < raw_confidence_clamped <= 80
+            and not evidence
+            and not has_tools
+        ):
+            capped_to = min(confidence, 60)
+            adjustments.append({
+                "rule": "evidence_count_vs_confidence",
+                "from": raw_confidence_clamped,
+                "to": capped_to,
+                "reason": "raw confidence 60-80 with no evidence and no tools",
+            })
+            confidence = capped_to
+
         if adjustments:
             # Stashed under a private key; _analyse_one pops it into _audit so
             # we don't double-persist the list on the AIAnalysis row.
@@ -886,6 +966,15 @@ class AnalysisAgent(BaseAgent):
         analysis["requires_human_review"] = confidence < settings.AI_CONFIDENCE_THRESHOLD
         analysis["confidence_validated"] = True
         return analysis
+
+    @staticmethod
+    def _stringify_value(value) -> str:
+        """Coerce an enum-like or scalar category value to a plain string."""
+        if value is None:
+            return ""
+        if hasattr(value, "value"):
+            return str(value.value)
+        return str(value)
 
     def _sanitize_category(self, analysis: dict) -> dict:
         """Validate failure_category against the FailureCategory enum.

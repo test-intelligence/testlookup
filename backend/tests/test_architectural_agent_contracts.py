@@ -43,6 +43,10 @@ INFRA_ALLOWLIST: frozenset[str] = frozenset({
     "contract_agent.py",
     "defect_commander.py",
     "agent_planner.py",
+    # Shared self-critique / verification helpers (AIQ-P2): emits consistency
+    # reports for other agents to fold into their contracts; not itself an
+    # analytic agent with a contracted output.
+    "consistency.py",
 })
 
 AGENTS_DIR = Path(__file__).resolve().parents[1] / "app" / "agents"
@@ -90,6 +94,34 @@ def test_every_analytic_agent_calls_validate_agent_contract() -> None:
         "<Output>, payload, agent_name=..., ...), or add the module to "
         "INFRA_ALLOWLIST with a reason if it does not emit a contracted "
         "analytic payload."
+    )
+
+
+def test_target_agents_run_consistency_checks() -> None:
+    """The three AIQ-P2 target agents must invoke their consistency check and
+    the ``consistency_check_failed`` event name must have a single source.
+    """
+    targets = {
+        "summary_agent.py": "check_summary_consistency",
+        "release_risk_agent.py": "check_release_consistency",
+        "analysis_agent.py": "check_analysis_consistency",
+    }
+    for filename, func_name in targets.items():
+        source = (AGENTS_DIR / filename).read_text(encoding="utf-8")
+        assert func_name in source, (
+            f"{filename} must reference {func_name} to run its consistency layer."
+        )
+
+    # The event string must live ONLY in the shared consistency module among
+    # app/agents/*.py — a single source for the failure event name.
+    emitters = [
+        source.name
+        for source in _agent_source_files()
+        if "consistency_check_failed" in source.read_text(encoding="utf-8")
+    ]
+    assert emitters == ["consistency.py"], (
+        "The 'consistency_check_failed' event name must be emitted only from "
+        f"app/agents/consistency.py, but found in: {emitters}"
     )
 
 

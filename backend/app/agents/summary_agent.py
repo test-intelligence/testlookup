@@ -19,6 +19,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.base import BaseAgent
+from app.agents.consistency import (
+    check_summary_consistency,
+    log_consistency_failures,
+)
 from app.core.config import settings
 from app.db.mongo import Collections, get_mongo_db
 from app.models.agent_contracts import SummaryAgentOutput, validate_agent_contract
@@ -257,6 +261,19 @@ class SummaryAgent(BaseAgent):
                 },
             )
 
+            consistency_report = check_summary_consistency(
+                structured=structured,
+                run_data=run_data,
+                failed_test_ids=state.get("failed_test_ids") or [],
+                analyses=analyses,
+            )
+            log_consistency_failures(consistency_report, pipeline_run_id=pipeline_run_id)
+
+            summary_decision_reason = (
+                "deterministic_summary_fallback"
+                if fallback_reason else "structured_summary_generated"
+            ) + consistency_report.decision_suffix()
+
             return validate_agent_contract(
                 SummaryAgentOutput,
                 {
@@ -280,11 +297,9 @@ class SummaryAgent(BaseAgent):
                         "type": "ordered_analysis_ids",
                         "id": summary_provenance.get("ordered_analysis_ids_sha256"),
                     },
+                    consistency_report.evidence_ref(),
                 ],
-                decision_reason=(
-                    "deterministic_summary_fallback"
-                    if fallback_reason else "structured_summary_generated"
-                ),
+                decision_reason=summary_decision_reason,
             )
 
         except Exception as exc:
