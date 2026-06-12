@@ -28,6 +28,7 @@ PASS_THRESHOLDS: dict[str, float] = {
     "coherence": 0.90,
     "completeness": 0.90,
     "actionability": 0.85,
+    "accuracy": 0.70,
     "brier_max": 0.20,
     "ece_max": 0.15,
 }
@@ -85,10 +86,12 @@ class AgentEvalSample(BaseModel):
     @field_validator("confidence_score", mode="before")
     @classmethod
     def _clamp_confidence(cls, value) -> int:
-        # OverflowError guards float('inf')/-inf; bare Exception mirrors the
-        # evidence module so no input shape can crash construction.
+        # Accept numeric-ish strings/floats ("90.5"->90, "85"->85) via
+        # int(float(...)). OverflowError/ValueError guard inf/-inf/nan; bare
+        # non-numeric ("high"/None) degrades to 0 so no input shape can crash
+        # construction.
         try:
-            number = int(value)
+            number = int(float(value))
         except (TypeError, ValueError, OverflowError):
             return 0
         return max(0, min(100, number))
@@ -224,6 +227,22 @@ def score_actionability(samples: list[AgentEvalSample]) -> dict:
     return {"score": score, "non_flaky": denom, "with_action": with_action}
 
 
+def score_accuracy(samples: list[AgentEvalSample]) -> dict:
+    """Fraction of samples whose verdict matches the ground-truth verdict.
+
+    A sample is correct iff ``verdict == ground_truth_verdict`` (both already
+    lowercased). Catches a genuinely-wrong agent that calibration alone would
+    let through (e.g. always wrong but appropriately under-confident). Empty
+    input scores None so it passes vacuously, consistent with calibration.
+    """
+    samples = [s for s in _as_list(samples) if isinstance(s, AgentEvalSample)]
+    total = len(samples)
+    if total == 0:
+        return {"score": None, "correct": 0, "total": 0}
+    correct = sum(1 for s in samples if s.verdict == s.ground_truth_verdict)
+    return {"score": correct / total, "correct": correct, "total": total}
+
+
 def score_calibration(samples: list[AgentEvalSample]) -> dict:
     """Brier score + Expected Calibration Error over the sample set.
 
@@ -289,6 +308,7 @@ class AgentEvalReport(BaseModel):
     coherence: float | None = None
     completeness: float | None = None
     actionability: float | None = None
+    accuracy: float | None = None
     brier: float | None = None
     ece: float | None = None
     sample_count: int = 0
@@ -303,6 +323,7 @@ def _failed_report(sample_count: int, detail: dict) -> AgentEvalReport:
         coherence=None,
         completeness=None,
         actionability=None,
+        accuracy=None,
         brier=None,
         ece=None,
         sample_count=sample_count,
@@ -310,6 +331,7 @@ def _failed_report(sample_count: int, detail: dict) -> AgentEvalReport:
             "coherence": False,
             "completeness": False,
             "actionability": False,
+            "accuracy": False,
             "brier": False,
             "ece": False,
         },
@@ -334,11 +356,13 @@ def evaluate_agent_outputs(samples: list[AgentEvalSample]) -> AgentEvalReport:
         coh = score_coherence(valid)
         comp = score_completeness(valid)
         act = score_actionability(valid)
+        acc = score_accuracy(valid)
         cal = score_calibration(valid)
 
         coherence = coh["score"]
         completeness = comp["score"]
         actionability = act["score"]
+        accuracy = acc["score"]
         brier = cal["brier"]
         ece = cal["ece"]
 
@@ -348,6 +372,7 @@ def evaluate_agent_outputs(samples: list[AgentEvalSample]) -> AgentEvalReport:
             or completeness >= PASS_THRESHOLDS["completeness"],
             "actionability": actionability is None
             or actionability >= PASS_THRESHOLDS["actionability"],
+            "accuracy": accuracy is None or accuracy >= PASS_THRESHOLDS["accuracy"],
             "brier": brier is None or brier <= PASS_THRESHOLDS["brier_max"],
             "ece": ece is None or ece <= PASS_THRESHOLDS["ece_max"],
         }
@@ -356,6 +381,7 @@ def evaluate_agent_outputs(samples: list[AgentEvalSample]) -> AgentEvalReport:
             "coherence": coh,
             "completeness": comp,
             "actionability": act,
+            "accuracy": acc,
             "calibration": cal,
             "thresholds": dict(PASS_THRESHOLDS),
         }
@@ -368,6 +394,7 @@ def evaluate_agent_outputs(samples: list[AgentEvalSample]) -> AgentEvalReport:
             coherence=coherence,
             completeness=completeness,
             actionability=actionability,
+            accuracy=accuracy,
             brier=brier,
             ece=ece,
             sample_count=sample_count,

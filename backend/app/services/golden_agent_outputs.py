@@ -283,3 +283,51 @@ def get_negative_fixtures() -> list[dict]:
             is_flaky=False,
         ),
     ]
+
+
+def get_wrong_agent_fixture() -> list[dict]:
+    """An under-confident, ALWAYS-WRONG agent (AIQ-P5 accuracy gate).
+
+    Eight samples whose verdict NEVER matches the ground-truth verdict, each at
+    confidence 15 — appropriately under-confident, so Brier/ECE stay tolerable
+    and calibration alone would let the agent PASS. The accuracy metric exists
+    to catch exactly this: accuracy is 0.0 (< 0.70 threshold) so the report must
+    FAIL. Kept OUT of the passing set; tests use it to assert the accuracy gate
+    blocks a genuinely-wrong agent.
+    """
+    wrong_pairs = [
+        ("product_bug", "infrastructure"),
+        ("infrastructure", "product_bug"),
+        ("automation_defect", "test_data"),
+        ("test_data", "automation_defect"),
+        ("regression", "flaky"),
+        ("flaky", "regression"),
+        ("product_bug", "automation_defect"),
+        ("infrastructure", "test_data"),
+    ]
+    return [
+        _entry(
+            sample_id=f"wrong-{i}",
+            agent_name="AnalysisAgent",
+            verdict=verdict,
+            confidence=15,
+            evidence_count=0,
+            decision_reason="Low-confidence guess; fix candidate unclear",
+            recommended_actions=["Gather more logs before triage"],
+            truth_verdict=truth_verdict,
+            is_flaky=(truth_verdict == "flaky"),
+        )
+        for i, (verdict, truth_verdict) in enumerate(wrong_pairs)
+    ]
+
+
+def get_wrong_agent_samples() -> list[AgentEvalSample]:
+    """Materialise the always-wrong under-confident fixture into samples."""
+    return [
+        AgentEvalSample.from_recorded_output(
+            entry["recorded_output"],
+            agent_name=entry["agent_name"],
+            ground_truth=entry["ground_truth"],
+        )
+        for entry in get_wrong_agent_fixture()
+    ]
