@@ -164,6 +164,20 @@ class GapDetectionAgent(BaseAgent):
                 "message": f"Coverage {analyzed_count}/{failed_count}; {len(gaps)} gap(s)",
             })
 
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="coverage_audit",
+                chosen=f"coverage:{analyzed_count}/{failed_count}",
+                rationale=f"{len(gaps)} gap(s); integrity_ok={integrity_ok}",
+                context={
+                    "failed_count": failed_count,
+                    "analyzed_count": analyzed_count,
+                    "skipped_count": skipped_count,
+                    "errored_count": errored_count,
+                    "integrity_ok": integrity_ok,
+                },
+            )
+
             return validate_agent_contract(
                 GapDetectionAgentOutput,
                 payload,
@@ -175,6 +189,15 @@ class GapDetectionAgent(BaseAgent):
             )
         except Exception as exc:
             logger.warning("gap_detection_failed", error=str(exc))
+            try:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="gap_detection_fallback",
+                    chosen="fallback_contract",
+                    rationale="coverage audit failed; emitting deterministic fallback",
+                )
+            except Exception:  # never-raise: a failing decision log must not escape
+                pass
             return validate_agent_contract(
                 GapDetectionAgentOutput,
                 {

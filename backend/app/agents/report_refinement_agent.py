@@ -164,6 +164,19 @@ class ReportRefinementAgent(BaseAgent):
                 "message": f"Deduped {dedup_count}; resolved {resolved}/{total} contradiction(s)",
             })
 
+            await self.log_decision(
+                pipeline_run_id,
+                decision_point="route_reconciliation",
+                chosen=f"deduped:{dedup_count}",
+                rationale=f"resolved {resolved}/{total} cross-route contradiction(s)",
+                context={
+                    "dedup_count": dedup_count,
+                    "contradictions": total,
+                    "resolved": resolved,
+                    "unresolved": total - resolved,
+                },
+            )
+
             return validate_agent_contract(
                 ReportRefinementAgentOutput,
                 payload,
@@ -173,6 +186,15 @@ class ReportRefinementAgent(BaseAgent):
             )
         except Exception as exc:
             logger.warning("report_refinement_failed", error=str(exc))
+            try:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="report_refinement_fallback",
+                    chosen="fallback_contract",
+                    rationale="reconciliation failed; emitting deterministic fallback",
+                )
+            except Exception:  # never-raise: a failing decision log must not escape
+                pass
             return validate_agent_contract(
                 ReportRefinementAgentOutput,
                 {
