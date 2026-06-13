@@ -53,7 +53,7 @@ jobs:
     outputs:
       image_tag: ${{ env.IMAGE_TAG }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP (Workload Identity Federation)
         uses: google-github-actions/auth@v2
@@ -116,7 +116,7 @@ jobs:
     # required-reviewer gates configured at repo level apply uniformly.
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Authenticate to GCP (Workload Identity Federation)
         uses: google-github-actions/auth@v2
