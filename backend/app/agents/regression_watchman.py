@@ -181,7 +181,7 @@ class RegressionWatchman(BaseAgent):
                 continue
             try:
                 confidences.append(int(value.get("confidence", 0)))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 confidences.append(0)
 
         confidence = int(sum(confidences) / len(confidences)) if confidences else 100

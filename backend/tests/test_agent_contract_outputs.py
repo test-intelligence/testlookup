@@ -179,6 +179,14 @@ def test_summarize_classification_defensive_coercion():
     assert RegressionWatchman._summarize_classification({}) == (100, [])
     assert RegressionWatchman._summarize_classification(None) == (100, [])
 
+    # A float infinity confidence (reachable: json.loads accepts ``Infinity``)
+    # raises OverflowError on int() — it must be coerced to 0, not escape.
+    conf_inf, refs_inf = RegressionWatchman._summarize_classification(
+        {"a": {"confidence": float("inf")}, "b": {"confidence": 90}}
+    )
+    assert conf_inf == 45  # [0 (inf), 90] -> mean 45, never raised
+    assert len(refs_inf) == 2
+
 
 # ── CLEANUP-2: undeclared top-level keys survive validation (parity w/ RunCompare)
 def test_log_intelligence_contract_preserves_undeclared_key():

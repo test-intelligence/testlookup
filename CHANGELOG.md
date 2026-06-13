@@ -50,6 +50,10 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Fixed (2026-06-13 — AI-Agent Quality: RegressionWatchman confidence coercion OverflowError (AIQ-P1 cleanup follow-up))
+
+Follow-up to the AIQ-P1 cleanup. `_summarize_classification` in `backend/app/agents/regression_watchman.py` coerced each classification `confidence` inside `try/except (TypeError, ValueError)`, which did **not** catch `OverflowError` from `int(float("inf"))` — and `float("inf")` is reachable because Python's `json.loads` accepts the `Infinity` token, so a degraded LLM payload could still escape the guarded helper and fail the pipeline run. Added `OverflowError` to the except clause (the awkward value now coerces to `0`, like the other non-numeric cases). Extended `test_summarize_classification_defensive_coercion` in `backend/tests/test_agent_contract_outputs.py` with an `inf` case asserting it coerces rather than raises. No behavior change for well-formed input; contract suites green (13 passed).
+
 ### Added (2026-06-13 — Flaky-Test Intelligence: intermittency + error-signature analysis (FLK-P1))
 
 First phase of the Flaky-Test Intelligence (FLK) initiative. Flaky verdicts now carry **intermittency signals** that discriminate a *high-volatility flake* (flips pass↔fail with many distinct errors / in-run framework retries) from a *low-volatility regression* (fails persistently with a single repeated error — a real bug that should **not** be quarantined on the flake track). A new pure, no-DB, never-raise scorer `backend/app/services/flaky_signals.py` defines `compute_intermittency_signals(records) -> IntermittencySignals` over a per-run window:
