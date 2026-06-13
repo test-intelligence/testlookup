@@ -271,12 +271,20 @@ class RunCompareAgentOutput(ContractedAgentOutput):
 
 
 class LogIntelligenceAgentOutput(ContractedAgentOutput):
+    # extra='allow' for parity with RunCompareAgentOutput so an undeclared
+    # nested payload key is preserved rather than silently dropped on validate.
+    model_config = ConfigDict(extra="allow")
+
     distributed_trace: dict[str, Any] = Field(default_factory=dict)
     log_anomaly: dict[str, Any] = Field(default_factory=dict)
     log_summary: str = ""
 
 
 class RegressionWatchmanAgentOutput(ContractedAgentOutput):
+    # extra='allow' for parity with RunCompareAgentOutput so an undeclared
+    # nested payload key is preserved rather than silently dropped on validate.
+    model_config = ConfigDict(extra="allow")
+
     regression_classification: dict[str, Any] = Field(default_factory=dict)
     completed_stages: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)

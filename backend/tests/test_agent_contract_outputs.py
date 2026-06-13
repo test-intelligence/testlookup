@@ -129,3 +129,89 @@ def test_regression_watchman_output_shape_matches_contract():
     assert contract["confidence_score"] == 80
     assert contract["evidence_count"] == 1
     assert contract["decision_reason"] == "Classified 2 failure clusters"
+
+
+# ── CLEANUP-1: RegressionWatchman.run() success path must never raise ──────────
+@pytest.mark.asyncio
+async def test_regression_watchman_run_never_raises_on_malformed_classification():
+    """run()'s SUCCESS branch derives confidence/evidence from the classification
+    dict. A classification merged back from a partially-validated LLM payload can
+    hold a non-dict value AND a 'confidence' that is a non-numeric string; the
+    success path must coerce both defensively and still return a valid contract
+    rather than raising into the graph node wrapper (which would fail the run).
+    """
+    from app.agents.regression_watchman import RegressionWatchman
+
+    malformed = {
+        "cluster-1": "not-a-dict",  # .get -> AttributeError if unguarded
+        "cluster-2": {"confidence": "high", "verdict": "flaky"},  # int('high') -> ValueError
+    }
+
+    agent = RegressionWatchman()
+    agent.mark_stage_running = AsyncMock()
+    agent.mark_stage_done = AsyncMock()
+    agent.broadcast_progress = AsyncMock()
+    agent._classify = AsyncMock(return_value=malformed)
+
+    state = {"pipeline_run_id": "pr-1", "project_id": "proj-1", "test_run_id": "tr-1"}
+    result = await agent.run(state)  # must not raise
+
+    assert result["regression_classification"] == malformed
+    contract = result["agent_contracts"]["regression_watchman"]
+    assert contract["fallback_used"] is False
+    # both values coerced to 0 (non-dict skipped, 'high' -> 0) -> mean 0
+    assert contract["confidence_score"] == 0
+    assert contract["evidence_count"] == 2
+
+
+def test_summarize_classification_defensive_coercion():
+    """The guarded helper coerces every awkward value and never raises."""
+    from app.agents.regression_watchman import RegressionWatchman
+
+    conf, refs = RegressionWatchman._summarize_classification(
+        {"a": {"confidence": 80}, "b": "str", "c": {"confidence": None}, "d": {}}
+    )
+    # confidences = [80 (a), 0 (c None), 0 (d missing)]; b skipped -> mean = 26
+    assert conf == 26
+    assert len(refs) == 4  # one ref per top-level key (b included as a cluster id)
+
+    # Empty / non-dict input degrades to confidence 100, no evidence.
+    assert RegressionWatchman._summarize_classification({}) == (100, [])
+    assert RegressionWatchman._summarize_classification(None) == (100, [])
+
+
+# ── CLEANUP-2: undeclared top-level keys survive validation (parity w/ RunCompare)
+def test_log_intelligence_contract_preserves_undeclared_key():
+    from app.models.agent_contracts import (
+        AgentContractMetadata,
+        LogIntelligenceAgentOutput,
+    )
+
+    meta = AgentContractMetadata(
+        agent_name="log_intelligence",
+        confidence_score=80,
+        evidence_count=2,
+        decision_reason="ok",
+    )
+    out = LogIntelligenceAgentOutput.model_validate(
+        {"contract": meta, "log_summary": "s", "undeclared_nested": {"k": "v"}}
+    )
+    assert out.model_dump()["undeclared_nested"] == {"k": "v"}
+
+
+def test_regression_watchman_contract_preserves_undeclared_key():
+    from app.models.agent_contracts import (
+        AgentContractMetadata,
+        RegressionWatchmanAgentOutput,
+    )
+
+    meta = AgentContractMetadata(
+        agent_name="regression_watchman",
+        confidence_score=80,
+        evidence_count=1,
+        decision_reason="ok",
+    )
+    out = RegressionWatchmanAgentOutput.model_validate(
+        {"contract": meta, "extra_workflow_key": [1, 2, 3]}
+    )
+    assert out.model_dump()["extra_workflow_key"] == [1, 2, 3]

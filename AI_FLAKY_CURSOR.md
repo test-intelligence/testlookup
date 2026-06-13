@@ -9,6 +9,13 @@ State of record across recurring headless sessions. Updated + pushed every run.
 - [x] Branch created off origin/main
 - [x] Bootstrap commit pushed + verified on origin (run 1)
 
+## Queued cleanup (apply before next pending phase)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| CLEANUP-1 RegressionWatchman success-path never-raise | done | run 6: `_summarize_classification(...)` guarded helper (skip non-dict; per-value `int()` try/except→0; empty→100). run()-level regression test feeds non-dict value + non-numeric 'confidence' string → no raise, valid contract. Reproduced defect first (ValueError on int('high')). |
+| CLEANUP-2 LogIntelligence/RegressionWatchman extra='allow' parity | done | run 6: added `model_config = ConfigDict(extra='allow')` to both contracts (parity w/ RunCompare); undeclared-key-survival tests added for both. |
+
 ## Phases
 
 | Phase | Status | Notes |

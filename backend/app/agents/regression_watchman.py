@@ -145,6 +145,7 @@ class RegressionWatchman(BaseAgent):
             {"status": "completed", "message": f"Classified {len(classification)} failure clusters"},
         )
 
+        confidence, evidence_refs = self._summarize_classification(classification)
         return validate_agent_contract(
             RegressionWatchmanAgentOutput,
             {
@@ -156,14 +157,36 @@ class RegressionWatchman(BaseAgent):
             agent_name=self.stage_name,
             agent_version="v1",
             fallback_used=False,
-            confidence=(
-                int(sum(int(v.get("confidence", 0)) for v in classification.values()) / len(classification))
-                if classification
-                else 100
-            ),
-            evidence_refs=[{"type": "cluster", "id": str(cid)} for cid in list(classification)[:10]],
+            confidence=confidence,
+            evidence_refs=evidence_refs,
             decision_reason=f"Classified {len(classification)} failure clusters",
         )
+
+    @staticmethod
+    def _summarize_classification(classification: dict) -> tuple[int, list[dict]]:
+        """Derive (confidence, evidence_refs) for the success contract defensively.
+
+        The classification dict can hold values merged back from a partially
+        validated LLM payload, so a value may not be a dict and a ``confidence``
+        field may be a non-numeric string. This helper coerces each value so the
+        success path can NEVER raise (the contract layer exists to prevent a
+        malformed classification from failing the whole pipeline run).
+        """
+        if not isinstance(classification, dict) or not classification:
+            return 100, []
+
+        confidences: list[int] = []
+        for value in classification.values():
+            if not isinstance(value, dict):
+                continue
+            try:
+                confidences.append(int(value.get("confidence", 0)))
+            except (TypeError, ValueError):
+                confidences.append(0)
+
+        confidence = int(sum(confidences) / len(confidences)) if confidences else 100
+        evidence_refs = [{"type": "cluster", "id": str(cid)} for cid in list(classification)[:10]]
+        return confidence, evidence_refs
 
     # -- Classification logic --------------------------------------------------
 
