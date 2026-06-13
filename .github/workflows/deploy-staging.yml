@@ -71,7 +71,7 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Deploy via SSH to GCP VM
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.GCP_VM_HOST_STAGING }}
           username: ${{ secrets.GCP_VM_USER }}
