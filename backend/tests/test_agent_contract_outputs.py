@@ -18,6 +18,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.agent_contracts import (
+    RegressionWatchmanAgentOutput,
+    validate_agent_contract,
+)
+
 
 def _tool_returning(value):
     """A stand-in for a langchain StructuredTool whose ainvoke returns value."""
@@ -30,11 +35,6 @@ def _tool_raising(exc):
     tool = MagicMock()
     tool.ainvoke = AsyncMock(side_effect=exc)
     return tool
-
-from app.models.agent_contracts import (
-    RegressionWatchmanAgentOutput,
-    validate_agent_contract,
-)
 
 
 @pytest.mark.asyncio

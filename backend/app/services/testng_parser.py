@@ -77,7 +77,7 @@ def _log_steps(testcase) -> List[dict]:
             # ``<reporter-output>`` wraps each entry in a <line> child; the
             # system-* blocks carry raw text. Handle both.
             lines = [_clean(ln.text) for ln in block.findall("line")]
-            text = "\n".join(l for l in lines if l) if lines else _clean(block.text)
+            text = "\n".join(ln for ln in lines if ln) if lines else _clean(block.text)
             if not text:
                 continue
             if len(out) >= _MAX_LOG_STEPS:

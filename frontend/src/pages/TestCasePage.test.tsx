@@ -13,6 +13,8 @@ const { mockProjectState } = vi.hoisted(() => ({
 
 vi.mock('@/hooks/useRuns', () => ({
   useTestCase: vi.fn(),
+  useTestSteps: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useTestCaseHistory: vi.fn(() => ({ data: undefined, isLoading: false })),
 }))
 
 vi.mock('@/store/projectStore', () => ({

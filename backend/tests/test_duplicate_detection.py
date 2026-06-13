@@ -35,7 +35,6 @@ from app.services import duplicate_detection_service as svc  # noqa: E402
 from app.models.postgres import (  # noqa: E402
     DismissedDuplicatePair,
     DuplicateTestCaseCandidate,
-    ManagedTestCase,
 )
 
 
@@ -228,7 +227,7 @@ async def test_structural_near_duplicate_scored():
                {"step_number": 3, "action": "click the login button", "expected_result": "dashboard"}],
     )
     db = FakeDB(cases=[a, b])
-    result = await svc.detect_duplicates_for_project(db, pid, enable_semantic=False)
+    await svc.detect_duplicates_for_project(db, pid, enable_semantic=False)
 
     cands = [r for r in db.added if isinstance(r, DuplicateTestCaseCandidate)]
     assert len(cands) == 1
