@@ -7,6 +7,11 @@ import json
 
 import structlog
 
+from app.agents.evidence import EvidenceRef
+from app.models.agent_contracts import (
+    LogIntelligenceAgentOutput,
+    validate_agent_contract,
+)
 from app.tools.detect_log_anomaly import detect_log_rate_anomaly
 from app.tools.reconstruct_trace import reconstruct_distributed_trace
 
@@ -69,4 +74,29 @@ class LogIntelligenceAgent:
         anomaly_assessment = evidence.get("log_anomaly", {}).get("assessment", "Anomaly check unavailable.")
         evidence["log_summary"] = f"Trace: {trace_summary} | Anomaly: {anomaly_assessment}"
 
-        return evidence
+        trace_ok = "error" not in evidence.get("distributed_trace", {})
+        anomaly_ok = "error" not in evidence.get("log_anomaly", {})
+        structured_evidence: list[EvidenceRef] = []
+        if trace_ok:
+            structured_evidence.append(EvidenceRef(
+                source="distributed_trace",
+                ref_id=service_name,
+                excerpt=trace_summary,
+                strength="medium",
+                contribution=80,
+            ))
+        if anomaly_ok:
+            structured_evidence.append(EvidenceRef(
+                source="log_anomaly",
+                ref_id=service_name,
+                excerpt=anomaly_assessment,
+                strength="medium",
+                contribution=80,
+            ))
+        fallback_used = not (trace_ok and anomaly_ok)
+        return validate_agent_contract(
+            LogIntelligenceAgentOutput, evidence, agent_name="log_intelligence",
+            agent_version="v1", fallback_used=fallback_used,
+            structured_evidence=structured_evidence,
+            decision_reason="log_evidence_gathered" if not fallback_used else "partial_log_evidence",
+        )

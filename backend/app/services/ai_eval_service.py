@@ -270,6 +270,30 @@ def compute_metrics_for_task_type(task_type: str, items: list[dict]) -> dict:
     return fn(items)
 
 
+def compute_agent_report_quality(samples: list) -> dict:
+    """Score recorded agent outputs into a JSON-safe quality report (AIQ-P5).
+
+    Thin sync adapter over ``agent_eval_harness.evaluate_agent_outputs``. Each
+    item may already be an ``AgentEvalSample`` (passed through) or a mapping that
+    is coerced via ``AgentEvalSample(**item)``. The harness never raises; this
+    helper mirrors that invariant and degrades a malformed item to defaults.
+    The lazy import keeps the harness (pure-local, no DB/LLM) off the module's
+    import path until a caller actually needs it.
+    """
+    from app.services.agent_eval_harness import (
+        AgentEvalSample,
+        evaluate_agent_outputs,
+    )
+
+    coerced: list[AgentEvalSample] = []
+    for item in samples if isinstance(samples, (list, tuple)) else []:
+        if isinstance(item, AgentEvalSample):
+            coerced.append(item)
+        elif isinstance(item, dict):
+            coerced.append(AgentEvalSample(**item))
+    return evaluate_agent_outputs(coerced).model_dump(mode="json")
+
+
 # ── Human-AI agreement from feedback ────────────────────────────────────────
 
 

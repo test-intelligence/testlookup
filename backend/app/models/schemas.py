@@ -2393,6 +2393,15 @@ class FlakyCoachEntry(BaseModel):
     stabilization_actions: List[str] = []
     impact_score: float = 0.0
     status_history: List[str] = []
+    # FLK-P1 intermittency signals (computed at read time; None when the test
+    # has no granular window to score). status_volatility = flips/(runs-1);
+    # error_signature_diversity = unique error prefixes / fail_count; label
+    # discriminates intermittent flakiness from low-volatility regression.
+    status_volatility: Optional[float] = None
+    error_signature_diversity: Optional[float] = None
+    stack_trace_diversity: Optional[float] = None
+    in_run_retry_rate: Optional[float] = None
+    intermittency_label: Optional[str] = None
 
 
 class FlakyCoachResponse(BaseModel):
