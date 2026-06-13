@@ -159,7 +159,7 @@ jobs:
           flags: backend
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4.4.3
+        uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: backend-test-results
