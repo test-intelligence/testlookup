@@ -90,7 +90,7 @@ click==8.1.8
 # ── Export: Excel / Word / PDF ───────────────────────────────
 openpyxl==3.1.5           # Excel export (.xlsx)
 python-docx==1.1.2        # Word export (.docx) + document ingestion
-reportlab==4.4.10         # PDF generation
+reportlab==4.5.1         # PDF generation
 pypdf==5.1.0              # PDF text extraction (knowledge RAG)
 beautifulsoup4==4.12.3    # HTML content extraction (knowledge RAG)
 
