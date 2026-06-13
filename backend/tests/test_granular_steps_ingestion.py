@@ -259,8 +259,6 @@ class _FakeDB:
 
     # begin_nested() is used by get_or_create_canonical / suite helpers.
     def begin_nested(self):
-        db = self
-
         class _Ctx:
             async def __aenter__(self_inner):
                 return self_inner
@@ -1012,10 +1010,12 @@ async def test_get_test_steps_tree_output_validates_against_response_model():
             if "from test_cases" in sql or "test_cases." in sql:
                 res.scalar_one_or_none = MagicMock(return_value=tc)
             elif "test_steps" in sql:
-                scal = MagicMock(); scal.all = MagicMock(return_value=[parent, child])
+                scal = MagicMock()
+                scal.all = MagicMock(return_value=[parent, child])
                 res.scalars = MagicMock(return_value=scal)
             elif "test_attachments" in sql:
-                scal = MagicMock(); scal.all = MagicMock(return_value=[att])
+                scal = MagicMock()
+                scal.all = MagicMock(return_value=[att])
                 res.scalars = MagicMock(return_value=scal)
             else:
                 res.scalar_one_or_none = MagicMock(return_value=None)

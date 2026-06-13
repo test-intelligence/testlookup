@@ -11,8 +11,6 @@ values. No fixtures, sessions, or network.
 """
 from __future__ import annotations
 
-import math
-
 import pytest
 
 from app.services.agent_eval_harness import (
