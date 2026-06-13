@@ -6,6 +6,61 @@ because the repo's `docs/` tree is gitignored.)
 
 ---
 
+## FLK-P1 — Intermittency + error-signature analysis  *(delivered 2026-06-13)*
+
+**Goal.** Make a flaky verdict a *discriminating* signal: separate a
+high-volatility flake (flips pass↔fail, many distinct errors, in-run framework
+retries) from a low-volatility regression (fails persistently with one repeated
+error — a real bug that must not be quarantined on the flake track).
+
+**New scorer — `backend/app/services/flaky_signals.py`** (pure, no-DB,
+never-raise; safe under `AI_OFFLINE_MODE` by construction).
+`compute_intermittency_signals(records) -> IntermittencySignals` over a per-run
+window yields:
+
+| signal | definition |
+|--------|------------|
+| `status_volatility` | `flips / (runs - 1)` — adjacent pass↔fail changes |
+| `error_signature_diversity` | unique denoised error-prefix signatures / fail_count |
+| `stack_trace_diversity` | unique stack-trace fingerprints / fail_count (many ⇒ environmental/race; one ⇒ deterministic bug) |
+| `in_run_retry_rate` | fraction of runs with a framework in-run retry / `is_flaky_run` flag (granular PR #169 columns) |
+| `intermittency_label` | `intermittent_flaky` · `environmental_flaky` · `low_volatility_flaky` · `persistent_regression` · `insufficient_data` |
+
+Error/stack signatures are denoised (hex addresses, long ids, timestamps, bare
+numbers → `#`) so run-specific values don't inflate diversity. Every input is
+coerced defensively — `None`, non-`Mapping` items, enum-repr statuses,
+non-numeric `retry_count`, and un-stringable error objects all degrade to a
+neutral contribution rather than raising.
+
+**Wiring — `test_health_coach_service.py`.**
+- `refresh_flaky_coach` joins the granular `TestCase` meta (`error_message`,
+  `stack_trace`, `retry_count`, `is_flaky_run`, keyed by
+  `TestCaseHistory.test_case_id`) into its existing windowed query (no new
+  round-trip) and scores intermittency per fingerprint. A `persistent_regression`
+  that would otherwise be `QUARANTINE` is downgraded to `INVESTIGATE`, and
+  label-aware stabilization lines are appended. **The quarantine state machine is
+  untouched** — only the advisory recommendation string changes.
+- `get_flaky_coach` scores intermittency at read time for the bounded
+  leaderboard set (`_load_intermittency_signals`, one extra batched windowed
+  query) and surfaces the numeric signals on new optional `FlakyCoachEntry`
+  fields, so `/flaky-coach` shows the new signal.
+
+**Guarantees / non-goals.** No migration (read-time compute + verdict
+refinement; the numeric signals are derived, not persisted — FLK-P2 owns the
+confidence-interval columns). No new service commit. No outbound calls. `/failures`
+surfacing is FLK-P4. Manual-triage leaderboard rows have no window and carry
+`None` signals.
+
+**Tests.** `backend/tests/test_flaky_signals.py` (16) — discrimination
+(environmental vs persistent-regression vs in-run-retry), stack/error diversity,
+noise normalisation, never-raise on malformed input, the refresh downgrade, and
+the read-time surfacing. Existing `test_flaky_coach_batched_queries.py` round-trip
+pins still hold (refresh stays at 4 queries).
+
+**Rollout.** Pure code + tests. Rollback = revert the commit; nothing to unwind.
+
+---
+
 ## AIQ-P5 — Report-quality eval harness for agent outputs  *(delivered 2026-06-12)*
 
 ### What it does

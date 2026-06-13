@@ -34,6 +34,10 @@ from app.models.schemas import (
     TestHealthResponse,
     TestHealthViolation,
 )
+from app.services.flaky_signals import (
+    IntermittencySignals,
+    compute_intermittency_signals,
+)
 
 logger = logging.getLogger("services.test_health_coach")
 
@@ -128,6 +132,109 @@ def _get_stabilization_actions(anti_patterns: list[str]) -> list[str]:
     if not actions:
         actions.append("Review test for environment sensitivity or data dependencies")
     return actions
+
+
+# ── FLK-P1 intermittency signal helpers ──────────────────────────────────────
+
+_SIGNAL_ACTION_BY_LABEL: dict[str, str] = {
+    "intermittent_flaky": (
+        "High status volatility — test flips pass↔fail intermittently; classic "
+        "flake. Investigate timing/ordering/shared-state before quarantining."
+    ),
+    "environmental_flaky": (
+        "High volatility with many distinct error signatures — likely "
+        "environmental/infra noise (network, resources, race). Stabilize the "
+        "environment or add contract stubs."
+    ),
+    "low_volatility_flaky": (
+        "Moderate intermittency — monitor; gather more runs to confirm the "
+        "flake versus an emerging regression."
+    ),
+    "persistent_regression": (
+        "Low status volatility with a single repeated error signature — looks "
+        "like a real regression, not a flake. Investigate as a bug rather than "
+        "quarantining on the flake track."
+    ),
+}
+
+
+def _signal_actions(signals: "IntermittencySignals") -> list[str]:
+    """Human-readable, signal-aware stabilization lines for a flaky verdict."""
+    lines: list[str] = []
+    label_line = _SIGNAL_ACTION_BY_LABEL.get(signals.intermittency_label)
+    if label_line:
+        lines.append(label_line)
+    if signals.in_run_retry_rate > 0.0:
+        lines.append(
+            "Framework recorded in-run retries / flaky flags on "
+            f"{round(signals.in_run_retry_rate * 100)}% of runs — strong in-run "
+            "flake signal."
+        )
+    return lines
+
+
+async def _load_intermittency_signals(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    fingerprints: list[str],
+    cutoff: datetime,
+) -> dict[str, IntermittencySignals]:
+    """Score intermittency for a bounded set of leaderboard fingerprints from
+    their recent windowed history + granular TestCase meta. One batched query;
+    pure-read on the caller's session.
+    """
+    fps = [fp for fp in fingerprints if fp]
+    if not fps:
+        return {}
+
+    _rn = sa_func.row_number().over(
+        partition_by=TestCaseHistory.test_fingerprint,
+        order_by=TestCaseHistory.created_at.desc(),
+    ).label("rn")
+    _ranked = (
+        select(
+            TestCaseHistory.test_fingerprint.label("fp"),
+            TestCaseHistory.status.label("status"),
+            TestCaseHistory.created_at.label("created_at"),
+            TestCase.error_message.label("error_message"),
+            TestCase.stack_trace.label("stack_trace"),
+            TestCase.retry_count.label("retry_count"),
+            TestCase.is_flaky_run.label("is_flaky_run"),
+            _rn,
+        )
+        .join(TestRun, TestRun.id == TestCaseHistory.test_run_id)
+        .join(TestCase, TestCase.id == TestCaseHistory.test_case_id, isouter=True)
+        .where(
+            TestRun.project_id == project_id,
+            TestCaseHistory.test_fingerprint.in_(fps),
+            TestCaseHistory.created_at >= cutoff,
+        )
+        .subquery()
+    )
+    stmt = (
+        select(
+            _ranked.c.fp,
+            _ranked.c.status,
+            _ranked.c.error_message,
+            _ranked.c.stack_trace,
+            _ranked.c.retry_count,
+            _ranked.c.is_flaky_run,
+        )
+        .where(_ranked.c.rn <= 30)
+        .order_by(_ranked.c.fp, _ranked.c.created_at.desc())
+    )
+    rows_by_fp: dict[str, list[dict]] = {}
+    for r in (await db.execute(stmt)).all():
+        rows_by_fp.setdefault(r.fp, []).append(
+            {
+                "status": r.status,
+                "error_message": r.error_message,
+                "stack_trace": r.stack_trace,
+                "retry_count": r.retry_count,
+                "is_flaky_run": r.is_flaky_run,
+            }
+        )
+    return {fp: compute_intermittency_signals(rows) for fp, rows in rows_by_fp.items()}
 
 
 # ── Per-run test health retrieval ────────────────────────────────────────────
@@ -284,8 +391,17 @@ async def get_flaky_coach(
         await _populate_flaky_cache_in_new_session(project_id, days)
         rows = await _load_flaky_cache(db, project_id, limit)
 
+    # FLK-P1: score intermittency at read time for the bounded leaderboard set
+    # so flaky verdicts carry status_volatility / error_signature_diversity /
+    # an intermittency label without persisting (and without a migration).
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    signals_by_fp = await _load_intermittency_signals(
+        db, project_id, [r.test_fingerprint for r in rows], cutoff
+    )
+
     entries = []
     for row in rows:
+        sig = signals_by_fp.get(row.test_fingerprint)
         entries.append(FlakyCoachEntry(
             test_fingerprint=row.test_fingerprint,
             test_name=row.test_name,
@@ -299,6 +415,11 @@ async def get_flaky_coach(
             stabilization_actions=row.stabilization_actions or [],
             impact_score=round(row.impact_score, 1),
             status_history=row.status_history or [],
+            status_volatility=sig.status_volatility if sig else None,
+            error_signature_diversity=sig.error_signature_diversity if sig else None,
+            stack_trace_diversity=sig.stack_trace_diversity if sig else None,
+            in_run_retry_rate=sig.in_run_retry_rate if sig else None,
+            intermittency_label=sig.intermittency_label if sig else None,
         ))
 
     # Augment with tests humans have manually triaged as ``FLAKY_TEST``
@@ -435,14 +556,23 @@ async def refresh_flaky_coach(
             partition_by=TestCaseHistory.test_fingerprint,
             order_by=TestCaseHistory.created_at.desc(),
         ).label("rn")
+        # FLK-P1: join TestCase (per-run snapshot, keyed by history.test_case_id)
+        # to carry the error_message / stack_trace / retry_count / is_flaky_run
+        # granular signals into the per-fingerprint window so intermittency can
+        # be scored without an extra query.
         _ranked = (
             select(
                 TestCaseHistory.test_fingerprint.label("fp"),
                 TestCaseHistory.status.label("status"),
                 TestCaseHistory.created_at.label("created_at"),
+                TestCase.error_message.label("error_message"),
+                TestCase.stack_trace.label("stack_trace"),
+                TestCase.retry_count.label("retry_count"),
+                TestCase.is_flaky_run.label("is_flaky_run"),
                 _rn,
             )
             .join(TestRun, TestRun.id == TestCaseHistory.test_run_id)
+            .join(TestCase, TestCase.id == TestCaseHistory.test_case_id, isouter=True)
             .where(
                 TestRun.project_id == project_id,
                 TestCaseHistory.test_fingerprint.in_(fps),
@@ -451,7 +581,15 @@ async def refresh_flaky_coach(
             .subquery()
         )
         status_stmt = (
-            select(_ranked.c.fp, _ranked.c.status, _ranked.c.created_at)
+            select(
+                _ranked.c.fp,
+                _ranked.c.status,
+                _ranked.c.created_at,
+                _ranked.c.error_message,
+                _ranked.c.stack_trace,
+                _ranked.c.retry_count,
+                _ranked.c.is_flaky_run,
+            )
             .where(_ranked.c.rn <= 30)
             .order_by(_ranked.c.fp, _ranked.c.created_at.desc())
         )
@@ -497,6 +635,26 @@ async def refresh_flaky_coach(
         quarantine_rec = _compute_quarantine_recommendation(failure_rate)
         impact = _compute_impact_score(failure_rate, total)
 
+        # FLK-P1: score intermittency from the same window (status + granular
+        # error/stack/retry meta carried by status_stmt) and discriminate a
+        # high-volatility flake from a low-volatility regression.
+        signals = compute_intermittency_signals(
+            {
+                "status": s.status,
+                "error_message": getattr(s, "error_message", None),
+                "stack_trace": getattr(s, "stack_trace", None),
+                "retry_count": getattr(s, "retry_count", None),
+                "is_flaky_run": getattr(s, "is_flaky_run", None),
+            }
+            for s in status_rows
+        )
+        # A test that rarely flips and fails with a single repeated error looks
+        # like a real regression, not a flake — do not recommend quarantining it
+        # on the flake track (state machine is untouched; only the advisory
+        # recommendation string changes).
+        if signals.intermittency_label == "persistent_regression" and quarantine_rec == "QUARANTINE":
+            quarantine_rec = "INVESTIGATE"
+
         # Latest test name/suite for this fingerprint (prefetched above).
         tc_row = tc_by_fp.get(fp)
         test_name = tc_row.test_name if tc_row else fp
@@ -529,6 +687,8 @@ async def refresh_flaky_coach(
                 "Continue monitoring — flag if failure rate increases",
                 "Review test for potential data dependency issues",
             ]
+
+        actions.extend(_signal_actions(signals))
 
         db.add(FlakyCoachResult(
             project_id=project_id,

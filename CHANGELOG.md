@@ -50,6 +50,18 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-13 — Flaky-Test Intelligence: intermittency + error-signature analysis (FLK-P1))
+
+First phase of the Flaky-Test Intelligence (FLK) initiative. Flaky verdicts now carry **intermittency signals** that discriminate a *high-volatility flake* (flips pass↔fail with many distinct errors / in-run framework retries) from a *low-volatility regression* (fails persistently with a single repeated error — a real bug that should **not** be quarantined on the flake track). A new pure, no-DB, never-raise scorer `backend/app/services/flaky_signals.py` defines `compute_intermittency_signals(records) -> IntermittencySignals` over a per-run window:
+
+- **status_volatility** = `flips / (runs - 1)` (adjacent pass↔fail changes)
+- **error_signature_diversity** = unique denoised error-prefix signatures / fail_count
+- **stack_trace_diversity** = unique stack-trace fingerprints / fail_count (many unique ⇒ environmental/race; one ⇒ deterministic bug)
+- **in_run_retry_rate** = fraction of runs the framework recorded an in-run retry / flaky flag (granular `retry_count` / `is_flaky_run` from PR #169 — a strong in-run flake signal)
+- **intermittency_label** ∈ `intermittent_flaky` · `environmental_flaky` · `low_volatility_flaky` · `persistent_regression` · `insufficient_data`
+
+`refresh_flaky_coach` joins the granular `TestCase` meta (`error_message`, `stack_trace`, `retry_count`, `is_flaky_run`) into its existing windowed query and uses the label to refine the advisory verdict: a `persistent_regression` that would otherwise be `QUARANTINE` is downgraded to `INVESTIGATE` (the quarantine **state machine is untouched** — only the advisory recommendation string changes), and signal-aware stabilization lines are appended. `get_flaky_coach` scores intermittency at read time for the bounded leaderboard set (one extra batched query) and surfaces the numeric signals on new optional `FlakyCoachEntry` fields, so `/flaky-coach` shows the new signal. **No migration** (read-time compute + verdict refinement only), **no new service commit**, **no outbound calls** — `AI_OFFLINE_MODE` semantics untouched. New `backend/tests/test_flaky_signals.py` (16 tests) covers discrimination, granular retry/stack signals, noise normalisation, never-raise on malformed input, and the service-level refinement + surfacing.
+
 ### Fixed (2026-06-13 — AIQ-P1 cleanup: RegressionWatchman never-raise + contract field-drop parity)
 
 External review of the merged AIQ-P1 contract work surfaced two empirically-reproduced defects in `backend/app/agents/regression_watchman.py` and `backend/app/models/agent_contracts.py`, both now fixed:
