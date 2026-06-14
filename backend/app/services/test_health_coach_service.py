@@ -38,6 +38,7 @@ from app.services.flaky_signals import (
     IntermittencySignals,
     compute_intermittency_signals,
 )
+from app.services.flaky_statistics import wilson_failure_confidence
 
 logger = logging.getLogger("services.test_health_coach")
 
@@ -342,7 +343,15 @@ async def _load_flaky_cache(
     result = await db.execute(
         select(FlakyCoachResult)
         .where(FlakyCoachResult.project_id == project_id)
-        .order_by(FlakyCoachResult.impact_score.desc())
+        # FLK-P2: impact_score already encodes sample-size strength (it scales
+        # with log2(total_runs)); the Wilson lower bound is a deterministic
+        # secondary key so equal-impact rows sort by statistical strength
+        # (30/100 above 3/10). NULLS LAST keeps not-yet-recomputed rows from
+        # jumping ahead.
+        .order_by(
+            FlakyCoachResult.impact_score.desc(),
+            FlakyCoachResult.flaky_confidence_low.desc().nullslast(),
+        )
         .limit(limit)
     )
     return result.scalars().all()
@@ -420,6 +429,9 @@ async def get_flaky_coach(
             stack_trace_diversity=sig.stack_trace_diversity if sig else None,
             in_run_retry_rate=sig.in_run_retry_rate if sig else None,
             intermittency_label=sig.intermittency_label if sig else None,
+            # FLK-P2: persisted Wilson 95% interval on the failure ratio.
+            flaky_confidence_low=row.flaky_confidence_low,
+            flaky_confidence_high=row.flaky_confidence_high,
         ))
 
     # Augment with tests humans have manually triaged as ``FLAKY_TEST``
@@ -635,6 +647,11 @@ async def refresh_flaky_coach(
         quarantine_rec = _compute_quarantine_recommendation(failure_rate)
         impact = _compute_impact_score(failure_rate, total)
 
+        # FLK-P2: Wilson 95% confidence band on the failure ratio. Distinguishes
+        # a well-evidenced flake (e.g. 30/100) from a thin one (3/10) sharing the
+        # same point failure rate — the lower bound rises with the sample size.
+        confidence = wilson_failure_confidence(failed, total)
+
         # FLK-P1: score intermittency from the same window (status + granular
         # error/stack/retry meta carried by status_stmt) and discriminate a
         # high-volatility flake from a low-volatility regression.
@@ -704,6 +721,8 @@ async def refresh_flaky_coach(
             stabilization_actions=actions,
             impact_score=impact,
             status_history=statuses[:10],
+            flaky_confidence_low=confidence.low,
+            flaky_confidence_high=confidence.high,
         ))
         count += 1
 

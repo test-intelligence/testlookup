@@ -202,6 +202,7 @@ async def test_get_flaky_coach_surfaces_intermittency_signals():
         quarantine_recommendation="INVESTIGATE",
         stabilization_actions=["existing"], impact_score=10.0,
         status_history=["FAILED", "PASSED", "FAILED", "PASSED"],
+        flaky_confidence_low=0.15, flaky_confidence_high=0.85,
     )])
     signal_rows = _Result([
         SimpleNamespace(fp="fpA", status="FAILED", error_message="Timeout 0xAB",
@@ -227,3 +228,6 @@ async def test_get_flaky_coach_surfaces_intermittency_signals():
         "intermittent_flaky", "environmental_flaky", "low_volatility_flaky",
         "persistent_regression", "insufficient_data",
     }
+    # FLK-P2: the persisted Wilson confidence band is surfaced from the cache row.
+    assert entry.flaky_confidence_low == 0.15
+    assert entry.flaky_confidence_high == 0.85

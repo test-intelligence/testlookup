@@ -2402,6 +2402,13 @@ class FlakyCoachEntry(BaseModel):
     stack_trace_diversity: Optional[float] = None
     in_run_retry_rate: Optional[float] = None
     intermittency_label: Optional[str] = None
+    # FLK-P2 statistical confidence: Wilson 95% interval on the failure ratio.
+    # None for manual-triage entries (no statistical sample) and historical
+    # cached rows not yet recomputed. The lower bound expresses statistical
+    # strength — for a fixed point estimate it rises with the sample size, so a
+    # flake confirmed over many runs outranks one inferred from a few.
+    flaky_confidence_low: Optional[float] = None
+    flaky_confidence_high: Optional[float] = None
 
 
 class FlakyCoachResponse(BaseModel):

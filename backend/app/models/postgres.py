@@ -2434,6 +2434,11 @@ class FlakyCoachResult(Base):
     stabilization_actions: Mapped[Optional[list]] = mapped_column(JSON, default=list)
     impact_score: Mapped[float] = mapped_column(Float, default=0.0)
     status_history: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    # FLK-P2: Wilson 95% confidence band on the failure ratio (failed_runs /
+    # total_runs). Nullable — historical rows + manual-triage entries carry no
+    # statistical interval until the next refresh recomputes them.
+    flaky_confidence_low: Mapped[Optional[float]] = mapped_column(Float)
+    flaky_confidence_high: Mapped[Optional[float]] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 

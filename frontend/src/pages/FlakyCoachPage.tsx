@@ -93,6 +93,21 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
             </div>
           </div>
 
+          {entry.flaky_confidence_low != null && entry.flaky_confidence_high != null && (
+            <div>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Failure rate 95% CI{' '}
+                <span className="text-[var(--color-text-faint)]">(Wilson)</span>
+              </p>
+              <p className="text-[var(--color-text-secondary)] font-mono text-xs">
+                {(entry.flaky_confidence_low * 100).toFixed(0)}% – {(entry.flaky_confidence_high * 100).toFixed(0)}%
+                <span className="text-[var(--color-text-faint)]">
+                  {' '}· narrower over more runs (statistical strength)
+                </span>
+              </p>
+            </div>
+          )}
+
           {entry.stabilization_actions.length > 0 && (
             <div>
               <p className="text-xs text-[var(--color-text-muted)] mb-1">Stabilization Actions</p>

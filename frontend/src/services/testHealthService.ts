@@ -40,6 +40,16 @@ export interface FlakyCoachEntry {
   stabilization_actions: string[]
   impact_score: number
   status_history: string[]
+  // FLK-P1 intermittency signals (read-time; null when no granular window).
+  status_volatility?: number | null
+  error_signature_diversity?: number | null
+  stack_trace_diversity?: number | null
+  in_run_retry_rate?: number | null
+  intermittency_label?: string | null
+  // FLK-P2 Wilson 95% confidence band on the failure ratio (null for
+  // manual-triage entries and not-yet-recomputed cached rows).
+  flaky_confidence_low?: number | null
+  flaky_confidence_high?: number | null
 }
 
 export interface FlakyCoachResponse {
