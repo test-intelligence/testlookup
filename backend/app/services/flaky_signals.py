@@ -89,6 +89,18 @@ def _error_signature(error_message: Any) -> str:
     return denoised[:80]
 
 
+# Public, stable aliases of the signature helpers so other flaky modules
+# (FLK-P4 investigator) can cluster failures without reaching into privates.
+def error_signature(error_message: Any) -> str:
+    """Public alias of the noise-free error-message signature."""
+    return _error_signature(error_message)
+
+
+def stack_fingerprint(stack_trace: Any) -> str:
+    """Public alias of the stack-trace fingerprint."""
+    return _stack_fingerprint(stack_trace)
+
+
 def _stack_fingerprint(stack_trace: Any) -> str:
     """SHA over the first ~500 chars of a stack trace. Many unique fingerprints
     per flaky test => environmental/race; one fingerprint => deterministic bug.

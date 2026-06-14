@@ -15,6 +15,13 @@ from app.agents.base import BaseAgent
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import FlakySentinelAgentOutput, validate_agent_contract
 from app.models.postgres import TestCase, TestCaseHistory, TestRun, TestStatus
+from app.services.flaky_investigator import build_flaky_verdict, cluster_failures
+from app.services.flaky_signals import compute_intermittency_signals
+from app.services.flaky_statistics import wilson_failure_confidence
+from app.services.ml.flaky_confidence import (
+    FlakyConfidenceModel,
+    build_flaky_feature_vector,
+)
 from app.tools.fetch_build_changes import fetch_build_changes
 
 logger = structlog.get_logger("agents.flaky_sentinel")
@@ -86,10 +93,22 @@ class FlakySentinelAgent(BaseAgent):
     async def _investigate_flaky_test(
         self, db, tc: TestCase, tc_id: str, project_id: str
     ) -> dict | None:
-        # Get last 20 history entries scoped to this project
+        # Get last 20 history entries scoped to this project. FLK-P4: join the
+        # per-run TestCase meta (error_message / stack_trace / retry_count /
+        # is_flaky_run) so the investigator can cluster failures and build a
+        # structured, evidence-backed verdict from the same window.
         hist_result = await db.execute(
-            select(TestCaseHistory)
+            select(
+                TestCaseHistory.status.label("status"),
+                TestCaseHistory.created_at.label("created_at"),
+                TestCaseHistory.test_run_id.label("test_run_id"),
+                TestCase.error_message.label("error_message"),
+                TestCase.stack_trace.label("stack_trace"),
+                TestCase.retry_count.label("retry_count"),
+                TestCase.is_flaky_run.label("is_flaky_run"),
+            )
             .join(TestRun, TestRun.id == TestCaseHistory.test_run_id)
+            .join(TestCase, TestCase.id == TestCaseHistory.test_case_id, isouter=True)
             .where(
                 TestCaseHistory.test_fingerprint == tc.test_fingerprint,
                 TestRun.project_id == project_id,
@@ -97,7 +116,7 @@ class FlakySentinelAgent(BaseAgent):
             .order_by(TestCaseHistory.created_at.desc())
             .limit(20)
         )
-        history = hist_result.scalars().all()
+        history = hist_result.all()  # most-recent-first Row objects
 
         if len(history) < 3:
             return {
@@ -157,6 +176,37 @@ class FlakySentinelAgent(BaseAgent):
         else:
             recommendation = "MONITOR -- low flakiness rate, worth tracking but not yet critical"
 
+        # FLK-P4: confirm + EXPLAIN the verdict. Build the per-run records from
+        # the joined window, score intermittency (FLK-P1), the Wilson interval
+        # (FLK-P2) and the ML confidence (FLK-P3), cluster the failures, and
+        # assemble a structured {is_flaky, confidence, likely_cause, evidence[]}
+        # verdict (AIQ-P1/P3). All helpers are pure + never-raise.
+        records = [
+            {
+                "status": h.status,
+                "created_at": h.created_at,
+                "error_message": h.error_message,
+                "stack_trace": h.stack_trace,
+                "retry_count": h.retry_count,
+                "is_flaky_run": h.is_flaky_run,
+            }
+            for h in history  # most-recent-first
+        ]
+        signals = compute_intermittency_signals(records)
+        wilson = wilson_failure_confidence(failed_count, len(statuses))
+        ml_confidence = FlakyConfidenceModel.predict(
+            build_flaky_feature_vector(failure_rate, signals, records)
+        )
+        clusters = cluster_failures(records)
+        verdict = build_flaky_verdict(
+            failure_rate,
+            signals,
+            ml_confidence=ml_confidence,
+            wilson=wilson,
+            clusters=clusters,
+            build_change_summary=change_summary,
+        )
+
         # Tier 1 item 3 — if the flip rate crosses the quarantine floor,
         # propose the test for QA Lead approval via the quarantine service.
         # Threshold matches the acceptance criterion (>= 20% flip rate over
@@ -208,4 +258,9 @@ class FlakySentinelAgent(BaseAgent):
             "recommendation": recommendation,
             "status_history": [str(s) for s in statuses[-10:]],
             "quarantine_request_id": quarantine_request_id,
+            # FLK-P4 structured verdict: {is_flaky, confidence, likely_cause,
+            # likely_cause_code, evidence[], confidence_breakdown}.
+            "verdict": verdict,
+            "is_flaky": verdict["is_flaky"],
+            "likely_cause": verdict["likely_cause"],
         }

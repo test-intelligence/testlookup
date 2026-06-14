@@ -38,6 +38,7 @@ from app.services.flaky_signals import (
     IntermittencySignals,
     compute_intermittency_signals,
 )
+from app.services.flaky_investigator import determine_likely_cause
 from app.services.flaky_statistics import wilson_failure_confidence
 from app.services.ml.flaky_confidence import (
     FlakyConfidenceModel,
@@ -450,6 +451,13 @@ async def get_flaky_coach(
     entries = []
     for row in rows:
         sig = signals_by_fp.get(row.test_fingerprint)
+        # FLK-P4: attribute a likely cause at read time from the intermittency
+        # signals + the persisted ML confidence (pure, never-raise).
+        likely_cause = likely_cause_code = None
+        if sig is not None:
+            likely_cause, likely_cause_code = determine_likely_cause(
+                sig, ml_confidence=row.is_flaky_confidence
+            )
         entries.append(FlakyCoachEntry(
             test_fingerprint=row.test_fingerprint,
             test_name=row.test_name,
@@ -473,6 +481,9 @@ async def get_flaky_coach(
             flaky_confidence_high=row.flaky_confidence_high,
             # FLK-P3: persisted ML flakiness-confidence.
             is_flaky_confidence=row.is_flaky_confidence,
+            # FLK-P4: read-time likely-cause attribution.
+            flaky_likely_cause=likely_cause,
+            flaky_likely_cause_code=likely_cause_code,
         ))
 
     # Augment with tests humans have manually triaged as ``FLAKY_TEST``

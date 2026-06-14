@@ -1495,14 +1495,19 @@ function FlakinessCard({ flaky, repeatFailures }: { flaky: FlakyTestItem[]; repe
             {flaky.slice(0, 5).map(f => (
               <div
                 key={f.test_fingerprint}
-                className="grid items-center gap-3 rounded-sm border px-2.5 py-2 text-[12px]"
-                style={{ gridTemplateColumns: '1fr auto', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+                className="flex flex-col gap-1 rounded-sm border px-2.5 py-2 text-[12px]"
+                style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
               >
-                <span className="font-mono text-[11.5px] text-[var(--color-text)] truncate">{f.test_name}</span>
-                {f.source === 'manual' ? (
-                  <span className="tabular-nums" style={{ color: '#93c5fd' }} title="Manually triaged as flaky on /my-failures">Flagged</span>
-                ) : (
-                  <span className="tabular-nums" style={{ color: '#fcd34d' }}>{Math.round(f.failure_rate_pct)}% flake</span>
+                <div className="grid items-center gap-3" style={{ gridTemplateColumns: '1fr auto' }}>
+                  <span className="font-mono text-[11.5px] text-[var(--color-text)] truncate">{f.test_name}</span>
+                  {f.source === 'manual' ? (
+                    <span className="tabular-nums" style={{ color: '#93c5fd' }} title="Manually triaged as flaky on /my-failures">Flagged</span>
+                  ) : (
+                    <span className="tabular-nums" style={{ color: '#fcd34d' }}>{Math.round(f.failure_rate_pct)}% flake</span>
+                  )}
+                </div>
+                {f.likely_cause && (
+                  <span className="text-[10.5px] text-[var(--color-text-muted)] leading-tight">{f.likely_cause}</span>
                 )}
               </div>
             ))}

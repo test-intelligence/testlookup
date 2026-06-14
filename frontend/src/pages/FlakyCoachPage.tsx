@@ -131,6 +131,13 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
             </div>
           )}
 
+          {entry.flaky_likely_cause && (
+            <div>
+              <p className="text-xs text-[var(--color-text-muted)]">Likely cause</p>
+              <p className="text-[var(--color-text-secondary)] text-xs">{entry.flaky_likely_cause}</p>
+            </div>
+          )}
+
           {entry.stabilization_actions.length > 0 && (
             <div>
               <p className="text-xs text-[var(--color-text-muted)] mb-1">Stabilization Actions</p>

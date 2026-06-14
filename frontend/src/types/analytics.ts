@@ -37,6 +37,10 @@ export interface FlakyTestItem {
   // triaged it FLAKY_TEST on /my-failures (merged so /failures agrees with
   // /flaky-coach). Manual entries carry failure_rate_pct=100 as a marker.
   source?: 'auto' | 'manual'
+  // FLK-P4 likely-cause attribution from intermittency signals (null when the
+  // fingerprint has no granular window to attribute).
+  likely_cause?: string | null
+  likely_cause_code?: string | null
 }
 
 export interface FailureCategoryItem {

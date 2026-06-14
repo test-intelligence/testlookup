@@ -10,6 +10,8 @@ from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Defect, Project, TestCase, TestRun, TriageStatus
+from app.services.flaky_investigator import determine_likely_cause
+from app.services.flaky_signals import compute_intermittency_signals
 
 
 def _period_start(days: int) -> datetime:
@@ -228,7 +230,87 @@ async def flaky_tests(
             if len(items) >= limit:
                 break
 
+    # FLK-P4: attribute a likely cause to each listed flake from its
+    # intermittency signals so /failures explains *why*, matching /flaky-coach.
+    # Best-effort + tenant-scoped — never breaks the list on failure.
+    await _attach_flaky_likely_cause(
+        db, items, days=days, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
+
     return {"items": items, "period_days": days, "total": len(items)}
+
+
+async def _attach_flaky_likely_cause(
+    db: AsyncSession,
+    items: list[dict],
+    *,
+    days: int,
+    project_id: str | None,
+    allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
+) -> None:
+    """Mutate ``items`` in place, adding ``likely_cause`` / ``likely_cause_code``
+    from FLK-P1 intermittency signals over each fingerprint's recent window.
+
+    One batched, tenant-scoped windowed query (top-30 runs per fingerprint).
+    Pure-read; swallows any error so the /failures list always renders.
+    """
+    fps = [it["test_fingerprint"] for it in items if it.get("test_fingerprint")]
+    if not fps:
+        return
+    try:
+        params: dict = {"period_start": _period_start(days), "fps": fps}
+        project_filter = _tenant_filter(
+            params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+        )
+        query = text(
+            f"""
+            SELECT fp, status, created_at, error_message, stack_trace,
+                   retry_count, is_flaky_run
+            FROM (
+                SELECT
+                    tch.test_fingerprint AS fp,
+                    tch.status AS status,
+                    tch.created_at AS created_at,
+                    tc.error_message AS error_message,
+                    tc.stack_trace AS stack_trace,
+                    tc.retry_count AS retry_count,
+                    tc.is_flaky_run AS is_flaky_run,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY tch.test_fingerprint
+                        ORDER BY tch.created_at DESC
+                    ) AS rn
+                FROM test_case_history tch
+                JOIN test_cases tc ON tc.id = tch.test_case_id
+                JOIN test_runs tr  ON tr.id = tch.test_run_id
+                WHERE tch.created_at >= :period_start
+                  AND tch.test_fingerprint = ANY(:fps)
+                  {project_filter}
+            ) ranked
+            WHERE rn <= 30
+            ORDER BY fp, created_at DESC
+            """
+        )
+        rows_by_fp: dict[str, list[dict]] = {}
+        for r in (await db.execute(query, params)).fetchall():
+            m = r._mapping
+            rows_by_fp.setdefault(m["fp"], []).append({
+                "status": m["status"],
+                "created_at": m["created_at"],
+                "error_message": m["error_message"],
+                "stack_trace": m["stack_trace"],
+                "retry_count": m["retry_count"],
+                "is_flaky_run": m["is_flaky_run"],
+            })
+        for it in items:
+            recs = rows_by_fp.get(it.get("test_fingerprint"))
+            if not recs:
+                continue
+            signals = compute_intermittency_signals(recs)
+            cause, code = determine_likely_cause(signals)
+            it["likely_cause"] = cause
+            it["likely_cause_code"] = code
+    except Exception:  # pragma: no cover — best-effort enrichment
+        return
 
 
 async def failure_categories(

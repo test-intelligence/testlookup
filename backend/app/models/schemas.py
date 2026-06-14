@@ -2412,6 +2412,10 @@ class FlakyCoachEntry(BaseModel):
     # FLK-P3 ML flakiness-confidence ∈ [0, 1], learned from human quarantine
     # decisions. None when no trained model is available.
     is_flaky_confidence: Optional[float] = None
+    # FLK-P4 likely-cause attribution (read-time, from intermittency signals +
+    # the ML confidence). None when there is no granular window to attribute.
+    flaky_likely_cause: Optional[str] = None
+    flaky_likely_cause_code: Optional[str] = None
 
 
 class FlakyCoachResponse(BaseModel):

@@ -52,6 +52,9 @@ export interface FlakyCoachEntry {
   flaky_confidence_high?: number | null
   // FLK-P3 ML flakiness-confidence in [0,1] (null when no trained model).
   is_flaky_confidence?: number | null
+  // FLK-P4 likely-cause attribution (null when no granular window).
+  flaky_likely_cause?: string | null
+  flaky_likely_cause_code?: string | null
 }
 
 export interface FlakyCoachResponse {

@@ -52,9 +52,13 @@ class _Result:
 
 
 def _db(auto_rows, manual_rows):
-    """A fake AsyncSession whose two ``execute`` calls return auto then manual."""
+    """A fake AsyncSession: auto query, then manual query, then the FLK-P4
+    likely-cause enrichment query (empty by default — exercised in its own
+    suite)."""
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_Result(auto_rows), _Result(manual_rows)])
+    db.execute = AsyncMock(
+        side_effect=[_Result(auto_rows), _Result(manual_rows), _Result([])]
+    )
     return db
 
 
@@ -103,11 +107,18 @@ async def test_manual_query_skipped_when_auto_already_fills_limit():
                  class_name="C", project_name="p", total_runs=10, fail_count=3,
                  pass_count=7, failure_rate_pct=30.0, last_seen=None)]
     db = AsyncMock()
+    # auto query, then the FLK-P4 enrichment query — but NOT the manual query.
     db.execute = AsyncMock(side_effect=[_Result(auto), _Result([])])
     out = await analytics_service.flaky_tests(db, "proj", 30, 1)  # limit == 1
 
     assert len(out["items"]) == 1
-    assert db.execute.await_count == 1               # manual query never issued
+    # 2 calls = auto + likely-cause enrichment; the manual query (a 3rd call
+    # carrying ``flaky_status``) is never issued.
+    assert db.execute.await_count == 2
+    assert all(
+        "flaky_status" not in (call.args[1] if len(call.args) > 1 else {})
+        for call in db.execute.await_args_list
+    )
 
 
 @pytest.mark.asyncio
@@ -134,7 +145,7 @@ async def test_manual_query_is_tenant_scoped_by_allowed_project_ids():
     await analytics_service.flaky_tests(
         db, None, 30, 20, allowed_project_ids=[pid],
     )
-    assert db.execute.await_count == 2          # auto + manual both ran
+    assert db.execute.await_count == 3          # auto + manual + FLK-P4 enrichment
     manual_params = db.execute.await_args_list[1].args[1]
     assert manual_params.get("pid_0") == str(pid)   # manual query is scoped too
     assert "flaky_status" in manual_params          # ...and it is the manual query
