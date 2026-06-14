@@ -76,7 +76,7 @@ opentelemetry-instrumentation-redis==0.63b1
 opentelemetry-instrumentation-celery==0.63b1
 
 # ── Observability: Prometheus metrics ────────────────────────
-prometheus-client==0.21.0
+prometheus-client==0.25.0
 # Zero-config HTTP metrics for FastAPI (exposes /metrics endpoint)
 prometheus-fastapi-instrumentator==7.0.0
 
