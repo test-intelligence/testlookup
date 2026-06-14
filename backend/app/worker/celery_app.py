@@ -113,6 +113,12 @@ celery_app.conf.update(
             "task": "app.worker.tasks.resync_stale_knowledge_sources",
             "schedule": crontab(minute=0, hour="*/4"),
         },
+        # FLK-P3: nightly retrain of the flaky-confidence model from human
+        # quarantine decisions. No-op-safe until enough labeled decisions exist.
+        "nightly-flaky-confidence-training": {
+            "task": "app.worker.tasks.train_flaky_confidence_model",
+            "schedule": crontab(hour=3, minute=30),
+        },
         # Safety net for live sessions whose clients forgot to send
         # run_complete — without this the runs only show in Live Execution
         # and never propagate to Runs / Overview / Coverage / Failures /

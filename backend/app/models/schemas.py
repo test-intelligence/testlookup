@@ -2409,6 +2409,9 @@ class FlakyCoachEntry(BaseModel):
     # flake confirmed over many runs outranks one inferred from a few.
     flaky_confidence_low: Optional[float] = None
     flaky_confidence_high: Optional[float] = None
+    # FLK-P3 ML flakiness-confidence ∈ [0, 1], learned from human quarantine
+    # decisions. None when no trained model is available.
+    is_flaky_confidence: Optional[float] = None
 
 
 class FlakyCoachResponse(BaseModel):

@@ -2175,6 +2175,46 @@ def run_flaky_quarantine_maintenance(self) -> dict:
     return cast(dict[str, Any], _run_async(_run()))
 
 
+# ── FLK-P3: flaky-confidence model retraining ───────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.train_flaky_confidence_model",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def train_flaky_confidence_model(self) -> dict:
+    """Nightly retrain of the FLK-P3 flaky-confidence model from human
+    quarantine approve/reject decisions.
+
+    A no-op-safe degrade chain: returns ``insufficient_data`` /
+    ``insufficient_class_diversity`` / ``error`` status strings (never raises)
+    when scikit-learn is absent or there aren't yet enough labeled decisions,
+    so enabling this beat entry is safe on a fresh deployment. The model is a
+    LOCAL scikit-learn artifact — no outbound calls — so it is unaffected by
+    ``AI_OFFLINE_MODE``.
+    """
+    async def _run():
+        from app.services.ml.flaky_confidence import train_flaky_confidence_model as _train
+        with _beat_span("train_flaky_confidence_model") as span:
+            result = await _train()
+            span.set_attribute("result.status", str(result.get("status")))
+            if result.get("auc") is not None:
+                span.set_attribute("result.auc", float(result["auc"]))
+            span.set_attribute("result.sample_count", int(result.get("sample_count", 0)))
+            logger.info(
+                "[Task %s] flaky-confidence training: status=%s auc=%s samples=%s",
+                self.request.id,
+                result.get("status"),
+                result.get("auc"),
+                result.get("sample_count", 0),
+            )
+            return result
+
+    return cast(dict[str, Any], _run_async(_run()))
+
+
 # ── DLQ helper ────────────────────────────────────────────────────────────────
 
 async def _send_to_dlq(task_name: str, task_id: str, kwargs: dict, error: str) -> None:

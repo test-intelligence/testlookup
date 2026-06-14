@@ -2439,6 +2439,10 @@ class FlakyCoachResult(Base):
     # statistical interval until the next refresh recomputes them.
     flaky_confidence_low: Mapped[Optional[float]] = mapped_column(Float)
     flaky_confidence_high: Mapped[Optional[float]] = mapped_column(Float)
+    # FLK-P3: ML flakiness-confidence ∈ [0, 1] from the model trained on human
+    # quarantine decisions. Nullable — only set when a trained model is
+    # available at refresh time.
+    is_flaky_confidence: Mapped[Optional[float]] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 

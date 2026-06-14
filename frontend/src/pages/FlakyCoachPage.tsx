@@ -108,6 +108,29 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
             </div>
           )}
 
+          {entry.is_flaky_confidence != null && (
+            <div>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                ML flakiness confidence{' '}
+                <span className="text-[var(--color-text-faint)]">(learned from quarantine decisions)</span>
+              </p>
+              <p
+                className={clsx(
+                  'font-mono text-xs',
+                  entry.is_flaky_confidence >= 0.7 ? 'text-amber-400' :
+                  entry.is_flaky_confidence <= 0.3 ? 'text-emerald-400' :
+                  'text-[var(--color-text-secondary)]',
+                )}
+              >
+                {(entry.is_flaky_confidence * 100).toFixed(0)}%
+                <span className="text-[var(--color-text-faint)]">
+                  {' '}· {entry.is_flaky_confidence >= 0.7 ? 'likely a flake' :
+                    entry.is_flaky_confidence <= 0.3 ? 'likely a real failure' : 'uncertain'}
+                </span>
+              </p>
+            </div>
+          )}
+
           {entry.stabilization_actions.length > 0 && (
             <div>
               <p className="text-xs text-[var(--color-text-muted)] mb-1">Stabilization Actions</p>

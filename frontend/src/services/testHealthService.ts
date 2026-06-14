@@ -50,6 +50,8 @@ export interface FlakyCoachEntry {
   // manual-triage entries and not-yet-recomputed cached rows).
   flaky_confidence_low?: number | null
   flaky_confidence_high?: number | null
+  // FLK-P3 ML flakiness-confidence in [0,1] (null when no trained model).
+  is_flaky_confidence?: number | null
 }
 
 export interface FlakyCoachResponse {

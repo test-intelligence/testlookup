@@ -203,6 +203,7 @@ async def test_get_flaky_coach_surfaces_intermittency_signals():
         stabilization_actions=["existing"], impact_score=10.0,
         status_history=["FAILED", "PASSED", "FAILED", "PASSED"],
         flaky_confidence_low=0.15, flaky_confidence_high=0.85,
+        is_flaky_confidence=0.72,
     )])
     signal_rows = _Result([
         SimpleNamespace(fp="fpA", status="FAILED", error_message="Timeout 0xAB",

@@ -39,6 +39,15 @@ from app.services.flaky_signals import (
     compute_intermittency_signals,
 )
 from app.services.flaky_statistics import wilson_failure_confidence
+from app.services.ml.flaky_confidence import (
+    FlakyConfidenceModel,
+    build_flaky_feature_vector,
+)
+
+# FLK-P3: at/above this ML confidence a flaky verdict is "model-confirmed";
+# below the low bound the model is actively skeptical of the ratio-based verdict.
+_ML_CONFIRM_THRESHOLD = 0.70
+_ML_SKEPTIC_THRESHOLD = 0.30
 
 logger = logging.getLogger("services.test_health_coach")
 
@@ -172,6 +181,32 @@ def _signal_actions(signals: "IntermittencySignals") -> list[str]:
             "flake signal."
         )
     return lines
+
+
+def _ml_confidence_actions(ml_confidence: "float | None") -> list[str]:
+    """FLK-P3: advisory line from the ML flakiness-confidence model. Empty when
+    no model is available (``ml_confidence is None``) — the verdict then rests
+    on the deterministic signals alone. The quarantine state machine is
+    untouched; this only enriches the advisory text.
+    """
+    if ml_confidence is None:
+        return []
+    pct = round(ml_confidence * 100)
+    if ml_confidence >= _ML_CONFIRM_THRESHOLD:
+        return [
+            f"ML flakiness model confirms this is likely a flake ({pct}% "
+            "confidence, learned from past quarantine decisions)."
+        ]
+    if ml_confidence <= _ML_SKEPTIC_THRESHOLD:
+        return [
+            f"ML flakiness model is skeptical ({pct}% confidence) — past "
+            "quarantine decisions suggest this may be a real failure, not a "
+            "flake. Verify before quarantining."
+        ]
+    return [
+        f"ML flakiness model is uncertain ({pct}% confidence) — gather more "
+        "runs to firm up the verdict."
+    ]
 
 
 async def _load_intermittency_signals(
@@ -343,13 +378,17 @@ async def _load_flaky_cache(
     result = await db.execute(
         select(FlakyCoachResult)
         .where(FlakyCoachResult.project_id == project_id)
-        # FLK-P2: impact_score already encodes sample-size strength (it scales
-        # with log2(total_runs)); the Wilson lower bound is a deterministic
-        # secondary key so equal-impact rows sort by statistical strength
-        # (30/100 above 3/10). NULLS LAST keeps not-yet-recomputed rows from
-        # jumping ahead.
+        # Ranking keys, highest priority first:
+        #  - impact_score: already encodes sample-size strength (scales with
+        #    log2(total_runs)).
+        #  - FLK-P3 is_flaky_confidence: the ML model surfaces high-confidence
+        #    flakes ahead of ratio-only candidates within an impact tier.
+        #  - FLK-P2 Wilson lower bound: statistical-strength tie-breaker
+        #    (30/100 above 3/10).
+        # NULLS LAST keeps not-yet-recomputed / no-model rows from jumping ahead.
         .order_by(
             FlakyCoachResult.impact_score.desc(),
+            FlakyCoachResult.is_flaky_confidence.desc().nullslast(),
             FlakyCoachResult.flaky_confidence_low.desc().nullslast(),
         )
         .limit(limit)
@@ -432,6 +471,8 @@ async def get_flaky_coach(
             # FLK-P2: persisted Wilson 95% interval on the failure ratio.
             flaky_confidence_low=row.flaky_confidence_low,
             flaky_confidence_high=row.flaky_confidence_high,
+            # FLK-P3: persisted ML flakiness-confidence.
+            is_flaky_confidence=row.is_flaky_confidence,
         ))
 
     # Augment with tests humans have manually triaged as ``FLAKY_TEST``
@@ -654,17 +695,28 @@ async def refresh_flaky_coach(
 
         # FLK-P1: score intermittency from the same window (status + granular
         # error/stack/retry meta carried by status_stmt) and discriminate a
-        # high-volatility flake from a low-volatility regression.
-        signals = compute_intermittency_signals(
+        # high-volatility flake from a low-volatility regression. The window
+        # records are materialised once and reused for the FLK-P3 feature vector.
+        window_records = [
             {
                 "status": s.status,
+                "created_at": getattr(s, "created_at", None),
                 "error_message": getattr(s, "error_message", None),
                 "stack_trace": getattr(s, "stack_trace", None),
                 "retry_count": getattr(s, "retry_count", None),
                 "is_flaky_run": getattr(s, "is_flaky_run", None),
             }
             for s in status_rows
+        ]
+        signals = compute_intermittency_signals(window_records)
+
+        # FLK-P3: ML flakiness-confidence learned from human quarantine
+        # decisions. None when no trained model is available — the deterministic
+        # Wilson/intermittency signals still stand on their own.
+        ml_confidence = FlakyConfidenceModel.predict(
+            build_flaky_feature_vector(failure_rate, signals, window_records)
         )
+
         # A test that rarely flips and fails with a single repeated error looks
         # like a real regression, not a flake — do not recommend quarantining it
         # on the flake track (state machine is untouched; only the advisory
@@ -706,6 +758,7 @@ async def refresh_flaky_coach(
             ]
 
         actions.extend(_signal_actions(signals))
+        actions.extend(_ml_confidence_actions(ml_confidence))
 
         db.add(FlakyCoachResult(
             project_id=project_id,
@@ -723,6 +776,7 @@ async def refresh_flaky_coach(
             status_history=statuses[:10],
             flaky_confidence_low=confidence.low,
             flaky_confidence_high=confidence.high,
+            is_flaky_confidence=ml_confidence,
         ))
         count += 1
 
