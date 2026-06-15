@@ -24,8 +24,13 @@ export default tseslint.config(
       globals: globals.browser,
     },
     rules: {
-      // React Hooks rules
-      ...reactHooks.configs.recommended.rules,
+      // React Hooks — keep the long-standing rule behavior. v7 expands
+      // `configs.recommended` with React-Compiler rules (purity,
+      // set-state-in-effect, immutability) that flag many existing
+      // components; adopting those is a separate refactor (follow-up).
+      // Pin the two classic rules so the plugin upgrade is behavior-preserving.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
 
       // React Refresh (Vite HMR)
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
