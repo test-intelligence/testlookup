@@ -664,6 +664,80 @@ async def first_failed_step_by_fingerprint(
     }
 
 
+async def failing_step_detail_by_fingerprint(
+    db: AsyncSession,
+    project_id: uuid.UUID | str,
+    fingerprints: list[str] | set[str],
+) -> dict[str, dict]:
+    """FLK-P5: map ``test_fingerprint -> {first_failing, total_steps,
+    failing_step_count}`` for granular surgical attribution.
+
+    ``first_failing`` is the lowest-ordinal FAILED/BROKEN step's full
+    attribution payload (name, ordinal, keyword, assertion_message,
+    expected/actual, assertion_trace) — or ``None`` when the snapshot has no
+    failing step. From the LATEST-RUN-ONLY ``test_steps`` snapshot, project
+    scoped via the canonical anchor. Two batched queries; pure read; never N+1.
+    """
+    fps = [f for f in {*fingerprints} if f]
+    if not fps:
+        return {}
+
+    anchor_rows = (
+        await db.execute(
+            select(CanonicalTestCase.id, CanonicalTestCase.test_fingerprint).where(
+                CanonicalTestCase.project_id == project_id,
+                CanonicalTestCase.test_fingerprint.in_(fps),
+            )
+        )
+    ).all()
+    fp_by_canonical: dict[uuid.UUID, str] = {cid: fp for cid, fp in anchor_rows}
+    if not fp_by_canonical:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(
+                TestStep.canonical_test_case_id,
+                TestStep.ordinal,
+                TestStep.status,
+                TestStep.name,
+                TestStep.keyword,
+                TestStep.assertion_message,
+                TestStep.expected_value,
+                TestStep.actual_value,
+                TestStep.assertion_trace,
+            )
+            .where(TestStep.canonical_test_case_id.in_(list(fp_by_canonical)))
+            .order_by(TestStep.canonical_test_case_id, TestStep.ordinal)
+        )
+    ).all()
+
+    # Fold per-canonical: total steps, failing count, and the first failing step.
+    acc: dict[uuid.UUID, dict] = {}
+    for r in rows:
+        cid = r.canonical_test_case_id
+        entry = acc.setdefault(cid, {"first_failing": None, "total_steps": 0, "failing_step_count": 0})
+        entry["total_steps"] += 1
+        if str(r.status).upper().rsplit(".", 1)[-1] in _STEP_FAILED_STATUSES:
+            entry["failing_step_count"] += 1
+            if entry["first_failing"] is None:  # rows are ordinal-ascending
+                entry["first_failing"] = {
+                    "ordinal": r.ordinal,
+                    "name": r.name,
+                    "keyword": r.keyword,
+                    "assertion_message": r.assertion_message,
+                    "expected_value": r.expected_value,
+                    "actual_value": r.actual_value,
+                    "assertion_trace": r.assertion_trace,
+                }
+
+    return {
+        fp_by_canonical[cid]: detail
+        for cid, detail in acc.items()
+        if cid in fp_by_canonical
+    }
+
+
 async def step_success_by_canonical(
     db: AsyncSession,
     canonical_ids: list[uuid.UUID] | set[uuid.UUID],

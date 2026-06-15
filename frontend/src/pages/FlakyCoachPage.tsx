@@ -138,6 +138,21 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
             </div>
           )}
 
+          {entry.failing_step && (
+            <div>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Failing step{' '}
+                <span className="text-[var(--color-text-faint)]">(latest run)</span>
+              </p>
+              <p className="text-[var(--color-text-secondary)] text-xs">
+                <span className="font-mono text-[11px] text-amber-400">{entry.failing_step}</span>
+                {entry.failing_step_detail && (
+                  <span className="block text-[var(--color-text-muted)] mt-0.5">{entry.failing_step_detail}</span>
+                )}
+              </p>
+            </div>
+          )}
+
           {entry.stabilization_actions.length > 0 && (
             <div>
               <p className="text-xs text-[var(--color-text-muted)] mb-1">Stabilization Actions</p>

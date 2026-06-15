@@ -55,6 +55,9 @@ export interface FlakyCoachEntry {
   // FLK-P4 likely-cause attribution (null when no granular window).
   flaky_likely_cause?: string | null
   flaky_likely_cause_code?: string | null
+  // FLK-P5 granular step-level surgical attribution (null when no step snapshot).
+  failing_step?: string | null
+  failing_step_detail?: string | null
 }
 
 export interface FlakyCoachResponse {

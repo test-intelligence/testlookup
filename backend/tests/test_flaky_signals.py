@@ -216,8 +216,10 @@ async def test_get_flaky_coach_surfaces_intermittency_signals():
     manual = _Result([])
 
     db = SimpleNamespace()
-    # get_flaky_coach: _load_flaky_cache, _load_intermittency_signals, _load_manual_flaky_triage
-    db.execute = AsyncMock(side_effect=[cached, signal_rows, manual])
+    # get_flaky_coach calls, in order: _load_flaky_cache,
+    # _load_intermittency_signals, FLK-P5 failing_step_detail_by_fingerprint
+    # (anchors — empty here so it short-circuits), _load_manual_flaky_triage.
+    db.execute = AsyncMock(side_effect=[cached, signal_rows, _Result([]), manual])
 
     resp = await svc.get_flaky_coach(project_id, db, days=30, limit=50)
     assert resp.total_flaky == 1

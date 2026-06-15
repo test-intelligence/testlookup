@@ -40,6 +40,7 @@ from app.services.flaky_signals import (
 )
 from app.services.flaky_investigator import determine_likely_cause
 from app.services.flaky_statistics import wilson_failure_confidence
+from app.services.flaky_step_analysis import build_step_attribution
 from app.services.ml.flaky_confidence import (
     FlakyConfidenceModel,
     build_flaky_feature_vector,
@@ -444,9 +445,18 @@ async def get_flaky_coach(
     # so flaky verdicts carry status_volatility / error_signature_diversity /
     # an intermittency label without persisting (and without a migration).
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    signals_by_fp = await _load_intermittency_signals(
-        db, project_id, [r.test_fingerprint for r in rows], cutoff
-    )
+    fps = [r.test_fingerprint for r in rows]
+    signals_by_fp = await _load_intermittency_signals(db, project_id, fps, cutoff)
+
+    # FLK-P5: granular step-level attribution from the latest step snapshot, so
+    # each flaky verdict can point at the failing step (surgical fix) instead of
+    # the whole test. Batched read; best-effort (never blocks the leaderboard).
+    step_detail_by_fp: dict = {}
+    try:
+        from app.services.runs_service import failing_step_detail_by_fingerprint
+        step_detail_by_fp = await failing_step_detail_by_fingerprint(db, project_id, fps)
+    except Exception as exc:  # pragma: no cover — best-effort enrichment
+        logger.debug("Flaky step attribution failed: %s", exc)
 
     entries = []
     for row in rows:
@@ -458,6 +468,18 @@ async def get_flaky_coach(
             likely_cause, likely_cause_code = determine_likely_cause(
                 sig, ml_confidence=row.is_flaky_confidence
             )
+        # FLK-P5: surgical step attribution from the latest snapshot.
+        failing_step = failing_step_detail = None
+        _detail = step_detail_by_fp.get(row.test_fingerprint)
+        if _detail:
+            _attr = build_step_attribution(
+                _detail.get("first_failing"),
+                total_steps=_detail.get("total_steps", 0),
+                failing_step_count=_detail.get("failing_step_count", 0),
+            )
+            if _attr.has_failing_step:
+                failing_step = _attr.step_name or None
+                failing_step_detail = _attr.surgical_recommendation or None
         entries.append(FlakyCoachEntry(
             test_fingerprint=row.test_fingerprint,
             test_name=row.test_name,
@@ -484,6 +506,9 @@ async def get_flaky_coach(
             # FLK-P4: read-time likely-cause attribution.
             flaky_likely_cause=likely_cause,
             flaky_likely_cause_code=likely_cause_code,
+            # FLK-P5: granular step-level surgical attribution.
+            failing_step=failing_step,
+            failing_step_detail=failing_step_detail,
         ))
 
     # Augment with tests humans have manually triaged as ``FLAKY_TEST``

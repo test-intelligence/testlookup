@@ -2416,6 +2416,11 @@ class FlakyCoachEntry(BaseModel):
     # the ML confidence). None when there is no granular window to attribute.
     flaky_likely_cause: Optional[str] = None
     flaky_likely_cause_code: Optional[str] = None
+    # FLK-P5 granular step-level attribution from the latest step snapshot:
+    # the failing step's name + a surgical-fix recommendation. None when the
+    # test has no captured steps / no failing step.
+    failing_step: Optional[str] = None
+    failing_step_detail: Optional[str] = None
 
 
 class FlakyCoachResponse(BaseModel):

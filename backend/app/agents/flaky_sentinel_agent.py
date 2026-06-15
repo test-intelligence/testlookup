@@ -207,6 +207,27 @@ class FlakySentinelAgent(BaseAgent):
             build_change_summary=change_summary,
         )
 
+        # FLK-P5: granular step-level surgical attribution from the latest step
+        # snapshot — point at the failing step rather than the whole test.
+        step_attribution: dict | None = None
+        try:
+            from app.services.flaky_step_analysis import build_step_attribution
+            from app.services.runs_service import failing_step_detail_by_fingerprint
+            detail_map = await failing_step_detail_by_fingerprint(
+                db, project_id, [tc.test_fingerprint]
+            )
+            detail = detail_map.get(tc.test_fingerprint)
+            if detail:
+                attr = build_step_attribution(
+                    detail.get("first_failing"),
+                    total_steps=detail.get("total_steps", 0),
+                    failing_step_count=detail.get("failing_step_count", 0),
+                )
+                if attr.has_failing_step:
+                    step_attribution = attr.to_dict()
+        except Exception as exc:  # pragma: no cover — best-effort enrichment
+            logger.debug("step attribution failed", error=str(exc))
+
         # Tier 1 item 3 — if the flip rate crosses the quarantine floor,
         # propose the test for QA Lead approval via the quarantine service.
         # Threshold matches the acceptance criterion (>= 20% flip rate over
@@ -263,4 +284,7 @@ class FlakySentinelAgent(BaseAgent):
             "verdict": verdict,
             "is_flaky": verdict["is_flaky"],
             "likely_cause": verdict["likely_cause"],
+            # FLK-P5 granular step-level surgical attribution (None when the test
+            # has no captured step snapshot / no failing step).
+            "step_attribution": step_attribution,
         }
