@@ -4,31 +4,31 @@ import { useProjectStore } from '@/store/projectStore'
 
 function usePreviousProjectId() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
-  const previousProjectId = useRef(activeProjectId)
-  return { activeProjectId, previousProjectId }
+  const previousProjectIdRef = useRef(activeProjectId)
+  return { activeProjectId, previousProjectIdRef }
 }
 
 export function useProjectChangeRedirect(targetPath: string | null, enabled = true) {
   const navigate = useNavigate()
-  const { activeProjectId, previousProjectId } = usePreviousProjectId()
+  const { activeProjectId, previousProjectIdRef } = usePreviousProjectId()
 
   useEffect(() => {
     if (!enabled) {
-      previousProjectId.current = activeProjectId
+      previousProjectIdRef.current = activeProjectId
       return
     }
 
-    const projectChanged = previousProjectId.current !== activeProjectId
-    previousProjectId.current = activeProjectId
+    const projectChanged = previousProjectIdRef.current !== activeProjectId
+    previousProjectIdRef.current = activeProjectId
 
     if (projectChanged && targetPath) {
       navigate(targetPath, { replace: true })
     }
-  }, [activeProjectId, enabled, navigate, targetPath, previousProjectId])
+  }, [activeProjectId, enabled, navigate, targetPath, previousProjectIdRef])
 }
 
 export function useProjectChangeReset(onChange: () => void, enabled = true) {
-  const { activeProjectId, previousProjectId } = usePreviousProjectId()
+  const { activeProjectId, previousProjectIdRef } = usePreviousProjectId()
   const onChangeRef = useRef(onChange)
 
   useEffect(() => {
@@ -37,15 +37,15 @@ export function useProjectChangeReset(onChange: () => void, enabled = true) {
 
   useEffect(() => {
     if (!enabled) {
-      previousProjectId.current = activeProjectId
+      previousProjectIdRef.current = activeProjectId
       return
     }
 
-    const projectChanged = previousProjectId.current !== activeProjectId
-    previousProjectId.current = activeProjectId
+    const projectChanged = previousProjectIdRef.current !== activeProjectId
+    previousProjectIdRef.current = activeProjectId
 
     if (projectChanged) {
       onChangeRef.current()
     }
-  }, [activeProjectId, enabled, previousProjectId])
+  }, [activeProjectId, enabled, previousProjectIdRef])
 }

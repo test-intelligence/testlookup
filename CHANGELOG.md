@@ -50,6 +50,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-16 — Frontend lint: promote react-hooks/immutability warn → error)
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set: `react-hooks/immutability` moves from `warn` to `error` in `frontend/eslint.config.js`, with its four flagged violations fixed by refactor (not disables):
+- `src/hooks/useLiveExecution.ts` — the WebSocket reconnect timer called `setTimeout(connect, …)` from inside `connect`'s own `onclose`, a forward self-reference the rule rejects (it closes over a stale `connect`). Routed the reconnect through a new `connectRef` kept in sync with the latest `connect` via an effect, so the timer always invokes the current closure.
+- `src/hooks/useProjectChange.ts` — the wrapper-hook ref `previousProjectId` was mutated in effects but not named with the `Ref` suffix the rule keys on to recognise an intentional mutable ref. Renamed to `previousProjectIdRef` throughout; behaviour unchanged.
+
+Added `src/hooks/useProjectChange.test.ts` asserting the previous-project tracker still: doesn't fire on first render, fires once per change while enabled, and silently absorbs changes while disabled without replaying them on re-enable. Validated: `npm run lint` (0 errors, immutability warnings gone), `type-check`, `build`, and the hook tests all green.
+
 ### Fixed (2026-06-13 — AI-Agent Quality: RegressionWatchman confidence coercion OverflowError (AIQ-P1 cleanup follow-up))
 
 Follow-up to the AIQ-P1 cleanup. `_summarize_classification` in `backend/app/agents/regression_watchman.py` coerced each classification `confidence` inside `try/except (TypeError, ValueError)`, which did **not** catch `OverflowError` from `int(float("inf"))` — and `float("inf")` is reachable because Python's `json.loads` accepts the `Infinity` token, so a degraded LLM payload could still escape the guarded helper and fail the pipeline run. Added `OverflowError` to the except clause (the awkward value now coerces to `0`, like the other non-numeric cases). Extended `test_summarize_classification_defensive_coercion` in `backend/tests/test_agent_contract_outputs.py` with an `inf` case asserting it coerces rather than raises. No behavior change for well-formed input; contract suites green (13 passed).

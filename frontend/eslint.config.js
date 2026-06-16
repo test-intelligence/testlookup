@@ -32,14 +32,17 @@ export default tseslint.config(
       // their "fixes" would contort correct code:
       //   • set-state-in-effect — reset/load-state-on-prop-change effects
       //   • refs — forwarding a ref prop to a DOM node (never reads .current)
-      //   • immutability — writing ref.current in an effect when the ref is
-      //     returned from a wrapper hook, and self-referencing reconnect timers
       //   • exhaustive-deps — long-standing advisory
       // Tracked as a follow-up to revisit individually.
+      //
+      // immutability is now an error: the only flagged cases were a
+      // wrapper-hook ref not named with the "Ref" suffix the rule keys on,
+      // and a self-referencing reconnect timer — both fixed by routing the
+      // reconnect through a connectRef and renaming the ref.
       ...reactHooks.configs['recommended-latest'].rules,
       'react-hooks/set-state-in-effect': 'warn',
       'react-hooks/refs': 'warn',
-      'react-hooks/immutability': 'warn',
+      'react-hooks/immutability': 'error',
       'react-hooks/exhaustive-deps': 'warn',
 
       // React Refresh (Vite HMR)

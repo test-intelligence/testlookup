@@ -88,6 +88,9 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
+  // Holds the latest `connect` so the reconnect timer can call it without a
+  // forward self-reference (which would close over a stale `connect`).
+  const connectRef = useRef<() => void>(() => {})
 
   const token = useAuthStore(s => s.token)
   // Hold the latest token in a ref so the WebSocket can refresh in-place when
@@ -254,10 +257,15 @@ export function useLiveExecution(projectId?: string, suiteName?: string | null, 
     ws.onclose = () => {
       if (!mountedRef.current) return
       setWsStatus('closed')
-      // Reconnect after 5s (auth token will be re-read from tokenRef on the next open)
-      reconnectTimer.current = setTimeout(connect, 5_000)
+      // Reconnect after 5s (auth token will be re-read from tokenRef on the next open).
+      // Go through connectRef so we always invoke the latest `connect` and avoid
+      // referencing `connect` before its own declaration completes.
+      reconnectTimer.current = setTimeout(() => connectRef.current(), 5_000)
     }
   }, [projectId, handleWsMessage])
+
+  // Keep connectRef pointed at the latest `connect` for the reconnect timer.
+  useEffect(() => { connectRef.current = connect }, [connect])
 
   const disconnect = useCallback(() => {
     if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
