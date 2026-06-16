@@ -46,6 +46,7 @@
  * export-PDF emit toasts pending the new endpoints.
  */
 import { useEffect, useMemo, useState } from 'react'
+import { useNow } from '@/hooks/useNow'
 import { Link } from 'react-router-dom'
 import {
   AlertCircle, AlertTriangle, ArrowRight, BarChart3, Calendar, ChevronRight,
@@ -1507,6 +1508,7 @@ export default function TrendsPage() {
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+  const now = useNow()  // captured at mount — avoids impure Date.now() in render
 
   // Global shared time-window preference — picking 24h here propagates
   // to every other window-filtered page (and vice versa). Snapped to
@@ -1815,7 +1817,7 @@ export default function TrendsPage() {
             tone={
               !model.lastRunIso ? 'neutral'
               : model.lastRunIso === new Date().toISOString().slice(0, 10) ? 'good'
-              : (Date.now() - new Date(model.lastRunIso).getTime()) > 7 * 86400000 ? 'bad'
+              : (now - new Date(model.lastRunIso).getTime()) > 7 * 86400000 ? 'bad'
               : 'warn'
             }
             meta={

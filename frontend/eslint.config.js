@@ -24,12 +24,22 @@ export default tseslint.config(
       globals: globals.browser,
     },
     rules: {
-      // React Hooks — keep the long-standing rule behavior. v7 expands
-      // `configs.recommended` with React-Compiler rules (purity,
-      // set-state-in-effect, immutability) that flag many existing
-      // components; adopting those is a separate refactor (follow-up).
-      // Pin the two classic rules so the plugin upgrade is behavior-preserving.
-      'react-hooks/rules-of-hooks': 'error',
+      // React Hooks — adopt the v7 recommended (React Compiler) rule set.
+      // Real-bug rules (purity, static-components, set-state-in-render, etc.)
+      // stay errors and are fixed. The rules below are downgraded to warn
+      // because, on this codebase, they flag *intentional/valid* patterns the
+      // React Compiler's conservative inference can't see through — forcing
+      // their "fixes" would contort correct code:
+      //   • set-state-in-effect — reset/load-state-on-prop-change effects
+      //   • refs — forwarding a ref prop to a DOM node (never reads .current)
+      //   • immutability — writing ref.current in an effect when the ref is
+      //     returned from a wrapper hook, and self-referencing reconnect timers
+      //   • exhaustive-deps — long-standing advisory
+      // Tracked as a follow-up to revisit individually.
+      ...reactHooks.configs['recommended-latest'].rules,
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/refs': 'warn',
+      'react-hooks/immutability': 'warn',
       'react-hooks/exhaustive-deps': 'warn',
 
       // React Refresh (Vite HMR)

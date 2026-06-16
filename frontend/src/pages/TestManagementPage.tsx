@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useNow } from '@/hooks/useNow'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown, ChevronRight,
@@ -890,6 +891,7 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
 interface TestCasesTabProps { projectId: string | null }
 
 function TestCasesTab({ projectId }: TestCasesTabProps) {
+  const now = useNow()  // captured at mount — avoids impure Date.now() in render
   // ── Filter state ────────────────────────────────────────────────────
   // Single-select today; multi-select chips with a popover are Phase 2 per
   // README §6 "Select chip click opens a popover with checkboxes".
@@ -999,7 +1001,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   const automatedPct      = fullList.length > 0 ? Math.round((automatedCount / fullList.length) * 100) : 0
   const reviewQueue       = fullList.filter(c => c.status === 'review_requested' || c.status === 'under_review')
   const reviewCount       = reviewQueue.length
-  const draftAgeDays = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+  const draftAgeDays = (iso: string) => Math.floor((now - new Date(iso).getTime()) / 86400000)
   const staleDrafts       = fullList.filter(c => c.status === 'draft' && draftAgeDays(c.updated_at) >= 30)
   const staleCount        = staleDrafts.length
   // "Deprecated cases referenced by active suites" — heuristic: deprecated
@@ -1869,8 +1871,9 @@ function OwnerCell({ userId }: { userId: string | null }) {
 }
 
 function LastRunCell({ status, at }: { status: string | undefined; at: string | undefined }) {
+  const now = useNow()  // hook before any early return — avoids impure Date.now() in render
   if (!at) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
-  const ms = Date.now() - new Date(at).getTime()
+  const ms = now - new Date(at).getTime()
   if (Number.isNaN(ms) || ms < 0) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
   const m = Math.floor(ms / 60000)
   const ageLabel = m < 1 ? 'just now'
@@ -2010,6 +2013,7 @@ function Legend({ color, label }: { color: string; label: string }) {
 
 // ── Right rail cards ────────────────────────────────────────────────────
 function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c: ManagedTestCase) => void }) {
+  const now = useNow()  // captured at mount — avoids impure Date.now() in render
   return (
     <CasesCardShell title={`Review queue · ${rows.length}`} rightSlot={
       <button
@@ -2028,7 +2032,7 @@ function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c
       ) : (
         <div>
           {rows.map(c => {
-            const days = Math.floor((Date.now() - new Date(c.updated_at).getTime()) / 86400000)
+            const days = Math.floor((now - new Date(c.updated_at).getTime()) / 86400000)
             const ageColor = days >= 7 ? '#fca5a5' : 'var(--color-text-muted)'
             return (
               <button
@@ -2052,7 +2056,7 @@ function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c
                   </div>
                 </div>
                 <span className="text-[11px] tabular-nums" style={{ color: ageColor }}>
-                  {days < 1 ? `${Math.max(1, Math.floor((Date.now() - new Date(c.updated_at).getTime()) / 3600000))}h` : `${days}d`}
+                  {days < 1 ? `${Math.max(1, Math.floor((now - new Date(c.updated_at).getTime()) / 3600000))}h` : `${days}d`}
                 </span>
               </button>
             )
@@ -2200,6 +2204,7 @@ function StrategyGapsCard({ gaps }: { gaps: { severity: 'critical' | 'warn'; tit
 interface RecentEvent { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
 
 function RecentActivityCard({ events }: { events: RecentEvent[] }) {
+  const now = useNow()  // captured at mount — avoids impure Date.now() in render
   return (
     <CasesCardShell title="Recent activity" rightSlot={
       <button
@@ -2218,7 +2223,7 @@ function RecentActivityCard({ events }: { events: RecentEvent[] }) {
       ) : (
         <div>
           {events.map((e, i) => {
-            const ms = Date.now() - new Date(e.created_at).getTime()
+            const ms = now - new Date(e.created_at).getTime()
             const min = Math.max(1, Math.floor(ms / 60000))
             const ageLabel = min < 60 ? `${min}m` : min < 1440 ? `${Math.floor(min / 60)}h` : `${Math.floor(min / 1440)}d`
             const action = (e.action ?? e.event_type ?? 'updated').toLowerCase()
@@ -2683,6 +2688,39 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
 
 interface StrategyTabProps { projectId: string | null }
 
+// Hoisted to module scope (was defined inside StrategyTab) so it isn't a
+// component re-created every render — react-hooks/static-components. The
+// accordion open-state is passed in rather than closed over.
+function AccordionSection({
+  id, title, expandedSection, setExpandedSection, children,
+}: {
+  id: string
+  title: string
+  expandedSection: string | null
+  setExpandedSection: (v: string | null) => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
+      <button
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-[var(--color-bg-hover)]/50 transition-colors"
+        onClick={() => setExpandedSection(expandedSection === id ? null : id)}
+      >
+        <span className="text-sm font-medium text-[var(--color-text)]">{title}</span>
+        {expandedSection === id
+          ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)]" />
+          : <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
+        }
+      </button>
+      {expandedSection === id && (
+        <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40">
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function StrategyTab({ projectId }: StrategyTabProps) {
   const [showGenerate, setShowGenerate] = useState(false)
   const [expandedSection, setExpandedSection] = useState<string | null>('objective')
@@ -2721,28 +2759,6 @@ function StrategyTab({ projectId }: StrategyTabProps) {
       setDownloadingFormat(null)
     }
   }
-
-  const AccordionSection = ({
-    id, title, children
-  }: { id: string; title: string; children: React.ReactNode }) => (
-    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-      <button
-        className="w-full flex items-center justify-between p-4 text-left hover:bg-[var(--color-bg-hover)]/50 transition-colors"
-        onClick={() => setExpandedSection(expandedSection === id ? null : id)}
-      >
-        <span className="text-sm font-medium text-[var(--color-text)]">{title}</span>
-        {expandedSection === id
-          ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)]" />
-          : <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)]" />
-        }
-      </button>
-      {expandedSection === id && (
-        <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40">
-          {children}
-        </div>
-      )}
-    </div>
-  )
 
   return (
     <>
@@ -2820,12 +2836,12 @@ function StrategyTab({ projectId }: StrategyTabProps) {
 
             {/* Accordion sections */}
             {strategy.objective && (
-              <AccordionSection id="objective" title="Objective">
+              <AccordionSection id="objective" title="Objective" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
                 <p className="text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">{strategy.objective}</p>
               </AccordionSection>
             )}
             {(strategy.scope || strategy.out_of_scope) && (
-              <AccordionSection id="scope" title="Scope">
+              <AccordionSection id="scope" title="Scope" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
                 {strategy.scope && (
                   <div className="mb-3">
                     <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-1">In Scope</p>
@@ -2841,7 +2857,7 @@ function StrategyTab({ projectId }: StrategyTabProps) {
               </AccordionSection>
             )}
             {strategy.test_types && strategy.test_types.length > 0 && (
-              <AccordionSection id="test_types" title="Test Types">
+              <AccordionSection id="test_types" title="Test Types" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -2867,7 +2883,7 @@ function StrategyTab({ projectId }: StrategyTabProps) {
               </AccordionSection>
             )}
             {strategy.risk_assessment && strategy.risk_assessment.length > 0 && (
-              <AccordionSection id="risks" title="Risk Assessment">
+              <AccordionSection id="risks" title="Risk Assessment" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
                 <div className="space-y-2">
                   {strategy.risk_assessment.map((r, i) => (
                     <div key={i} className="bg-[var(--color-bg-secondary)] rounded-lg p-3 grid grid-cols-2 gap-3 text-sm">
@@ -2881,7 +2897,7 @@ function StrategyTab({ projectId }: StrategyTabProps) {
               </AccordionSection>
             )}
             {(strategy.entry_criteria?.length || strategy.exit_criteria?.length) && (
-              <AccordionSection id="criteria" title="Entry / Exit Criteria">
+              <AccordionSection id="criteria" title="Entry / Exit Criteria" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
                 <div className="grid grid-cols-2 gap-4">
                   {strategy.entry_criteria && strategy.entry_criteria.length > 0 && (
                     <div>
@@ -2911,7 +2927,7 @@ function StrategyTab({ projectId }: StrategyTabProps) {
               </AccordionSection>
             )}
             {strategy.environments && strategy.environments.length > 0 && (
-              <AccordionSection id="envs" title="Test Environments">
+              <AccordionSection id="envs" title="Test Environments" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
                 <div className="grid grid-cols-3 gap-3">
                   {strategy.environments.map((env, i) => (
                     <div key={i} className="bg-[var(--color-bg-secondary)] rounded-lg p-3">
@@ -2924,7 +2940,7 @@ function StrategyTab({ projectId }: StrategyTabProps) {
               </AccordionSection>
             )}
             {strategy.automation_approach && (
-              <AccordionSection id="automation" title="Automation Approach">
+              <AccordionSection id="automation" title="Automation Approach" expandedSection={expandedSection} setExpandedSection={setExpandedSection}>
                 <p className="text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap">{strategy.automation_approach}</p>
               </AccordionSection>
             )}

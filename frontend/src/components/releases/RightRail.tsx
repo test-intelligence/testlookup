@@ -9,6 +9,7 @@
  * portfolio list uses. No new endpoints needed.
  */
 import { clsx } from 'clsx'
+import { useNow } from '@/hooks/useNow'
 import {
   ArrowRight,
   Clock,
@@ -256,6 +257,7 @@ export function CompliancePacks({ releases }: { releases: DerivedRelease[] }) {
 // ── Recent activity ────────────────────────────────────────────────────────
 
 export function RecentActivity({ releases }: { releases: DerivedRelease[] }) {
+  const now = useNow()  // captured at mount — avoids impure Date.now() in render
   const items = releases
     .map(r => ({
       release: r,
@@ -271,7 +273,7 @@ export function RecentActivity({ releases }: { releases: DerivedRelease[] }) {
       ) : (
         <ul className="m-0 p-0 list-none divide-y" style={{ borderColor: 'var(--color-border)' }}>
           {items.map(({ release: r, at }) => {
-            const ms = Date.now() - at.getTime()
+            const ms = now - at.getTime()
             const rel =
               ms < 60_000 ? 'just now'
               : ms < 3600_000 ? `${Math.round(ms / 60_000)}m ago`

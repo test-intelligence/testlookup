@@ -7,6 +7,7 @@
  * metric grid, and the running/failed suffix rows.
  */
 import { clsx } from 'clsx'
+import { useNow } from '@/hooks/useNow'
 import {
   AlertTriangle,
   Bot,
@@ -159,6 +160,9 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
   const pos = POS[stage.id]
   const style = STATUS_STYLE[stage.status]
   const Icon = GLYPH_MAP[stage.glyph] ?? FileText
+  // Ticking clock so the running progress bar advances without calling the
+  // impure Date.now() during render (react-hooks/purity).
+  const now = useNow(500)
 
   // Confidence tone — handoff: ok when > 80%.
   const confValue = stage.metrics.confidence
@@ -183,7 +187,7 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
     if (stage.status !== 'running') return 0
     if (stage.startMs == null || stage.etaMs == null) return 0
     if (stage.etaMs <= stage.startMs) return 0
-    const elapsed = Date.now() / 1000 - stage.startMs
+    const elapsed = now / 1000 - stage.startMs
     return ((elapsed) / (stage.etaMs - stage.startMs)) * 100
   })()
   const etaSeconds = stage.startMs != null && stage.etaMs != null

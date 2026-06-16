@@ -10,6 +10,7 @@
  * the inline detail panel (the existing ``ReleaseDetailPanel``).
  */
 import { clsx } from 'clsx'
+import { useNow } from '@/hooks/useNow'
 import { Clock, CheckCircle2, Sparkles, Copy, BadgeCheck, ChevronRight } from 'lucide-react'
 import toast from 'react-hot-toast'
 import type { DerivedRelease, GateDecision } from './types'
@@ -123,6 +124,7 @@ interface ReleaseCardProps {
 export default function ReleaseCard({ release, collapsed = false, onClick }: ReleaseCardProps) {
   const tile = ICON_TILE[release.gate.decision]
   const Icon = tile.icon
+  const now = useNow()  // captured at mount — avoids impure Date.now() in render
   const muted = release.stage === 'cancelled'
   const isReleased = release.stage === 'released'
   const isPlanning = release.stage === 'planning'
@@ -138,7 +140,7 @@ export default function ReleaseCard({ release, collapsed = false, onClick }: Rel
     ? new Date(release.dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     : null
   const overdue = release.dueAt
-    ? new Date(release.dueAt).getTime() < Date.now() && release.stage === 'in_progress'
+    ? new Date(release.dueAt).getTime() < now && release.stage === 'in_progress'
     : false
 
   return (

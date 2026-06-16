@@ -635,7 +635,9 @@ export default function LiveExecutionPage() {
     }
   }
 
-  const SortIcon = ({ field }: { field: SortField }) => {
+  // Render helper (not a component) so it isn't flagged as a component defined
+  // during render (react-hooks/static-components) — it closes over sort state.
+  const sortIcon = (field: SortField) => {
     if (field !== sortField) return <ChevronsUpDown className="h-3 w-3 opacity-30" />
     return sortDir === 'asc'
       ? <ChevronUp className="h-3 w-3 text-[var(--color-text)]" />
@@ -1043,27 +1045,27 @@ export default function LiveExecutionPage() {
                   className="px-5 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
                   onClick={() => handleSort('build')}
                 >
-                  <span className="flex items-center gap-1">Build <SortIcon field="build" /></span>
+                  <span className="flex items-center gap-1">Build {sortIcon('build')}</span>
                 </th>
                 <th
                   className="px-3 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
                   onClick={() => handleSort('suite')}
                 >
-                  <span className="flex items-center gap-1">Suite <SortIcon field="suite" /></span>
+                  <span className="flex items-center gap-1">Suite {sortIcon('suite')}</span>
                 </th>
                 <th className="px-3 py-2.5 text-left font-medium">Status</th>
                 <th
                   className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
                   onClick={() => handleSort('total')}
                 >
-                  <span className="flex items-center justify-end gap-1">Tests <SortIcon field="total" /></span>
+                  <span className="flex items-center justify-end gap-1">Tests {sortIcon('total')}</span>
                 </th>
                 <th className="px-3 py-2.5 text-right font-medium">Pass</th>
                 <th
                   className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
                   onClick={() => handleSort('failed')}
                 >
-                  <span className="flex items-center justify-end gap-1">Failed <SortIcon field="failed" /></span>
+                  <span className="flex items-center justify-end gap-1">Failed {sortIcon('failed')}</span>
                 </th>
                 <th className="px-3 py-2.5 text-left font-medium" style={{ width: 200 }}>Outcome</th>
                 <th className="px-3 py-2.5 text-left font-medium">Release</th>
@@ -1071,7 +1073,7 @@ export default function LiveExecutionPage() {
                   className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
                   onClick={() => handleSort('started_at')}
                 >
-                  <span className="flex items-center justify-end gap-1">Started <SortIcon field="started_at" /></span>
+                  <span className="flex items-center justify-end gap-1">Started {sortIcon('started_at')}</span>
                 </th>
                 <th className="px-5 py-2.5 text-right font-medium">End</th>
               </tr>

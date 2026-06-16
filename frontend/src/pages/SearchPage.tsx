@@ -45,6 +45,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { useNow } from '@/hooks/useNow'
 import PageShell from '@/components/layout/PageShell'
 import Pagination from '@/components/ui/Pagination'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -354,8 +355,9 @@ function VerdictRibbon({
   zeroResultPct: number | null
   latencyP95Ms: number | null
 }) {
+  const now = useNow()  // captured at mount — avoids impure Date.now() in render
   const freshAge = indexStatus?.last_indexed_at
-    ? Math.max(0, Math.round((Date.now() - new Date(indexStatus.last_indexed_at).getTime()) / 1000))
+    ? Math.max(0, Math.round((now - new Date(indexStatus.last_indexed_at).getTime()) / 1000))
     : null
   const freshLabel = freshAge == null ? '—'
     : freshAge < 60 ? `${freshAge}s`
