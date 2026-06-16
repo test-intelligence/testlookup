@@ -1,6 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+/* Tailwind v4 loads the existing v3-style JS theme (colors->CSS vars,
+   fonts, radius, shadows) via @config so the multi-theme system is
+   preserved without rewriting it into CSS @theme. */
+@config "../tailwind.config.js";
 
 /* Slide animation for the running-stage progress bar in the AgentWorkflowPage
    subway cards. A 35%-wide gradient sweeps the 2px-tall track at the bottom
@@ -366,11 +368,11 @@
   .badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
-  .badge-passed  { @apply badge bg-emerald-900/50 text-emerald-300 border border-emerald-700/60; }
-  .badge-failed  { @apply badge bg-red-900/50 text-red-300 border border-red-700/60; }
-  .badge-skipped { @apply badge bg-amber-900/50 text-amber-300 border border-amber-700/60; }
-  .badge-broken  { @apply badge bg-orange-900/50 text-orange-300 border border-orange-700/60; }
-  .badge-flaky   { @apply badge bg-purple-900/50 text-purple-300 border border-purple-700/60; }
+  .badge-passed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-900/50 text-emerald-300 border border-emerald-700/60; }
+  .badge-failed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-900/50 text-red-300 border border-red-700/60; }
+  .badge-skipped { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-900/50 text-amber-300 border border-amber-700/60; }
+  .badge-broken  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-900/50 text-orange-300 border border-orange-700/60; }
+  .badge-flaky   { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-900/50 text-purple-300 border border-purple-700/60; }
 
   .sidebar-link {
     color: var(--color-text-muted);
