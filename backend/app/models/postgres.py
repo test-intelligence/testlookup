@@ -715,6 +715,58 @@ class TestStep(Base):
     )
 
 
+class TestStepRun(Base):
+    """Per-run, compact step-outcome history for cross-run step-flip analysis.
+
+    Distinct from :class:`TestStep`, which is a LATEST-RUN-ONLY snapshot
+    (delete+reinsert on every ingest) and therefore cannot answer "which step
+    flipped between run N-1 and run N". ``test_step_runs`` instead RETAINS one
+    flat row per ``(canonical_test_case_id, source_test_run_id, ordinal)`` so a
+    test's step outcomes accumulate across runs (migration 0097).
+
+    Deliberately compact: only the identity (ordinal/depth/name/keyword) and the
+    per-run signal (status/duration_ms) needed to detect a step-flip. The heavy,
+    PII-bearing columns (assertion_message/trace, expected/actual, parameters,
+    attachments) live ONLY on the latest-run :class:`TestStep` snapshot and are
+    NOT duplicated per run. ``source_test_run_id`` is CASCADE (the row IS about
+    that run — when the run is deleted its step history goes with it), unlike the
+    snapshot's SET NULL provenance pointer.
+
+    Written by ingestion alongside the snapshot, idempotent per ``(canonical,
+    run)`` (delete this run's rows then reinsert). NEVER committed by the
+    service — the ingestion router owns the commit.
+    """
+    __tablename__ = "test_step_runs"
+    __table_args__ = (
+        # One row per step-position per run — the idempotency invariant — and
+        # the composite index for both the per-(canonical, run) overwrite delete
+        # and the per-canonical cross-run scan the step-flip analysis walks.
+        UniqueConstraint(
+            "canonical_test_case_id",
+            "source_test_run_id",
+            "ordinal",
+            name="uq_test_step_runs_canonical_run_ordinal",
+        ),
+        # FK index for the run-deletion CASCADE.
+        Index("ix_test_step_runs_source_run", "source_test_run_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    canonical_test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("canonical_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    source_test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    name: Mapped[str] = mapped_column(String(2000), nullable=False)
+    keyword: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class TestAttachment(Base):
     """Index-only attachment metadata for the latest-run snapshot.
 

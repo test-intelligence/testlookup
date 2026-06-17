@@ -50,6 +50,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-17 — Flaky-Test Intelligence: per-run step-outcome retention (FLK-P6, slice 1 — capture))
+
+Foundation for cross-run step-flip analysis, fulfilling the schema change FLK-P5 flagged as "left for future work". `test_steps` is a LATEST-RUN-ONLY snapshot (one per `canonical_test_cases`, delete+reinsert on every ingest), so a step-flip — "PASSED in run N-1, FAILED in run N" — cannot be computed from it. This slice starts RETAINING per-run step outcomes without touching the snapshot or any of its readers (zero blast radius):
+
+- **New table `test_step_runs`** (Alembic `0097`, down_revision `0096`, real downgrade) — one compact, flat row per `(canonical_test_case_id, source_test_run_id, ordinal)`. Deliberately minimal: only the step identity (`ordinal`/`depth`/`name`/`keyword`) and the per-run signal (`status`/`duration_ms`). The heavy, PII-bearing columns (assertion message/trace, expected/actual, parameters, attachments) stay ONLY on the latest-run `test_steps` snapshot and are **not** duplicated per run. `source_test_run_id` is **CASCADE** (the row *is* about that run — deleting the run deletes its step history), unlike the snapshot's SET NULL provenance pointer. A unique constraint on `(canonical_test_case_id, source_test_run_id, ordinal)` encodes the idempotency invariant.
+- **Ingestion writes the history alongside the snapshot** (`_persist_step_snapshot` / `_insert_step` in `backend/app/services/ingestion.py`), idempotent per `(canonical, run)`: it deletes only **this run's** rows then reinserts them, so re-ingesting a run overwrites its own rows while prior runs' history is retained. Stays inside the ingestion-pipeline transaction — the router still owns the commit (no service-level commit).
+- **Deferred to slice 2**: the cross-run step-flip computation + surfacing. Capture must ship first — step-flip is undefined until ≥2 runs of history have accumulated post-deploy.
+- New `backend/tests/test_step_run_retention.py` — proves cross-run retention makes a PASSED→FAILED flip observable, per-`(canonical, run)` idempotency on re-ingest, the latest-run snapshot is unchanged (no regression), and the model/migration contract (compact columns, run-CASCADE, real downgrade). Full backend suite (3397 passed) + 15 quality gates + ruff green.
+
 ### Changed (2026-06-16 — Frontend lint: promote react-hooks/refs warn → error)
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set: `react-hooks/refs` moves from `warn` to `error` in `frontend/eslint.config.js`. All 18 flagged violations were in a single component and fixed by refactor (not disables):

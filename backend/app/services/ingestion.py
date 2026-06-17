@@ -25,6 +25,7 @@ from app.models.postgres import (
     TestRun,
     TestStatus,
     TestStep,
+    TestStepRun,
 )
 from app.models.schemas import SentinelFile
 from app.services.allure_parser import parse_allure_result
@@ -521,6 +522,15 @@ async def _persist_step_snapshot(
             TestStep.canonical_test_case_id == canonical.id
         )
     )
+    # Per-run step history (test_step_runs) RETAINS prior runs — so the delete is
+    # scoped to THIS run only (idempotent re-ingest of the same run overwrites
+    # its own rows, never the cross-run history we need for step-flip analysis).
+    await db.execute(
+        _sql_delete(TestStepRun).where(
+            TestStepRun.canonical_test_case_id == canonical.id,
+            TestStepRun.source_test_run_id == run.id,
+        )
+    )
     await db.flush()
 
     # Test-level attachments (no owning step).
@@ -598,6 +608,20 @@ async def _insert_step(
         ),
     )
     db.add(step)
+    # Retain a compact per-run copy of this step's outcome for cross-run
+    # step-flip analysis. Reuses the snapshot's already-truncated name/keyword
+    # and the same ordinal/depth, so the two stay aligned; carries no heavy /
+    # PII columns (those stay on the latest-run snapshot only).
+    db.add(TestStepRun(
+        canonical_test_case_id=canonical_id,
+        source_test_run_id=run_id,
+        ordinal=ordinal,
+        depth=depth,
+        name=step.name,
+        keyword=step.keyword,
+        status=status,
+        duration_ms=node.get("duration_ms"),
+    ))
     await db.flush()  # assign step.id for child + attachment FKs
 
     for att in (node.get("attachments") or []):
