@@ -39,9 +39,16 @@ export default tseslint.config(
       // wrapper-hook ref not named with the "Ref" suffix the rule keys on,
       // and a self-referencing reconnect timer — both fixed by routing the
       // reconnect through a connectRef and renaming the ref.
+      //
+      // refs is now an error: every flagged case was a single component
+      // (CasesFilterBar) that took its props as an undestructured `p` object
+      // whose `searchInputRef` member made the rule treat *all* `p.*` reads as
+      // ref-reads-during-render. Destructuring the props at the parameter keeps
+      // the ref a named binding (forwarded to a DOM `ref=`, which is allowed)
+      // and clears every false positive.
       ...reactHooks.configs['recommended-latest'].rules,
       'react-hooks/set-state-in-effect': 'warn',
-      'react-hooks/refs': 'warn',
+      'react-hooks/refs': 'error',
       'react-hooks/immutability': 'error',
       'react-hooks/exhaustive-deps': 'warn',
 

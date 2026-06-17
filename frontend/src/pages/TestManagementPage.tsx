@@ -1489,7 +1489,32 @@ interface CasesFilterBarProps {
   onToggleAutomation: (v: boolean) => void
 }
 
-function CasesFilterBar(p: CasesFilterBarProps) {
+function CasesFilterBar({
+  // Destructure props so the RefObject is a named binding. The react-hooks v7
+  // `refs` rule treats every member access on a props object that *contains* a
+  // ref as a ref-read-during-render; destructuring keeps the ref separate from
+  // the plain values that legitimately drive the render.
+  searchInputRef,
+  search,
+  onSearchChange,
+  status,
+  onStatusChange,
+  testType,
+  onTypeChange,
+  priority,
+  onPriorityChange,
+  ownerFilter,
+  onOwnerChange,
+  suiteFilter,
+  onSuiteChange,
+  suiteOptions,
+  savedView,
+  savedViews,
+  onSavedView,
+  onSaveCurrent,
+  includeAutomation,
+  onToggleAutomation,
+}: CasesFilterBarProps) {
   return (
     <div
       className="flex items-center flex-wrap gap-2 rounded-md"
@@ -1505,10 +1530,10 @@ function CasesFilterBar(p: CasesFilterBarProps) {
         style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', minWidth: 240, height: 32 }}
       >
         <input
-          ref={p.searchInputRef}
+          ref={searchInputRef}
           type="search"
-          value={p.search}
-          onChange={(e) => p.onSearchChange(e.target.value)}
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search by ID, title, tags, owner, or requirement…"
           className="bg-transparent text-[13px] text-[var(--color-text)] outline-none flex-1"
           aria-label="Search cases"
@@ -1530,14 +1555,14 @@ function CasesFilterBar(p: CasesFilterBarProps) {
       >
         <input
           type="checkbox"
-          checked={p.includeAutomation}
-          onChange={(e) => p.onToggleAutomation(e.target.checked)}
+          checked={includeAutomation}
+          onChange={(e) => onToggleAutomation(e.target.checked)}
           className="accent-[var(--color-accent)]"
         />
         Automation tests
       </label>
 
-      <SelectChip label="Status" value={p.status} options={[
+      <SelectChip label="Status" value={status} options={[
         { value: '', label: 'All' },
         { value: 'draft', label: 'Draft' },
         { value: 'review_requested', label: 'Review requested' },
@@ -1546,9 +1571,9 @@ function CasesFilterBar(p: CasesFilterBarProps) {
         { value: 'active', label: 'Active' },
         { value: 'rejected', label: 'Rejected' },
         { value: 'deprecated', label: 'Deprecated' },
-      ]} onChange={p.onStatusChange} />
+      ]} onChange={onStatusChange} />
 
-      <SelectChip label="Type" value={p.testType} options={[
+      <SelectChip label="Type" value={testType} options={[
         { value: '', label: 'All' },
         { value: 'functional',   label: 'Functional' },
         { value: 'integration',  label: 'Integration' },
@@ -1559,28 +1584,28 @@ function CasesFilterBar(p: CasesFilterBarProps) {
         { value: 'security',     label: 'Security' },
         { value: 'usability',    label: 'Usability' },
         { value: 'api',          label: 'API' },
-      ]} onChange={p.onTypeChange} />
+      ]} onChange={onTypeChange} />
 
-      <SelectChip label="Priority" value={p.priority} options={[
+      <SelectChip label="Priority" value={priority} options={[
         { value: '', label: 'Any' },
         { value: 'critical', label: 'Critical' },
         { value: 'high', label: 'High' },
         { value: 'medium', label: 'Medium' },
         { value: 'low', label: 'Low' },
-      ]} onChange={p.onPriorityChange} />
+      ]} onChange={onPriorityChange} />
 
-      <SelectChip label="Owner" value={p.ownerFilter} options={[
+      <SelectChip label="Owner" value={ownerFilter} options={[
         { value: '', label: 'Anyone' },
-      ]} onChange={p.onOwnerChange} disabled title="Owner filter — coming in Phase 2" />
+      ]} onChange={onOwnerChange} disabled title="Owner filter — coming in Phase 2" />
 
       <SelectChip
         label="Suite"
-        value={p.suiteFilter}
+        value={suiteFilter}
         options={[
           { value: '', label: 'All' },
-          ...p.suiteOptions.map(s => ({ value: s, label: s })),
+          ...suiteOptions.map(s => ({ value: s, label: s })),
         ]}
-        onChange={p.onSuiteChange}
+        onChange={onSuiteChange}
       />
 
       <span aria-hidden className="inline-block w-px h-[18px] mx-1" style={{ background: 'var(--color-border)' }} />
@@ -1591,13 +1616,13 @@ function CasesFilterBar(p: CasesFilterBarProps) {
       >
         Views
       </span>
-      {p.savedViews.map(v => {
-        const active = p.savedView === v.id
+      {savedViews.map(v => {
+        const active = savedView === v.id
         return (
           <button
             key={v.id}
             type="button"
-            onClick={() => p.onSavedView(v)}
+            onClick={() => onSavedView(v)}
             className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
             style={{
               background: active ? 'rgba(167,139,250,0.14)' : 'transparent',
@@ -1611,7 +1636,7 @@ function CasesFilterBar(p: CasesFilterBarProps) {
       })}
       <button
         type="button"
-        onClick={p.onSaveCurrent}
+        onClick={onSaveCurrent}
         className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
         style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
         title="Save current filters as a view"

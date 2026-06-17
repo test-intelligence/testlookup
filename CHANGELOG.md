@@ -50,6 +50,13 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-16 — Frontend lint: promote react-hooks/refs warn → error)
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set: `react-hooks/refs` moves from `warn` to `error` in `frontend/eslint.config.js`. All 18 flagged violations were in a single component and fixed by refactor (not disables):
+- `src/pages/TestManagementPage.tsx` — the `CasesFilterBar` component took its props as an undestructured `p` object whose `searchInputRef: RefObject` member made the rule treat *every* `p.*` read as a ref-read-during-render (18 false positives across the search input, checkbox, filter chips, and saved-view buttons). Destructured the props at the parameter so the ref is a named binding forwarded straight to the DOM `ref=` (which the rule allows); the remaining props become plain locals. Behaviour unchanged.
+
+Added `src/pages/TestManagementPage.refs.test.ts` (source-text invariants via `?raw`, matching the sibling suite-aggregates regression) asserting the rule stays at `error` and `CasesFilterBar` keeps its destructured signature and named-binding `ref=`. Validated: `npm run lint` (0 errors, 94→76 warnings), `type-check`, `build`, and the new test all green.
+
 ### Changed (2026-06-16 — Frontend lint: promote react-hooks/immutability warn → error)
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set: `react-hooks/immutability` moves from `warn` to `error` in `frontend/eslint.config.js`, with its four flagged violations fixed by refactor (not disables):
