@@ -50,6 +50,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-18 — Flaky-Test Intelligence: cross-run step-flip computation (FLK-P6, slice 2 — compute))
+
+Builds on slice 1's `test_step_runs` retention (#199) to compute the signal FLK-P5 explicitly deferred ("left for future work" until per-run step history existed): **which step flipped between runs, how often, and in which direction**. A step that oscillates PASSED↔FAILED across runs reads as *step-level flakiness* — fix/quarantine that one step — rather than a whole-test verdict. New pure, no-DB, never-raise module `backend/app/services/flaky_step_flip.py`, a sibling of `flaky_signals`/`flaky_step_analysis`:
+
+- `compute_step_flips(runs) -> StepFlipReport` over a per-run step-outcome window ordered oldest→newest (the shape `test_step_runs` yields). Steps are matched across runs by `ordinal` (the table's grain and the key FLK-P5 attribution already uses); a flip is a PASSED↔FAILED change between two consecutive runs where the step had a pass/fail outcome. `BROKEN` normalises to `FAILED`; `SKIPPED`/`UNKNOWN` carry no pass-vs-fail signal and are bridged (not counted as a third state that would manufacture spurious flips). Each transition is classified `regression` (PASSED→FAILED) or `recovery` (FAILED→PASSED); per-step roll-ups (`flip_count`, `runs_observed`, `last_status`) are sorted most-flipping-first.
+- Defensive by construction: a `<2`-run window reports "insufficient history" (a flip is undefined with one run), malformed rows degrade to a neutral contribution, and the function never raises — safe under `AI_OFFLINE_MODE`.
+- **Deferred to a later slice**: the DB read that assembles the per-run window from `test_step_runs` (ordered by run start) and the surfacing (Flaky Coach / agent verdict). This slice is the pure computation those will call — zero blast radius, no migration, no ingestion/router change.
+- New `backend/tests/test_flaky_step_flip.py` (14 cases) — pass→fail/regression, fail→pass/recovery, multi-transition oscillation, stable-step no-flip, BROKEN/enum-prefix normalisation, SKIPPED bridging, independent-ordinal tracking, flip-count ordering, latest-name display, the `<2`-run guard, and the never-raise invariant. Full backend suite + 15 quality gates + ruff green.
+
 ### Added (2026-06-17 — Flaky-Test Intelligence: per-run step-outcome retention (FLK-P6, slice 1 — capture))
 
 Foundation for cross-run step-flip analysis, fulfilling the schema change FLK-P5 flagged as "left for future work". `test_steps` is a LATEST-RUN-ONLY snapshot (one per `canonical_test_cases`, delete+reinsert on every ingest), so a step-flip — "PASSED in run N-1, FAILED in run N" — cannot be computed from it. This slice starts RETAINING per-run step outcomes without touching the snapshot or any of its readers (zero blast radius):
