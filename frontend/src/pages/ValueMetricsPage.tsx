@@ -1,14 +1,13 @@
-import { useEffect, useState } from 'react'
 import {
   BarChart3, Clock, Download, GitMerge, Shield, ShieldAlert, Sparkles, Bug, AlertTriangle,
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildValueMetricsWorkflow } from '@/components/workflow/workflowPresets'
-import { valueMetricsService, type ValueMetrics } from '@/services/valueMetricsService'
+import { valueMetricsService } from '@/services/valueMetricsService'
+import { useValueMetrics } from '@/hooks/useValueMetrics'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 
@@ -37,8 +36,6 @@ export default function ValueMetricsPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const project = useProjectStore(s => s.activeProject)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined)
-  const [metrics, setMetrics] = useState<ValueMetrics | null>(null)
-  const [loading, setLoading] = useState(true)
   // Global shared time window — Value Metrics' options diverge from
   // most other pages (no 24h, includes 1y), so we snap the shared value
   // to the nearest supported option here. Picking a value here also
@@ -49,15 +46,9 @@ export default function ValueMetricsPage() {
   const days = snapToAllowed(storedDays, VALUE_OPTIONS)
   const setDays = setStoredDays
 
-  useEffect(() => {
-    setLoading(true)
-    valueMetricsService.get(projectId, days)
-      .then(setMetrics)
-      .catch(() => toast.error('Failed to load value metrics'))
-      .finally(() => setLoading(false))
-  }, [projectId, days])
+  const { metrics, isLoading } = useValueMetrics(projectId, days)
 
-  if (loading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
+  if (isLoading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
   if (!metrics) return null
   const workflow = buildValueMetricsWorkflow(metrics, days, project?.name ?? 'All Projects')
 

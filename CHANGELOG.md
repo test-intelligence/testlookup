@@ -50,6 +50,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-19 — Frontend lint: ValueMetricsPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (it flags 35 sites — far more than the `refs`/`immutability` flips, which each touched a single component — so it is cleared in reviewable slices before the rule is promoted to `error`). This slice clears one site by a real refactor (not a disable):
+
+- `src/pages/ValueMetricsPage.tsx` — replaced the load-on-mount `useEffect(() => { setLoading(true); valueMetricsService.get(projectId, days).then(setMetrics)… })` with a new SWR hook `useValueMetrics`, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns loading/data state declaratively, so the page no longer drives state from an effect.
+- `src/hooks/useValueMetrics.ts` (new) — `useSWR` keyed on `['value-metrics', projectId ?? '__all__', days]`, mirroring the old effect's `[projectId, days]` dependency array. The key is never null, so the page still always fetches (including all-projects mode, where the service omits the `project_id` filter); `onError` preserves the prior toast. Behaviour unchanged.
+
+Added `src/hooks/useValueMetrics.test.ts` (project-scoped fetch, all-projects fetch with no filter, error surfaced + toast). Validated: `npm run lint` (0 errors, 76→75 warnings; the rule's count drops 35→34 and `ValueMetricsPage` no longer flags it), `type-check`, `build`, and the full vitest suite (343 passed) all green. The rule stays at `warn` until the remaining 34 sites are cleared in later slices.
+
 ### Added (2026-06-19 — Flaky-Test Intelligence: cross-run step-flip DB read (FLK-P6, slice 3 — assemble))
 
 Picks up the read that slice 2 deferred: it pulls the retained per-run step outcomes from `test_step_runs` (#199), groups them into the oldest→newest per-run window `compute_step_flips` (#200) expects, and returns the step-flip report — so the signal can finally be assembled from real history. New `runs_service.step_flip_report_by_fingerprint(db, project_id, fingerprints, *, since=None, max_runs=25) -> dict[fingerprint, StepFlipReport]`, a sibling of the existing `failing_step_detail_by_fingerprint` (which reads the latest-run snapshot):
