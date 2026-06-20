@@ -50,6 +50,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-20 — Frontend lint: SeedDataPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (34 sites remain after the ValueMetricsPage slice); the sites are cleared in reviewable slices before the rule is promoted to `error`. This slice clears one more site by a real refactor (not a disable):
+
+- `src/pages/settings/SeedDataPage.tsx` — replaced the load-on-mount `useEffect(() => fetchStatus(), [fetchStatus])` (whose `fetchStatus` called `setSeeded`/`setLoading`) with a new SWR hook `useSeedStatus`, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns loading/data/error state declaratively, so the page no longer drives state from an effect. The post-mutation `await fetchStatus()` (after load/reset/delete) becomes `await refresh()` (SWR `mutate`).
+- `src/hooks/useSeedStatus.ts` (new) — `useSWR` keyed on the constant `'dev-seed-status'` with `shouldRetryOnError: false` so a failed check surfaces immediately like the old `.catch`. `seeded` is `null` while loading or on error (preserving the old `useState<boolean | null>(null)` semantics); the page distinguishes the error case via `isError`. Behaviour unchanged.
+
+Added `src/hooks/useSeedStatus.test.ts` (seeded=true, seeded=false, and the error path surfacing `isError` + `seeded=null`); each render uses a fresh SWR cache so the constant key doesn't bleed across tests. Validated: `npm run lint` (0 errors, 75→74 warnings; the rule's count drops 34→33 and `SeedDataPage` no longer flags it), `type-check`, `build`, and the full vitest suite (346 passed) all green. The rule stays at `warn` until the remaining 33 sites are cleared in later slices.
+
 ### Changed (2026-06-19 — Frontend lint: ValueMetricsPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (it flags 35 sites — far more than the `refs`/`immutability` flips, which each touched a single component — so it is cleared in reviewable slices before the rule is promoted to `error`). This slice clears one site by a real refactor (not a disable):

@@ -1,31 +1,16 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { Database, Loader2, Plus, RefreshCw, Trash2, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import { api } from '@/services/api'
+import { useSeedStatus } from '@/hooks/useSeedStatus'
 
 type SeedAction = 'load' | 'reset' | 'delete' | null
 
 export default function SeedDataPage() {
-  const [seeded, setSeeded] = useState<boolean | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { seeded, isLoading: loading, isError, refresh } = useSeedStatus()
   const [running, setRunning] = useState<SeedAction>(null)
   const [lastOutput, setLastOutput] = useState<string | null>(null)
-
-  const fetchStatus = useCallback(async () => {
-    try {
-      const res = await api.get('/api/v1/dev/seed/status')
-      setSeeded(res.data.seeded)
-    } catch {
-      setSeeded(null)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchStatus()
-  }, [fetchStatus])
 
   const handleAction = async (action: SeedAction) => {
     if (!action) return
@@ -42,7 +27,7 @@ export default function SeedDataPage() {
       }
       toast.success(res.data.message)
       setLastOutput(res.data.output || null)
-      await fetchStatus()
+      await refresh()
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       toast.error(detail ?? 'Operation failed')
@@ -86,7 +71,7 @@ export default function SeedDataPage() {
             <Loader2 className="h-4 w-4 animate-spin" />
             Checking status...
           </div>
-        ) : seeded === null ? (
+        ) : isError ? (
           <div className="flex items-center gap-2 text-sm text-red-400">
             <XCircle className="h-4 w-4" />
             Unable to check seed status — API may be unavailable
