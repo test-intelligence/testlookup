@@ -15,7 +15,9 @@ from app.models.postgres import (
     TestCase,
     TestRun,
     TestStep,
+    TestStepRun,
 )
+from app.services.flaky_step_flip import StepFlipReport, compute_step_flips
 
 # Step status vocab (strict TestStatus values, see ingestion._map_step_status).
 # A step "failed" if it ended FAILED or BROKEN; a step "passed" if PASSED.
@@ -767,3 +769,106 @@ async def step_success_by_canonical(
         for cid, passed, total in (await db.execute(stmt)).all()
         if int(total or 0) > 0
     }
+
+
+async def step_flip_report_by_fingerprint(
+    db: AsyncSession,
+    project_id: uuid.UUID | str,
+    fingerprints: list[str] | set[str],
+    *,
+    since: datetime | None = None,
+    max_runs: int = 25,
+) -> dict[str, StepFlipReport]:
+    """FLK-P6 slice 3: read the per-run step history and compute cross-run
+    step-flip per fingerprint.
+
+    Unlike :func:`failing_step_detail_by_fingerprint`, which reads the
+    LATEST-RUN-ONLY ``test_steps`` snapshot, this reads ``test_step_runs`` —
+    which RETAINS one outcome row per ``(canonical, run, ordinal)`` (migration
+    0097) — so it can answer *which step oscillated PASSED<->FAILED across runs*.
+    This is the DB read FLK-P6 slice 2 deferred: it assembles the per-run window
+    (ordered oldest->newest, capped to the most recent ``max_runs`` runs) that
+    :func:`compute_step_flips` expects and returns its report per fingerprint.
+
+    Project scoped via the canonical anchor; ``since`` bounds the window by
+    ``TestRun.created_at``. Two batched queries; pure read; never N+1. A
+    fingerprint that resolves to a canonical but has <2 runs of step history maps
+    to an "insufficient history" report, so callers can distinguish "no flip"
+    from "no history"; a fingerprint with no canonical anchor is absent.
+    """
+    fps = [f for f in {*fingerprints} if f]
+    if not fps:
+        return {}
+
+    anchor_rows = (
+        await db.execute(
+            select(CanonicalTestCase.id, CanonicalTestCase.test_fingerprint).where(
+                CanonicalTestCase.project_id == project_id,
+                CanonicalTestCase.test_fingerprint.in_(fps),
+            )
+        )
+    ).all()
+    fp_by_canonical: dict[uuid.UUID, str] = {cid: fp for cid, fp in anchor_rows}
+    if not fp_by_canonical:
+        return {}
+
+    filters = [TestStepRun.canonical_test_case_id.in_(list(fp_by_canonical))]
+    if since is not None:
+        filters.append(TestRun.created_at >= since)
+    rows = (
+        await db.execute(
+            select(
+                TestStepRun.canonical_test_case_id,
+                TestStepRun.source_test_run_id,
+                TestStepRun.ordinal,
+                TestStepRun.status,
+                TestStepRun.name,
+            )
+            .join(TestRun, TestRun.id == TestStepRun.source_test_run_id)
+            .where(*filters)
+            # Oldest->newest per canonical (the order compute_step_flips wants);
+            # run id + ordinal are deterministic tiebreaks when created_at
+            # collides for runs ingested together.
+            .order_by(
+                TestStepRun.canonical_test_case_id,
+                TestRun.created_at.asc(),
+                TestStepRun.source_test_run_id,
+                TestStepRun.ordinal,
+            )
+        )
+    ).all()
+
+    # Fold the flat, ordered rows into per-canonical per-run windows. ``order``
+    # keeps run ids oldest->newest (first-seen wins, the query is ordered);
+    # ``steps`` accumulates each run's step outcomes in ordinal order.
+    per_canonical: dict[uuid.UUID, dict] = {}
+    for r in rows:
+        bucket = per_canonical.setdefault(
+            r.canonical_test_case_id, {"order": [], "steps": {}}
+        )
+        run_id = r.source_test_run_id
+        if run_id not in bucket["steps"]:
+            bucket["order"].append(run_id)
+            bucket["steps"][run_id] = []
+        bucket["steps"][run_id].append(
+            {"ordinal": r.ordinal, "name": r.name, "status": r.status}
+        )
+
+    reports: dict[str, StepFlipReport] = {}
+    for cid, fp in fp_by_canonical.items():
+        bucket = per_canonical.get(cid)
+        if not bucket:
+            # Resolved canonical with no retained step history yet — emit the
+            # empty-window report so the caller sees "insufficient history".
+            reports[fp] = compute_step_flips([])
+            continue
+        # Cap to the most recent ``max_runs`` runs; the window stays
+        # oldest->newest so adjacent-run comparison is unaffected.
+        run_ids = bucket["order"][-max_runs:] if max_runs and max_runs > 0 else bucket["order"]
+        window = [
+            {"run_id": str(run_id), "steps": bucket["steps"][run_id]}
+            for run_id in run_ids
+        ]
+        reports[fp] = compute_step_flips(window)
+
+    return reports

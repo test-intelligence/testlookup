@@ -50,6 +50,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-19 — Flaky-Test Intelligence: cross-run step-flip DB read (FLK-P6, slice 3 — assemble))
+
+Picks up the read that slice 2 deferred: it pulls the retained per-run step outcomes from `test_step_runs` (#199), groups them into the oldest→newest per-run window `compute_step_flips` (#200) expects, and returns the step-flip report — so the signal can finally be assembled from real history. New `runs_service.step_flip_report_by_fingerprint(db, project_id, fingerprints, *, since=None, max_runs=25) -> dict[fingerprint, StepFlipReport]`, a sibling of the existing `failing_step_detail_by_fingerprint` (which reads the latest-run snapshot):
+
+- **Two batched queries, never N+1**: resolve the fingerprints to canonical ids (project-scoped via the canonical anchor), then one `test_step_runs JOIN test_runs` read ordered `(canonical, run created_at, run id, ordinal)` — oldest→newest, the order `compute_step_flips` wants — with deterministic run-id/ordinal tiebreaks when `created_at` collides for runs ingested together.
+- Folds the flat, ordered rows into per-canonical per-run windows (first-seen run wins ordering; steps accumulate in ordinal order), capping to the most recent `max_runs` runs and honouring an optional `since` bound on `TestRun.created_at`. A resolved canonical with `<2` runs of history maps to an "insufficient history" report (caller distinguishes "no flip" from "no history"); a fingerprint with no anchor is absent. Pure read — the caller's transaction is never mutated.
+- **Deferred to a later slice**: the surfacing (Flaky Coach response fields / agent verdict / UI). This slice is the read those will call — no migration, no ingestion/router change.
+- New `backend/tests/test_step_flip_read.py` (10 cases, DB stubbed by SQL-dispatch fake) — oscillation flagged as a flip, stable-step no-flip, single-run/no-history insufficient-history reports, project scoping, the two-query batching, `max_runs` capping (drops early oscillation), `since` filtering, and per-ordinal step grouping within a run. Full backend suite (3421 passed) + 15 quality gates + ruff green.
+
 ### Added (2026-06-18 — Flaky-Test Intelligence: cross-run step-flip computation (FLK-P6, slice 2 — compute))
 
 Builds on slice 1's `test_step_runs` retention (#199) to compute the signal FLK-P5 explicitly deferred ("left for future work" until per-run step history existed): **which step flipped between runs, how often, and in which direction**. A step that oscillates PASSED↔FAILED across runs reads as *step-level flakiness* — fix/quarantine that one step — rather than a whole-test verdict. New pure, no-DB, never-raise module `backend/app/services/flaky_step_flip.py`, a sibling of `flaky_signals`/`flaky_step_analysis`:
