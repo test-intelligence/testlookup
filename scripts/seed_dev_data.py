@@ -423,6 +423,68 @@ async def _seed_releases(
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _seed_execution_history(project_ids: list[str]) -> None:
+    """Seed realistic *execution* history (runs + per-test results over ~30 days)
+    so dashboards / flaky-coach / trends / failures are populated on first run.
+
+    Best-effort and fully isolated: it runs AFTER the core seed has committed,
+    opens its own sessions, and swallows any error per run — a problem here can
+    never break the user/project/case seed above. Feeds synthetic runs through
+    the REAL ingestion pipeline (so every derived table is correct), then
+    backdates the run + its rows so the history spans the trend window.
+    """
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    try:
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import TestCase, TestCaseHistory
+        from app.services.demo_dataset import generate_demo_runs
+        from app.services.ingestion_pipeline import (
+            create_run_from_payload,
+            finalize_run,
+            ingest_test_results,
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        print(f"⏭️  Skipping execution-history seed (imports unavailable): {exc}")
+        return
+
+    now = datetime.now(timezone.utc)
+    print("📈  Seeding execution history (runs, failures, flaky, trends)…")
+    for pid in project_ids:
+        seeded = 0
+        try:
+            for spec in generate_demo_runs(runs=14, now=now):
+                run_id = str(_uuid.uuid4())
+                async with AsyncSessionLocal() as db:
+                    run = await create_run_from_payload(
+                        db, project_id=pid, build_number=spec.build_number,
+                        run_id=run_id, branch=spec.branch, framework=spec.framework,
+                        trigger_source="demo", ingestion_source="demo",
+                    )
+                    await ingest_test_results(db, run, spec.results)
+                    ts = spec.started_at
+                    run.start_time = ts
+                    run.end_time = ts
+                    run.created_at = ts
+                    await db.execute(update(TestCase).where(
+                        TestCase.test_run_id == run.id).values(created_at=ts))
+                    await db.execute(update(TestCaseHistory).where(
+                        TestCaseHistory.test_run_id == run.id).values(created_at=ts))
+                    await db.commit()
+                # finalize_run owns its own sessions (suites, aggregates, etc.)
+                await finalize_run(
+                    run_id=run_id, project_id=pid, build_number=spec.build_number,
+                )
+                seeded += 1
+            print(f"   ✅  project {pid[:8]}…: {seeded} runs of history")
+        except Exception as exc:  # pragma: no cover — best-effort
+            print(f"   ⚠️  execution-history seed partial for {pid[:8]}… "
+                  f"({seeded} runs) — {type(exc).__name__}: {exc}")
+
+
 async def main(reset: bool = False) -> None:
     engine = create_async_engine(str(settings.DATABASE_URL), echo=False)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -454,8 +516,13 @@ async def main(reset: bool = False) -> None:
             )
 
         await db.commit()
+        project_ids = [str(p.id) for p in projects]
 
     await engine.dispose()
+
+    # Execution history (runs/failures/flaky/trends) — runs after the core seed
+    # committed, with its own sessions; isolated + best-effort.
+    await _seed_execution_history(project_ids)
 
     print()
     print("=" * 62)

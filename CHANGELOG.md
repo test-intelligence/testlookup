@@ -50,6 +50,16 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-21 — Adoption: rich demo dataset so first-run views are populated)
+
+Slice 2 of frictionless self-host adoption. The seed previously created only *authored* test cases/plans/releases, so a fresh install's dashboards, flaky-coach, trends, and failures pages were empty until real runs arrived (and a single upload can't show flakiness or trends). Now a `make quickstart` / `make seed-data` shows a populated, compelling app out of the box.
+
+- **New `backend/app/services/demo_dataset.py`** — pure, deterministic generator (`generate_demo_runs(now=…)`) producing ~14 synthetic runs over ~30 days that embed the headline patterns: stable tests, a **flaky** test (alternating pass/fail with varied environmental error signatures), a **regression** (clean for most of the window then failing in the latest runs), a **product bug** (fails every run with one assertion), and a **perf** regression (duration spikes in recent runs). No DB / no wall-clock — the caller passes `now`.
+- **`scripts/seed_dev_data.py`** — new best-effort `_seed_execution_history` runs AFTER the core seed commits, in isolated sessions, feeding the generated runs through the REAL ingestion pipeline (`create_run_from_payload` → `ingest_test_results` → `finalize_run`) so every derived table (history, fingerprints, canonical cases, suites, aggregates) is correct, then backdates the run + its rows so the history spans the trend window. Any failure here is swallowed per-run and can never break the user/project/case seed.
+- **New `backend/tests/test_demo_dataset.py`** (14 tests) — pins valid `IngestPayload`/`IngestTestResult` shape, the ~30-day date spread, and that each pattern is detectable downstream (flaky alternates ≥3/≥3 with varied errors; regression is clean→failing; product bug always fails; stable always passes; perf duration spikes; realistic per-run pass rate; stable test identity; determinism). ruff + quality-gate green.
+
+(End-to-end ingestion of the seed runs needs a running stack — validate with a `make quickstart` smoke; the generator contract is pinned by the tests.)
+
 ### Added (2026-06-21 — Adoption: one-command zero-config quickstart (`make quickstart`))
 
 First slice of the "frictionless self-host adoption" track. Removes the #1 first-run barrier: previously a newcomer had to `cp .env.example .env` and hand-generate **8 secrets** via `openssl`, and `.env.example` shipped literal placeholders where `DATABASE_URL`/`MONGO_URI` embedded *different* placeholder passwords than `POSTGRES_PASSWORD`/`MONGO_PASSWORD` — so a bare copy + `make demo` brought up containers whose backend couldn't authenticate to Postgres (Compose hard-fails on empty `${POSTGRES_PASSWORD:?…}` etc.).
