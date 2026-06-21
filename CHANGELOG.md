@@ -50,6 +50,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-21 — Adoption: one-command zero-config quickstart (`make quickstart`))
+
+First slice of the "frictionless self-host adoption" track. Removes the #1 first-run barrier: previously a newcomer had to `cp .env.example .env` and hand-generate **8 secrets** via `openssl`, and `.env.example` shipped literal placeholders where `DATABASE_URL`/`MONGO_URI` embedded *different* placeholder passwords than `POSTGRES_PASSWORD`/`MONGO_PASSWORD` — so a bare copy + `make demo` brought up containers whose backend couldn't authenticate to Postgres (Compose hard-fails on empty `${POSTGRES_PASSWORD:?…}` etc.).
+
+- **New `scripts/gen-dev-env.sh`** — copies `.env.example`, then fills every required secret (`POSTGRES_PASSWORD`, `MONGO_PASSWORD`, `MINIO_ACCESS_KEY/SECRET_KEY`, `APP_SECRET_KEY`, `JWT_SECRET_KEY`, `WEBHOOK_SECRET`, `FLOWER_PASSWORD`, `GF_SECURITY_ADMIN_PASSWORD`) with a freshly generated random value and rewrites `DATABASE_URL` / `MONGO_URI` so their passwords stay in sync. Secret source falls back openssl → python `secrets` → `/dev/urandom`. The file is git-ignored and stamped with a clear LOCAL/DEMO-only banner; the script no-ops if `.env` already exists (`--force` to regenerate).
+- **Makefile**: the `.env` bootstrap target now runs the generator (so `make dev` / `make demo` start on the first try with zero manual editing), with a plain-copy fallback if `bash` is unavailable. New **`make quickstart`** target = generate `.env` + run the demo.
+- **README**: Quick Start now leads with the one-command `make quickstart`; the secrets section is reframed as production-only (local/demo secrets are auto-generated); removed the stale "demo coming in v0.1.0" note (the `demo` target already exists).
+
 ### Changed (2026-06-20 — Frontend lint: PerformancePage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (33 sites remain after the SeedDataPage slice); the sites are cleared in reviewable slices before the rule is promoted to `error`. This slice clears one more site by a real refactor (not a disable):

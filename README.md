@@ -29,25 +29,25 @@ Three run modes. Pick the one that fits.
 
 | Mode | Command | What you get | Time |
 |------|---------|-------------|------|
+| **Demo** ⭐ | `make quickstart` | Zero config: auto-generates `.env` with local secrets, starts the core stack, loads sample data | ~3 min |
 | **Core** (no LLM) | `make dev` | Rules/ML analysis, dashboards, CLI, MCP | ~5 min |
 | **Full** (local LLM) | `make dev-llm` then `docker compose exec ollama ollama pull qwen2.5:7b` | Core + AI-assisted triage via Ollama + ChromaDB | ~10 min |
-| **Demo** | `make demo` | Core + pre-loaded sample data (coming in v0.1.0) | ~3 min |
 
 ```bash
 git clone https://github.com/anandtopu/testlookup.git
 cd testlookup
-cp .env.example .env
-# edit .env before starting; see the required first-run secrets below
-make dev                 # or: make dev-llm for full mode
+make quickstart          # generates .env (random local secrets) + loads demo data
 ```
+
+That's it — no manual secret editing. `make quickstart` / `make dev` run `scripts/gen-dev-env.sh`, which fills every required secret in `.env` with a random value and keeps `DATABASE_URL` / `MONGO_URI` in sync, so the stack starts on the first try. Prefer to configure by hand? `cp .env.example .env`, edit the secrets, then `make dev`.
 
 Dashboard: http://localhost:3000 | API docs: http://localhost:8000/docs | MCP SSE: http://localhost:8002/sse
 
 Prerequisites: Docker + Compose v2. Core mode: 4 GB RAM / 2 vCPU. Full mode: 8 GB / 4 vCPU.
 
-### Required first-run secrets
+### Secrets
 
-Docker Compose intentionally refuses to start until the required secrets in `.env` are set. After copying `.env.example`, replace these values:
+For **local / demo** use, `make quickstart` / `make dev` auto-generate strong random secrets into `.env` — nothing to do. For a **production** deployment, generate your own values and set these (Docker Compose refuses to start until they're non-empty):
 
 | Variable | Example generation |
 |----------|--------------------|
