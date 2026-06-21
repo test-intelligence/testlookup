@@ -50,6 +50,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-20 — Frontend lint: PerformancePage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (33 sites remain after the SeedDataPage slice); the sites are cleared in reviewable slices before the rule is promoted to `error`. This slice clears one more site by a real refactor (not a disable):
+
+- `src/pages/settings/PerformancePage.tsx` — replaced the load-on-mount `useEffect(() => { setLoading(true); Promise.all([getPerformanceBudgets(), getSearchConfig()]).then(([b, c]) => { setBudgets(b); setConfig(c) })… }, [])` with a new SWR hook `usePerformanceSettings`, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns loading/data state declaratively, so the page no longer drives state from an effect.
+- `src/hooks/usePerformanceSettings.ts` (new) — `useSWR` keyed on the constant `'performance-settings'`; both static, read-only endpoints are fetched in parallel under one key, exactly as the old `Promise.all`. `shouldRetryOnError: false` makes a failed load surface as empty immediately, matching the old `.catch(() => {})` that swallowed the error. `budgets`/`config` are `null` while loading or on error (preserving the old `useState<… | null>(null)` semantics); each tab body still renders only when its data is present. Behaviour unchanged.
+
+Added `src/hooks/usePerformanceSettings.test.ts` (parallel fetch surfacing both budgets and config; the error path leaving both `null` and reporting `isError`); each render uses a fresh SWR cache so the constant key doesn't bleed across tests. Validated: `npm run lint` (0 errors, 74→73 warnings; the rule's count drops 33→32 and `PerformancePage` no longer flags it), `type-check`, `build`, and the full vitest suite (348 passed) all green. The rule stays at `warn` until the remaining 32 sites are cleared in later slices.
+
 ### Changed (2026-06-20 — Frontend lint: SeedDataPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (34 sites remain after the ValueMetricsPage slice); the sites are cleared in reviewable slices before the rule is promoted to `error`. This slice clears one more site by a real refactor (not a disable):

@@ -1,27 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { clsx } from 'clsx';
-import {
-  type PerformanceBudgets,
-  type SearchConfig,
-  getPerformanceBudgets,
-  getSearchConfig,
-} from '../../services/performanceService';
+import { usePerformanceSettings } from '@/hooks/usePerformanceSettings';
 
 type Tab = 'budgets' | 'config' | 'scenarios';
 
 export default function PerformancePage() {
   const [tab, setTab] = useState<Tab>('budgets');
-  const [budgets, setBudgets] = useState<PerformanceBudgets | null>(null);
-  const [config, setConfig] = useState<SearchConfig | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([getPerformanceBudgets(), getSearchConfig()])
-      .then(([b, c]) => { setBudgets(b); setConfig(c); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const { budgets, config, isLoading } = usePerformanceSettings();
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'budgets', label: 'Latency Budgets' },
@@ -29,7 +14,7 @@ export default function PerformancePage() {
     { key: 'scenarios', label: 'Scale Scenarios' },
   ];
 
-  if (loading) return <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>;
+  if (isLoading) return <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>;
 
   return (
     <div className="space-y-6">
