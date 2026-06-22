@@ -7,6 +7,9 @@ import DeepInvestigationPage from './DeepInvestigationPage'
 vi.mock('@/hooks/useDeepInvestigation', () => ({
   useFailureClusters: vi.fn(),
   useDeepFindings: vi.fn(),
+  // Pipeline status moved from a load-on-mount effect to this SWR hook; the
+  // mock must export it or the page throws on render.
+  usePipelineStatus: vi.fn(),
 }))
 
 vi.mock('@/hooks/useRuns', () => ({
@@ -27,8 +30,10 @@ vi.mock('@/store/projectStore', () => ({
 
 describe('DeepInvestigationPage', () => {
   it('renders the investigation workflow strip above the cluster view', async () => {
-    const { useFailureClusters, useDeepFindings } = await import('@/hooks/useDeepInvestigation')
+    const { useFailureClusters, useDeepFindings, usePipelineStatus } = await import('@/hooks/useDeepInvestigation')
     const { useRuns, useRun } = await import('@/hooks/useRuns')
+
+    ;(usePipelineStatus as ReturnType<typeof vi.fn>).mockReturnValue({ data: null })
 
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [{ id: 'run-1' }] },

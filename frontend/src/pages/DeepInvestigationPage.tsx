@@ -52,7 +52,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
-import { useFailureClusters, useDeepFindings } from '@/hooks/useDeepInvestigation'
+import { useFailureClusters, useDeepFindings, usePipelineStatus } from '@/hooks/useDeepInvestigation'
 import { useRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -1466,16 +1466,9 @@ export default function DeepInvestigationPage() {
   const { data: clusters = [] } = useFailureClusters(runId ?? null)
   const { data: findings = [] } = useDeepFindings(runId ?? null)
 
-  // Pipeline status is a one-shot SWR-less call; refresh on focus.
-  const [pipelineStatus, setPipelineStatus] = useState<{ status: string; stage_summary?: { completed: number; failed: number; skipped: number; pending: number } } | null>(null)
-  useEffect(() => {
-    if (!runId) { setPipelineStatus(null); return }
-    let alive = true
-    deepInvestigationService.getPipelineStatus(runId, 'deep')
-      .then(s => { if (alive) setPipelineStatus(s) })
-      .catch(() => { if (alive) setPipelineStatus(null) })
-    return () => { alive = false }
-  }, [runId])
+  // Pipeline status fetched declaratively via SWR (refreshes on focus); null
+  // while loading, before a run is selected, or on a failed load.
+  const { data: pipelineStatus = null } = usePipelineStatus(runId ?? null, 'deep')
 
   const model = useMemo(
     () => buildModel({ clusters, findings, pipelineStatus, settings, recentRuns: recentItems, focusedRun }),

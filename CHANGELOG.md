@@ -51,6 +51,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-22 — Frontend lint: DeepInvestigationPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks **v7 (React Compiler)** rule set: `react-hooks/set-state-in-effect` is the last named rule still at `warn`. Sites are cleared one page per slice by real refactors (not disables) before the rule is promoted to `error`.
+
+- **`DeepInvestigationPage`** — replaced the load-on-mount `useEffect` that fetched WF-1 pipeline status into a `useState` (`getPipelineStatus(runId, 'deep')` with an `alive` guard) with a new SWR hook **`usePipelineStatus`** in `useDeepInvestigation.ts`, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns the fetch declaratively; the key is `null` (no fetch) when there is no run — exactly the old `if (!runId) { setPipelineStatus(null); return }` guard — and `revalidateOnFocus` is left at the SWR default to honour the page's "refresh on focus" intent the bare effect never actually delivered. `shouldRetryOnError: false` surfaces a failed load as `null`, matching the old `.catch`. Behaviour unchanged.
+- **Regression test** `src/hooks/useDeepInvestigation.test.ts` covers the run-scoped fetch, the no-run case skipping the fetch, and the error path leaving data undefined (rendered as `null`).
+- `npm run lint` 0 errors; `set-state-in-effect` count drops **32 → 31**; type-check, build, and full vitest (358) green. The rule stays at `warn` until the remaining 31 sites are cleared.
+
 ### Added (2026-06-21 — Adoption: `make smoke` health verifier + fixed demo health-wait)
 
 Slice 4 of frictionless self-host adoption — give newcomers confidence the stack actually came up, and fix a real hang.
