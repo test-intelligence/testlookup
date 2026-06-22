@@ -50,6 +50,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-21 — Adoption: `make smoke` health verifier + fixed demo health-wait)
+
+Slice 4 of frictionless self-host adoption — give newcomers confidence the stack actually came up, and fix a real hang.
+
+- **Fixed a `make demo` hang**: it waited on `curl http://localhost:8000/health`, but the bare `GET /health` shim was retired — the probes are `/health/live` and `/health/ready` (the Compose healthcheck already uses `/health/live`). The retired path 404s, so `curl -sf` never succeeded and the demo looped forever after "Waiting for backend health check." Now it waits on `/health/ready`.
+- **New `scripts/smoke.py`** (stdlib only — no install) + **`make smoke`**: probes backend readiness (`/health/ready`), liveness (`/health/live`), the API schema (`/openapi.json`), and the frontend, then prints a clear PASS/FAIL report and exits non-zero if any core check is down (usable in CI / setup scripts). Dependency details are informational. Output is ASCII-only so it can't crash a Windows (cp1252) console. Base URLs override via `TL_API` / `TL_WEB`.
+- **GETTING_STARTED.md**: Step 1 now uses `make quickstart` (dropping the stale "`cp .env.example` — defaults work for local dev" line, which was the broken path slice 1 fixed) and adds a `make smoke` verification step.
+- **New `backend/tests/test_smoke_script.py`** (5 tests) — pins the pure `summarize()` decision core (core failure ⇒ non-pass; informational failure ⇒ still pass; empty ⇒ ok) and that `probe()` never raises on an unreachable host. ruff + quality-gate green.
+
 ### Added (2026-06-21 — Adoption: first-run getting-started guide on the dashboard)
 
 Slice 3 of frictionless self-host adoption. A brand-new project (or a fresh instance) used to land on a zeroed-out dashboard with no obvious next step. Now, when there are no executions in the window and no recent runs, the Overview shows a dismissible **getting-started guide** that turns the empty state into a clear path to first value.

@@ -13,11 +13,18 @@ This walkthrough takes you from `git clone` to seeing your first failure cluster
 ```bash
 git clone https://github.com/anandtopu/testlookup.git
 cd testlookup
-cp .env.example .env     # defaults work for local dev
-make demo                # boots the stack + loads sample data
+make quickstart          # generates .env (random local secrets) + boots + loads sample data
 ```
 
-Wait for the `Demo ready!` message. The first boot takes 3-5 minutes (Docker image builds + database migrations + seed data).
+`make quickstart` writes a `.env` with random local secrets for you (no manual `openssl` steps) and keeps the connection strings in sync, so the stack starts on the first try. Wait for the `Demo ready!` message — the first boot takes 3-5 minutes (Docker image builds + database migrations + seed data).
+
+Then verify everything came up healthy:
+
+```bash
+make smoke               # checks backend readiness, the API schema, and the frontend
+```
+
+A green `Smoke check passed` means you're ready. (Prefer to configure secrets by hand? `cp .env.example .env`, edit the secrets, then `make dev`.)
 
 ## Step 2 -- Open the dashboard
 

@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 # Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
 # breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
@@ -300,13 +300,16 @@ seed-data: ## Seed demo users, projects, test cases, plans, strategies and relea
 seed-data-reset: ## Wipe seed data and regenerate from scratch
 	$(DOCKER_COMPOSE) exec backend python /app/scripts/seed_dev_data.py --reset
 
+smoke: ## Verify a running stack is healthy (run after make quickstart / make dev)
+	@python3 scripts/smoke.py 2>/dev/null || python scripts/smoke.py
+
 quickstart: demo ## Zero-config one-command launch: auto-generate .env + run the demo
 
 demo: .env ## One-shot demo: start core stack, wait for health, seed data loads automatically
 	@echo "==> Starting core stack (no LLM)..."
 	$(DOCKER_COMPOSE) up -d --build
 	@echo "==> Waiting for backend health check..."
-	@until curl -sf http://localhost:8000/health > /dev/null 2>&1; do sleep 2; done
+	@until curl -sf http://localhost:8000/health/ready > /dev/null 2>&1; do sleep 2; done
 	@echo "==> Backend healthy. Seed data loads automatically on first start."
 	@echo "==> Uploading sample test results..."
 	@for f in samples/junit/*.xml; do \
