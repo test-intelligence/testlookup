@@ -51,6 +51,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-22 — Frontend lint: OnboardingPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:
+
+- `src/pages/OnboardingPage.tsx` — replaced the load-on-mount `useEffect(() => { … onboardingService.detectProgress(projectId).then(setStatus)… }, [projectId])` (which drove `status`/`loading` from inside the effect) with a new SWR hook `useOnboardingStatus`, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns the loading/data state declaratively, so the page no longer drives state from an effect. The post-skip `setStatus(updated)` becomes `mutate(updated, { revalidate: false })` (applies the server response to the SWR cache without a refetch, exactly as before).
+- `src/hooks/useOnboardingStatus.ts` (new) — `useSWR` keyed on `['onboarding-status', projectId]`, mirroring the old `projectId` dependency. The key is `null` (no fetch) when there is no resolved project — exactly the old `if (!projectId) { setStatus(null); setLoading(false); return }` guard, where the all-projects view (`null` projectId) never fetched and showed the 0%/no-steps workspace view. `status` is `null` while loading or before a project is selected (preserving the prior `useState<OnboardingStatus | null>(null)` semantics); `shouldRetryOnError: false` surfaces a failed load immediately, toasting the same "Failed to load onboarding status" the old `.catch` raised. Behaviour unchanged.
+
+Added `src/hooks/useOnboardingStatus.test.ts` (project-scoped fetch surfacing status; the no-project case skipping the fetch entirely; the error path toasting and leaving `status` null); each render uses a fresh SWR cache so keys don't bleed across tests. Validated: `npm run lint` (0 errors, the rule's count drops 32 → 31 and `OnboardingPage` no longer flags it), `type-check`, `build`, and the full vitest suite all green. The rule stays at `warn` until the remaining 31 sites are cleared in later slices.
 ### Changed (2026-06-21 — Frontend lint: OwnershipEditorPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (31 sites remain after this slice); the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:

@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   CheckCircle, Circle, FlaskConical, GitBranch, Brain, Key, Radio, SkipForward,
@@ -7,8 +6,9 @@ import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { onboardingService, type OnboardingStatus, type OnboardingStep } from '@/services/onboardingService'
+import { onboardingService, type OnboardingStep } from '@/services/onboardingService'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import { useOnboardingStatus } from '@/hooks/useOnboardingStatus'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import { buildOnboardingWorkflow } from '@/components/workflow/workflowPresets'
 
@@ -101,23 +101,8 @@ export default function OnboardingPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
-  const [status, setStatus] = useState<OnboardingStatus | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { status, isLoading: loading, mutate } = useOnboardingStatus(projectId)
   const workflow = buildOnboardingWorkflow(status)
-
-  useEffect(() => {
-    if (!projectId) {
-      setStatus(null)
-      setLoading(false)
-      return
-    }
-    setStatus(null)
-    setLoading(true)
-    onboardingService.detectProgress(projectId)
-      .then(setStatus)
-      .catch(() => toast.error('Failed to load onboarding status'))
-      .finally(() => setLoading(false))
-  }, [projectId])
 
   if (!projectId && !isAllProjects) {
     return (
@@ -144,7 +129,7 @@ export default function OnboardingPage() {
     if (!projectId) return
     try {
       const updated = await onboardingService.skipStep(projectId, stepKey)
-      setStatus(updated)
+      mutate(updated, { revalidate: false })
     } catch {
       toast.error('Failed to skip step')
     }
