@@ -50,6 +50,16 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-21 — Adoption: first-run getting-started guide on the dashboard)
+
+Slice 3 of frictionless self-host adoption. A brand-new project (or a fresh instance) used to land on a zeroed-out dashboard with no obvious next step. Now, when there are no executions in the window and no recent runs, the Overview shows a dismissible **getting-started guide** that turns the empty state into a clear path to first value.
+
+- **New `frontend/src/components/onboarding/FirstRunGuide.tsx`** — a presentational, dismissible card with three copy-to-clipboard steps (1: `make quickstart` to load the demo; 2: `testlookup upload results.xml` / ingest your own results; 3: explore) plus quick links to Failure analysis, Flaky coach, the Release gate, and the getting-started docs. Copy uses the shared `utils/clipboard` helper; dismissal persists per-browser via `localStorage` (`FIRST_RUN_DISMISS_KEY`).
+- **`OverviewPage.tsx`** — renders the guide at the top when `!summaryLoading && total_executions === 0 && recentRunItems.length === 0` and it hasn't been dismissed; it disappears automatically once the first run lands (and the demo seed from slice 2 means demo users never see it).
+- **New `frontend/src/components/onboarding/FirstRunGuide.test.tsx`** (7 tests) — steps/commands present, first-insight links wired, project name shown, clipboard copy, dismiss handler, no-dismiss-without-handler, stable key.
+
+Validated locally: `vitest` (7 passed), `tsc --noEmit`, `eslint`, and `vite build` all green. (The live Overview render on a fresh instance is best confirmed with a `make quickstart` smoke — the component is fully unit-tested and the page integration type-checks/builds.)
+
 ### Added (2026-06-21 — Adoption: rich demo dataset so first-run views are populated)
 
 Slice 2 of frictionless self-host adoption. The seed previously created only *authored* test cases/plans/releases, so a fresh install's dashboards, flaky-coach, trends, and failures pages were empty until real runs arrived (and a single upload can't show flakiness or trends). Now a `make quickstart` / `make seed-data` shows a populated, compelling app out of the box.

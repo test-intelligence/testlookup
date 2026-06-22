@@ -12,6 +12,7 @@ import { useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
 import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from '@/components/onboarding/FirstRunGuide'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { formatDuration } from '@/utils/formatters'
 import { clsx } from 'clsx'
@@ -901,6 +902,9 @@ export default function OverviewPage() {
   const project = useProjectStore((s) => s.activeProject)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+  const [guideDismissed, setGuideDismissed] = useState(() => {
+    try { return localStorage.getItem(FIRST_RUN_DISMISS_KEY) === '1' } catch { return false }
+  })
   const analyticsView = useAnalyticsView('dashboard')
 
   const suiteFilter = selectedSuite || null
@@ -941,6 +945,12 @@ export default function OverviewPage() {
     [summary, totalExecutions, days],
   )
 
+  // First-run: a project (or the whole instance) with no executions in the
+  // window and no recent runs gets a getting-started guide instead of a
+  // zeroed-out dashboard. Dismissible (persisted per browser).
+  const isFreshInstall = !summaryLoading && totalExecutions === 0 && recentRunItems.length === 0
+  const showFirstRunGuide = isFreshInstall && !guideDismissed
+
   const totalSeries = trendData.map((p) => p.passed + p.failed + p.skipped + (p.broken ?? 0))
   const passRateSeries = trendData.map((p) => Math.round(((p.pass_rate ?? 0)) * 100) / 100)
   const failedSeries = trendData.map((p) => p.failed)
@@ -964,6 +974,15 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-5">
+      {showFirstRunGuide && (
+        <FirstRunGuide
+          projectName={project?.name}
+          onDismiss={() => {
+            try { localStorage.setItem(FIRST_RUN_DISMISS_KEY, '1') } catch { /* ignore */ }
+            setGuideDismissed(true)
+          }}
+        />
+      )}
       {/* Header — custom layout (status dot + project + last-run) */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between mb-1">
         <div className="min-w-0">
