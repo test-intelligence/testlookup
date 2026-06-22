@@ -37,6 +37,22 @@ export function useMyFailuresCount(params: { days?: number } = {}) {
   )
 }
 
+/**
+ * Reassignment picker payload (suite owner + QA Engineers) for a single
+ * failure. Lazily keyed on the test-case id so opening the Reassign modal
+ * for a different row re-fetches; a `null` id skips the request entirely.
+ * Fetched once per open (no focus revalidation) and surfaces a failed load
+ * immediately (no retry) so the modal can show the permission/empty message
+ * the old load-on-mount effect raised.
+ */
+export function useReassignOptions(testCaseId: string | null) {
+  return useSWR(
+    testCaseId ? ['reassign-options', testCaseId] : null,
+    () => myFailuresService.getReassignOptions(testCaseId as string),
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  )
+}
+
 /** Non-project-scoped variant for the top-level "all my work" sidebar badge. */
 export function useMyFailuresCountUnscoped(params: { days?: number } = {}) {
   return useSWR(

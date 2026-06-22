@@ -51,6 +51,12 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-22 — Frontend: ReassignModal off set-state-in-effect via SWR hook)
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set: `react-hooks/set-state-in-effect` is cleared one site per PR by real refactors (not disables) before the rule is promoted to `error`.
+
+- **`MyFailuresPage` ReassignModal** — replaced the load-on-mount `useEffect` (which drove `setOptions`/`setLoading`/`setError` and a derived default selection) with a new SWR hook `useReassignOptions(testCaseId)`. SWR now owns loading/data/error declaratively; the default assignee (suite owner → first QA Engineer → none) is derived during render with an explicit pick taking precedence, so the picker behaves identically without driving state from an effect. Regression test `frontend/src/hooks/useReassignOptions.test.ts` covers the fetch, the null-id skip, and the error path.
+
 ### Changed (2026-06-22 — Frontend lint: OnboardingPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:

@@ -12,7 +12,7 @@
  *                   error preview, row-click → /runs/:rid/tests/:cid
  *   Pagination    → standard Pagination component
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckSquare, Clock, ExternalLink, Inbox, UserCog, X } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -22,7 +22,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
 import { formatRunWhen } from '@/utils/formatters'
-import { useMyFailures } from '@/hooks/useMyFailures'
+import { useMyFailures, useReassignOptions } from '@/hooks/useMyFailures'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useAuthStore } from '@/store/authStore'
@@ -30,7 +30,6 @@ import { usePermissions } from '@/hooks/usePermissions'
 import {
   myFailuresService,
   type ReassignmentOption,
-  type ReassignmentOptions,
 } from '@/services/myFailuresService'
 import { mutate as swrMutate } from 'swr'
 import type { MyFailureItem, TriageStatus } from '@/types/myFailures'
@@ -458,38 +457,30 @@ function ReassignModal({
   onClose: () => void
   onReassigned: () => void
 }) {
-  const [options, setOptions] = useState<ReassignmentOptions | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [selectedUserId, setSelectedUserId] = useState<string>('')
-  const [submitting, setSubmitting] = useState(false)
+  // SWR owns the fetch/loading/error state declaratively — this was a
+  // load-on-mount useEffect driving three setState calls (set-state-in-effect).
+  // Keyed on the failure id, so reopening the modal for a different row
+  // re-fetches exactly as the old `[failure.id]` dependency did.
+  const { data, error: loadError, isLoading: loading } =
+    useReassignOptions(failure.id as unknown as string)
+  const options = data ?? null
+  const error = loadError
+    ? ((loadError as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail || 'Could not load reassignment options.')
+    : null
 
-  useEffect(() => {
-    let active = true
-    setLoading(true)
-    setError(null)
-    myFailuresService.getReassignOptions(failure.id as unknown as string)
-      .then(opts => {
-        if (!active) return
-        setOptions(opts)
-        // Default selection: suite owner if present, otherwise the
-        // first QA Engineer. Empty string when neither exists — the
-        // submit button stays disabled in that case so the user can't
-        // fire an empty PUT.
-        const initial = opts.suite_owner?.user_id
-          ?? opts.qa_engineers[0]?.user_id
-          ?? ''
-        setSelectedUserId(initial)
-      })
-      .catch((err: unknown) => {
-        if (!active) return
-        const detail = (err as { response?: { data?: { detail?: string } } })
-          ?.response?.data?.detail
-        setError(detail || 'Could not load reassignment options.')
-      })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-  }, [failure.id])
+  // Default selection: suite owner if present, otherwise the first QA
+  // Engineer. Empty string when neither exists — the submit button stays
+  // disabled in that case so the user can't fire an empty PUT. Derived during
+  // render (no setState-on-load) with an explicit pick taking precedence, so
+  // the picker behaves exactly as before without driving state from an effect.
+  const defaultUserId = options
+    ? (options.suite_owner?.user_id ?? options.qa_engineers[0]?.user_id ?? '')
+    : ''
+  const [picked, setPicked] = useState('')
+  const selectedUserId = picked || defaultUserId
+
+  const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit() {
     if (!selectedUserId) return
@@ -564,7 +555,7 @@ function ReassignModal({
                   option={options.suite_owner}
                   badge="Suite owner"
                   checked={selectedUserId === options.suite_owner.user_id}
-                  onSelect={() => setSelectedUserId(options.suite_owner!.user_id)}
+                  onSelect={() => setPicked(options.suite_owner!.user_id)}
                 />
               )}
               {options?.qa_engineers.map(eng => (
@@ -573,7 +564,7 @@ function ReassignModal({
                   option={eng}
                   badge="QA Engineer"
                   checked={selectedUserId === eng.user_id}
-                  onSelect={() => setSelectedUserId(eng.user_id)}
+                  onSelect={() => setPicked(eng.user_id)}
                 />
               ))}
             </div>
