@@ -26,6 +26,14 @@ make smoke               # checks backend readiness, the API schema, and the fro
 
 A green `Smoke check passed` means you're ready. (Prefer to configure secrets by hand? `cp .env.example .env`, edit the secrets, then `make dev`.)
 
+**Don't want to clone at all?** Pull the pre-built release images with a single remote command — it downloads the stack into `./testlookup`, writes a local `.env`, and starts everything:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anandtopu/testlookup/main/install.sh | bash
+```
+
+This runs `docker-compose.release.yml` (pinned `ghcr.io/anandtopu/testlookup/*` images, no source build). Add demo data with `TL_PROFILE=demo`, or pin a build with `TESTLOOKUP_VERSION=<sha-or-tag>`.
+
 ## Step 2 -- Open the dashboard
 
 Open http://localhost:3000 in your browser. You should see the TestLookup login page.

@@ -15,6 +15,7 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 
 ### Added
 
+- **No-clone self-host release artifacts** -- `docker-compose.release.yml` pulls pinned pre-built images (`ghcr.io/anandtopu/testlookup/{backend,frontend,mcp}:${TESTLOOKUP_VERSION:-latest}`) instead of building from source, with demo/local-LLM profiles; `install.sh` is a remote one-liner (`curl ... | bash`) that downloads the stack, generates a local `.env`, and brings it up; a `VERSION` file anchors the release tag. Contract pinned by `backend/tests/test_release_artifacts.py` (image-not-build, no host-source bind-mounts, dev/release service parity, `install.sh` bash-syntax + fetch list).
 - **Multi-framework ingestion** -- JUnit XML, TestNG, Allure JSON, Cypress, Playwright, pytest
 - **Three analysis modes** -- rules (pattern match), ML (scikit-learn HistGradientBoosting), LLM (Ollama ReAct agent), auto (smart fallback chain)
 - **Run Intelligence** -- single-pane summary with failure clusters, regression diff, risk score

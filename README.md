@@ -45,6 +45,16 @@ Dashboard: http://localhost:3000 | API docs: http://localhost:8000/docs | MCP SS
 
 Prerequisites: Docker + Compose v2. Core mode: 4 GB RAM / 2 vCPU. Full mode: 8 GB / 4 vCPU.
 
+### Run without cloning (pre-built images)
+
+Don't want the source? One command pulls the pinned release images, writes a local `.env`, and starts the stack:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/anandtopu/testlookup/main/install.sh | bash
+```
+
+This downloads [`docker-compose.release.yml`](docker-compose.release.yml) (which pulls `ghcr.io/anandtopu/testlookup/{backend,frontend,mcp}` instead of building) into `./testlookup` and brings it up. Add demo data with `TL_PROFILE=demo curl ... | bash`; pin a specific build with `TESTLOOKUP_VERSION=<sha-or-tag>`. `latest` tracks `main` — pin a commit SHA for a reproducible deploy. See the header of `docker-compose.release.yml` for the by-hand steps and all overrides.
+
 ### Secrets
 
 For **local / demo** use, `make quickstart` / `make dev` auto-generate strong random secrets into `.env` — nothing to do. For a **production** deployment, generate your own values and set these (Docker Compose refuses to start until they're non-empty):
