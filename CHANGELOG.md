@@ -51,6 +51,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-21 — Frontend lint: OwnershipEditorPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (31 sites remain after this slice); the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:
+
+- `src/pages/OwnershipEditorPage.tsx` — replaced the load-on-mount `useEffect(() => { loadRules() }, [loadRules])` (the `loadRules` callback drove `rules`/`loading`/`error` state synchronously) with a new SWR hook `useOwnershipRules`, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns loading/data state declaratively, so the page no longer drives state from an effect; the mutation handlers (create/toggle/delete) call the hook's `refresh()` (SWR `mutate`) instead of re-invoking `loadRules()`.
+- `src/hooks/useOwnershipRules.ts` (new) — `useSWR` keyed on `['ownership-rules', projectId]`, mirroring the old effect's `projectId` dependency. The key is `null` (no fetch) when there is no resolved project — matching the old `if (!projectId) return` guard, where the all-projects view never fetched and showed the "select a project" empty state. `shouldRetryOnError: false` surfaces a failed load immediately as `isError` (rendered as the same red "Failed to load ownership rules" banner), and `rules` is `[]` while loading or on error, preserving the prior `useState([])` semantics. Behaviour unchanged.
+
+Added `src/hooks/useOwnershipRules.test.ts` (regression guard per repo convention): project-scoped fetch surfacing rules, the no-project case skipping the fetch entirely, and the error path reporting `isError` with an empty rules list. Each render uses a fresh SWR cache so keys don't bleed across tests. Validated: `npm run lint` (0 errors, 73→72 warnings; the rule's count drops 32→31 and `OwnershipEditorPage` no longer flags it), `type-check`, `build`, and the full vitest suite (351 passed) all green. The rule stays at `warn` until the remaining 31 sites are cleared in later slices.
 ### Changed (2026-06-21 — Frontend lint: SuiteDetailPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (32 sites remain after the PerformancePage slice); the sites are cleared in reviewable slices before the rule is promoted to `error`. This slice clears one more site by a real refactor (not a disable):

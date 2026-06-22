@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import {
@@ -6,18 +6,16 @@ import {
   MATCH_TYPES,
   createOwnershipRule,
   deleteOwnershipRule,
-  listOwnershipRules,
   updateOwnershipRule,
 } from '../services/ownershipService';
 import { useProjectStore, ALL_PROJECTS_ID } from '../store/projectStore';
+import { useOwnershipRules } from '../hooks/useOwnershipRules';
 
 export default function OwnershipEditorPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId;
 
-  const [rules, setRules] = useState<OwnershipRule[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { rules, isLoading: loading, isError, refresh } = useOwnershipRules(projectId);
 
   // New rule form
   const [showForm, setShowForm] = useState(false);
@@ -27,21 +25,6 @@ export default function OwnershipEditorPage() {
   const [teamName, setTeamName] = useState('');
   const [teamContact, setTeamContact] = useState('');
   const [priority, setPriority] = useState(0);
-
-  const loadRules = useCallback(async () => {
-    if (!projectId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setRules(await listOwnershipRules(projectId));
-    } catch {
-      setError('Failed to load ownership rules');
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
-
-  useEffect(() => { loadRules(); }, [loadRules]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,7 +48,7 @@ export default function OwnershipEditorPage() {
       setTeamName('');
       setTeamContact('');
       setPriority(0);
-      loadRules();
+      refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create rule');
     }
@@ -75,7 +58,7 @@ export default function OwnershipEditorPage() {
     if (!projectId) return;
     try {
       await updateOwnershipRule(projectId, rule.id, { is_active: !rule.is_active });
-      loadRules();
+      refresh();
     } catch {
       toast.error('Failed to toggle rule');
     }
@@ -86,7 +69,7 @@ export default function OwnershipEditorPage() {
     try {
       await deleteOwnershipRule(projectId, ruleId);
       toast.success('Rule deleted');
-      loadRules();
+      refresh();
     } catch {
       toast.error('Failed to delete rule');
     }
@@ -119,7 +102,7 @@ export default function OwnershipEditorPage() {
         </button>
       </div>
 
-      {error && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{error}</div>}
+      {isError && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">Failed to load ownership rules</div>}
 
       {/* New rule form */}
       {showForm && (
