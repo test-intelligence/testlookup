@@ -51,6 +51,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-21 — Frontend lint: SuiteDetailPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn` (32 sites remain after the PerformancePage slice); the sites are cleared in reviewable slices before the rule is promoted to `error`. This slice clears one more site by a real refactor (not a disable):
+
+- `src/pages/SuiteDetailPage.tsx` — replaced the `(suiteName, activeProjectId, days)`-keyed load effect `useEffect(() => { setTrendLoading(true); getSuiteTrend(suiteName, pid, days).then(res => setTrendPoints(res.points || [])).catch(() => setTrendPoints([]))… }, [suiteName, activeProjectId, days])` with a new SWR hook `useSuiteTrend`, matching the codebase's "pages fetch via SWR hooks" convention (the page already reads `useSuiteDetail`/`useSuites`). SWR now owns loading/data state declaratively, so the page no longer drives state from an effect. Dropped the now-unused inline `SuiteTrendPoint` type, `useState`/`useEffect`, and `testManagementService` imports.
+- `src/hooks/useSuiteTrend.ts` (new) — `useSWR` keyed on `['suite-trend', activeProjectId, suiteName, days]`, mirroring the old effect's dependency array. The key is null only when there is no `suiteName` (so no fetch then, exactly as the old `if (!suiteName) { setTrendPoints([]); return }` guard); the "all projects" view maps `ALL_PROJECTS_ID` to a `null` project id as the old effect did. `shouldRetryOnError: false` makes a failed load surface as `[]` immediately, matching the old `.catch(() => setTrendPoints([]))`. `points` is `[]` while loading or on error (preserving the old `useState<SuiteTrendPoint[]>([])` semantics). Behaviour unchanged.
+
+Added `src/hooks/useSuiteTrend.test.ts` (project-scoped fetch surfacing points, all-projects view mapping to a `null` project id, no-suite-name skipping the fetch, and the error path surfacing `[]`); each render uses a fresh SWR cache so keys don't bleed across tests. Validated: `npm run lint` (0 errors, 73→72 warnings; the rule's count drops 32→31 and `SuiteDetailPage` no longer flags it), `type-check`, `build`, and the full vitest suite (352 passed) all green. The rule stays at `warn` until the remaining 31 sites are cleared in later slices.
+
 ### Changed (2026-06-22 — Frontend lint: DeepInvestigationPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks **v7 (React Compiler)** rule set: `react-hooks/set-state-in-effect` is the last named rule still at `warn`. Sites are cleared one page per slice by real refactors (not disables) before the rule is promoted to `error`.

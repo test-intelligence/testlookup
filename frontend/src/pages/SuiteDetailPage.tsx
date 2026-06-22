@@ -1,5 +1,4 @@
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
   Clock, Activity, AlertTriangle, Calendar, FolderTree,
@@ -14,10 +13,10 @@ import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useSuiteDetail } from '@/hooks/useMetrics'
 import { useSuites } from '@/hooks/useSuites'
+import { useSuiteTrend } from '@/hooks/useSuiteTrend'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailSummary } from '@/types/analytics'
-import { testManagementService } from '@/services/testManagementService'
 
 const PERIODS = [
   { label: '1d',  days: 1 },
@@ -118,31 +117,10 @@ export default function SuiteDetailPage() {
 
   // Per-day trend (run_count + passed/failed/skipped) for the same time
   // window. Owned by the new ``suite_history_service`` so every page
-  // shows the same numbers. Polled in lockstep with the days selector;
-  // refresh is bounded to the user's window so a chatty live-stream
-  // run-set doesn't refire the query every poll.
-  type SuiteTrendPoint = {
-    date: string
-    run_count: number
-    total_tests: number
-    passed_count: number
-    failed_count: number
-    skipped_count: number
-    broken_count: number
-  }
-  const [trendPoints, setTrendPoints] = useState<SuiteTrendPoint[]>([])
-  const [trendLoading, setTrendLoading] = useState(false)
-  useEffect(() => {
-    if (!suiteName) { setTrendPoints([]); return }
-    let alive = true
-    setTrendLoading(true)
-    const pid = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
-    testManagementService.getSuiteTrend(suiteName, pid, days)
-      .then(res => { if (alive) setTrendPoints(res.points || []) })
-      .catch(() => { if (alive) setTrendPoints([]) })
-      .finally(() => { if (alive) setTrendLoading(false) })
-    return () => { alive = false }
-  }, [suiteName, activeProjectId, days])
+  // shows the same numbers. Keyed on (suiteName, activeProjectId, days) so
+  // the chart refreshes in lockstep with the days selector and the active
+  // project, without driving state from an effect.
+  const { points: trendPoints, isLoading: trendLoading } = useSuiteTrend(suiteName || null, days)
   // The reverse-direction link to the catalog needs a TestSuite *id*,
   // but the analytics page only knows the name (from the URL). Use the
   // already-cached ``useSuites`` SWR entry to resolve it. The lookup is
