@@ -51,6 +51,12 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-23 — Frontend lint: ProfilePage off set-state-in-effect (render-phase sync, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set: `react-hooks/set-state-in-effect` is cleared one site per PR by real refactors (not disables) before the rule is promoted to `error`.
+
+- **`settings/ProfilePage`** — replaced the form-sync `useEffect` (which re-seeded `fullName`/`avatarColor` from the auth-store `user` whenever it changed) with React's documented "adjust state during render" pattern. The component now tracks the last-synced `full_name`/`avatar_color` and resets the editable fields during render when the canonical user changes (after a save here, a save elsewhere, or re-login), with no effect. Local edits are preserved because the user object is unchanged while typing. Regression test `frontend/src/pages/settings/ProfilePage.test.tsx` covers initial seeding, the re-seed on user change, and the empty-name fallback.
+
 ### Changed (2026-06-23 — Frontend lint: SSOSettingsPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:

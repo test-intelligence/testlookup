@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Check, Eye, EyeOff, KeyRound, Loader2, UserCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -78,11 +78,21 @@ export default function ProfilePage() {
 
   const strength = getStrength(newPw)
 
-  // Sync when user object changes (e.g., after save)
-  useEffect(() => {
+  // Re-seed the editable form from the canonical user object whenever it
+  // changes (e.g. after a save here, a save elsewhere, or re-login). This is
+  // React's documented "adjust state during render" pattern: it stores the
+  // value last synced from and resets the form fields when the user changes,
+  // without an effect (which would render twice and trips
+  // react-hooks/set-state-in-effect). Local edits are preserved because the
+  // user object is unchanged while typing.
+  const [syncedName, setSyncedName] = useState(user?.full_name ?? null)
+  const [syncedColor, setSyncedColor] = useState(user?.avatar_color ?? null)
+  if (syncedName !== (user?.full_name ?? null) || syncedColor !== (user?.avatar_color ?? null)) {
+    setSyncedName(user?.full_name ?? null)
+    setSyncedColor(user?.avatar_color ?? null)
     setFullName(user?.full_name ?? '')
     setAvatarColor(user?.avatar_color ?? 'blue')
-  }, [user?.full_name, user?.avatar_color])
+  }
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleSaveProfile = async () => {
