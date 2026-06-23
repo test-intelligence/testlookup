@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
 import { buildIntegrationHealthWorkflow } from '@/components/workflow/workflowPresets';
 import {
-  type HealthTrend,
-  type IntegrationStatus,
-  type ProbeHistoryEntry,
-  getAllStatus,
-  getHealthTrends,
-  getProviderHistory,
-  triggerProbe,
-} from '../../services/integrationHealthService';
+  useHealthTrends,
+  useIntegrationStatus,
+  useProviderHistory,
+  refreshIntegrationHealth,
+} from '@/hooks/useIntegrationHealth';
+import { triggerProbe } from '../../services/integrationHealthService';
 
 const STATUS_COLORS: Record<string, string> = {
   healthy: 'bg-green-900/40 text-green-400',
@@ -28,31 +26,22 @@ type Tab = 'status' | 'trends' | 'history';
 
 export default function IntegrationHealthPage() {
   const [tab, setTab] = useState<Tab>('status');
-  const [statuses, setStatuses] = useState<IntegrationStatus[]>([]);
-  const [trends, setTrends] = useState<HealthTrend[]>([]);
-  const [history, setHistory] = useState<ProbeHistoryEntry[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
-  const [loading, setLoading] = useState(false);
   const [probing, setProbing] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      if (tab === 'status') setStatuses(await getAllStatus());
-      else if (tab === 'trends') setTrends(await getHealthTrends(7));
-      else if (tab === 'history' && selectedProvider) setHistory(await getProviderHistory(selectedProvider, 7));
-    } catch { /* empty */ }
-    finally { setLoading(false); }
-  }, [tab, selectedProvider]);
+  const { statuses, isLoading: statusLoading } = useIntegrationStatus();
+  const { trends, isLoading: trendsLoading } = useHealthTrends(tab === 'trends');
+  const { history, isLoading: historyLoading } = useProviderHistory(selectedProvider, tab === 'history');
 
-  useEffect(() => { load(); }, [load]);
+  const loading =
+    tab === 'status' ? statusLoading : tab === 'trends' ? trendsLoading : historyLoading;
 
   const handleProbe = async (provider?: string) => {
     setProbing(true);
     try {
       await triggerProbe(provider);
       toast.success(provider ? `Probed ${provider}` : 'All integrations probed');
-      load();
+      refreshIntegrationHealth();
     } catch { toast.error('Probe failed'); }
     finally { setProbing(false); }
   };

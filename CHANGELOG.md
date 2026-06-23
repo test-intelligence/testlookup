@@ -51,6 +51,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-23 — Frontend lint: IntegrationHealthPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:
+
+- `src/pages/settings/IntegrationHealthPage.tsx` — replaced the tab-keyed load-on-mount `useEffect(() => { load() }, [load])` (which drove `statuses`/`trends`/`history`/`loading` from inside the effect) with three SWR hooks, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns the loading/data/error state declaratively. The post-probe `load()` call becomes `refreshIntegrationHealth()` (SWR `mutate`), revalidating whichever dataset is mounted exactly as before. Behaviour unchanged.
+- `src/hooks/useIntegrationHealth.ts` (new) — `useIntegrationStatus()` always fetches (it feeds the status tab, the history-tab provider dropdown, and the always-rendered workflow timeline); `useHealthTrends(enabled)` and `useProviderHistory(provider, enabled)` are gated by the active tab (and history additionally by a selected provider), mirroring the old `if (tab === ...)` branches. `revalidateOnFocus: false` and `shouldRetryOnError: false` preserve the prior single-shot fetch semantics. `refreshIntegrationHealth()` revalidates all three keys via a global mutate predicate.
+
+Added `src/hooks/useIntegrationHealth.test.ts` (status fetches and surfaces data; a failed load reports `isError` with an empty list; trends/history skip the fetch when their tab is inactive; history additionally skips without a selected provider). Each render uses a fresh SWR cache so keys don't bleed across tests. Validated: `npm run lint` (0 errors, `IntegrationHealthPage` no longer flags the rule), `type-check`, `build`, and the new vitest suite all green. The rule stays at `warn` until the remaining sites are cleared in later slices.
+
 ### Changed (2026-06-23 — Deps: recharts 2 → 3)
 
 Bumped `recharts` from `^2.13.3` to `^3.9.0` (supersedes Dependabot #211, which failed `tsc`). recharts 3 tightened the `Tooltip` `formatter` type to `Formatter<ValueType, NameType>`, so the two call sites that annotated the value param as `number` no longer compiled (`DefectDonut.tsx`, `SuiteDetailPage.tsx`). Dropped the manual annotations so recharts' own param types flow through; behaviour is unchanged (the donut tooltip still shows `[value, name]`, the pass-rate area still shows `"<v>% / Pass Rate"`). recharts 3 also restructured its internals (now backed by a redux/immer store instead of lodash/prop-types/react-smooth), which is reflected in the lockfile. Validated locally: `type-check`, `lint` (0 errors), `build`, and the chart/SuiteDetail vitest suites all green.
