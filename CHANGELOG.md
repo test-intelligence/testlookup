@@ -51,6 +51,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-23 — Frontend lint: SSOSettingsPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:
+
+- `src/pages/settings/SSOSettingsPage.tsx` — replaced the tab-keyed load-on-mount `useEffect(() => { loadData() }, [loadData])` (which drove `configs`/`scimTokens`/`events`/`syncStatus`/`loading`/`error` from inside the effect) with a new SWR hook `useSSOTabData(tab)`, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns the loading/data/error state declaratively, keyed on the active tab so switching tabs fetches exactly the slice the old effect did. The post-mutation `loadData()` calls (after create/toggle/delete config and create/revoke SCIM token) become `refresh()` (SWR `mutate`), revalidating the active tab exactly as before; mutation errors still set a local `error` that is merged with the load error for the inline banner. Behaviour unchanged.
+- `src/hooks/useSSOTabData.ts` (new) — `useSWR` keyed on `['sso-tab', tab]`, mirroring the old `tab` dependency. The fetcher switches on tab and populates only that tab's slice (the others stay empty, matching the original per-tab render guards); `revalidateOnFocus: false` and `shouldRetryOnError: false` preserve the prior fetch semantics, and a failed load is surfaced as a string `error` for the banner the old `catch` raised.
+
+Added `src/hooks/useSSOTabData.test.ts` (config-tab fetches only the config slice; the events tab unwraps the `{ total, items }` envelope; a failed load surfaces a string error with a null `syncStatus`; `refresh` revalidates). Each render uses a fresh SWR cache so keys don't bleed across tests. Validated: `npm run lint` (0 errors, the rule's count drops 27 → 26 and `SSOSettingsPage` no longer flags it), `type-check`, `build`, and the new vitest suite all green. The rule stays at `warn` until the remaining 26 sites are cleared in later slices.
+
 ### Added (2026-06-22 — Frontend: ReassignModal off set-state-in-effect via SWR hook)
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set: `react-hooks/set-state-in-effect` is cleared one site per PR by real refactors (not disables) before the rule is promoted to `error`.

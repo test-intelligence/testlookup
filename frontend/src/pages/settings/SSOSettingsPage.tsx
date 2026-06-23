@@ -1,8 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
-  type IdentityEvent,
-  type IdentitySyncStatus,
-  type SCIMToken,
   type SCIMTokenCreated,
   type SSOConfig,
   type SSOConfigCreate,
@@ -10,24 +7,16 @@ import {
   createSCIMToken,
   createSSOConfig,
   deleteSSOConfig,
-  getIdentitySyncStatus,
-  listIdentityEvents,
-  listSCIMTokens,
-  listSSOConfigs,
   revokeSCIMToken,
   testSSOConnection,
   updateSSOConfig,
 } from '../../services/ssoService';
-
-type Tab = 'config' | 'scim' | 'events' | 'sync';
+import { type SSOTab, useSSOTabData } from '../../hooks/useSSOTabData';
 
 export default function SSOSettingsPage() {
-  const [tab, setTab] = useState<Tab>('config');
-  const [configs, setConfigs] = useState<SSOConfig[]>([]);
-  const [scimTokens, setScimTokens] = useState<SCIMToken[]>([]);
-  const [events, setEvents] = useState<IdentityEvent[]>([]);
-  const [syncStatus, setSyncStatus] = useState<IdentitySyncStatus | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<SSOTab>('config');
+  const { data, isLoading: loading, error: loadError, refresh } = useSSOTabData(tab);
+  const { configs, scimTokens, events, syncStatus } = data;
   const [error, setError] = useState<string | null>(null);
 
   // SSO Config form
@@ -37,30 +26,7 @@ export default function SSOSettingsPage() {
   const [newToken, setNewToken] = useState<SCIMTokenCreated | null>(null);
   const [tokenName, setTokenName] = useState('');
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (tab === 'config') {
-        setConfigs(await listSSOConfigs());
-      } else if (tab === 'scim') {
-        setScimTokens(await listSCIMTokens());
-      } else if (tab === 'events') {
-        const result = await listIdentityEvents({ days: 30, page_size: 50 });
-        setEvents(result.items);
-      } else if (tab === 'sync') {
-        setSyncStatus(await getIdentitySyncStatus());
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data');
-    } finally {
-      setLoading(false);
-    }
-  }, [tab]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const displayError = error ?? loadError;
 
   const handleCreateConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,7 +38,7 @@ export default function SSOSettingsPage() {
       await createSSOConfig(formData as SSOConfigCreate);
       setShowForm(false);
       setFormData({});
-      loadData();
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create SSO config');
     }
@@ -81,7 +47,7 @@ export default function SSOSettingsPage() {
   const handleToggleActive = async (config: SSOConfig) => {
     try {
       await updateSSOConfig(config.id, { is_active: !config.is_active });
-      loadData();
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to toggle SSO config');
     }
@@ -100,7 +66,7 @@ export default function SSOSettingsPage() {
     if (!confirm('Are you sure you want to delete this SSO configuration?')) return;
     try {
       await deleteSSOConfig(configId);
-      loadData();
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete SSO config');
     }
@@ -112,7 +78,7 @@ export default function SSOSettingsPage() {
       const created = await createSCIMToken(tokenName.trim());
       setNewToken(created);
       setTokenName('');
-      loadData();
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create SCIM token');
     }
@@ -122,13 +88,13 @@ export default function SSOSettingsPage() {
     if (!confirm('Revoke this SCIM token?')) return;
     try {
       await revokeSCIMToken(tokenId);
-      loadData();
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to revoke SCIM token');
     }
   };
 
-  const tabs: { key: Tab; label: string }[] = [
+  const tabs: { key: SSOTab; label: string }[] = [
     { key: 'config', label: 'SSO Configuration' },
     { key: 'scim', label: 'SCIM Tokens' },
     { key: 'events', label: 'Identity Events' },
@@ -161,9 +127,9 @@ export default function SSOSettingsPage() {
         ))}
       </div>
 
-      {error && (
+      {displayError && (
         <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">
-          {error}
+          {displayError}
           <button onClick={() => setError(null)} className="ml-2 text-red-400 hover:text-red-200">Dismiss</button>
         </div>
       )}
