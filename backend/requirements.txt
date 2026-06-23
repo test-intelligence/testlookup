@@ -92,7 +92,7 @@ openpyxl==3.1.5           # Excel export (.xlsx)
 python-docx==1.1.2        # Word export (.docx) + document ingestion
 reportlab==4.5.1         # PDF generation
 pypdf==6.13.2              # PDF text extraction (knowledge RAG)
-beautifulsoup4==4.12.3    # HTML content extraction (knowledge RAG)
+beautifulsoup4==4.15.0    # HTML content extraction (knowledge RAG)
 
 # ── Development & Testing ────────────────────────────────────
 pytest==9.1.0
