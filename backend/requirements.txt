@@ -28,7 +28,7 @@ email-validator==2.2.0
 # ── Authentication & Security ────────────────────────────────
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 slowapi==0.1.9
 
 # ── Notifications ─────────────────────────────────────────────
