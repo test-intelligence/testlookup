@@ -344,7 +344,7 @@ export default function SuiteDetailPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis dataKey="name" tick={AXIS_TICK} axisLine={false} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={AXIS_TICK} axisLine={false} tickLine={false} unit="%" />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v}%`, 'Pass Rate']} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}%`, 'Pass Rate']} />
                   <Area
                     type="monotone" dataKey="pass_rate" stroke="#10b981"
                     strokeWidth={2} fill="url(#passGrad)" dot={{ r: 3, fill: '#10b981' }}

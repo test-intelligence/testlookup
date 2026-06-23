@@ -51,6 +51,12 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-23 — Deps: recharts 2 → 3)
+
+Bumped `recharts` from `^2.13.3` to `^3.9.0` (supersedes Dependabot #211, which failed `tsc`). recharts 3 tightened the `Tooltip` `formatter` type to `Formatter<ValueType, NameType>`, so the two call sites that annotated the value param as `number` no longer compiled (`DefectDonut.tsx`, `SuiteDetailPage.tsx`). Dropped the manual annotations so recharts' own param types flow through; behaviour is unchanged (the donut tooltip still shows `[value, name]`, the pass-rate area still shows `"<v>% / Pass Rate"`). recharts 3 also restructured its internals (now backed by a redux/immer store instead of lodash/prop-types/react-smooth), which is reflected in the lockfile. Validated locally: `type-check`, `lint` (0 errors), `build`, and the chart/SuiteDetail vitest suites all green.
+
+> **Manual smoke required before relying on this in prod:** recharts 3 changes some default rendering (animations, axis/category defaults, responsive sizing). The build and unit tests pass, but the actual chart visuals (Overview trend, DefectDonut, PassRateGauge, TrendChart, SuiteDetail pass-rate area) should be eyeballed in the running app — same caveat class as the tailwind v4 bump.
+
 ### Changed (2026-06-23 — Deps: web-vitals 4 → 5)
 
 Bumped `web-vitals` from `^4.2.4` to `^5.3.0` (supersedes Dependabot #219, which failed type-check on the removed export). v5 retired FID (First Input Delay) in favour of INP (Interaction to Next Paint) and removed the `onFID` export, so `src/hooks/useWebVitals.ts` no longer registers it — the remaining five Core Web Vitals (CLS, LCP, FCP, TTFB, INP) are unchanged. Added `src/hooks/useWebVitals.test.ts` to guard the registered metric set. Validated locally: `type-check`, `lint` (0 errors), `build`, and the new vitest suite all green.

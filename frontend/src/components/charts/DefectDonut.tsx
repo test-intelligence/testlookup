@@ -17,7 +17,7 @@ export default function DefectDonut({ data }: Props) {
         </Pie>
         <Tooltip
           contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', fontSize: '12px' }}
-          formatter={(val: number, name: string) => [val, name]}
+          formatter={(val, name) => [val, name]}
         />
         <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
       </PieChart>
