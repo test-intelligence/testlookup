@@ -1,18 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
 import { buildAuditWorkflow } from '@/components/workflow/workflowPresets';
+import { exportAuditCSV } from '../../services/auditDashboardService';
 import {
-  type AuditCategory,
-  type AuditEvent,
-  type TenantObservability,
-  exportAuditCSV,
-  getProjectObservability,
-  listAuditEvents,
-  listCategories,
-} from '../../services/auditDashboardService';
+  useAuditCategories,
+  useAuditEvents,
+  useProjectObservability,
+} from '@/hooks/useAuditDashboard';
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
 import { snapToAllowed, useTimeWindowStore } from '../../store/timeWindowStore';
 
@@ -34,9 +31,6 @@ export default function AuditDashboardPage() {
   const projectId: string | undefined = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined);
 
   // Events tab
-  const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [total, setTotal] = useState(0);
-  const [categories, setCategories] = useState<AuditCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('');
   // Global shared time window — Audit only offers 7/30/90 in its
   // dropdown but participates in the shared preference so the user
@@ -46,36 +40,16 @@ export default function AuditDashboardPage() {
   const setStoredDays = useTimeWindowStore(s => s.setDays);
   const days = snapToAllowed(storedDays, AUDIT_OPTIONS);
   const setDays = setStoredDays;
-  const [loading, setLoading] = useState(false);
 
-  // Observability tab
-  const [obs, setObs] = useState<TenantObservability | null>(null);
-
-  const loadEvents = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await listAuditEvents({
-        project_id: projectId,
-        category: selectedCategory || undefined,
-        days,
-        page_size: 100,
-      });
-      setEvents(result.items);
-      setTotal(result.total);
-    } catch { /* empty */ }
-    finally { setLoading(false); }
-  }, [projectId, selectedCategory, days]);
-
-  useEffect(() => {
-    listCategories().then(setCategories).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (tab === 'events') loadEvents();
-    else if (tab === 'observability' && projectId) {
-      getProjectObservability(projectId, 7).then(setObs).catch(() => {});
-    }
-  }, [tab, projectId, loadEvents]);
+  // Data fetches are SWR hooks — each owns its loading/data/error state and
+  // re-fetches when its keyed params (project, category, day window) change,
+  // so the page no longer drives state from a tab-keyed load-on-mount effect.
+  const { categories } = useAuditCategories();
+  const { events, total, isLoading: loading } = useAuditEvents(
+    { projectId, category: selectedCategory, days },
+    tab === 'events',
+  );
+  const { observability: obs } = useProjectObservability(projectId, tab === 'observability');
 
   const workflow = useMemo(
     () => buildAuditWorkflow(obs, events),

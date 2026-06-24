@@ -51,6 +51,15 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Changed (2026-06-24 — Frontend lint: AuditDashboardPage off set-state-in-effect (SWR migration, slice toward promotion))
+
+Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site (24 → 23 warnings):
+
+- `src/pages/settings/AuditDashboardPage.tsx` — replaced the tab-keyed load-on-mount effects (one fetching audit categories on mount, one driving `events`/`total`/`obs`/`loading` off the active tab and filter selection) with three SWR hooks, matching the codebase's "pages fetch via SWR hooks" convention. SWR now owns the loading/data/error state declaratively and re-keys on the filter params (project, category, day window), so the page no longer threads a `loadEvents` callback through an effect dependency array. Behaviour unchanged.
+- `src/hooks/useAuditDashboard.ts` (new) — `useAuditCategories()` always fetches (it feeds the events-tab filter dropdown); `useAuditEvents(params, enabled)` is gated by the active events tab and re-fetches when project/category/days change; `useProjectObservability(projectId, enabled)` is gated by the active observability tab plus a selected project, mirroring the old `if (tab === ...)` / `projectId` branches. `revalidateOnFocus: false` and `shouldRetryOnError: false` preserve the prior single-shot fetch semantics.
+
+Added `src/hooks/useAuditDashboard.test.ts` (categories fetch and surface data; a failed load reports `isError` with an empty list; events re-key on filters and omit empty project/category params; events and observability skip the fetch when their tab is inactive; observability additionally skips without a selected project). Each render uses a fresh SWR cache so keys don't bleed across tests. Validated: `npm run lint` (0 errors, `AuditDashboardPage` no longer flags the rule), `type-check`, `build`, and the new vitest suite all green. The rule stays at `warn` until the remaining sites are cleared in later slices.
+
 ### Changed (2026-06-23 — Frontend lint: IntegrationHealthPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site:
