@@ -67,3 +67,16 @@ export function useTestCaseHistory(runId?: string, testId?: string) {
     () => runsService.getTestHistory(runId as string, testId as string)
   )
 }
+
+/**
+ * Cross-run step-flip report for a logical test (FLK-P6). Surfaces which step
+ * oscillated PASSED↔FAILED across runs — step-level flakiness rather than a
+ * whole-test verdict. Lazy — fetched separately from the test-case detail so the
+ * detail renders immediately. Read-only, project-scoped server-side.
+ */
+export function useTestStepFlips(runId?: string, testId?: string) {
+  return useSWR(
+    runId && testId ? ['test-step-flips', runId, testId] : null,
+    () => runsService.getTestStepFlips(runId as string, testId as string)
+  )
+}

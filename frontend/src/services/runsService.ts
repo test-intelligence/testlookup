@@ -4,6 +4,7 @@ import type {
   TestCaseHistory,
   TestRun,
   TestRunListResponse,
+  TestStepFlips,
   TestStepsTree,
 } from '@/types/runs'
 import { getData, postData } from './http'
@@ -33,6 +34,11 @@ export const runsService = {
    *  Project-scoped server-side; lazy/separate from the test-case detail. */
   getTestHistory: (runId: string, testId: string) =>
     getData<TestCaseHistory>(`/api/v1/runs/${runId}/tests/${testId}/history`),
+
+  /** Cross-run step-flip report — which step oscillated PASSED↔FAILED across
+   *  runs (FLK-P6). Project-scoped server-side; lazy/separate from the detail. */
+  getTestStepFlips: (runId: string, testId: string) =>
+    getData<TestStepFlips>(`/api/v1/runs/${runId}/tests/${testId}/step-flips`),
 
   setRelease: (runId: string, releaseName: string) =>
     postData(`/api/v1/runs/${runId}/release`, { release_name: releaseName }),

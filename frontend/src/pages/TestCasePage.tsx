@@ -7,6 +7,7 @@ import LogViewer from '@/components/ai/LogViewer'
 import AIAnalysisPanel from '@/components/ai/AIAnalysisPanel'
 import TestStepsPanel from '@/components/runs/TestStepsPanel'
 import TestHistoryPanel from '@/components/runs/TestHistoryPanel'
+import StepFlipPanel from '@/components/runs/StepFlipPanel'
 import { useTestCase } from '@/hooks/useRuns'
 import { formatDuration, formatDateTime } from '@/utils/formatters'
 import { useProjectStore } from '@/store/projectStore'
@@ -121,6 +122,14 @@ export default function TestCasePage() {
           <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Steps</h3>
           <TestStepsPanel runId={runId} testId={testId} />
         </div>
+      </div>
+
+      {/* Cross-run step-flip (FLK-P6): which step oscillates PASSED↔FAILED across runs */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">
+          Cross-Run Step Flakiness
+        </h3>
+        <StepFlipPanel runId={runId} testId={testId} />
       </div>
     </div>
   )

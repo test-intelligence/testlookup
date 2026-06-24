@@ -158,6 +158,46 @@ export interface TestCaseHistory {
   metadata: TestCaseMetadata
 }
 
+/** One adjacent-run transition of a single step between PASSED and FAILED. */
+export interface StepFlip {
+  ordinal: number
+  step_name: string
+  from_run_id: string
+  to_run_id: string
+  from_status: string
+  to_status: string
+  /** "regression" (PASSED→FAILED) | "recovery" (FAILED→PASSED). */
+  direction: string
+}
+
+/** Per-step roll-up across the analysed window — the actionable unit. */
+export interface StepFlipSummary {
+  ordinal: number
+  step_name: string
+  flip_count: number
+  runs_observed: number
+  last_status: string
+  is_flaky: boolean
+}
+
+/** Cross-run step-flip report computed over the per-run step window. */
+export interface StepFlipReport {
+  has_step_flip: boolean
+  runs_analyzed: number
+  total_flips: number
+  flips: StepFlip[]
+  flipping_steps: StepFlipSummary[]
+  summary: string
+}
+
+/** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/step-flips``. */
+export interface TestStepFlips {
+  run_id: string
+  test_id: string
+  test_fingerprint: string | null
+  report: StepFlipReport
+}
+
 /** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/steps``. */
 export interface TestStepsTree {
   run_id: string

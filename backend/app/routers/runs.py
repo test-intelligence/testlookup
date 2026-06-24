@@ -270,6 +270,32 @@ async def get_test_case_history_endpoint(
     return payload
 
 
+@router.get("/{run_id}/tests/{test_id}/step-flips")
+async def get_test_case_step_flips(
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Cross-run step-flip report for one logical test (FLK-P6 slice 4).
+
+    READ-ONLY. Unlike ``/steps`` (a LATEST-RUN-ONLY snapshot), this reads the
+    retained per-run step outcomes (``test_step_runs``) and reports WHICH step
+    oscillated PASSED<->FAILED across runs, how often, and in which direction —
+    so a flickering step reads as step-level flakiness rather than a whole-test
+    verdict. Resolves the test's ``test_fingerprint`` + project via the PROVIDED
+    ``run_id`` (verified by ``require_run_access`` — IDOR ratchet); the underlying
+    read is project-scoped. No DB writes. Returns 404 when ``test_id`` doesn't
+    belong to ``run_id``; an empty-window "insufficient history" report otherwise.
+    """
+    from app.services.runs_service import step_flip_report_for_test
+
+    payload = await step_flip_report_for_test(db, run_id, test_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    return payload
+
+
 @router.get("/{run_id}/regression-diff")
 async def get_regression_diff(
     run_id: uuid.UUID,

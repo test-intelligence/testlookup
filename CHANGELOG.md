@@ -55,6 +55,14 @@ TestLookup is our answer: a local-first test failure intelligence engine that in
 - Continuous fine-tuning pipeline
 - Semantic/hybrid search (ChromaDB)
 
+### Added (2026-06-24 — FLK-P6 slice 4: cross-run step-flip surfaced on the test-case detail page)
+
+Surfaces the previously backend-only cross-run step-flip intelligence (FLK-P6) in the UI. Earlier slices retained per-run step outcomes (`test_step_runs`, migration 0097), added the pure `compute_step_flips`, and the project-scoped DB read `step_flip_report_by_fingerprint`; this slice wires a read API and a per-test panel so a QA engineer can see *which step* oscillated PASSED↔FAILED across runs — pointing at one flickering step rather than a whole-test verdict.
+
+- `GET /api/v1/runs/{run_id}/tests/{test_id}/step-flips` (new, `backend/app/routers/runs.py`) — READ-ONLY. Resolves the test's `test_fingerprint` + `project_id` from the **provided** `run_id` (guarded by `require_run_access` — IDOR ratchet), then returns the cross-run step-flip report. 404 when the `test_id` doesn't belong to the run; an empty-window "insufficient history" report otherwise. No DB writes (router owns the no-op transaction).
+- `runs_service.step_flip_report_for_test()` (new) — thin per-test wrapper that resolves `(run_id, test_id)` → `(fingerprint, project_id)` and defers to the existing batched, project-scoped `step_flip_report_by_fingerprint`. Pure read; never N+1 (resolve + anchor + step-runs). Covered by `backend/tests/test_step_flip_for_test.py`.
+- `src/components/runs/StepFlipPanel.tsx` (new) + `useTestStepFlips` SWR hook (`src/hooks/useRuns.ts`) + `runsService.getTestStepFlips` + `TestStepFlips`/`StepFlipReport` types — a "Cross-Run Step Flakiness" section on the test-case detail page (`src/pages/TestCasePage.tsx`), beneath the existing History/Steps panels. Renders the per-step flip roll-up (flip count, current PASSED/FAILED status, regression vs recovery) with distinct empty states for "no history yet" vs "stable across N runs". Lazy SWR fetch, no set-state-in-effect. Covered by `src/components/runs/StepFlipPanel.test.tsx`.
+
 ### Changed (2026-06-24 — Frontend lint: AuditDashboardPage off set-state-in-effect (SWR migration, slice toward promotion))
 
 Continues the phased adoption of the eslint-plugin-react-hooks v7 (React Compiler) rule set. `react-hooks/set-state-in-effect` is the last named rule still at `warn`; the sites are cleared in reviewable, one-page-per-PR slices by real refactors (not disables) before the rule is promoted to `error`. This slice clears one more site (24 → 23 warnings):

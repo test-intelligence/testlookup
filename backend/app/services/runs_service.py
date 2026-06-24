@@ -872,3 +872,54 @@ async def step_flip_report_by_fingerprint(
         reports[fp] = compute_step_flips(window)
 
     return reports
+
+
+async def step_flip_report_for_test(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+    *,
+    since: datetime | None = None,
+    max_runs: int = 25,
+) -> dict | None:
+    """FLK-P6 slice 4: cross-run step-flip report for one ``(run_id, test_id)``.
+
+    READ-ONLY surface for the per-test detail view. Resolves the test's
+    ``test_fingerprint`` + ``project_id`` from the PROVIDED ``run_id`` (the router
+    guards it with ``require_run_access`` — IDOR ratchet), then defers to the
+    batched, project-scoped :func:`step_flip_report_by_fingerprint`. No DB writes.
+
+    Returns ``None`` (→ 404 at the router) when ``test_id`` doesn't belong to
+    ``run_id``. When the test has no retained per-run step history yet, the
+    embedded report is the empty-window "insufficient history" report so the UI
+    can distinguish "no flip" from "no history".
+    """
+    row = (
+        await db.execute(
+            select(TestCase.test_fingerprint, TestRun.project_id)
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(TestCase.id == test_id, TestCase.test_run_id == run_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    fingerprint, project_id = row[0], row[1]
+    if not fingerprint:
+        # No fingerprint anchor → no cross-run identity to compute flips over.
+        return {
+            "run_id": str(run_id),
+            "test_id": str(test_id),
+            "test_fingerprint": None,
+            "report": compute_step_flips([]).to_dict(),
+        }
+
+    reports = await step_flip_report_by_fingerprint(
+        db, project_id, [fingerprint], since=since, max_runs=max_runs
+    )
+    report = reports.get(fingerprint) or compute_step_flips([])
+    return {
+        "run_id": str(run_id),
+        "test_id": str(test_id),
+        "test_fingerprint": fingerprint,
+        "report": report.to_dict(),
+    }
