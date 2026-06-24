@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import {
   type PolicyDocument,
   type PolicyRule,
-  type PolicySummary,
   type RuleEvaluation,
   type SimulateResponse,
   DEFAULT_THRESHOLDS,
@@ -14,12 +13,11 @@ import {
   DEFAULT_HARD_CAPS,
   createPolicy,
   deactivatePolicy,
-  getPolicy,
-  listPolicies,
   publishPolicy,
   simulatePolicy,
   updatePolicy,
 } from '../services/policyService';
+import { usePolicies, usePolicy } from '@/hooks/usePolicyEditor';
 
 const RULE_TYPES = [
   { type: 'flaky_recurrence', label: 'Flaky Recurrence Limit', defaultParams: { max_flaky_tests: 10, action: 'BLOCK' } },
@@ -54,10 +52,6 @@ export default function PolicyEditorPage() {
   const navigate = useNavigate();
   const isNew = !policyId || policyId === 'new';
 
-  const [policies, setPolicies] = useState<PolicySummary[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   // Editor state
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -65,44 +59,54 @@ export default function PolicyEditorPage() {
   const [doc, setDoc] = useState<PolicyDocument>(emptyDocument());
   const [isDraft, setIsDraft] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Tracks which policy id the editable form fields below were seeded from, so
+  // the "adjust state during render" seeding (below) runs once per loaded
+  // policy instead of from a set-state-in-effect.
+  const [seededPolicyId, setSeededPolicyId] = useState<string | null>(null);
 
   // Simulator
   const [simRunId, setSimRunId] = useState('');
   const [simResult, setSimResult] = useState<SimulateResponse | null>(null);
   const [simulating, setSimulating] = useState(false);
 
-  // List mode
-  const loadPolicies = useCallback(async () => {
-    setLoading(true);
-    try {
-      setPolicies(await listPolicies());
-    } catch {
-      setError('Failed to load policies');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Data fetches are SWR hooks — each owns its loading/data/error state and
+  // re-keys on the route params, so the page no longer drives state from a
+  // load-on-mount effect. List mode fetches the policy list (and exposes
+  // `refreshPolicies` so a deactivate can revalidate it); edit mode fetches the
+  // single policy keyed on its id.
+  const listMode = isNew && !policyId;
+  const {
+    policies,
+    isLoading: policiesLoading,
+    isError: policiesError,
+    mutate: refreshPolicies,
+  } = usePolicies(listMode);
+  const {
+    policy: loadedPolicy,
+    isLoading: policyLoading,
+    isError: policyError,
+  } = usePolicy(policyId, !isNew);
 
-  // Edit mode — load existing policy
-  useEffect(() => {
-    if (!isNew && policyId) {
-      setLoading(true);
-      getPolicy(policyId)
-        .then(p => {
-          setName(p.name);
-          setDescription(p.description || '');
-          setProjectId(p.project_id);
-          setDoc(p.rules as PolicyDocument);
-          setIsDraft(p.is_draft);
-        })
-        .catch(() => setError('Policy not found'))
-        .finally(() => setLoading(false));
-    }
-  }, [policyId, isNew]);
+  // Seed the editable form fields from the loaded policy during render (the
+  // "adjust state during render" pattern) — once per loaded policy, tracked by
+  // `seededPolicyId` — instead of from a set-state-in-effect. React re-renders
+  // synchronously with the new state before painting, so the form shows the
+  // loaded values without a flash.
+  if (loadedPolicy && policyId && seededPolicyId !== policyId) {
+    setSeededPolicyId(policyId);
+    setName(loadedPolicy.name);
+    setDescription(loadedPolicy.description || '');
+    setProjectId(loadedPolicy.project_id);
+    setDoc(loadedPolicy.rules as PolicyDocument);
+    setIsDraft(loadedPolicy.is_draft);
+  }
 
-  useEffect(() => {
-    if (isNew && !policyId) loadPolicies();
-  }, [isNew, policyId, loadPolicies]);
+  // Surface load failures the way the old single-shot try/catch did.
+  const loading = listMode ? policiesLoading : policyLoading;
+  const displayError =
+    (listMode && policiesError && 'Failed to load policies') ||
+    (!isNew && policyError && 'Policy not found') ||
+    null;
 
   const weightsSum = Object.values(doc.dimension_weights).reduce((s, v) => s + v, 0);
 
@@ -152,7 +156,7 @@ export default function PolicyEditorPage() {
     try {
       await deactivatePolicy(id);
       toast.success('Policy deactivated');
-      loadPolicies();
+      refreshPolicies();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed');
     }
@@ -217,7 +221,7 @@ export default function PolicyEditorPage() {
           </button>
         </div>
 
-        {error && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{error}</div>}
+        {displayError && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{displayError}</div>}
 
         {loading ? (
           <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
@@ -293,7 +297,7 @@ export default function PolicyEditorPage() {
         </div>
       </div>
 
-      {error && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{error}</div>}
+      {displayError && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{displayError}</div>}
 
       {/* Metadata */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
