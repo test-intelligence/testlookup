@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-06-24 — Semver release workflow (versioned GHCR images)
+
+- **Tag-driven release pipeline** -- new `.github/workflows/release.yml` fires on a `v*.*.*` tag push and builds + pushes the three app images (`backend`, `frontend`, `mcp`) to `ghcr.io/anandtopu/testlookup/*` tagged with the full semver and its moving aliases: `v1.2.3` -> `:v1.2.3 :1.2.3 :1.2 :1 :sha-<sha>`. This makes `TESTLOOKUP_VERSION` real -- `docker-compose.release.yml` self-hosters can now pin a published release tag instead of the moving `latest` (still published by the main-push CI). Reuses the proven build/login/SDK-staging steps from `ci.yml`, derives tags via `docker/metadata-action` semver patterns, attaches an SBOM + max provenance per image, and warns when the pushed tag disagrees with the tracked `VERSION` file. Contract pinned by `backend/tests/test_release_workflow.py` (semver-tag trigger, all three images, semver tag derivation, GHCR push, `packages:write`, GITHUB_TOKEN login).
+
 ### Why we built this
 
 Engineering teams running automated tests get fragmented artifacts: JUnit XML, Allure outputs, flaky failures, pipeline status. Existing tools help visualise results, but teams still burn hours on manual triage, clustering, root-cause analysis, and release decisions. The problem is worse in regulated or private environments that can't depend on cloud-only AI services.

@@ -1,0 +1,220 @@
+name: TestLookup — Release (semver images)
+
+# ============================================================
+# Publish versioned GHCR images on a semver tag push.
+#
+# Trigger: pushing a tag that matches v*.*.* (e.g. v1.2.3).
+# Result:  the three app images (backend, frontend, mcp) are
+#          built once and pushed to GHCR tagged with the full
+#          semver and its moving aliases, plus the commit SHA:
+#
+#            tag v1.2.3  ->  :v1.2.3  :1.2.3  :1.2  :1  :sha-<sha>
+#
+# This is what makes TESTLOOKUP_VERSION real: docker-compose.release.yml
+# pulls ghcr.io/anandtopu/testlookup/{backend,frontend,mcp}:${TESTLOOKUP_VERSION},
+# so users can pin a published release tag instead of the moving `latest`.
+#
+# The main-push CI workflow (ci.yml) still publishes :latest and :sha-<sha>
+# on every merge to main; this workflow adds the immutable semver tags.
+#
+# NOTE: this does NOT create the git tag — tag first (and ideally bump the
+# VERSION file to match), then push the tag to fire this workflow. A guard
+# step warns when the tag and the VERSION file disagree.
+# ============================================================
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Least-privilege by default; the build job opts into packages:write.
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-release-images:
+    name: Build & Push Release Images
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # Guard: the pushed tag should match the tracked VERSION file. This is a
+      # warning, not a hard failure, so an intentional out-of-band tag still
+      # releases — but a mismatch is almost always a forgotten VERSION bump.
+      - name: Verify tag matches VERSION file
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          file="$(tr -d '[:space:]' < VERSION)"
+          echo "git tag (stripped) = '$tag'  ·  VERSION file = '$file'"
+          if [ "$tag" != "$file" ]; then
+            echo "::warning::Release tag '${GITHUB_REF_NAME}' does not match VERSION file '${file}'. Did you forget to bump VERSION?"
+          else
+            echo "Tag and VERSION agree. ✓"
+          fi
+
+      # Generate package-lock.json before the Docker build so npm ci works
+      # inside the frontend image. Mirrors ci.yml's build-images job — avoids
+      # committing a lockfile while keeping reproducible installs.
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Generate frontend package-lock.json
+        working-directory: ./frontend
+        run: npm install --package-lock-only
+
+      - name: Log in to Docker Hub (avoids pull rate limits on base images and buildkit)
+        uses: docker/login-action@v4.2.0
+        if: env.DOCKERHUB_USERNAME != ''
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4.2.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.1.0
+
+      # Derive image tags from the git tag. For a push of `v1.2.3` this emits
+      # the full semver (v1.2.3 / 1.2.3), the moving minor/major aliases
+      # (1.2 / 1), and the commit SHA (sha-<sha>). One metadata block is reused
+      # per image via the `images:` matrix substitution below.
+      - name: Extract metadata — backend
+        id: meta-backend
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=sha-
+
+      - name: Extract metadata — frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=sha-
+
+      - name: Extract metadata — mcp
+        id: meta-mcp
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=sha-
+
+      # Stage client SDKs into the backend build context so the production
+      # Dockerfile can bake them into the image at /app/client_sdks. Mirrors
+      # ci.yml's build-images job and the homelab deploy script — without it
+      # the `COPY --from=builder /app/__client_sdks_staged ./client_sdks`
+      # line in backend/Dockerfile fails during the production build.
+      - name: Stage client SDKs into backend context
+        run: |
+          set -euo pipefail
+          STAGED_SDK="./backend/__client_sdks_staged"
+          rm -rf "$STAGED_SDK"
+          mkdir -p "$STAGED_SDK"
+          rsync -a \
+            --exclude='.pytest_cache' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            --exclude='node_modules' \
+            --exclude='.tox' \
+            --exclude='.mypy_cache' \
+            --exclude='.ruff_cache' \
+            --exclude='target' \
+            --exclude='build' \
+            --exclude='*.egg-info' \
+            --exclude='.coverage' \
+            --exclude='htmlcov' \
+            --exclude='.DS_Store' \
+            ./client/ "$STAGED_SDK/"
+          ls -la "$STAGED_SDK" | head -20
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: production
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          target: production
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Build & push MCP server
+        uses: docker/build-push-action@v7
+        with:
+          context: ./mcp
+          file: ./mcp/Dockerfile
+          push: true
+          tags: ${{ steps.meta-mcp.outputs.tags }}
+          labels: ${{ steps.meta-mcp.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Release image summary
+        run: |
+          {
+            echo "## Released images for \`${GITHUB_REF_NAME}\`"
+            echo ""
+            echo "Pushed to \`${REGISTRY}/${IMAGE_PREFIX}/{backend,frontend,mcp}\`:"
+            echo ""
+            echo '```'
+            echo "${{ steps.meta-backend.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "Pin in \`docker-compose.release.yml\` via \`TESTLOOKUP_VERSION=${GITHUB_REF_NAME}\`."
+          } >> "$GITHUB_STEP_SUMMARY"

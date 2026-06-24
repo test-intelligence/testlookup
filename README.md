@@ -53,7 +53,9 @@ Don't want the source? One command pulls the pinned release images, writes a loc
 curl -fsSL https://raw.githubusercontent.com/anandtopu/testlookup/main/install.sh | bash
 ```
 
-This downloads [`docker-compose.release.yml`](docker-compose.release.yml) (which pulls `ghcr.io/anandtopu/testlookup/{backend,frontend,mcp}` instead of building) into `./testlookup` and brings it up. Add demo data with `TL_PROFILE=demo curl ... | bash`; pin a specific build with `TESTLOOKUP_VERSION=<sha-or-tag>`. `latest` tracks `main` — pin a commit SHA for a reproducible deploy. See the header of `docker-compose.release.yml` for the by-hand steps and all overrides.
+This downloads [`docker-compose.release.yml`](docker-compose.release.yml) (which pulls `ghcr.io/anandtopu/testlookup/{backend,frontend,mcp}` instead of building) into `./testlookup` and brings it up. Add demo data with `TL_PROFILE=demo curl ... | bash`; pin a specific build with `TESTLOOKUP_VERSION=<sha-or-tag>`. `latest` tracks `main` — pin a commit SHA or a published release tag for a reproducible deploy. See the header of `docker-compose.release.yml` for the by-hand steps and all overrides.
+
+Pushing a `v*.*.*` git tag publishes immutable, versioned images via [`.github/workflows/release.yml`](.github/workflows/release.yml): tag `v1.2.3` ships `:v1.2.3`, `:1.2.3`, `:1.2`, `:1`, and `:sha-<sha>` to GHCR, so `TESTLOOKUP_VERSION=v1.2.3` (or `1.2`, to float on patches) pins a real release.
 
 ### Secrets
 
