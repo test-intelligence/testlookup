@@ -1,0 +1,13 @@
+{
+  "name": "testlookup-mermaid-check",
+  "private": true,
+  "type": "module",
+  "description": "CI check: validate every ```mermaid block in the repo's markdown parses under the Mermaid grammar (the same check GitHub applies before rendering).",
+  "scripts": {
+    "check": "node validate.mjs"
+  },
+  "dependencies": {
+    "jsdom": "^25.0.1",
+    "mermaid": "^11.4.1"
+  }
+}

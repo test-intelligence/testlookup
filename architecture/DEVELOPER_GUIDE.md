@@ -239,6 +239,18 @@ npx vitest run src/hooks/useFoo.test.ts   # single file
 npm run test:e2e                      # Playwright (needs the full stack)
 ```
 
+### Docs — Mermaid diagrams
+
+Every `` ```mermaid `` block in tracked markdown is validated in CI (the **Docs —
+Mermaid diagrams** job) by parsing it with the Mermaid grammar — the same parse
+GitHub runs before rendering. A diagram that doesn't parse renders as "Unable to
+render rich display" on GitHub, so the check fails the build instead. Run it
+locally before pushing diagram changes:
+
+```bash
+cd scripts/mermaid-check && npm ci && node validate.mjs
+```
+
 ### The traceability convention
 
 Every code change ships with: **a branch + a regression test + a `CHANGELOG.md`

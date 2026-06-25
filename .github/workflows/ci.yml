@@ -79,6 +79,34 @@ jobs:
           python -m pytest test_quality_gate.py -v
 
   # ─────────────────────────────────────────────────────────────
+  # JOB 0c: Validate Mermaid diagrams in markdown
+  # Parses every ```mermaid block in tracked *.md with the Mermaid
+  # grammar (the same parse GitHub runs before rendering). A broken
+  # diagram fails here instead of silently shipping an "Unable to
+  # render rich display" box. Node-only, no app deps.
+  # ─────────────────────────────────────────────────────────────
+  mermaid-check:
+    name: Docs — Mermaid diagrams
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: scripts/mermaid-check/package-lock.json
+
+      - name: Install validator dependencies
+        working-directory: ./scripts/mermaid-check
+        run: npm ci
+
+      - name: Validate Mermaid diagrams render
+        working-directory: ./scripts/mermaid-check
+        run: node validate.mjs
+
+  # ─────────────────────────────────────────────────────────────
   # JOB 1: Backend tests and linting
   # ─────────────────────────────────────────────────────────────
   backend-test:
