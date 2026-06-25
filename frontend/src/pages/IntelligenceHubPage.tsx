@@ -199,8 +199,14 @@ export default function IntelligenceHubPage() {
   const TABLE_PAGE_SIZE = 25
   const [tablePage, setTablePage] = useState(1)
   // Filters change the data window — reset to page 1 to avoid showing an
-  // empty page when the user narrows the result set.
-  useEffect(() => { setTablePage(1) }, [range, branch, status, query, suite])
+  // empty page when the user narrows the result set. Reset during render via
+  // previous-value tracking rather than a cascading setState-in-effect.
+  const tableFilterKey = `${range}|${branch}|${status}|${query}|${suite}`
+  const [prevTableFilterKey, setPrevTableFilterKey] = useState(tableFilterKey)
+  if (prevTableFilterKey !== tableFilterKey) {
+    setPrevTableFilterKey(tableFilterKey)
+    setTablePage(1)
+  }
   // Client-side datetime sort. Backend returns desc; this toggle reorders the
   // full filtered set before table-pagination so toggling reorders every row
   // in scope, not just the current page.

@@ -53,6 +53,29 @@ describe('WorkflowTimeline', () => {
     expect(screen.getByText(/No workflow stages found/i)).toBeInTheDocument()
   })
 
+  // Regression: the default-stage selection is synced during render via the
+  // previous-value pattern (not a setState-in-effect). Pins that the selected
+  // stage still follows the computed default (first running) as the pipeline
+  // advances, so the inspector tracks the live stage without a cascading effect.
+  it('follows the computed default stage as the pipeline advances', () => {
+    const stages = (analysis: string, delivery: string) => [
+      { stage_name: 'analysis', status: analysis, label: 'Analysis', route_rationale: 'Analyzing the run' },
+      { stage_name: 'delivery', status: delivery, label: 'Delivery', route_rationale: 'Delivering the report' },
+    ]
+    const { rerender } = render(
+      <WorkflowTimeline showInspector stageOrder={['analysis', 'delivery']} stages={stages('running', 'pending')} />,
+    )
+    // Default = first running = analysis → inspector shows its rationale.
+    expect(screen.getAllByText(/Analyzing the run/i).length).toBeGreaterThan(0)
+
+    // Analysis completes, delivery starts running: the default recomputes to
+    // delivery and the selection follows it during render.
+    rerender(
+      <WorkflowTimeline showInspector stageOrder={['analysis', 'delivery']} stages={stages('completed', 'running')} />,
+    )
+    expect(screen.getAllByText(/Delivering the report/i).length).toBeGreaterThan(0)
+  })
+
   it('respects a custom stage order for synthesized workflows', () => {
     render(
       <WorkflowTimeline

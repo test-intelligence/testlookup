@@ -604,9 +604,14 @@ export default function WorkflowTimeline({
   // the page (recent activity, KPIs, etc.) without losing access to it.
   const [pipelineCollapsed, setPipelineCollapsed] = useState(false)
 
-  useEffect(() => {
+  // Follow the computed default stage (first running, then failed, then first)
+  // as the pipeline progresses. Synced during render via previous-value
+  // tracking instead of a cascading setState-in-effect.
+  const [prevDefaultStageName, setPrevDefaultStageName] = useState(defaultStageName)
+  if (prevDefaultStageName !== defaultStageName) {
+    setPrevDefaultStageName(defaultStageName)
     setSelectedStageName(defaultStageName)
-  }, [defaultStageName])
+  }
 
   if (orderedStages.length === 0) {
     return (

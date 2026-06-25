@@ -550,13 +550,17 @@ export default function AgentStatusPage() {
   // Default canvas selection: the first running stage (or first failed) so
   // the rail isn't empty on first paint.
   const [canvasSelection, setCanvasSelection] = useState<SelectedId>(null)
-  useEffect(() => {
-    if (canvasSelection !== null) return
-    const running = computeGraph.stages.find(s => s.status === 'running')
-    const failed  = computeGraph.stages.find(s => s.status === 'failed')
-    const initial = running ?? failed ?? computeGraph.stages[0] ?? null
-    if (initial) setCanvasSelection(initial.id)
-  }, [computeGraph.stages, canvasSelection])
+  // Seed the canvas selection with the first running (else failed, else first)
+  // stage while nothing is selected. Applied during render rather than via a
+  // cascading setState-in-effect; it converges in one pass and re-seeds if the
+  // user clears the selection, matching the prior effect's behaviour.
+  const initialCanvasId =
+    (computeGraph.stages.find(s => s.status === 'running')
+      ?? computeGraph.stages.find(s => s.status === 'failed')
+      ?? computeGraph.stages[0])?.id ?? null
+  if (canvasSelection === null && initialCanvasId != null) {
+    setCanvasSelection(initialCanvasId)
+  }
   const { data: liveRuns = [] } = useActiveLiveRuns()
   const {
     data: summary,

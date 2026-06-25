@@ -49,6 +49,7 @@ function makeMember(role: 'QA_LEAD' | 'QA_ENGINEER' | 'ADMIN', overrides: Partia
 const mockListProjectMembers = vi.fn()
 const mockUpdateProject = vi.fn()
 const mockUsersHook = vi.fn()
+const mockProjectMembersHook = vi.fn()
 const mockListProjects = vi.fn()
 
 vi.mock('@/services/projectsService', () => ({
@@ -69,6 +70,7 @@ vi.mock('@/services/userManagementService', () => ({
 
 vi.mock('@/hooks/useUserManagement', () => ({
   useUsers: (...args: unknown[]) => mockUsersHook(...args),
+  useProjectMembers: (...args: unknown[]) => mockProjectMembersHook(...args),
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -80,6 +82,14 @@ async function renderAndPickProject(opts: { isAdmin: boolean; project?: Project;
   mockListProjects.mockResolvedValue([project])
   mockListProjectMembers.mockResolvedValue(opts.members ?? [])
   mockUsersHook.mockReturnValue({ data: [], isLoading: false, error: null })
+  // Members now flow through the useProjectMembers SWR hook (keyed on the
+  // selected project); return data only once a project is selected.
+  mockProjectMembersHook.mockImplementation((projectId: string | null) => ({
+    data: projectId ? (opts.members ?? []) : undefined,
+    isLoading: false,
+    error: null,
+    mutate: vi.fn(),
+  }))
 
   render(<ProjectMembersTab isAdmin={opts.isAdmin} canManageUsers={true} />)
 
@@ -90,7 +100,7 @@ async function renderAndPickProject(opts: { isAdmin: boolean; project?: Project;
   const projectOption = await screen.findByRole('option', { name: project.name })
   const projectSelect = projectOption.parentElement as HTMLSelectElement
   fireEvent.change(projectSelect, { target: { value: project.id } })
-  await waitFor(() => expect(mockListProjectMembers).toHaveBeenCalledWith(project.id))
+  await waitFor(() => expect(mockProjectMembersHook).toHaveBeenCalledWith(project.id))
 }
 
 describe('ProjectMembersTab — Default QA Lead', () => {
@@ -99,6 +109,7 @@ describe('ProjectMembersTab — Default QA Lead', () => {
     mockListProjects.mockReset()
     mockUpdateProject.mockReset()
     mockUsersHook.mockReset()
+    mockProjectMembersHook.mockReset()
   })
 
   it('shows the picker for ADMIN with only QA_LEAD candidates', async () => {

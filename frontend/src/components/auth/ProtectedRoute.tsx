@@ -25,6 +25,10 @@ export default function ProtectedRoute() {
     // from localStorage) we don't block rendering — the verification runs in the
     // background and only logs out on an explicit 401/403 from the server.
     const hasCachedAuth = useAuthStore.getState().isAuthenticated;
+    // Genuine async loading flag around a network token re-verification (not a
+    // derive-during-render case): show the spinner only when there's no cached
+    // auth state to fall back on.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!hasCachedAuth) setValidating(true);
     fetchUser().finally(() => {
       if (!hasCachedAuth) setValidating(false);

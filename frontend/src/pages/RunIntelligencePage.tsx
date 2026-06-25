@@ -1324,19 +1324,25 @@ export default function RunIntelligencePage() {
   // User decision (Approve with conditions / Hold / Override) — held
   // locally until the gate-decision backend endpoint lands. Persists per-
   // run so a refresh keeps the panel in sync; clears on Undo.
-  const [userDecision, setUserDecision] = useState<UserDecision | null>(null)
-  useEffect(() => {
-    if (!runId) {
-      setUserDecision(null)
-      return
-    }
+  const loadPersistedDecision = (id: typeof runId): UserDecision | null => {
+    if (!id) return null
     try {
-      const raw = localStorage.getItem(DECISION_KEY_PREFIX + runId)
-      setUserDecision(raw ? (JSON.parse(raw) as UserDecision) : null)
+      const raw = localStorage.getItem(DECISION_KEY_PREFIX + id)
+      return raw ? (JSON.parse(raw) as UserDecision) : null
     } catch {
-      setUserDecision(null)
+      return null
     }
-  }, [runId])
+  }
+  const [userDecision, setUserDecision] = useState<UserDecision | null>(() =>
+    loadPersistedDecision(runId),
+  )
+  // Re-load the persisted per-run decision whenever the runId changes. Synced
+  // during render via previous-value tracking rather than a setState-in-effect.
+  const [prevDecisionRunId, setPrevDecisionRunId] = useState(runId)
+  if (prevDecisionRunId !== runId) {
+    setPrevDecisionRunId(runId)
+    setUserDecision(loadPersistedDecision(runId))
+  }
 
   function recordUserDecision(action: DecisionAction): void {
     if (!runId) return

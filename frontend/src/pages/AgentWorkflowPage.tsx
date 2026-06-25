@@ -1413,12 +1413,16 @@ export default function AgentWorkflowPage() {
     setRunPage(1)
   })
 
-  useEffect(() => {
+  // Reset the run-scoped selection whenever the route's runId changes. Synced
+  // during render via previous-value tracking rather than a setState-in-effect.
+  const [prevRunId, setPrevRunId] = useState(runId)
+  if (prevRunId !== runId) {
+    setPrevRunId(runId)
     setSelectedRunId(runId ?? null)
     setSelectedPipeline(null)
     setSelectedId(null)
     setSummaryOpen(false)
-  }, [runId])
+  }
 
   const runQueryParams = useMemo(
     () => ({ page: runPage, size: RUN_PICKER_PAGE_SIZE, days: 0 }),
@@ -1476,13 +1480,17 @@ export default function AgentWorkflowPage() {
   const elapsedSec = elapsedSeconds(pipelineStartedAt, pipelineCompletedAt)
   const elapsedLabel = pipelineStartedAt ? formatElapsed(elapsedSec) : '—'
 
-  // Default selection: first running, else first failed, else null
-  useEffect(() => {
-    if (selectedId != null) return
-    const firstRunning = displayStages.find(s => s.status === 'running')
-    const firstFailed = displayStages.find(s => s.status === 'failed')
-    setSelectedId(firstRunning?.id ?? firstFailed?.id ?? null)
-  }, [displayStages, selectedId])
+  // Default selection: first running, else first failed, else none. Seeded
+  // during render while nothing is selected rather than via a cascading
+  // setState-in-effect; converges in one pass and re-seeds on a cleared
+  // selection, matching the prior effect.
+  const initialSelectedId =
+    displayStages.find(s => s.status === 'running')?.id
+    ?? displayStages.find(s => s.status === 'failed')?.id
+    ?? null
+  if (selectedId == null && initialSelectedId != null) {
+    setSelectedId(initialSelectedId)
+  }
 
   // ESC clears selection
   useEffect(() => {

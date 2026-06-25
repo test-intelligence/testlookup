@@ -1657,9 +1657,16 @@ export default function RunsPage() {
   // upload must target one concrete project.
   const [searchParams, setSearchParams] = useSearchParams()
   const [uploadOpen, setUploadOpen] = useState(false)
-  useEffect(() => {
-    if (searchParams.get('upload') === '1' && !isAllProjects && uploadEnabled) setUploadOpen(true)
-  }, [searchParams, isAllProjects, uploadEnabled])
+  // Auto-open the upload drawer when the deep-link condition (``?upload=1`` on a
+  // concrete project with the flag enabled) first becomes true. Tracked during
+  // render via the previous-value pattern instead of a setState-in-effect so a
+  // transition false→true opens once, and re-navigating after a close re-opens.
+  const shouldAutoOpenUpload = searchParams.get('upload') === '1' && !isAllProjects && uploadEnabled
+  const [prevShouldAutoOpenUpload, setPrevShouldAutoOpenUpload] = useState(false)
+  if (shouldAutoOpenUpload !== prevShouldAutoOpenUpload) {
+    setPrevShouldAutoOpenUpload(shouldAutoOpenUpload)
+    if (shouldAutoOpenUpload) setUploadOpen(true)
+  }
   const closeUpload = () => {
     setUploadOpen(false)
     if (searchParams.has('upload')) {
@@ -1696,10 +1703,17 @@ export default function RunsPage() {
   // surfaces that.
   const ANALYTICS_FETCH_SIZE = 500
   const [tablePage, setTablePage] = useState(1)
-  // Reset to page 1 whenever the filters change so users aren't stuck on
-  // an empty page after narrowing the window.
-  useEffect(() => { setTablePage(1) }, [days, statusFilter, selectedSuite])
-  useEffect(() => { setSelectedIds(new Set()) }, [days, statusFilter, selectedSuite])
+  // Reset page + selection whenever the filters change so users aren't stuck
+  // on an empty page after narrowing the window. Done during render via
+  // previous-value tracking (the React-recommended way to reset state on a
+  // dependency change) rather than a cascading setState-in-effect.
+  const runsFilterKey = `${days}|${statusFilter}|${selectedSuite}`
+  const [prevRunsFilterKey, setPrevRunsFilterKey] = useState(runsFilterKey)
+  if (prevRunsFilterKey !== runsFilterKey) {
+    setPrevRunsFilterKey(runsFilterKey)
+    setTablePage(1)
+    setSelectedIds(new Set())
+  }
 
   const { options: suiteOptions } = useSuiteOptions(days || 0)
 

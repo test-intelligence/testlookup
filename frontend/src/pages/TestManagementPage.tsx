@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import useSWR from 'swr'
 import { useNow } from '@/hooks/useNow'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
@@ -24,6 +25,7 @@ import {
   usePlanItems, useUsers, useDuplicateCandidates,
 } from '@/hooks/useTestManagement'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useProjectMembers } from '@/hooks/useUserManagement'
 import {
   testManagementService,
 } from '@/services/testManagementService'
@@ -3046,19 +3048,10 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   // Surfacing anyone else in the picker just produces 400s. ``UserSummary``
   // doesn't carry the global role, so we cross-reference with the project
   // members API (which gives the per-project role) when a project is set.
-  const [projectMembers, setProjectMembers] = useState<{
-    user_id: string; role: string; full_name: string | null; username: string; email: string;
-  }[]>([])
-  useEffect(() => {
-    if (!projectId) { setProjectMembers([]); return }
-    let alive = true
-    import('@/services/userManagementService').then(({ userManagementService }) =>
-      userManagementService.listProjectMembers(projectId)
-        .then(rows => { if (alive) setProjectMembers(rows) })
-        .catch(() => { if (alive) setProjectMembers([]) })
-    )
-    return () => { alive = false }
-  }, [projectId])
+  // Project members via SWR (keyed on the project) rather than a load-on-change
+  // effect — feeds the QA_LEAD owner-candidate list below.
+  const { data: projectMembersData } = useProjectMembers(projectId || null)
+  const projectMembers = useMemo(() => projectMembersData ?? [], [projectMembersData])
   const ownerCandidates: UserSummary[] = useMemo(() => {
     const qaLeadIds = new Set(
       projectMembers.filter(m => m.role === 'QA_LEAD').map(m => m.user_id),
@@ -3081,8 +3074,18 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   }, [projectMembers, userList])
   const [searchParams] = useSearchParams()
   const deepLinkSuite = searchParams.get('suite')
-  const [suites, setSuites] = useState<SuiteItem[]>([])
-  const [loading, setLoading] = useState(false)
+  // Suites via SWR (keyed on the project) rather than a load-on-change effect;
+  // local edits below patch the cache via mutate.
+  const {
+    data: suitesData,
+    isLoading: loading,
+    error: suitesError,
+    mutate: mutateSuites,
+  } = useSWR(['test-suites', projectId], () => testManagementService.listSuites(projectId))
+  const suites = useMemo(() => suitesData ?? [], [suitesData])
+  useEffect(() => {
+    if (suitesError) toast.error('Failed to load test suites')
+  }, [suitesError])
   const [expandedSuite, setExpandedSuite] = useState<string | null>(deepLinkSuite)
   const [suiteCases, setSuiteCases] = useState<Record<string, SuiteCase[]>>({})
   // Per-suite pagination state for the cases inline-expand. Keyed by
@@ -3104,14 +3107,6 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   // on a successful create.
   const [showAddSuite, setShowAddSuite] = useState(false)
 
-  useEffect(() => {
-    setLoading(true)
-    testManagementService.listSuites(projectId)
-      .then(setSuites)
-      .catch(() => toast.error('Failed to load test suites'))
-      .finally(() => setLoading(false))
-  }, [projectId])
-
   // When arriving via /test-management?tab=Test+Suites&suite=<name>, auto-load
   // the deep-linked suite's cases and scroll its card into view once. Subsequent
   // suite changes from the URL also re-apply; user-initiated collapses don't
@@ -3120,6 +3115,11 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     if (!deepLinkSuite || deepLinkAppliedRef.current) return
     if (suites.length === 0) return
     deepLinkAppliedRef.current = true
+    // Coordinated one-time deep-link side effect: expand the card, load its
+    // cases, and scroll it into view. The scrollIntoView requires the rendered
+    // DOM, so this legitimately belongs in an effect — the expand setState is
+    // an intentional part of that one-shot, not a derive-during-render case.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpandedSuite(deepLinkSuite)
     void loadSuiteData(deepLinkSuite)
     const el = document.getElementById(`suite-card-${deepLinkSuite}`)
@@ -3160,13 +3160,13 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     }
     try {
       const updated = await testManagementService.setSuiteOwner(suite.suite_name, projectId, ownerUserId)
-      setSuites(prev => prev.map(s => s.suite_name === suite.suite_name ? {
+      mutateSuites(prev => (prev ?? []).map(s => s.suite_name === suite.suite_name ? {
         ...s,
         owner_user_id: updated.owner_user_id,
         owner_email: updated.owner_email,
         owner_full_name: updated.owner_full_name,
         owner_is_fallback: updated.is_fallback,
-      } : s))
+      } : s), { revalidate: false })
       setEditingOwnerFor(null)
       toast.success(ownerUserId ? 'Suite owner assigned' : 'Suite owner cleared')
     } catch (err: unknown) {
@@ -3275,8 +3275,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
       tags: payload.tags.length > 0 ? payload.tags : null,
     })
     // Refetch suites so the new one (if it has test cases yet) shows up.
-    const fresh = await testManagementService.listSuites(projectId)
-    setSuites(fresh)
+    await mutateSuites()
   }
 
   if (loading) return <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>

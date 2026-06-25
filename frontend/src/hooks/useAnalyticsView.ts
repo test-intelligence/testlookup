@@ -3,7 +3,7 @@
  *
  * Loads from: server saved view → page defaults. Saves instance-based views (v2 format).
  */
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import useSWR from 'swr'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import {
@@ -54,7 +54,7 @@ export function useAnalyticsView(page: string): AnalyticsViewResult {
   const [instances, setInstances] = useState<VisualizationInstance[]>(defaults)
   const [savedViewId, setSavedViewId] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
-  const initializedRef = useRef(false)
+  const [initialized, setInitialized] = useState(false)
 
   const widgetIds = useMemo(() => instances.map(i => i.templateId), [instances])
 
@@ -69,20 +69,19 @@ export function useAnalyticsView(page: string): AnalyticsViewResult {
     { revalidateOnFocus: false },
   )
 
-  useEffect(() => {
-    if (isLoading || initializedRef.current) return
-
+  // One-time seed from the saved view once SWR resolves. Applied during render
+  // (the React-recommended way to derive state from freshly-loaded data) rather
+  // than a cascading setState-in-effect.
+  if (!isLoading && !initialized) {
+    setInitialized(true)
     const pageView = savedViews?.find(v => v.filters?.page === page)
     if (pageView?.filters.instances && Array.isArray(pageView.filters.instances)) {
       setSavedViewId(pageView.id)
       setInstances(pageView.filters.instances)
-      initializedRef.current = true
-      return
+    } else {
+      setInstances(defaults)
     }
-
-    setInstances(defaults)
-    initializedRef.current = true
-  }, [savedViews, isLoading, page, defaults])
+  }
 
   const addInstance = useCallback((
     templateId: string,

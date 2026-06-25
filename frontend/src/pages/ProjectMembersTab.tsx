@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, KeyRound, ShieldCheck, UserMinus, UserPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useUsers } from '@/hooks/useUserManagement'
+import { useUsers, useProjectMembers } from '@/hooks/useUserManagement'
 import { userManagementService, type ProjectMember, type UserItem, type UserRole } from '@/services/userManagementService'
 import { projectsService } from '@/services/projectsService'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -21,8 +21,6 @@ const ROLE_COLORS: Record<UserRole, string> = {
 export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolean; canManageUsers: boolean }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
-  const [members, setMembers] = useState<ProjectMember[]>([])
-  const [loading, setLoading] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   // Pending default-QA-lead selection — committed by the Save button so a
   // mis-click on the picker doesn't immediately fire a PUT.
@@ -33,26 +31,35 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
   // Use SWR hook for users — reliable, auto-retries, and shares cache with Users tab
   const { data: allUsers, isLoading: usersLoading, error: usersError } = useUsers()
 
+  // Members come from SWR (keyed on the selected project) rather than a
+  // load-on-change effect; local edits below patch the cache via mutate.
+  const {
+    data: membersData,
+    isLoading: loading,
+    error: membersError,
+    mutate: mutateMembers,
+  } = useProjectMembers(selectedProjectId || null)
+  const members = useMemo(() => membersData ?? [], [membersData])
+  useEffect(() => {
+    if (membersError) toast.error('Failed to load project members')
+  }, [membersError])
+
   useEffect(() => {
     projectsService.list().then(setProjects).catch(() => {})
   }, [])
 
-  useEffect(() => {
-    if (!selectedProjectId) { setMembers([]); return }
-    setLoading(true)
-    userManagementService.listProjectMembers(selectedProjectId)
-      .then(setMembers)
-      .catch(() => toast.error('Failed to load project members'))
-      .finally(() => setLoading(false))
-  }, [selectedProjectId])
-
   // Reset the draft whenever the selected project changes, seeding from the
   // server value. The dropdown lists only QA_LEAD members of the project +
-  // ADMIN users (admin bypass mirrors the backend role-check rule).
+  // ADMIN users (admin bypass mirrors the backend role-check rule). Synced
+  // during render via previous-value tracking rather than a setState-in-effect.
   const selectedProjectObj = projects.find(p => p.id === selectedProjectId)
-  useEffect(() => {
-    setDefaultQaLeadDraft(selectedProjectObj?.default_qa_lead_user_id ?? '')
-  }, [selectedProjectId, selectedProjectObj?.default_qa_lead_user_id])
+  const draftSeed = selectedProjectObj?.default_qa_lead_user_id ?? ''
+  const draftSeedKey = `${selectedProjectId}|${draftSeed}`
+  const [prevDraftSeedKey, setPrevDraftSeedKey] = useState(draftSeedKey)
+  if (prevDraftSeedKey !== draftSeedKey) {
+    setPrevDraftSeedKey(draftSeedKey)
+    setDefaultQaLeadDraft(draftSeed)
+  }
 
   // Candidate list for the Default QA Lead picker. Filter to project members
   // whose role is QA_LEAD — the backend rejects anything else with 400, so
@@ -113,7 +120,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
     try {
       await userManagementService.removeProjectMember(selectedProjectId, userId)
       toast.success('Member removed')
-      setMembers(prev => prev.filter(m => m.user_id !== userId))
+      mutateMembers(prev => (prev ?? []).filter(m => m.user_id !== userId), { revalidate: false })
     } catch { toast.error('Failed to remove member') }
   }
 
@@ -121,7 +128,10 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
     if (!selectedProjectId) return
     try {
       const updated = await userManagementService.updateProjectMemberRole(selectedProjectId, userId, role)
-      setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role: updated.role } : m))
+      mutateMembers(
+        prev => (prev ?? []).map(m => m.user_id === userId ? { ...m, role: updated.role } : m),
+        { revalidate: false },
+      )
       toast.success('Role updated')
     } catch { toast.error('Failed to update role') }
   }
@@ -313,7 +323,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
           nonMembers={nonMembers}
           usersLoading={usersLoading}
           onClose={() => setShowAddModal(false)}
-          onAdded={member => { setMembers(prev => [...prev, member]); setShowAddModal(false) }}
+          onAdded={member => { mutateMembers(prev => [...(prev ?? []), member], { revalidate: false }); setShowAddModal(false) }}
         />
       )}
     </div>

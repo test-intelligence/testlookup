@@ -53,8 +53,12 @@ export default function DefectPromotionModal({
   const [showEvidence, setShowEvidence] = useState(false)
   const [submitted, setSubmitted] = useState(false)
 
-  // Populate form from candidate when loaded
-  useEffect(() => {
+  // Populate form from candidate when loaded. Seeded during render via
+  // previous-value tracking rather than a setState-in-effect; re-seeds whenever
+  // the candidate object changes, matching the prior effect.
+  const [prevCandidate, setPrevCandidate] = useState(candidate)
+  if (candidate !== prevCandidate) {
+    setPrevCandidate(candidate)
     if (candidate) {
       setTitle(candidate.title)
       setSeverity((candidate.severity as Severity) ?? 'HIGH')
@@ -63,7 +67,7 @@ export default function DefectPromotionModal({
       setLabelsInput(candidate.labels.join(', '))
       setDescription(candidate.description)
     }
-  }, [candidate])
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -30,10 +30,15 @@ export default tseslint.config(
       // because, on this codebase, they flag *intentional/valid* patterns the
       // React Compiler's conservative inference can't see through — forcing
       // their "fixes" would contort correct code:
-      //   • set-state-in-effect — reset/load-state-on-prop-change effects
-      //   • refs — forwarding a ref prop to a DOM node (never reads .current)
       //   • exhaustive-deps — long-standing advisory
       // Tracked as a follow-up to revisit individually.
+      //
+      // set-state-in-effect is now an error: every flagged site was migrated
+      // off load/reset-state-in-effect — pagination/selection resets use the
+      // adjust-state-during-render previous-value pattern, data fetches moved to
+      // SWR hooks, and the two genuine cases that must stay effects (a network
+      // token re-verification in ProtectedRoute, a coordinated one-time
+      // deep-link expand+scroll in TestManagementPage) carry scoped disables.
       //
       // immutability is now an error: the only flagged cases were a
       // wrapper-hook ref not named with the "Ref" suffix the rule keys on,
@@ -47,7 +52,7 @@ export default tseslint.config(
       // the ref a named binding (forwarded to a DOM `ref=`, which is allowed)
       // and clears every false positive.
       ...reactHooks.configs['recommended-latest'].rules,
-      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/set-state-in-effect': 'error',
       'react-hooks/refs': 'error',
       'react-hooks/immutability': 'error',
       'react-hooks/exhaustive-deps': 'warn',

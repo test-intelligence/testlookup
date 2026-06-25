@@ -788,7 +788,14 @@ export default function LiveExecutionPage() {
   const sessionsForTable = showRawSessions ? visibleSessions : dedupedSessions
   // Reset to page 1 if the source set (or the raw/deduped toggle) changes,
   // otherwise the user can land on a now-empty page after a filter shift.
-  useEffect(() => { setTablePage(1) }, [showRawSessions, sessionsForTable.length])
+  // Reset during render via previous-value tracking rather than a cascading
+  // setState-in-effect.
+  const sessionsTableKey = `${showRawSessions}|${sessionsForTable.length}`
+  const [prevSessionsTableKey, setPrevSessionsTableKey] = useState(sessionsTableKey)
+  if (prevSessionsTableKey !== sessionsTableKey) {
+    setPrevSessionsTableKey(sessionsTableKey)
+    setTablePage(1)
+  }
   const tableTotalPages = Math.max(1, Math.ceil(sessionsForTable.length / TABLE_PAGE_SIZE))
   const pagedSessions = useMemo(() => {
     const start = (tablePage - 1) * TABLE_PAGE_SIZE

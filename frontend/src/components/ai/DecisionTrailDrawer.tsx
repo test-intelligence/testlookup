@@ -47,14 +47,16 @@ export default function DecisionTrailDrawer({ runId, open, onClose }: Props) {
   const [stageFilter, setStageFilter] = useState<string>('all')
 
   // Reset filters when the drawer is closed so reopening a different run
-  // doesn't inherit stale query state. useEffect keeps the hook-order
-  // discipline intact even though the component early-returns null.
-  useEffect(() => {
+  // doesn't inherit stale query state. Synced during render via previous-value
+  // tracking rather than a setState-in-effect.
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (prevOpen !== open) {
+    setPrevOpen(open)
     if (!open) {
       setQuery('')
       setStageFilter('all')
     }
-  }, [open])
+  }
 
   const normQuery = query.trim().toLowerCase()
   const filtered = useMemo(() => {

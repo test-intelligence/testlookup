@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import useSWR from 'swr';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
 import { buildAIEvalWorkflow } from '@/components/workflow/workflowPresets';
 import {
-  type AIEvalDataset,
-  type AIQualityDashboard,
-  type EvalBaseline,
   type EvalGateResult,
   createDatasetFromFeedback,
   getDashboard,
@@ -29,38 +27,32 @@ const GATE_STATUS_STYLES: Record<string, string> = {
 
 export default function AIEvalDashboardPage() {
   const [tab, setTab] = useState<Tab>('dashboard');
-  const [dashboard, setDashboard] = useState<AIQualityDashboard | null>(null);
-  const [datasets, setDatasets] = useState<AIEvalDataset[]>([]);
-  const [baselines, setBaselines] = useState<EvalBaseline[]>([]);
   const [gateResult, setGateResult] = useState<EvalGateResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [gateRunning, setGateRunning] = useState(false);
 
-  const loadDashboard = useCallback(async () => {
-    setLoading(true);
-    try { setDashboard(await getDashboard(30)); }
-    catch { /* empty */ }
-    finally { setLoading(false); }
-  }, []);
-
-  const loadDatasets = useCallback(async () => {
-    setLoading(true);
-    try { setDatasets(await listDatasets()); }
-    catch { /* empty */ }
-    finally { setLoading(false); }
-  }, []);
-
-  const loadGateTab = useCallback(async () => {
-    setLoading(true);
-    try { setBaselines(await listBaselines()); }
-    catch { /* empty */ }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => {
-    if (tab === 'dashboard') loadDashboard();
-    else if (tab === 'datasets') loadDatasets();
-    else if (tab === 'gate') loadGateTab();
-  }, [tab, loadDashboard, loadDatasets, loadGateTab]);
+  // Data via SWR instead of load-on-tab-change effects. Dashboard + baselines
+  // feed the always-visible workflow timeline, so they stay fetched across
+  // tabs; the spinner below is gated to the active tab to preserve the prior
+  // per-tab loading UX.
+  const {
+    data: dashboard = null,
+    isLoading: dashboardLoading,
+    mutate: mutateDashboard,
+  } = useSWR(['ai-eval/dashboard', 30], () => getDashboard(30));
+  const {
+    data: datasets = [],
+    isLoading: datasetsLoading,
+    mutate: mutateDatasets,
+  } = useSWR('ai-eval/datasets', () => listDatasets());
+  const { data: baselines = [], isLoading: baselinesLoading } = useSWR(
+    'ai-eval/baselines',
+    () => listBaselines(),
+  );
+  const loading =
+    (tab === 'dashboard' && dashboardLoading) ||
+    (tab === 'datasets' && datasetsLoading) ||
+    (tab === 'gate' && baselinesLoading) ||
+    gateRunning;
 
   const workflow = useMemo(
     () => buildAIEvalWorkflow(dashboard, baselines, gateResult),
@@ -71,7 +63,7 @@ export default function AIEvalDashboardPage() {
     try {
       await createDatasetFromFeedback();
       toast.success('Dataset generated from feedback');
-      loadDatasets();
+      mutateDatasets();
     } catch { toast.error('No feedback data available'); }
   };
 
@@ -83,7 +75,7 @@ export default function AIEvalDashboardPage() {
       } else {
         toast.success('Golden datasets already exist');
       }
-      loadDatasets();
+      mutateDatasets();
     } catch { toast.error('Failed to seed golden datasets'); }
   };
 
@@ -91,12 +83,12 @@ export default function AIEvalDashboardPage() {
     try {
       await runEvaluation(datasetId);
       toast.success('Evaluation complete');
-      loadDashboard();
+      mutateDashboard();
     } catch { toast.error('Evaluation failed'); }
   };
 
   const handleRunGate = async (taskType: string, agentName: string) => {
-    setLoading(true);
+    setGateRunning(true);
     try {
       const result = await runPreReleaseGate(taskType, agentName);
       setGateResult(result);
@@ -105,7 +97,7 @@ export default function AIEvalDashboardPage() {
       else if (result.status === 'WARN') toast.success('Evaluation gate: WARN');
       else toast.success('No baseline configured');
     } catch { toast.error('Gate evaluation failed'); }
-    finally { setLoading(false); }
+    finally { setGateRunning(false); }
   };
 
   const tabs: { key: Tab; label: string }[] = [
