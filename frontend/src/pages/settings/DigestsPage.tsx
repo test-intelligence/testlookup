@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
@@ -6,20 +6,17 @@ import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
 import { buildDigestWorkflow } from '@/components/workflow/workflowPresets';
 import {
   type DigestContent,
-  type DigestSubscription,
   createSubscription,
   deleteSubscription,
-  listSubscriptions,
   pauseSubscription,
   previewDigest,
   resumeSubscription,
 } from '../../services/digestService';
 import {
-  type SavedView,
   createSavedView,
   deleteSavedView,
-  listSavedViews,
 } from '../../services/savedViewsService';
+import { useDigestSavedViews, useDigestSubscriptions } from '@/hooks/useDigestData';
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
 
 type Tab = 'subscriptions' | 'saved-views' | 'preview';
@@ -30,9 +27,8 @@ export default function DigestsPage() {
   const projectId: string | undefined = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined);
 
   // Subscriptions
-  const [subs, setSubs] = useState<DigestSubscription[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { subscriptions: subs, isLoading: subsLoading, isError: subsError, mutate: mutateSubs } =
+    useDigestSubscriptions(tab === 'subscriptions');
   const [newSubName, setNewSubName] = useState('');
   const [newSubSchedule, setNewSubSchedule] = useState<import('@/services/digestService').DigestScheduleType>('WEEKLY');
   const [newSubChannel, setNewSubChannel] = useState<'email' | 'slack' | 'teams'>('email');
@@ -40,7 +36,8 @@ export default function DigestsPage() {
   const [newSubScopeValue, setNewSubScopeValue] = useState('');
 
   // Saved views
-  const [views, setViews] = useState<SavedView[]>([]);
+  const { views, isLoading: viewsLoading, isError: viewsError, mutate: mutateViews } =
+    useDigestSavedViews(projectId, tab === 'saved-views');
   const [newViewName, setNewViewName] = useState('');
 
   // Preview
@@ -48,23 +45,8 @@ export default function DigestsPage() {
   const [previewPeriod, setPreviewPeriod] = useState<'daily' | 'weekly'>('weekly');
   const [previewing, setPreviewing] = useState(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (tab === 'subscriptions') {
-        setSubs(await listSubscriptions());
-      } else if (tab === 'saved-views') {
-        setViews(await listSavedViews(projectId));
-      }
-    } catch {
-      setError('Failed to load data');
-    } finally {
-      setLoading(false);
-    }
-  }, [tab, projectId]);
-
-  useEffect(() => { loadData(); }, [loadData]);
+  const loading = subsLoading || viewsLoading;
+  const error = subsError || viewsError ? 'Failed to load data' : null;
 
   const handleCreateSub = async () => {
     if (!newSubName.trim()) { toast.error('Name is required'); return; }
@@ -79,19 +61,19 @@ export default function DigestsPage() {
       });
       toast.success('Subscription created');
       setNewSubName('');
-      loadData();
+      mutateSubs();
     } catch { toast.error('Failed to create subscription'); }
   };
 
   const handlePause = async (id: string) => {
-    try { await pauseSubscription(id); loadData(); } catch { toast.error('Failed'); }
+    try { await pauseSubscription(id); mutateSubs(); } catch { toast.error('Failed'); }
   };
   const handleResume = async (id: string) => {
-    try { await resumeSubscription(id); loadData(); } catch { toast.error('Failed'); }
+    try { await resumeSubscription(id); mutateSubs(); } catch { toast.error('Failed'); }
   };
   const handleDeleteSub = async (id: string) => {
     if (!confirm('Unsubscribe from this digest?')) return;
-    try { await deleteSubscription(id); toast.success('Unsubscribed'); loadData(); } catch { toast.error('Failed'); }
+    try { await deleteSubscription(id); toast.success('Unsubscribed'); mutateSubs(); } catch { toast.error('Failed'); }
   };
 
   const handleCreateView = async () => {
@@ -104,13 +86,13 @@ export default function DigestsPage() {
       });
       toast.success('View saved');
       setNewViewName('');
-      loadData();
+      mutateViews();
     } catch { toast.error('Failed to create view'); }
   };
 
   const handleDeleteView = async (id: string) => {
     if (!confirm('Delete this saved view?')) return;
-    try { await deleteSavedView(id); loadData(); } catch { toast.error('Failed'); }
+    try { await deleteSavedView(id); mutateViews(); } catch { toast.error('Failed'); }
   };
 
   const handlePreview = async () => {
