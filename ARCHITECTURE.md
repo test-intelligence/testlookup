@@ -1,5 +1,11 @@
 # TestLookup Architecture
 
+> **Detailed engineering docs live in [`architecture/`](./architecture/):**
+> [system & runtime architecture with diagrams](./architecture/README.md) ·
+> [database & schema design (ER diagrams + full reference)](./architecture/DATABASE_SCHEMA.md) ·
+> [developer guide (conventions, gates, bug classes)](./architecture/DEVELOPER_GUIDE.md).
+> This page is the short overview.
+
 ## System overview
 
 ```
