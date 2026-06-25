@@ -174,7 +174,7 @@ queues; the broker is Redis (FIFO) with priority hints set for a RabbitMQ broker
 
 ```mermaid
 flowchart LR
-    subgraph Queues "priority high → low"
+    subgraph Queues ["priority: high → low"]
         CR["critical (9)<br/>run_live_test_analysis"]
         ING["ingestion (7)<br/>ingest_*, persist_live_session"]
         SH["ingestion.shard.0..7 (7)<br/>persist_live_session by hash(project_id)"]
