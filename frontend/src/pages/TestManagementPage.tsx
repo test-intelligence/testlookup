@@ -3040,7 +3040,10 @@ const REVIEW_STATE_STYLES: Record<SuiteReviewState, { label: string; cls: string
 function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   const { isQaLead } = usePermissions()
   const { data: users } = useUsers()
-  const userList = (users ?? []) as UserSummary[]
+  // Memoize so the array identity is stable across renders — the
+  // `ownerCandidates` useMemo below keys on it, and a fresh `users ?? []`
+  // literal each render would defeat that memo (exhaustive-deps).
+  const userList = useMemo(() => (users ?? []) as UserSummary[], [users])
 
   // Suite-owner candidates must match the backend rule in
   // ``assert_user_is_qa_lead_on_project``: a user is eligible if they're an

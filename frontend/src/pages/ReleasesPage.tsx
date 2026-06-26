@@ -603,7 +603,10 @@ export default function ReleasesPage() {
   const projectId = useProjectStore(s => s.activeProjectId)
 
   const { data, isLoading, mutate: refetch } = useReleases()
-  const releases: Release[] = data?.items ?? []
+  // Memoize so the array identity is stable across renders — the downstream
+  // `derived` useMemo keys on it, and a fresh `data?.items ?? []` literal each
+  // render would defeat that memo (exhaustive-deps).
+  const releases: Release[] = useMemo(() => data?.items ?? [], [data])
 
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()

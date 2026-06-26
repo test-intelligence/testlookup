@@ -26,12 +26,16 @@ export default tseslint.config(
     rules: {
       // React Hooks — adopt the v7 recommended (React Compiler) rule set.
       // Real-bug rules (purity, static-components, set-state-in-render, etc.)
-      // stay errors and are fixed. The rules below are downgraded to warn
-      // because, on this codebase, they flag *intentional/valid* patterns the
-      // React Compiler's conservative inference can't see through — forcing
-      // their "fixes" would contort correct code:
-      //   • exhaustive-deps — long-standing advisory
-      // Tracked as a follow-up to revisit individually.
+      // stay errors and are fixed. Every historically-downgraded rule has now
+      // been driven to error as its sites were cleaned up.
+      //
+      // exhaustive-deps is now an error: the last two flagged sites were the
+      // same shape — an SWR-derived array (`data?.items ?? []` in ReleasesPage,
+      // `users ?? []` in TestManagementPage) recreated as a fresh literal every
+      // render and then used as a useMemo dependency, defeating the downstream
+      // memo. Each was wrapped in its own useMemo (the fix the rule itself
+      // recommends), matching the `projectMembers = useMemo(() => … ?? [], […])`
+      // pattern already in those files.
       //
       // set-state-in-effect is now an error: every flagged site was migrated
       // off load/reset-state-in-effect — pagination/selection resets use the
@@ -55,7 +59,7 @@ export default tseslint.config(
       'react-hooks/set-state-in-effect': 'error',
       'react-hooks/refs': 'error',
       'react-hooks/immutability': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
 
       // React Refresh (Vite HMR)
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
