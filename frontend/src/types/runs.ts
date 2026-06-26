@@ -198,6 +198,28 @@ export interface TestStepFlips {
   report: StepFlipReport
 }
 
+/** One run test that has at least one flickering step (run-level roll-up). */
+export interface RunStepFlipTest {
+  test_id: string
+  test_name: string
+  test_fingerprint: string
+  status: string
+  report: StepFlipReport
+}
+
+/** Response of ``GET /api/v1/runs/{run_id}/step-flips`` — run-level roll-up of
+ *  which TESTS in the run have a cross-run flickering step (FLK-P6 slice 5). */
+export interface RunStepFlips {
+  run_id: string
+  project_id: string
+  tests_analyzed: number
+  tests_with_flips: number
+  total_flips: number
+  /** True when the run had more anchored tests than the analysis cap. */
+  truncated: boolean
+  tests: RunStepFlipTest[]
+}
+
 /** Response of ``GET /api/v1/runs/{run_id}/tests/{test_id}/steps``. */
 export interface TestStepsTree {
   run_id: string

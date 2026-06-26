@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-06-25 — FLK-P6 slice 5: run-level step-flip roll-up surfaced on Run Intelligence
+
+Extends the cross-run step-flip intelligence (FLK-P6) from per-test (slice 4) to the **whole run**. Slice 4 answered "which step oscillated for *this* test"; this slice answers "which *tests* in this run have a flickering step" — so a QA engineer triaging a run sees the step-level flakiness across it without opening each test.
+
+- `GET /api/v1/runs/{run_id}/step-flips` (new, `backend/app/routers/runs.py`) — READ-ONLY. Resolves the run's `project_id` from the **provided** `run_id` (guarded by `require_run_access` — IDOR ratchet), then returns a run-level roll-up. 404 when the run doesn't exist. No DB writes (router owns the no-op transaction).
+- `runs_service.step_flip_report_for_run()` (new) — gathers the run's fingerprint-anchored tests (fingerprints are unique per run) and defers to the existing batched, project-scoped `step_flip_report_by_fingerprint`. Pure read; never N+1 (one resolve + the batched read's two queries). Returns only the tests with at least one flip (sorted by total flips desc, then name) plus `tests_analyzed` / `tests_with_flips` / `total_flips`; a `max_tests` cap bounds the fingerprints fed to the batched read and surfaces a `truncated` flag (no silent cap). Covered by `backend/tests/test_step_flip_for_run.py`.
+- `src/components/runs/RunStepFlipCard.tsx` (new) + `useRunStepFlips` SWR hook (`src/hooks/useRuns.ts`) + `runsService.getRunStepFlips` + `RunStepFlips`/`RunStepFlipTest` types — a "Step-level flakiness" card in the Run Intelligence right column (`src/pages/RunIntelligencePage.tsx`). Lists each flickering test with its top oscillating step (flip count, current PASSED/FAILED) linking to that test's cross-run detail, a stable empty state when no step flips, and a truncation note. Lazy SWR fetch, no set-state-in-effect. Covered by `src/components/runs/RunStepFlipCard.test.tsx`.
+
 ### 2026-06-25 — CI check: validate Mermaid diagrams render
 
 - **New CI job "Docs — Mermaid diagrams"** -- parses every `` ```mermaid `` block in tracked markdown with the Mermaid grammar (`mermaid.parse()` under jsdom, the same parse GitHub runs before rendering), so a broken diagram fails the build instead of silently shipping an "Unable to render rich display" box. Self-contained validator in `scripts/mermaid-check/` (pinned `mermaid` + `jsdom`, committed lockfile); enumerates files via `git ls-files` so it checks exactly the tracked docs GitHub renders. Run locally with `cd scripts/mermaid-check && npm ci && node validate.mjs`. Currently 18/18 blocks across 37 markdown files parse cleanly. (Caught and motivated by a real "Unable to render" bug in the Celery topology diagram, fixed in the same day's docs.)

@@ -80,3 +80,16 @@ export function useTestStepFlips(runId?: string, testId?: string) {
     () => runsService.getTestStepFlips(runId as string, testId as string)
   )
 }
+
+/**
+ * Run-level roll-up of cross-run step-flip (FLK-P6). Surfaces which TESTS in the
+ * run have a flickering step — step-level flakiness across the whole run rather
+ * than per-test. Lazy — fetched separately from the run-intelligence payload so
+ * the page renders immediately. Read-only, project-scoped server-side.
+ */
+export function useRunStepFlips(runId?: string) {
+  return useSWR(
+    runId ? ['run-step-flips', runId] : null,
+    () => runsService.getRunStepFlips(runId as string)
+  )
+}

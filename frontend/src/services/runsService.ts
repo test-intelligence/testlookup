@@ -1,4 +1,5 @@
 import type {
+  RunStepFlips,
   RunTestCase,
   RunTestCaseListResponse,
   TestCaseHistory,
@@ -39,6 +40,12 @@ export const runsService = {
    *  runs (FLK-P6). Project-scoped server-side; lazy/separate from the detail. */
   getTestStepFlips: (runId: string, testId: string) =>
     getData<TestStepFlips>(`/api/v1/runs/${runId}/tests/${testId}/step-flips`),
+
+  /** Run-level roll-up of cross-run step-flip — which TESTS in the run have a
+   *  flickering step (FLK-P6). Project-scoped server-side; lazy/separate from
+   *  the run-intelligence payload. */
+  getRunStepFlips: (runId: string) =>
+    getData<RunStepFlips>(`/api/v1/runs/${runId}/step-flips`),
 
   setRelease: (runId: string, releaseName: string) =>
     postData(`/api/v1/runs/${runId}/release`, { release_name: releaseName }),

@@ -923,3 +923,98 @@ async def step_flip_report_for_test(
         "test_fingerprint": fingerprint,
         "report": report.to_dict(),
     }
+
+
+async def step_flip_report_for_run(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    since: datetime | None = None,
+    max_runs: int = 25,
+    max_tests: int = 200,
+) -> dict | None:
+    """FLK-P6 slice 5: run-level roll-up of cross-run step-flip.
+
+    READ-ONLY surface for the run-intelligence view. Slice 4 answered "which step
+    oscillated for THIS test"; this answers "which TESTS in this run have a
+    flickering step", so a QA engineer triaging a whole run sees the step-level
+    flakiness across it without opening each test. Resolves the run's
+    ``project_id`` from the PROVIDED ``run_id`` (the router guards it with
+    ``require_run_access`` — IDOR ratchet), gathers the run's fingerprint-anchored
+    tests, and defers to the batched, project-scoped
+    :func:`step_flip_report_by_fingerprint`. No DB writes; never N+1 (one resolve
+    + the batched read's two queries).
+
+    Returns ``None`` (→ 404 at the router) when ``run_id`` has no ``TestRun`` row.
+    Only tests whose report has at least one flip are returned in ``tests``
+    (sorted by total flips desc, then name); ``tests_analyzed`` /
+    ``tests_with_flips`` / ``total_flips`` summarise the window. ``max_tests``
+    bounds the fingerprints fed to the batched read; ``truncated`` is ``True`` (and
+    surfaced to the UI — no silent cap) when the run has more anchored tests than
+    that.
+    """
+    run_row = (
+        await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+    ).first()
+    if run_row is None:
+        return None
+    project_id = run_row[0]
+
+    # Fingerprints are unique per run (uq on (test_run_id, test_fingerprint)), so
+    # one row == one logical test. Order by name for a deterministic truncation
+    # boundary; fetch one extra to detect "more than max_tests" without a count.
+    fetch_limit = max_tests + 1 if max_tests and max_tests > 0 else None
+    stmt = (
+        select(TestCase.id, TestCase.test_name, TestCase.test_fingerprint, TestCase.status)
+        .where(TestCase.test_run_id == run_id, TestCase.test_fingerprint.isnot(None))
+        .order_by(TestCase.test_name, TestCase.id)
+    )
+    if fetch_limit is not None:
+        stmt = stmt.limit(fetch_limit)
+    test_rows = (await db.execute(stmt)).all()
+
+    truncated = fetch_limit is not None and len(test_rows) > max_tests
+    if truncated:
+        test_rows = test_rows[:max_tests]
+
+    meta_by_fp: dict[str, dict] = {}
+    for test_id, test_name, fingerprint, status in test_rows:
+        # First occurrence wins; fingerprints are unique per run anyway.
+        meta_by_fp.setdefault(
+            fingerprint,
+            {
+                "test_id": str(test_id),
+                "test_name": test_name,
+                "test_fingerprint": fingerprint,
+                "status": str(status),
+            },
+        )
+
+    reports = (
+        await step_flip_report_by_fingerprint(
+            db, project_id, list(meta_by_fp), since=since, max_runs=max_runs
+        )
+        if meta_by_fp
+        else {}
+    )
+
+    tests: list[dict] = []
+    total_flips = 0
+    for fingerprint, meta in meta_by_fp.items():
+        report = reports.get(fingerprint)
+        if report is None or not report.has_step_flip:
+            continue
+        total_flips += report.total_flips
+        tests.append({**meta, "report": report.to_dict()})
+
+    tests.sort(key=lambda t: (-t["report"]["total_flips"], t["test_name"]))
+
+    return {
+        "run_id": str(run_id),
+        "project_id": str(project_id),
+        "tests_analyzed": len(meta_by_fp),
+        "tests_with_flips": len(tests),
+        "total_flips": total_flips,
+        "truncated": truncated,
+        "tests": tests,
+    }

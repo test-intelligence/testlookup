@@ -296,6 +296,30 @@ async def get_test_case_step_flips(
     return payload
 
 
+@router.get("/{run_id}/step-flips")
+async def get_run_step_flips(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """Run-level roll-up of cross-run step-flip (FLK-P6 slice 5).
+
+    READ-ONLY. Aggregates the per-test cross-run step-flip across the run's
+    fingerprint-anchored tests so a QA engineer triaging a whole run sees WHICH
+    TESTS have a flickering step — without opening each one. Resolves the run's
+    project via the PROVIDED ``run_id`` (verified by ``require_run_access`` — IDOR
+    ratchet); the underlying read is project-scoped. No DB writes. Returns 404
+    when ``run_id`` has no run; otherwise a roll-up listing only the tests with at
+    least one step flip (``truncated`` flags a run larger than the analysis cap).
+    """
+    from app.services.runs_service import step_flip_report_for_run
+
+    payload = await step_flip_report_for_run(db, run_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Test run not found")
+    return payload
+
+
 @router.get("/{run_id}/regression-diff")
 async def get_regression_diff(
     run_id: uuid.UUID,

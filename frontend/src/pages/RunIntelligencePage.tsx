@@ -52,6 +52,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
+import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
 import { useRunIntelligence, useRunModeSummary } from '@/hooks/useRunIntelligence'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import type {
@@ -1517,6 +1518,7 @@ export default function RunIntelligencePage() {
             fallbackUsed={fallbackUsed}
           />
           <FailureCategoryCard breakdown={category_breakdown} />
+          <RunStepFlipCard runId={run.id} />
           <ProvenanceFooter
             evidenceCount={evidenceCount}
             toolCount={toolCount}
