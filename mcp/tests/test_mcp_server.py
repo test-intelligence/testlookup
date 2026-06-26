@@ -238,3 +238,103 @@ class TestGranularStepsSearch:
     def test_step_note_applied_to_results(self):
         content = (MCP_DIR / "tools" / "search.py").read_text(encoding="utf-8")
         assert "_step_match_note(" in content
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# FLK-P6: cross-run step-flip report surfaced via MCP (get_test_step_flips)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestStepFlipsRuns:
+    """runs.py gains a get_test_step_flips tool over the cross-run report.
+
+    Static checks (matching the rest of this suite) plus a functional check of
+    the pure ``_render_step_flips`` renderer so the three report states stay
+    distinguishable.
+    """
+
+    def test_has_get_test_step_flips_tool(self):
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "get_test_step_flips" in content
+
+    def test_fetches_step_flips_endpoint(self):
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "/tests/{test_id}/step-flips" in content
+
+    def test_has_step_flip_renderer(self):
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "_render_step_flips" in content
+
+    def test_renders_step_flip_table_header(self):
+        content = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
+        assert "| Step | Flips | Runs Observed | Current |" in content
+
+
+class TestStepFlipRenderer:
+    """Functional coverage of the pure ``_render_step_flips`` renderer."""
+
+    @staticmethod
+    def _renderer():
+        import sys
+        sys.path.insert(0, str(MCP_DIR))
+        from tools import runs as runs_tool  # noqa: PLC0415
+
+        return runs_tool._render_step_flips
+
+    def test_insufficient_history(self):
+        out = self._renderer()({"test_id": "abc123ff", "report": {"runs_analyzed": 1}})
+        assert "Not enough cross-run step history" in out
+        assert "abc123ff"[:8] in out
+
+    def test_stable_when_no_flip(self):
+        out = self._renderer()(
+            {"test_id": "t", "report": {"runs_analyzed": 5, "has_step_flip": False}}
+        )
+        assert "steps are stable" in out
+
+    def test_flipping_steps_table(self):
+        out = self._renderer()(
+            {
+                "test_id": "deadbeefcafe",
+                "report": {
+                    "runs_analyzed": 6,
+                    "has_step_flip": True,
+                    "total_flips": 3,
+                    "summary": "Step 'login' flickered 3 times.",
+                    "flipping_steps": [
+                        {
+                            "ordinal": 2,
+                            "step_name": "login",
+                            "flip_count": 3,
+                            "runs_observed": 6,
+                            "last_status": "FAILED",
+                        }
+                    ],
+                },
+            }
+        )
+        assert "3 total flips across 6 runs" in out
+        assert "Step 'login' flickered 3 times." in out
+        assert "| Step | Flips | Runs Observed | Current |" in out
+        assert "| login | 3 | 6 |" in out
+        assert "FAILED" in out
+
+    def test_unnamed_step_falls_back_to_ordinal(self):
+        out = self._renderer()(
+            {
+                "test_id": "x",
+                "report": {
+                    "runs_analyzed": 2,
+                    "has_step_flip": True,
+                    "total_flips": 1,
+                    "flipping_steps": [
+                        {"ordinal": 4, "flip_count": 1, "runs_observed": 2, "last_status": "PASSED"}
+                    ],
+                },
+            }
+        )
+        assert "step #4" in out
+
+    def test_malformed_payload_degrades(self):
+        out = self._renderer()({})
+        assert "Not enough cross-run step history" in out

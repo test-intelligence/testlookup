@@ -67,6 +67,53 @@ def _render_step_tree(tree: dict) -> list:
     return lines
 
 
+def _render_step_flips(payload: dict) -> str:
+    """Render the cross-run step-flip report (FLK-P6) as readable markdown.
+
+    Mirrors the per-test ``StepFlipPanel`` UI semantics over the
+    ``GET /runs/{run_id}/tests/{test_id}/step-flips`` payload: it distinguishes
+    "not enough history" from "stable" from "flickering", then lists each step
+    that oscillated PASSED<->FAILED with its flip count, how many runs observed
+    it, and its current status. Pure / best-effort — malformed payloads degrade
+    to the insufficient-history message rather than raising.
+    """
+    report = (payload or {}).get("report") or {}
+    test_id = str((payload or {}).get("test_id") or "")
+    runs_analyzed = report.get("runs_analyzed") or 0
+    title = f"## Step-Level Flakiness — Test `{test_id[:8]}`"
+
+    if runs_analyzed < 2:
+        return (
+            f"{title}\n\n"
+            "_Not enough cross-run step history to detect step-level flakiness yet "
+            f"(analysed {runs_analyzed} run(s); need at least 2)._"
+        )
+
+    if not report.get("has_step_flip"):
+        return (
+            f"{title}\n\n"
+            f"_No cross-run step-flip across {runs_analyzed} runs — steps are stable._"
+        )
+
+    lines = [
+        f"{title} — {report.get('total_flips', 0)} total flips across {runs_analyzed} runs",
+        "",
+        report.get("summary") or "",
+        "",
+        "| Step | Flips | Runs Observed | Current |",
+        "|------|-------|---------------|---------|",
+    ]
+    for s in report.get("flipping_steps") or []:
+        label = s.get("step_name") or f"step #{s.get('ordinal', '?')}"
+        lines.append(
+            f"| {str(label)[:60]} "
+            f"| {s.get('flip_count', 0)} "
+            f"| {s.get('runs_observed', 0)} "
+            f"| {_status(s.get('last_status') or 'UNKNOWN')} |"
+        )
+    return "\n".join(lines)
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
@@ -294,3 +341,23 @@ def register(mcp) -> None:  # noqa: ANN001
             f"*Use `trigger_ai_analysis` with test_case_id `{t['id']}` for root-cause analysis.*",
         ]
         return "\n".join(lines)
+
+    @mcp.tool()
+    async def get_test_step_flips(run_id: str, test_id: str) -> str:
+        """
+        Show which step oscillated PASSED<->FAILED across runs for one test (FLK-P6).
+
+        Unlike `get_test_case(include_steps=True)` — a LATEST-RUN-ONLY snapshot —
+        this reads the retained per-run step outcomes and reports step-level
+        flakiness: which step flickered, how often, how many runs observed it, and
+        its current status. Use it to pin a single flaky step instead of
+        quarantining a whole test. Read-only.
+
+        Args:
+            run_id: Test run UUID (from list_test_runs).
+            test_id: Test case UUID (from list_test_cases).
+        """
+        payload = await api.get(f"/api/v1/runs/{run_id}/tests/{test_id}/step-flips")
+        if not isinstance(payload, dict):
+            return "No step-flip report available for this test."
+        return _render_step_flips(payload)

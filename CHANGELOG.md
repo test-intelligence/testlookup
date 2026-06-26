@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-06-26 — Cross-run step-flip report surfaced via MCP
+
+- **New MCP tool `get_test_step_flips`** (`mcp/tools/runs.py`) -- surfaces the existing FLK-P6 cross-run step-flip read (`GET /api/v1/runs/{run_id}/tests/{test_id}/step-flips`) on the MCP surface, so an agent can ask *which step oscillated PASSED↔FAILED across runs* for one test instead of only seeing the latest-run snapshot from `get_test_case(include_steps=True)`. Read-only; reuses the on-main per-test endpoint (no new backend code). A pure `_render_step_flips` helper mirrors the web `StepFlipPanel` semantics — it distinguishes "not enough history" (`runs_analyzed < 2`) from "stable" from a flicker table (step, flips, runs observed, current status) and degrades gracefully on a malformed payload. Brings the MCP tool count to 49 (all names still globally unique). Regression coverage: static checks plus functional tests of the renderer's three states in `mcp/tests/test_mcp_server.py`.
+
 ### 2026-06-25 — FLK-P6 slice 5: run-level step-flip roll-up surfaced on Run Intelligence
 
 Extends the cross-run step-flip intelligence (FLK-P6) from per-test (slice 4) to the **whole run**. Slice 4 answered "which step oscillated for *this* test"; this slice answers "which *tests* in this run have a flickering step" — so a QA engineer triaging a run sees the step-level flakiness across it without opening each test.
