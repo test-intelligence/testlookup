@@ -13,14 +13,14 @@ export function useSuites() {
 export function useSuite(suiteId?: string) {
   return useSWR(
     suiteId ? ['suite', suiteId] : null,
-    () => suitesService.get(suiteId!),
+    ([, id]: readonly [string, string]) => suitesService.get(id),
   )
 }
 
 export function useSuiteTestCases(suiteId?: string) {
   return useSWR(
     suiteId ? ['suite', suiteId, 'cases'] : null,
-    () => suitesService.listSuiteCases(suiteId!),
+    ([, id]: readonly [string, string, string]) => suitesService.listSuiteCases(id),
     { refreshInterval: 60_000 },
   )
 }
@@ -28,14 +28,14 @@ export function useSuiteTestCases(suiteId?: string) {
 export function useCanonicalRuns(canonicalId?: string) {
   return useSWR(
     canonicalId ? ['canonical', canonicalId, 'runs'] : null,
-    () => suitesService.listCanonicalRuns(canonicalId!),
+    ([, id]: readonly [string, string, string]) => suitesService.listCanonicalRuns(id),
   )
 }
 
 export function useCanonicalCase(canonicalId?: string) {
   return useSWR(
     canonicalId ? ['canonical', canonicalId] : null,
-    () => suitesService.getCanonicalCase(canonicalId!),
+    ([, id]: readonly [string, string]) => suitesService.getCanonicalCase(id),
   )
 }
 
