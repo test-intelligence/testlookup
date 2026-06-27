@@ -244,7 +244,7 @@ export default function SummaryReportPage() {
         )}
       </div>
 
-      {!hasData ? (
+      {!hasData || totals == null ? (
         <EmptyState
           title="No executions in this window"
           description={`No test runs were recorded for ${project.name} in the last ${windowLabel}. Ingest a run or widen the window to populate this report.`}
@@ -254,12 +254,12 @@ export default function SummaryReportPage() {
         <>
           {/* Headline KPIs */}
           <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
-            <KpiTile label="Total tests"   value={fmtInt(totals!.total_test_cases)} icon={<ListChecks className="h-4 w-4" />} tone="neutral" />
-            <KpiTile label="Pass %"        value={fmtPct(totals!.pass_rate_pct)}    icon={<CheckCircle2 className="h-4 w-4" />} tone="good"
-                     sub={`weighted ${fmtPct(totals!.weighted_pass_rate_pct)}`} />
-            <KpiTile label="Fail %"        value={fmtPct(totals!.fail_rate_pct)}    icon={<XCircle className="h-4 w-4" />} tone="bad" />
-            <KpiTile label="Skip %"        value={fmtPct(totals!.skip_rate_pct)}    icon={<MinusCircle className="h-4 w-4" />} tone="warn" />
-            <KpiTile label="Broken %"      value={fmtPct(totals!.broken_rate_pct)}  icon={<TriangleAlert className="h-4 w-4" />} tone="bad" />
+            <KpiTile label="Total tests"   value={fmtInt(totals.total_test_cases)} icon={<ListChecks className="h-4 w-4" />} tone="neutral" />
+            <KpiTile label="Pass %"        value={fmtPct(totals.pass_rate_pct)}    icon={<CheckCircle2 className="h-4 w-4" />} tone="good"
+                     sub={`weighted ${fmtPct(totals.weighted_pass_rate_pct)}`} />
+            <KpiTile label="Fail %"        value={fmtPct(totals.fail_rate_pct)}    icon={<XCircle className="h-4 w-4" />} tone="bad" />
+            <KpiTile label="Skip %"        value={fmtPct(totals.skip_rate_pct)}    icon={<MinusCircle className="h-4 w-4" />} tone="warn" />
+            <KpiTile label="Broken %"      value={fmtPct(totals.broken_rate_pct)}  icon={<TriangleAlert className="h-4 w-4" />} tone="bad" />
             <KpiTile label="Flaky"         value={fmtInt(data?.flaky_test_count)}   icon={<Zap className="h-4 w-4" />} tone="warn"
                      sub={`${fmtPct(data?.flaky_rate_pct)} of total`} />
           </section>
@@ -267,11 +267,11 @@ export default function SummaryReportPage() {
           {/* Counts strip */}
           <section className="card mb-5">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-y-3 text-sm">
-              <Count label="Passed"    value={totals!.passed}   color="text-emerald-300" />
-              <Count label="Failed"    value={totals!.failed}   color="text-red-300" />
-              <Count label="Skipped"   value={totals!.skipped}  color="text-amber-300" />
-              <Count label="Broken"    value={totals!.broken}   color="text-red-300" />
-              <Count label="Evaluated" value={totals!.evaluated} color="text-[var(--color-text)]" />
+              <Count label="Passed"    value={totals.passed}   color="text-emerald-300" />
+              <Count label="Failed"    value={totals.failed}   color="text-red-300" />
+              <Count label="Skipped"   value={totals.skipped}  color="text-amber-300" />
+              <Count label="Broken"    value={totals.broken}   color="text-red-300" />
+              <Count label="Evaluated" value={totals.evaluated} color="text-[var(--color-text)]" />
             </div>
             <div className="mt-3 pt-3 border-t border-[var(--color-border)] text-[11.5px] text-[var(--color-text-muted)] flex flex-wrap gap-x-4 gap-y-1">
               <span className="inline-flex items-center gap-1"><Layers className="h-3 w-3" />Runs in window: <strong className="text-[var(--color-text)] tabular-nums">{fmtInt(data?.run_count)}</strong></span>

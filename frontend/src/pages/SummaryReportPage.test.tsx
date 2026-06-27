@@ -232,6 +232,28 @@ describe('SummaryReportPage', () => {
     expect(await screen.findByText(/No executions in this window/i)).toBeInTheDocument()
   })
 
+  it('renders the no-data empty state (no crash) when the envelope has null totals', async () => {
+    // The backend can short-circuit to an empty envelope where ``totals``
+    // is absent entirely (not just zeroed) — the same shape the
+    // all-projects gate alludes to. The page guards ``totals == null``
+    // before dereferencing the KPI fields, so a missing-totals payload
+    // must fall through to the empty state rather than throwing on a
+    // ``totals.total_test_cases`` read. Regression for the guard that
+    // narrows ``totals`` in place of the old non-null assertions.
+    mockGet.mockResolvedValue(makeReport({
+      totals: null as unknown as SummaryReport['totals'],
+      suites: [],
+      top_failing_tests: [],
+      run_count: 0,
+    }))
+
+    renderPage()
+
+    expect(await screen.findByText(/No executions in this window/i)).toBeInTheDocument()
+    // KPI grid must not render — proves we never hit the dereference path.
+    expect(screen.queryByText('Total tests')).not.toBeInTheDocument()
+  })
+
   it('renders KPI tiles, per-suite table, and top failing rows on happy path', async () => {
     mockGet.mockResolvedValue(makeReport())
 
