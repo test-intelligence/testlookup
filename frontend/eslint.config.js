@@ -65,7 +65,16 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
 
       // TypeScript — relax rules that block rapid iteration
-      '@typescript-eslint/no-explicit-any': 'warn',        // warn, not error
+      //
+      // no-explicit-any is now an error: every production site had already been
+      // given a real type, leaving one last source case — useTableSort's generic
+      // constraint `T extends Record<string, any>`, which only needs an indexable
+      // shape. Its sort body already narrows with runtime `typeof` checks and a
+      // `String()` fallback, so `Record<string, unknown>` types it precisely.
+      // The single remaining `any` is a test-only `File.prototype` mock that is
+      // genuinely unavoidable and carries a scoped disable. Promoting the rule to
+      // error guards against reintroducing untyped `any` in app code.
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': ['warn', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',

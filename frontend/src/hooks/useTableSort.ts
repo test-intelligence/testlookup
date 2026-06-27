@@ -14,8 +14,7 @@ export interface SortState {
   dir: SortDir
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function useTableSort<T extends Record<string, any>>(
+export function useTableSort<T>(
   items: T[],
   defaultKey: string = '',
   defaultDir: SortDir = 'asc',
@@ -35,8 +34,10 @@ export function useTableSort<T extends Record<string, any>>(
   const sorted = useMemo(() => {
     if (!sortKey) return items
     return [...items].sort((a, b) => {
-      const av = a[sortKey]
-      const bv = b[sortKey]
+      // sortKey is a runtime string, so index through an indexable view of the
+      // row; the comparisons below narrow each value with `typeof` at runtime.
+      const av = (a as Record<string, unknown>)[sortKey]
+      const bv = (b as Record<string, unknown>)[sortKey]
       if (av == null && bv == null) return 0
       if (av == null) return 1
       if (bv == null) return -1
