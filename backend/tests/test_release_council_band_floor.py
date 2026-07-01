@@ -7,11 +7,13 @@ and /overview produce the same colour + verdict for the same project + run:
     recommendations on the GO < CONDITIONAL < NO_GO ladder. Used to layer
     the band-derived verdict over the composite without ever softening.
 
-  * ``_apply_band_floor(db, project_id, recommendation, pass_rate,
-    open_defects)`` — async. Resolves the active ``ReleaseGatePolicy`` for
-    the project via ``metrics_service._resolve_policy_for_project``, runs
-    ``classify_with_policy``, and returns ``worse_of(composite, band)``.
-    No-ops when no policy is active.
+  * ``_apply_band_floor(db, project_id, recommendation, pass_rate)`` — async.
+    Resolves the active ``ReleaseGatePolicy`` for the project via
+    ``metrics_service._resolve_policy_for_project``, counts open CRITICAL
+    defects via ``metrics_service.count_open_critical_defects`` (the P0-cap
+    input — resolved *internally* so no caller can pass the wrong severity
+    set), runs ``classify_with_policy``, and returns ``worse_of(composite,
+    band)``. No-ops when no policy is active (no defect count is issued).
 
 The integration into ``_synthesize_release_council`` and ``get_release_council``
 is exercised by ``test_release_council_synthesize.py``; here we test the
@@ -87,6 +89,13 @@ def _policy_first_result(rules: dict | None):
     return res
 
 
+def _critical_count_result(n: int):
+    """Match the .scalar() shape used by count_open_critical_defects."""
+    res = MagicMock()
+    res.scalar = MagicMock(return_value=n)
+    return res
+
+
 @pytest.mark.asyncio
 async def test_band_floor_no_project_returns_input_unchanged():
     """Synth path with a run that has no project_id — band-floor must be
@@ -94,7 +103,7 @@ async def test_band_floor_no_project_returns_input_unchanged():
     from app.services.release_council_service import _apply_band_floor
     db = AsyncMock()
     rec, band, downgrades = await _apply_band_floor(
-        db, project_id=None, recommendation="GO", pass_rate=99.0, open_defects=0,
+        db, project_id=None, recommendation="GO", pass_rate=99.0,
     )
     assert rec == "GO"
     assert band is None
@@ -104,7 +113,9 @@ async def test_band_floor_no_project_returns_input_unchanged():
 
 @pytest.mark.asyncio
 async def test_band_floor_no_policy_returns_input_unchanged():
-    """Project exists but no active ReleaseGatePolicy row — still a no-op."""
+    """Project exists but no active ReleaseGatePolicy row — still a no-op,
+    and no defect count is issued (the count only happens once a policy
+    resolves)."""
     from app.services.release_council_service import _apply_band_floor
     db = AsyncMock()
     # Both lookups (project-scoped → system-default) return None.
@@ -114,11 +125,13 @@ async def test_band_floor_no_policy_returns_input_unchanged():
     ])
     rec, band, downgrades = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="CONDITIONAL",
-        pass_rate=92.0, open_defects=0,
+        pass_rate=92.0,
     )
     assert rec == "CONDITIONAL"
     assert band is None
     assert downgrades == []
+    # Policy resolution issued 2 queries; no third (the defect count) fired.
+    assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -132,10 +145,12 @@ async def test_band_floor_downgrades_when_band_is_stricter():
         "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
     }
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    db.execute = AsyncMock(side_effect=[
+        _policy_first_result(rules), _critical_count_result(0),
+    ])
     rec, band, downgrades = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="GO",
-        pass_rate=88.0, open_defects=0,
+        pass_rate=88.0,
     )
     assert band == "red"
     assert rec == "NO_GO"
@@ -156,10 +171,12 @@ async def test_band_floor_never_softens_composite():
         "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
     }
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    db.execute = AsyncMock(side_effect=[
+        _policy_first_result(rules), _critical_count_result(0),
+    ])
     rec, band, downgrades = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="NO_GO",
-        pass_rate=99.5, open_defects=0,
+        pass_rate=99.5,
     )
     # Band itself is green, but the final recommendation MUST stay NO_GO.
     assert band == "green"
@@ -179,10 +196,12 @@ async def test_band_floor_does_not_soften_conditional_go_in_green_band():
         "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
     }
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    db.execute = AsyncMock(side_effect=[
+        _policy_first_result(rules), _critical_count_result(0),
+    ])
     rec, band, downgrades = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="CONDITIONAL_GO",
-        pass_rate=99.5, open_defects=0,
+        pass_rate=99.5,
     )
     assert band == "green"
     assert rec == "CONDITIONAL_GO"  # NOT softened to GO
@@ -190,18 +209,22 @@ async def test_band_floor_does_not_soften_conditional_go_in_green_band():
 
 @pytest.mark.asyncio
 async def test_band_floor_p0_cap_downgrades_via_hard_caps():
-    """An open P0 defect over the hard cap fires the P0 downgrade — even
-    when the bare pass-rate would have been green."""
+    """An open CRITICAL defect over the hard cap fires the P0 downgrade —
+    even when the bare pass-rate would have been green. This is the B1
+    regression: the count comes from count_open_critical_defects (CRITICAL
+    severity), NOT the dead ``severity == "P0"`` filter that matched nothing."""
     from app.services.release_council_service import _apply_band_floor
     rules = {
         "pass_rate_bands": {"orange_min": 90.0, "yellow_min": 95.0, "green_min": 99.0},
         "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
     }
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    db.execute = AsyncMock(side_effect=[
+        _policy_first_result(rules), _critical_count_result(2),
+    ])
     rec, band, downgrades = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="GO",
-        pass_rate=99.5, open_defects=2,
+        pass_rate=99.5,
     )
     # green → yellow via P0 downgrade. GO verdict survives the band step
     # because yellow is still GO; only orange or red would change rec.
@@ -221,10 +244,12 @@ async def test_band_floor_returns_downgrade_audit_trail():
         "hard_caps": {"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
     }
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_policy_first_result(rules)])
+    db.execute = AsyncMock(side_effect=[
+        _policy_first_result(rules), _critical_count_result(5),
+    ])
     _, _, downgrades = await _apply_band_floor(
         db, project_id=uuid.uuid4(), recommendation="GO",
-        pass_rate=99.5, open_defects=5,
+        pass_rate=99.5,
     )
     # Exactly one cap fired (P0). Format: "p0_defects:5>0".
     assert len(downgrades) == 1

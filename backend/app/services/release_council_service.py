@@ -83,7 +83,6 @@ async def _apply_band_floor(
     project_id: Optional[uuid.UUID],
     recommendation: str,
     pass_rate: float,
-    open_defects: int,
 ) -> tuple[str, Optional[str], list[str]]:
     """Layer the project's ``PolicyPassRateBands`` over the composite verdict.
 
@@ -97,6 +96,12 @@ async def _apply_band_floor(
     uses for /overview, so both pages produce the same colour for the same
     project + run. Returns ``(final_recommendation, band, downgrades)``;
     ``band`` is ``None`` and ``downgrades`` is empty when no policy is active.
+
+    The open-CRITICAL defect count for the ``max_p0_defects`` hard cap is
+    resolved here via the shared ``count_open_critical_defects`` helper rather
+    than trusting a caller-supplied number — the synth and deep call sites
+    previously passed an all-severities total and a dead ``severity == "P0"``
+    zero respectively, so the cap either over-counted or never fired.
     """
     if project_id is None:
         return recommendation, None, []
@@ -109,6 +114,7 @@ async def _apply_band_floor(
     from app.services.metrics_service import (
         _resolve_policy_for_project,
         classify_with_policy,
+        count_open_critical_defects,
     )
 
     policy_doc = await _resolve_policy_for_project(db, str(project_id))
@@ -117,14 +123,14 @@ async def _apply_band_floor(
 
     bands = policy_doc.get("pass_rate_bands") or {}
     caps = policy_doc.get("hard_caps") or {}
-    # The synth path doesn't have flaky or new_failures stats handy; pass 0
-    # so the corresponding hard caps don't fire. This is a conservative
-    # choice — when a deep run lands, those signals join the picture. The
-    # band still reflects pass-rate + open P0 defects, which is what the
-    # user explicitly asked the gate to honour.
+    # Count open CRITICAL defects for the P0 hard cap. flaky / new_failures
+    # stats aren't handy on the synth path, so pass 0 — those caps join the
+    # picture when a deep run lands. The band still reflects pass-rate + open
+    # CRITICAL defects, which is what the user asked the gate to honour.
+    active_p0 = await count_open_critical_defects(db, project_id)
     classified = classify_with_policy(
         pass_rate=pass_rate,
-        active_defects_p0=open_defects,
+        active_defects_p0=active_p0,
         flaky_count=0,
         new_failures_24h=0,
         bands=bands,
@@ -306,7 +312,7 @@ async def _synthesize_release_council(
     # so /release-gate honours the same colours /overview renders. Fail-closed:
     # the band can downgrade the verdict but never soften it.
     recommendation, band, band_downgrades = await _apply_band_floor(
-        db, run.project_id, recommendation, pass_rate, open_defects,
+        db, run.project_id, recommendation, pass_rate,
     )
 
     reasoning = (
@@ -469,20 +475,11 @@ async def get_release_council(
     band: Optional[str] = None
     band_downgrades: list[str] = []
     if decision.human_override is None:
-        # Count open P0 defects for the hard-cap input — the persisted snapshot
-        # tracks total open defects per component, not by severity, so we
-        # issue one extra COUNT query scoped to the project + severity=P0.
-        active_p0 = 0
-        if project_id is not None:
-            p0_result = await db.execute(
-                select(sa_func.count(Defect.id))
-                .where(Defect.project_id == project_id)
-                .where(Defect.resolution_status == "OPEN")
-                .where(Defect.severity == "P0")
-            )
-            active_p0 = int(p0_result.scalar() or 0)
+        # The open-CRITICAL defect count for the P0 hard cap is resolved
+        # inside _apply_band_floor via the shared helper — the old inline
+        # ``severity == "P0"`` count matched nothing, so the cap never fired.
         final_recommendation, band, band_downgrades = await _apply_band_floor(
-            db, project_id, decision.recommendation, run.pass_rate if run else 0.0, active_p0,
+            db, project_id, decision.recommendation, run.pass_rate if run else 0.0,
         )
 
     return ReleaseCouncilResponse(

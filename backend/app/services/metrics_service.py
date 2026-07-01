@@ -11,6 +11,31 @@ from app.models.postgres import Defect, TestCase, TestRun, TestStatus
 logger = logging.getLogger(__name__)
 
 
+# The release-gate "P0" hard cap is expressed in the policy/UI's P0–P3
+# vocabulary, but the ``defects.severity`` column only ever holds the values
+# the promotion pipeline writes — CRITICAL/HIGH/MEDIUM/LOW (see
+# ``defect_promotion_service._composite_to_severity`` and
+# ``analytics_service._SEVERITY_FROM_PRIORITY``, where P0 → CRITICAL). No row is
+# ever stored with the literal string "P0", so a ``severity == "P0"`` filter
+# matches nothing and the cap can never fire. This constant is the single
+# source of truth for that mapping; query with it, not the literal "P0".
+P0_DEFECT_SEVERITY = "CRITICAL"
+
+
+async def count_open_critical_defects(db: AsyncSession, project_id) -> int:
+    """Count OPEN CRITICAL defects (the canonical severity behind a policy
+    "P0" hard cap) for a project. Centralised so every release-gate call site
+    counts the same set — the prior inline ``severity == "P0"`` filters
+    (metrics readiness + release-council synth/deep) each matched nothing or
+    the wrong severity, silently defeating the ``max_p0_defects`` cap.
+    """
+    conds = [Defect.resolution_status == "OPEN", Defect.severity == P0_DEFECT_SEVERITY]
+    if project_id:
+        conds.append(Defect.project_id == project_id)
+    result = await db.execute(select(func.count(Defect.id)).where(*conds))
+    return int(result.scalar() or 0)
+
+
 def _normalize_suite_name(suite_name: str | None) -> str | None:
     normalized = (suite_name or "").strip().lower()
     return normalized or None
@@ -122,16 +147,10 @@ async def get_dashboard_summary(
         if policy_doc is not None:
             bands_cfg = policy_doc.get("pass_rate_bands") or {}
             caps_cfg = policy_doc.get("hard_caps") or {}
-            # Count active P0 defects when the policy actually uses the cap —
-            # avoids an extra COUNT query when the cap is at default 0 and
-            # the project has no P0-tracked defects.
-            active_p0 = 0
-            if int(caps_cfg.get("max_p0_defects", 0) or 0) >= 0:
-                p0_conds = [Defect.resolution_status == "OPEN", Defect.severity == "P0"]
-                if project_id:
-                    p0_conds.append(Defect.project_id == project_id)
-                p0_res = await db.execute(select(func.count(Defect.id)).where(*p0_conds))
-                active_p0 = int(p0_res.scalar() or 0)
+            # Count open CRITICAL defects for the "P0" hard cap. The prior
+            # ``severity == "P0"`` filter matched no rows (defects are stored
+            # CRITICAL/HIGH/MEDIUM/LOW), so the cap silently never fired.
+            active_p0 = await count_open_critical_defects(db, project_id)
             classified = classify_with_policy(
                 pass_rate=pass_rate,
                 active_defects_p0=active_p0,
