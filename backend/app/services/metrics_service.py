@@ -379,12 +379,24 @@ async def _period_stats(
     }
 
 
+# A test is "flaky" for the dashboard headline when its recent history mixes
+# passes and failures. Two invariants this heuristic must honour (both were
+# silently broken before): the window is the most-recent N executions PER
+# fingerprint (a test flaky months ago but stable since is NOT flaky now), and
+# a "failure" is FAILED *or* BROKEN — the canonical failed set used everywhere
+# else (see flaky_signals._FAILED_STATUSES). This is the cheap headline count;
+# the Wilson-CI / ML flaky verdict lives in flaky_statistics / flaky_sentinel.
+_FLAKY_WINDOW_RUNS = 10
+_FLAKY_MIN_RUNS = 5
+
+
 async def _count_flaky_tests(
     db: AsyncSession,
     project_id: str | None,
     suite_name: str | None = None,
 ) -> int:
-    """Count tests with failure rate between 10% and 90% over last 10 runs (flaky pattern)."""
+    """Count tests whose failure rate is between 10% and 90% over their last
+    ``_FLAKY_WINDOW_RUNS`` executions (the flaky pattern)."""
     project_filter = "WHERE tr.project_id = :project_id" if project_id else ""
     suite_join = "JOIN test_cases tc ON tc.id = tch.test_case_id" if suite_name else ""
     suite_match_sql = "(LOWER(TRIM(tc.suite_name)) = :suite_name OR LOWER(TRIM(tr.primary_suite_name)) = :suite_name)"
@@ -395,20 +407,31 @@ async def _count_flaky_tests(
         if suite_name
         else ""
     )
+    # Rank each fingerprint's history newest-first, keep only the last N, then
+    # apply the flaky ratio over that bounded window. Without the window the
+    # HAVING scanned all history, so a fingerprint's flaky flag could only ever
+    # accumulate — a test never "recovered" once flaky.
     query = text(f"""
         SELECT COUNT(DISTINCT fingerprint) FROM (
-            SELECT
-                tch.test_fingerprint AS fingerprint,
-                COUNT(*) FILTER (WHERE tch.status = 'FAILED') AS fail_count,
-                COUNT(*) AS total_count
-            FROM test_case_history tch
-            JOIN test_runs tr ON tr.id = tch.test_run_id
-            {suite_join}
-            {project_filter}
-            {suite_filter}
-            GROUP BY tch.test_fingerprint
-            HAVING COUNT(*) >= 5
-               AND COUNT(*) FILTER (WHERE tch.status = 'FAILED') * 1.0 / COUNT(*) BETWEEN 0.1 AND 0.9
+            SELECT fingerprint
+            FROM (
+                SELECT
+                    tch.test_fingerprint AS fingerprint,
+                    tch.status AS status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY tch.test_fingerprint
+                        ORDER BY tch.created_at DESC, tch.id DESC
+                    ) AS rn
+                FROM test_case_history tch
+                JOIN test_runs tr ON tr.id = tch.test_run_id
+                {suite_join}
+                {project_filter}
+                {suite_filter}
+            ) ranked
+            WHERE rn <= {_FLAKY_WINDOW_RUNS}
+            GROUP BY fingerprint
+            HAVING COUNT(*) >= {_FLAKY_MIN_RUNS}
+               AND COUNT(*) FILTER (WHERE status IN ('FAILED', 'BROKEN')) * 1.0 / COUNT(*) BETWEEN 0.1 AND 0.9
         ) flaky
     """)
     params: dict = {}

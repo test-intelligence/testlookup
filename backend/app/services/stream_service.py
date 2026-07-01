@@ -24,6 +24,7 @@ from app.models.schemas import (
     LiveStreamIngestResponse,
 )
 from app.services.async_utils import await_if_needed
+from app.services.run_status import terminal_run_status
 
 logger = logging.getLogger(__name__)
 
@@ -1015,8 +1016,13 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     total = total or (passed + failed + skipped + broken)
     # Pass rate EXCLUDES skipped from the denominator (passed / passed+failed+broken),
     # consistent with live_consumer and ingestion. Skips are neither pass nor fail.
-    pass_rate = round(passed / (passed + failed + broken) * 100, 2) if (passed + failed + broken) > 0 else None
-    run_status = LaunchStatus.FAILED if (failed + broken) > 0 else LaunchStatus.PASSED
+    executed = passed + failed + broken
+    pass_rate = round(passed / executed * 100, 2) if executed > 0 else None
+    # A closed run that executed nothing (empty session / all-skipped) grades as
+    # STOPPED, not PASSED — mirrors ingestion._update_run_aggregates via the
+    # shared helper. Runs at close_session only; the drainer creates the
+    # in-progress row as IN_PROGRESS, so this never mislabels a live run.
+    run_status = terminal_run_status(executed, failed, broken)
     now = datetime.now(timezone.utc)
 
     # Run-level suite identifier supplied by the SDK on session create. We

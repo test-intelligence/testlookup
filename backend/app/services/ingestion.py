@@ -29,6 +29,7 @@ from app.models.postgres import (
 )
 from app.models.schemas import SentinelFile
 from app.services.allure_parser import parse_allure_result
+from app.services.run_status import terminal_run_status
 from app.services.testng_parser import parse_testng_xml
 from app.services.ocp_client import get_pod_metadata
 
@@ -777,6 +778,11 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     )
     existing_psn = (existing_psn_q.scalar_one_or_none() or "").strip() or None
 
+    # A finalized run that executed nothing (empty/parse-failed upload, or a
+    # fully-skipped suite) grades as STOPPED, not PASSED — see run_status
+    # for the rationale. Shared with the live-stream close path for parity.
+    run_status = terminal_run_status(executed, failed, broken)
+
     values_to_update: dict = {
         "total_tests":   total,
         "passed_tests":  passed,
@@ -784,11 +790,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
         "skipped_tests": counts.skipped or 0,
         "broken_tests":  counts.broken or 0,
         "pass_rate":     pass_rate,
-        # FAILED iff something actually failed/broke — matches the live-stream
-        # path (live_consumer / persist_live_session) and avoids the brittle
-        # ``pass_rate == 100`` float compare, which also wrongly marked a
-        # 0-test run (pass_rate 0.0) as FAILED.
-        "status":        LaunchStatus.FAILED if ((counts.failed or 0) + (counts.broken or 0)) > 0 else LaunchStatus.PASSED,
+        "status":        run_status,
         "end_time":      datetime.now(timezone.utc),
         # ``suite_names`` is the full set actually present in the
         # events — always refresh it (its purpose is to mirror the
