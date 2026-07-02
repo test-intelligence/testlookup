@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Administration & settings"
+
+- **New `user-guide/administration.md`** — the admin surface organized into three concerns: people & projects (/projects incl. archive + default-QA-lead auto-provision, /users roles and what they gate, profile, SSO), connecting to your world (API keys, integrations/GitHub/webhooks/notifications/digests — all explicitly subordinate to `AI_OFFLINE_MODE` — and Integration Health as the first stop for "the webhook didn't fire"), and operating the instance (AI settings/eval, feature flags incl. cache propagation, the audit dashboard, storage, project-data retention/cleanup, seed data, performance, billing). Ends with a new-instance checklist and a something-isn't-arriving triage order. Covers the ~19 /settings routes that had no documentation. Indexed from the guide README.
+- Docs-loop iteration 14 (user-doc track).
+
 ### 2026-07-02 — Architecture docs: DEPLOYMENT.md (topologies)
 
 - **New `architecture/DEPLOYMENT.md`** — consolidates the deployment story that was scattered across compose files, k8s overlays, and workflows, verified against the tree: the five compose variants (dev source-build, pinned-image `release` with demo/local-llm profiles + install.sh, dev-lite, gcp-vm, monitoring), the Kustomize base (incl. the workers-subscribe-to-all-shards invariant) with its nine overlays (env tiers, GKE/EKS/AKS, homelab NodePort-30500 agreement, air-gapped openshift-artifactory, self-hosted), the CI/CD pipelines (ci.yml merge gate + latest/sha images; release.yml semver + SBOM/provenance/digests; per-cloud deploys), and environment realities (TLS-interception CA injection, deploy-target-agnostic frontend, default ports). A choosing-a-topology matrix up front. Indexed from the README; cross-linked to SECURITY/INGESTION_SCALE/GETTING_STARTED.
