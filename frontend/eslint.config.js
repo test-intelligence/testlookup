@@ -81,6 +81,17 @@ export default tseslint.config(
       }],
       '@typescript-eslint/no-non-null-assertion': 'warn',
 
+      // Design-audit guard (handoff 1.3): raw Tailwind palette classes
+      // (text-emerald-400, bg-red-900/40, …) bypass the per-theme token
+      // system (--status-*, --gate-*, --color-*) and are each a light-theme
+      // defect. Ratchet: 'warn' until the existing sites are tokenized
+      // (design_handoff_ui_improvements Phase 1.1), then flip to 'error'.
+      // Avatar-color swatches (user data, not theme UI) are exempt by intent.
+      'no-restricted-syntax': ['warn', {
+        selector: 'Literal[value=/(text|bg|border)-(emerald|green|red|amber|yellow|orange|purple|blue)-[0-9]{2,3}/]',
+        message: 'Use theme tokens (--status-*, --gate-*, --color-*) instead of raw palette classes.',
+      }],
+
       // Allow console in development
       'no-console': 'off',
     },

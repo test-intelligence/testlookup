@@ -37,34 +37,67 @@ function UserProfileDropdown() {
   const username = useAuthStore(s => s.user?.username || 'U')
   const fullName = useAuthStore(s => s.user?.full_name ?? null)
 
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // Close on outside click / Esc — same pattern as the notification bell.
+  useEffect(() => {
+    if (!open) return
+    const onMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
   const initials = getInitials(fullName, username)
   const bgClass = AVATAR_BG[avatarColor] ?? AVATAR_BG['blue']
 
   return (
-    <div className="flex items-center gap-3 border-l pl-4 relative group cursor-pointer h-full" style={{ borderColor: 'var(--color-border)' }}>
-      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${bgClass}`}>
-        {initials}
-      </div>
-      <div className="flex flex-col justify-center">
-        <span className="text-sm font-medium text-[var(--color-text)] leading-none">
-          {userName}
-        </span>
-        <span className="text-xs text-[var(--color-text-muted)] mt-1 leading-none">{userRole}</span>
-      </div>
-
-      {/* Dropdown on hover */}
-      <div className="absolute right-0 top-12 mt-2 w-48 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-md shadow-lg py-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">
-        <div className="px-4 py-2 border-b border-[var(--color-border)]">
-          <p className="text-sm text-[var(--color-text-secondary)] font-medium">{userEmail}</p>
+    <div ref={rootRef} className="relative border-l pl-4 h-full flex items-center" style={{ borderColor: 'var(--color-border)' }}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Account menu"
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+      >
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${bgClass}`}>
+          {initials}
         </div>
-        <button
-          onClick={() => useAuthStore.getState().logout()}
-          className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-[var(--color-bg-hover)]/50 flex items-center gap-2 transition-colors mt-1"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign out
-        </button>
-      </div>
+        <div className="flex flex-col justify-center items-start">
+          <span className="text-sm font-medium text-[var(--color-text)] leading-none">
+            {userName}
+          </span>
+          <span className="text-xs text-[var(--color-text-muted)] mt-1 leading-none">{userRole}</span>
+        </div>
+      </button>
+
+      {open && (
+        <div role="menu" aria-label="Account" className="absolute right-0 top-12 mt-2 w-48 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-md shadow-lg py-1 z-50">
+          <div className="px-4 py-2 border-b border-[var(--color-border)]">
+            <p className="text-sm text-[var(--color-text-secondary)] font-medium">{userEmail}</p>
+          </div>
+          <button
+            role="menuitem"
+            onClick={() => useAuthStore.getState().logout()}
+            className="w-full text-left px-4 py-2 text-sm text-[var(--status-failed)] hover:bg-[var(--color-bg-hover)]/50 flex items-center gap-2 transition-colors mt-1"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -171,7 +204,7 @@ export default function TopBar() {
         >
           <Bell className="w-5 h-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 text-[var(--color-text)] text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
@@ -217,9 +250,9 @@ export default function TopBar() {
                     >
                       <span className="mt-0.5 shrink-0">
                         {log.status === 'sent' ? (
-                          <CheckCircle className="w-4 h-4 text-emerald-400" />
+                          <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
                         ) : (
-                          <XCircle className="w-4 h-4 text-red-400" />
+                          <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
                         )}
                       </span>
                       <div className="flex-1 min-w-0">

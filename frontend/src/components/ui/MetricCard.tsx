@@ -14,23 +14,41 @@ interface Props {
   icon: ReactNode
   accentColor?: string
   loading?: boolean
+  /**
+   * Which trend direction is GOOD for this metric. Pass-rate style metrics
+   * default to 'up'; count-of-bad-things metrics (Failed, Flaky, Duration)
+   * should pass 'down' so a falling trend renders green, not red.
+   */
+  positiveDirection?: 'up' | 'down'
 }
 
-export default function MetricCard({ title, metric, icon, accentColor = 'default', loading }: Props) {
+export default function MetricCard({
+  title,
+  metric,
+  icon,
+  accentColor = 'default',
+  loading,
+  positiveDirection = 'up',
+}: Props) {
   const dir = metric?.trend_direction
   const TrendIcon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus
-  const trendColor = dir === 'up' ? 'text-emerald-400' : dir === 'down' ? 'text-red-400' : 'text-[var(--color-text-muted)]'
+  const trendColor =
+    dir === 'up' || dir === 'down'
+      ? dir === positiveDirection
+        ? 'text-[var(--status-passed)]'
+        : 'text-[var(--status-failed)]'
+      : 'text-[var(--color-text-muted)]'
 
   const accentBg: Record<string, string> = {
     default: 'bg-white/5 text-[var(--color-text)]',
-    green:   'bg-emerald-500/10 text-emerald-400',
-    red:     'bg-red-500/10 text-red-400',
-    amber:   'bg-amber-500/10 text-amber-400',
-    purple:  'bg-purple-500/10 text-purple-400',
+    green:   'bg-[var(--status-passed-bg)] text-[var(--status-passed)]',
+    red:     'bg-[var(--status-failed-bg)] text-[var(--status-failed)]',
+    amber:   'bg-[var(--status-broken-bg)] text-[var(--status-broken)]',
+    purple:  'bg-[var(--status-flaky-bg)] text-[var(--status-flaky)]',
   }
 
   return (
-    <div className="card flex items-start justify-between gap-4" role="status" aria-live="polite">
+    <div className="card flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">{title}</p>
         {loading ? (

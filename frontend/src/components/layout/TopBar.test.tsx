@@ -183,4 +183,43 @@ describe('TopBar', () => {
       expect(mocked.refreshLogs).toHaveBeenCalledTimes(1)
     })
   })
+
+  // Audit 1.4: the profile menu used to open on CSS hover only — no click
+  // handler, no aria-expanded, no keyboard path — so Sign out was unreachable
+  // by keyboard/touch. It is now a real disclosure button + menu.
+  it('opens the profile menu on click and signs out', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+
+    // Closed by default: no menu, trigger reports collapsed.
+    const trigger = screen.getByRole('button', { name: 'Account menu' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('test@example.com')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /Sign out/ }))
+    expect(mocked.logout).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the profile menu on Escape', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Account menu' })
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
 })

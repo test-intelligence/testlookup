@@ -368,11 +368,25 @@
   .badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
-  .badge-passed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-900/50 text-emerald-300 border border-emerald-700/60; }
-  .badge-failed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-900/50 text-red-300 border border-red-700/60; }
-  .badge-skipped { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-900/50 text-amber-300 border border-amber-700/60; }
-  .badge-broken  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-900/50 text-orange-300 border border-orange-700/60; }
-  .badge-flaky   { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-900/50 text-purple-300 border border-purple-700/60; }
+  /* Status badges consume the per-theme --status-* tokens (audit 1.2): raw
+     emerald/red/amber/orange/purple palette classes bypassed the theme system
+     and broke legibility on light themes. v4 @apply cannot expand custom
+     classes, so each badge repeats the .badge utilities. */
+  .badge-passed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+                   color: var(--status-passed);  background: var(--status-passed-bg);
+                   border: 1px solid var(--status-passed-bd); }
+  .badge-failed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+                   color: var(--status-failed);  background: var(--status-failed-bg);
+                   border: 1px solid var(--status-failed-bd); }
+  .badge-skipped { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+                   color: var(--status-skipped); background: var(--status-skipped-bg);
+                   border: 1px solid var(--status-skipped-bd); }
+  .badge-broken  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+                   color: var(--status-broken);  background: var(--status-broken-bg);
+                   border: 1px solid var(--status-broken-bd); }
+  .badge-flaky   { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+                   color: var(--status-flaky);   background: var(--status-flaky-bg);
+                   border: 1px solid var(--status-flaky-bd); }
 
   .sidebar-link {
     color: var(--color-text-muted);
