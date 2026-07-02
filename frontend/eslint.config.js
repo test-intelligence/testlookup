@@ -79,7 +79,14 @@ export default tseslint.config(
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
       }],
-      '@typescript-eslint/no-non-null-assertion': 'warn',
+      // no-non-null-assertion is now an error: every `x!` non-null assertion in
+      // src/ was replaced with a real guard, early-return, default, or narrowing
+      // as its owning page/area was cleaned up over successive ratchet passes,
+      // leaving zero remaining sites. Promoting the rule to error guards against
+      // reintroducing unchecked `!` assertions — which silence the compiler's
+      // null/undefined analysis and turn a would-be type error into a runtime
+      // crash — in app code.
+      '@typescript-eslint/no-non-null-assertion': 'error',
 
       // Design-audit guard (handoff 1.3): raw Tailwind palette classes
       // (text-emerald-400, bg-red-900/40, …) bypass the per-theme token

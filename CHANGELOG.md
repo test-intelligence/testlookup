@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — no-non-null-assertion ratchet complete: rule promoted to error
+
+- **`@typescript-eslint/no-non-null-assertion` → `error` (`frontend/eslint.config.js`)** — the last TypeScript rule sitting at `warn`. Every `x!` non-null assertion in `src/` had already been burned down to zero over successive ratchet passes (suite-keyed SWR fetchers moved to a `([, id]) => …` tuple-key destructure; `useLatestSuiteCompare` replaced `suiteName!.trim()` with an explicit `if (!suiteName) throw` guard; RightRail/FailureAnalysisPage/SuiteCasesPage/runComparisons cleared in prior passes). With the last site clean, the rule is promoted to `error`, guarding against reintroducing unchecked `!` assertions that silence the compiler's null/undefined analysis and turn a would-be type error into a runtime crash.
+- **Regression coverage** — `noNonNullAssertion.promotion.test.ts` pins the config to `error` (and asserts it is not `warn`), mirroring the sibling `noExplicitAny.promotion.test.ts`. Validated: `eslint src` (0 errors), `tsc --noEmit`, and `vite build` all green.
+
 ### 2026-07-02 — deps: vite 6→8 + @vitejs/plugin-react 4→6 (coordinated major bump)
 
 - **Coordinated frontend tooling bump** — supersedes Dependabot #263 (vite 8.1.0) and #266 (@vitejs/plugin-react 6.0.3), which each failed CI with a mutual `ERESOLVE`: plugin-react 4 peers vite ≤6 while vite 8 needs plugin-react 6, so neither could land alone. Bumped together with a single regenerated lockfile (vitest 4.1.5 already peers vite ^8; the lock shrinks ~900 lines as vite 8 replaces esbuild/rollup with rolldown).
