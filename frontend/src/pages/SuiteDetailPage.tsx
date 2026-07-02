@@ -56,10 +56,10 @@ function PassRateBar({ rate }: { rate: number }) {
 function StatusBadge({ status }: { status: string }) {
   const s = (status || '').toUpperCase()
   const cls =
-    s === 'PASSED'  ? 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20' :
-    s === 'FAILED'  ? 'bg-red-500/10 text-red-400 ring-red-500/20' :
-    s === 'BROKEN'  ? 'bg-orange-500/10 text-orange-400 ring-orange-500/20' :
-    s === 'SKIPPED' ? 'bg-amber-500/10 text-amber-400 ring-amber-500/20' :
+    s === 'PASSED'  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] ring-[var(--status-passed-bd)]' :
+    s === 'FAILED'  ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] ring-[var(--status-failed-bd)]' :
+    s === 'BROKEN'  ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] ring-[var(--status-broken-bd)]' :
+    s === 'SKIPPED' ? 'bg-[var(--status-skipped-bg)] text-[var(--status-skipped)] ring-[var(--status-skipped-bd)]' :
                       'bg-neutral-700/10 text-[var(--color-text-muted)] ring-neutral-600/20'
   return (
     <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ring-1 ring-inset', cls)}>
@@ -238,7 +238,7 @@ export default function SuiteDetailPage() {
         <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
       ) : error ? (
         <EmptyState
-          icon={<AlertTriangle className="h-8 w-8 text-red-400" />}
+          icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
           title="Failed to load suite details"
           description="Check the console for errors or try again"
         />
@@ -263,17 +263,17 @@ export default function SuiteDetailPage() {
               },
               {
                 label: 'Passed', value: summary.passed ?? 0,
-                color: 'text-emerald-400', icon: <CheckCircle2 className="h-4 w-4" />,
+                color: 'text-[var(--status-passed)]', icon: <CheckCircle2 className="h-4 w-4" />,
               },
               {
                 label: 'Failed', value: summary.failed ?? 0,
-                color: 'text-red-400', icon: <XCircle className="h-4 w-4" />,
+                color: 'text-[var(--status-failed)]', icon: <XCircle className="h-4 w-4" />,
               },
               {
                 label: 'Pass Rate',
                 value: `${Number(summary.pass_rate ?? 0).toFixed(1)}%`,
-                color: Number(summary.pass_rate ?? 0) >= 90 ? 'text-emerald-400'
-                     : Number(summary.pass_rate ?? 0) >= 70 ? 'text-amber-400' : 'text-red-400',
+                color: Number(summary.pass_rate ?? 0) >= 90 ? 'text-[var(--status-passed)]'
+                     : Number(summary.pass_rate ?? 0) >= 70 ? 'text-[var(--status-broken)]' : 'text-[var(--status-failed)]',
                 icon: <SkipForward className="h-4 w-4" />,
               },
               {
@@ -361,11 +361,11 @@ export default function SuiteDetailPage() {
               Test Cases ({testCases.length})
             </h3>
             {testCases.length === 0 ? (
-              <div className="rounded border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
+              <div className="rounded border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-4 py-3 text-sm text-[var(--status-broken)]">
                 <p className="font-medium">
                   {summary.total_executions ?? 0} test{(summary.total_executions ?? 0) === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
                 </p>
-                <p className="mt-1 text-xs text-amber-300/80">
+                <p className="mt-1 text-xs text-[var(--status-broken)]/80">
                   This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
                   the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
                   or the live buffer evicted before persistence. Re-run the suite to populate detail rows.
@@ -379,9 +379,9 @@ export default function SuiteDetailPage() {
                     <th className="th text-left">Test Name</th>
                     <th className="th text-left">Class</th>
                     <th className="th text-right">Runs</th>
-                    <th className="th text-right text-emerald-400">Passed</th>
-                    <th className="th text-right text-red-400">Failed</th>
-                    <th className="th text-right text-amber-400">Skipped</th>
+                    <th className="th text-right text-[var(--status-passed)]">Passed</th>
+                    <th className="th text-right text-[var(--status-failed)]">Failed</th>
+                    <th className="th text-right text-[var(--status-skipped)]">Skipped</th>
                     <th className="th min-w-[160px]">Pass Rate</th>
                     <th className="th text-right">Avg Duration</th>
                     <th className="th">Last Status</th>
@@ -397,14 +397,14 @@ export default function SuiteDetailPage() {
                             {tc.test_name}
                           </span>
                           {tc.is_flaky && (
-                            <span className="flex-shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/20">
+                            <span className="flex-shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-[var(--status-flaky-bg)] text-[var(--status-flaky)] ring-1 ring-inset ring-[var(--status-flaky-bd)]">
                               <AlertTriangle className="h-3 w-3" />
                               Flaky
                             </span>
                           )}
                         </div>
                         {tc.last_error && (
-                          <p className="text-xs text-red-400/70 truncate mt-0.5" title={tc.last_error}>
+                          <p className="text-xs text-[var(--status-failed)]/70 truncate mt-0.5" title={tc.last_error}>
                             {tc.last_error}
                           </p>
                         )}
@@ -413,9 +413,9 @@ export default function SuiteDetailPage() {
                         {tc.class_name ?? '—'}
                       </td>
                       <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">{tc.total_executions}</td>
-                      <td className="td text-right tabular-nums text-emerald-400">{tc.passed}</td>
-                      <td className="td text-right tabular-nums text-red-400">{tc.failed}</td>
-                      <td className="td text-right tabular-nums text-amber-400">{tc.skipped}</td>
+                      <td className="td text-right tabular-nums text-[var(--status-passed)]">{tc.passed}</td>
+                      <td className="td text-right tabular-nums text-[var(--status-failed)]">{tc.failed}</td>
+                      <td className="td text-right tabular-nums text-[var(--status-skipped)]">{tc.skipped}</td>
                       <td className="td w-44">
                         <PassRateBar rate={Number(tc.pass_rate ?? 0)} />
                       </td>
@@ -451,9 +451,9 @@ export default function SuiteDetailPage() {
                     <tr>
                       <th className="th text-left">Build</th>
                       <th className="th text-right">Date</th>
-                      <th className="th text-right text-emerald-400">Passed</th>
-                      <th className="th text-right text-red-400">Failed</th>
-                      <th className="th text-right text-amber-400">Skipped</th>
+                      <th className="th text-right text-[var(--status-passed)]">Passed</th>
+                      <th className="th text-right text-[var(--status-failed)]">Failed</th>
+                      <th className="th text-right text-[var(--status-skipped)]">Skipped</th>
                       <th className="th min-w-[160px]">Pass Rate</th>
                       <th className="th text-left">Run</th>
                     </tr>
@@ -463,9 +463,9 @@ export default function SuiteDetailPage() {
                       <tr key={r.test_run_id} className="table-row">
                         <td className="td font-mono text-[var(--color-text-secondary)] text-xs">{r.build_number ?? '—'}</td>
                         <td className="td text-right text-xs text-[var(--color-text-muted)]">{fmtDate(r.run_date)}</td>
-                        <td className="td text-right tabular-nums text-emerald-400">{r.passed}</td>
-                        <td className="td text-right tabular-nums text-red-400">{r.failed}</td>
-                        <td className="td text-right tabular-nums text-amber-400">{r.skipped}</td>
+                        <td className="td text-right tabular-nums text-[var(--status-passed)]">{r.passed}</td>
+                        <td className="td text-right tabular-nums text-[var(--status-failed)]">{r.failed}</td>
+                        <td className="td text-right tabular-nums text-[var(--status-skipped)]">{r.skipped}</td>
                         <td className="td w-44">
                           <PassRateBar rate={Number(r.pass_rate ?? 0)} />
                         </td>
