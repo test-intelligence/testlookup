@@ -15,6 +15,47 @@ logger = logging.getLogger("tools.embed_and_cluster")
 
 _COLLECTION = "failure_clusters"
 
+# ChromaDB uses L2 distance; ≤ this ≈ "same root cause" for our error text.
+_SIMILARITY_DISTANCE = 0.5
+# Per-error nearest-neighbour lookup size. This MUST be large enough that a
+# single root cause hitting many tests is returned as one neighbourhood — the
+# old cap of 5 meant a 30-test outage could only ever link 4 others per seed and
+# so fragmented into ≥6 clusters, defeating the O(n)→O(k) goal and multiplying
+# downstream per-cluster deep-investigation LLM cost. Bounded to keep the
+# returned distance matrix (O(n·cap)) from blowing up on pathological runs;
+# beyond it, clustering is knowingly approximate (logged, not silent).
+_MAX_NEIGHBOR_QUERY = 100
+
+
+def _cluster_from_neighbours(
+    ids: list[str],
+    result_ids: list[list[str]],
+    result_distances: list[list[float]],
+    threshold: float = _SIMILARITY_DISTANCE,
+) -> list[list[int]]:
+    """Greedy star-clustering over a nearest-neighbour result: for each
+    unassigned error, absorb every neighbour within ``threshold``.
+
+    Correctness depends on each error's neighbour list being complete enough to
+    contain all its similar errors — see ``_MAX_NEIGHBOR_QUERY`` for why the
+    lookup size matters. Uses an id→index map for O(1) resolution (the prior
+    ``ids.index()`` was O(n) per neighbour). Pure + deterministic."""
+    id_to_index = {cid: i for i, cid in enumerate(ids)}
+    assigned = [False] * len(ids)
+    clusters: list[list[int]] = []
+    for i in range(len(ids)):
+        if assigned[i]:
+            continue
+        cluster = [i]
+        assigned[i] = True
+        for j_id, dist in zip(result_ids[i], result_distances[i]):
+            j = id_to_index.get(j_id)
+            if j is not None and not assigned[j] and dist <= threshold:
+                cluster.append(j)
+                assigned[j] = True
+        clusters.append(cluster)
+    return clusters
+
 
 def _get_chroma_client() -> Any:
     return get_chroma_client()
@@ -82,29 +123,26 @@ async def embed_and_cluster(error_messages_json: str) -> str:
         await asyncio.to_thread(
             collection.upsert, ids=ids, documents=errors
         )
-        # Query each error against the collection to find nearest neighbours
+        # Query each error against the collection to find nearest neighbours.
+        # The lookup size must be large enough not to fragment a big same-cause
+        # cluster (see _MAX_NEIGHBOR_QUERY); beyond the cap, log rather than
+        # silently truncate.
+        n_query = min(len(errors), _MAX_NEIGHBOR_QUERY)
+        if len(errors) > _MAX_NEIGHBOR_QUERY:
+            logger.info(
+                "Clustering neighbour lookup capped at %d of %d errors; clusters "
+                "larger than the cap may fragment.",
+                _MAX_NEIGHBOR_QUERY, len(errors),
+            )
         results = await asyncio.to_thread(
             collection.query,
             query_texts=errors,
-            n_results=min(len(errors), 5),
+            n_results=n_query,
             include=["distances"],
         )
-        # Build adjacency from distance threshold (ChromaDB uses L2; ≤0.5 ≈ similar)
-        assigned = [False] * len(errors)
-        for i in range(len(errors)):
-            if assigned[i]:
-                continue
-            cluster = [i]
-            assigned[i] = True
-            distances = results["distances"][i]
-            idxs = results["ids"][i]
-            for j_id, dist in zip(idxs, distances):
-                if j_id in ids:
-                    j = ids.index(j_id)
-                    if not assigned[j] and dist <= 0.5:
-                        cluster.append(j)
-                        assigned[j] = True
-            cluster_indices.append(cluster)
+        cluster_indices = _cluster_from_neighbours(
+            ids, results["ids"], results["distances"],
+        )
     except Exception as exc:
         logger.warning("ChromaDB unavailable, falling back to Jaccard clustering: %s", exc)
         cluster_indices = _simple_cluster(errors)

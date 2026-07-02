@@ -18,6 +18,47 @@ from app.tools.reconstruct_trace import reconstruct_distributed_trace
 logger = structlog.get_logger("agents.log_intelligence")
 
 
+def _grade_anomaly_evidence(anomaly_data: dict) -> tuple[str, int]:
+    """Map a log-rate-anomaly result to (strength, contribution) from the ACTUAL
+    spike magnitude, not a fixed ``medium``/80.
+
+    A *detected* spike is graded by its ratio (current/baseline); a "no anomaly"
+    result is WEAK evidence — the absence of a log-rate spike rules a cause out,
+    it is not medium-strength support for one. Grading these identically was
+    cosmetic: it made the evidence-weighting machinery inert. Degrades to weak
+    when the fields are absent (e.g. Splunk disabled)."""
+    if not anomaly_data.get("anomaly_detected"):
+        return "weak", 15
+    levels = anomaly_data.get("levels") or {}
+    max_ratio = max(
+        (float(v.get("ratio", 0) or 0) for v in levels.values() if isinstance(v, dict)),
+        default=0.0,
+    )
+    if max_ratio >= 6.0:
+        return "strong", 85
+    return "medium", 60
+
+
+def _grade_trace_evidence(trace_data: dict) -> tuple[str, int]:
+    """Map a reconstructed trace to (strength, contribution) by whether it
+    surfaced an actual error chain.
+
+    An error-bearing trace (ERROR/FATAL steps) is real causal evidence and
+    scales with the number of error events; a trace with only context steps (no
+    errors) is weak, and an empty trace weaker still. Previously every trace was
+    emitted at a fixed ``medium``/80 regardless of whether it found anything."""
+    steps = trace_data.get("trace_steps") or []
+    error_steps = [
+        s for s in steps
+        if isinstance(s, dict) and s.get("level") in ("ERROR", "FATAL")
+    ]
+    if error_steps:
+        return ("strong" if len(error_steps) >= 3 else "medium"), min(90, 60 + len(error_steps) * 10)
+    if steps:
+        return "weak", 20  # context only — no error chain
+    return "weak", 10      # empty trace
+
+
 class LogIntelligenceAgent:
     """
     Stateless specialist for log-based evidence gathering.
@@ -78,20 +119,26 @@ class LogIntelligenceAgent:
         anomaly_ok = "error" not in evidence.get("log_anomaly", {})
         structured_evidence: list[EvidenceRef] = []
         if trace_ok:
+            trace_strength, trace_contribution = _grade_trace_evidence(
+                evidence.get("distributed_trace", {})
+            )
             structured_evidence.append(EvidenceRef(
                 source="distributed_trace",
                 ref_id=service_name,
                 excerpt=trace_summary,
-                strength="medium",
-                contribution=80,
+                strength=trace_strength,
+                contribution=trace_contribution,
             ))
         if anomaly_ok:
+            anomaly_strength, anomaly_contribution = _grade_anomaly_evidence(
+                evidence.get("log_anomaly", {})
+            )
             structured_evidence.append(EvidenceRef(
                 source="log_anomaly",
                 ref_id=service_name,
                 excerpt=anomaly_assessment,
-                strength="medium",
-                contribution=80,
+                strength=anomaly_strength,
+                contribution=anomaly_contribution,
             ))
         fallback_used = not (trace_ok and anomaly_ok)
         return validate_agent_contract(

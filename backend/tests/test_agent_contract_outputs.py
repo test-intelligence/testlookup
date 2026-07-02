@@ -44,8 +44,23 @@ async def test_log_intelligence_investigate_wraps_contract_on_success():
     """
     from app.agents.log_intelligence_agent import LogIntelligenceAgent
 
-    trace_payload = json.dumps({"causal_summary": "A -> B timeout"})
-    anomaly_payload = json.dumps({"assessment": "spike at T0"})
+    # Realistic tool outputs carrying the real signal the evidence graders read:
+    # an error-bearing trace and a detected spike with a high ratio → strong
+    # evidence → high confidence. (Grading now reflects the actual signal rather
+    # than a fixed medium/80.)
+    trace_payload = json.dumps({
+        "causal_summary": "A -> B timeout",
+        "trace_steps": [
+            {"service": "A", "level": "ERROR", "message": "timeout"},
+            {"service": "B", "level": "ERROR", "message": "downstream 500"},
+            {"service": "B", "level": "FATAL", "message": "circuit open"},
+        ],
+    })
+    anomaly_payload = json.dumps({
+        "assessment": "spike at T0",
+        "anomaly_detected": True,
+        "levels": {"ERROR": {"ratio": 12.0}},
+    })
 
     with patch(
         "app.agents.log_intelligence_agent.reconstruct_distributed_trace",
@@ -60,13 +75,15 @@ async def test_log_intelligence_investigate_wraps_contract_on_success():
         )
 
     # Original keys preserved (superset, no behavior change).
-    assert result["distributed_trace"] == {"causal_summary": "A -> B timeout"}
-    assert result["log_anomaly"] == {"assessment": "spike at T0"}
+    assert result["distributed_trace"]["causal_summary"] == "A -> B timeout"
+    assert result["log_anomaly"]["assessment"] == "spike at T0"
     assert "log_summary" in result
 
     contract = result["agent_contracts"]["log_intelligence"]
     assert contract["fallback_used"] is False
-    assert contract["confidence_score"] == 80
+    # Strong error-bearing trace (3 ERROR/FATAL steps) + a severe spike (12×) →
+    # both refs strong → high aggregate confidence (no longer a fixed 80).
+    assert contract["confidence_score"] >= 80
     assert contract["evidence_count"] == 2
     assert contract["decision_reason"] == "log_evidence_gathered"
 
