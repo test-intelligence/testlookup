@@ -396,6 +396,58 @@ async def test_snapshot_inserts_nested_steps_and_attachments():
 
 
 @pytest.mark.asyncio
+async def test_insert_step_does_not_flush_per_node():
+    """Perf regression (P1 — ingestion flush storm): ``_insert_step`` must build
+    the whole step tree WITHOUT a per-node ``db.flush()``. It previously flushed
+    after every node (up to _MAX_STEP_NODES=2000 per test) solely to populate
+    ``step.id`` for child/attachment FKs; that is now assigned up front via an
+    explicit uuid4. Here the DB's ``flush`` raises, proving no flush happens
+    inside the recursion — yet parent/child linkage and attachment FKs are still
+    correct because the id is set at construction, not at flush."""
+    canonical_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+
+    added: list = []
+
+    class _NoFlushDB:
+        def add(self, obj):
+            added.append(obj)
+
+        async def flush(self):
+            raise AssertionError("_insert_step must not flush per node (P1 flush storm)")
+
+    node = {
+        "name": "root", "status": "FAILED",
+        "attachments": [{"name": "a0.png"}],
+        "steps": [
+            {"name": "child", "status": "PASSED",
+             "attachments": [{"name": "c.log"}],
+             "steps": [{"name": "grandchild", "status": "FAILED"}]},
+        ],
+    }
+
+    with patch(
+        "app.services.privacy_service.sanitize_for_persistence",
+        side_effect=lambda s: s,
+    ):
+        await svc._insert_step(_NoFlushDB(), canonical_id, run_id, node, None, 0, {"ordinal": 0})
+
+    steps = [o for o in added if isinstance(o, TestStep)]
+    atts = [o for o in added if isinstance(o, TestAttachment)]
+    by_name = {s.name: s for s in steps}
+    # Every step got a PK at construction (not None, not flush-assigned).
+    assert all(s.id is not None for s in steps)
+    assert len(steps) == 3
+    # Parent linkage resolved purely from the pre-assigned ids.
+    assert by_name["root"].parent_step_id is None
+    assert by_name["child"].parent_step_id == by_name["root"].id
+    assert by_name["grandchild"].parent_step_id == by_name["child"].id
+    # Attachment FKs point at the right pre-assigned step ids.
+    step_ids = {s.id for s in steps}
+    assert all(a.test_step_id in step_ids for a in atts)
+
+
+@pytest.mark.asyncio
 async def test_upsert_links_canonical_id_on_sentinel_path():
     """The per-run TestCase must be linked to its canonical anchor at WRITE time.
 

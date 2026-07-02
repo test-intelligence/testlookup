@@ -809,6 +809,10 @@ class TestCaseHistory(Base):
     __tablename__ = "test_case_history"
     __table_args__ = (
         Index("ix_history_fingerprint_date", "test_fingerprint", "created_at"),
+        # Covering variant (migration 0098) for the windowed flaky-count scan
+        # (_count_flaky_tests): partition/order by (test_fingerprint, created_at)
+        # then filter status — including status makes that scan index-only.
+        Index("ix_history_fingerprint_date_status", "test_fingerprint", "created_at", "status"),
         # FK indexes added in migration 0082 — see
         # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
         Index("ix_history_test_case_id", "test_case_id"),
@@ -877,6 +881,15 @@ class Defect(Base):
         # FK index added in migration 0082 — see
         # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
         Index("ix_defects_project_id", "project_id"),
+        # Composite for the release-gate open-CRITICAL count (migration 0098):
+        # count_open_critical_defects filters (project_id, resolution_status,
+        # severity) on every /release-gate + /overview render.
+        Index(
+            "ix_defects_project_status_severity",
+            "project_id",
+            "resolution_status",
+            "severity",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

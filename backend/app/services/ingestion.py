@@ -584,7 +584,19 @@ async def _insert_step(
     ordinal = counter["ordinal"]
     counter["ordinal"] += 1
     params = node.get("parameters")
+    # Assign the PK up front (the model's Python-side ``default=uuid.uuid4`` only
+    # fires at flush) so children reference it as ``parent_step_id`` and
+    # attachments as ``test_step_id`` WITHOUT a per-node ``db.flush()``. This
+    # kills the ingestion flush storm — a test with N step nodes previously did N
+    # flushes (up to _MAX_STEP_NODES=2000) inside one transaction; now the whole
+    # tree is buffered and inserted in the caller's single flush/commit. Ordering
+    # is safe: nodes are added depth-first (parent before child), which SQLAlchemy
+    # preserves for same-mapper INSERTs, and Postgres evaluates the self-FK
+    # (parent_step_id → test_steps.id) at statement end, so intra-batch parent
+    # references resolve. Verified end-to-end against real Postgres.
+    step_id = uuid.uuid4()
     step = TestStep(
+        id=step_id,
         canonical_test_case_id=canonical_id,
         source_test_run_id=run_id,
         parent_step_id=parent_id,
@@ -623,14 +635,13 @@ async def _insert_step(
         status=status,
         duration_ms=node.get("duration_ms"),
     ))
-    await db.flush()  # assign step.id for child + attachment FKs
 
     for att in (node.get("attachments") or []):
         if not isinstance(att, dict):
             continue
         db.add(TestAttachment(
             canonical_test_case_id=canonical_id,
-            test_step_id=step.id,
+            test_step_id=step_id,
             source_test_run_id=run_id,
             name=_sanitize(str(att.get("name") or "attachment"))[:500],
             source_ref=(_sanitize(str(att["source_ref"]))[:1000] if att.get("source_ref") else None),
@@ -639,7 +650,7 @@ async def _insert_step(
 
     for child in (node.get("steps") or []):
         if isinstance(child, dict):
-            await _insert_step(db, canonical_id, run_id, child, step.id, depth + 1, counter)
+            await _insert_step(db, canonical_id, run_id, child, step_id, depth + 1, counter)
 
 
 def _redact_dict_or_list(value, redact_dict):
