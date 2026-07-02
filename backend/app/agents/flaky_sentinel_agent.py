@@ -27,6 +27,64 @@ from app.tools.fetch_build_changes import fetch_build_changes
 logger = structlog.get_logger("agents.flaky_sentinel")
 
 
+def _detect_flaky_onset(statuses: list) -> int | None:
+    """Index (oldest-first) of the first status flip that BEGINS a genuinely
+    oscillating region — a flip after which the history flips at least once
+    more.
+
+    Returns ``None`` when there is no sustained oscillation. The previous
+    "first flip wins" heuristic mislabelled a *single permanent transition* as
+    the flakiness onset: a test that was broken then fixed
+    (``[F,F,F,P,P,P]``) reported the FIX build as ``flaky_since``, and a
+    one-off blip (``[P,P,P,P,P,F]``) or a plain regression (``[P,P,P,F,F,F]``)
+    was treated as flaky onset. None of those oscillate, so none is a flaky
+    onset — the caller reports ``flaky_since = "unknown"`` and skips the
+    build-diff lookup rather than pointing at the wrong build.
+    """
+    n = len(statuses)
+    for i in range(1, n):
+        if statuses[i] == statuses[i - 1]:
+            continue
+        # A flip at i is a sustained-flakiness onset only if the suffix from i
+        # flips again (real oscillation), not a single permanent transition.
+        for j in range(i + 1, n):
+            if statuses[j] != statuses[j - 1]:
+                return i
+    return None
+
+
+def _reconcile_recommendation(failure_rate: float, verdict: dict) -> str:
+    """Derive the human recommendation from the reconciled flaky VERDICT, not
+    the raw failure rate alone.
+
+    The verdict (ML + Wilson + intermittency signals) already distinguishes a
+    genuine flake from a *persistent regression* (``is_flaky`` is False when
+    ``likely_cause_code`` is ``likely_regression``/``insufficient_data`` — see
+    ``flaky_investigator.build_flaky_verdict``). The old failure-rate ladder
+    ignored that, so a consistently-failing real bug (high failure rate, low
+    intermittency) was told to "QUARANTINE" while its own ``verdict.is_flaky``
+    said it wasn't flaky — a self-contradiction that also risks *hiding a real
+    defect* behind a quarantine. Reconcile the two here.
+    """
+    if not bool(verdict.get("is_flaky")):
+        if verdict.get("likely_cause_code") == "likely_regression":
+            return (
+                "INVESTIGATE AS BUG -- fails persistently with a consistent "
+                "signature; this is a real defect, not flakiness. Fix it rather "
+                "than quarantine (quarantining would hide the failure)."
+            )
+        return (
+            "MONITOR -- not enough evidence to confirm flakiness "
+            "(insufficient or inconclusive history)."
+        )
+    # Confirmed flaky: severity by how often it disrupts CI.
+    if failure_rate > 0.5:
+        return "QUARANTINE -- flaky and failing more than 50% of the time, blocking CI reliability"
+    if failure_rate > 0.25:
+        return "INVESTIGATE URGENTLY -- flaky with a high flip rate, significant noise source"
+    return "MONITOR -- flaky at a low rate, worth tracking but not yet critical"
+
+
 class FlakySentinelAgent(BaseAgent):
     stage_name = "flaky_sentinel"
 
@@ -137,15 +195,17 @@ class FlakySentinelAgent(BaseAgent):
         statuses = [h.status for h in reversed(history)]  # oldest first
         build_numbers = [build_map.get(str(h.test_run_id), "unknown") for h in reversed(history)]
 
-        # Find flakiness onset: first run where status started alternating
-        onset_index = 0
-        for i in range(1, len(statuses)):
-            if statuses[i] != statuses[i - 1]:
-                onset_index = i
-                break
-
-        flaky_since_build = build_numbers[onset_index] if onset_index < len(build_numbers) else "unknown"
-        last_stable_build = build_numbers[onset_index - 1] if onset_index > 0 else "unknown"
+        # Find flakiness onset: the first flip that BEGINS a sustained
+        # oscillation (not a one-off transition — a fix/regression/blip is not a
+        # flaky onset). None → no sustained onset; report "unknown" and skip the
+        # build-diff lookup rather than blaming the wrong build.
+        onset_index = _detect_flaky_onset(statuses)
+        if onset_index is not None and onset_index < len(build_numbers):
+            flaky_since_build = build_numbers[onset_index]
+            last_stable_build = build_numbers[onset_index - 1] if onset_index > 0 else "unknown"
+        else:
+            flaky_since_build = "unknown"
+            last_stable_build = "unknown"
 
         # Compute failure rate
         failed_count = sum(1 for s in statuses if s in (TestStatus.FAILED, TestStatus.BROKEN))
@@ -167,14 +227,6 @@ class FlakySentinelAgent(BaseAgent):
                 change_summary = changes.get("change_summary", "No changes found.")
             except Exception as exc:
                 logger.debug("Build changes fetch failed", error=str(exc))
-
-        # Quarantine recommendation
-        if failure_rate > 0.5:
-            recommendation = "QUARANTINE -- failing more than 50% of the time, blocking CI reliability"
-        elif failure_rate > 0.25:
-            recommendation = "INVESTIGATE URGENTLY -- high flakiness rate, significant noise source"
-        else:
-            recommendation = "MONITOR -- low flakiness rate, worth tracking but not yet critical"
 
         # FLK-P4: confirm + EXPLAIN the verdict. Build the per-run records from
         # the joined window, score intermittency (FLK-P1), the Wilson interval
@@ -207,6 +259,12 @@ class FlakySentinelAgent(BaseAgent):
             build_change_summary=change_summary,
         )
 
+        # Recommendation is derived from the reconciled verdict (not the raw
+        # failure rate) so it can never contradict ``verdict.is_flaky`` — a
+        # consistently-failing real bug is flagged as a bug to fix, not
+        # "quarantined as flaky".
+        recommendation = _reconcile_recommendation(failure_rate, verdict)
+
         # FLK-P5: granular step-level surgical attribution from the latest step
         # snapshot — point at the failing step rather than the whole test.
         step_attribution: dict | None = None
@@ -228,13 +286,17 @@ class FlakySentinelAgent(BaseAgent):
         except Exception as exc:  # pragma: no cover — best-effort enrichment
             logger.debug("step attribution failed", error=str(exc))
 
-        # Tier 1 item 3 — if the flip rate crosses the quarantine floor,
-        # propose the test for QA Lead approval via the quarantine service.
-        # Threshold matches the acceptance criterion (>= 20% flip rate over
-        # 10 runs). The service is idempotent: repeat runs just refresh the
-        # existing PROPOSED row. Feature-flag gated, never raises.
+        # Tier 1 item 3 — if the flip rate crosses the quarantine floor AND the
+        # verdict confirms the test is actually flaky, propose it for QA Lead
+        # approval via the quarantine service. Gating on ``verdict.is_flaky``
+        # keeps this consistent with the recommendation: a persistent regression
+        # (high failure rate, not flaky) must be fixed, not quarantined — hiding
+        # a real defect behind a quarantine is the wrong action. Threshold
+        # matches the acceptance criterion (>= 20% flip rate over 10 runs). The
+        # service is idempotent: repeat runs just refresh the existing PROPOSED
+        # row. Feature-flag gated, never raises.
         quarantine_request_id: str | None = None
-        if failure_rate >= 0.20 and len(statuses) >= 10:
+        if verdict.get("is_flaky") and failure_rate >= 0.20 and len(statuses) >= 10:
             try:
                 import uuid as _uuid
                 from app.services.flaky_quarantine_service import propose_quarantine
