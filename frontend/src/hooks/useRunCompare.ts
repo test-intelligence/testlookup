@@ -37,7 +37,12 @@ export function useLatestSuiteCompare(suiteName: string | null, projectId?: stri
   const enabled = Boolean(suiteName?.trim())
   const { data, error, isLoading } = useSWR<RunCompareResponse>(
     enabled ? ['run-compare-latest-suite', suiteName, projectId || ''] : null,
-    () => runCompareService.compareLatestSuite(suiteName!.trim(), projectId),
+    () => {
+      if (!suiteName) {
+        throw new Error('Suite name is required')
+      }
+      return runCompareService.compareLatestSuite(suiteName.trim(), projectId)
+    },
     { revalidateOnFocus: false },
   )
   return {

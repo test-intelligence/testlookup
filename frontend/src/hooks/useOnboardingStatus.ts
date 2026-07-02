@@ -24,7 +24,7 @@ import { onboardingService, type OnboardingStatus } from '@/services/onboardingS
 export function useOnboardingStatus(projectId: string | null) {
   const { data, isLoading, mutate } = useSWR<OnboardingStatus>(
     projectId ? ['onboarding-status', projectId] : null,
-    () => onboardingService.detectProgress(projectId!),
+    ([, id]: [string, string]) => onboardingService.detectProgress(id),
     {
       revalidateOnFocus: false,
       shouldRetryOnError: false,
