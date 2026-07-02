@@ -21,6 +21,29 @@ export const formatRunWhen = (d?: string | Date | null): string => {
   return format(date, 'MMM dd, HH:mm')
 }
 
+/**
+ * Relative label for a DAY-bucketed calendar date (``yyyy-mm-dd``) — e.g. a
+ * trend point's day used for "Last run".
+ *
+ * Parsed at LOCAL midnight (no ``Z``/offset) and compared by whole calendar
+ * days, so "today" never resolves to a *future* UTC instant for users east or
+ * west of UTC — the bug that made "Last run —" appear near day boundaries when
+ * the value was forced to ``…T00:00:00Z`` and the resulting age went negative.
+ * Day-granular output matches the day-granular input (no fake "X min ago"
+ * precision on a midnight value). Empty/invalid → '—'.
+ */
+export const dayTimeAgo = (dayOnly?: string | null): string => {
+  if (!dayOnly) return '—'
+  const then = new Date(`${dayOnly}T00:00:00`) // no 'Z' → LOCAL time
+  if (Number.isNaN(then.getTime())) return '—'
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((startOfToday.getTime() - then.getTime()) / 86_400_000)
+  if (days <= 0) return 'today'
+  if (days === 1) return 'yesterday'
+  return `${days} d ago`
+}
+
 export const formatDuration = (ms?: number | null): string => {
   if (!ms) return '—'
   if (ms < 1000) return `${ms}ms`

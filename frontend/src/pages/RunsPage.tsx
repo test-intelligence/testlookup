@@ -63,13 +63,15 @@ import type { TestRun } from '@/types/runs'
 import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
 
 // ── Window picker ──────────────────────────────────────────────────────────
-// 1 = last 24 hours, 0 = all time.
-const WINDOWS = [1, 6, 14, 30, 90, 0] as const
+// 1 = last 24 hours, 0 = all time. NB: use 7 (a week), not 6, so the global
+// 7-day default window (timeWindowStore) doesn't silently snap to a different
+// value here than on every other page (Overview/Coverage/Trends/… all use 7).
+const WINDOWS = [1, 7, 14, 30, 90, 0] as const
 type Window = (typeof WINDOWS)[number]
 
 const WINDOW_LABELS: Record<Window, string> = {
   1:  'Last 24 hours',
-  6:  'Last 6 days',
+  7:  'Last 7 days',
   14: 'Last 14 days',
   30: 'Last 30 days',
   90: 'Last 90 days',

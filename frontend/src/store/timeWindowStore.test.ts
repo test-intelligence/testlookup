@@ -67,9 +67,11 @@ describe('snapToAllowed', () => {
   })
 
   it('handles the special "all time" (0) case used by RunsPage', () => {
-    // 0 is in RunsPage's allowed set — keep it.
-    expect(snapToAllowed(0, [1, 6, 14, 30, 90, 0])).toBe(0)
-    // A shared 7d, snapped to RunsPage's [1,6,14,30,90,0] gives 6 (closer than 14).
-    expect(snapToAllowed(7, [1, 6, 14, 30, 90, 0])).toBe(6)
+    // 0 ("all time") is in RunsPage's allowed set — keep it.
+    expect(snapToAllowed(0, [1, 7, 14, 30, 90, 0])).toBe(0)
+    // Regression: RunsPage's set now includes 7 (was an anomalous 6), so the
+    // global 7-day default stays 7 here instead of silently drifting to 6 —
+    // the window a user set elsewhere is the window the Runs page queries.
+    expect(snapToAllowed(7, [1, 7, 14, 30, 90, 0])).toBe(7)
   })
 })

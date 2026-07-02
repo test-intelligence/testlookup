@@ -14,7 +14,7 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import FirstRunGuide, { FIRST_RUN_DISMISS_KEY } from '@/components/onboarding/FirstRunGuide'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
-import { formatDuration } from '@/utils/formatters'
+import { formatDuration, dayTimeAgo } from '@/utils/formatters'
 import { clsx } from 'clsx'
 import type { TrendPoint } from '@/types/metrics'
 import type { DashboardMetricValue, DashboardSummary } from '@/types/analytics'
@@ -149,19 +149,6 @@ function readinessConfidence(v: Verdict, passRate: number): { pct: number; label
   if (v === 'CONDITIONAL') return { pct: Math.max(50, Math.min(75, Math.round(passRate))), label: 'moderate' }
   if (v === 'WATCH')   return { pct: Math.max(75, Math.min(92, Math.round(passRate))), label: 'good' }
   return { pct: Math.max(92, Math.min(100, Math.round(passRate))), label: 'high' }
-}
-
-function timeAgo(iso: string | undefined | null): string {
-  if (!iso) return '—'
-  const ms = Date.now() - new Date(iso).getTime()
-  if (Number.isNaN(ms) || ms < 0) return '—'
-  const m = Math.floor(ms / 60000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m} min ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h} h ago`
-  const d = Math.floor(h / 24)
-  return `${d} d ago`
 }
 
 // ── Sparkline ────────────────────────────────────────────────────────────
@@ -933,7 +920,7 @@ export default function OverviewPage() {
   const verdict = mapReadinessToVerdict(summary?.release_readiness_band, summary?.release_readiness, totalExecutions)
   const generatedLabel = totalExecutions > 0 ? 'just now' : `awaiting data · last ${days} days`
   const lastRunLabel = trendData.length > 0
-    ? timeAgo(`${trendData[trendData.length - 1].date}T00:00:00Z`)
+    ? dayTimeAgo(trendData[trendData.length - 1].date)
     : '—'
   const verdictDotColor = verdict === 'GO' ? 'var(--status-passed)'
     : verdict === 'CONDITIONAL' ? 'var(--status-skipped)'

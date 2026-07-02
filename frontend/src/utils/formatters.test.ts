@@ -1,6 +1,42 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatRunWhen } from './formatters'
+import { dayTimeAgo, formatRunWhen } from './formatters'
+
+describe('dayTimeAgo', () => {
+  // Build day-only strings relative to the runner's LOCAL "today" so the
+  // assertions are timezone-independent (the fix parses at local midnight).
+  const dayStr = (offsetDays: number): string => {
+    const now = new Date()
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offsetDays)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  it("labels today's date 'today' (not '—') regardless of timezone", () => {
+    // Regression: the old ``…T00:00:00Z`` forced UTC midnight, so for users
+    // east/west of UTC the age went negative near day boundaries and rendered
+    // "—" ("Last run —") even with a fresh run. Local parsing → always "today".
+    expect(dayTimeAgo(dayStr(0))).toBe('today')
+  })
+
+  it("labels yesterday and older days by whole calendar days", () => {
+    expect(dayTimeAgo(dayStr(1))).toBe('yesterday')
+    expect(dayTimeAgo(dayStr(3))).toBe('3 d ago')
+  })
+
+  it("treats a future day-bucket as 'today' rather than discarding it", () => {
+    // A date-only value can round slightly ahead of now; must not become '—'.
+    expect(dayTimeAgo(dayStr(-1))).toBe('today')
+  })
+
+  it("returns '—' for empty or unparseable input", () => {
+    expect(dayTimeAgo('')).toBe('—')
+    expect(dayTimeAgo(null)).toBe('—')
+    expect(dayTimeAgo('not-a-date')).toBe('—')
+  })
+})
 
 describe('formatRunWhen', () => {
   it('formats an ISO timestamp into a compact "MMM dd, HH:mm" label', () => {
