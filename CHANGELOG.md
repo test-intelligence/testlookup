@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: FLAKY_INTELLIGENCE.md (FLK P1-P6 subsystem)
+
+- **New `architecture/FLAKY_INTELLIGENCE.md`** — the flaky-detection subsystem shipped across FLK P1-P6 post-dates the architecture set (PR #242) and had no architecture doc. Covers, verified against the implementation: the four evidence layers (`flaky_signals` intermittency/signatures, `flaky_statistics` Wilson-CI, `ml/flaky_confidence` feature vector — distinct from the 6-class triage classifier, `flaky_step_flip` over the retained `test_step_runs` history), verdict assembly in `flaky_investigator.build_flaky_verdict` (evidence-weighted `{is_flaky, confidence, likely_cause_code, evidence[]}`), the sentinel's verdict-reconciled recommendation (`_reconcile_recommendation` and the regression-vs-flaky bug class it fixes), the audited quarantine state machine (propose→approve/reject/expire→release), and the step-flip read path (per-test + run roll-up endpoints, MCP `get_test_step_flips`, SWR panels). Three mermaid diagrams: component map, quarantine stateDiagram, step-flip read sequence. Indexed from `architecture/README.md`.
+- Docs-loop iteration 2 (architecture track; iteration 1 was the `user-guide/` foundation).
+
 ### 2026-07-02 — User Guide track started: guide index + "Getting results in"
 
 - **New tracked `user-guide/` folder** — end-user documentation (QA engineers, SDETs, leads), distinct from operator docs (GETTING_STARTED) and internals (`architecture/`). `README.md` carries the core-concepts glossary (project/run/fingerprint/cluster/flaky/quarantine/release-gate/ownership), a navigation map of the dashboard grouped by area (verified against `App.tsx` routes), and the guide roadmap.
