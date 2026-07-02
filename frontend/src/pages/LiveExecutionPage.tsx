@@ -63,14 +63,14 @@ import { copyTextToClipboard } from '@/utils/clipboard'
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function passRateColor(rate: number): string {
-  if (rate >= 90) return 'text-emerald-400'
-  if (rate >= 70) return 'text-yellow-400'
-  return 'text-red-400'
+  if (rate >= 90) return 'text-[var(--status-passed)]'
+  if (rate >= 70) return 'text-[var(--status-broken)]'
+  return 'text-[var(--status-failed)]'
 }
 
 function statusDot(status: string) {
   if (status === 'running') return 'bg-neutral-300 animate-pulse'
-  if (status === 'completed') return 'bg-emerald-500'
+  if (status === 'completed') return 'bg-[var(--status-passed)]'
   return 'bg-neutral-600'
 }
 
@@ -85,9 +85,9 @@ function relativeTime(ts: number): string {
 
 function WsStatusBadge({ status }: { status: string }) {
   const configs = {
-    open:       { icon: Wifi,    label: 'Live',        cls: 'text-emerald-400' },
-    connecting: { icon: Radio,   label: 'Connecting…', cls: 'text-yellow-400 animate-pulse' },
-    error:      { icon: WifiOff, label: 'Error',       cls: 'text-red-400' },
+    open:       { icon: Wifi,    label: 'Live',        cls: 'text-[var(--status-passed)]' },
+    connecting: { icon: Radio,   label: 'Connecting…', cls: 'text-[var(--status-broken)] animate-pulse' },
+    error:      { icon: WifiOff, label: 'Error',       cls: 'text-[var(--status-failed)]' },
     closed:     { icon: WifiOff, label: 'Reconnecting…', cls: 'text-[var(--color-text-muted)]' },
   } as const
   const cfg = configs[status as keyof typeof configs] ?? configs.closed
@@ -433,7 +433,7 @@ function CopyButton({ text }: { text: string }) {
       className="absolute top-2 right-2 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] transition-colors"
       title="Copy to clipboard"
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? <Check className="h-3.5 w-3.5 text-[var(--status-passed)]" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
   )
 }
@@ -898,12 +898,12 @@ export default function LiveExecutionPage() {
             <span className={clsx(
               'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border',
               liveSummary.isLive
-                ? 'bg-emerald-900/20 text-emerald-300 border-emerald-700/30'
+                ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
                 : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)] border-[var(--color-border)]',
             )}>
               <span className={clsx(
                 'h-2 w-2 rounded-full',
-                liveSummary.isLive ? 'bg-emerald-400 animate-pulse' : 'bg-[var(--color-text-faint)]',
+                liveSummary.isLive ? 'bg-[var(--status-passed)] animate-pulse' : 'bg-[var(--color-text-faint)]',
               )} />
               LIVE
             </span>
@@ -949,7 +949,7 @@ export default function LiveExecutionPage() {
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-[var(--color-bg-hover)] flex items-center justify-center">
               {liveSummary.isLive
-                ? <Activity className="w-4 h-4 text-emerald-400" />
+                ? <Activity className="w-4 h-4 text-[var(--status-passed)]" />
                 : <Pause className="w-4 h-4 text-[var(--color-text-muted)]" />}
             </div>
             <div>
@@ -985,7 +985,7 @@ export default function LiveExecutionPage() {
               <span>
                 {visibleStats.totalPassed} passed
                 {visibleStats.totalFailed > 0 && (
-                  <> · <span className="text-red-400">{visibleStats.totalFailed} failed</span></>
+                  <> · <span className="text-[var(--status-failed)]">{visibleStats.totalFailed} failed</span></>
                 )}
                 {visibleStats.totalSkipped > 0 && <> · {visibleStats.totalSkipped} skipped</>}
               </span>
@@ -994,8 +994,8 @@ export default function LiveExecutionPage() {
             <div className="bg-[var(--color-bg-hover)] rounded-full h-1.5 overflow-hidden flex">
               {visibleStats.totalTests > 0 ? (
                 <>
-                  <span className="bg-emerald-500 h-full" style={{ width: `${(visibleStats.totalPassed / visibleStats.totalTests) * 100}%` }} />
-                  <span className="bg-red-500 h-full" style={{ width: `${(visibleStats.totalFailed / visibleStats.totalTests) * 100}%` }} />
+                  <span className="bg-[var(--status-passed)] h-full" style={{ width: `${(visibleStats.totalPassed / visibleStats.totalTests) * 100}%` }} />
+                  <span className="bg-[var(--status-failed)] h-full" style={{ width: `${(visibleStats.totalFailed / visibleStats.totalTests) * 100}%` }} />
                 </>
               ) : null}
             </div>
@@ -1153,10 +1153,10 @@ export default function LiveExecutionPage() {
                           <span className={clsx(
                             'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border',
                             stale
-                              ? 'bg-amber-900/30 text-amber-300 border-amber-700/30'
+                              ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
                               : s.status === 'running'
                                 ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
-                                : 'bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]',
+                                : 'bg-[rgba(52,211,153,.10)] text-[var(--status-passed)] border-[rgba(52,211,153,.30)]',
                           )}
                           title={stale ? 'No telemetry for over a minute — pending reaper cleanup' : undefined}
                           >
@@ -1167,14 +1167,14 @@ export default function LiveExecutionPage() {
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.total}</td>
                     <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)]">{s.passed}</td>
-                    <td className="px-3 py-3 text-right tabular-nums text-red-400 font-medium">
+                    <td className="px-3 py-3 text-right tabular-nums text-[var(--status-failed)] font-medium">
                       {s.failed > 0 ? s.failed : <span className="text-[var(--color-text-faint)]">0</span>}
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
                         <div className="bg-[var(--color-bg-hover)] rounded-full h-1.5 overflow-hidden flex w-24">
-                          <span className="bg-emerald-500 h-full" style={{ width: `${passW}%` }} />
-                          <span className="bg-red-500 h-full" style={{ width: `${failW}%` }} />
+                          <span className="bg-[var(--status-passed)] h-full" style={{ width: `${passW}%` }} />
+                          <span className="bg-[var(--status-failed)] h-full" style={{ width: `${failW}%` }} />
                         </div>
                         <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
                           {s.pass_rate.toFixed(1)}%
@@ -1258,7 +1258,7 @@ export default function LiveExecutionPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(52,211,153,.10)] text-[var(--status-passed)] border-[rgba(52,211,153,.30)]">
                 <Check className="w-3 h-3" />
                 {workflow.stages.filter(s => s.status === 'completed').length} done
               </span>
@@ -1287,13 +1287,13 @@ export default function LiveExecutionPage() {
                 status === 'running' ? 'rgba(68,147,248,.4)' :
                 'var(--color-border)'
               const stageIconColor =
-                status === 'completed' ? 'text-emerald-400' :
-                status === 'failed' ? 'text-red-400' :
+                status === 'completed' ? 'text-[var(--status-passed)]' :
+                status === 'failed' ? 'text-[var(--status-failed)]' :
                 status === 'running' ? 'text-[var(--color-accent)]' :
                 'text-[var(--color-text-muted)]'
               const statusLabelColor =
-                status === 'completed' ? 'text-emerald-400' :
-                status === 'failed' ? 'text-red-400' :
+                status === 'completed' ? 'text-[var(--status-passed)]' :
+                status === 'failed' ? 'text-[var(--status-failed)]' :
                 status === 'running' ? 'text-[var(--color-accent)]' :
                 'text-[var(--color-text-muted)]'
               return (
@@ -1304,7 +1304,7 @@ export default function LiveExecutionPage() {
                     className={clsx(
                       'relative bg-[var(--color-bg-card)] border rounded-2xl px-4 py-3.5 min-w-[232px] text-left flex-shrink-0 transition-colors',
                       status === 'pending' && 'opacity-60 border-dashed',
-                      status === 'failed' && 'border-red-500/45',
+                      status === 'failed' && 'border-[var(--status-failed-bd)]',
                     )}
                     style={{
                       borderColor: isSelected ? 'var(--color-accent)' : stageBorder,
@@ -1330,7 +1330,7 @@ export default function LiveExecutionPage() {
                     <p className="text-[11px] text-[var(--color-text-muted)] mb-2">{stage.description}</p>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {stage.confidence_score != null && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(52,211,153,.10)] text-emerald-300 border-[rgba(52,211,153,.30)]">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(52,211,153,.10)] text-[var(--status-passed)] border-[rgba(52,211,153,.30)]">
                           {stage.confidence_score}% conf
                         </span>
                       )}
@@ -1410,7 +1410,7 @@ export default function LiveExecutionPage() {
                     {Object.entries(selectedStage.result_data).map(([k, v]) => (
                       <div key={k}>
                         <span className="text-[var(--color-text-muted)]">{k}:</span>{' '}
-                        <span className="text-emerald-400">{String(v)}</span>
+                        <span className="text-[var(--status-passed)]">{String(v)}</span>
                       </div>
                     ))}
                   </div>
@@ -1457,9 +1457,9 @@ export default function LiveExecutionPage() {
               filteredFeed.map((e, i) => {
                 const Icon = e.tone === 'success' ? CheckCircle2 : e.tone === 'warning' ? AlertTriangle : e.tone === 'error' ? XCircle : CircleDot
                 const iconColor =
-                  e.tone === 'success' ? 'text-emerald-400' :
-                  e.tone === 'warning' ? 'text-amber-400' :
-                  e.tone === 'error' ? 'text-red-400' :
+                  e.tone === 'success' ? 'text-[var(--status-passed)]' :
+                  e.tone === 'warning' ? 'text-[var(--status-broken)]' :
+                  e.tone === 'error' ? 'text-[var(--status-failed)]' :
                   'text-[var(--color-accent-2)]'
                 return (
                   <div
