@@ -172,6 +172,31 @@ async def semantic_cache_store(
         logger.debug("Semantic cache store failed (non-critical): %s", exc)
 
 
+async def semantic_cache_invalidate(
+    test_name: str,
+    error_message: str,
+    stack_trace: str,
+    project_id: Optional[str] = None,
+) -> None:
+    """Evict the cached analysis for a specific error signature.
+
+    Called when a human corrects an AI classification (feedback_service) so the
+    now-known-wrong verdict isn't re-served from the semantic cache to this or a
+    similar test. Rebuilds the same ``doc_id`` ``semantic_cache_store`` used and
+    deletes it from the tenant's collection. Best-effort — never raises."""
+    if not error_message and not stack_trace:
+        return
+    try:
+        collection = await _get_or_create_collection(project_id)
+        signature = _build_signature(test_name or "", error_message or "", stack_trace or "")
+        import hashlib
+        doc_id = hashlib.sha256(signature.encode()).hexdigest()[:32]
+        await asyncio.to_thread(collection.delete, ids=[doc_id])
+        logger.debug("Invalidated semantic cache entry id=%s test=%s", doc_id, (test_name or "")[:40])
+    except Exception as exc:
+        logger.debug("Semantic cache invalidate failed (non-critical): %s", exc)
+
+
 async def get_semantic_cache_stats() -> dict:
     """Return semantic cache health metrics."""
     try:

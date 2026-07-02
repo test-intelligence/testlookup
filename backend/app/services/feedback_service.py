@@ -33,9 +33,43 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
         if body.corrected_root_cause:
             analysis.root_cause_summary = body.corrected_root_cause
         analysis.requires_human_review = False
+        # Close the correction loop: evict the stale (now-known-wrong) verdict
+        # from the semantic analysis cache so it isn't re-served to this or a
+        # similar test. Best-effort — never fail the feedback submission.
+        await _invalidate_analysis_cache_for(db, analysis.test_case_id)
 
     # stage-only: router handler commits
     return {"feedback_id": str(feedback.id), "message": "Feedback recorded — thank you!"}
+
+
+async def _invalidate_analysis_cache_for(db: AsyncSession, test_case_id) -> None:
+    """Evict the semantic-cache entry for a corrected test's error signature."""
+    try:
+        from app.models.postgres import TestCase, TestRun
+        from app.services.semantic_cache import semantic_cache_invalidate
+
+        row = (
+            await db.execute(
+                select(
+                    TestCase.test_name,
+                    TestCase.error_message,
+                    TestCase.stack_trace,
+                    TestRun.project_id,
+                )
+                .join(TestRun, TestCase.test_run_id == TestRun.id)
+                .where(TestCase.id == test_case_id)
+            )
+        ).first()
+        if row is None:
+            return
+        await semantic_cache_invalidate(
+            test_name=row.test_name or "",
+            error_message=row.error_message or "",
+            stack_trace=row.stack_trace or "",
+            project_id=str(row.project_id) if row.project_id else None,
+        )
+    except Exception:  # pragma: no cover — best-effort, must not block feedback
+        pass
 
 
 async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, current_user) -> dict:

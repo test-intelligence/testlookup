@@ -207,6 +207,12 @@ class AnalysisAgent(BaseAgent):
         # Fetch enriched test metadata (error_message, severity, flakiness history)
         test_meta = await self._fetch_test_metadata(failed_ids)
 
+        # Learning loop: fetch human corrections FRESH each run (not via the
+        # cached metadata) so a just-submitted correction takes effect
+        # immediately. Stashed on state; _analyse_one applies it by fingerprint,
+        # bypassing the known-wrong AI path. Best-effort, never blocks analysis.
+        state["_human_corrections"] = await self._fetch_human_corrections(project_id, test_meta)
+
         # Sort by priority: blockers/critical first, then by severity
         prioritized_ids = self._prioritize_tests(failed_ids, test_meta)
 
@@ -552,7 +558,32 @@ class AnalysisAgent(BaseAgent):
                 },
             )
 
-            if mode in (AnalysisMode.ML, AnalysisMode.RULES):
+            # Learning-loop short-circuit: if a human previously corrected this
+            # logical test's classification, apply it instead of re-running the
+            # (known-wrong) AI path. Flows through the same post-processing +
+            # audit below so provenance is recorded like any other verdict.
+            analysis = None
+            correction = (state.get("_human_corrections") or {}).get(
+                meta.get("test_fingerprint")
+            )
+            if correction:
+                from app.services.analysis_corrections import build_corrected_analysis
+                analysis = build_corrected_analysis(correction)
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="apply_human_correction",
+                    chosen=correction["corrected_category"],
+                    rationale=(
+                        "A prior human review corrected this test's classification; "
+                        "applying it instead of re-running analysis."
+                    ),
+                    test_case_id=tc_id,
+                    context={"feedback_id": correction.get("feedback_id")},
+                )
+
+            if analysis is not None:
+                pass  # human correction applied — skip the classifier dispatch
+            elif mode in (AnalysisMode.ML, AnalysisMode.RULES):
                 # Non-LLM path: use analysis_router (no timeout needed, <5ms)
                 from app.services.analysis_router import classify_test
                 run_data = state.get("test_run_data") or {}
@@ -720,6 +751,7 @@ class AnalysisAgent(BaseAgent):
                         "class_name": row.class_name,
                         "error_message": row.error_message,
                         "severity": row.severity,
+                        "test_fingerprint": row.test_fingerprint,
                         "stack_trace": None,  # fetched from MongoDB if available
                     }
                     if row.test_fingerprint:
@@ -736,6 +768,27 @@ class AnalysisAgent(BaseAgent):
                 return meta
         except Exception as db_exc:
             logger.error("fetch_test_metadata_failed", error=str(db_exc))
+            return {}
+
+    async def _fetch_human_corrections(
+        self, project_id, test_meta: dict[str, dict]
+    ) -> dict[str, dict]:
+        """Return ``{test_fingerprint: correction}`` for the failing tests that a
+        human previously reclassified. Best-effort: on any error (or no
+        project), returns an empty map so analysis proceeds normally."""
+        try:
+            fingerprints = [
+                m.get("test_fingerprint")
+                for m in test_meta.values()
+                if m.get("test_fingerprint")
+            ]
+            if not project_id or not fingerprints:
+                return {}
+            from app.services.analysis_corrections import get_corrections_for_fingerprints
+            async with AsyncSessionLocal() as db:
+                return await get_corrections_for_fingerprints(db, project_id, fingerprints)
+        except Exception as exc:  # pragma: no cover — best-effort enrichment
+            logger.debug("human_corrections_fetch_failed", error=str(exc))
             return {}
 
     async def _enrich_historical_counts(
