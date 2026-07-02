@@ -54,26 +54,26 @@ type Tab = typeof TABS[number]
 
 const STATUS_COLORS: Record<string, string> = {
   draft:            'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
-  review_requested: 'bg-amber-900/60 text-amber-300 border border-amber-700/50',
+  review_requested: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
   under_review:     'bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
-  approved:         'bg-green-900/60 text-green-300 border border-green-700/50',
-  active:           'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50',
-  rejected:         'bg-red-900/60 text-red-300 border border-red-700/50',
+  approved:         'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
+  active:           'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
+  rejected:         'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
   deprecated:       'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  critical: 'bg-red-900/60 text-red-300 border border-red-700/50',
-  high:     'bg-orange-900/60 text-orange-300 border border-orange-700/50',
-  medium:   'bg-yellow-900/60 text-yellow-300 border border-yellow-700/50',
+  critical: 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
+  high:     'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
+  medium:   'bg-[var(--status-skipped-bg)] text-[var(--status-skipped)] border border-[var(--status-skipped-bd)]',
   low:      'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-light)]',
 }
 
 const PLAN_STATUS_COLORS: Record<string, string> = {
   draft:       'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
   active:      'bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
-  in_progress: 'bg-amber-900/60 text-amber-300 border border-amber-700/50',
-  completed:   'bg-green-900/60 text-green-300 border border-green-700/50',
+  in_progress: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
+  completed:   'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
   archived:    'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
 }
 
@@ -88,7 +88,7 @@ function StatusPill({ status, map }: { status: string; map: Record<string, strin
 
 function QualityScore({ score }: { score?: number }) {
   if (score == null) return <span className="text-[var(--color-text-faint)] text-xs">—</span>
-  const color = score >= 80 ? 'text-green-400' : score >= 60 ? 'text-amber-400' : 'text-red-400'
+  const color = score >= 80 ? 'text-[var(--status-passed)]' : score >= 60 ? 'text-[var(--status-broken)]' : 'text-[var(--status-failed)]'
   return <span className={clsx('text-sm font-semibold tabular-nums', color)}>{score}</span>
 }
 
@@ -260,7 +260,7 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
                   />
                 </div>
                 {steps.length > 1 && (
-                  <button onClick={() => removeStep(i)} className="text-[var(--color-text-faint)] hover:text-red-400 mt-2">
+                  <button onClick={() => removeStep(i)} className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] mt-2">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 )}
@@ -446,7 +446,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                 <StatusPill status={caseItem.priority} map={PRIORITY_COLORS} />
                 <span className="text-xs text-[var(--color-text-muted)]">{caseItem.test_type}</span>
                 {caseItem.ai_generated && (
-                  <span className="text-xs text-purple-400 flex items-center gap-0.5"><Sparkles className="h-3 w-3" /> AI</span>
+                  <span className="text-xs text-[var(--color-purple)] flex items-center gap-0.5"><Sparkles className="h-3 w-3" /> AI</span>
                 )}
               </div>
             </div>
@@ -616,7 +616,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                     </div>
                     {r.ai_review_completed && r.ai_quality_score != null && (
                       <div className="flex items-center gap-2">
-                        <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+                        <Sparkles className="h-3.5 w-3.5 text-[var(--color-purple)]" />
                         <span className="text-xs text-[var(--color-text-muted)]">AI Score:</span>
                         <QualityScore score={r.ai_quality_score} />
                       </div>
@@ -687,7 +687,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                     </div>
                     {aiResult.grade && (
                       <div className="text-center">
-                        <p className="text-3xl font-bold text-green-400">{aiResult.grade}</p>
+                        <p className="text-3xl font-bold text-[var(--status-passed)]">{aiResult.grade}</p>
                         <p className="text-xs text-[var(--color-text-muted)]">Grade</p>
                       </div>
                     )}
@@ -700,7 +700,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                         {aiResult.issues.map((issue, i) => (
                           <div key={i} className="flex items-start gap-2 bg-[var(--color-bg-secondary)] rounded p-2.5">
                             <AlertCircle className={clsx('h-3.5 w-3.5 mt-0.5 flex-shrink-0',
-                              issue.severity === 'critical' ? 'text-red-400' : issue.severity === 'major' ? 'text-orange-400' : 'text-amber-400'
+                              issue.severity === 'critical' ? 'text-[var(--status-failed)]' : issue.severity === 'major' ? 'text-[var(--status-broken)]' : 'text-[var(--status-broken)]'
                             )} />
                             <div>
                               <p className="text-xs font-medium text-[var(--color-text-secondary)]">{issue.category}{issue.step ? ` (Step #${issue.step})` : ''}</p>
@@ -729,8 +729,8 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh }: CaseDetailPanelProps)
                       <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Positive Aspects</p>
                       <ul className="space-y-1">
                         {aiResult.positive_aspects.map((p, i) => (
-                          <li key={i} className="flex items-center gap-2 text-xs text-green-300">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
+                          <li key={i} className="flex items-center gap-2 text-xs text-[var(--status-passed)]">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)] flex-shrink-0" />
                             {p}
                           </li>
                         ))}
@@ -2338,9 +2338,9 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
 
   const EXEC_COLORS: Record<string, string> = {
     not_run: 'text-[var(--color-text-muted)]',
-    passed:  'text-green-400',
-    failed:  'text-red-400',
-    blocked: 'text-orange-400',
+    passed:  'text-[var(--status-passed)]',
+    failed:  'text-[var(--status-failed)]',
+    blocked: 'text-[var(--status-broken)]',
     skipped: 'text-[var(--color-text-muted)]',
   }
 
@@ -2396,9 +2396,9 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
                       onClick={() => handleExecute(item.id, s)}
                       className={clsx(
                         'text-xs px-2 py-0.5 rounded transition-colors',
-                        s === 'passed'  ? 'bg-green-900/40 text-green-400 hover:bg-green-900/70' :
-                        s === 'failed'  ? 'bg-red-900/40 text-red-400 hover:bg-red-900/70' :
-                                          'bg-orange-900/40 text-orange-400 hover:bg-orange-900/70'
+                        s === 'passed'  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] hover:bg-[var(--status-passed-bd)]' :
+                        s === 'failed'  ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] hover:bg-[var(--status-failed-bd)]' :
+                                          'bg-[var(--status-broken-bg)] text-[var(--status-broken)] hover:bg-[var(--status-broken-bd)]'
                       )}
                     >
                       {s}
@@ -2565,9 +2565,9 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
     const notRunPct = ((total - plan.executed_cases) / total) * 100
     return (
       <div className="w-full h-2 bg-[var(--color-bg-hover)] rounded-full overflow-hidden flex">
-        <div className="h-full bg-green-500" style={{ width: `${passedPct}%` }} title={`Passed: ${plan.passed_cases}`} />
-        <div className="h-full bg-red-500" style={{ width: `${failedPct}%` }} title={`Failed: ${plan.failed_cases}`} />
-        <div className="h-full bg-orange-500" style={{ width: `${blockedPct}%` }} title={`Blocked: ${plan.blocked_cases}`} />
+        <div className="h-full bg-[var(--status-passed)]" style={{ width: `${passedPct}%` }} title={`Passed: ${plan.passed_cases}`} />
+        <div className="h-full bg-[var(--status-failed)]" style={{ width: `${failedPct}%` }} title={`Failed: ${plan.failed_cases}`} />
+        <div className="h-full bg-[var(--status-broken)]" style={{ width: `${blockedPct}%` }} title={`Blocked: ${plan.blocked_cases}`} />
         <div className="h-full bg-neutral-700" style={{ width: `${notRunPct}%` }} title="Not run" />
       </div>
     )
@@ -2642,15 +2642,15 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
                             ))}
                           </select>
                         </div>
-                        {plan.ai_generated && <Sparkles className="h-3.5 w-3.5 text-purple-400" aria-label="AI generated" />}
+                        {plan.ai_generated && <Sparkles className="h-3.5 w-3.5 text-[var(--color-purple)]" aria-label="AI generated" />}
                       </div>
                       {plan.description && <p className="text-xs text-[var(--color-text-muted)] mb-2 truncate">{plan.description}</p>}
                       <div className="space-y-1">
                         <PlanProgressBar plan={plan} />
                         <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)]">
-                          <span className="text-green-400">{plan.passed_cases} passed</span>
-                          <span className="text-red-400">{plan.failed_cases} failed</span>
-                          <span className="text-orange-400">{plan.blocked_cases} blocked</span>
+                          <span className="text-[var(--status-passed)]">{plan.passed_cases} passed</span>
+                          <span className="text-[var(--status-failed)]">{plan.failed_cases} failed</span>
+                          <span className="text-[var(--status-broken)]">{plan.blocked_cases} blocked</span>
                           <span>{plan.total_cases - plan.executed_cases} not run</span>
                           <span className="ml-auto">{plan.executed_cases}/{plan.total_cases} executed</span>
                         </div>
@@ -2831,7 +2831,7 @@ function StrategyTab({ projectId }: StrategyTabProps) {
                     </select>
                     <span className="text-xs text-[var(--color-text-muted)]">v{strategy.version_label}</span>
                     {strategy.ai_generated && (
-                      <span className="text-xs text-purple-400 flex items-center gap-1">
+                      <span className="text-xs text-[var(--color-purple)] flex items-center gap-1">
                         <Sparkles className="h-3 w-3" /> AI Generated
                       </span>
                     )}
@@ -2932,7 +2932,7 @@ function StrategyTab({ projectId }: StrategyTabProps) {
                       <ul className="space-y-1">
                         {strategy.entry_criteria.map((c, i) => (
                           <li key={i} className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />{c}
+                            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)] flex-shrink-0" />{c}
                           </li>
                         ))}
                       </ul>
@@ -3031,9 +3031,9 @@ interface SuiteCase {
 interface TestSuitesTabProps { projectId: string | null }
 
 const REVIEW_STATE_STYLES: Record<SuiteReviewState, { label: string; cls: string }> = {
-  pending:       { label: 'Pending review',  cls: 'bg-amber-900/30 text-amber-300' },
-  confirmed:     { label: 'Confirmed',        cls: 'bg-emerald-900/30 text-emerald-300' },
-  acknowledged:  { label: 'Acknowledged',     cls: 'bg-blue-900/30 text-blue-300' },
+  pending:       { label: 'Pending review',  cls: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
+  confirmed:     { label: 'Confirmed',        cls: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
+  acknowledged:  { label: 'Acknowledged',     cls: 'bg-[var(--color-accent-bg-soft)] text-[var(--color-accent)]' },
   review_later:  { label: 'Review later',     cls: 'bg-violet-900/30 text-violet-300' },
 }
 
@@ -3253,11 +3253,11 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   }
 
   const CASE_STATUS_COLORS: Record<string, string> = {
-    passed:  'text-green-400',
-    failed:  'text-red-400',
-    error:   'text-red-400',
+    passed:  'text-[var(--status-passed)]',
+    failed:  'text-[var(--status-failed)]',
+    error:   'text-[var(--status-failed)]',
     skipped: 'text-[var(--color-text-muted)]',
-    pending: 'text-amber-400',
+    pending: 'text-[var(--status-broken)]',
   }
 
   // Add-suite handler. Refreshes the list on success so the user sees their
@@ -3404,10 +3404,10 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                           <span className="text-[var(--color-text-faint)]"> · {uniqueCount} unique</span>
                         )}
                       </span>
-                      <span className="text-green-400">{displayPassed} passed</span>
-                      <span className="text-red-400">{displayFailed} failed</span>
+                      <span className="text-[var(--status-passed)]">{displayPassed} passed</span>
+                      <span className="text-[var(--status-failed)]">{displayFailed} failed</span>
                       {displayPassRate != null && (
-                        <span className={displayPassRate >= 80 ? 'text-green-400 font-medium' : displayPassRate >= 60 ? 'text-amber-400 font-medium' : 'text-red-400 font-medium'}>
+                        <span className={displayPassRate >= 80 ? 'text-[var(--status-passed)] font-medium' : displayPassRate >= 60 ? 'text-[var(--status-broken)] font-medium' : 'text-[var(--status-failed)] font-medium'}>
                           {displayPassRate.toFixed(1)}% pass rate
                         </span>
                       )}
@@ -3425,10 +3425,10 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     >
                       {suite.run_count} run{suite.run_count === 1 ? '' : 's'}
                       {(suite.total_skipped ?? 0) > 0 && (
-                        <span className="text-amber-300/80 ml-2">{suite.total_skipped} skipped</span>
+                        <span className="text-[var(--status-skipped)]/80 ml-2">{suite.total_skipped} skipped</span>
                       )}
                       {(suite.total_broken ?? 0) > 0 && (
-                        <span className="text-orange-300/80 ml-2">{suite.total_broken} broken</span>
+                        <span className="text-[var(--status-broken)]/80 ml-2">{suite.total_broken} broken</span>
                       )}
                     </span>
                   )}
@@ -3445,7 +3445,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     {isEditingOwner ? (
                       ownerCandidates.length === 0 ? (
                         <span
-                          className="text-[10.5px] italic text-amber-300"
+                          className="text-[10.5px] italic text-[var(--status-broken)]"
                           title="Add a project member with role QA_LEAD before assigning."
                         >
                           No QA_LEAD members on this project
@@ -3652,10 +3652,10 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     {(suiteChanges[suite.suite_name] ?? []).slice(0, 5).map((evt, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
                         <span className={clsx('px-1.5 py-0.5 rounded font-medium',
-                          evt.event_type === 'added' ? 'bg-green-900/30 text-green-400' :
-                          evt.event_type === 'deleted' ? 'bg-red-900/30 text-red-400' :
-                          evt.event_type === 'modified' ? 'bg-amber-900/30 text-amber-400' :
-                          'bg-blue-900/30 text-blue-400'
+                          evt.event_type === 'added' ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' :
+                          evt.event_type === 'deleted' ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed)]' :
+                          evt.event_type === 'modified' ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' :
+                          'bg-[var(--color-accent-bg-soft)] text-[var(--color-accent)]'
                         )}>{evt.event_type}</span>
                         <span className="text-[var(--color-text-secondary)] truncate">{evt.test_name}</span>
                         {evt.details && <span className="text-[var(--color-text-faint)] truncate ml-auto">{evt.details}</span>}
@@ -3666,17 +3666,17 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
               )}
               {/* Deleted Tests (needs_review) */}
               {(suiteDeleted[suite.suite_name] ?? []).length > 0 && (
-                <div className="border-t border-red-700/30 bg-red-900/10 px-4 py-3">
-                  <p className="text-xs font-medium text-red-400 uppercase tracking-wider mb-2">
+                <div className="border-t border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] px-4 py-3">
+                  <p className="text-xs font-medium text-[var(--status-failed)] uppercase tracking-wider mb-2">
                     Deleted from Suite ({(suiteDeleted[suite.suite_name] ?? []).length} tests need review)
                   </p>
                   <div className="space-y-1">
                     {(suiteDeleted[suite.suite_name] ?? []).map(d => (
                       <div key={d.id} className="flex items-center gap-2 text-xs">
-                        <span className="text-red-400">✕</span>
+                        <span className="text-[var(--status-failed)]">✕</span>
                         <span className="text-[var(--color-text-secondary)]">{d.test_name}</span>
                         {d.review_tag && (
-                          <span className="bg-amber-900/30 text-amber-400 px-1.5 py-0.5 rounded text-[10px] font-medium">{d.review_tag}</span>
+                          <span className="bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded text-[10px] font-medium">{d.review_tag}</span>
                         )}
                         {d.class_name && <span className="text-[var(--color-text-faint)] ml-auto">{d.class_name}</span>}
                       </div>
@@ -3759,7 +3759,7 @@ function AddTestSuiteModal({
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-              Suite name <span className="text-red-400">*</span>
+              Suite name <span className="text-[var(--status-failed)]">*</span>
             </label>
             <input
               type="text"
@@ -3771,7 +3771,7 @@ function AddTestSuiteModal({
               maxLength={500}
             />
             {isDuplicate && (
-              <p className="text-[11px] text-red-400 mt-1">
+              <p className="text-[11px] text-[var(--status-failed)] mt-1">
                 A suite named “{trimmedName}” already exists in this project.
               </p>
             )}
@@ -3792,7 +3792,7 @@ function AddTestSuiteModal({
           <div>
             <label className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
             {ownerCandidates.length === 0 ? (
-              <p className="text-[11px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-2 py-1.5">
+              <p className="text-[11px] text-[var(--status-broken)] bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)] rounded px-2 py-1.5">
                 No project members have the QA_LEAD role yet. Leave unset to inherit the project's default QA lead, or add a QA_LEAD member first.
               </p>
             ) : (
@@ -3936,19 +3936,19 @@ function ReviewsTab({ projectId: _projectId }: ReviewsTabProps) {
                   </button>
                   <button
                     onClick={() => handleReviewAction(tc, 'approve')}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-green-900/40 text-green-400 hover:bg-green-900/70 transition-colors"
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[var(--status-passed-bg)] text-[var(--status-passed)] hover:bg-[var(--status-passed-bd)] transition-colors"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" /> Approve
                   </button>
                   <button
                     onClick={() => handleReviewAction(tc, 'request_changes')}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-900/40 text-amber-400 hover:bg-amber-900/70 transition-colors"
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[var(--status-broken-bg)] text-[var(--status-broken)] hover:bg-[var(--status-broken-bd)] transition-colors"
                   >
                     <RotateCcw className="h-3.5 w-3.5" /> Changes
                   </button>
                   <button
                     onClick={() => handleReviewAction(tc, 'reject')}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-red-900/40 text-red-400 hover:bg-red-900/70 transition-colors"
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-[var(--status-failed-bg)] text-[var(--status-failed)] hover:bg-[var(--status-failed-bd)] transition-colors"
                   >
                     <XCircle className="h-3.5 w-3.5" /> Reject
                   </button>
@@ -3979,13 +3979,13 @@ function AuditTab({ projectId: _projectId }: AuditTabProps) {
   const entries = data?.items ?? []
 
   const ACTION_COLORS: Record<string, string> = {
-    created:          'text-green-400',
+    created:          'text-[var(--status-passed)]',
     updated:          'text-[var(--color-text)]',
-    deleted:          'text-red-400',
-    status_changed:   'text-amber-400',
-    review_requested: 'text-purple-400',
-    approved:         'text-emerald-400',
-    rejected:         'text-red-400',
+    deleted:          'text-[var(--status-failed)]',
+    status_changed:   'text-[var(--status-broken)]',
+    review_requested: 'text-[var(--color-purple)]',
+    approved:         'text-[var(--status-passed)]',
+    rejected:         'text-[var(--status-failed)]',
   }
 
   return (
@@ -4056,9 +4056,9 @@ function AuditTab({ projectId: _projectId }: AuditTabProps) {
 // ─── Tab: Duplicates (Phase 4) ────────────────────────────────────────────────
 
 const DUP_BAND_COLORS: Record<DuplicateBand, string> = {
-  exact:    'bg-red-900/60 text-red-300 border border-red-700/50',
-  strong:   'bg-orange-900/60 text-orange-300 border border-orange-700/50',
-  possible: 'bg-amber-900/60 text-amber-300 border border-amber-700/50',
+  exact:    'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
+  strong:   'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
+  possible: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
 }
 
 const DUP_METHOD_LABEL: Record<string, string> = {
