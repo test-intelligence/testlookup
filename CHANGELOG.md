@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: SECURITY.md (security & tenancy)
+
+- **New `architecture/SECURITY.md`** — the security architecture, verified against the implementation: identity (JWT + single-flight refresh, API keys, token revocation via `core/token_revocation.py`), the `require_*_access` guard family with the verify-the-PROVIDED-id IDOR bug-class it codifies, the **HMAC-signed Redis membership cache** (`_sign_membership_cache` — forged/tampered entries fail HMAC and fall through to Postgres; sequence diagram included), tenancy defence-in-depth (project-scoped queries/fingerprints, per-project Chroma collections + semantic cache, per-project rate buckets), secure-by-default deployment (F1 `.env`/compose defaults + `critical_security_failures` startup fail-fast + dev-login-404, F2 authenticated Redis, F3 signed cache), offline-first as a provable no-egress property (with an honest scoping note on the knowledge-source domain allowlist), audit trail, and the quality-gate ratchets that enforce it all. Indexed from the README.
+- Docs-loop iteration 11 (architecture track).
+
 ### 2026-07-02 — User Guide: "Test management & ownership"
 
 - **New `user-guide/test-management.md`** — the catalog + routing layer, verified against the implementation: the Test Management page (case types/priorities/lifecycle draft→active→approved/deprecated, the details/history/reviews/comments/unautomated detail tabs, plans, the suites tab incl. owner assignment, review workflow incl. AI Review, duplicate detection, execution-aware counts), the two ownership layers (per-suite owners + /ownership pattern rules), and the exact auto-assignment resolution chain from `failed_test_assignment_service` (TestSuiteOwner → default QA lead → manager → unassigned) with its two guarantees (never overwrites human reassignments — NULL-only writes; isolated step that can't break finalization), plus the default-QA-lead auto-provision and the admin Team-scope consequence. Indexed from the guide README.
