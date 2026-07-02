@@ -164,6 +164,13 @@ jobs:
             ./client/ "$STAGED_SDK/"
           ls -la "$STAGED_SDK" | head -20
 
+      # Build provenance baked into the backend image so a running container
+      # can self-report its origin via GET /health/details. BUILD_REVISION is
+      # the full commit SHA; BUILD_DATE is the ISO-8601 UTC build timestamp.
+      - name: Capture build metadata
+        id: build-meta
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build & push backend
         uses: docker/build-push-action@v7
         with:
@@ -173,6 +180,9 @@ jobs:
           push: true
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
+          build-args: |
+            BUILD_REVISION=${{ github.sha }}
+            BUILD_DATE=${{ steps.build-meta.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           sbom: true

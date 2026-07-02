@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     APP_SECRET_KEY_PREVIOUS: Optional[str] = None
     APP_DEBUG: bool = False
     APP_VERSION: str = "0.0.1"
+    # ── Build provenance ────────────────────────────────────
+    # Injected at image-build time (backend/Dockerfile ARGs, wired from
+    # release.yml) so a running container can self-report exactly which
+    # commit + build it is. Surfaced by GET /health/details so a self-host
+    # operator can match a pinned image digest back to its source without
+    # shelling into the pod. Left empty in local/dev runs → reported as
+    # "unknown".
+    BUILD_REVISION: str = ""
+    BUILD_DATE: str = ""
     CORS_ORIGINS_RAW: str = Field(
         default="http://localhost:3000,http://localhost:5173",
         alias="CORS_ORIGINS",

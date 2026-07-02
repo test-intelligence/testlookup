@@ -153,6 +153,22 @@ async def _with_budget(coro, label: str) -> dict[str, Any]:
         return {"status": "degraded", "detail": str(exc)[:200]}
 
 
+def build_provenance() -> dict[str, str]:
+    """Self-reported build provenance for the running image.
+
+    Sourced from ``BUILD_REVISION`` / ``BUILD_DATE``, injected at
+    image-build time (``backend/Dockerfile`` ARGs, wired from
+    ``release.yml``). Lets a self-host operator confirm which commit and
+    build a container is running — matching a pinned image digest back to
+    its source — without shelling into the pod. Falls back to ``"unknown"``
+    in local/dev runs where the env is unset.
+    """
+    return {
+        "revision": settings.BUILD_REVISION or "unknown",
+        "built_at": settings.BUILD_DATE or "unknown",
+    }
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/live", summary="Liveness probe — is the process alive?")
@@ -217,6 +233,7 @@ async def health_details():
     return {
         "status": "healthy" if critical_ok else "degraded",
         "version": settings.APP_VERSION,
+        "build": build_provenance(),
         "env": settings.APP_ENV,
         "uptime_seconds": int(time.time() - _START_TIME),
         "timestamp": datetime.now(timezone.utc).isoformat(),

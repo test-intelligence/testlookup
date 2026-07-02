@@ -134,9 +134,18 @@ COPY --from=builder /app/scripts ./scripts
 # it targets the `development` stage and uses a host volume mount instead.
 COPY --from=builder /app/__client_sdks_staged ./client_sdks
 
+# Build provenance — the commit SHA + build timestamp this image was built
+# from. Wired from release.yml so a running container can self-report its
+# origin via GET /health/details. Empty by default (local builds) → reported
+# as "unknown".
+ARG BUILD_REVISION=""
+ARG BUILD_DATE=""
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    APP_ENV=production
+    APP_ENV=production \
+    BUILD_REVISION=$BUILD_REVISION \
+    BUILD_DATE=$BUILD_DATE
 
 RUN chown -R testlookup:testlookup /app
 USER testlookup
