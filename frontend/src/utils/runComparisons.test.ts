@@ -134,6 +134,11 @@ describe('buildCompareWithPreviousHref', () => {
       _run({ id: 'cur', primary_suite_name: 'Realistic TestNG client examples' }),
       _run({ id: 'prev', primary_suite_name: 'Realistic TestNG client examples' }),
     )
-    expect(href!).toMatch(/suite=Realistic[+%20]TestNG[+%20]client[+%20]examples/)
+    // Both sides carry a suite name, so a compare href must be produced.
+    // Assert non-null and narrow with a throw (instead of a `!`) so the
+    // subsequent match runs against a `string`, not `string | null`.
+    expect(href).not.toBeNull()
+    if (href === null) throw new Error('buildCompareWithPreviousHref returned null')
+    expect(href).toMatch(/suite=Realistic[+%20]TestNG[+%20]client[+%20]examples/)
   })
 })
