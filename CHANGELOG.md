@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Triaging failures"
+
+- **New `user-guide/triaging-failures.md`** — the daily triage loop across its three surfaces (Failure Analysis / My Failures / run detail), verified against the implementation: cluster-first triage, category distribution + uncategorised classification, the evidence-backed regression-vs-flaky verdict, the auto-assignment inbox with the real `TriageStatus` vocabulary (PENDING_REVIEW inbox; REVIEWED_APPROVED / DEFECT_CREATED / WONT_FIX / AUTOMATION_SCRIPT_ISSUE / FLAKY_TEST resolutions per migration 0088), reassignment (suite owner / QA engineer), the Mine-vs-Team scope gotcha (default-QA-lead auto-assignment), and the AI-correction loop (INCORRECT rating + corrected category → patches the record, evicts the semantic cache, applies by fingerprint on future analyses). Hands off to flaky-coach/quarantine and defect promotion. Indexed from the guide README.
+- Docs-loop iteration 3 (user-doc track).
+
 ### 2026-07-02 — Architecture docs: FLAKY_INTELLIGENCE.md (FLK P1-P6 subsystem)
 
 - **New `architecture/FLAKY_INTELLIGENCE.md`** — the flaky-detection subsystem shipped across FLK P1-P6 post-dates the architecture set (PR #242) and had no architecture doc. Covers, verified against the implementation: the four evidence layers (`flaky_signals` intermittency/signatures, `flaky_statistics` Wilson-CI, `ml/flaky_confidence` feature vector — distinct from the 6-class triage classifier, `flaky_step_flip` over the retained `test_step_runs` history), verdict assembly in `flaky_investigator.build_flaky_verdict` (evidence-weighted `{is_flaky, confidence, likely_cause_code, evidence[]}`), the sentinel's verdict-reconciled recommendation (`_reconcile_recommendation` and the regression-vs-flaky bug class it fixes), the audited quarantine state machine (propose→approve/reject/expire→release), and the step-flip read path (per-test + run roll-up endpoints, MCP `get_test_step_flips`, SWR panels). Three mermaid diagrams: component map, quarantine stateDiagram, step-flip read sequence. Indexed from `architecture/README.md`.

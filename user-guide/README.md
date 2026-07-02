@@ -9,7 +9,7 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | Guide | What it covers |
 |---|---|
 | [Getting results in](getting-results-in.md) | The four ways to feed TestLookup: dashboard upload, REST API, CLI, and live-streaming SDKs |
-| Triaging failures *(planned)* | Failure Analysis, clusters, AI explanations, assigning and resolving |
+| [Triaging failures](triaging-failures.md) | Failure Analysis, clusters, the My Failures inbox, resolution statuses, correcting the AI |
 | Flaky tests & quarantine *(planned)* | Flaky detection, the Flaky Coach, step-level flakiness, quarantine workflow |
 | Release gates & policies *(planned)* | GO / CONDITIONAL_GO / NO_GO verdicts, policy editor, overrides |
 | CLI & SDK reference *(planned)* | `testlookup` CLI commands, Python/Java/JS/Go reporters, MCP server |
