@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide track started: guide index + "Getting results in"
+
+- **New tracked `user-guide/` folder** — end-user documentation (QA engineers, SDETs, leads), distinct from operator docs (GETTING_STARTED) and internals (`architecture/`). `README.md` carries the core-concepts glossary (project/run/fingerprint/cluster/flaky/quarantine/release-gate/ownership), a navigation map of the dashboard grouped by area (verified against `App.tsx` routes), and the guide roadmap.
+- **First workflow guide: `getting-results-in.md`** — the four ingestion paths, verified against code: dashboard upload (`/runs?upload=1`, `manual_upload` flag), REST (`POST /api/v1/ingest` JSON batch + `/api/v1/ingest/file` multipart, both `202` async, formats junit/testng/allure/cypress/playwright + `auto` detection), the `testlookup` CLI (real command groups from `cli/testlookup_cli/app.py`), and the live-streaming SDKs (session → events → `run_complete`, heartbeat recovery). Includes the post-ingest pipeline (fingerprint → cluster → analyze → assign → gate) and a troubleshooting section drawn from real incident patterns.
+- Part of the iterative docs loop (alternating architecture/user-doc slices); next slices fill the planned guides in the index.
+
 ### 2026-07-02 — Design-audit palette-token ratchet: SuiteDetailPage tokenized
 
 - **`SuiteDetailPage.tsx` palette classes → theme tokens** — the coverage suite-detail analytics page (KPI cards, the `StatusBadge`, the per-test and recent-run tables, the flaky pill and the missing-detail warning box) carried 26 raw Tailwind palette classes that bypass the per-theme CSS-token system and read poorly on the light themes. Converted each by semantic role: passed/pass-rate-good greens → `--status-passed(-bg/-bd)`; failed/error/last-error reds → `--status-failed(-bg/-bd)`; broken-status, mid pass-rate, and the "per-test rows missing" warning box ambers+oranges → `--status-broken(-bg/-bd)`; skipped-count ambers → `--status-skipped(-bg/-bd)`; the flaky pill → `--status-flaky(-bg/-bd)`. The non-flagged Recharts hex `fill`/`stroke` chart values and the `cyan` avg-duration KPI are outside the restricted set and left unchanged. The file's `no-restricted-syntax` warn count drops from 26 to 0 (tree total 613 → 587).
