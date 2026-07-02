@@ -57,8 +57,8 @@ _DIMENSION_DESCRIPTIONS: dict[str, str] = {
         "High when fresh code changes introduced failures."
     ),
     "hist_recurrence": (
-        "Ratio of low-confidence analyses — tests that have been seen failing before. "
-        "High when known issues are recurring without resolution."
+        "Ratio of failing tests that are NOT new regressions — i.e. known issues "
+        "still failing from a prior run. High when unresolved failures recur."
     ),
     "blast_radius": (
         "Clusters spanning more than 3 tests plus overall failure breadth. "
@@ -111,9 +111,18 @@ def compute_dimension_scores(
     # 4. Regression likelihood: new regressions this run
     regression_likely = min(100.0, len(regression_tests) * 15 + (50 if is_regression else 0))
 
-    # 5. Historical recurrence: low-confidence analyses = previously seen failures
-    low_conf = sum(1 for a in analyses.values() if a.get("confidence_score", 100) < 40)
-    hist_recurrence = min(100.0, (low_conf / total_analysed) * 80)
+    # 5. Historical recurrence: failing tests this run that are NOT new
+    # regressions are, by definition, KNOWN/RECURRING failures (still failing
+    # from a prior run). ``regression_tests`` holds the new-failure test_case_ids
+    # (AnomalyAgent); the complement over the analysed failures is the recurrence
+    # set. This previously counted low-confidence analyses, which (a) DOUBLE-
+    # COUNTED the same AI-uncertainty signal already captured by ``diagnosis_conf``
+    # below — inflating composite risk through two weighted terms whenever the AI
+    # was merely unsure — and (b) contradicted this dimension's own definition
+    # ("known issues recurring"). It now measures actual recurrence.
+    new_regression_ids = {str(t) for t in (regression_tests or [])}
+    recurring = sum(1 for k in analyses if str(k) not in new_regression_ids)
+    hist_recurrence = min(100.0, (recurring / total_analysed) * 80)
 
     # 6. Blast radius: clusters spanning multiple test cases
     multi_suite_clusters = sum(1 for c in failure_clusters if c.get("size", 1) > 3)

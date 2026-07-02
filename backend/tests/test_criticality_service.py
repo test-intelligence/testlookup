@@ -105,6 +105,55 @@ class TestComputeDimensionScores:
         )
         assert with_reg["regression_likely"] > no_reg["regression_likely"]
 
+    # ── hist_recurrence now measures ACTUAL recurrence, not AI confidence ──────
+
+    def test_hist_recurrence_measures_known_recurring_failures(self):
+        """Failing tests that are NOT new regressions are recurring/known
+        failures. All-new → 0 recurrence; none-new → full recurrence."""
+        analyses = _minimal_analyses(n_product_bugs=3, n_flaky=0)  # tc_0, tc_1, tc_2
+        base = dict(anomalies=[], pass_rate=80.0, is_regression=False,
+                    failure_clusters=[], open_defects=0)
+        # Every failure is a brand-new regression → nothing is recurring.
+        all_new = compute_dimension_scores(
+            analyses=analyses, regression_tests=["tc_0", "tc_1", "tc_2"], **base,
+        )
+        assert all_new["hist_recurrence"] == 0.0
+        # No new regressions → every failure is a known/recurring one.
+        none_new = compute_dimension_scores(
+            analyses=analyses, regression_tests=[], **base,
+        )
+        assert none_new["hist_recurrence"] > all_new["hist_recurrence"]
+        # Half new → partial recurrence, between the two extremes.
+        some_new = compute_dimension_scores(
+            analyses=analyses, regression_tests=["tc_0"], **base,
+        )
+        assert all_new["hist_recurrence"] < some_new["hist_recurrence"] < none_new["hist_recurrence"]
+
+    def test_hist_recurrence_no_longer_tracks_ai_confidence(self):
+        """Regression for the double-count bug: hist_recurrence and diagnosis_conf
+        both used to rise with low AI confidence, counting uncertainty into risk
+        twice. hist_recurrence must now be INDEPENDENT of confidence — only
+        diagnosis_conf reflects AI uncertainty."""
+        from app.models.postgres import FailureCategory
+
+        def _analyses(conf: int) -> dict:
+            return {
+                "tc_0": {"failure_category": FailureCategory.PRODUCT_BUG,
+                         "is_flaky": False, "confidence_score": conf},
+                "tc_1": {"failure_category": FailureCategory.PRODUCT_BUG,
+                         "is_flaky": False, "confidence_score": conf},
+            }
+
+        base = dict(anomalies=[], pass_rate=80.0, is_regression=False,
+                    regression_tests=[], failure_clusters=[], open_defects=0)
+        low = compute_dimension_scores(analyses=_analyses(15), **base)
+        high = compute_dimension_scores(analyses=_analyses(95), **base)
+        # Same failures, same recurrence structure → identical hist_recurrence,
+        # regardless of AI confidence.
+        assert low["hist_recurrence"] == high["hist_recurrence"]
+        # But diagnosis_conf still (correctly) reflects the uncertainty.
+        assert low["diagnosis_conf"] > high["diagnosis_conf"]
+
 
 # ── compute_composite ────────────────────────────────────────────────────────
 
