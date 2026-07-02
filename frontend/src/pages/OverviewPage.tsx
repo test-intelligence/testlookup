@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, Play, TrendingUp,
+  ArrowRight, CheckCircle, Clock, HelpCircle, LayoutGrid, TrendingUp,
 } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -141,15 +141,6 @@ function gateLabel(v: Verdict): string {
     : 'Pending'
 }
 
-function readinessConfidence(v: Verdict, passRate: number): { pct: number; label: string } {
-  // Backend doesn't expose a confidence value yet — derive a sensible proxy
-  // from the pass-rate, with the verdict bucket clamping floor/ceiling.
-  if (v === 'PENDING') return { pct: 0, label: 'no data' }
-  if (v === 'NO_GO')   return { pct: Math.max(20, Math.min(45, Math.round(passRate))), label: 'low' }
-  if (v === 'CONDITIONAL') return { pct: Math.max(50, Math.min(75, Math.round(passRate))), label: 'moderate' }
-  if (v === 'WATCH')   return { pct: Math.max(75, Math.min(92, Math.round(passRate))), label: 'good' }
-  return { pct: Math.max(92, Math.min(100, Math.round(passRate))), label: 'high' }
-}
 
 // ── Sparkline ────────────────────────────────────────────────────────────
 type SparkTone = 'good' | 'warn' | 'bad' | 'neutral'
@@ -284,24 +275,23 @@ interface VerdictCardProps {
   windowDays: number
   generatedLabel: string
   passRate: number
-  onViewEvidence: () => void
-  canOverrideGate: boolean
 }
 
 function VerdictCard({
   verdict, newFailures24h, newFailuresDelta, totalExecutions, windowDays,
-  generatedLabel, passRate, onViewEvidence, canOverrideGate,
+  generatedLabel, passRate,
 }: VerdictCardProps) {
   const t = VERDICT_THEME[verdict]
   const gate = gateLabel(verdict)
-  const conf = readinessConfidence(verdict, passRate)
+  // Real, weighted pass rate for the window — clamped for the meter width.
+  const passRatePct = Math.min(100, Math.max(0, Math.round(passRate)))
 
   const lede = verdict === 'PENDING' ? (
     <>No test executions in the last {windowDays} days — readiness will assess once data lands in <code className="font-mono text-[12px]">release</code>.</>
   ) : verdict === 'NO_GO' ? (
-    <>{newFailures24h} new failure{newFailures24h === 1 ? '' : 's'} in the last 24 h on a workflow that completed with low readiness confidence. Resolve the failures or override before merging to <code className="font-mono text-[12px]">release</code>.</>
+    <>{newFailures24h} new failure{newFailures24h === 1 ? '' : 's'} in the last 24 h on a run that completed with failures still open. Resolve the failures or override before merging to <code className="font-mono text-[12px]">release</code>.</>
   ) : verdict === 'CONDITIONAL' ? (
-    <>Some quality criteria need attention — readiness is moderate. Verify the warning evidence before merging to <code className="font-mono text-[12px]">release</code>.</>
+    <>Some quality criteria need attention. Verify the warning evidence before merging to <code className="font-mono text-[12px]">release</code>.</>
   ) : (
     <>All quality gates passed across {totalExecutions} run{totalExecutions === 1 ? '' : 's'} in the last {windowDays} days. Safe to merge to <code className="font-mono text-[12px]">release</code>.</>
   )
@@ -319,8 +309,8 @@ function VerdictCard({
        : newFailuresDelta > 0 ? `(was ${Math.max(newFailures24h - newFailuresDelta, 0)})`
        : `(▼ ${Math.abs(newFailuresDelta)})`)
 
-  const reason2Value = verdict === 'PENDING' ? '—' : `${conf.pct}%`
-  const reason2Sub = verdict === 'PENDING' ? '(awaiting runs)' : conf.label
+  const reason2Value = verdict === 'PENDING' ? '—' : `${passRatePct}%`
+  const reason2Sub = verdict === 'PENDING' ? '(awaiting runs)' : `weighted · ${windowDays}d`
   const reason3Value = `${totalExecutions}`
   const reason3Sub = `runs / ${windowDays} days`
 
@@ -369,18 +359,18 @@ function VerdictCard({
             className="text-[26px] font-bold tabular-nums leading-none"
             style={{ color: t.meterValue, letterSpacing: '-0.02em' }}
           >
-            {verdict === 'PENDING' ? '—' : `${conf.pct}%`}
+            {verdict === 'PENDING' ? '—' : `${passRatePct}%`}
           </div>
           <div
             className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]"
             style={{ letterSpacing: 'var(--tracking-wider)' }}
           >
-            Readiness
+            Pass rate
           </div>
           <div className="w-[110px] h-1 rounded-full mt-1" style={{ background: t.meterTrack }}>
             <div
               className="h-full rounded-full transition-[width] duration-300"
-              style={{ width: `${verdict === 'PENDING' ? 0 : conf.pct}%`, background: t.meterFill }}
+              style={{ width: `${verdict === 'PENDING' ? 0 : passRatePct}%`, background: t.meterFill }}
             />
           </div>
         </div>
@@ -388,37 +378,16 @@ function VerdictCard({
 
       <div className="grid grid-cols-3 gap-2.5">
         <ReasonCard label="New failures · 24h" value={reason1Value} sub={reason1Sub} tone={reason1Tone} />
-        <ReasonCard label="Readiness confidence" value={reason2Value} sub={reason2Sub} tone={reason2Tone} />
+        <ReasonCard label="Pass rate" value={reason2Value} sub={reason2Sub} tone={reason2Tone} />
         <ReasonCard label="Sample size" value={reason3Value} sub={reason3Sub} tone="neutral" />
       </div>
 
-      <div className="flex flex-row items-center justify-between gap-2.5 flex-wrap">
-        <div className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
-          <Clock className="h-3.5 w-3.5" />
-          <span>
-            Verdict generated {generatedLabel} by{' '}
-            <span className="font-medium text-[var(--color-text-secondary)]">Quality workflow</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onViewEvidence}
-            className="px-3 py-1.5 text-[13px] rounded-md border text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-            style={{ borderColor: 'var(--color-border)' }}
-          >
-            View evidence
-          </button>
-          {canOverrideGate && (
-            <button
-              type="button"
-              className="px-3 py-1.5 text-[13px] rounded-md border transition-colors"
-              style={{ color: '#fca5a5', borderColor: 'rgba(239,68,68,0.35)' }}
-            >
-              Override gate
-            </button>
-          )}
-        </div>
+      <div className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+        <Clock className="h-3.5 w-3.5" />
+        <span>
+          Verdict generated {generatedLabel} by{' '}
+          <span className="font-medium text-[var(--color-text-secondary)]">Quality workflow</span>
+        </span>
       </div>
     </div>
   )
@@ -457,7 +426,6 @@ interface RibbonStage {
   state: RibbonStageState
   pillText: string
   pillTone: 'accent' | 'red'
-  duration: string
   /**
    * Route the card navigates to when clicked. The cards were styled as
    * ``cursor-pointer`` + ``tabIndex={0}`` for months but had no handler —
@@ -474,38 +442,38 @@ function buildRibbonStages(
 ): RibbonStage[] {
   const verdict = mapReadinessToVerdict(summary?.release_readiness_band, summary?.release_readiness, totalExecutions)
   const passRateRaw = (summary?.avg_pass_rate_7d?.value as number | undefined) ?? 0
-  const conf = readinessConfidence(verdict, passRateRaw)
   const newFailures = (summary?.new_failures_24h?.value as number | undefined) ?? 0
   const flaky = (summary?.flaky_test_count?.value as number | undefined) ?? 0
   const defects = (summary?.active_defects?.value as number | undefined) ?? 0
 
   if (totalExecutions <= 0) {
     return [
-      { name: 'Quality Snapshot', state: 'pending', desc: `No runs captured in ${days} days`, pillText: 'awaiting data', pillTone: 'accent', duration: '—', linkTo: '/runs' },
-      { name: 'Readiness Check',  state: 'pending', desc: 'Need ≥ 1 run to assess',           pillText: 'pending',       pillTone: 'accent', duration: '—', linkTo: '/release-gate' },
-      { name: 'Trend Analysis',   state: 'pending', desc: 'No baseline yet',                   pillText: 'pending',       pillTone: 'accent', duration: '—', linkTo: '/trends' },
-      { name: 'Action Focus',     state: 'pending', desc: 'No actions queued',                 pillText: 'pending',       pillTone: 'accent', duration: '—', linkTo: '/failures' },
+      { name: 'Quality Snapshot', state: 'pending', desc: `No runs captured in ${days} days`, pillText: 'awaiting data', pillTone: 'accent', linkTo: '/runs' },
+      { name: 'Readiness Check',  state: 'pending', desc: 'Need ≥ 1 run to assess',           pillText: 'pending',       pillTone: 'accent', linkTo: '/release-gate' },
+      { name: 'Trend Analysis',   state: 'pending', desc: 'No baseline yet',                   pillText: 'pending',       pillTone: 'accent', linkTo: '/trends' },
+      { name: 'Action Focus',     state: 'pending', desc: 'No actions queued',                 pillText: 'pending',       pillTone: 'accent', linkTo: '/failures' },
     ]
   }
 
   const actionCount = newFailures + flaky
+  // Pill text is a short, REAL status token per stage (no fabricated evidence
+  // counts / stage durations — the dashboard has no per-stage timing or
+  // evidence-count signal to report).
   return [
     {
       name: 'Quality Snapshot',
       state: 'done',
       desc: `Capture current state — ${totalExecutions} run${totalExecutions === 1 ? '' : 's'} / ${defects} active defect${defects === 1 ? '' : 's'}`,
-      pillText: '1 evidence',
+      pillText: `${totalExecutions} run${totalExecutions === 1 ? '' : 's'}`,
       pillTone: 'accent',
-      duration: '1.2s',
       linkTo: '/runs',
     },
     {
       name: 'Readiness Check',
       state: verdict === 'GO' ? 'done' : 'warn',
-      desc: `Assess release fitness — ${conf.pct}% confidence (${conf.label})`,
-      pillText: '1 evidence',
+      desc: `Assess release fitness — ${Math.round(passRateRaw)}% pass rate over ${days}d`,
+      pillText: gateLabel(verdict),
       pillTone: verdict === 'GO' ? 'accent' : 'red',
-      duration: '3.4s',
       linkTo: '/release-gate',
     },
     {
@@ -514,9 +482,8 @@ function buildRibbonStages(
       desc: totalExecutions < 3
         ? `Sparse data — ${totalExecutions} day${totalExecutions === 1 ? '' : 's'} vs ${days}-day baseline`
         : `${totalExecutions} runs vs ${days}-day baseline`,
-      pillText: '1 evidence',
+      pillText: `${days}d baseline`,
       pillTone: 'accent',
-      duration: '0.8s',
       linkTo: '/trends',
     },
     {
@@ -528,9 +495,8 @@ function buildRibbonStages(
             flaky > 0 ? `${flaky} flake` : '',
           ].filter(Boolean).join(', ')}`
         : 'No actions required',
-      pillText: `${Math.max(actionCount, 1)} evidence`,
-      pillTone: 'accent',
-      duration: '1.6s',
+      pillText: actionCount > 0 ? `${actionCount} to fix` : 'clear',
+      pillTone: actionCount > 0 ? 'red' : 'accent',
       linkTo: '/failures',
     },
   ]
@@ -590,14 +556,13 @@ function StageCard({ stage }: { stage: RibbonStage }) {
       <p className="text-[11px] m-0 text-[var(--color-text-muted)]" style={{ lineHeight: 1.35 }}>
         {stage.desc}
       </p>
-      <div className="flex items-center justify-between mt-auto text-[11px] text-[var(--color-text-muted)]">
+      <div className="flex items-center mt-auto text-[11px] text-[var(--color-text-muted)]">
         <span
           className="rounded-full px-1.5 py-px font-medium"
           style={{ background: pill.bg, color: pill.fg, fontSize: 10.5 }}
         >
           {stage.pillText}
         </span>
-        <span className="tabular-nums">{stage.duration}</span>
       </div>
     </Link>
   )
@@ -1039,17 +1004,6 @@ export default function OverviewPage() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors"
-            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
-            onClick={() => { /* placeholder: wire to workflow trigger */ }}
-          >
-            <Play className="h-3.5 w-3.5" />
-            Run quality workflow
-          </button>
         </div>
       </div>
 
@@ -1069,8 +1023,6 @@ export default function OverviewPage() {
               windowDays={days}
               generatedLabel={generatedLabel}
               passRate={passRate}
-              onViewEvidence={() => { /* TODO: wire to evidence drawer */ }}
-              canOverrideGate={false}
             />
           </SectionErrorBoundary>
         )}
@@ -1093,26 +1045,7 @@ export default function OverviewPage() {
                     {totalExecutions > 0 ? 'Completed' : 'Awaiting'}
                   </span>
                   <span>· {ribbonStages.length} stages</span>
-                  <span>· {totalExecutions > 0 ? '5 evidence items' : '0 evidence items'}</span>
-                  <span>· $0.31</span>
                 </div>
-              </div>
-              <div
-                className="flex items-center gap-0.5 p-0.5 rounded-md text-[12px]"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-              >
-                <button
-                  type="button"
-                  className="px-2 py-0.5 rounded-sm bg-[var(--color-bg-card)] text-[var(--color-text)] shadow-[var(--shadow-sm)]"
-                >
-                  Compact
-                </button>
-                <button
-                  type="button"
-                  className="px-2 py-0.5 rounded-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                >
-                  Detail
-                </button>
               </div>
             </div>
             <div className="mt-4 flex items-center gap-1.5 overflow-x-auto pb-1">

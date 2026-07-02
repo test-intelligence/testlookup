@@ -118,4 +118,46 @@ describe('OverviewPage', () => {
     expect(await screen.findByText(/\bPending\b/)).toBeInTheDocument()
     expect(screen.queryByText(/Critical issues must be resolved/i)).toBeNull()
   })
+
+  it('does not render fabricated cost/evidence/duration literals or dead CTAs', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 120 },
+        avg_pass_rate_7d: { value: 91.5 },
+        active_defects: { value: 4 },
+        flaky_test_count: { value: 2 },
+        new_failures_24h: { value: 3 },
+        avg_duration_ms: { value: 180000 },
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-04-02', passed: 91, failed: 4, skipped: 1, broken: 0, pass_rate: 94 }] },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findAllByText(/Quality workflow/i)
+    // Fabricated ribbon literals must be gone (the dashboard has no real
+    // per-run cost / evidence-count / stage-duration signal to report).
+    expect(screen.queryByText(/\$0\.31/)).toBeNull()
+    expect(screen.queryByText(/evidence items/i)).toBeNull()
+    // The invented "readiness confidence %" is replaced by the real pass rate.
+    expect(screen.queryByText(/Readiness confidence/i)).toBeNull()
+    expect(screen.getAllByText(/^Pass rate$/i).length).toBeGreaterThan(0)
+    // Dead CTAs (no-op handlers) are removed, not shipped as inert buttons.
+    expect(screen.queryByRole('button', { name: /Run quality workflow/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /View evidence/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
+  })
 })
