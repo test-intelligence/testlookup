@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Flaky tests & quarantine"
+
+- **New `user-guide/flaky-tests.md`** — the flaky workflow from the user side: flaky-as-verdict (regression-vs-flaky distinction, why regressions never get quarantine proposals), the surfaces (Flaky Coach incl. its specific-project requirement, the per-test "Cross-Run Step Flakiness" panel with its insufficient-history/stable states, the run-level roll-up, MCP `get_test_step_flips`), and the reviewed quarantine lifecycle as the /quarantine page presents it (Awaiting review / Active / Released / Rejected-expired; excluded from the gate signal only — tests keep running and recording; every transition audited), plus an operating rhythm and fix-the-step guidance. Indexed from the guide README.
+- Docs-loop iteration 7 (user-doc track).
+
 ### 2026-07-02 — Architecture docs: AI_QUALITY.md (cache, corrections, evidence integrity)
 
 - **New `architecture/AI_QUALITY.md`** — the AIQ mechanisms that keep the AI layer honest over time, verified against the implementation: the per-project tenant-scoped semantic cache (`semantic_cache.py` signature build / lookup / store / invalidate), the human-correction learning loop (`analysis_corrections.get_corrections_for_fingerprints` one batched project-scoped query + `build_corrected_analysis` short-circuit before rules/ML/LLM with `human_corrected` provenance; `feedback_service` → exact-signature cache invalidation), real-signal evidence grading (`_grade_anomaly_evidence` / `_grade_trace_evidence` replacing the fixed medium/80), and cluster integrity (`_MAX_NEIGHBOR_QUERY=100`, pure `_cluster_from_neighbours`, logged-not-silent truncation). Two mermaid diagrams (correction-loop sequence, precedence flow: correction > cache > routed computation). Indexed from the README; cross-linked to RELEASE_GATE / FLAKY_INTELLIGENCE / the user guide.
