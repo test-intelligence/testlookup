@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Release gates & policies"
+
+- **New `user-guide/release-gates.md`** — the user-side companion to `architecture/RELEASE_GATE.md`: what GO / CONDITIONAL_GO / NO_GO mean, reading the Release Gate page (decision flow, Risk Dimension Breakdown, PDF/share), the plain-language computation model (BLOCK/WARN/INFO rule folding, fail-closed pass-rate band floor, honest recurrence dimension, quarantine exclusion), configuring policies at /policies (thresholds/weights/rules/bands, effective-policy fallback, WARN-then-promote guidance), reasoned+audited overrides that never erase the computed verdict, and gating a CI pipeline via API/CLI. Indexed from the guide README.
+- Docs-loop iteration 5 (user-doc track).
+
 ### 2026-07-02 — Architecture docs: RELEASE_GATE.md (verdict decision architecture)
 
 - **New `architecture/RELEASE_GATE.md`** — how a run becomes GO / CONDITIONAL_GO / NO_GO, verified against the implementation: the input signals (pass-rate bands via `classify_with_policy`, `criticality_service` weighted risk dimensions incl. the real-recurrence `hist_recurrence`, flaky verdicts + active-quarantine exclusion, failure clusters), the policy layer (`resolve_effective_policy` → `evaluate_policy`, monotonic-downward rule folding), the release council (`assemble_input_snapshot` determinism, `DIMENSION_METADATA` score×weight contributions, `_apply_band_floor` fail-closed floor + the CONDITIONAL↔CONDITIONAL_GO vocabulary seam, `_worse_verdict` composition, reasoned+audited `apply_override`), and the adjacent agent-stack gate (`eval_gate_service` manifests). One mermaid decision-flow diagram; indexed from the README.
