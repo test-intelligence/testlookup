@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: DEPLOYMENT.md (topologies)
+
+- **New `architecture/DEPLOYMENT.md`** — consolidates the deployment story that was scattered across compose files, k8s overlays, and workflows, verified against the tree: the five compose variants (dev source-build, pinned-image `release` with demo/local-llm profiles + install.sh, dev-lite, gcp-vm, monitoring), the Kustomize base (incl. the workers-subscribe-to-all-shards invariant) with its nine overlays (env tiers, GKE/EKS/AKS, homelab NodePort-30500 agreement, air-gapped openshift-artifactory, self-hosted), the CI/CD pipelines (ci.yml merge gate + latest/sha images; release.yml semver + SBOM/provenance/digests; per-cloud deploys), and environment realities (TLS-interception CA injection, deploy-target-agnostic frontend, default ports). A choosing-a-topology matrix up front. Indexed from the README; cross-linked to SECURITY/INGESTION_SCALE/GETTING_STARTED.
+- Docs-loop iteration 13 (architecture track; third pass).
+
 ### 2026-07-02 — User Guide: "AI features" — docs loop concludes with both tracks comprehensive
 
 - **New `user-guide/ai-features.md`** — the AI surfaces from the user side, verified against the pages: the Intelligence Hub (cross-run insights + visible Intelligence spend) and Run Intelligence reports, Deep Investigation (tunable clustering threshold, per-cluster confidence, auto-draft defects / auto-create Jira, browsable past investigations), the Agent Pipeline page (queue the standard pipeline per run, Workflow Progress, Executive Summary), Ask AI chat, and the AI settings/evaluation pages — framed by the two governing rules (offline-by-default with graceful LLM→ML→rules degradation; provenance on every verdict) and a works-with-what matrix.

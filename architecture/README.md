@@ -11,6 +11,7 @@
 > - **[AI_QUALITY.md](./AI_QUALITY.md)** — the mechanisms that keep the AI layer honest: semantic cache, the human-correction learning loop, evidence grading, cluster integrity.
 > - **[INGESTION_SCALE.md](./INGESTION_SCALE.md)** — ingestion under load: admission gates, shard queues, buffer caps + the drainer, DLQ/recovery, and AI cost controls.
 > - **[SECURITY.md](./SECURITY.md)** — identity, the authz guard family + HMAC-signed membership cache, tenancy layers, secure-by-default deployment, offline-first, audit.
+> - **[DEPLOYMENT.md](./DEPLOYMENT.md)** — the topologies: compose variants, the release-image path, k8s base + per-target overlays, CI/CD pipelines, environment gotchas.
 >
 > The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) is the short, marketing-adjacent
 > overview; this folder is the detailed engineering reference.
