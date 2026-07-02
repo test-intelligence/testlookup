@@ -499,8 +499,11 @@ function ReassignModal({
   }
 
   // Combined list for rendering — suite owner labelled, engineers grouped.
+  // Capture suite_owner once so the onSelect closure narrows it to non-null
+  // without a non-null assertion.
+  const suiteOwner = options?.suite_owner
   const hasAny = options
-    ? Boolean(options.suite_owner) || options.qa_engineers.length > 0
+    ? Boolean(suiteOwner) || options.qa_engineers.length > 0
     : false
 
   return (
@@ -550,12 +553,12 @@ function ReassignModal({
         ) : (
           <>
             <div role="radiogroup" aria-label="New assignee" className="space-y-1 max-h-[280px] overflow-y-auto">
-              {options?.suite_owner && (
+              {suiteOwner && (
                 <ReassignChoice
-                  option={options.suite_owner}
+                  option={suiteOwner}
                   badge="Suite owner"
-                  checked={selectedUserId === options.suite_owner.user_id}
-                  onSelect={() => setPicked(options.suite_owner!.user_id)}
+                  checked={selectedUserId === suiteOwner.user_id}
+                  onSelect={() => setPicked(suiteOwner.user_id)}
                 />
               )}
               {options?.qa_engineers.map(eng => (

@@ -262,7 +262,9 @@ describe('MyFailuresPage', () => {
     renderPage()
 
     const row = await screen.findByText('test_a')
-    fireEvent.click(row.closest('tr')!)
+    const tr = row.closest('tr')
+    if (!tr) throw new Error('test_a row has no <tr> ancestor')
+    fireEvent.click(tr)
 
     // The router renders RUN PAGE for /runs/:rid/tests/:cid.
     expect(await screen.findByText('RUN PAGE')).toBeInTheDocument()
