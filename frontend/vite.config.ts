@@ -25,10 +25,18 @@ export default defineConfig({
     sourcemap: process.env.NODE_ENV !== 'production',
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['recharts', 'd3'],
-          ui: ['lucide-react', '@radix-ui/react-dialog'],
+        // vite 8 bundles with rolldown, which only accepts the function form
+        // of manualChunks (the object form fails the build with "manualChunks
+        // is not a function"). Same vendor/charts/ui grouping as the previous
+        // object form.
+        manualChunks(id: string) {
+          // Normalize Windows separators so one pattern covers both.
+          const nid = id.split('\\').join('/')
+          if (!nid.includes('/node_modules/')) return undefined
+          if (/\/node_modules\/(react|react-dom|react-router-dom)\//.test(nid)) return 'vendor'
+          if (/\/node_modules\/(recharts|d3)\//.test(nid)) return 'charts'
+          if (/\/node_modules\/(lucide-react|@radix-ui\/react-dialog)\//.test(nid)) return 'ui'
+          return undefined
         },
       },
     },

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — deps: vite 6→8 + @vitejs/plugin-react 4→6 (coordinated major bump)
+
+- **Coordinated frontend tooling bump** — supersedes Dependabot #263 (vite 8.1.0) and #266 (@vitejs/plugin-react 6.0.3), which each failed CI with a mutual `ERESOLVE`: plugin-react 4 peers vite ≤6 while vite 8 needs plugin-react 6, so neither could land alone. Bumped together with a single regenerated lockfile (vitest 4.1.5 already peers vite ^8; the lock shrinks ~900 lines as vite 8 replaces esbuild/rollup with rolldown).
+- **One config migration** — vite 8 bundles with **rolldown**, which only accepts the *function* form of `build.rollupOptions.output.manualChunks` (the object form fails the build with "manualChunks is not a function"). `vite.config.ts` converts the vendor/charts/ui object mapping to an equivalent function.
+- **Validated locally** — `tsc --noEmit`, eslint, `vite build` (chunks emit under the same vendor/charts/ui names), and the full vitest suite green with the new toolchain.
+
 ### 2026-07-02 — Design-audit Phase 1 quick wins: keyboard-reachable profile menu, honest metric trends, tokenized badges, palette-class lint guard
 
 - **Accessibility fix (audit 1.4, `TopBar.tsx`)** — the profile dropdown opened via CSS `group-hover` only: no click handler, no `aria-expanded`, no keyboard path — **Sign out was unreachable by keyboard or touch**. It is now a real disclosure widget mirroring the notification bell: `<button aria-haspopup="menu" aria-expanded>` trigger, click toggles, outside-click and Escape close, menu carries `role="menu"`/`menuitem`.
