@@ -21,7 +21,7 @@ pymongo==4.17.0          # Must stay <4.11 to match motor 3.7.0 constraint
 aioboto3==13.2.0
 
 # ── Validation & Settings ────────────────────────────────────
-pydantic==2.10.3
+pydantic==2.13.4
 pydantic-settings==2.6.1
 email-validator==2.3.0
 
