@@ -72,9 +72,9 @@ interface ShippingItem { release: DerivedRelease; relDays: number; label: string
 export function ShippingThisWeek({ releases, onOpen }: { releases: DerivedRelease[]; onOpen: (id: string) => void }) {
   const today = new Date()
   const items: ShippingItem[] = releases
-    .filter(r => r.dueAt && r.stage === 'in_progress')
+    .filter((r): r is DerivedRelease & { dueAt: string } => Boolean(r.dueAt) && r.stage === 'in_progress')
     .map(r => {
-      const d = new Date(r.dueAt!)
+      const d = new Date(r.dueAt)
       const rel = daysBetween(d, today)
       const label = rel === 0 ? 'Today' : rel === 1 ? 'Tmr' : d.toLocaleDateString(undefined, { weekday: 'short' })
       return { release: r, relDays: rel, label }

@@ -1982,8 +1982,8 @@ export default function FailureAnalysisPage() {
       n > 0 && n < 1 ? `${n.toFixed(1)}%` : `${Math.round(n)}%`
     )
 
-    const headline = perTestRatePct !== null
-      ? <><strong>{fmtPct(perTestRatePct)} failure rate</strong> on <code>{t.test_name}</code> — failed {t.fail_count} of {flakyMatch!.total_runs} executions.</>
+    const headline = perTestRatePct !== null && flakyMatch
+      ? <><strong>{fmtPct(perTestRatePct)} failure rate</strong> on <code>{t.test_name}</code> — failed {t.fail_count} of {flakyMatch.total_runs} executions.</>
       // Drop the misleading denominator when we don't actually know this
       // test's run count. Lead with the count + share so the user gets
       // an actionable signal rather than a fake-precise rate.
