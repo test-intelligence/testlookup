@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type ElementType } from 'react'
+import { Fragment, useMemo, useState, type ElementType } from 'react'
 import {
   AlertCircle,
   AlertTriangle,
@@ -358,8 +358,8 @@ const STAGE_META: Record<string, StageMeta> = {
 const STATUS_META: Record<string, { label: string; icon: ElementType; cls: string }> = {
   pending: { label: 'Pending', icon: Clock3, cls: 'text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]/70 border-[var(--color-border)]' },
   running: { label: 'Running', icon: RefreshCw, cls: 'text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)]/40 border-[var(--color-border-light)]' },
-  completed: { label: 'Done', icon: CheckCircle2, cls: 'text-emerald-300 bg-emerald-950/20 border-emerald-700/40' },
-  failed: { label: 'Failed', icon: XCircle, cls: 'text-red-300 bg-red-950/20 border-red-700/40' },
+  completed: { label: 'Done', icon: CheckCircle2, cls: 'text-[var(--status-passed)] bg-[var(--status-passed-bg)] border-[var(--status-passed-bd)]' },
+  failed: { label: 'Failed', icon: XCircle, cls: 'text-[var(--status-failed)] bg-[var(--status-failed-bg)] border-[var(--status-failed-bd)]' },
   skipped: { label: 'Skipped', icon: ChevronRight, cls: 'text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]/80 border-[var(--color-border)]' },
 }
 
@@ -408,14 +408,14 @@ function eventLabel(event: WorkflowEventNode): string {
 
 function EventIcon({ event }: { event: WorkflowEventNode }) {
   const type = event.event_type
-  if (type === 'stage_completed' || type === 'pipeline_completed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-  if (type === 'stage_failed') return <XCircle className="h-3.5 w-3.5 text-red-400" />
+  if (type === 'stage_completed' || type === 'pipeline_completed') return <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)]" />
+  if (type === 'stage_failed') return <XCircle className="h-3.5 w-3.5 text-[var(--status-failed)]" />
   if (type === 'stage_skipped') return <ChevronRight className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
   if (type === 'stage_started') return <ArrowRight className="h-3.5 w-3.5 text-[var(--color-text)]" />
   if (type === 'llm_called') return <Bot className="h-3.5 w-3.5 text-violet-400" />
   if (type === 'tool_invoked') return <Cpu className="h-3.5 w-3.5 text-cyan-400" />
-  if (type === 'cache_hit') return <Database className="h-3.5 w-3.5 text-emerald-400" />
-  if (type === 'checkpoint_restored') return <Shield className="h-3.5 w-3.5 text-amber-400" />
+  if (type === 'cache_hit') return <Database className="h-3.5 w-3.5 text-[var(--status-passed)]" />
+  if (type === 'checkpoint_restored') return <Shield className="h-3.5 w-3.5 text-[var(--status-broken)]" />
   return <AlertCircle className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
 }
 
@@ -464,10 +464,10 @@ function StageNode({
               <span className={clsx(
                 'badge text-[10px]',
                 stage.confidence_score >= 80
-                  ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40'
+                  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
                   : stage.confidence_score >= 50
-                    ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'
-                    : 'bg-red-900/30 text-red-300 border-red-700/40',
+                    ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
+                    : 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border-[var(--status-failed-bd)]',
               )}>
                 {stage.confidence_score}% confidence
               </span>
@@ -483,7 +483,7 @@ function StageNode({
               </span>
             )}
             {stage.cost_usd != null && stage.cost_usd > 0 && (
-              <span className="badge bg-amber-900/20 text-amber-300 border border-amber-700/30 text-[10px]">
+              <span className="badge bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)] text-[10px]">
                 ${stage.cost_usd.toFixed(4)}
               </span>
             )}
@@ -492,7 +492,7 @@ function StageNode({
             <p className="mt-2 text-xs text-[var(--color-text-muted)] italic">{stage.skipped_reason}</p>
           )}
           {stage.error && !compact && (
-            <p className="mt-2 text-xs text-red-300 bg-red-950/30 border border-red-800/30 rounded-lg px-2.5 py-1.5">
+            <p className="mt-2 text-xs text-[var(--status-failed)] bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)] rounded-lg px-2.5 py-1.5">
               {stage.error}
             </p>
           )}
@@ -777,7 +777,7 @@ export default function WorkflowTimeline({
               )}
 
               {selectedStage.error && (
-                <div className="rounded-xl border border-red-800/30 bg-red-950/30 p-3 text-sm text-red-200">
+                <div className="rounded-xl border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]">
                   {selectedStage.error}
                 </div>
               )}

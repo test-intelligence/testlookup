@@ -76,6 +76,49 @@ describe('WorkflowTimeline', () => {
     expect(screen.getAllByText(/Delivering the report/i).length).toBeGreaterThan(0)
   })
 
+  // Regression: status, confidence, cost, event-feed, and error surfaces use
+  // per-theme CSS tokens (--status-*) instead of raw Tailwind palette classes,
+  // so they stay legible in the light themes. Pins the palette-token ratchet
+  // for this component (no text-/bg-/border-emerald|red|amber leaks).
+  it('renders status surfaces with theme tokens, not raw palette classes', () => {
+    const { container } = render(
+      <WorkflowTimeline
+        showInspector
+        showEventFeed
+        stages={[
+          {
+            stage_name: 'analysis',
+            status: 'completed',
+            label: 'Analysis',
+            confidence_score: 92,
+            cost_usd: 0.01,
+          },
+          {
+            stage_name: 'delivery',
+            status: 'failed',
+            label: 'Delivery',
+            error: 'Delivery failed',
+            confidence_score: 30,
+          },
+        ]}
+        stageOrder={['analysis', 'delivery']}
+        events={[
+          { event_type: 'stage_completed', stage_name: 'analysis', timestamp: '2026-04-01T10:00:00Z' },
+          { event_type: 'stage_failed', stage_name: 'delivery', timestamp: '2026-04-01T10:00:01Z' },
+          { event_type: 'cache_hit', stage_name: 'analysis', timestamp: '2026-04-01T10:00:02Z' },
+          { event_type: 'checkpoint_restored', stage_name: 'analysis', timestamp: '2026-04-01T10:00:03Z' },
+        ]}
+      />,
+    )
+
+    const html = container.innerHTML
+    expect(html).toContain('var(--status-passed)')
+    expect(html).toContain('var(--status-failed)')
+    expect(html).toContain('var(--status-broken)')
+    // No converted raw palette classes should survive for these status roles.
+    expect(html).not.toMatch(/(text|bg|border)-(emerald|red|amber)-\d/)
+  })
+
   it('respects a custom stage order for synthesized workflows', () => {
     render(
       <WorkflowTimeline

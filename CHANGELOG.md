@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Design-audit palette-token ratchet: WorkflowTimeline tokenized
+
+- **`WorkflowTimeline.tsx` palette classes → theme tokens** — the workflow DAG component had 12 raw Tailwind palette classes (`text-emerald-300`/`bg-red-950`/`border-amber-700`/…) that bypass the per-theme CSS-token system and read poorly on the light themes. Converted each by semantic role: completed/cache-hit status and high-confidence badges → `--status-passed(-bg/-bd)`; failed status, stage-error surfaces, and low-confidence badges → `--status-failed(-bg/-bd)`; checkpoint-restored, mid-confidence, and cost badges → `--status-broken(-bg/-bd)`. Non-status accents (cyan/violet/indigo) are outside the restricted set and left unchanged. Also dropped a dead `useEffect` import. The file's `no-restricted-syntax` warn count drops from 12 to 0.
+- **Regression coverage** — added a test to `WorkflowTimeline.test.tsx` asserting status/confidence/cost/event/error surfaces render `var(--status-*)` tokens and that no converted `(text|bg|border)-(emerald|red|amber)-N` palette class leaks. Validated: `eslint src/components/workflow/WorkflowTimeline.tsx` (0 warnings), `vitest run` for the component (5 passing), plus full `lint` + `type-check` + `build`.
+
 ### 2026-07-02 — no-non-null-assertion ratchet complete: rule promoted to error
 
 - **`@typescript-eslint/no-non-null-assertion` → `error` (`frontend/eslint.config.js`)** — the last TypeScript rule sitting at `warn`. Every `x!` non-null assertion in `src/` had already been burned down to zero over successive ratchet passes (suite-keyed SWR fetchers moved to a `([, id]) => …` tuple-key destructure; `useLatestSuiteCompare` replaced `suiteName!.trim()` with an explicit `if (!suiteName) throw` guard; RightRail/FailureAnalysisPage/SuiteCasesPage/runComparisons cleared in prior passes). With the last site clean, the rule is promoted to `error`, guarding against reintroducing unchecked `!` assertions that silence the compiler's null/undefined analysis and turn a would-be type error into a runtime crash.
