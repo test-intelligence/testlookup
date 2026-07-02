@@ -279,4 +279,76 @@ describe('workflowPresets', () => {
       'triage',
     ])
   })
+
+  it('buildValueMetricsWorkflow tolerates a null metrics payload without dereferencing it', () => {
+    // The roi_calculation stage used to reach into `metrics!` for its
+    // result_data / confidence_score. The non-null assertions were only sound
+    // because `hasValueSignal` (a separate boolean) implied `metrics` was set —
+    // a relationship TS can't see. Guarding on `metrics &&` makes the no-signal
+    // path explicit; these cases pin that the no-signal branch never touches it.
+    const nullWorkflow = buildValueMetricsWorkflow(null, 30, 'All Projects')
+    const roiStage = nullWorkflow.stages.find(s => s.stage_name === 'roi_calculation')
+    expect(roiStage).toBeDefined()
+    expect(roiStage?.status).toBe('pending')
+    expect(roiStage?.result_data).toBeNull()
+    expect(roiStage?.confidence_score).toBeNull()
+  })
+
+  it('buildValueMetricsWorkflow treats an all-zero metrics payload as no value signal', () => {
+    const zeroWorkflow = buildValueMetricsWorkflow(
+      {
+        period_days: 30,
+        project_id: 'proj-1',
+        triage_time_saved_minutes: 0,
+        triage_time_saved_hours: 0,
+        defects_auto_grouped: 0,
+        tests_grouped: 0,
+        duplicate_tickets_avoided: 0,
+        defects_promoted: 0,
+        flaky_tests_identified: 0,
+        quarantine_recommended: 0,
+        risky_releases_blocked: 0,
+        releases_conditional: 0,
+        release_overrides: 0,
+        intelligence_reports_generated: 0,
+      },
+      30,
+      'Project One',
+    )
+    const roiStage = zeroWorkflow.stages.find(s => s.stage_name === 'roi_calculation')
+    expect(roiStage?.status).toBe('pending')
+    expect(roiStage?.result_data).toBeNull()
+    expect(roiStage?.confidence_score).toBeNull()
+  })
+
+  it('buildValueMetricsWorkflow surfaces roi result_data when there is a value signal', () => {
+    const workflow = buildValueMetricsWorkflow(
+      {
+        period_days: 30,
+        project_id: 'proj-1',
+        triage_time_saved_minutes: 120,
+        triage_time_saved_hours: 2,
+        defects_auto_grouped: 6,
+        tests_grouped: 18,
+        duplicate_tickets_avoided: 3,
+        defects_promoted: 4,
+        flaky_tests_identified: 1,
+        quarantine_recommended: 0,
+        risky_releases_blocked: 2,
+        releases_conditional: 0,
+        release_overrides: 0,
+        intelligence_reports_generated: 1,
+      },
+      30,
+      'Project One',
+    )
+    const roiStage = workflow.stages.find(s => s.stage_name === 'roi_calculation')
+    expect(roiStage?.status).toBe('completed')
+    expect(roiStage?.result_data).toEqual({
+      defects_auto_grouped: 6,
+      duplicate_tickets_avoided: 3,
+      risky_releases_blocked: 2,
+    })
+    expect(roiStage?.confidence_score).toBe(72)
+  })
 })

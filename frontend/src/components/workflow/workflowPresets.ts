@@ -953,13 +953,17 @@ export function buildValueMetricsWorkflow(
       status: hasValueSignal ? 'completed' : 'pending',
       label: 'ROI Calculation',
       description: 'Quantify defects grouped, duplicates avoided, and releases blocked',
-      result_data: hasValueSignal ? {
-        defects_auto_grouped: metrics!.defects_auto_grouped,
-        duplicate_tickets_avoided: metrics!.duplicate_tickets_avoided,
-        risky_releases_blocked: metrics!.risky_releases_blocked,
+      // `hasValueSignal` already implies `metrics` is non-null (it is
+      // `!!metrics && …`), but that fact lives in a separate boolean TS can't
+      // relate back to `metrics`. Re-checking `metrics &&` here narrows the
+      // union without changing behaviour, dropping the non-null assertions.
+      result_data: metrics && hasValueSignal ? {
+        defects_auto_grouped: metrics.defects_auto_grouped,
+        duplicate_tickets_avoided: metrics.duplicate_tickets_avoided,
+        risky_releases_blocked: metrics.risky_releases_blocked,
       } : null,
-      confidence_score: hasValueSignal
-        ? Math.min(100, 70 + Math.round(metrics!.triage_time_saved_hours))
+      confidence_score: metrics && hasValueSignal
+        ? Math.min(100, 70 + Math.round(metrics.triage_time_saved_hours))
         : null,
       evidence_count: roiEvidenceCount,
     }),
