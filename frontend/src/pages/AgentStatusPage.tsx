@@ -77,21 +77,21 @@ const STAGE_META: Record<string, { label: string; icon: React.ElementType; descr
 const STATUS_COLOUR: Record<string, string> = {
   pending: 'text-[var(--color-text-muted)]',
   running: 'text-[var(--color-text)]',
-  completed: 'text-emerald-400',
+  completed: 'text-[var(--status-passed)]',
   // `partial` is a degraded-but-finished pipeline/stage (e.g. a stage errored,
   // errors>=1). Render it as a visible amber warning state so the row never
   // looks "missing" — see BUG-004.
-  partial: 'text-amber-400',
-  failed: 'text-red-400',
+  partial: 'text-[var(--status-broken)]',
+  failed: 'text-[var(--status-failed)]',
   skipped: 'text-[var(--color-text-muted)]',
 }
 
 const STATUS_BG: Record<string, string> = {
   pending: 'bg-[var(--color-bg-hover)]',
   running: 'bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border-light)]',
-  completed: 'bg-emerald-900/20 border border-emerald-700/30',
-  partial: 'bg-amber-900/20 border border-amber-700/30',
-  failed: 'bg-red-900/20 border border-red-700/30',
+  completed: 'bg-[var(--status-passed-bg)] border border-[var(--status-passed-bd)]',
+  partial: 'bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)]',
+  failed: 'bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)]',
   skipped: 'bg-[var(--color-bg-secondary)]/80',
 }
 
@@ -161,12 +161,12 @@ function StructuredReportDetail({ markdown, hasPanel }: { markdown: string; hasP
 }
 
 function StatusIcon({ status }: { status: string }) {
-  if (status === 'completed') return <CheckCircle className="w-4 h-4 text-emerald-400" />
+  if (status === 'completed') return <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
   // `partial` = finished with errors (degraded). Amber warning triangle so the
   // pipeline/stage stays visible instead of falling through to the neutral
   // Clock fallback and looking "missing" — see BUG-004.
-  if (status === 'partial') return <AlertTriangle className="w-4 h-4 text-amber-400" />
-  if (status === 'failed') return <XCircle className="w-4 h-4 text-red-400" />
+  if (status === 'partial') return <AlertTriangle className="w-4 h-4 text-[var(--status-broken)]" />
+  if (status === 'failed') return <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
   if (status === 'running') return <RefreshCw className="w-4 h-4 text-[var(--color-text)] animate-spin" />
   if (status === 'skipped') return <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />
   return <Clock className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -209,15 +209,15 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
             </span>
           )}
           {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
-            <span className="text-[10px] bg-amber-900/30 text-amber-400 px-1.5 py-0.5 rounded">
+            <span className="text-[10px] bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded">
               ${stage.cost_usd.toFixed(4)}
             </span>
           )}
           {stage.confidence_score != null && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-              stage.confidence_score >= 80 ? 'bg-emerald-900/30 text-emerald-400' :
-              stage.confidence_score >= 50 ? 'bg-amber-900/30 text-amber-400' :
-              'bg-red-900/30 text-red-400'
+              stage.confidence_score >= 80 ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' :
+              stage.confidence_score >= 50 ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' :
+              'bg-[var(--status-failed-bg)] text-[var(--status-failed)]'
             }`}>
               {stage.confidence_score}%
             </span>
@@ -256,7 +256,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
               )}
               {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
-                  <div className="text-sm font-bold text-amber-400">${stage.cost_usd.toFixed(4)}</div>
+                  <div className="text-sm font-bold text-[var(--status-broken)]">${stage.cost_usd.toFixed(4)}</div>
                   <div className="text-[9px] text-[var(--color-text-muted)]">Est. Cost</div>
                 </div>
               )}
@@ -276,7 +276,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
           )}
           {stage.error_category && (
             <div className="text-[10px] text-[var(--color-text-muted)]">
-              Error category: <span className="text-red-400 font-mono">{stage.error_category}</span>
+              Error category: <span className="text-[var(--status-failed)] font-mono">{stage.error_category}</span>
             </div>
           )}
           {stage.result_data && (
@@ -290,7 +290,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
             </div>
           )}
           {stage.error && (
-            <div className="bg-red-950/40 border border-red-800/30 rounded p-2 text-xs text-red-300">
+            <div className="bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)] rounded p-2 text-xs text-[var(--status-failed)]">
               {stage.error}
             </div>
           )}
@@ -392,9 +392,9 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
         </p>
       )}
       <div className="grid grid-cols-4 gap-2 mb-2 text-center text-xs">
-        <div><div className="text-emerald-400 font-mono">{run.passed}</div><div className="text-[var(--color-text-muted)]">Pass</div></div>
-        <div><div className="text-red-400 font-mono">{run.failed}</div><div className="text-[var(--color-text-muted)]">Fail</div></div>
-        <div><div className="text-yellow-400 font-mono">{run.skipped}</div><div className="text-[var(--color-text-muted)]">Skip</div></div>
+        <div><div className="text-[var(--status-passed)] font-mono">{run.passed}</div><div className="text-[var(--color-text-muted)]">Pass</div></div>
+        <div><div className="text-[var(--status-failed)] font-mono">{run.failed}</div><div className="text-[var(--color-text-muted)]">Fail</div></div>
+        <div><div className="text-[var(--status-skipped)] font-mono">{run.skipped}</div><div className="text-[var(--color-text-muted)]">Skip</div></div>
         <div><div className="text-[var(--color-text)] font-mono">{run.pass_rate}%</div><div className="text-[var(--color-text-muted)]">Rate</div></div>
       </div>
       <div className="w-full h-1.5 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
@@ -419,9 +419,9 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
   if (!obs && alerts.length === 0) return null
 
   const costRatio = obs?.cost.budget_usd ? obs.cost.total_usd / obs.cost.budget_usd : 0
-  const costTone = costRatio >= 1 ? 'text-red-400' : costRatio >= 0.75 ? 'text-amber-400' : 'text-emerald-400'
-  const fallbackTone = (obs?.fallback.count ?? 0) > 0 ? 'text-amber-400' : 'text-emerald-400'
-  const errorTone = (obs?.errors.count ?? 0) > 0 ? 'text-red-400' : 'text-emerald-400'
+  const costTone = costRatio >= 1 ? 'text-[var(--status-failed)]' : costRatio >= 0.75 ? 'text-[var(--status-broken)]' : 'text-[var(--status-passed)]'
+  const fallbackTone = (obs?.fallback.count ?? 0) > 0 ? 'text-[var(--status-broken)]' : 'text-[var(--status-passed)]'
+  const errorTone = (obs?.errors.count ?? 0) > 0 ? 'text-[var(--status-failed)]' : 'text-[var(--status-passed)]'
   const avgStageDuration = obs?.latency.avg_stage_duration_seconds == null
     ? '—'
     : `${obs.latency.avg_stage_duration_seconds}s`
@@ -432,7 +432,7 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
         <Activity className="h-4 w-4 text-[var(--color-text)]" />
         <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Pipeline Observability</h3>
         {alerts.length > 0 && (
-          <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-red-900/25 text-red-300">
+          <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
             {alerts.length} alert{alerts.length === 1 ? '' : 's'}
           </span>
         )}
@@ -466,11 +466,11 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
       {alerts.length > 0 && (
         <div className="space-y-2">
           {alerts.map((alert, index) => (
-            <div key={`${alert.type}-${index}`} className="rounded border border-red-800/30 bg-red-950/20 p-2">
+            <div key={`${alert.type}-${index}`} className="rounded border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-2">
               <div className="flex items-start gap-2">
-                <AlertTriangle className="h-3.5 w-3.5 text-red-300 mt-0.5 shrink-0" />
+                <AlertTriangle className="h-3.5 w-3.5 text-[var(--status-failed)] mt-0.5 shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-red-200">{alert.message}</p>
+                  <p className="text-xs font-medium text-[var(--status-failed)]">{alert.message}</p>
                   {alert.routing && (
                     <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-[var(--color-text-muted)]">
                       <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)]">owner: {alert.routing.primary_owner}</span>
@@ -496,8 +496,8 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
 const MODE_BADGE: Record<string, { label: string; colour: string }> = {
   llm:   { label: 'LLM Mode',   colour: 'bg-indigo-900/30 text-indigo-400' },
   ml:    { label: 'ML Mode',    colour: 'bg-cyan-900/30 text-cyan-400' },
-  rules: { label: 'Rules Mode', colour: 'bg-amber-900/30 text-amber-400' },
-  auto:  { label: 'Auto Mode',  colour: 'bg-emerald-900/30 text-emerald-400' },
+  rules: { label: 'Rules Mode', colour: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
+  auto:  { label: 'Auto Mode',  colour: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
 }
 
 export default function AgentStatusPage() {
@@ -717,7 +717,7 @@ export default function AgentStatusPage() {
               </div>
 
               {liveRuns.length > 0 && (
-                <p className="text-xs text-amber-300 border-t border-[var(--color-border)] pt-2">
+                <p className="text-xs text-[var(--status-broken)] border-t border-[var(--color-border)] pt-2">
                   {liveRuns.length} live run{liveRuns.length === 1 ? '' : 's'} still streaming.
                   Pipelines fire after each run sends a <code className="px-1 bg-[var(--color-bg-secondary)] rounded">run_complete</code> event.
                   Stale runs are auto-closed after 15 min idle.
@@ -851,7 +851,7 @@ export default function AgentStatusPage() {
                     </div>
                   ) : summaryError ? (
                     <div className="space-y-1">
-                      <p className="text-sm text-amber-300">The AI report could not be loaded.</p>
+                      <p className="text-sm text-[var(--status-broken)]">The AI report could not be loaded.</p>
                       <p className="text-xs text-[var(--color-text-muted)]">
                         {summaryStage?.error || 'The summary endpoint returned an error for this pipeline run.'}
                       </p>

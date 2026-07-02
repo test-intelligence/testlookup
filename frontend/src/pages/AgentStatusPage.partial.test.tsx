@@ -12,8 +12,10 @@
  * errors, e.g. errors>=1 — very common) rendered with blank styling
  * and no icon, so it looked "missing".
  *
- * Fix: treat `partial` as a visible amber/degraded state everywhere
- * status is rendered for pipelines AND stages.
+ * Fix: treat `partial` as a visible broken/degraded state everywhere
+ * status is rendered for pipelines AND stages. The degraded tone is the
+ * per-theme `--status-broken` token (was raw `amber-400` before the
+ * palette-token ratchet) so it stays legible on the light themes too.
  *
  * Strategy: pull the page source via Vite's `?raw` import (no Node
  * built-ins so the production `tsc` build doesn't trip on this test)
@@ -26,14 +28,14 @@ import { describe, expect, it } from 'vitest'
 import pageSource from './AgentStatusPage.tsx?raw'
 
 describe('AgentStatusPage — partial status rendering (BUG-004 regression)', () => {
-  it('STATUS_COLOUR maps `partial` to an amber tone', () => {
-    // e.g.  partial: 'text-amber-400',
-    expect(pageSource).toMatch(/partial:\s*'text-amber-400'/)
+  it('STATUS_COLOUR maps `partial` to the broken (degraded) token', () => {
+    // e.g.  partial: 'text-[var(--status-broken)]',
+    expect(pageSource).toMatch(/partial:\s*'text-\[var\(--status-broken\)\]'/)
   })
 
-  it('STATUS_BG maps `partial` to an amber background', () => {
-    // e.g.  partial: 'bg-amber-900/20 border border-amber-700/30',
-    expect(pageSource).toMatch(/partial:\s*'bg-amber-900\/20[^']*'/)
+  it('STATUS_BG maps `partial` to the broken background token', () => {
+    // e.g.  partial: 'bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)]',
+    expect(pageSource).toMatch(/partial:\s*'bg-\[var\(--status-broken-bg\)\][^']*'/)
   })
 
   it('StatusIcon has an explicit `partial` branch (not the neutral fallback)', () => {
@@ -41,11 +43,11 @@ describe('AgentStatusPage — partial status rendering (BUG-004 regression)', ()
     expect(pageSource).toMatch(/status\s*===\s*'partial'/)
   })
 
-  it('the `partial` icon uses an amber-toned warning glyph', () => {
-    // Lock in the amber colour on the partial icon so it stays visibly
+  it('the `partial` icon uses the broken (degraded) warning tone', () => {
+    // Lock in the degraded colour on the partial icon so it stays visibly
     // degraded rather than reverting to a muted/neutral colour.
     expect(pageSource).toMatch(
-      /status\s*===\s*'partial'\)\s*return\s*<AlertTriangle[^>]*text-amber-400/,
+      /status\s*===\s*'partial'\)\s*return\s*<AlertTriangle[^>]*text-\[var\(--status-broken\)\]/,
     )
   })
 })
