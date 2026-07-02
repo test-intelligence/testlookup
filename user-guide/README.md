@@ -12,7 +12,7 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | [Triaging failures](triaging-failures.md) | Failure Analysis, clusters, the My Failures inbox, resolution statuses, correcting the AI |
 | [Flaky tests & quarantine](flaky-tests.md) | The flaky verdict, the Flaky Coach, step-level flip detection, the quarantine review workflow |
 | [Release gates & policies](release-gates.md) | GO / CONDITIONAL_GO / NO_GO verdicts, how they're computed, the policy editor, overrides, gating CI |
-| CLI & SDK reference *(planned)* | `testlookup` CLI commands, Python/Java/JS/Go reporters, MCP server |
+| [CLI, SDKs & MCP](cli-sdk-mcp.md) | `testlookup` CLI command groups, the shared SDK config, live-streaming reporters, the 49-tool MCP server |
 
 ## Core concepts
 
