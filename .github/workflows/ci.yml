@@ -22,7 +22,7 @@ jobs:
     name: K8s — Forbid :latest image tags
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Fail on :latest image tags in k8s/**
         run: |
           set -euo pipefail
@@ -55,7 +55,7 @@ jobs:
     name: Quality Gates — Cross-cutting invariants
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v6.3.0
@@ -89,7 +89,7 @@ jobs:
     name: Docs — Mermaid diagrams
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v6
@@ -141,7 +141,7 @@ jobs:
         working-directory: ./backend
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v6.3.0
@@ -205,7 +205,7 @@ jobs:
         working-directory: ./frontend
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v6
@@ -254,7 +254,7 @@ jobs:
         working-directory: ./mcp
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v6.3.0
@@ -326,7 +326,7 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Generate package-lock.json before Docker build so npm ci works inside the image.
       # This avoids needing to commit a lockfile while still getting reproducible installs.
@@ -452,7 +452,7 @@ jobs:
     environment: development
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@v5.1.0

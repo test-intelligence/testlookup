@@ -63,7 +63,7 @@ jobs:
     outputs:
       image_tag: ${{ env.IMAGE_TAG }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Authenticate to Azure (OIDC)
         uses: azure/login@v3
@@ -129,7 +129,7 @@ jobs:
     # level apply uniformly across clouds.
     environment: production
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Authenticate to Azure (OIDC)
         uses: azure/login@v3

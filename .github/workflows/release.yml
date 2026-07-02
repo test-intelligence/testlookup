@@ -48,7 +48,7 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Guard: the pushed tag should match the tracked VERSION file. This is a
       # warning, not a hard failure, so an intentional out-of-band tag still
