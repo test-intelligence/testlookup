@@ -14,6 +14,7 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | [Release gates & policies](release-gates.md) | GO / CONDITIONAL_GO / NO_GO verdicts, how they're computed, the policy editor, overrides, gating CI |
 | [CLI, SDKs & MCP](cli-sdk-mcp.md) | `testlookup` CLI command groups, the shared SDK config, live-streaming reporters, the 49-tool MCP server |
 | [Test management & ownership](test-management.md) | The test-case catalog, plans, reviews, suite owners, ownership rules, and the auto-assignment chain |
+| [AI features](ai-features.md) | Run Intelligence, Deep Investigation, the Agent Pipeline, Ask AI chat, and configuring the AI tier |
 
 ## Core concepts
 

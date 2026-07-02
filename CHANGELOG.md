@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "AI features" — docs loop concludes with both tracks comprehensive
+
+- **New `user-guide/ai-features.md`** — the AI surfaces from the user side, verified against the pages: the Intelligence Hub (cross-run insights + visible Intelligence spend) and Run Intelligence reports, Deep Investigation (tunable clustering threshold, per-cluster confidence, auto-draft defects / auto-create Jira, browsable past investigations), the Agent Pipeline page (queue the standard pipeline per run, Workflow Progress, Executive Summary), Ask AI chat, and the AI settings/evaluation pages — framed by the two governing rules (offline-by-default with graceful LLM→ML→rules degradation; provenance on every verdict) and a works-with-what matrix.
+- **Docs loop complete (12 iterations, PRs #296-#306 + this one):** architecture set now covers FLAKY_INTELLIGENCE / RELEASE_GATE / AI_QUALITY / INGESTION_SCALE / SECURITY beyond the original three docs; the user guide covers ingestion, triage, flaky/quarantine, release gates, CLI/SDK/MCP, test management/ownership, and AI features.
+
 ### 2026-07-02 — Architecture docs: SECURITY.md (security & tenancy)
 
 - **New `architecture/SECURITY.md`** — the security architecture, verified against the implementation: identity (JWT + single-flight refresh, API keys, token revocation via `core/token_revocation.py`), the `require_*_access` guard family with the verify-the-PROVIDED-id IDOR bug-class it codifies, the **HMAC-signed Redis membership cache** (`_sign_membership_cache` — forged/tampered entries fail HMAC and fall through to Postgres; sequence diagram included), tenancy defence-in-depth (project-scoped queries/fingerprints, per-project Chroma collections + semantic cache, per-project rate buckets), secure-by-default deployment (F1 `.env`/compose defaults + `critical_security_failures` startup fail-fast + dev-login-404, F2 authenticated Redis, F3 signed cache), offline-first as a provable no-egress property (with an honest scoping note on the knowledge-source domain allowlist), audit trail, and the quality-gate ratchets that enforce it all. Indexed from the README.
