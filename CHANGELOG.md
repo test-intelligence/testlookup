@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Test management & ownership"
+
+- **New `user-guide/test-management.md`** — the catalog + routing layer, verified against the implementation: the Test Management page (case types/priorities/lifecycle draft→active→approved/deprecated, the details/history/reviews/comments/unautomated detail tabs, plans, the suites tab incl. owner assignment, review workflow incl. AI Review, duplicate detection, execution-aware counts), the two ownership layers (per-suite owners + /ownership pattern rules), and the exact auto-assignment resolution chain from `failed_test_assignment_service` (TestSuiteOwner → default QA lead → manager → unassigned) with its two guarantees (never overwrites human reassignments — NULL-only writes; isolated step that can't break finalization), plus the default-QA-lead auto-provision and the admin Team-scope consequence. Indexed from the guide README.
+- Docs-loop iteration 10 (user-doc track; second pass beyond the initial index).
+
 ### 2026-07-02 — Architecture docs: INGESTION_SCALE.md (ingestion under load)
 
 - **New `architecture/INGESTION_SCALE.md`** — the scalability design layered onto the basic ingest flow, verified against the implementation: the two-layer admission gate (`stream.py` — memory backpressure first for a cheap failure path, then the per-project rate limit with server-side project resolution so noisy sessions charge the right bucket), the O(1) LTRIM buffer cap, project-keyed shard queues (`ingestion_routing.py` — local shard derivation, ordering preservation, 1/N re-home on scale-out, the subscribe-to-ALL-shards operational invariant and its classic symptom), the mid-session drainer (per-run lock, real `started_at` resolution, default-suite application), DLQ + auto-recovery + heartbeat reaper, and the AI cost controls (debouncer grouping, per-project daily budget with mode downgrade, logged high-volume sampling). One end-to-end mermaid flowchart mapping every gate. Indexed from the README.
