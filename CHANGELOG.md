@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: INGESTION_SCALE.md (ingestion under load)
+
+- **New `architecture/INGESTION_SCALE.md`** — the scalability design layered onto the basic ingest flow, verified against the implementation: the two-layer admission gate (`stream.py` — memory backpressure first for a cheap failure path, then the per-project rate limit with server-side project resolution so noisy sessions charge the right bucket), the O(1) LTRIM buffer cap, project-keyed shard queues (`ingestion_routing.py` — local shard derivation, ordering preservation, 1/N re-home on scale-out, the subscribe-to-ALL-shards operational invariant and its classic symptom), the mid-session drainer (per-run lock, real `started_at` resolution, default-suite application), DLQ + auto-recovery + heartbeat reaper, and the AI cost controls (debouncer grouping, per-project daily budget with mode downgrade, logged high-volume sampling). One end-to-end mermaid flowchart mapping every gate. Indexed from the README.
+- Docs-loop iteration 9 (architecture track; second pass beyond the initial index).
+
 ### 2026-07-02 — User Guide: "CLI, SDKs & MCP" — user-guide roadmap COMPLETE
 
 - **New `user-guide/cli-sdk-mcp.md`** — the three programmatic surfaces, verified against the implementation: the `testlookup` CLI's 11 command groups (from `cli/testlookup_cli/app.py`), the SDKs' shared `testlookup.yaml` config (real discovery order + precedence chain from `client/testlookup.yaml.example`, secrets-in-env guidance), framework notes (TestNG suite-name inheritance, pytest live-vs-junitxml), and the MCP server (49 `@mcp.tool`s counted from `mcp/tools/`, stdio for desktop clients / `--transport sse` on 8002, domain coverage incl. `get_test_step_flips` and dependency-health `health_check`), plus a choosing-a-surface matrix.
