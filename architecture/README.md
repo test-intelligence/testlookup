@@ -8,6 +8,7 @@
 > - **[DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)** — conventions, quality-gate ratchets, how to add/fix code, and the recurring bug classes.
 > - **[FLAKY_INTELLIGENCE.md](./FLAKY_INTELLIGENCE.md)** — the flaky-detection subsystem (FLK P1–P6): evidence layers, verdict assembly, quarantine lifecycle, step-flip surfaces.
 > - **[RELEASE_GATE.md](./RELEASE_GATE.md)** — how GO / CONDITIONAL_GO / NO_GO is decided: input signals, policy layer, band floor, council synthesis, overrides.
+> - **[AI_QUALITY.md](./AI_QUALITY.md)** — the mechanisms that keep the AI layer honest: semantic cache, the human-correction learning loop, evidence grading, cluster integrity.
 >
 > The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) is the short, marketing-adjacent
 > overview; this folder is the detailed engineering reference.
