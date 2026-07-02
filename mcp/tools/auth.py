@@ -8,6 +8,37 @@ import client as api  # type: ignore[import]
 from config import settings  # type: ignore[import]
 
 
+def _render_health(data: dict) -> str:
+    """Render a ``/health/details`` payload as a human-readable status block.
+
+    Kept pure (no I/O) so the formatting can be unit-tested without a live
+    backend. The endpoint reports per-dependency status under the ``checks``
+    key — NOT ``dependencies`` — and each value is a dict shaped like
+    ``{"status": "ok", "latency_ms": 3}``, so we surface the nested
+    ``status`` rather than stringifying the whole dict. Degrades gracefully
+    on a missing/malformed ``checks`` block (no dependency section).
+    """
+    lines = [
+        f"**Status:** {data.get('status', 'unknown')}",
+        f"**Version:** {data.get('version', 'unknown')}",
+        f"**Environment:** {data.get('env', 'unknown')}",
+    ]
+    uptime = data.get("uptime_seconds")
+    if isinstance(uptime, (int, float)) and not isinstance(uptime, bool):
+        lines.append(f"**Uptime:** {int(uptime)}s")
+    checks = data.get("checks")
+    if isinstance(checks, dict) and checks:
+        lines.append("**Dependencies:**")
+        for dep_name, dep_info in checks.items():
+            dep_status = (
+                dep_info.get("status", "unknown")
+                if isinstance(dep_info, dict)
+                else dep_info
+            )
+            lines.append(f"  - {dep_name}: {dep_status}")
+    return "\n".join(lines)
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
@@ -42,31 +73,11 @@ def register(mcp) -> None:  # noqa: ANN001
     async def health_check() -> str:
         """
         Verify that the TestLookup backend is reachable and return its status,
-        version, environment, and configured LLM provider.
+        version, environment, uptime, and per-dependency health.
         """
-        try:
-            data = await api.get("/health/ready")
-        except Exception:
-            pass
-
-        # Try detailed health for richer info
         try:
             data = await api.get("/health/details")
         except Exception as exc:
             return f"Backend unreachable at {settings.api_url}: {exc}"
 
-        lines = [
-            f"**Status:** {data.get('status', 'unknown')}",
-            f"**Version:** {data.get('version', 'unknown')}",
-            f"**Environment:** {data.get('env', 'unknown')}",
-            f"**LLM Provider:** {data.get('llm_provider', 'unknown')}",
-            f"**Offline Mode:** {data.get('offline_mode', False)}",
-            f"**API URL:** {settings.api_url}",
-        ]
-        # Include dependency status if available
-        deps = data.get("dependencies", {})
-        if deps:
-            lines.append("**Dependencies:**")
-            for dep_name, dep_status in deps.items():
-                lines.append(f"  - {dep_name}: {dep_status}")
-        return "\n".join(lines)
+        return f"{_render_health(data)}\n**API URL:** {settings.api_url}"

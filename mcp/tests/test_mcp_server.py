@@ -57,6 +57,88 @@ class TestHealthEndpoint:
         # The old broken path should not be the primary call
         assert 'get("/health")' not in content
 
+    def test_health_reads_checks_not_dependencies(self):
+        """Regression: /health/details returns per-dependency status under the
+        ``checks`` key. The renderer previously read a non-existent
+        ``dependencies`` key, so dependency health was silently dropped."""
+        content = (MCP_DIR / "tools" / "auth.py").read_text(encoding="utf-8")
+        assert 'data.get("dependencies"' not in content
+        assert 'data.get("checks")' in content
+
+
+class TestHealthRenderer:
+    """Functional coverage of the pure ``_render_health`` renderer.
+
+    Mirrors the ``_render_step_flips`` renderer suite: the tool's formatting
+    is pulled into a pure helper so it can be exercised against a realistic
+    ``/health/details`` payload without a live backend.
+    """
+
+    @staticmethod
+    def _renderer():
+        import sys
+
+        sys.path.insert(0, str(MCP_DIR))
+        from tools import auth as auth_tool  # noqa: PLC0415
+
+        return auth_tool._render_health
+
+    def test_renders_status_version_env_and_uptime(self):
+        out = self._renderer()(
+            {
+                "status": "healthy",
+                "version": "0.1.0",
+                "env": "production",
+                "uptime_seconds": 42,
+                "checks": {},
+            }
+        )
+        assert "**Status:** healthy" in out
+        assert "**Version:** 0.1.0" in out
+        assert "**Environment:** production" in out
+        assert "**Uptime:** 42s" in out
+
+    def test_surfaces_per_dependency_status_from_checks(self):
+        # The core regression: dependency health lives under ``checks`` and each
+        # value is a dict whose ``status`` we surface (not the whole dict).
+        out = self._renderer()(
+            {
+                "status": "degraded",
+                "version": "0.1.0",
+                "env": "production",
+                "checks": {
+                    "postgres": {"status": "ok", "latency_ms": 2},
+                    "mongo": {"status": "ok"},
+                    "redis": {"status": "degraded", "error": "timeout"},
+                },
+            }
+        )
+        assert "**Dependencies:**" in out
+        assert "  - postgres: ok" in out
+        assert "  - mongo: ok" in out
+        assert "  - redis: degraded" in out
+        # The raw nested dict must not leak into the output.
+        assert "latency_ms" not in out
+
+    def test_no_dependency_section_when_checks_absent(self):
+        out = self._renderer()({"status": "healthy", "version": "0.1.0", "env": "dev"})
+        assert "**Status:** healthy" in out
+        assert "**Dependencies:**" not in out
+
+    def test_degrades_on_malformed_checks(self):
+        # A non-dict ``checks`` (or a plain-string dep value) must not raise.
+        out = self._renderer()(
+            {"status": "healthy", "checks": {"postgres": "ok", "mongo": None}}
+        )
+        assert "  - postgres: ok" in out
+        assert "  - mongo: None" in out
+
+    def test_empty_payload_degrades_to_unknowns(self):
+        out = self._renderer()({})
+        assert "**Status:** unknown" in out
+        assert "**Version:** unknown" in out
+        assert "**Dependencies:**" not in out
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Phase 1: Tool Modules Exist
