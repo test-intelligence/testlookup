@@ -512,13 +512,19 @@ def classify_with_policy(
     max_new_fail = int(hard_caps.get("max_new_failures_24h", 0) or 0)
     if active_defects_p0 > max_p0:
         downgrades.append(f"p0_defects:{active_defects_p0}>{max_p0}")
-        idx = max(0, idx - 1)
     if max_flaky > 0 and flaky_count > max_flaky:
         downgrades.append(f"flaky:{flaky_count}>{max_flaky}")
-        idx = max(0, idx - 1)
     if max_new_fail > 0 and new_failures_24h > max_new_fail:
         downgrades.append(f"new_failures_24h:{new_failures_24h}>{max_new_fail}")
-        idx = max(0, idx - 1)
+
+    # A hard cap is a HARD blocker: any breach forces NO_GO regardless of the
+    # pass-rate band. Previously each breach only stepped the band one notch,
+    # and yellow still mapped to GO — so an otherwise-green run with open P0
+    # defects (or flaky / new-failure breaches) still shipped GO, which made
+    # the "hard cap" advisory at best. The band is pinned to red to match the
+    # blocking verdict; ``downgrades`` records exactly which caps fired.
+    if downgrades:
+        return {"band": "red", "verdict": "NO_GO", "downgrades": downgrades}
 
     band = _BAND_ORDER[idx]
     verdict = (

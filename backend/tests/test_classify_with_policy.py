@@ -7,9 +7,9 @@ edge of the band table + every hard-cap path here without fixtures.
 
 Cases covered:
   * Band edges (parametrised) — including ties at each boundary.
-  * Each hard cap individually downgrades exactly one step.
-  * Stacked caps cascade (yellow → orange → red).
-  * Floor: stacked downgrades cannot go below red.
+  * Each hard cap individually forces NO_GO (a hard cap is a hard blocker;
+    a breach overrides the pass-rate band regardless of how green it was).
+  * Stacked caps stay NO_GO / red.
   * ``max_flaky_count=0`` and ``max_new_failures_24h=0`` disable those caps.
     ``max_p0_defects=0`` is the only cap where 0 means "zero allowed."
   * Custom bands reclassify the same input differently.
@@ -67,8 +67,9 @@ def test_band_edges(pass_rate, expected_band, expected_verdict):
 # ── Individual hard caps ──────────────────────────────────────────────────
 
 
-def test_p0_defect_cap_downgrades_one_step():
-    """A single P0 defect over the cap downgrades green → yellow."""
+def test_p0_defect_cap_forces_no_go():
+    """A single P0 defect over the cap forces NO_GO / red even from a green
+    pass-rate — a hard cap is a hard blocker, not a one-band nudge."""
     result = classify_with_policy(
         pass_rate=99.5,
         active_defects_p0=1,
@@ -77,13 +78,13 @@ def test_p0_defect_cap_downgrades_one_step():
         bands=DEFAULT_BANDS,
         hard_caps={"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
     )
-    assert result["band"] == "yellow"
-    assert result["verdict"] == "GO"
+    assert result["band"] == "red"
+    assert result["verdict"] == "NO_GO"
     assert any("p0_defects" in d for d in result["downgrades"])
 
 
-def test_flaky_cap_downgrades_one_step():
-    """flaky_count > max_flaky_count downgrades the band."""
+def test_flaky_cap_forces_no_go():
+    """flaky_count > max_flaky_count forces NO_GO / red."""
     result = classify_with_policy(
         pass_rate=99.5,
         active_defects_p0=0,
@@ -92,12 +93,13 @@ def test_flaky_cap_downgrades_one_step():
         bands=DEFAULT_BANDS,
         hard_caps={"max_p0_defects": 5, "max_flaky_count": 10, "max_new_failures_24h": 0},
     )
-    assert result["band"] == "yellow"
+    assert result["band"] == "red"
+    assert result["verdict"] == "NO_GO"
     assert any("flaky" in d for d in result["downgrades"])
 
 
-def test_new_failures_cap_downgrades_one_step():
-    """new_failures_24h > max_new_failures_24h downgrades the band."""
+def test_new_failures_cap_forces_no_go():
+    """new_failures_24h > max_new_failures_24h forces NO_GO / red."""
     result = classify_with_policy(
         pass_rate=99.5,
         active_defects_p0=0,
@@ -106,16 +108,17 @@ def test_new_failures_cap_downgrades_one_step():
         bands=DEFAULT_BANDS,
         hard_caps={"max_p0_defects": 5, "max_flaky_count": 0, "max_new_failures_24h": 20},
     )
-    assert result["band"] == "yellow"
+    assert result["band"] == "red"
+    assert result["verdict"] == "NO_GO"
     assert any("new_failures_24h" in d for d in result["downgrades"])
 
 
 # ── Stacked caps + floor ──────────────────────────────────────────────────
 
 
-def test_stacked_downgrades_cascade():
-    """The smoke test from the feature ship: pr=97 + all three caps fire
-    cascades yellow → orange → red."""
+def test_stacked_caps_stay_no_go():
+    """pr=97 (yellow) + all three caps fire → NO_GO / red, with all three
+    breaches recorded in the audit trail."""
     result = classify_with_policy(
         pass_rate=97.0,
         active_defects_p0=5,
@@ -124,7 +127,6 @@ def test_stacked_downgrades_cascade():
         bands=DEFAULT_BANDS,
         hard_caps={"max_p0_defects": 0, "max_flaky_count": 10, "max_new_failures_24h": 20},
     )
-    # yellow (97 in [95, 99)) → orange (P0 cap) → red (flaky cap) → red (floor)
     assert result["band"] == "red"
     assert result["verdict"] == "NO_GO"
     assert len(result["downgrades"]) == 3
@@ -191,7 +193,8 @@ def test_p0_cap_zero_means_zero_allowed():
         bands=DEFAULT_BANDS,
         hard_caps={"max_p0_defects": 0, "max_flaky_count": 0, "max_new_failures_24h": 0},
     )
-    assert result["band"] == "yellow"
+    assert result["band"] == "red"
+    assert result["verdict"] == "NO_GO"
     assert result["downgrades"] != []
 
 

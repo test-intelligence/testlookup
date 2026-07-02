@@ -208,11 +208,12 @@ async def test_band_floor_does_not_soften_conditional_go_in_green_band():
 
 
 @pytest.mark.asyncio
-async def test_band_floor_p0_cap_downgrades_via_hard_caps():
-    """An open CRITICAL defect over the hard cap fires the P0 downgrade —
-    even when the bare pass-rate would have been green. This is the B1
-    regression: the count comes from count_open_critical_defects (CRITICAL
-    severity), NOT the dead ``severity == "P0"`` filter that matched nothing."""
+async def test_band_floor_p0_cap_forces_no_go():
+    """An open CRITICAL defect over the hard cap forces NO_GO — even when the
+    bare pass-rate would have been green. Combines two fixes: the count comes
+    from count_open_critical_defects (B1 — CRITICAL severity, not the dead
+    ``severity == "P0"`` filter), and a tripped hard cap is a hard blocker that
+    forces NO_GO rather than a one-band nudge (B4)."""
     from app.services.release_council_service import _apply_band_floor
     rules = {
         "pass_rate_bands": {"orange_min": 90.0, "yellow_min": 95.0, "green_min": 99.0},
@@ -226,10 +227,9 @@ async def test_band_floor_p0_cap_downgrades_via_hard_caps():
         db, project_id=uuid.uuid4(), recommendation="GO",
         pass_rate=99.5,
     )
-    # green → yellow via P0 downgrade. GO verdict survives the band step
-    # because yellow is still GO; only orange or red would change rec.
-    assert band == "yellow"
-    assert rec == "GO"
+    # Hard cap breached → NO_GO / red, overriding the green pass-rate band.
+    assert band == "red"
+    assert rec == "NO_GO"
     assert any("p0_defects" in d for d in downgrades)
 
 
