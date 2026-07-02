@@ -1,5 +1,6 @@
 """Dependencies for FastAPI (authentication, authorisation, webhook security)."""
 import hashlib
+import hmac
 import json
 import logging
 import uuid
@@ -453,7 +454,16 @@ async def get_accessible_project_ids(
         redis = get_redis()
         cached = await redis.get(cache_key)
         if cached is not None:
-            return {uuid.UUID(pid) for pid in json.loads(cached)}
+            verified = _verify_membership_cache(user.id, cached)
+            if verified is not None:
+                return verified
+            # Signature missing/invalid → treat as a cache miss and fall
+            # through to the DB (the authoritative source). Defence-in-depth
+            # for tenant isolation: even if Redis is writable by an attacker
+            # (or a stale/plain legacy entry survives a deploy), a poisoned or
+            # forged ``membership:*`` value cannot widen a user's project scope
+            # — it just fails the HMAC and is ignored. See the signing helpers.
+            _warn_membership_cache_tampered(user.id)
     except Exception as exc:
         _warn_membership_cache_degraded("read", exc)
 
@@ -467,13 +477,48 @@ async def get_accessible_project_ids(
         redis = get_redis()
         await redis.set(
             cache_key,
-            json.dumps([str(pid) for pid in project_ids]),
+            _sign_membership_cache(user.id, project_ids),
             ex=_MEMBERSHIP_CACHE_TTL,
         )
     except Exception as exc:
         _warn_membership_cache_degraded("write", exc)
 
     return project_ids
+
+
+def _membership_signature(user_id, payload: str) -> str:
+    """HMAC-SHA256 of the cached membership payload, keyed by APP_SECRET_KEY and
+    bound to the user id so a valid blob can't be replayed under another user's
+    cache key."""
+    msg = f"{user_id}:{payload}".encode("utf-8")
+    key = (settings.APP_SECRET_KEY or "").encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def _sign_membership_cache(user_id, project_ids: set) -> str:
+    """Serialise + sign a user's accessible project-id set for Redis storage."""
+    payload = json.dumps(sorted(str(pid) for pid in project_ids))
+    return json.dumps({"p": payload, "s": _membership_signature(user_id, payload)})
+
+
+def _verify_membership_cache(user_id, cached):
+    """Return the cached project-id set iff the value carries a valid HMAC for
+    this user; ``None`` on any decode/format error or signature mismatch (the
+    caller then treats it as a miss and re-reads from the DB)."""
+    try:
+        if isinstance(cached, (bytes, bytearray)):
+            cached = cached.decode("utf-8")
+        blob = json.loads(cached)
+        payload = blob["p"]
+        sig = blob["s"]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    if not isinstance(sig, str) or not hmac.compare_digest(sig, _membership_signature(user_id, payload)):
+        return None
+    try:
+        return {uuid.UUID(pid) for pid in json.loads(payload)}
+    except (ValueError, TypeError):
+        return None
 
 
 # Throttle noisy warnings — log once per hour per op if Redis is down.
@@ -490,6 +535,23 @@ def _warn_membership_cache_degraded(op: str, exc: Exception) -> None:
     logger.warning(
         "membership cache %s failed — falling back to DB on every request: %s",
         op, exc,
+    )
+
+
+def _warn_membership_cache_tampered(user_id) -> None:
+    """A ``membership:*`` entry failed HMAC verification — either tampering or a
+    legacy/plain value from before signing. Throttled like the degraded warner;
+    security-relevant, so it's logged rather than silently swallowed."""
+    import time as _time
+    now = _time.monotonic()
+    last = _last_cache_warn_ts.get("tamper", 0.0)
+    if now - last < 3600:
+        return
+    _last_cache_warn_ts["tamper"] = now
+    logger.warning(
+        "membership cache entry failed signature verification for user=%s — "
+        "ignoring cache and reading membership from DB (possible tampering or "
+        "a pre-signing legacy value)", user_id,
     )
 
 

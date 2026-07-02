@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     MINIO_USE_SSL: bool = False
 
     # ── Redis ─────────────────────────────────────────────────
+    # Redis is the Celery broker + JWT-revocation store + membership authz
+    # cache, so it must not be reachable unauthenticated. Set REDIS_PASSWORD and
+    # it flows into the connection URLs below (compose passes it to the server's
+    # --requirepass). Empty = no auth (backward-compatible for a purely-internal,
+    # non-published Redis). Prefer embedding it in the URLs; this field documents
+    # the source and is read by tooling/compose.
+    REDIS_PASSWORD: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"

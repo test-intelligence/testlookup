@@ -74,13 +74,19 @@ services:
     image: redis:7-alpine
     container_name: testlookup_lite_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # --requirepass is applied only when REDIS_PASSWORD is set (the container
+    # shell evaluates ${...:+...}; $$ escapes compose interpolation).
+    command: sh -c 'redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    # Loopback-only publish — see the main docker-compose.yml redis service
+    # for the full rationale (Celery broker + JWT-revocation + authz cache).
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - lite_redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -159,9 +165,9 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
       - MONGO_URI=mongodb://mongo:27017
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
       # Lite-mode overrides: smaller pools, disable unused services
       - APP_ENV=development
       - AI_OFFLINE_MODE=true
@@ -221,9 +227,9 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
       - MONGO_URI=mongodb://mongo:27017
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
       - APP_ENV=development
       - AI_OFFLINE_MODE=true
       - OLLAMA_BASE_URL=http://localhost:11434

@@ -29,7 +29,8 @@ _EXAMPLE = _REPO / ".env.example"
 
 # Secrets docker-compose.yml refuses to start without, plus the app/JWT secrets.
 _REQUIRED = [
-    "POSTGRES_PASSWORD", "MONGO_PASSWORD", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
+    "POSTGRES_PASSWORD", "MONGO_PASSWORD", "REDIS_PASSWORD",
+    "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
     "APP_SECRET_KEY", "JWT_SECRET_KEY", "WEBHOOK_SECRET", "FLOWER_PASSWORD",
     "GF_SECURITY_ADMIN_PASSWORD",
 ]
@@ -82,6 +83,20 @@ def test_all_required_secrets_filled_no_placeholders(generated_env):
 def test_connection_strings_synced(generated_env):
     assert generated_env["POSTGRES_PASSWORD"] in generated_env["DATABASE_URL"]
     assert generated_env["MONGO_PASSWORD"] in generated_env["MONGO_URI"]
+    # F2 — Redis is the Celery broker + JWT-revocation + authz cache and must
+    # not be reachable unauthenticated. The generator must fill a real password
+    # and keep REDIS_URL / CELERY_* in sync with it, same as Postgres/Mongo.
+    assert generated_env["REDIS_PASSWORD"] in generated_env["REDIS_URL"]
+    assert generated_env["REDIS_PASSWORD"] in generated_env["CELERY_BROKER_URL"]
+    assert generated_env["REDIS_PASSWORD"] in generated_env["CELERY_RESULT_BACKEND"]
+
+
+def test_generated_env_restores_dev_convenience(generated_env):
+    """gen-dev-env.sh is the LOCAL/DEMO path (`make dev` / `make quickstart`), so
+    it must restore the developer affordances that the secure .env.example
+    defaults (F1) turn off: dev-login available on APP_ENV=development."""
+    assert generated_env["APP_ENV"] == "development"
+    assert generated_env["DEV_AUTO_LOGIN_ENABLED"] == "true"
 
 
 def test_no_stray_carriage_returns_in_values(generated_env):

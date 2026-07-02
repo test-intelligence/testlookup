@@ -50,6 +50,7 @@ rand() { # rand <hex|b64|alnum> <bytes>
 
 POSTGRES_PW="$(rand hex 24)"
 MONGO_PW="$(rand hex 24)"
+REDIS_PW="$(rand hex 24)"
 MINIO_AK="tl$(rand alnum 6)"
 MINIO_SK="$(rand b64 32)"
 FLOWER_PW="$(rand hex 16)"
@@ -89,6 +90,10 @@ set_kv POSTGRES_PASSWORD "$POSTGRES_PW"
 set_kv DATABASE_URL "postgresql+asyncpg://${PG_USER}:${POSTGRES_PW}@localhost:5433/${PG_DB}"
 set_kv MONGO_PASSWORD "$MONGO_PW"
 set_kv MONGO_URI "mongodb://${MONGO_USER}:${MONGO_PW}@localhost:27017/${MONGO_DB}?authSource=admin"
+set_kv REDIS_PASSWORD "$REDIS_PW"
+set_kv REDIS_URL "redis://:${REDIS_PW}@localhost:6379/0"
+set_kv CELERY_BROKER_URL "redis://:${REDIS_PW}@localhost:6379/0"
+set_kv CELERY_RESULT_BACKEND "redis://:${REDIS_PW}@localhost:6379/1"
 set_kv MINIO_ACCESS_KEY "$MINIO_AK"
 set_kv MINIO_SECRET_KEY "$MINIO_SK"
 set_kv FLOWER_PASSWORD "$FLOWER_PW"
@@ -96,6 +101,12 @@ set_kv APP_SECRET_KEY "$APP_SECRET"
 set_kv JWT_SECRET_KEY "$JWT_SECRET"
 set_kv WEBHOOK_SECRET "$WEBHOOK_SECRET"
 set_kv GF_SECURITY_ADMIN_PASSWORD "$GF_ADMIN_PW"
+# Local convenience: gen-dev-env is the LOCAL/DEMO path, so restore the dev
+# affordances the secure .env.example defaults turn off (passwordless dev-login
+# on APP_ENV=development). Real deployments use the .env.example defaults.
+set_kv APP_ENV "development"
+set_kv APP_DEBUG "true"
+set_kv DEV_AUTO_LOGIN_ENABLED "true"
 
 # Stamp a clear local-only banner at the top.
 python3 - "$ENV_FILE" <<'PY'
