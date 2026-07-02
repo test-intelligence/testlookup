@@ -100,3 +100,56 @@ def test_version_file_is_semver_taggable():
     assert len(parts) == 3 and all(p.isdigit() for p in parts), (
         f"VERSION must be a 3-part semver for the v*.*.* tag trigger: {raw!r}"
     )
+
+
+# ── Supply-chain: SBOM + provenance + digest surfacing ────────────────────────
+#
+# The images build with `sbom: true` + `provenance: mode=max`, but that metadata
+# is only actionable if an operator can find the content-addressable digest to
+# pin and inspect — a moving tag can be re-pushed to point at different bits, a
+# digest cannot. These tests pin that the workflow both *produces* the metadata
+# and *surfaces* the per-image digest so a self-hoster can pin by `@sha256:…`.
+
+def _build_push_steps() -> list[dict]:
+    """Every docker/build-push-action step across the workflow's jobs."""
+    doc = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    steps: list[dict] = []
+    for job in doc["jobs"].values():
+        for step in job.get("steps", []) or []:
+            if "docker/build-push-action" in str(step.get("uses", "")):
+                steps.append(step)
+    return steps
+
+
+def test_every_build_push_step_ships_sbom_and_provenance():
+    steps = _build_push_steps()
+    assert len(steps) == len(_IMAGES), f"expected one build-push step per app image, got {len(steps)}"
+    for step in steps:
+        with_ = step.get("with", {})
+        assert with_.get("sbom") is True, f"{step.get('name')} must build with sbom: true"
+        assert with_.get("provenance") == "mode=max", (
+            f"{step.get('name')} must build with provenance: mode=max"
+        )
+
+
+def test_every_build_push_step_has_an_id_for_the_digest_output():
+    # build-push-action exposes its pushed digest via steps.<id>.outputs.digest;
+    # without an id the digest can't be referenced downstream.
+    for step in _build_push_steps():
+        assert step.get("id"), f"build-push step {step.get('name')!r} needs an id to expose outputs.digest"
+
+
+def test_summary_surfaces_each_image_digest(workflow_text):
+    for image in _IMAGES:
+        assert f"steps.build-{image}.outputs.digest" in workflow_text, (
+            f"release summary must surface the {image} image digest"
+        )
+
+
+def test_summary_pins_and_verifies_by_digest(workflow_text):
+    # The digest is only useful if the operator is shown the pin form and how to
+    # verify the attestation it enables.
+    assert "@${BACKEND_DIGEST}" in workflow_text, "summary must show the digest pin form (image@sha256:…)"
+    assert "buildx imagetools inspect" in workflow_text, (
+        "summary must show how to inspect the SBOM/provenance attestation"
+    )

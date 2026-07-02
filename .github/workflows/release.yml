@@ -172,6 +172,7 @@ jobs:
         run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Build & push backend
+        id: build-backend
         uses: docker/build-push-action@v7
         with:
           context: ./backend
@@ -189,6 +190,7 @@ jobs:
           provenance: mode=max
 
       - name: Build & push frontend
+        id: build-frontend
         uses: docker/build-push-action@v7
         with:
           context: ./frontend
@@ -203,6 +205,7 @@ jobs:
           provenance: mode=max
 
       - name: Build & push MCP server
+        id: build-mcp
         uses: docker/build-push-action@v7
         with:
           context: ./mcp
@@ -215,7 +218,17 @@ jobs:
           sbom: true
           provenance: mode=max
 
+      # Surface each pushed image's content-addressable digest (sha256) plus the
+      # SBOM/provenance verification recipe. The images build with `sbom: true` +
+      # `provenance: mode=max`, but that supply-chain metadata is only actionable
+      # if an operator can find the digest to pin and inspect — a moving tag can be
+      # re-pushed to point at different bits, a digest cannot. Digests come from the
+      # build-push-action `digest` output (env-passed, not inlined into the shell).
       - name: Release image summary
+        env:
+          BACKEND_DIGEST: ${{ steps.build-backend.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.build-frontend.outputs.digest }}
+          MCP_DIGEST: ${{ steps.build-mcp.outputs.digest }}
         run: |
           {
             echo "## Released images for \`${GITHUB_REF_NAME}\`"
@@ -224,6 +237,23 @@ jobs:
             echo ""
             echo '```'
             echo "${{ steps.meta-backend.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "### Image digests"
+            echo ""
+            echo "Each image ships an SBOM and max-mode build provenance. Pin **by digest** (not just tag) so a re-pushed tag can never silently change the bits you run:"
+            echo ""
+            echo '```'
+            echo "${REGISTRY}/${IMAGE_PREFIX}/backend@${BACKEND_DIGEST}"
+            echo "${REGISTRY}/${IMAGE_PREFIX}/frontend@${FRONTEND_DIGEST}"
+            echo "${REGISTRY}/${IMAGE_PREFIX}/mcp@${MCP_DIGEST}"
+            echo '```'
+            echo ""
+            echo "Inspect the SBOM / provenance attestation for any of the above with:"
+            echo ""
+            echo '```'
+            echo "docker buildx imagetools inspect ${REGISTRY}/${IMAGE_PREFIX}/backend@${BACKEND_DIGEST} --format '{{json .SBOM}}'"
+            echo "docker buildx imagetools inspect ${REGISTRY}/${IMAGE_PREFIX}/backend@${BACKEND_DIGEST} --format '{{json .Provenance}}'"
             echo '```'
             echo ""
             echo "Pin in \`docker-compose.release.yml\` via \`TESTLOOKUP_VERSION=${GITHUB_REF_NAME}\`."
