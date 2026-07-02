@@ -16,6 +16,7 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | [Test management & ownership](test-management.md) | The test-case catalog, plans, reviews, suite owners, ownership rules, and the auto-assignment chain |
 | [AI features](ai-features.md) | Run Intelligence, Deep Investigation, the Agent Pipeline, Ask AI chat, and configuring the AI tier |
 | [Administration & settings](administration.md) | Projects, users, API keys, integrations & webhooks, flags, audit, storage, and the admin checklists |
+| [Dashboards & analytics](dashboards.md) | Overview, Trends, Coverage, the Summary Report's aggregation modes, Value Metrics, Search — and how their counts relate |
 
 ## Core concepts
 

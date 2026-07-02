@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Dashboards & analytics" — docs loop third pass concludes
+
+- **New `user-guide/dashboards.md`** — the read-side pages with their counting semantics made explicit (the historical cross-page-confusion class): the shared global time window as the golden rule, Overview (honest weighted pass rate, day-granular "last run"), Trends, Coverage (unique-tests-across-window semantics + bulk suite-label hygiene), the Summary Report's **window-vs-latest aggregation modes** (window matches Coverage; latest is deliberately smaller), Value Metrics, and Search (index freshness tell), ending with a discrepancy cheat-sheet. Labels verified against the six pages.
+- **Docs loop third pass complete (iterations 13-15, PRs #308-#310):** DEPLOYMENT.md + administration guide + this. Cumulative loop total: 15 iterations, PRs #296-#310 — `architecture/` at 9 documents, `user-guide/` at 10 files (9 guides + index).
+
 ### 2026-07-02 — User Guide: "Administration & settings"
 
 - **New `user-guide/administration.md`** — the admin surface organized into three concerns: people & projects (/projects incl. archive + default-QA-lead auto-provision, /users roles and what they gate, profile, SSO), connecting to your world (API keys, integrations/GitHub/webhooks/notifications/digests — all explicitly subordinate to `AI_OFFLINE_MODE` — and Integration Health as the first stop for "the webhook didn't fire"), and operating the instance (AI settings/eval, feature flags incl. cache propagation, the audit dashboard, storage, project-data retention/cleanup, seed data, performance, billing). Ends with a new-instance checklist and a something-isn't-arriving triage order. Covers the ~19 /settings routes that had no documentation. Indexed from the guide README.
