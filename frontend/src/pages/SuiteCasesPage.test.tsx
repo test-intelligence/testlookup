@@ -175,7 +175,9 @@ describe('SuiteCasesPage bulk move', () => {
     // the bar's button label is the same text "Move", so use the bar's
     // region as the scope.
     const bar = screen.getByRole('region', { name: /Bulk actions/i })
-    fireEvent.click(bar.querySelector('button')!)
+    const barButton = bar.querySelector('button')
+    if (barButton === null) throw new Error('Bulk actions bar has no button')
+    fireEvent.click(barButton)
 
     // The bulk modal heading reflects the selection count.
     expect(
