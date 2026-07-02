@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Surface 422 validation errors in the UI (kill the "empty page, no error toast" footgun)
+
+- **Bug fix (UX/diagnosability)** — the shared Axios response interceptor (`services/api.ts`) suppressed toasts for **422** alongside 401/404. A 422 (typically a strict Pydantic enum over a `String(N)` column, or any request-shape mismatch) therefore failed **silently**: SWR yielded `undefined`, the page rendered a blank state, and the user got zero feedback — the documented "empty page, no error toast" footgun that has cost repeated live-probe debugging sessions. 422 responses now toast; 401 (handled by the single-flight token-refresh flow) and 404 (frequently an expected "no data yet") stay quiet.
+- **Message extraction fixed for FastAPI 422 bodies** — a 422 `detail` is an **array** of `{loc, msg, type}` items, so the old `detail || message` would have rendered `[object Object]`. New pure helpers in `services/apiErrors.ts`: `shouldToastError(status)` (the visibility policy) and `extractErrorMessage(detail, fallback)` (string details as-is; validation arrays joined as "Validation error: field — msg; …" with the `body` prefix stripped; graceful fallback on empty/malformed detail).
+- **Regression coverage** — new `apiErrors.test.ts` (8 tests) pins 422-now-toasts (and 401/404 stay quiet, network errors surface), string/array/empty detail extraction, and the no-`[object Object]` guarantee. Full frontend suite green; `tsc --noEmit` + eslint clean.
+
 ### 2026-07-02 — Dashboard honesty: remove fabricated numbers and dead CTAs from the Overview hero
 
 - **UX/trust fix** — the flagship Overview dashboard presented several **invented** figures and **dead** controls as if they were real, which badly undercuts a *test-intelligence* product on its first screen. Removed/corrected:

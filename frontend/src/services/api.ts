@@ -1,6 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
+import { extractErrorMessage, shouldToastError } from './apiErrors'
 
 // When VITE_API_BASE_URL is unset, use same-origin relative URLs. This makes
 // the production bundle deploy-target agnostic — it works behind any ingress
@@ -60,7 +61,7 @@ function processQueue(error: unknown, token: string | null) {
 // Response interceptor: on 401 try to refresh once, then retry original request
 api.interceptors.response.use(
   (res) => res,
-  async (error: AxiosError<{ detail?: string }>) => {
+  async (error: AxiosError<{ detail?: unknown }>) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
 
     if (
@@ -102,14 +103,11 @@ api.interceptors.response.use(
       }
     }
 
-    // For non-401 errors or exhausted retries, show a toast
-    const msg = error.response?.data?.detail || error.message || 'Request failed'
-    if (
-      error.response?.status !== 404 &&
-      error.response?.status !== 401 &&
-      error.response?.status !== 422
-    ) {
-      toast.error(msg)
+    // For non-401 errors or exhausted retries, surface a toast. 422 is now
+    // surfaced (was silently swallowed — the "empty page, no error" footgun);
+    // 401/404 stay quiet. See services/apiErrors.
+    if (shouldToastError(error.response?.status)) {
+      toast.error(extractErrorMessage(error.response?.data?.detail, error.message))
     }
     return Promise.reject(error)
   }
