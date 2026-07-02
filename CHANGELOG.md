@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: RELEASE_GATE.md (verdict decision architecture)
+
+- **New `architecture/RELEASE_GATE.md`** — how a run becomes GO / CONDITIONAL_GO / NO_GO, verified against the implementation: the input signals (pass-rate bands via `classify_with_policy`, `criticality_service` weighted risk dimensions incl. the real-recurrence `hist_recurrence`, flaky verdicts + active-quarantine exclusion, failure clusters), the policy layer (`resolve_effective_policy` → `evaluate_policy`, monotonic-downward rule folding), the release council (`assemble_input_snapshot` determinism, `DIMENSION_METADATA` score×weight contributions, `_apply_band_floor` fail-closed floor + the CONDITIONAL↔CONDITIONAL_GO vocabulary seam, `_worse_verdict` composition, reasoned+audited `apply_override`), and the adjacent agent-stack gate (`eval_gate_service` manifests). One mermaid decision-flow diagram; indexed from the README.
+- Docs-loop iteration 4 (architecture track).
+
 ### 2026-07-02 — User Guide: "Triaging failures"
 
 - **New `user-guide/triaging-failures.md`** — the daily triage loop across its three surfaces (Failure Analysis / My Failures / run detail), verified against the implementation: cluster-first triage, category distribution + uncategorised classification, the evidence-backed regression-vs-flaky verdict, the auto-assignment inbox with the real `TriageStatus` vocabulary (PENDING_REVIEW inbox; REVIEWED_APPROVED / DEFECT_CREATED / WONT_FIX / AUTOMATION_SCRIPT_ISSUE / FLAKY_TEST resolutions per migration 0088), reassignment (suite owner / QA engineer), the Mine-vs-Team scope gotcha (default-QA-lead auto-assignment), and the AI-correction loop (INCORRECT rating + corrected category → patches the record, evicts the semantic cache, applies by fingerprint on future analyses). Hands off to flaky-coach/quarantine and defect promotion. Indexed from the guide README.

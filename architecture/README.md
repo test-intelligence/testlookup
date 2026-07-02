@@ -7,6 +7,7 @@
 > - **[DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)** — ER diagrams + full schema reference for all 96 PostgreSQL tables, plus the Mongo/Redis/MinIO/Chroma layout.
 > - **[DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)** — conventions, quality-gate ratchets, how to add/fix code, and the recurring bug classes.
 > - **[FLAKY_INTELLIGENCE.md](./FLAKY_INTELLIGENCE.md)** — the flaky-detection subsystem (FLK P1–P6): evidence layers, verdict assembly, quarantine lifecycle, step-flip surfaces.
+> - **[RELEASE_GATE.md](./RELEASE_GATE.md)** — how GO / CONDITIONAL_GO / NO_GO is decided: input signals, policy layer, band floor, council synthesis, overrides.
 >
 > The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) is the short, marketing-adjacent
 > overview; this folder is the detailed engineering reference.
