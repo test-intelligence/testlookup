@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: KNOWLEDGE_RAG.md (the optional RAG subsystem)
+
+- **New `architecture/KNOWLEDGE_RAG.md`** — the ~2,500-line RAG-* subsystem (10 services), previously only listed as a schema domain. Verified against the implementation: the two flows (indexing: `knowledge_source_service` w/ `_validate_url_domain` allowlist → `knowledge_chunking_service.chunk_and_index` into a per-project `knowledge_chunks` Chroma collection → `knowledge_sync_service`; grounded generation RAG-8/9: `rag_retrieval_service.retrieve_chunks` → `rag_generation_service.grounded_generate`/`_build_grounded_prompt`/`_stub_generated_cases` offline fallback → `_build_citations` linking every case to its source chunks → `_persist_cases`/`_map_coverage`), and the four integrity guards (`rag_redaction_service` classification-based redaction, `rag_faithfulness_service.evaluate` via Ollama/RAGAS backend, `rag_staleness_service.mark_cases_stale_for_source`, review/eval services). One mermaid component flow. Design invariants: traceability-over-fluency, per-project tenancy, offline-safe stub path. Indexed from the README; cross-linked to AI_QUALITY/SECURITY/DATABASE_SCHEMA.
+- Docs-loop iteration 20 (architecture track; fifth pass — long tail).
+
 ### 2026-07-02 — User Guide: "Defects & promotion"
 
 - **New `user-guide/defects.md`** — the defect lifecycle, verified against the implementation: the /defects queue + KPIs (open defects, mean-time-to-resolve, escape rate, auto-link-rule-misses, last-sync — labels from `DefectsPage.tsx`), promoting a cluster (`defect_promotion_service.promote_cluster` — evidence bundle carried, `_composite_to_severity` bands CRITICAL≥70/HIGH≥50/MEDIUM≥30/LOW, owner resolution from assignment memory) and its tie to the `DEFECT_CREATED` triage status, issue-tracker auto-linking with the explicit `AI_OFFLINE_MODE` hard-kill-switch-above-integration-flags note, and duplicate detection (`compute_dup_fingerprint` normalization). Ends with a promotion routine. Indexed from the guide README.
