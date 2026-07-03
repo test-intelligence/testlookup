@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: AI_EVALUATION.md (model-ops & the AI pre-release gate)
+
+- **New `architecture/AI_EVALUATION.md`** — the AI-ops/model-governance subsystem (the "is the AI itself good and safe to ship" layer, distinct from AI_QUALITY's runtime honesty), verified against the implementation: golden datasets (`golden_datasets`/`golden_agent_outputs` — classification/root-cause/duplicate/release-decision item sets) + feedback-derived datasets (`ai_eval_service.build_dataset_from_feedback`), evaluation runs + drift (`agent_eval_harness`, `AIEvalRun`, `detect_quality_drift`), the checksummed pre-release gate (`eval_gate_service.build_agent_stack_gate_manifest`/`evaluate_pre_release_gate`/`persist_agent_stack_gate_run` — admin-only endpoint, PASS/FAIL blocks prompt/model/routing changes), the per-track model registry (`model_registry` promote/retire/status with justifying metrics), and cost-as-signal (`agent_cost_service`). One mermaid eval-loop diagram. Indexed from the README; cross-linked to AI_QUALITY/RELEASE_GATE/ai-features.
+- Docs-loop iteration 22 (architecture track; sixth pass — found via a fresh service survey after the prior "done" call).
+
 ### 2026-07-02 — User Guide: "Compliance & governance"
 
 - **New `user-guide/compliance.md`** — the compliance-pack workflow, verified against the implementation: the `release_compliance_pack` feature flag (503 when off), what a pack captures (the six `_gather_*` sections — release+decision, the point-in-time policy snapshot, decision trail incl. overrides, clusters, defects, audit events), generate/download via the Releases-page `CompliancePackPanel` + durable object storage, the MCP `list_compliance_packs`/`generate_compliance_pack` tools, the deliberate self-guarding resilience (decision-trail/audit sections embed an error note rather than failing the whole pack), the governance surround (Audit Dashboard / Decision Trail / Release Gate), and when-to-generate guidance. Indexed from the guide README.
