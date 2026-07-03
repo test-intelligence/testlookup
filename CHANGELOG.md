@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Defects & promotion"
+
+- **New `user-guide/defects.md`** — the defect lifecycle, verified against the implementation: the /defects queue + KPIs (open defects, mean-time-to-resolve, escape rate, auto-link-rule-misses, last-sync — labels from `DefectsPage.tsx`), promoting a cluster (`defect_promotion_service.promote_cluster` — evidence bundle carried, `_composite_to_severity` bands CRITICAL≥70/HIGH≥50/MEDIUM≥30/LOW, owner resolution from assignment memory) and its tie to the `DEFECT_CREATED` triage status, issue-tracker auto-linking with the explicit `AI_OFFLINE_MODE` hard-kill-switch-above-integration-flags note, and duplicate detection (`compute_dup_fingerprint` normalization). Ends with a promotion routine. Indexed from the guide README.
+- Docs-loop iteration 19 (user-doc track; fifth pass — into the specialized long tail).
+
 ### 2026-07-02 — Architecture docs: OBSERVABILITY.md — docs loop fourth pass concludes
 
 - **New `architecture/OBSERVABILITY.md`** — the three signals plus the unusual fourth, verified against the implementation: domain-shaped Prometheus metrics (`core/metrics.py` ingestion/upload/AI instruments) with the versioned Grafana dashboards + alert rules under `infra/monitoring/`, opt-in OTEL tracing (`setup_tracing` OTLP HTTP; no-op unset, consistent with offline-first), the structlog kwargs-only convention (with the positional-%s-TypeError-inside-except incident class), **agent decision logs** (`BaseAgent.log_decision` → `agent_stage_results.decision_log` checkpoints + OTEL span events → the Decision Trail UI), and the health surfaces (`/health/details` per-dependency probes + build provenance; MCP `health_check`; Integration Health page).
