@@ -19,6 +19,7 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | [Dashboards & analytics](dashboards.md) | Overview, Trends, Coverage, the Summary Report's aggregation modes, Value Metrics, Search — and how their counts relate |
 | [Working with runs](working-with-runs.md) | The run list and detail pages, comparing runs, bisect-from-green, and a red-build routine |
 | [Defects & promotion](defects.md) | Promoting clusters to defects, auto-severity, issue-tracker auto-linking, duplicate detection |
+| [Compliance & governance](compliance.md) | Compliance packs — the exportable, reproducible evidence bundle behind a release decision |
 
 ## Core concepts
 

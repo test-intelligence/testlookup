@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Compliance & governance"
+
+- **New `user-guide/compliance.md`** — the compliance-pack workflow, verified against the implementation: the `release_compliance_pack` feature flag (503 when off), what a pack captures (the six `_gather_*` sections — release+decision, the point-in-time policy snapshot, decision trail incl. overrides, clusters, defects, audit events), generate/download via the Releases-page `CompliancePackPanel` + durable object storage, the MCP `list_compliance_packs`/`generate_compliance_pack` tools, the deliberate self-guarding resilience (decision-trail/audit sections embed an error note rather than failing the whole pack), the governance surround (Audit Dashboard / Decision Trail / Release Gate), and when-to-generate guidance. Indexed from the guide README.
+- Docs-loop iteration 21 (user-doc track; long tail).
+
 ### 2026-07-02 — Architecture docs: KNOWLEDGE_RAG.md (the optional RAG subsystem)
 
 - **New `architecture/KNOWLEDGE_RAG.md`** — the ~2,500-line RAG-* subsystem (10 services), previously only listed as a schema domain. Verified against the implementation: the two flows (indexing: `knowledge_source_service` w/ `_validate_url_domain` allowlist → `knowledge_chunking_service.chunk_and_index` into a per-project `knowledge_chunks` Chroma collection → `knowledge_sync_service`; grounded generation RAG-8/9: `rag_retrieval_service.retrieve_chunks` → `rag_generation_service.grounded_generate`/`_build_grounded_prompt`/`_stub_generated_cases` offline fallback → `_build_citations` linking every case to its source chunks → `_persist_cases`/`_map_coverage`), and the four integrity guards (`rag_redaction_service` classification-based redaction, `rag_faithfulness_service.evaluate` via Ollama/RAGAS backend, `rag_staleness_service.mark_cases_stale_for_source`, review/eval services). One mermaid component flow. Design invariants: traceability-over-fluency, per-project tenancy, offline-safe stub path. Indexed from the README; cross-linked to AI_QUALITY/SECURITY/DATABASE_SCHEMA.
