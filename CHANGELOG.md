@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Troubleshooting & FAQ" (symptom-first index)
+
+- **New `user-guide/troubleshooting.md`** — a distinct document *type* (symptom→cause), not another subsystem: consolidates the operational gotchas scattered across the workflow guides plus this project's real recurring support patterns, each verified against current code — empty page (project/window/now-toasting-422), count mismatches (aggregation mode vs executions-vs-unique-tests), run-with-no-per-test-rows and `/suites`-empty-while-`/runs`-populated (shard-queue subscription), missing Upload button (`manual_upload` flag / All-Projects), integrations not firing (`AI_OFFLINE_MODE` hard kill-switch → Integration Health → Audit), AI features needing the local-LLM profile, My-Failures Mine-vs-Team scope, bisect needing a green baseline, generated-case faithfulness, and stale-bundle. Cross-links into the workflow guides + observability rather than duplicating. Indexed from the guide README.
+- Docs-loop iteration 24 (user-doc track). Architecture track verified complete (size-ranked service survey); this symptom-index was the last remaining high-value user-doc slice.
+
 ### 2026-07-02 — User Guide: "Knowledge base & test generation"
 
 - **New `user-guide/knowledge-base.md`** — the user-facing side of the RAG subsystem, verified against the implementation: registering knowledge sources (upload/URL, per-project chunking+indexing, sync-history + freshness endpoints, allowlist/scheme validation), grounded test-case generation in the Test-Management knowledge tab (`KnowledgeGenerationTab` + `KnowledgeSourcePicker`/`GenerationReviewPanel`/`CitationDrawer`) with per-case citations, the human review gate (faithfulness score via Ollama/RAGAS + citations), automatic staleness flagging when a source changes, and the optional-AI-stack/`AI_OFFLINE_MODE` gating (stub fallback offline). Ends with when-it's-worth-it + review tips. Indexed from the guide README.
