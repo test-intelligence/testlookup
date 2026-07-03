@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Working with runs"
+
+- **New `user-guide/working-with-runs.md`** — the run-centric investigation tools, labels verified against `RunsPage.tsx`/`RunComparePage.tsx`: the run list's per-run actions (Compare to previous, **Bisect from last green**, Deep-all-failed), run detail incl. the live-buffer read path (in-progress runs readable immediately) and failure→triage linkage, the compare view (Left-baseline/new-failures/key-differences, suite scoping, the shareable `mode=manual&left=&right=&suite=` URL), bisect-from-green explained as the regression shortcut (baseline = last green, right = latest failed, suite = failing run's; missing button = no green baseline in window), and a five-step red-build routine tying runs/bisect/clusters/flaky/deep-investigate together.
+- Docs-loop iteration 17 (user-doc track; fourth pass).
+
 ### 2026-07-02 — Architecture docs: FRONTEND.md (SPA architecture)
 
 - **New `architecture/FRONTEND.md`** — the last major runtime component without an architecture doc (its conventions previously lived only in gitignored local agent docs). Verified against the implementation: the pages→hooks→services→single-Axios layering (with the mermaid flow), the shared instance's interceptor policy (single-flight 401 refresh; the 422-toasts/401-404-quiet policy and array-detail flattening in `services/apiErrors.ts`; deploy-target-agnostic empty base URL), the four Zustand stores incl. the shared `timeWindowStore` and the primitive-selector discipline, the six-theme `[data-theme]` token system (`--color-*`/`--status-*(-bg/-bd)`/`--gate-*`) with the palette warn-ratchet, the enforcing CI (four `frontend.*` quality gates, the all-error eslint ratchet set + promotion regressions, strict tsc, rolldown build), and the patterns-worth-copying distilled from the ratchet burn-downs. Indexed from the README.

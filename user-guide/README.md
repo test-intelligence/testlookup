@@ -17,6 +17,7 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | [AI features](ai-features.md) | Run Intelligence, Deep Investigation, the Agent Pipeline, Ask AI chat, and configuring the AI tier |
 | [Administration & settings](administration.md) | Projects, users, API keys, integrations & webhooks, flags, audit, storage, and the admin checklists |
 | [Dashboards & analytics](dashboards.md) | Overview, Trends, Coverage, the Summary Report's aggregation modes, Value Metrics, Search — and how their counts relate |
+| [Working with runs](working-with-runs.md) | The run list and detail pages, comparing runs, bisect-from-green, and a red-build routine |
 
 ## Core concepts
 
