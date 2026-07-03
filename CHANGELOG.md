@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: OBSERVABILITY.md — docs loop fourth pass concludes
+
+- **New `architecture/OBSERVABILITY.md`** — the three signals plus the unusual fourth, verified against the implementation: domain-shaped Prometheus metrics (`core/metrics.py` ingestion/upload/AI instruments) with the versioned Grafana dashboards + alert rules under `infra/monitoring/`, opt-in OTEL tracing (`setup_tracing` OTLP HTTP; no-op unset, consistent with offline-first), the structlog kwargs-only convention (with the positional-%s-TypeError-inside-except incident class), **agent decision logs** (`BaseAgent.log_decision` → `agent_stage_results.decision_log` checkpoints + OTEL span events → the Decision Trail UI), and the health surfaces (`/health/details` per-dependency probes + build provenance; MCP `health_check`; Integration Health page).
+- **Docs loop fourth pass complete (iterations 16-18, PRs #312-#314):** FRONTEND.md + working-with-runs + this. Cumulative: **18 iterations, PRs #296-#314** — `architecture/` at **11 documents**, `user-guide/` at **11 files** (10 guides + index). Both tracks comprehensive at every tier.
+
 ### 2026-07-02 — User Guide: "Working with runs"
 
 - **New `user-guide/working-with-runs.md`** — the run-centric investigation tools, labels verified against `RunsPage.tsx`/`RunComparePage.tsx`: the run list's per-run actions (Compare to previous, **Bisect from last green**, Deep-all-failed), run detail incl. the live-buffer read path (in-progress runs readable immediately) and failure→triage linkage, the compare view (Left-baseline/new-failures/key-differences, suite scoping, the shareable `mode=manual&left=&right=&suite=` URL), bisect-from-green explained as the regression shortcut (baseline = last green, right = latest failed, suite = failing run's; missing button = no green baseline in window), and a five-step red-build routine tying runs/bisect/clusters/flaky/deep-investigate together.
