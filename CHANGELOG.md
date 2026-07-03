@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — User Guide: "Knowledge base & test generation"
+
+- **New `user-guide/knowledge-base.md`** — the user-facing side of the RAG subsystem, verified against the implementation: registering knowledge sources (upload/URL, per-project chunking+indexing, sync-history + freshness endpoints, allowlist/scheme validation), grounded test-case generation in the Test-Management knowledge tab (`KnowledgeGenerationTab` + `KnowledgeSourcePicker`/`GenerationReviewPanel`/`CitationDrawer`) with per-case citations, the human review gate (faithfulness score via Ollama/RAGAS + citations), automatic staleness flagging when a source changes, and the optional-AI-stack/`AI_OFFLINE_MODE` gating (stub fallback offline). Ends with when-it's-worth-it + review tips. Indexed from the guide README.
+- Docs-loop iteration 23 (user-doc track; sixth pass).
+
 ### 2026-07-02 — Architecture docs: AI_EVALUATION.md (model-ops & the AI pre-release gate)
 
 - **New `architecture/AI_EVALUATION.md`** — the AI-ops/model-governance subsystem (the "is the AI itself good and safe to ship" layer, distinct from AI_QUALITY's runtime honesty), verified against the implementation: golden datasets (`golden_datasets`/`golden_agent_outputs` — classification/root-cause/duplicate/release-decision item sets) + feedback-derived datasets (`ai_eval_service.build_dataset_from_feedback`), evaluation runs + drift (`agent_eval_harness`, `AIEvalRun`, `detect_quality_drift`), the checksummed pre-release gate (`eval_gate_service.build_agent_stack_gate_manifest`/`evaluate_pre_release_gate`/`persist_agent_stack_gate_run` — admin-only endpoint, PASS/FAIL blocks prompt/model/routing changes), the per-track model registry (`model_registry` promote/retire/status with justifying metrics), and cost-as-signal (`agent_cost_service`). One mermaid eval-loop diagram. Indexed from the README; cross-linked to AI_QUALITY/RELEASE_GATE/ai-features.
