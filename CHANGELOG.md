@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-02 — Architecture docs: FRONTEND.md (SPA architecture)
+
+- **New `architecture/FRONTEND.md`** — the last major runtime component without an architecture doc (its conventions previously lived only in gitignored local agent docs). Verified against the implementation: the pages→hooks→services→single-Axios layering (with the mermaid flow), the shared instance's interceptor policy (single-flight 401 refresh; the 422-toasts/401-404-quiet policy and array-detail flattening in `services/apiErrors.ts`; deploy-target-agnostic empty base URL), the four Zustand stores incl. the shared `timeWindowStore` and the primitive-selector discipline, the six-theme `[data-theme]` token system (`--color-*`/`--status-*(-bg/-bd)`/`--gate-*`) with the palette warn-ratchet, the enforcing CI (four `frontend.*` quality gates, the all-error eslint ratchet set + promotion regressions, strict tsc, rolldown build), and the patterns-worth-copying distilled from the ratchet burn-downs. Indexed from the README.
+- Docs-loop iteration 16 (architecture track; fourth pass).
+
 ### 2026-07-03 — Design tokens: ExecutiveSummaryPanel migrated to per-theme status/gate tokens
 
 - **`ExecutiveSummaryPanel.tsx` off raw Tailwind palette classes** — the release-readiness badge (GO/CONDITIONAL/NO_GO), the pass-rate / failed-count metric colours, the dominant-failure category legend and progress bar, and the baseline-comparison trend arrows now route through the per-theme `--gate-*`, `--status-*`, and `--color-*` CSS variables instead of hard-coded `emerald/amber/red/orange/sky/violet` palette classes. Every colour was mapped by semantic role (release-gate → `--gate-*`; passed/failed/broken/flaky → matching `--status-*`; category hues → `--status-failed`/`--status-broken`/`--color-cyan`/`--color-purple`/`--status-flaky`), fixing the light-theme legibility defect those raw classes caused. Drops the file's `no-restricted-syntax` palette warnings from 24 → 0.
