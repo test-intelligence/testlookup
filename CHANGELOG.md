@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-03 — Design tokens: ExecutiveSummaryPanel migrated to per-theme status/gate tokens
+
+- **`ExecutiveSummaryPanel.tsx` off raw Tailwind palette classes** — the release-readiness badge (GO/CONDITIONAL/NO_GO), the pass-rate / failed-count metric colours, the dominant-failure category legend and progress bar, and the baseline-comparison trend arrows now route through the per-theme `--gate-*`, `--status-*`, and `--color-*` CSS variables instead of hard-coded `emerald/amber/red/orange/sky/violet` palette classes. Every colour was mapped by semantic role (release-gate → `--gate-*`; passed/failed/broken/flaky → matching `--status-*`; category hues → `--status-failed`/`--status-broken`/`--color-cyan`/`--color-purple`/`--status-flaky`), fixing the light-theme legibility defect those raw classes caused. Drops the file's `no-restricted-syntax` palette warnings from 24 → 0.
+- **New `ExecutiveSummaryPanel.test.tsx`** — regression guard asserting the rendered markup carries the token classes and contains no raw palette class for any status signal. The palette lint rule stays at `warn` (533 sites remain across the app).
+
 ### 2026-07-02 — User Guide: "Dashboards & analytics" — docs loop third pass concludes
 
 - **New `user-guide/dashboards.md`** — the read-side pages with their counting semantics made explicit (the historical cross-page-confusion class): the shared global time window as the golden rule, Overview (honest weighted pass rate, day-granular "last run"), Trends, Coverage (unique-tests-across-window semantics + bulk suite-label hygiene), the Summary Report's **window-vs-latest aggregation modes** (window matches Coverage; latest is deliberately smaller), Value Metrics, and Search (index freshness tell), ending with a discrepancy cheat-sheet. Labels verified against the six pages.

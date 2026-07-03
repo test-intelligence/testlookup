@@ -3,9 +3,9 @@ import clsx from 'clsx'
 import type { ExecutivePanel } from '@/services/runIntelligenceService'
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  GO: { bg: 'bg-emerald-900/30 border-emerald-700/40', text: 'text-emerald-300', label: 'GO' },
-  CONDITIONAL_GO: { bg: 'bg-amber-900/30 border-amber-700/40', text: 'text-amber-300', label: 'CONDITIONAL GO' },
-  NO_GO: { bg: 'bg-red-900/30 border-red-700/40', text: 'text-red-300', label: 'NO GO' },
+  GO: { bg: 'bg-[var(--status-passed-bg)] border-[var(--status-passed-bd)]', text: 'text-[var(--gate-go)]', label: 'GO' },
+  CONDITIONAL_GO: { bg: 'bg-[var(--gate-conditional-bg)] border-[var(--gate-conditional-border)]', text: 'text-[var(--gate-conditional)]', label: 'CONDITIONAL GO' },
+  NO_GO: { bg: 'bg-[var(--status-failed-bg)] border-[var(--status-failed-bd)]', text: 'text-[var(--gate-no-go)]', label: 'NO GO' },
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -18,18 +18,18 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 
 const CATEGORY_COLOUR: Record<string, string> = {
-  PRODUCT_BUG: 'text-red-400',
-  INFRASTRUCTURE: 'text-orange-400',
-  TEST_DATA: 'text-sky-400',
-  AUTOMATION_DEFECT: 'text-violet-400',
-  FLAKY: 'text-amber-400',
+  PRODUCT_BUG: 'text-[var(--status-failed)]',
+  INFRASTRUCTURE: 'text-[var(--status-broken)]',
+  TEST_DATA: 'text-[var(--color-cyan)]',
+  AUTOMATION_DEFECT: 'text-[var(--color-purple)]',
+  FLAKY: 'text-[var(--status-flaky)]',
   UNKNOWN: 'text-[var(--color-text-muted)]',
 }
 
 function passRateColour(rate: number): string {
-  if (rate >= 90) return 'text-emerald-400'
-  if (rate >= 70) return 'text-amber-400'
-  return 'text-red-400'
+  if (rate >= 90) return 'text-[var(--status-passed)]'
+  if (rate >= 70) return 'text-[var(--status-broken)]'
+  return 'text-[var(--status-failed)]'
 }
 
 interface Props {
@@ -89,7 +89,7 @@ export default function ExecutiveSummaryPanel({ panel, compact = false }: Props)
         <MetricCell
           label="Failed"
           value={String(metrics.failed)}
-          valueClass={metrics.failed === 0 ? 'text-emerald-400' : 'text-red-400'}
+          valueClass={metrics.failed === 0 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}
           title="Number of tests that failed"
         />
         <MetricCell
@@ -123,7 +123,7 @@ export default function ExecutiveSummaryPanel({ panel, compact = false }: Props)
           </div>
           <div className="h-1.5 w-20 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden shrink-0">
             <div
-              className={clsx('h-full rounded-full', panel.dominant_failure.percentage >= 70 ? 'bg-red-500' : 'bg-amber-500')}
+              className={clsx('h-full rounded-full', panel.dominant_failure.percentage >= 70 ? 'bg-[var(--status-failed)]' : 'bg-[var(--status-broken)]')}
               style={{ width: `${Math.min(panel.dominant_failure.percentage, 100)}%` }}
             />
           </div>
@@ -152,24 +152,24 @@ export default function ExecutiveSummaryPanel({ panel, compact = false }: Props)
           <div className="flex flex-wrap gap-4 text-sm">
             <div className="flex items-center gap-1.5" title="Change in pass rate compared to last good run">
               {panel.baseline_comparison.pass_rate_delta >= 0
-                ? <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-                : <TrendingDown className="h-3.5 w-3.5 text-red-400" />}
-              <span className={panel.baseline_comparison.pass_rate_delta >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                ? <TrendingUp className="h-3.5 w-3.5 text-[var(--status-passed)]" />
+                : <TrendingDown className="h-3.5 w-3.5 text-[var(--status-failed)]" />}
+              <span className={panel.baseline_comparison.pass_rate_delta >= 0 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}>
                 {panel.baseline_comparison.pass_rate_delta > 0 ? '+' : ''}{panel.baseline_comparison.pass_rate_delta.toFixed(1)}%
               </span>
               <span className="text-[var(--color-text-muted)]">pass rate</span>
             </div>
             {panel.baseline_comparison.new_failures > 0 && (
               <div className="flex items-center gap-1.5" title="Tests that were passing in baseline but failing now">
-                <ArrowUp className="h-3.5 w-3.5 text-red-400" />
-                <span className="text-red-400">{panel.baseline_comparison.new_failures}</span>
+                <ArrowUp className="h-3.5 w-3.5 text-[var(--status-failed)]" />
+                <span className="text-[var(--status-failed)]">{panel.baseline_comparison.new_failures}</span>
                 <span className="text-[var(--color-text-muted)]">new failures</span>
               </div>
             )}
             {panel.baseline_comparison.resolved > 0 && (
               <div className="flex items-center gap-1.5" title="Tests that were failing in baseline but passing now">
-                <ArrowDown className="h-3.5 w-3.5 text-emerald-400" />
-                <span className="text-emerald-400">{panel.baseline_comparison.resolved}</span>
+                <ArrowDown className="h-3.5 w-3.5 text-[var(--status-passed)]" />
+                <span className="text-[var(--status-passed)]">{panel.baseline_comparison.resolved}</span>
                 <span className="text-[var(--color-text-muted)]">resolved</span>
               </div>
             )}
