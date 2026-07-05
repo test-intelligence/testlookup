@@ -12,7 +12,7 @@ httpx==0.28.1
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 alembic==1.14.0
-motor==3.7.0            # Async MongoDB driver (requires pymongo>=4.9,<4.11)
+motor==3.7.1            # Async MongoDB driver (requires pymongo>=4.9,<4.11)
 pymongo==4.17.0          # Must stay <4.11 to match motor 3.7.0 constraint
 
 # ── Object Storage ───────────────────────────────────────────
