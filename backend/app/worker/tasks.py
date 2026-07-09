@@ -1087,6 +1087,14 @@ def _parse_file_to_results(
         from app.services.pytest_parser import parse_pytest_json
         return parse_pytest_json(content, run_id)
 
+    if fmt == "robot":
+        from app.services.robot_parser import parse_robot_xml
+        return parse_robot_xml(content, run_id)
+
+    if fmt == "cucumber":
+        from app.services.cucumber_parser import parse_cucumber_json
+        return parse_cucumber_json(content, run_id)
+
     # junit (default) — reuse testng_parser which handles standard JUnit XML too
     from app.services.testng_parser import parse_testng_xml
     return parse_testng_xml(content, run_id)

@@ -35,7 +35,7 @@ type Phase = 'idle' | 'uploading' | 'processing' | 'success' | 'error'
 const POLL_INTERVAL_MS = 1500
 const MAX_POLLS = 40 // ~60s, then fall back to "still processing"
 
-// Backend accepts XML (JUnit/TestNG), JSON (Allure/Playwright/Cypress), or a
+// Backend accepts XML (JUnit/TestNG/Robot), JSON (Allure/Playwright/Cypress/Cucumber), or a
 // .zip (an Allure results dir, or several reports zipped together — MRU-12).
 const ACCEPT = '.xml,.json,.zip'
 
@@ -153,7 +153,7 @@ export default function UploadReportModal({
     if (!picked.length) return
     const bad = picked.find((f) => !isAcceptedFile(f.name))
     if (bad) {
-      rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG), .json (Allure/Playwright/Cypress), or .zip files.`)
+      rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG/Robot), .json (Allure/Playwright/Cypress/Cucumber), or .zip files.`)
       return
     }
     // A .zip can only be uploaded on its own — bundling it with others would
@@ -260,7 +260,7 @@ export default function UploadReportModal({
             <div>
               <h2 className="text-base font-semibold text-[var(--color-text)]">Upload test report</h2>
               <p className="text-xs text-[var(--color-text-muted)]">
-                JUnit · TestNG · Allure · Playwright · Cypress
+                JUnit · TestNG · Allure · Playwright · Cypress · Robot · Cucumber
               </p>
             </div>
           </div>
@@ -409,6 +409,8 @@ export default function UploadReportModal({
                   <li><b>Playwright</b> — <code>--reporter=json</code> output</li>
                   <li><b>Cypress</b> — Mochawesome merged <code>.json</code></li>
                   <li><b>pytest</b> — <code>--junitxml</code> (XML), or <code>pytest --json-report</code> (JSON)</li>
+                  <li><b>Robot Framework</b> — the <code>output.xml</code> result file</li>
+                  <li><b>Cucumber</b> — <code>--format json</code> output (cucumber-jvm/js, behave, SpecFlow)</li>
                   <li><b>Multiple files</b> — select several (zipped automatically) or upload one <code>.zip</code></li>
                 </ul>
               </details>

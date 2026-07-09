@@ -28,6 +28,8 @@ export type ReportFormat =
   | 'cypress'
   | 'playwright'
   | 'pytest'
+  | 'robot'
+  | 'cucumber'
 
 /** Formats the backend `/ingest/file` endpoint accepts. Cypress/Playwright are
  *  feature-flagged server-side and may 503 if disabled for the project. */
@@ -39,6 +41,8 @@ export const SUPPORTED_FORMATS: ReadonlyArray<{ value: ReportFormat; label: stri
   { value: 'playwright', label: 'Playwright JSON' },
   { value: 'cypress', label: 'Cypress (Mochawesome) JSON' },
   { value: 'pytest', label: 'pytest JSON (json-report)' },
+  { value: 'robot', label: 'Robot Framework (output.xml)' },
+  { value: 'cucumber', label: 'Cucumber JSON' },
 ]
 
 /** 50 MB — must match the backend MAX_FILE_SIZE cap in routers/ingest.py. */

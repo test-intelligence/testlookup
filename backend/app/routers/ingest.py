@@ -123,7 +123,10 @@ async def ingest_batch(
     )
 
 
-_SUPPORTED_FORMATS = {"auto", "junit", "testng", "allure", "cypress", "playwright", "pytest"}
+_SUPPORTED_FORMATS = {
+    "auto", "junit", "testng", "allure", "cypress", "playwright", "pytest",
+    "robot", "cucumber",
+}
 
 
 @router.post(
@@ -148,7 +151,8 @@ async def ingest_file(
     Upload a test result file for async parsing and ingestion.
 
     Supported formats: ``junit`` | ``testng`` | ``allure`` | ``cypress`` |
-    ``playwright``. Use ``format=auto`` (default) for content-based detection.
+    ``playwright`` | ``pytest`` | ``robot`` | ``cucumber``. Use
+    ``format=auto`` (default) for content-based detection.
     The Cypress and Playwright parsers are gated behind the ``cypress_ingest``
     and ``playwright_ingest`` feature flags respectively — 503 is returned if
     a disabled format is requested.
@@ -341,6 +345,12 @@ def _detect_format(filename: str, content: bytes) -> str:
     # TestNG has distinctive markers
     if "<testng-results" in text or "configurationmethod" in text.lower():
         return "testng"
+    # Robot Framework output.xml — the root element is always <robot ...>.
+    # Checked before the JUnit markers for most-specific-first ordering (a
+    # Robot output file never contains <testsuite, but the discipline keeps
+    # future formats honest).
+    if "<robot" in text:
+        return "robot"
     # Standard JUnit/Surefire XML
     if "<testsuite" in text or "<testsuites" in text:
         return "junit"
@@ -378,6 +388,19 @@ def _detect_format(filename: str, content: bytes) -> str:
         and '"results"' in stripped[:2048]
     ):
         return "cypress"
+
+    # Cucumber JSON (`cucumber --format json`, also behave/SpecFlow): the root
+    # is an ARRAY of Feature objects carrying ``elements`` + a Gherkin
+    # ``keyword``. No other supported format is array-rooted with those keys.
+    # MUST run before the .json→allure extension fallback below, which would
+    # otherwise swallow every cucumber.json.
+    if (
+        looks_like_json
+        and stripped.startswith("[")
+        and '"elements"' in stripped[:4096]
+        and '"keyword"' in stripped[:4096]
+    ):
+        return "cucumber"
 
     # Allure single-result JSON: ``uuid``/``name``/``status`` at root.
     if looks_like_json and '"uuid"' in stripped and '"name"' in stripped and '"status"' in stripped:
