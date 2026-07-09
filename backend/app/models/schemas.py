@@ -3674,6 +3674,39 @@ class QuarantineProposeRequest(BaseModel):
     quarantine_duration_days: int = Field(14, ge=1, le=90)
 
 
+class QuarantineManifestEntry(BaseModel):
+    """One currently-quarantined test in the CI manifest (US-5.1).
+
+    Identity tuple for CI-side matching: ``fingerprint`` (primary key —
+    ``sha256(class_name::test_name)[:16]``, same formula as ingestion's
+    ``make_test_fingerprint``) plus the human-readable ``test_name`` /
+    ``suite_name`` / ``class_name`` for name-based fallback matching.
+    """
+    fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    class_name: Optional[str] = None
+    status: str
+    quarantined_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    reason: Optional[str] = None
+
+
+class QuarantineManifestResponse(BaseModel):
+    """Versioned quarantine manifest consumed by CI (``testlookup ci-verdict``).
+
+    Contains ONLY currently-effective quarantines (QUARANTINED /
+    RECHECK_SCHEDULED / RE_QUARANTINED) — released, rejected, and expired
+    rows never appear, nor do un-reviewed proposals.
+    """
+    version: int = 1
+    project_id: uuid.UUID
+    generated_at: datetime
+    etag: str
+    count: int
+    entries: List[QuarantineManifestEntry]
+
+
 class QuarantineStatsResponse(BaseModel):
     """Counts per status for the /quarantine page header tiles."""
     proposed: int = 0

@@ -141,6 +141,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     decision_trail.router,             # Tier 0B: AI decision audit trail per run
     llm_cost_budget_router.router,     # Tier 1 item 2: LLM cost budget + usage meter
     flaky_quarantine.router,           # Tier 1 item 3: flaky-test quarantine workflow
+    flaky_quarantine.manifest_router,  # US-5.1: CI quarantine manifest (project-scoped)
     compliance_packs.router,           # Tier 1 item 4: release compliance export pack
     github_integration.router,         # Tier 1 item 5: GitHub Checks integration
     webhooks_outbound.router,          # Tier 2 item 6: outbound webhook subscriptions

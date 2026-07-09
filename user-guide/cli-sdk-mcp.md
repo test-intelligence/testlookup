@@ -18,6 +18,7 @@ Install from the repo: `pip install ./cli`. Command groups (each has `--help`):
 |---|---|
 | `auth` | Log in / manage credentials |
 | `upload` | Upload a report file (JUnit/TestNG/Allure/Cypress/Playwright, `--format auto`) |
+| `ci-verdict` | Quarantine-aware CI gate: exit 0 when a run's only failures are quarantined/known-flaky tests (see [Flaky tests](flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict)) |
 | `projects` | List/inspect projects |
 | `runs` | List runs, inspect a run's tests and status |
 | `tests` | Query individual test results and history |
@@ -28,7 +29,7 @@ Install from the repo: `pip install ./cli`. Command groups (each has `--help`):
 | `keys` | Manage API keys |
 | `health` | Check backend reachability/health |
 
-The bread-and-butter CI pattern is in [Getting results in](getting-results-in.md#3-cli); for blocking a pipeline on the gate verdict see [Release gates](release-gates.md#gating-a-ci-pipeline).
+The bread-and-butter CI pattern is in [Getting results in](getting-results-in.md#3-cli); for blocking a pipeline on the gate verdict see [Release gates](release-gates.md#gating-a-ci-pipeline); for letting known-flaky failures through, [`ci-verdict`](flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict).
 
 ## The SDKs
 

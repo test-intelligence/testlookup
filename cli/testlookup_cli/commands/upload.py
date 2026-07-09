@@ -63,8 +63,12 @@ def upload_file(
             format=format, profile_name=profile_name,
         ))
         output.render(data, output_format)
-        run_id = data.get("run_id", "?")
-        output.print_success(f"Ingestion queued — run_id={run_id}")
+        # Keep structured stdout parseable (`upload ... --output json | jq -r
+        # '.run_id'` feeds ci-verdict in CI recipes) — the run_id is already
+        # in the rendered JSON/YAML document.
+        if output_format not in ("json", "yaml"):
+            run_id = data.get("run_id", "?")
+            output.print_success(f"Ingestion queued — run_id={run_id}")
     except Exception as e:
         output.print_error(str(e))
         raise typer.Exit(1)

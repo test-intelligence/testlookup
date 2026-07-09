@@ -15,6 +15,7 @@ from testlookup_cli.commands.deep import deep_app
 from testlookup_cli.commands.reports import reports_app
 from testlookup_cli.commands.keys import keys_app
 from testlookup_cli.commands.upload import upload_app
+from testlookup_cli.commands.ci_verdict import ci_verdict
 
 app = typer.Typer(
     name="testlookup",
@@ -62,6 +63,10 @@ app.add_typer(deep_app, name="deep")
 app.add_typer(reports_app, name="reports")
 app.add_typer(keys_app, name="keys")
 app.add_typer(upload_app, name="upload")
+
+# Single top-level command (not a group): `testlookup ci-verdict --run <id>`.
+# US-5.2 — exits 0 when the only failures in a run are quarantined tests.
+app.command("ci-verdict")(ci_verdict)
 
 
 if __name__ == "__main__":

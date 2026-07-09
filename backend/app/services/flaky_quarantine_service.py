@@ -53,6 +53,17 @@ _LIVE_STATES = (
     FlakyQuarantineStatus.RE_QUARANTINED.value,
 )
 
+# States in which a quarantine is CURRENTLY EFFECTIVE — the test is actively
+# excluded from release-gate scoring and (US-5.1) suppressed by the CI
+# manifest. Deliberately narrower than ``_LIVE_STATES``: DETECTED/PROPOSED
+# are un-reviewed signals and APPROVED is a staged intent that hasn't
+# activated — none of those may green a CI build.
+_ACTIVE_QUARANTINE_STATES = (
+    FlakyQuarantineStatus.QUARANTINED.value,
+    FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
+    FlakyQuarantineStatus.RE_QUARANTINED.value,
+)
+
 # How long a PROPOSED row can sit waiting for a QA Lead before it auto-expires.
 _PROPOSAL_TTL_DAYS = 7
 
@@ -289,6 +300,71 @@ async def active_quarantines_for_project(
         )
     )
     return {row[0] for row in result.all()}
+
+
+async def active_quarantine_entries(
+    db: AsyncSession, project_id: uuid.UUID,
+) -> list[tuple[FlakyQuarantineRequest, Optional[str]]]:
+    """Return ``(request_row, class_name)`` pairs for every currently-effective
+    quarantine in a project — the data behind the CI quarantine manifest
+    (US-5.1).
+
+    ``class_name`` is not stored on ``FlakyQuarantineRequest``; it comes from
+    an outer join to ``CanonicalTestCase`` on ``(project_id,
+    test_fingerprint)`` (index-backed via ``uq_canonical_test_cases_project_fp``)
+    so CI-side matchers that key on ``class::name`` tuples can resolve it.
+    ``None`` when the canonical row doesn't exist (e.g. manual proposals for
+    tests that never ran).
+
+    Mirrors :func:`active_quarantines_for_project` semantics: when the
+    ``flaky_auto_quarantine`` feature flag is off, quarantine is not enforced
+    anywhere (ingestion tagging, release gate), so the manifest is empty —
+    CI then treats every failure as real, which fails toward strictness.
+    """
+    if not await _feature_enabled(db):
+        return []
+    from sqlalchemy import and_ as _and
+
+    from app.models.postgres import CanonicalTestCase
+
+    stmt = (
+        select(FlakyQuarantineRequest, CanonicalTestCase.class_name)
+        .outerjoin(
+            CanonicalTestCase,
+            _and(
+                CanonicalTestCase.project_id == FlakyQuarantineRequest.project_id,
+                CanonicalTestCase.test_fingerprint == FlakyQuarantineRequest.test_fingerprint,
+            ),
+        )
+        .where(
+            FlakyQuarantineRequest.project_id == project_id,
+            FlakyQuarantineRequest.status.in_(_ACTIVE_QUARANTINE_STATES),
+        )
+        .order_by(FlakyQuarantineRequest.test_fingerprint)
+    )
+    result = await db.execute(stmt)
+    return [(row[0], row[1]) for row in result.all()]
+
+
+def manifest_etag(rows: list[FlakyQuarantineRequest]) -> str:
+    """Stable content hash of a manifest's entry set for HTTP ``ETag``.
+
+    sha256 over the sorted ``fingerprint|status|updated_at`` triples: identical
+    quarantine state always yields the same tag (row order doesn't matter),
+    and any transition — release, re-quarantine, refreshed window — changes
+    it, so CI can poll with ``If-None-Match`` and get cheap 304s.
+    """
+    import hashlib
+
+    parts = sorted(
+        "{}|{}|{}".format(
+            row.test_fingerprint,
+            row.status,
+            row.updated_at.isoformat() if row.updated_at else "",
+        )
+        for row in rows
+    )
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 # ── Transitions ─────────────────────────────────────────────────────────────

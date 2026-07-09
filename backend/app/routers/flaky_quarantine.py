@@ -17,16 +17,18 @@ flaky policy ownership is a QA Lead decision.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
     get_db,
+    require_project_access,
     require_role,
     resolve_project_scope,
 )
@@ -34,12 +36,19 @@ from app.models.postgres import User, UserRole
 from app.models.schemas import (
     FlakyQuarantineRead,
     QuarantineDecisionRequest,
+    QuarantineManifestEntry,
+    QuarantineManifestResponse,
     QuarantineProposeRequest,
     QuarantineStatsResponse,
 )
 from app.services import flaky_quarantine_service as svc
 
 router = APIRouter(prefix="/api/v1/quarantine", tags=["Flaky Quarantine"])
+# US-5.1 — CI quarantine manifest lives under the project scope so the
+# ``require_project_access`` guard (authorization ratchet) applies directly.
+# Separate router because ``router``'s prefix is /api/v1/quarantine and its
+# ``GET /{request_id}`` would swallow literal sub-paths as UUIDs.
+manifest_router = APIRouter(prefix="/api/v1/projects", tags=["Flaky Quarantine"])
 logger = structlog.get_logger("routers.flaky_quarantine")
 
 
@@ -196,6 +205,89 @@ async def reject_quarantine(
         raise HTTPException(status_code=404, detail="Quarantine request not found")
     await resolve_project_scope(db, current_user, str(row.project_id))
     return await svc.reject(db, request_id, current_user, notes=payload.notes)
+
+
+# ── CI quarantine manifest (US-5.1) ────────────────────────────────────────
+
+
+def _etag_matches(if_none_match: str, etag: str) -> bool:
+    """Compare an ``If-None-Match`` header against our ETag.
+
+    Tolerates quoted / unquoted / weak (``W/"..."``) forms and the
+    multi-value comma-separated syntax. ``*`` matches any representation.
+    """
+    for candidate in if_none_match.split(","):
+        token = candidate.strip()
+        if token == "*":
+            return True
+        if token.startswith("W/"):
+            token = token[2:]
+        if token.strip('"') == etag:
+            return True
+    return False
+
+
+def _manifest_reason(row) -> Optional[str]:
+    """Human-readable one-liner for why the test is quarantined."""
+    if row.reviewer_notes:
+        return row.reviewer_notes
+    rationale = row.rationale or {}
+    if isinstance(rationale, dict) and rationale.get("method"):
+        return f"flaky ({rationale['method']})"
+    return f"flaky ({row.detection_method})" if row.detection_method else None
+
+
+@manifest_router.get(
+    "/{project_id}/quarantine/manifest",
+    response_model=QuarantineManifestResponse,
+)
+async def get_quarantine_manifest(
+    project_id: uuid.UUID,
+    response: Response,
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
+):
+    """CI-consumable manifest of currently-effective quarantines.
+
+    Returns only tests whose quarantine is active right now (QUARANTINED,
+    RECHECK_SCHEDULED, RE_QUARANTINED) — released / rejected / expired rows
+    and un-reviewed proposals are excluded. Each entry carries the identity
+    tuple a CI-side matcher needs: ``fingerprint`` (primary), plus
+    ``test_name`` / ``suite_name`` / ``class_name`` for name-based fallback.
+
+    Sends a content-hash ``ETag`` and honours ``If-None-Match`` with 304 so
+    CI can poll cheaply. Empty when the ``flaky_auto_quarantine`` feature
+    flag is off (quarantine isn't enforced anywhere in that state).
+    """
+    pairs = await svc.active_quarantine_entries(db, project_id)
+    etag = svc.manifest_etag([row for row, _cls in pairs])
+    quoted = f'"{etag}"'
+    if if_none_match and _etag_matches(if_none_match, etag):
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": quoted})
+
+    response.headers["ETag"] = quoted
+    entries = [
+        QuarantineManifestEntry(
+            fingerprint=row.test_fingerprint,
+            test_name=row.test_name,
+            suite_name=row.suite_name,
+            class_name=class_name,
+            status=row.status,
+            quarantined_at=row.quarantine_start,
+            expires_at=row.quarantine_expires_at,
+            reason=_manifest_reason(row),
+        )
+        for row, class_name in pairs
+    ]
+    return QuarantineManifestResponse(
+        version=1,
+        project_id=project_id,
+        generated_at=datetime.now(timezone.utc),
+        etag=etag,
+        count=len(entries),
+        entries=entries,
+    )
 
 
 @router.post("/{request_id}/release", response_model=FlakyQuarantineRead)

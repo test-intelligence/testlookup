@@ -49,6 +49,14 @@ def register(mcp) -> None:  # noqa: ANN001
         )
         return json.dumps(data, indent=2, default=str)
 
+    @mcp.resource("testlookup://projects/{project_id}/quarantine-manifest")
+    async def quarantine_manifest(project_id: str) -> str:
+        """CI quarantine manifest — currently-effective quarantined tests only
+        (US-5.1): the identity tuples (fingerprint, test/suite/class name) that
+        `testlookup ci-verdict` matches a run's failures against."""
+        data = await api.get(f"/api/v1/projects/{project_id}/quarantine/manifest")
+        return json.dumps(data, indent=2, default=str)
+
     @mcp.resource("testlookup://projects/{project_id}/flaky-tests")
     async def flaky_tests(project_id: str) -> str:
         """Current flakiness leaderboard (last 30 days, top 20)."""
