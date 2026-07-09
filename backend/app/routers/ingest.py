@@ -125,7 +125,7 @@ async def ingest_batch(
 
 _SUPPORTED_FORMATS = {
     "auto", "junit", "testng", "allure", "cypress", "playwright", "pytest",
-    "robot", "cucumber",
+    "robot", "cucumber", "nunit", "trx", "xunit",
 }
 
 
@@ -151,7 +151,8 @@ async def ingest_file(
     Upload a test result file for async parsing and ingestion.
 
     Supported formats: ``junit`` | ``testng`` | ``allure`` | ``cypress`` |
-    ``playwright`` | ``pytest`` | ``robot`` | ``cucumber``. Use
+    ``playwright`` | ``pytest`` | ``robot`` | ``cucumber`` | ``nunit`` |
+    ``trx`` | ``xunit``. Use
     ``format=auto`` (default) for content-based detection.
     The Cypress and Playwright parsers are gated behind the ``cypress_ingest``
     and ``playwright_ingest`` feature flags respectively — 503 is returned if
@@ -353,6 +354,21 @@ def _detect_format(filename: str, content: bytes) -> str:
     # future formats honest).
     if "<robot" in text:
         return "robot"
+    # NUnit3 result XML — the root element is always <test-run ...>. Checked
+    # before the JUnit markers (an NUnit file never contains <testsuite, but
+    # most-specific-first keeps the ordering honest).
+    if "<test-run" in text:
+        return "nunit"
+    # Visual Studio TRX — root <TestRun ...> carrying the VisualStudio
+    # TeamTest namespace. A TRX file contains NO <testsuite marker, so it
+    # would otherwise fall through to the junit default and parse to zero
+    # results — this check must run before the generic XML fallbacks.
+    if "<TestRun" in text and "microsoft.com/schemas/VisualStudio/TeamTest" in text:
+        return "trx"
+    # xUnit.net v2 XML — root <assemblies>, or a bare <assembly> root that
+    # carries the distinctive test-framework attribute.
+    if "<assemblies" in text or ("<assembly" in text and "test-framework" in text):
+        return "xunit"
     # Standard JUnit/Surefire XML
     if "<testsuite" in text or "<testsuites" in text:
         return "junit"

@@ -30,6 +30,9 @@ export type ReportFormat =
   | 'pytest'
   | 'robot'
   | 'cucumber'
+  | 'nunit'
+  | 'trx'
+  | 'xunit'
 
 /** Formats the backend `/ingest/file` endpoint accepts. Cypress/Playwright are
  *  feature-flagged server-side and may 503 if disabled for the project. */
@@ -43,6 +46,9 @@ export const SUPPORTED_FORMATS: ReadonlyArray<{ value: ReportFormat; label: stri
   { value: 'pytest', label: 'pytest JSON (json-report)' },
   { value: 'robot', label: 'Robot Framework (output.xml)' },
   { value: 'cucumber', label: 'Cucumber JSON' },
+  { value: 'nunit', label: 'NUnit3 XML' },
+  { value: 'trx', label: 'Visual Studio TRX' },
+  { value: 'xunit', label: 'xUnit.net v2 XML' },
 ]
 
 /** 50 MB — must match the backend MAX_FILE_SIZE cap in routers/ingest.py. */

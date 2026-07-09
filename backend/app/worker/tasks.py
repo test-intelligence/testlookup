@@ -1095,6 +1095,18 @@ def _parse_file_to_results(
         from app.services.cucumber_parser import parse_cucumber_json
         return parse_cucumber_json(content, run_id)
 
+    if fmt == "nunit":
+        from app.services.nunit_parser import parse_nunit_xml
+        return parse_nunit_xml(content, run_id)
+
+    if fmt == "trx":
+        from app.services.trx_parser import parse_trx_xml
+        return parse_trx_xml(content, run_id)
+
+    if fmt == "xunit":
+        from app.services.xunit_parser import parse_xunit_xml
+        return parse_xunit_xml(content, run_id)
+
     # junit (default) — reuse testng_parser which handles standard JUnit XML too
     from app.services.testng_parser import parse_testng_xml
     return parse_testng_xml(content, run_id)

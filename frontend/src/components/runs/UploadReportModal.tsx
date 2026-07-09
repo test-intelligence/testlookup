@@ -35,13 +35,14 @@ type Phase = 'idle' | 'uploading' | 'processing' | 'success' | 'error'
 const POLL_INTERVAL_MS = 1500
 const MAX_POLLS = 40 // ~60s, then fall back to "still processing"
 
-// Backend accepts XML (JUnit/TestNG/Robot), JSON (Allure/Playwright/Cypress/Cucumber), or a
-// .zip (an Allure results dir, or several reports zipped together — MRU-12).
-const ACCEPT = '.xml,.json,.zip'
+// Backend accepts XML (JUnit/TestNG/Robot/NUnit/xUnit) incl. .trx, JSON
+// (Allure/Playwright/Cypress/Cucumber), or a .zip (an Allure results dir, or
+// several reports zipped together — MRU-12).
+const ACCEPT = '.xml,.json,.zip,.trx'
 
 function isAcceptedFile(name: string): boolean {
   const lower = name.toLowerCase()
-  return lower.endsWith('.xml') || lower.endsWith('.json') || lower.endsWith('.zip')
+  return lower.endsWith('.xml') || lower.endsWith('.json') || lower.endsWith('.zip') || lower.endsWith('.trx')
 }
 
 function humanSize(bytes: number): string {
@@ -153,7 +154,7 @@ export default function UploadReportModal({
     if (!picked.length) return
     const bad = picked.find((f) => !isAcceptedFile(f.name))
     if (bad) {
-      rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG/Robot), .json (Allure/Playwright/Cypress/Cucumber), or .zip files.`)
+      rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG/Robot/NUnit/xUnit), .trx, .json (Allure/Playwright/Cypress/Cucumber), or .zip files.`)
       return
     }
     // A .zip can only be uploaded on its own — bundling it with others would
@@ -260,7 +261,7 @@ export default function UploadReportModal({
             <div>
               <h2 className="text-base font-semibold text-[var(--color-text)]">Upload test report</h2>
               <p className="text-xs text-[var(--color-text-muted)]">
-                JUnit · TestNG · Allure · Playwright · Cypress · Robot · Cucumber
+                JUnit · TestNG · Allure · Playwright · Cypress · Robot · Cucumber · NUnit · TRX · xUnit
               </p>
             </div>
           </div>
@@ -365,7 +366,7 @@ export default function UploadReportModal({
                   <>
                     <UploadCloud className="h-7 w-7 text-[var(--color-text-muted)]" />
                     <p className="text-sm text-[var(--color-text)]">Drop report file(s) or click to browse</p>
-                    <p className="text-xs text-[var(--color-text-muted)]">.xml, .json, or .zip · multiple allowed · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
+                    <p className="text-xs text-[var(--color-text-muted)]">.xml, .trx, .json, or .zip · multiple allowed · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
                   </>
                 )}
               </div>
@@ -411,6 +412,9 @@ export default function UploadReportModal({
                   <li><b>pytest</b> — <code>--junitxml</code> (XML), or <code>pytest --json-report</code> (JSON)</li>
                   <li><b>Robot Framework</b> — the <code>output.xml</code> result file</li>
                   <li><b>Cucumber</b> — <code>--format json</code> output (cucumber-jvm/js, behave, SpecFlow)</li>
+                  <li><b>NUnit</b> — <code>nunit3-console</code> result XML, or <code>dotnet test --logger:nunit</code></li>
+                  <li><b>TRX</b> — <code>dotnet test --logger trx</code> (MSTest / vstest <code>.trx</code>)</li>
+                  <li><b>xUnit.net</b> — <code>xunit.runner</code> XML, or <code>dotnet test --logger:xunit</code></li>
                   <li><b>Multiple files</b> — select several (zipped automatically) or upload one <code>.zip</code></li>
                 </ul>
               </details>

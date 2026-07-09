@@ -23,7 +23,7 @@ def upload_file(
         "auto",
         "--format",
         "-f",
-        help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber",
+        help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber|nunit|trx|xunit",
     ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),
@@ -32,8 +32,8 @@ def upload_file(
 
     Accepts JUnit/TestNG XML, Allure JSON, Cypress (Mochawesome) JSON,
     Playwright JSON, pytest --json-report, Robot Framework output.xml,
-    or Cucumber JSON. ``--format auto`` (default) detects the format
-    from the file content.
+    Cucumber JSON, NUnit3 XML, Visual Studio TRX, or xUnit.net v2 XML.
+    ``--format auto`` (default) detects the format from the file content.
 
     The file is parsed and ingested asynchronously on the server.
     AI analysis is triggered automatically after ingestion completes.
@@ -64,11 +64,14 @@ def upload_dir(
     branch: Optional[str] = typer.Option(None, "--branch"),
     commit: Optional[str] = typer.Option(None, "--commit"),
     release: Optional[str] = typer.Option(None, "--release"),
-    format: str = typer.Option("auto", "--format", "-f"),
+    format: str = typer.Option(
+        "auto", "--format", "-f",
+        help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber|nunit|trx|xunit",
+    ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),
 ):
-    """Upload all test result files (.xml, .json) in a directory.
+    """Upload all test result files (.xml, .trx, .json) in a directory.
 
     Each file is uploaded as a separate ingestion job.
 
@@ -77,7 +80,7 @@ def upload_dir(
         testlookup upload dir ./allure-results -p <project-id> -b v2.5.0 --format allure
     """
     files = sorted(
-        list(directory.glob("*.xml")) + list(directory.glob("*.json"))
+        list(directory.glob("*.xml")) + list(directory.glob("*.json")) + list(directory.glob("*.trx"))
     )
     if not files:
         output.print_error(f"No .xml or .json files found in {directory}")
