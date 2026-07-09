@@ -55,6 +55,11 @@ from typing import Any, Optional
 
 import httpx
 
+# Shipped alongside this module (see py-modules in pyproject.toml). Auto-
+# detects ci_provider / ci_repo / pr_number / ci_actor / ci_run_url from
+# standard CI env vars (US-4.3b); explicit values always win.
+from ci_context import resolve_ci_context
+
 __version__ = "1.0.0"
 __all__ = ["TestLookupReporter", "LiveSession", "LiveStream"]
 
@@ -209,6 +214,13 @@ class ConfigLoader:
         "testlookup.branch":       ("ci", "branch"),
         "testlookup.commit":       ("ci", "commit_hash"),
         "testlookup.framework":    ("reporting", "framework"),
+        # CI context (US-4.3b) — explicit values beat auto-detection from
+        # standard CI env vars (see ci_context.py).
+        "testlookup.ci_provider":  ("ci", "provider"),
+        "testlookup.ci_repo":      ("ci", "repo"),
+        "testlookup.pr_number":    ("ci", "pr_number"),
+        "testlookup.ci_actor":     ("ci", "actor"),
+        "testlookup.ci_run_url":   ("ci", "run_url"),
         # TLS — homelab / dev convenience. Either point at a custom CA bundle
         # (preferred — preserves verification) or disable verification entirely.
         "testlookup.ca_cert_path": ("auth", "ca_cert_path"),
@@ -234,6 +246,12 @@ class ConfigLoader:
         "TESTLOOKUP_SUITE":       ("reporting", "suite_name"),
         "TESTLOOKUP_RELEASE":     ("reporting", "release_name"),
         "TESTLOOKUP_FRAMEWORK":   ("reporting", "framework"),
+        # CI-context overrides (US-4.3b) — beat auto-detection.
+        "TESTLOOKUP_CI_PROVIDER": ("ci", "provider"),
+        "TESTLOOKUP_CI_REPO":     ("ci", "repo"),
+        "TESTLOOKUP_PR_NUMBER":   ("ci", "pr_number"),
+        "TESTLOOKUP_CI_ACTOR":    ("ci", "actor"),
+        "TESTLOOKUP_CI_RUN_URL":  ("ci", "run_url"),
     }
 
     @classmethod
@@ -360,6 +378,20 @@ class ConfigLoader:
         return cur if cur != "" else default
 
 
+# ── CI-context config bridge ──────────────────────────────────────────────────
+
+def _ci_overrides_from_config(cfg: dict) -> dict:
+    """Pull the user's explicit ci.* config values (file + env overlay) into
+    the field names ``resolve_ci_context`` merges over auto-detection."""
+    return {
+        "ci_provider": ConfigLoader.get(cfg, "ci.provider"),
+        "ci_repo":     ConfigLoader.get(cfg, "ci.repo"),
+        "pr_number":   ConfigLoader.get(cfg, "ci.pr_number"),
+        "ci_actor":    ConfigLoader.get(cfg, "ci.actor"),
+        "ci_run_url":  ConfigLoader.get(cfg, "ci.run_url"),
+    }
+
+
 # ── Reporter ──────────────────────────────────────────────────────────────────
 
 class TestLookupReporter:
@@ -420,6 +452,10 @@ class TestLookupReporter:
         # The server falls back to the project's default release when this
         # is left blank.
         self._release_name = ConfigLoader.get(cfg, "reporting.release_name")
+        # CI context (US-4.3b): auto-detected from standard CI env vars, with
+        # testlookup.ci_* config / TESTLOOKUP_CI_* env values winning. Merged
+        # into every session-create payload; per-session args win over this.
+        self._ci_context = resolve_ci_context(overrides=_ci_overrides_from_config(cfg))
         self._batch_size = min(
             batch_size if batch_size != BATCH_SIZE else int(ConfigLoader.get(cfg, "reporting.batch_size", BATCH_SIZE)),
             MAX_BATCH_SIZE,
@@ -453,6 +489,11 @@ class TestLookupReporter:
         launch_name: Optional[str] = None,
         suite_name: Optional[str] = None,
         release_name: Optional[str] = None,
+        ci_provider: Optional[str] = None,
+        ci_repo: Optional[str] = None,
+        pr_number: Optional[int] = None,
+        ci_actor: Optional[str] = None,
+        ci_run_url: Optional[str] = None,
     ):
         """
         Async context manager that manages the full session lifecycle:
@@ -476,6 +517,11 @@ class TestLookupReporter:
             launch_name=launch_name,
             suite_name=resolved_suite,
             release_name=resolved_release,
+            ci_provider=ci_provider,
+            ci_repo=ci_repo,
+            pr_number=pr_number,
+            ci_actor=ci_actor,
+            ci_run_url=ci_run_url,
         )
         try:
             yield live
@@ -490,13 +536,23 @@ class TestLookupReporter:
         # and as the LiveSession default for record() calls. Pop early so we
         # can pass it down to LiveSession without leaving it in payload twice.
         suite_for_session = kwargs.pop("suite_name", None)
+        # CI context (US-4.3b): reporter-level resolution (auto-detection +
+        # config/env overrides) is the default; explicit per-session values
+        # always win. Pop the five typed fields so they merge exactly once.
+        explicit_ci = {
+            field: kwargs.pop(field, None)
+            for field in ("ci_provider", "ci_repo", "pr_number", "ci_actor", "ci_run_url")
+        }
+        ci_context = dict(self._ci_context)
+        ci_context.update({k: v for k, v in explicit_ci.items() if v is not None})
         payload: dict[str, Any] = {
             "project_id": self._project_id,
             "client_name": self._client_name,
             "framework": self._framework,
-            "machine_id": kwargs.pop("machine_id") or socket.gethostname(),
+            "machine_id": kwargs.pop("machine_id", None) or socket.gethostname(),
         }
         payload.update({k: v for k, v in kwargs.items() if v is not None})
+        payload.update(ci_context)
         if suite_for_session is not None:
             payload["suite_name"] = suite_for_session
 
@@ -859,6 +915,11 @@ class LiveStream:
         machine_id: Optional[str] = None,
         release_name: Optional[str] = None,
         metadata: Optional[dict] = None,
+        ci_provider: Optional[str] = None,
+        ci_repo: Optional[str] = None,
+        pr_number: Optional[int] = None,
+        ci_actor: Optional[str] = None,
+        ci_run_url: Optional[str] = None,
         batch_size: int = BATCH_SIZE,
         batch_interval_ms: int = BATCH_INTERVAL_MS,
         verify_ssl: Any = None,
@@ -936,6 +997,26 @@ class LiveStream:
         if resolved_launch is not None:    self._meta["launch_name"] = resolved_launch
         if resolved_suite is not None:     self._meta["suite_name"] = resolved_suite
         if metadata is not None:           self._meta["metadata"] = metadata
+        # CI context (US-4.3b): /stream/ingest carries it inside
+        # meta.metadata["ci_context"] — the server folds meta.metadata into
+        # LiveSession.extra_metadata and upsert_test_run stamps the TestRun
+        # from extra_metadata["ci_context"] at persist time. Precedence:
+        # auto-detection < testlookup.ci_* config / TESTLOOKUP_CI_* env <
+        # constructor kwargs < caller-supplied metadata["ci_context"] keys.
+        ci_context = resolve_ci_context(
+            {
+                "ci_provider": ci_provider,
+                "ci_repo": ci_repo,
+                "pr_number": pr_number,
+                "ci_actor": ci_actor,
+                "ci_run_url": ci_run_url,
+            },
+            overrides=_ci_overrides_from_config(cfg),
+        )
+        if ci_context:
+            meta_md = dict(self._meta.get("metadata") or {})
+            meta_md["ci_context"] = {**ci_context, **(meta_md.get("ci_context") or {})}
+            self._meta["metadata"] = meta_md
         # Cached for record() default — see LiveStream.record below.
         self._default_suite_name = resolved_suite
 

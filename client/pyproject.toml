@@ -29,9 +29,10 @@ yaml = ["pyyaml>=5.4"]
 testlookup = "testlookup_reporter"
 
 [tool.setuptools]
-# Single-file module — no nested package layout. Once we grow past one file,
-# convert this to a `[tool.setuptools.packages.find]` block.
-py-modules = ["testlookup_reporter"]
+# Flat modules — no nested package layout. ci_context ships alongside the
+# reporter (CI auto-detection, US-4.3b). If this list grows further,
+# convert to a `[tool.setuptools.packages.find]` block.
+py-modules = ["testlookup_reporter", "ci_context"]
 
 [tool.setuptools.package-data]
 testlookup_reporter = ["testlookup.yaml.example"]

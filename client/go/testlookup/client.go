@@ -159,7 +159,19 @@ type SessionOptions struct {
 	// ReleaseName overrides Config.ReleaseName for this session. Blank →
 	// server falls back to the project's default release.
 	ReleaseName string
-	Metadata    map[string]interface{}
+	// CI context (US-4.3b). Auto-detected from standard CI env vars (GitHub
+	// Actions, GitLab CI, Jenkins, Azure DevOps, CircleCI) when left empty;
+	// explicit values here — or TESTLOOKUP_CI_* env overrides — always win.
+	CIProvider string
+	// CIRepo is the repository as "org/name" (overrides auto-detection).
+	CIRepo string
+	// PRNumber is the pull/merge request number, >= 1 (overrides auto-detection).
+	PRNumber int
+	// CIActor is the CI user that triggered the run (overrides auto-detection).
+	CIActor string
+	// CIRunURL deep-links back to the CI job (overrides auto-detection).
+	CIRunURL string
+	Metadata map[string]interface{}
 }
 
 // ── RecordOptions ─────────────────────────────────────────────────────────────
@@ -213,6 +225,21 @@ func (r *Reporter) StartSession(ctx context.Context, opts SessionOptions) (*Sess
 	if sessionRelease == "" { sessionRelease = r.cfg.ReleaseName }
 	if sessionRelease != "" { payload["release_name"] = sessionRelease }
 	if opts.Metadata    != nil { payload["metadata"]    = opts.Metadata }
+
+	// CI context (US-4.3b): auto-detection < TESTLOOKUP_CI_* env overrides
+	// < explicit SessionOptions values. Only known fields are sent.
+	ci := resolveCIContext(os.Getenv, CIContext{
+		Provider: opts.CIProvider,
+		Repo:     opts.CIRepo,
+		PRNumber: opts.PRNumber,
+		Actor:    opts.CIActor,
+		RunURL:   opts.CIRunURL,
+	})
+	if ci.Provider != "" { payload["ci_provider"] = ci.Provider }
+	if ci.Repo     != "" { payload["ci_repo"]     = ci.Repo }
+	if ci.PRNumber >= 1  { payload["pr_number"]   = ci.PRNumber }
+	if ci.Actor    != "" { payload["ci_actor"]    = ci.Actor }
+	if ci.RunURL   != "" { payload["ci_run_url"]  = ci.RunURL }
 
 	var result struct {
 		SessionID    string `json:"session_id"`

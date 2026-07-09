@@ -6,6 +6,7 @@ from typing import Optional
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.ci_context import resolve_ci_context
 from testlookup_cli.config import get_profile
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
@@ -19,6 +20,11 @@ def upload_file(
     branch: Optional[str] = typer.Option(None, "--branch", help="Git branch"),
     commit: Optional[str] = typer.Option(None, "--commit", help="Git commit SHA"),
     release: Optional[str] = typer.Option(None, "--release", help="Release name"),
+    ci_provider: Optional[str] = typer.Option(None, "--ci-provider", help="CI provider (overrides auto-detection)"),
+    repo: Optional[str] = typer.Option(None, "--repo", help="Repository as org/name (overrides auto-detection)"),
+    pr_number: Optional[int] = typer.Option(None, "--pr-number", min=1, help="Pull/merge request number (overrides auto-detection)"),
+    ci_actor: Optional[str] = typer.Option(None, "--ci-actor", help="CI actor / triggering user (overrides auto-detection)"),
+    ci_run_url: Optional[str] = typer.Option(None, "--ci-run-url", help="CI run/job URL (overrides auto-detection)"),
     format: str = typer.Option(
         "auto",
         "--format",
@@ -35,17 +41,25 @@ def upload_file(
     Cucumber JSON, NUnit3 XML, Visual Studio TRX, or xUnit.net v2 XML.
     ``--format auto`` (default) detects the format from the file content.
 
+    CI context (provider, repo, PR number, actor, run URL) is auto-detected
+    from standard CI env vars (GitHub Actions, GitLab CI, Jenkins, Azure
+    DevOps, CircleCI); the --ci-provider/--repo/--pr-number/--ci-actor/
+    --ci-run-url options override detection.
+
     The file is parsed and ingested asynchronously on the server.
     AI analysis is triggered automatically after ingestion completes.
 
     Examples:
         testlookup upload file results.xml -p <project-id> -b build-42
         testlookup upload file allure.json -p <project-id> -b v2.5.0 --format allure
+        testlookup upload file results.xml -p <project-id> -b build-42 --pr-number 421
     """
     try:
         data = asyncio.run(_upload_file(
             path=path, project=project, build=build,
             branch=branch, commit=commit, release=release,
+            ci_provider=ci_provider, ci_repo=repo, pr_number=pr_number,
+            ci_actor=ci_actor, ci_run_url=ci_run_url,
             format=format, profile_name=profile_name,
         ))
         output.render(data, output_format)
@@ -64,6 +78,11 @@ def upload_dir(
     branch: Optional[str] = typer.Option(None, "--branch"),
     commit: Optional[str] = typer.Option(None, "--commit"),
     release: Optional[str] = typer.Option(None, "--release"),
+    ci_provider: Optional[str] = typer.Option(None, "--ci-provider", help="CI provider (overrides auto-detection)"),
+    repo: Optional[str] = typer.Option(None, "--repo", help="Repository as org/name (overrides auto-detection)"),
+    pr_number: Optional[int] = typer.Option(None, "--pr-number", min=1, help="Pull/merge request number (overrides auto-detection)"),
+    ci_actor: Optional[str] = typer.Option(None, "--ci-actor", help="CI actor / triggering user (overrides auto-detection)"),
+    ci_run_url: Optional[str] = typer.Option(None, "--ci-run-url", help="CI run/job URL (overrides auto-detection)"),
     format: str = typer.Option(
         "auto", "--format", "-f",
         help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber|nunit|trx|xunit",
@@ -73,7 +92,9 @@ def upload_dir(
 ):
     """Upload all test result files (.xml, .trx, .json) in a directory.
 
-    Each file is uploaded as a separate ingestion job.
+    Each file is uploaded as a separate ingestion job. CI context is
+    auto-detected from standard CI env vars (override with --ci-provider /
+    --repo / --pr-number / --ci-actor / --ci-run-url).
 
     Examples:
         testlookup upload dir ./target/surefire-reports -p <project-id> -b build-42
@@ -93,6 +114,8 @@ def upload_dir(
             data = asyncio.run(_upload_file(
                 path=f, project=project, build=build,
                 branch=branch, commit=commit, release=release,
+                ci_provider=ci_provider, ci_repo=repo, pr_number=pr_number,
+                ci_actor=ci_actor, ci_run_url=ci_run_url,
                 format=format, profile_name=profile_name,
             ))
             results.append(data)
@@ -105,23 +128,24 @@ def upload_dir(
     output.print_success(f"Uploaded {len(results)}/{len(files)} files ({errors} errors)")
 
 
-async def _upload_file(
-    path: Path,
+def _build_form_data(
     project: str,
     build: str,
     branch: Optional[str] = None,
     commit: Optional[str] = None,
     release: Optional[str] = None,
+    ci_provider: Optional[str] = None,
+    ci_repo: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    ci_actor: Optional[str] = None,
+    ci_run_url: Optional[str] = None,
     format: str = "auto",
-    profile_name: Optional[str] = None,
 ) -> dict:
-    """Upload a single file via multipart POST to /api/v1/ingest/file."""
-    import httpx
+    """Assemble the multipart form fields for POST /api/v1/ingest/file.
 
-    profile = get_profile(profile_name)
-    base_url = profile.get("url", "http://localhost:8000").rstrip("/")
-    headers = client._build_headers(profile)
-
+    CI context (US-4.3b) is auto-detected from standard CI env vars; the
+    explicit ci_* arguments (CLI flags) always win over detection.
+    """
     form_data = {
         "project_id": project,
         "build_number": build,
@@ -133,6 +157,48 @@ async def _upload_file(
         form_data["commit_hash"] = commit
     if release:
         form_data["release_name"] = release
+
+    ci_context = resolve_ci_context({
+        "ci_provider": ci_provider,
+        "ci_repo": ci_repo,
+        "pr_number": pr_number,
+        "ci_actor": ci_actor,
+        "ci_run_url": ci_run_url,
+    })
+    for field, value in ci_context.items():
+        form_data[field] = str(value)
+
+    return form_data
+
+
+async def _upload_file(
+    path: Path,
+    project: str,
+    build: str,
+    branch: Optional[str] = None,
+    commit: Optional[str] = None,
+    release: Optional[str] = None,
+    ci_provider: Optional[str] = None,
+    ci_repo: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    ci_actor: Optional[str] = None,
+    ci_run_url: Optional[str] = None,
+    format: str = "auto",
+    profile_name: Optional[str] = None,
+) -> dict:
+    """Upload a single file via multipart POST to /api/v1/ingest/file."""
+    import httpx
+
+    profile = get_profile(profile_name)
+    base_url = profile.get("url", "http://localhost:8000").rstrip("/")
+    headers = client._build_headers(profile)
+
+    form_data = _build_form_data(
+        project=project, build=build, branch=branch, commit=commit,
+        release=release, ci_provider=ci_provider, ci_repo=ci_repo,
+        pr_number=pr_number, ci_actor=ci_actor, ci_run_url=ci_run_url,
+        format=format,
+    )
 
     async with httpx.AsyncClient(timeout=60.0) as http:
         with open(path, "rb") as f:

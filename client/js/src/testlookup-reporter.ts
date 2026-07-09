@@ -31,6 +31,8 @@
 
 import * as os from 'os'
 
+import { resolveCiContext } from './ci-context'
+
 // ── Constants ──────────────────────────────────────────────────────────────────
 const BATCH_SIZE         = 50        // flush when buffer reaches this count
 const BATCH_INTERVAL_MS  = 100       // flush at most every N ms
@@ -87,6 +89,20 @@ export interface SessionOptions {
   suiteName?: string
   /** Per-session release override (beats ReporterConfig.releaseName). */
   releaseName?: string
+  /**
+   * CI context (US-4.3b). Auto-detected from standard CI env vars (GitHub
+   * Actions, GitLab CI, Jenkins, Azure DevOps, CircleCI) when omitted;
+   * explicit values here — or TESTLOOKUP_CI_* env overrides — always win.
+   */
+  ciProvider?: string
+  /** Repository as "org/name" (overrides auto-detection). */
+  ciRepo?: string
+  /** Pull/merge request number, >= 1 (overrides auto-detection). */
+  prNumber?: number
+  /** CI actor / triggering user (overrides auto-detection). */
+  ciActor?: string
+  /** CI run/job URL (overrides auto-detection). */
+  ciRunUrl?: string
   metadata?: Record<string, unknown>
 }
 
@@ -186,6 +202,19 @@ export class TestLookupReporter {
     if (sessionSuite      != null) payload.suite_name   = sessionSuite
     if (sessionRelease    != null) payload.release_name = sessionRelease
     if (opts.metadata     != null) payload.metadata     = opts.metadata
+
+    // CI context (US-4.3b): auto-detection < TESTLOOKUP_CI_* env overrides
+    // < explicit SessionOptions values. Only defined fields are sent.
+    const ciContext = resolveCiContext({
+      ci_provider: opts.ciProvider,
+      ci_repo:     opts.ciRepo,
+      pr_number:   opts.prNumber,
+      ci_actor:    opts.ciActor,
+      ci_run_url:  opts.ciRunUrl,
+    })
+    for (const [field, value] of Object.entries(ciContext)) {
+      if (value != null) payload[field] = value
+    }
 
     const data = await this._fetch<SessionCreateResponse>('POST', '/api/v1/stream/sessions', payload)
 

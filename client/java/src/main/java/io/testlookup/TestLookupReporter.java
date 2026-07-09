@@ -231,6 +231,20 @@ public class TestLookupReporter {
         if (sessionSuite     != null) payload.put("suite_name",   sessionSuite);
         if (sessionRelease   != null) payload.put("release_name", sessionRelease);
 
+        // CI context (US-4.3b): auto-detection + TESTLOOKUP_CI_* env
+        // overrides, with explicit SessionOptions values winning over both.
+        CiContext ci = CiContext.resolve(System.getenv());
+        String  ciProvider = opts.ciProvider != null ? opts.ciProvider : ci.provider;
+        String  ciRepo     = opts.ciRepo     != null ? opts.ciRepo     : ci.repo;
+        Integer prNumber   = opts.prNumber   != null ? opts.prNumber   : ci.prNumber;
+        String  ciActor    = opts.ciActor    != null ? opts.ciActor    : ci.actor;
+        String  ciRunUrl   = opts.ciRunUrl   != null ? opts.ciRunUrl   : ci.runUrl;
+        if (ciProvider != null)                  payload.put("ci_provider", ciProvider);
+        if (ciRepo     != null)                  payload.put("ci_repo",     ciRepo);
+        if (prNumber   != null && prNumber >= 1) payload.put("pr_number",   prNumber.intValue());
+        if (ciActor    != null)                  payload.put("ci_actor",    ciActor);
+        if (ciRunUrl   != null)                  payload.put("ci_run_url",  ciRunUrl);
+
         String body;
         try { body = MAPPER.writeValueAsString(payload); }
         catch (Exception e) { throw new TestLookupException("Serialization error", e); }
@@ -408,6 +422,11 @@ public class TestLookupReporter {
         public final String launchName;
         public final String suiteName;
         public final String releaseName;
+        public final String  ciProvider;
+        public final String  ciRepo;
+        public final Integer prNumber;
+        public final String  ciActor;
+        public final String  ciRunUrl;
 
         private SessionOptions(Builder b) {
             this.buildNumber = b.buildNumber;
@@ -418,6 +437,11 @@ public class TestLookupReporter {
             this.launchName  = b.launchName;
             this.suiteName   = b.suiteName;
             this.releaseName = b.releaseName;
+            this.ciProvider  = b.ciProvider;
+            this.ciRepo      = b.ciRepo;
+            this.prNumber    = b.prNumber;
+            this.ciActor     = b.ciActor;
+            this.ciRunUrl    = b.ciRunUrl;
         }
 
         public static Builder builder() { return new Builder(); }
@@ -431,6 +455,11 @@ public class TestLookupReporter {
             private String launchName;
             private String suiteName;
             private String releaseName;
+            private String  ciProvider;
+            private String  ciRepo;
+            private Integer prNumber;
+            private String  ciActor;
+            private String  ciRunUrl;
 
             public Builder buildNumber(String v)  { this.buildNumber = v; return this; }
             public Builder branch(String v)       { this.branch      = v; return this; }
@@ -442,6 +471,16 @@ public class TestLookupReporter {
             public Builder suiteName(String v)    { this.suiteName   = v; return this; }
             /** Per-session release override (beats the reporter-level default). */
             public Builder releaseName(String v)  { this.releaseName = v; return this; }
+            /** CI provider override — beats auto-detection (US-4.3b). */
+            public Builder ciProvider(String v)   { this.ciProvider  = v; return this; }
+            /** Repository as "org/name" — beats auto-detection. */
+            public Builder ciRepo(String v)       { this.ciRepo      = v; return this; }
+            /** Pull/merge request number (&gt;= 1) — beats auto-detection. */
+            public Builder prNumber(Integer v)    { this.prNumber    = v; return this; }
+            /** CI actor / triggering user — beats auto-detection. */
+            public Builder ciActor(String v)      { this.ciActor     = v; return this; }
+            /** CI run/job URL — beats auto-detection. */
+            public Builder ciRunUrl(String v)     { this.ciRunUrl    = v; return this; }
             public SessionOptions build()         { return new SessionOptions(this); }
         }
     }

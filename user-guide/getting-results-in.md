@@ -85,6 +85,18 @@ The flow every SDK follows: open a session → stream `test_started` / `test_fin
 
 While a live run is in progress, the Runs and report pages read from the live buffer, so counts stay consistent with what **Live** shows.
 
+## CI context (PRs)
+
+When results come from a CI job, the SDKs and CLI automatically detect and attach **CI context** — provider, repository (`org/name`), PR/MR number, triggering user, and a deep link back to the CI run. Detection reads the standard environment variables of **GitHub Actions, GitLab CI, Jenkins (multibranch), Azure DevOps, and CircleCI**; outside CI nothing is sent, and nothing is ever guessed.
+
+Explicit values always win over detection:
+
+- **CLI**: `testlookup upload file … --ci-provider … --repo org/name --pr-number 421 --ci-actor … --ci-run-url …` (same flags on `upload dir`).
+- **Any SDK / CLI**: set `TESTLOOKUP_CI_PROVIDER`, `TESTLOOKUP_CI_REPO`, `TESTLOOKUP_PR_NUMBER`, `TESTLOOKUP_CI_ACTOR`, `TESTLOOKUP_CI_RUN_URL` env vars, or (Python SDK) the `testlookup.ci_*` config-file keys.
+- **SDK session options**: each SDK's session-create options accept the five fields directly (e.g. `prNumber` in JS/Java, `PRNumber` in Go, `pr_number` in Python).
+
+The fields land on the run (`ci_provider` / `ci_repo` / `pr_number` / `ci_actor` / `ci_run_url`) and anchor PR-level features like per-PR risk summaries and commit attribution.
+
 ## After ingest: what happens automatically
 
 1. Per-test rows are persisted and each test gets its cross-run **fingerprint**.
