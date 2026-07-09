@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   BarChart3, Bot, Brain, Bug, ChevronDown, ClipboardList, FileText,
   FolderTree, Gauge, GitBranch, HeartPulse, Inbox, Layers, LayoutDashboard,
-  Network, Package, Radio, Rocket, Search, Settings, Shield,
+  MessageSquare, Network, Package, Radio, Rocket, Search, Settings, Shield,
   ShieldAlert, ShieldCheck, ShieldEllipsis, TrendingUp, Upload, UsersRound, UserCircle2,
 } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -71,15 +71,16 @@ const GROUPS: NavGroup[] = [
     label: 'AI Reports',
     icon: Brain,
     to: '/intelligence',
-    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/quarantine'],
+    activePrefixes: ['/intelligence', '/agents', '/deep-investigate', '/release-gate', '/flaky-coach', '/quarantine', '/chat'],
     children: [
       { to: '/agents',           icon: Bot,           label: 'AI Pipeline'   },
       { to: '/deep-investigate', icon: Layers,         label: 'Deep Analysis' },
       { to: '/release-gate',     icon: Shield,         label: 'Release Gate'  },
       { to: '/flaky-coach',      icon: HeartPulse,     label: 'Flaky Coach'   },
       { to: '/quarantine',       icon: ShieldAlert,    label: 'Quarantine'    },
-      // Chat feature temporarily disabled — re-enable by uncommenting this entry, the '/chat' activePrefix above, and the route in App.tsx.
-      // { to: '/chat',             icon: MessageSquare,  label: 'Chat'          },
+      // Gated below: hidden unless the ask_ai_chat flag is on AND the AI
+      // analysis mode can reach an LLM (rules mode has nothing to chat with).
+      { to: '/chat',             icon: MessageSquare,  label: 'Ask AI'        },
     ],
   },
 ]
@@ -177,6 +178,11 @@ export default function Sidebar() {
   const { data: aiConfig } = useAIConfig()
   // Rollout gate (MRU-17): hide the Upload Report item until the flag is on.
   const uploadEnabled = useFeatureEnabled('manual_upload')
+  // Ask-AI chat (US-2.1): flag-gated, and pointless without an LLM — hide the
+  // nav item in rules mode so there is no dead entry. Direct navigation to
+  // /chat still works; the page renders its own "switch mode" guidance.
+  const chatFlagEnabled = useFeatureEnabled('ask_ai_chat')
+  const chatEnabled = chatFlagEnabled && !!aiConfig && aiConfig.analysis_mode !== 'rules'
 
   // Show a mode badge on the AI Reports group when in rules or ML mode
   const aiModeBadge =
@@ -189,6 +195,10 @@ export default function Sidebar() {
     let group = g.key === 'intelligence' && aiModeBadge ? { ...g, badge: aiModeBadge } : g
     if (!uploadEnabled) {
       const children = group.children.filter(c => c.to !== '/runs?upload=1')
+      if (children.length !== group.children.length) group = { ...group, children }
+    }
+    if (!chatEnabled) {
+      const children = group.children.filter(c => c.to !== '/chat')
       if (children.length !== group.children.length) group = { ...group, children }
     }
     return group

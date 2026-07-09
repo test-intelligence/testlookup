@@ -115,6 +115,7 @@ const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
 const MyFailuresPage = lazy(() => import('@/pages/MyFailuresPage'))
 const SummaryReportPage = lazy(() => import('@/pages/SummaryReportPage'))
+const ChatPage = lazy(() => import('@/pages/ChatPage'))
 
 type AppRoute = {
   path: string
@@ -140,8 +141,10 @@ const appRoutes: AppRoute[] = [
   { path: 'trends', component: TrendsPage },
   { path: 'defects', component: DefectsPage },
   { path: 'search', component: SearchPage },
-  // Chat feature temporarily disabled — re-enable by uncommenting this route and the Sidebar entry.
-  // { path: 'chat', component: ChatPage },
+  // Ask-AI chat (US-2.1). The Sidebar entry is gated on the ask_ai_chat
+  // feature flag + a non-rules AI mode; the route itself stays registered so
+  // a direct URL renders the page's own "switch mode" guidance instead of 404.
+  { path: 'chat', component: ChatPage },
   { path: 'agents', component: AgentStatusPage },
   { path: 'agents/run/:runId', component: AgentStatusPage },
   { path: 'deep-investigate', component: DeepInvestigationPage },

@@ -23,11 +23,17 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => mockPermissions,
 }))
 
-// Control the manual_upload rollout flag (MRU-17).
-const mockUpload = vi.hoisted(() => ({ enabled: false }))
+// Control the rollout flags per key (manual_upload MRU-17, ask_ai_chat US-2.1).
+const mockFlags = vi.hoisted(() => ({ byKey: {} as Record<string, boolean> }))
 vi.mock('@/hooks/useFeatureFlags', () => ({
-  useFeatureEnabled: () => mockUpload.enabled,
+  useFeatureEnabled: (key: string) => mockFlags.byKey[key] ?? false,
   useFeatureFlags: () => ({ flags: [], isLoading: false, isError: false, refresh: vi.fn() }),
+}))
+
+// Control the AI analysis mode (the Ask AI entry hides in rules mode).
+const mockAI = vi.hoisted(() => ({ config: undefined as { analysis_mode: string } | undefined }))
+vi.mock('@/hooks/useAIConfig', () => ({
+  useAIConfig: () => ({ data: mockAI.config }),
 }))
 
 describe('Sidebar', () => {
@@ -35,7 +41,8 @@ describe('Sidebar', () => {
     mockPermissions.role = 'ADMIN'
     mockPermissions.canAccessManagement = true
     mockPermissions.canViewSettings = true
-    mockUpload.enabled = false
+    mockFlags.byKey = {}
+    mockAI.config = undefined
   })
 
   it('hides Upload Report when the manual_upload flag is off, shows it when on', () => {
@@ -46,9 +53,36 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: /Coverage/ })).toBeInTheDocument()  // group is open
     expect(screen.queryByRole('link', { name: /Upload Report/ })).not.toBeInTheDocument()
 
-    mockUpload.enabled = true
+    mockFlags.byKey = { manual_upload: true }
     rerender(<MemoryRouter initialEntries={['/runs']}><Sidebar /></MemoryRouter>)
     expect(screen.getByRole('link', { name: /Upload Report/ })).toBeInTheDocument()
+  })
+
+  it('shows Ask AI only when the ask_ai_chat flag is on AND the AI mode is not rules', () => {
+    // Render within an AI Reports route so that group is expanded.
+    const at = ['/agents']
+    const { rerender } = render(
+      <MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>,
+    )
+    // Flag off → hidden regardless of mode.
+    expect(screen.getByRole('link', { name: /AI Pipeline/ })).toBeInTheDocument() // group open
+    expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
+
+    // Flag on but rules mode → still hidden (nothing to chat with).
+    mockFlags.byKey = { ask_ai_chat: true }
+    mockAI.config = { analysis_mode: 'rules' }
+    rerender(<MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>)
+    expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
+
+    // Flag on but AI config not yet loaded → hidden (no flicker of a dead link).
+    mockAI.config = undefined
+    rerender(<MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>)
+    expect(screen.queryByRole('link', { name: /Ask AI/ })).not.toBeInTheDocument()
+
+    // Flag on + LLM-capable mode → visible.
+    mockAI.config = { analysis_mode: 'auto' }
+    rerender(<MemoryRouter initialEntries={at}><Sidebar /></MemoryRouter>)
+    expect(screen.getByRole('link', { name: /Ask AI/ })).toBeInTheDocument()
   })
 
   it('renders branding and top-level group links', () => {

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-09 — Ask-AI chat page enabled (PMF backlog US-2.1)
+
+- The fully-built Ask-AI chat page (natural-language Q&A over runs/failures via the configured LLM, `/chat`) was dark — its route commented out of `App.tsx`. Now registered, with the sidebar "Ask AI" entry (AI Reports group) gated on **both** the new `ask_ai_chat` feature flag (migration 0100, seeded enabled) **and** a non-rules AI analysis mode — so installs without an LLM show no dead nav entry. Direct URL navigation always works; the page renders its own "switch to LLM/Auto mode in Settings → AI Configuration" guidance when chat is unreachable.
+- Sidebar tests reworked to per-key flag mocking + a new visibility matrix test (flag off / rules mode / config not loaded / enabled). Admins can hard-disable via Settings → Feature Flags.
+
 ### 2026-07-09 — Docs-truth pass: supported ingestion formats (PMF backlog US-1.6)
 
 - `user-guide/getting-results-in.md` and the CLI `upload --format` help now list the full, real format set (`junit`, `testng`, `allure`, `cypress`, `playwright`, `pytest`, `robot`, `cucumber`) — both previously stopped at the original 3–5 formats.
