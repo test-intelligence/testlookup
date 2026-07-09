@@ -25,16 +25,16 @@
  * Out of scope (Phase 2 — README §11 + §"Out of scope" implications):
  *   - Pre-scan endpoint — synthesised client-side from existing
  *     useFailureClusters (members + cohesion_score) of the focused run.
- *   - Cost estimate breakdown — derived from eligible count; backend
- *     doesn't expose per-stage cost.
- *   - Evidence-source health (live/lagging/off) — static placeholder.
- *   - Per-stage model routing — static placeholder.
- *   - Spend MTD / budget cap — no backend; static placeholder.
+ *   - Per-stage cost estimate — no server-side price book; the estimate
+ *     card shows the real cost of the focused run's last investigation
+ *     (decision trail) plus a workload/time heuristic, never $-rates.
  *   - ⌘⏎ shortcut wiring (helper text shown; no key listener yet).
  *   - Cluster detail page (`/investigations/:runId/clusters/:clusterId`).
  *
  * Data: derives every rendered field from useRuns (focused run picker),
- * useFailureClusters, useDeepFindings, deepInvestigationService.getPipelineStatus.
+ * useFailureClusters, useDeepFindings, deepInvestigationService.getPipelineStatus,
+ * useIntegrationStatus (evidence-source health), useProjectUsage/useProjectQuota
+ * (spend + budget), and useDecisionTrail (per-stage model routing + actual cost).
  * Run settings persist to localStorage. Synthesis paths are tagged with
  * `coming in Phase 2` toasts on the relevant CTAs.
  */
@@ -42,9 +42,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertCircle, AlertTriangle, ArrowRight, BarChart3, Bot, Check,
-  ChevronRight, Clock, DollarSign, ExternalLink, FileText, GitBranch,
-  History, KeyRound, Layers, Network, Play, Search, Settings, ShieldCheck,
-  Sparkles, Target, XCircle, Zap,
+  ChevronRight, Clock, Database, DollarSign, ExternalLink, FileText,
+  GitBranch, History, KeyRound, Layers, Mail, MessageSquare, Play, Plug,
+  Search, Server, Settings, ShieldCheck, Sparkles, Target, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -53,12 +53,18 @@ import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { useFailureClusters, useDeepFindings, usePipelineStatus } from '@/hooks/useDeepInvestigation'
+import { useDecisionTrail } from '@/hooks/useDecisionTrail'
+import { useIntegrationStatus } from '@/hooks/useIntegrationHealth'
+import { useProjectQuota, useProjectUsage } from '@/hooks/useLlmBudget'
 import { useRun, useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { deepInvestigationService } from '@/services/deepInvestigationService'
 import type { FailureCluster, DeepFinding } from '@/types/deep-investigation'
+import type { DecisionTrailResponse } from '@/types/decisionTrail'
+import type { IntegrationStatus } from '@/services/integrationHealthService'
+import type { LlmQuotaRead, LlmUsageRead } from '@/services/llmBudgetService'
 import type { TestRun } from '@/types/runs'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { formatRunWhen } from '@/utils/formatters'
@@ -154,9 +160,10 @@ const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   },
 }
 
-// ── Static placeholders (no backend yet) ─────────────────────────────────
-// These are UI-only fixtures that match the design's spec values exactly.
-// When the matching backend endpoints land, replace with real reads.
+// ── Evidence-source view model (real integration-health reads) ──────────
+// Backed by GET /api/v1/integration-health/status via useIntegrationStatus.
+// The vocab maps probe statuses onto the card's original live/lagging/off
+// design: healthy→live, degraded/timeout→lagging, everything else→off.
 interface EvidenceSource {
   id: string
   name: string
@@ -167,21 +174,83 @@ interface EvidenceSource {
   toneBg: string
   toneFg: string
 }
-const EVIDENCE_SOURCES: EvidenceSource[] = [
-  { id: 'git',     name: 'Git history',          description: 'commits, diffs, blame',           status: 'live',    detail: 'Live',         icon: GitBranch, toneBg: 'rgba(168,85,247,0.16)', toneFg: '#c4b5fd' },
-  { id: 'logs',    name: 'Application logs',     description: 'stderr / stdout · 24h retention', status: 'live',    detail: 'Live',         icon: FileText,  toneBg: 'rgba(34,197,94,0.16)',  toneFg: '#86efac' },
-  { id: 'tests',   name: 'Test results',         description: 'last 30 days · all suites',       status: 'live',    detail: 'Live',         icon: ShieldCheck, toneBg: 'rgba(68,147,248,0.16)', toneFg: '#93c5fd' },
-  { id: 'tel',     name: 'Telemetry / traces',   description: 'OTEL spans · partial coverage',   status: 'lagging', detail: 'Lagging 18s',  icon: Network,   toneBg: 'rgba(245,158,11,0.16)', toneFg: '#fcd34d' },
-  { id: 'jira',    name: 'Jira context',         description: 'requires Jira connection',       status: 'off',     detail: 'Off',          icon: KeyRound,  toneBg: 'var(--color-bg-secondary)', toneFg: 'var(--color-text-muted)' },
-]
 
-interface ModelRow { stage: string; model: string; rate: string }
-const MODEL_ROUTING: ModelRow[] = [
-  { stage: 'Clustering',       model: 'text-embed-3-large', rate: '$0.00013 / failure' },
-  { stage: 'Root cause',       model: 'claude-sonnet-4.5',  rate: '$0.07 / cluster' },
-  { stage: 'Evidence synth',   model: 'claude-haiku-4.5',   rate: '$0.03 / pack' },
-  { stage: 'Defect drafts',    model: 'claude-haiku-4.5',   rate: '$0.013 / draft' },
-]
+interface ProviderMeta {
+  name: string
+  description: string
+  icon: typeof GitBranch
+  toneBg: string
+  toneFg: string
+}
+
+const PROVIDER_META: Record<string, ProviderMeta> = {
+  github:   { name: 'GitHub',           description: 'commits, diffs, blame',        icon: GitBranch,     toneBg: 'rgba(168,85,247,0.16)', toneFg: '#c4b5fd' },
+  jira:     { name: 'Jira context',     description: 'defect & ticket context',      icon: KeyRound,      toneBg: 'rgba(68,147,248,0.16)', toneFg: '#93c5fd' },
+  splunk:   { name: 'Splunk logs',      description: 'application log search',       icon: FileText,      toneBg: 'rgba(34,197,94,0.16)',  toneFg: '#86efac' },
+  ocp:      { name: 'OpenShift / K8s',  description: 'cluster & pod telemetry',      icon: Server,        toneBg: 'rgba(245,158,11,0.16)', toneFg: '#fcd34d' },
+  slack:    { name: 'Slack',            description: 'notification channel',         icon: MessageSquare, toneBg: 'rgba(168,85,247,0.16)', toneFg: '#c4b5fd' },
+  teams:    { name: 'Microsoft Teams',  description: 'notification channel',         icon: MessageSquare, toneBg: 'rgba(68,147,248,0.16)', toneFg: '#93c5fd' },
+  smtp:     { name: 'SMTP email',       description: 'notification delivery',        icon: Mail,          toneBg: 'rgba(34,197,94,0.16)',  toneFg: '#86efac' },
+  ollama:   { name: 'Ollama LLM',       description: 'local model runtime',          icon: Bot,           toneBg: 'rgba(68,147,248,0.16)', toneFg: '#93c5fd' },
+  chromadb: { name: 'ChromaDB',         description: 'semantic search index',        icon: Database,      toneBg: 'rgba(168,85,247,0.16)', toneFg: '#c4b5fd' },
+}
+
+const GENERIC_PROVIDER_META: Omit<ProviderMeta, 'name' | 'description'> = {
+  icon: Plug, toneBg: 'var(--color-bg-secondary)', toneFg: 'var(--color-text-muted)',
+}
+
+/** Compact relative age for the detail line, e.g. "2m ago" / "3h ago". */
+function shortAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return 'just now'
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+function toEvidenceSource(s: IntegrationStatus): EvidenceSource {
+  const meta: ProviderMeta = PROVIDER_META[s.provider] ?? {
+    ...GENERIC_PROVIDER_META,
+    name: s.provider.charAt(0).toUpperCase() + s.provider.slice(1),
+    description: 'external integration',
+  }
+  const status: EvidenceSource['status'] =
+    s.status === 'healthy' ? 'live'
+    : s.status === 'degraded' || s.status === 'timeout' ? 'lagging'
+    : 'off'
+  const checked = s.last_checked_at ? `checked ${shortAgo(s.last_checked_at)}` : null
+  const description = [s.message ?? meta.description, checked].filter(Boolean).join(' · ')
+  return {
+    id: s.provider,
+    name: meta.name,
+    description,
+    status,
+    detail: status === 'live' ? 'Live' : status === 'lagging' ? 'Degraded' : 'Off',
+    icon: meta.icon,
+    toneBg: status === 'off' ? 'var(--color-bg-secondary)' : meta.toneBg,
+    toneFg: status === 'off' ? 'var(--color-text-muted)' : meta.toneFg,
+  }
+}
+
+/**
+ * The platform's own ingested test results are always an evidence source —
+ * not an external probe, but demonstrably present whenever runs exist.
+ */
+function testResultsSource(hasRuns: boolean): EvidenceSource {
+  return {
+    id: 'tests',
+    name: 'Test results',
+    description: hasRuns ? 'runs, failures & history in this workspace' : 'no runs ingested yet',
+    status: hasRuns ? 'live' : 'off',
+    detail: hasRuns ? 'Live' : 'Off',
+    icon: ShieldCheck,
+    toneBg: hasRuns ? 'rgba(68,147,248,0.16)' : 'var(--color-bg-secondary)',
+    toneFg: hasRuns ? '#93c5fd' : 'var(--color-text-muted)',
+  }
+}
 
 // ── Run settings (persists to localStorage) ──────────────────────────────
 type WindowChoice = '6h' | '24h' | '7d'
@@ -273,6 +342,7 @@ interface DeepModel {
   eligibleFailures: number
   windowLabel: string
   windowSinceCommit: string | null
+  evidenceSources: EvidenceSource[]
   evidenceConnected: number
   evidenceTotal: number
   preScanClusters: number
@@ -281,10 +351,15 @@ interface DeepModel {
   pastInvestigations: PastRun[]
   lastRunAgeHours: number | null
   lastRunSummary: string | null
+  /** Real month-to-date LLM spend for the project (GET /llm-usage). */
   spendMtdDollars: number
-  spendBudgetDollars: number
+  /** Real monthly hard cap (GET /llm-quota); null when no budget is set. */
+  spendBudgetDollars: number | null
+  /** Soft-warn threshold pct from the quota, for the budget-bar marker. */
+  spendSoftWarnPct: number | null
+  /** Actual cost of the focused run's last investigation (decision trail). */
+  lastRunCostDollars: number | null
   estimateBreakdown: EstimateRow[]
-  estimateTotal: number
   estimateMinutes: number
   severityCounts: { p0: number; p1: number; p2: number; p3: number }
 }
@@ -328,7 +403,6 @@ interface PastRun {
 
 interface EstimateRow {
   label: string
-  cost: number
   detail: string
 }
 
@@ -341,6 +415,7 @@ function severityFromConfidence(c: number): ProposedCluster['severity'] {
 
 function buildModel({
   clusters, findings, pipelineStatus, settings, recentRuns, focusedRun,
+  evidenceSources, usage, quota, trail,
 }: {
   clusters: FailureCluster[]
   findings: DeepFinding[]
@@ -348,6 +423,10 @@ function buildModel({
   settings: RunSettings
   recentRuns: TestRun[]
   focusedRun: TestRun | null
+  evidenceSources: EvidenceSource[]
+  usage: LlmUsageRead | undefined
+  quota: LlmQuotaRead | null
+  trail: DecisionTrailResponse | undefined
 }): DeepModel {
   // Eligible failures = sum of failed_tests across the focused run + any
   // recent un-investigated runs in the window.
@@ -433,19 +512,15 @@ function buildModel({
     ? `${lastSuccessful.clusters} cluster${lastSuccessful.clusters === 1 ? '' : 's'} · ${lastSuccessful.defects} defect${lastSuccessful.defects === 1 ? '' : 's'} · $${lastSuccessful.cost.toFixed(2)}`
     : null
 
-  // Cost estimate — derived from eligible count using the per-stage rates
-  // shown in the Model routing card. Not from a real backend endpoint.
-  const clusteringCost = eligibleFailures * 0.00013
-  const rcCost         = proposedClusters.length * 0.07
-  const evidenceCost   = proposedClusters.length * 0.03
-  const draftsCost     = proposedClusters.length * 0.013
+  // Workload breakdown — real counts per stage. There is no server-side
+  // price book, so no per-stage $ figures are fabricated here; the estimate
+  // card shows the decision trail's ACTUAL cost for the last investigation.
   const estimateBreakdown: EstimateRow[] = [
-    { label: 'Clustering',        cost: clusteringCost, detail: `${eligibleFailures} embeds` },
-    { label: 'Root cause',        cost: rcCost,         detail: `${proposedClusters.length} traces` },
-    { label: 'Evidence synth',    cost: evidenceCost,   detail: `${proposedClusters.length} packs` },
-    { label: 'Defect drafts',     cost: draftsCost,     detail: `${proposedClusters.length} drafts` },
+    { label: 'Clustering',        detail: `${eligibleFailures} embeds` },
+    { label: 'Root cause',        detail: `${proposedClusters.length} traces` },
+    { label: 'Evidence synth',    detail: `${proposedClusters.length} packs` },
+    { label: 'Defect drafts',     detail: `${proposedClusters.length} drafts` },
   ]
-  const estimateTotal = estimateBreakdown.reduce((s, r) => s + r.cost, 0)
   // Time estimate: 0.5 min base + 0.05 min/failure clustering + 1 min/cluster RCA
   const estimateMinutes = 0.5 + eligibleFailures * 0.05 + proposedClusters.length * 1.0
 
@@ -455,9 +530,14 @@ function buildModel({
     { p0: 0, p1: 0, p2: 0, p3: 0 },
   )
 
-  // Spend MTD — placeholder ratio of recent run costs.
-  const spendMtdDollars = pastInvestigations.reduce((s, p) => s + p.cost, 0)
-  const spendBudgetDollars = 40
+  // Spend — real project LLM meter (GET /llm-usage) + quota (GET /llm-quota).
+  // Honest $0.00 when the usage meter is empty; null budget when no quota
+  // has been configured (the UI renders a "no budget set" state, never a
+  // fabricated cap).
+  const spendMtdDollars = usage?.total_cost_usd ?? 0
+  const spendBudgetDollars =
+    usage?.hard_cap_usd ?? (quota?.enabled ? quota.hard_cap_usd : null)
+  const spendSoftWarnPct = quota?.enabled ? quota.soft_warn_threshold_pct : null
 
   return {
     focusedRun,
@@ -467,8 +547,9 @@ function buildModel({
     // synthesise from the run id when present so the verdict facet reads
     // sensibly. Drop the fallback once `TestRun.commit_hash` lands.
     windowSinceCommit: focusedRun ? focusedRun.id.slice(0, 7) : null,
-    evidenceConnected: EVIDENCE_SOURCES.filter(s => s.status === 'live').length,
-    evidenceTotal: EVIDENCE_SOURCES.length,
+    evidenceSources,
+    evidenceConnected: evidenceSources.filter(s => s.status === 'live').length,
+    evidenceTotal: evidenceSources.length,
     preScanClusters: proposedClusters.length,
     preScanAvgConfidence,
     proposedClusters,
@@ -477,8 +558,9 @@ function buildModel({
     lastRunSummary,
     spendMtdDollars,
     spendBudgetDollars,
+    spendSoftWarnPct,
+    lastRunCostDollars: trail && trail.total_cost_usd > 0 ? trail.total_cost_usd : null,
     estimateBreakdown,
-    estimateTotal,
     estimateMinutes,
     severityCounts: { ...sevCounts },
   }
@@ -487,8 +569,11 @@ function buildModel({
 function pickVerdict(model: DeepModel, pipelineStatus: { status: string } | null): Verdict {
   if (pipelineStatus?.status === 'running') return 'RUNNING'
   if (pipelineStatus?.status === 'failed')  return 'FAILED'
-  if (model.evidenceConnected === 0)        return 'NO_SOURCES'
+  // NO_FAILURES before NO_SOURCES: with real integration-health data an
+  // install with zero external integrations AND zero runs would otherwise
+  // land on the misleading "connect an evidence source" verdict.
   if (model.eligibleFailures === 0)         return 'NO_FAILURES'
+  if (model.evidenceConnected === 0)        return 'NO_SOURCES'
   if (model.proposedClusters.length === 0)  return 'PENDING'
   return 'READY'
 }
@@ -561,7 +646,9 @@ function VerdictCard({
           <FacetTile
             label="Evidence sources"
             value={`${model.evidenceConnected} / ${model.evidenceTotal}`}
-            sub={`${EVIDENCE_SOURCES.filter(s => s.status === 'live').map(s => s.id).join(', ')}`}
+            sub={model.evidenceConnected > 0
+              ? model.evidenceSources.filter(s => s.status === 'live').map(s => s.id).join(', ')
+              : 'none live'}
             tone={model.evidenceConnected >= 3 ? 'neutral' : 'warn'}
           />
           <FacetTile
@@ -634,9 +721,16 @@ function FacetTile({
 }
 
 // ── Estimate card ───────────────────────────────────────────────────────
+// Headline $ is the ACTUAL cost of the focused run's last investigation
+// (decision trail). There is no server-side price book, so no per-stage $
+// estimates are fabricated — the breakdown lists real workload counts and
+// the budget bar reads the real project spend/quota.
 function EstimateCard({ model }: { model: DeepModel }) {
-  const cap = model.spendBudgetDollars * 0.8
-  const usedPct = Math.min(100, (model.spendMtdDollars / model.spendBudgetDollars) * 100)
+  const budget = model.spendBudgetDollars
+  const usedPct = budget && budget > 0
+    ? Math.min(100, (model.spendMtdDollars / budget) * 100)
+    : 0
+  const softWarnPct = model.spendSoftWarnPct
   return (
     <div
       className="rounded-md border flex flex-col gap-2.5 p-3.5"
@@ -644,13 +738,15 @@ function EstimateCard({ model }: { model: DeepModel }) {
     >
       <div>
         <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-          Estimated cost &amp; time
+          Cost &amp; time
         </div>
         <div className="flex items-end gap-2 mt-0.5">
           <span className="font-bold tabular-nums leading-none" style={{ fontSize: 32, color: 'var(--color-text)', letterSpacing: '-0.02em' }}>
-            ${model.estimateTotal.toFixed(2)}
+            {model.lastRunCostDollars != null ? `$${model.lastRunCostDollars.toFixed(2)}` : '—'}
           </span>
-          <span className="text-[12px] text-[var(--color-text-muted)] mb-0.5">est.</span>
+          <span className="text-[12px] text-[var(--color-text-muted)] mb-0.5">
+            {model.lastRunCostDollars != null ? 'last run' : 'no costed run yet'}
+          </span>
           <span
             className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold tabular-nums"
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
@@ -664,27 +760,35 @@ function EstimateCard({ model }: { model: DeepModel }) {
         {model.estimateBreakdown.map((r, i) => (
           <div key={i} className="flex items-baseline justify-between gap-3">
             <span className="text-[var(--color-text-secondary)]">{r.label}</span>
-            <span className="text-[var(--color-text-muted)] tabular-nums">${r.cost.toFixed(2)} <span className="text-[10.5px]">({r.detail})</span></span>
+            <span className="text-[var(--color-text-muted)] tabular-nums">{r.detail}</span>
           </div>
         ))}
       </div>
 
-      {/* Budget bar */}
-      <div className="mt-1">
-        <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          <i className="block h-full" style={{ width: `${usedPct}%`, background: 'var(--color-accent)' }} />
-          <span
-            aria-hidden
-            className="absolute top-0 bottom-0"
-            style={{ left: '80%', width: 1, background: '#fcd34d' }}
-            title="Cap at 80%"
-          />
+      {/* Budget bar — real spend vs the configured monthly quota. */}
+      {budget != null && budget > 0 ? (
+        <div className="mt-1">
+          <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
+            <i className="block h-full" style={{ width: `${usedPct}%`, background: 'var(--color-accent)' }} />
+            {softWarnPct != null && softWarnPct > 0 && softWarnPct < 100 && (
+              <span
+                aria-hidden
+                className="absolute top-0 bottom-0"
+                style={{ left: `${softWarnPct}%`, width: 1, background: '#fcd34d' }}
+                title={`Soft warn at ${softWarnPct}%`}
+              />
+            )}
+          </div>
+          <div className="text-[10.5px] text-[var(--color-text-muted)] mt-1.5 flex justify-between">
+            <span>${model.spendMtdDollars.toFixed(2)} of ${budget} monthly</span>
+            {softWarnPct != null && <span>warn at {softWarnPct}%</span>}
+          </div>
         </div>
-        <div className="text-[10.5px] text-[var(--color-text-muted)] mt-1.5 flex justify-between">
-          <span>${model.spendMtdDollars.toFixed(2)} of ${model.spendBudgetDollars} monthly</span>
-          <span>cap ${(cap).toFixed(0)}</span>
+      ) : (
+        <div className="text-[10.5px] text-[var(--color-text-muted)] mt-1">
+          ${model.spendMtdDollars.toFixed(2)} spent this month · no budget set — configure in Settings → Billing
         </div>
-      </div>
+      )}
     </div>
   )
 }
@@ -1185,11 +1289,25 @@ function Th({ label, align }: { label: string; align?: 'right' }) {
 }
 
 // ── Right rail: Evidence sources ─────────────────────────────────────────
-function EvidenceSourcesCard() {
+function EvidenceSourcesCard({
+  sources, isLoading, isError,
+}: { sources: EvidenceSource[]; isLoading: boolean; isError: boolean }) {
+  const externalCount = sources.filter(s => s.id !== 'tests').length
   return (
-    <CardShell title="Evidence sources" rightSlot={<span>{EVIDENCE_SOURCES.filter(s => s.status === 'live').length} live</span>}>
+    <CardShell title="Evidence sources" rightSlot={<span>{sources.filter(s => s.status === 'live').length} live</span>}>
+      {isLoading && externalCount === 0 ? (
+        <div className="px-4 py-6 flex justify-center"><LoadingSpinner size="sm" /></div>
+      ) : (
+      <>
+      {(isError || externalCount === 0) && (
+        <div className="px-4 pt-3 text-[12px] text-[var(--color-text-muted)]">
+          {isError
+            ? 'Could not load integration health.'
+            : 'No integrations configured — connect Jira, GitHub, Splunk and more under Settings → Integration Health.'}
+        </div>
+      )}
       <div className="px-4 py-3 flex flex-col gap-2">
-        {EVIDENCE_SOURCES.map(src => {
+        {sources.map(src => {
           const Icon = src.icon
           const statusPalette = src.status === 'live'
             ? { bg: 'rgba(34,197,94,0.10)', bd: 'rgba(34,197,94,0.25)', fg: '#86efac' }
@@ -1221,12 +1339,22 @@ function EvidenceSourcesCard() {
           )
         })}
       </div>
+      </>
+      )}
     </CardShell>
   )
 }
 
 // ── Right rail: Model routing ────────────────────────────────────────────
-function ModelRoutingCard() {
+// Renders the ACTUAL per-stage routing recorded in the focused run's
+// decision trail (GET /runs/{id}/decision-trail) — analysis_mode /
+// execution_path per stage plus a fallback flag. No static model catalog
+// and no fabricated per-token rates: when the run has no trail yet, an
+// explanatory empty state renders instead.
+function ModelRoutingCard({
+  trail, isLoading,
+}: { trail: DecisionTrailResponse | undefined; isLoading: boolean }) {
+  const stages = (trail?.stages ?? []).filter(s => s.analysis_mode || s.execution_path)
   return (
     <CardShell
       title="Model routing"
@@ -1241,19 +1369,41 @@ function ModelRoutingCard() {
         </button>
       }
     >
-      <div className="px-4 py-3 flex flex-col gap-1.5">
-        {MODEL_ROUTING.map((m, i) => (
-          <div key={i} className="flex items-baseline justify-between gap-2 text-[12px]">
-            <span className="text-[var(--color-text-secondary)]">{m.stage}</span>
-            <span className="inline-flex items-center gap-1.5 ml-auto">
-              <code className="font-mono text-[11px] px-1.5 py-px rounded" style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
-                {m.model}
-              </code>
-              <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">{m.rate}</span>
-            </span>
-          </div>
-        ))}
-      </div>
+      {isLoading ? (
+        <div className="px-4 py-5 flex justify-center"><LoadingSpinner size="sm" /></div>
+      ) : stages.length === 0 ? (
+        <div className="px-4 py-4 text-[12px] text-[var(--color-text-muted)]">
+          Routing appears once an investigation runs — each stage records the
+          engine it actually used (rules / ML / LLM) in the decision trail.
+        </div>
+      ) : (
+        <div className="px-4 py-3 flex flex-col gap-1.5">
+          {stages.map((s, i) => (
+            <div key={i} className="flex items-baseline justify-between gap-2 text-[12px]">
+              <span className="text-[var(--color-text-secondary)] capitalize">
+                {s.stage_name.replace(/_/g, ' ')}
+              </span>
+              <span className="inline-flex items-center gap-1.5 ml-auto">
+                {s.fallback_used && (
+                  <span
+                    className="inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold"
+                    style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.25)', color: '#fcd34d' }}
+                    title={s.fallback_reason ?? 'Fallback engine used'}
+                  >
+                    fallback
+                  </span>
+                )}
+                <code className="font-mono text-[11px] px-1.5 py-px rounded" style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
+                  {s.analysis_mode ?? s.execution_path}
+                </code>
+                {s.analysis_mode && s.execution_path && s.execution_path !== s.analysis_mode && (
+                  <span className="text-[10.5px] text-[var(--color-text-muted)]">{s.execution_path}</span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </CardShell>
   )
 }
@@ -1470,9 +1620,36 @@ export default function DeepInvestigationPage() {
   // while loading, before a run is selected, or on a failed load.
   const { data: pipelineStatus = null } = usePipelineStatus(runId ?? null, 'deep')
 
+  // Evidence-source health — real integration probes plus the intrinsic
+  // "test results" source (live whenever runs exist in the workspace).
+  const {
+    statuses: integrationStatuses,
+    isLoading: integrationsLoading,
+    isError: integrationsError,
+  } = useIntegrationStatus()
+  const evidenceSources = useMemo<EvidenceSource[]>(
+    () => [testResultsSource(recentItems.length > 0), ...integrationStatuses.map(toEvidenceSource)],
+    [integrationStatuses, recentItems],
+  )
+
+  // Spend + budget — real project LLM meter. In "All Projects" mode fall
+  // back to the focused run's project so the numbers stay scoped and real.
+  const budgetProjectId =
+    activeProjectId && activeProjectId !== ALL_PROJECTS_ID
+      ? activeProjectId
+      : focusedRun?.project_id ?? null
+  const { usage } = useProjectUsage(budgetProjectId)
+  const { quota } = useProjectQuota(budgetProjectId)
+
+  // Actual per-stage routing + cost for the focused run.
+  const { data: decisionTrail, isLoading: trailLoading } = useDecisionTrail(runId ?? null)
+
   const model = useMemo(
-    () => buildModel({ clusters, findings, pipelineStatus, settings, recentRuns: recentItems, focusedRun }),
-    [clusters, findings, pipelineStatus, settings, recentItems, focusedRun],
+    () => buildModel({
+      clusters, findings, pipelineStatus, settings, recentRuns: recentItems, focusedRun,
+      evidenceSources, usage, quota, trail: decisionTrail,
+    }),
+    [clusters, findings, pipelineStatus, settings, recentItems, focusedRun, evidenceSources, usage, quota, decisionTrail],
   )
   const verdict = pickVerdict(model, pipelineStatus)
   const ribbonStages = useMemo(() => buildRibbon(model, pipelineStatus), [model, pipelineStatus])
@@ -1542,7 +1719,7 @@ export default function DeepInvestigationPage() {
     }
   }
   const onRunSelection = () => toast('Failure picker — coming in Phase 2', { icon: '🎯' })
-  const onDryRun = () => toast(`Dry run estimate: $${model.estimateTotal.toFixed(2)} · ~${model.estimateMinutes.toFixed(1)} min`, { icon: '🧪' })
+  const onDryRun = () => toast(`Dry run: ${model.eligibleFailures} failures · ${model.preScanClusters} clusters · ~${model.estimateMinutes.toFixed(1)} min`, { icon: '🧪' })
   const onOpenCluster = (clusterId: string) => {
     if (!runId) return
     toast(`Cluster detail (${clusterId.slice(0, 6)}…) — coming in Phase 2`, { icon: '🔍' })
@@ -1676,8 +1853,10 @@ export default function DeepInvestigationPage() {
           label="Spend MTD"
           value={`$${model.spendMtdDollars.toFixed(2)}`}
           tone="neutral"
-          meta={<>of ${model.spendBudgetDollars} budget · {Math.round((model.spendMtdDollars / model.spendBudgetDollars) * 100)}%</>}
-          spark={<SparkGrowingBars pct={(model.spendMtdDollars / model.spendBudgetDollars) * 100} />}
+          meta={model.spendBudgetDollars != null && model.spendBudgetDollars > 0
+            ? <>of ${model.spendBudgetDollars} budget · {Math.round((model.spendMtdDollars / model.spendBudgetDollars) * 100)}%</>
+            : <>no budget set</>}
+          spark={<SparkGrowingBars pct={model.spendBudgetDollars != null && model.spendBudgetDollars > 0 ? (model.spendMtdDollars / model.spendBudgetDollars) * 100 : 0} />}
           isLast
         />
       </section>
@@ -1688,8 +1867,12 @@ export default function DeepInvestigationPage() {
           <PastInvestigations rows={model.pastInvestigations} onOpen={onOpenPastRun} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
-          <EvidenceSourcesCard />
-          <ModelRoutingCard />
+          <EvidenceSourcesCard
+            sources={evidenceSources}
+            isLoading={integrationsLoading}
+            isError={integrationsError}
+          />
+          <ModelRoutingCard trail={decisionTrail} isLoading={!!runId && trailLoading} />
           <RunSettingsCard
             settings={settings}
             onChange={(s) => setSettings(prev => ({ ...prev, ...s }))}

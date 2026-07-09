@@ -18,12 +18,13 @@
  * Composite health, delta, and the stacked bar are all derived from the same
  * data the runs table is showing — no extra round-trip.
  *
- * The Insights / Spend / Activity right-rail panels render graceful empty
- * states pending the backend endpoints proposed in the handoff
- * (/api/intelligence/insights, /api/intelligence/spend, etc.) — when those
- * land, wire them in and the UI stays the same.
+ * Right-rail panels: Spend is wired to the real per-project LLM meter
+ * (GET /projects/{id}/llm-usage + /llm-quota via useProjectUsage /
+ * useProjectQuota). Insights still renders a graceful empty state pending
+ * the /api/intelligence/insights endpoint proposed in the handoff; Activity
+ * synthesizes from the runs already in scope.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity,
@@ -48,6 +49,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { useProjectQuota, useProjectUsage } from '@/hooks/useLlmBudget'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -307,7 +309,7 @@ export default function IntelligenceHubPage() {
 
         <div className="space-y-3.5">
           <InsightsPanel />
-          <SpendPanel />
+          <SpendPanel projectId={isAll ? null : projectId} />
           <ActivityPanel runs={visibleRuns.slice(0, 5)} />
         </div>
       </div>
@@ -865,22 +867,70 @@ function InsightsPanel() {
   )
 }
 
-function SpendPanel() {
-  // Wire to /api/intelligence/spend when available. Placeholder values intentionally
-  // shown as '—' so users don't confuse them with real numbers.
+function SpendPanel({ projectId }: { projectId: string | null }) {
+  // Real project LLM meter: GET /projects/{id}/llm-usage (current MONTHLY
+  // period) + /llm-quota (hard cap). The endpoints are per-project, so in
+  // "All Projects" mode the panel asks the user to narrow the scope rather
+  // than showing numbers that don't apply.
+  const { usage, isLoading: usageLoading } = useProjectUsage(projectId)
+  const { quota, isLoading: quotaLoading } = useProjectQuota(projectId)
+
+  const hasBudget = quota != null && quota.enabled && quota.hard_cap_usd > 0
+  const spend = usage?.total_cost_usd ?? 0
+  const calls = usage?.total_llm_calls ?? 0
+  const utilization = hasBudget
+    ? Math.min(100, usage?.utilization_pct ?? (spend / quota.hard_cap_usd) * 100)
+    : 0
+
+  if (!projectId) {
+    return (
+      <RailPanel title="Intelligence spend" right={<span className="text-[var(--color-text-faint)]">per project</span>}>
+        <div className="px-4 py-5 text-[12.5px] text-[var(--color-text-muted)] text-center">
+          Select a project to see its LLM spend and budget.
+        </div>
+      </RailPanel>
+    )
+  }
+
+  const loading = usageLoading || quotaLoading
+
   return (
-    <RailPanel title="Intelligence spend" right={<span className="text-[var(--color-text-faint)]">no budget set</span>}>
+    <RailPanel
+      title="Intelligence spend"
+      right={
+        <span className="text-[var(--color-text-faint)]">
+          {loading ? 'loading…' : hasBudget ? `cap $${quota.hard_cap_usd}` : 'no budget set'}
+        </span>
+      }
+    >
       <div className="grid grid-cols-2 gap-3 p-4">
-        <SpendCell label="Used today" value="—" sub="not connected" />
-        <SpendCell label="Avg per run" value="—" sub="not connected" />
+        {/* The usage endpoint meters the current MONTHLY period — label it
+            as such rather than the design's original "today". */}
+        <SpendCell
+          label="Used this month"
+          value={loading ? '—' : `$${spend.toFixed(2)}`}
+          sub={loading ? 'loading' : `${calls} LLM call${calls === 1 ? '' : 's'}`}
+        />
+        <SpendCell
+          label="Avg per call"
+          value={loading ? '—' : calls > 0 ? `$${(spend / calls).toFixed(3)}` : '—'}
+          sub={loading ? 'loading' : calls > 0 ? 'this period' : 'no calls yet'}
+        />
       </div>
       <div className="px-4 pb-4">
         <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mb-1.5">
           <span>Monthly budget</span>
-          <span className="text-[var(--color-text-faint)] normal-case">configure in settings</span>
+          <span className="text-[var(--color-text-faint)] normal-case">
+            {hasBudget
+              ? `$${spend.toFixed(2)} of $${quota.hard_cap_usd} · ${Math.round(utilization)}%`
+              : 'configure in settings'}
+          </span>
         </div>
         <div className="h-1.5 rounded-full bg-[var(--color-bg-secondary)] overflow-hidden">
-          <div className="h-full w-0" style={{ background: 'linear-gradient(90deg,#14b8a6,#5eead4)' }} />
+          <div
+            className="h-full"
+            style={{ width: `${utilization}%`, background: 'linear-gradient(90deg,#14b8a6,#5eead4)' }}
+          />
         </div>
       </div>
     </RailPanel>

@@ -51,5 +51,8 @@ describe('IntelligenceHubPage', () => {
     // the activity feed, so getAllByText is the right query.
     expect(screen.getAllByText('#42').length).toBeGreaterThan(0)
     expect(screen.getAllByText('#41').length).toBeGreaterThan(0)
+    // Spend panel is per-project (real /llm-usage meter) — in All-Projects
+    // mode it asks the user to narrow scope instead of faking numbers.
+    expect(screen.getByText(/Select a project to see its LLM spend/i)).toBeInTheDocument()
   })
 })
