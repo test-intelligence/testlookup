@@ -193,10 +193,12 @@ async def ingest_file(
     is_archive = looks_like_zip(content) or (file.filename or "").lower().endswith(".zip")
 
     # Feature-flag gate: cypress/playwright ingestion is admin-gated (flags seeded
-    # by migration 0064, default OFF). For single files we reject up-front; for a
-    # zip we can't know its contents here, so resolve which gated formats are
-    # DISABLED and pass that set to the worker, which skips matching tier-2
-    # entries — otherwise zipping a Cypress/Playwright report would bypass the gate.
+    # by migration 0063; enabled by default since migration 0099 — an admin can
+    # still disable either format from Settings > Feature Flags). For single
+    # files we reject up-front; for a zip we can't know its contents here, so
+    # resolve which gated formats are DISABLED and pass that set to the worker,
+    # which skips matching tier-2 entries — otherwise zipping a Cypress/
+    # Playwright report would bypass the gate.
     from app.services.feature_flags import is_enabled
 
     disabled_formats: list[str] = []

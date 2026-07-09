@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-09 — Ingestion: Cypress/Playwright enabled by default (PMF backlog US-1.5)
+
+- **Migration 0099** flips the `cypress_ingest` and `playwright_ingest` feature flags to `enabled_global=true`. They were seeded OFF by migration 0063, so a fresh install returned 503 on two advertised, documented formats until an admin discovered the flag — a first-run trap. The flag machinery is unchanged (admins can still disable either format per project/globally from Settings → Feature Flags); only the default changes. **Note for existing deployments:** if you deliberately disabled these formats, re-disable once after migrating.
+- Regression test `backend/tests/test_ingest_flag_defaults.py` pins the migration contract: it flips exactly the router-gated keys, upgrade enables / downgrade disables (guards the copy-paste inversion). Router comment updated to reflect the new default.
+
 ### 2026-07-09 — Ingestion: Robot Framework & Cucumber support (PMF backlog US-1.1 / US-1.2)
 
 - **New `backend/app/services/robot_parser.py`** — parses Robot Framework `output.xml` (root `<robot>`): arbitrarily nested `<suite>` trees flatten into ` > `-joined suite names; PASS/FAIL/SKIP/NOT RUN map to PASSED/FAILED/SKIPPED (NOT RUN → SKIPPED); the test `<status>` body becomes the failure message / skip reason; failing keywords aggregate into a coarse stack trace; direct child `<kw>` elements surface as bounded common-shape steps (NOT RUN keywords dropped); tags ingest from both the RF4+ `<tag>` and RF3 `<tags><tag>` shapes; timing handles **both** RF3–6 `starttime`/`endtime` and RF7 `start`+`elapsed` attributes.
