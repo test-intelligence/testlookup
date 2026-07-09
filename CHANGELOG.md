@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-09 — Docs-truth pass: supported ingestion formats (PMF backlog US-1.6)
+
+- `user-guide/getting-results-in.md` and the CLI `upload --format` help now list the full, real format set (`junit`, `testng`, `allure`, `cypress`, `playwright`, `pytest`, `robot`, `cucumber`) — both previously stopped at the original 3–5 formats.
+- **New ratchet `backend/tests/test_supported_formats_docs_truth.py`**: CI-blocking in both directions — every format in `_SUPPORTED_FORMATS` must be named in the user guide and CLI help, and the user guide's "Supported formats" section must not claim a format the backend doesn't accept (the Robot/Cucumber months-long docs-vs-code drift can't recur silently).
+
 ### 2026-07-09 — Ingestion: Cypress/Playwright enabled by default (PMF backlog US-1.5)
 
 - **Migration 0099** flips the `cypress_ingest` and `playwright_ingest` feature flags to `enabled_global=true`. They were seeded OFF by migration 0063, so a fresh install returned 503 on two advertised, documented formats until an admin discovered the flag — a first-run trap. The flag machinery is unchanged (admins can still disable either format per project/globally from Settings → Feature Flags); only the default changes. **Note for existing deployments:** if you deliberately disabled these formats, re-disable once after migrating.

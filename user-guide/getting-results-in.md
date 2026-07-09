@@ -4,7 +4,7 @@ Everything in TestLookup — clustering, flakiness, release gates — starts wit
 
 | You have… | Use |
 |---|---|
-| A report file (JUnit XML, TestNG, Allure, Cypress, Playwright) | [Dashboard upload](#1-upload-from-the-dashboard) or [REST file ingest](#2-rest-api) |
+| A report file (JUnit XML, TestNG, Allure, Cypress, Playwright, pytest, Robot Framework, Cucumber) | [Dashboard upload](#1-upload-from-the-dashboard) or [REST file ingest](#2-rest-api) |
 | A CI job that produces report files | [CLI upload](#3-cli) or [REST file ingest](#2-rest-api) in a pipeline step |
 | Tests you want streamed **live**, test-by-test, as they run | [SDK live streaming](#4-live-streaming-sdks) |
 | Structured results you already parse yourself | [REST JSON batch ingest](#2-rest-api) |
@@ -13,7 +13,7 @@ All four paths land in the same place: a **Run** under your project, with per-te
 
 ## Supported formats
 
-`junit` (also what pytest emits with `--junitxml`), `testng`, `allure`, `cypress`, `playwright`. Everywhere a format is accepted, `auto` (the default) detects the format from the file content — you rarely need to specify it.
+`junit` (also what pytest emits with `--junitxml`), `testng`, `allure`, `cypress` (Mochawesome JSON), `playwright` (`--reporter=json`), `pytest` (`--json-report`), `robot` (Robot Framework `output.xml`), `cucumber` (`--format json` — cucumber-jvm/js, behave, SpecFlow). Everywhere a format is accepted, `auto` (the default) detects the format from the file content — you rarely need to specify it.
 
 ## 1. Upload from the dashboard
 

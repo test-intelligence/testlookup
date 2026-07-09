@@ -19,11 +19,21 @@ def upload_file(
     branch: Optional[str] = typer.Option(None, "--branch", help="Git branch"),
     commit: Optional[str] = typer.Option(None, "--commit", help="Git commit SHA"),
     release: Optional[str] = typer.Option(None, "--release", help="Release name"),
-    format: str = typer.Option("auto", "--format", "-f", help="File format: auto|junit|testng|allure"),
+    format: str = typer.Option(
+        "auto",
+        "--format",
+        "-f",
+        help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber",
+    ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),
 ):
-    """Upload a single test result file (JUnit XML, TestNG XML, or Allure JSON).
+    """Upload a single test result file.
+
+    Accepts JUnit/TestNG XML, Allure JSON, Cypress (Mochawesome) JSON,
+    Playwright JSON, pytest --json-report, Robot Framework output.xml,
+    or Cucumber JSON. ``--format auto`` (default) detects the format
+    from the file content.
 
     The file is parsed and ingested asynchronously on the server.
     AI analysis is triggered automatically after ingestion completes.
