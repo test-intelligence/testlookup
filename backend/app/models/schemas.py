@@ -1824,6 +1824,13 @@ class LiveSessionCreate(BaseModel):
     # and TestRun.primary_suite_name so every page that links to the run
     # shows a single, user-configured suite label.
     suite_name: Optional[str] = Field(None, max_length=500)
+    # CI context (US-4.3) — stored in LiveSession.extra_metadata["ci_context"]
+    # and stamped onto the TestRun at persist time (no LiveSession columns).
+    ci_provider: Optional[str] = Field(None, max_length=30)
+    ci_repo: Optional[str] = Field(None, max_length=300)
+    pr_number: Optional[int] = Field(None, ge=1)
+    ci_actor: Optional[str] = Field(None, max_length=120)
+    ci_run_url: Optional[str] = Field(None, max_length=1000)
 
 
 class LiveSessionResponse(BaseModel):
@@ -1938,6 +1945,13 @@ class IngestPayload(BaseModel):
     framework: Optional[str] = Field(None, max_length=50)
     trigger_source: Optional[str] = "api"
     release_name: Optional[str] = Field(None, max_length=255)
+    # CI context (US-4.3) — SDKs auto-detect these from standard CI env vars
+    # (GITHUB_*, GITLAB CI_*, Jenkins CHANGE_*); explicit values win.
+    ci_provider: Optional[str] = Field(None, max_length=30)
+    ci_repo: Optional[str] = Field(None, max_length=300)
+    pr_number: Optional[int] = Field(None, ge=1)
+    ci_actor: Optional[str] = Field(None, max_length=120)
+    ci_run_url: Optional[str] = Field(None, max_length=1000)
 
 
 class IngestResponse(BaseModel):

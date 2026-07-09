@@ -111,6 +111,27 @@ async def resolve_project(db: AsyncSession, identifier: str) -> Project:
     raise HTTPException(status_code=404, detail="Project not found")
 
 
+_CI_CONTEXT_FIELDS = ("ci_provider", "ci_repo", "pr_number", "ci_actor", "ci_run_url")
+
+
+def _with_ci_context(metadata: dict, payload) -> dict:
+    """Fold the payload's CI-context fields (US-4.3) into the session's
+    extra_metadata under ``ci_context`` — LiveSession has no dedicated
+    columns; ``upsert_test_run`` reads this back at persist time and stamps
+    the TestRun. Explicit ``metadata['ci_context']`` keys from the caller
+    win over the typed fields."""
+    ci = {
+        f: getattr(payload, f, None)
+        for f in _CI_CONTEXT_FIELDS
+        if getattr(payload, f, None) is not None
+    }
+    if not ci:
+        return metadata
+    merged = dict(metadata)
+    merged["ci_context"] = {**ci, **(merged.get("ci_context") or {})}
+    return merged
+
+
 async def create_session(
     db: AsyncSession,
     payload,
@@ -160,7 +181,7 @@ async def create_session(
         launch_name=getattr(payload, "launch_name", None) or None,
         suite_name=getattr(payload, "suite_name", None) or None,
         started_at=datetime.now(timezone.utc),
-        extra_metadata=payload.metadata or {},
+        extra_metadata=_with_ci_context(payload.metadata or {}, payload),
     )
     db.add(session)
     await db.flush()
@@ -202,6 +223,11 @@ async def create_session(
                 suite_names=[getattr(payload, "suite_name", None)] if getattr(payload, "suite_name", None) else None,
                 branch=payload.branch,
                 commit_hash=payload.commit_hash,
+                ci_provider=getattr(payload, "ci_provider", None) or None,
+                ci_repo=getattr(payload, "ci_repo", None) or None,
+                pr_number=getattr(payload, "pr_number", None),
+                ci_actor=getattr(payload, "ci_actor", None) or None,
+                ci_run_url=getattr(payload, "ci_run_url", None) or None,
                 start_time=started_at,
                 end_time=started_at,
             )
@@ -1031,6 +1057,10 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     # in _update_run_aggregates.
     suite_label = getattr(session, "suite_name", None) or None
 
+    # CI context (US-4.3): stashed in extra_metadata["ci_context"] at session
+    # create — stamp onto the TestRun (fill-if-null; never overwrite).
+    ci_context = (getattr(session, "extra_metadata", None) or {}).get("ci_context") or {}
+
     run = (await db.execute(select(TestRun).where(TestRun.id == run_uuid))).scalar_one_or_none()
     if run is None:
         run = TestRun(
@@ -1041,6 +1071,11 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
             ingestion_source="live",
             branch=session.branch or None,
             commit_hash=session.commit_hash or None,
+            ci_provider=ci_context.get("ci_provider"),
+            ci_repo=ci_context.get("ci_repo"),
+            pr_number=ci_context.get("pr_number"),
+            ci_actor=ci_context.get("ci_actor"),
+            ci_run_url=ci_context.get("ci_run_url"),
             status=run_status,
             total_tests=total,
             passed_tests=passed,
@@ -1071,6 +1106,12 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         if suite_label and not run.primary_suite_name:
             run.primary_suite_name = suite_label
             run.suite_names = [suite_label]
+        # CI context: fill-if-null only (the create_session stub usually
+        # already carries it; this covers drainer-created rows).
+        for field in ("ci_provider", "ci_repo", "pr_number", "ci_actor", "ci_run_url"):
+            value = ci_context.get(field)
+            if value is not None and getattr(run, field) is None:
+                setattr(run, field, value)
         logger.info(
             f"test_run_updated_for_live_session run_id={run_uuid} session_id={session.id}"
         )

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-09 — CI context on runs: repo / PR / actor / run-URL (PMF backlog US-4.3a)
+
+- **Migration 0101** adds `ci_provider`, `ci_repo`, `pr_number`, `ci_actor`, `ci_run_url` to `test_runs` + a partial index `ix_test_runs_project_pr` (`WHERE pr_number IS NOT NULL`) — `pr_number` is the anchor for the upcoming PR-summary-comment and commit-attribution features; `ci_run_url` deep-links back to the CI job.
+- All three ingest paths carry the fields: **JSON batch** (`IngestPayload` — bounded optional fields), **file upload** (`/ingest/file` form params → worker task → run), and **live streaming** (`LiveSessionCreate` fields fold into `LiveSession.extra_metadata["ci_context"]` — no LiveSession migration — and stamp the TestRun at both the session-create stub and `upsert_test_run`, fill-if-null so drainer-created rows backfill without overwriting).
+- `create_run_from_payload` reuse path (CI retries) backfills **NULL fields only** — never overwrites recorded context (same discipline as the `primary_suite_name IS NULL` guard).
+- Regression tests: `backend/tests/test_ci_context_contract.py` (8 tests — schema acceptance/bounds on both payload types, metadata fold incl. explicit-key precedence, reuse-path fill-if-null, migration 0101 contract). `backend.analysis-router` baseline re-keyed (line shift only).
+- Next slice (US-4.3b): SDK/CLI auto-detection of these fields from standard CI env vars (GitHub Actions, Jenkins, GitLab CI).
+
 ### 2026-07-09 — Ingestion: NUnit3, TRX & xUnit support (PMF backlog US-1.3 / US-1.4)
 
 - **New `backend/app/services/nunit_parser.py`** — parses NUnit3 XML (root `<test-run>`; `nunit3-console` / `dotnet test --logger:nunit`): nested `<test-suite>` trees walked with the nearest **TestFixture** ancestor's `fullname` as the suite (assembly-name fallback); Passed/Failed/Skipped/Inconclusive map to PASSED/FAILED/SKIPPED (Inconclusive → SKIPPED with reason "inconclusive"); a `label="Error"` on a Failed case marks an *unexpected exception* → **BROKEN** — the same FAILED-vs-BROKEN vocab the TestNG parser preserves for `<failure>` vs `<error>`; `<failure><message>`/`<stack-trace>` children carry error details, `<reason><message>` the skip reason; `Category` properties (and legacy `<categories>`) → tags; **float-seconds** `duration` converts to ms; parameterized test-cases parse as plain leaves; one outcome pseudo-step emitted for non-passing cases.

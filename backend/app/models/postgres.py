@@ -202,6 +202,13 @@ class TestRun(Base):
         Index("ix_test_runs_created_at", "created_at"),
         # P3-3: Composite index for analytics queries that filter by project + status + time range
         Index("ix_test_runs_project_status_created", "project_id", "status", "created_at"),
+        # US-4.3: PR-scoped lookups ("all runs for PR N") for PR summary comments.
+        # Partial — most runs have no PR; keeps the index tiny.
+        Index(
+            "ix_test_runs_project_pr",
+            "project_id", "pr_number",
+            postgresql_where=text("pr_number IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -218,6 +225,16 @@ class TestRun(Base):
     ingestion_source: Mapped[str] = mapped_column(
         String(20), nullable=False, default=IngestionSource.UNKNOWN.value, server_default="unknown"
     )
+
+    # CI context (US-4.3, migration 0101) — populated by SDK/CLI auto-detection
+    # from standard CI env vars, or explicitly by API callers. pr_number is the
+    # anchor for PR-scoped features (sticky PR summary comments, commit
+    # attribution); ci_run_url deep-links back to the CI job.
+    ci_provider: Mapped[Optional[str]] = mapped_column(String(30))    # github_actions|jenkins|gitlab_ci|azure_devops|circleci|other
+    ci_repo: Mapped[Optional[str]] = mapped_column(String(300))       # e.g. "org/repo"
+    pr_number: Mapped[Optional[int]] = mapped_column(Integer)
+    ci_actor: Mapped[Optional[str]] = mapped_column(String(120))
+    ci_run_url: Mapped[Optional[str]] = mapped_column(String(1000))
 
     # Aggregated counts
     total_tests: Mapped[int] = mapped_column(Integer, default=0)

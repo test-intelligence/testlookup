@@ -62,6 +62,11 @@ async def create_run_from_payload(
     framework: Optional[str] = None,
     ingestion_source: str = "unknown",
     reuse_existing: bool = True,
+    ci_provider: Optional[str] = None,
+    ci_repo: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    ci_actor: Optional[str] = None,
+    ci_run_url: Optional[str] = None,
 ) -> TestRun:
     """
     Create a TestRun record for API-ingested data.
@@ -97,6 +102,19 @@ async def create_run_from_payload(
         )
         existing = result.scalar_one_or_none()
         if existing:
+            # CI-context backfill (US-4.3): a CI retry may supply context the
+            # first ingest lacked. Fill only NULL fields — never overwrite a
+            # value already recorded (mirrors the primary_suite_name IS NULL
+            # guard discipline).
+            for field, value in (
+                ("ci_provider", ci_provider),
+                ("ci_repo", ci_repo),
+                ("pr_number", pr_number),
+                ("ci_actor", ci_actor),
+                ("ci_run_url", ci_run_url),
+            ):
+                if value is not None and getattr(existing, field) is None:
+                    setattr(existing, field, value)
             logger.info("Reusing existing run", run_id=str(existing.id), build=build_number)
             return existing
     else:
@@ -119,6 +137,11 @@ async def create_run_from_payload(
         commit_hash=commit_hash,
         trigger_source=trigger_source,
         ingestion_source=ingestion_source,
+        ci_provider=ci_provider,
+        ci_repo=ci_repo,
+        pr_number=pr_number,
+        ci_actor=ci_actor,
+        ci_run_url=ci_run_url,
         status=LaunchStatus.IN_PROGRESS,
         total_tests=0,
         passed_tests=0,

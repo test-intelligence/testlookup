@@ -677,6 +677,11 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
                     trigger_source=payload.get("trigger_source", "api"),
                     release_name=payload.get("release_name"),
                     ingestion_source="sdk",
+                    ci_provider=payload.get("ci_provider"),
+                    ci_repo=payload.get("ci_repo"),
+                    pr_number=payload.get("pr_number"),
+                    ci_actor=payload.get("ci_actor"),
+                    ci_run_url=payload.get("ci_run_url"),
                 )
                 count = await ingest_test_results(db, run, payload["results"])
                 await db.commit()
@@ -727,6 +732,11 @@ def ingest_uploaded_file(
     user_id: str = None,
     disabled_formats: list = None,
     run_ai: bool = True,
+    ci_provider: str = None,
+    ci_repo: str = None,
+    pr_number: int = None,
+    ci_actor: str = None,
+    ci_run_url: str = None,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -827,6 +837,11 @@ def ingest_uploaded_file(
                     # build-label collision — always create a fresh run so the
                     # 202 run_id is authoritative and aggregates aren't blended.
                     reuse_existing=False,
+                    ci_provider=ci_provider,
+                    ci_repo=ci_repo,
+                    pr_number=pr_number,
+                    ci_actor=ci_actor,
+                    ci_run_url=ci_run_url,
                 )
                 if archive_prefix:
                     run.minio_prefix = archive_prefix  # link the archived raw upload (dir prefix)

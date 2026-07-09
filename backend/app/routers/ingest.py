@@ -144,6 +144,13 @@ async def ingest_file(
     release_name: str = Form(None),
     format: str = Form("auto"),
     run_ai: bool = Form(True),
+    # CI context (US-4.3) — optional; the CLI auto-detects these from standard
+    # CI env vars and forwards them here.
+    ci_provider: str = Form(None, max_length=30),
+    ci_repo: str = Form(None, max_length=300),
+    pr_number: int = Form(None, ge=1),
+    ci_actor: str = Form(None, max_length=120),
+    ci_run_url: str = Form(None, max_length=1000),
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
 ):
@@ -258,6 +265,11 @@ async def ingest_file(
         user_id=str(current_user.id),
         disabled_formats=disabled_formats,
         run_ai=run_ai,
+        ci_provider=ci_provider,
+        ci_repo=ci_repo,
+        pr_number=pr_number,
+        ci_actor=ci_actor,
+        ci_run_url=ci_run_url,
     )
 
     # Seed a 'pending' status so the very first client poll (which may land
