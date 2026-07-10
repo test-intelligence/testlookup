@@ -805,8 +805,20 @@ class NotificationPreferenceCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None  # None = all projects
     channel: NotificationChannel
     enabled: bool = True
+    # Default includes the transition events (PMF US-7.1) so a freshly
+    # created preference routes them without extra clicks. Harmless for
+    # existing projects: their transition policy is backfilled OFF, so no
+    # transition event is ever emitted there until someone opts in.
     events: List[str] = Field(
-        default_factory=lambda: ["run_failed", "high_failure_rate"],
+        default_factory=lambda: [
+            "run_failed",
+            "high_failure_rate",
+            "test.newly_failing",
+            "test.recovered",
+            "test.newly_flaky",
+            "test.quarantined",
+            "test.unquarantined",
+        ],
         description="List of NotificationEventType values",
     )
     failure_rate_threshold: float = Field(default=80.0, ge=0.0, le=100.0)
@@ -849,6 +861,54 @@ class NotificationLogResponse(BaseModel):
 class TestNotificationRequest(BaseModel):
     channel: NotificationChannel
     preference_id: Optional[uuid.UUID] = None
+
+
+# Transition event vocabulary (PMF US-7.1) — kept in sync with the
+# ``test.*`` members of ``NotificationEventType``.
+TRANSITION_EVENT_VALUES: tuple = (
+    "test.newly_failing",
+    "test.recovered",
+    "test.newly_flaky",
+    "test.quarantined",
+    "test.unquarantined",
+)
+
+
+class NotificationTransitionPolicyUpdate(BaseModel):
+    """Per-project transition-notification policy (PMF US-7.1)."""
+    transitions_enabled: bool = True
+    per_run_events_enabled: bool = False
+    enabled_events: List[str] = Field(
+        default_factory=lambda: list(TRANSITION_EVENT_VALUES),
+        description="Transition NotificationEventType values enabled for the project",
+    )
+    consecutive_failure_threshold: int = Field(default=2, ge=1, le=20)
+
+    @field_validator("enabled_events")
+    @classmethod
+    def _known_transition_events(cls, v: List[str]) -> List[str]:
+        unknown = [e for e in v if e not in TRANSITION_EVENT_VALUES]
+        if unknown:
+            raise ValueError(
+                f"Unknown transition events: {unknown}; "
+                f"allowed: {list(TRANSITION_EVENT_VALUES)}"
+            )
+        # de-dupe, preserve canonical order
+        chosen = set(v)
+        return [e for e in TRANSITION_EVENT_VALUES if e in chosen]
+
+
+class NotificationTransitionPolicyResponse(BaseModel):
+    project_id: uuid.UUID
+    transitions_enabled: bool
+    per_run_events_enabled: bool
+    enabled_events: List[str]
+    consecutive_failure_threshold: int
+    # True when the project has no explicit policy row yet and the
+    # new-project defaults apply (transitions ON, per-run spam OFF).
+    is_default: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Agent Pipeline Schemas ─────────────────────────────────────

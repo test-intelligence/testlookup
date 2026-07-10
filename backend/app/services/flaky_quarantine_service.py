@@ -564,6 +564,24 @@ async def approve(
     except Exception as exc:  # pragma: no cover — best-effort
         logger.debug("flaky.quarantined webhook emit failed", error=str(exc))
 
+    # PMF US-7.1 — test.quarantined transition notification. Event-driven
+    # from this hook point (no polling); the dispatcher gates on the
+    # per-project transition policy and never raises.
+    from app.models.postgres import NotificationEventType
+    from app.services.notification_transitions import dispatch_quarantine_transitions
+    await dispatch_quarantine_transitions(
+        row.project_id,
+        NotificationEventType.TEST_QUARANTINED,
+        [{
+            "test_name": row.test_name,
+            "test_fingerprint": row.test_fingerprint,
+            "suite_name": row.suite_name,
+            "detail": (
+                f"flip rate {row.flip_rate:.0%}" if row.flip_rate is not None else None
+            ),
+        }],
+    )
+
     return row
 
 
@@ -646,6 +664,21 @@ async def release(
         project_id=row.project_id,
         before=before,
         after=_snapshot(row),
+    )
+
+    # PMF US-7.1 — test.unquarantined transition notification (hook point;
+    # never raises, gated on the per-project transition policy).
+    from app.models.postgres import NotificationEventType
+    from app.services.notification_transitions import dispatch_quarantine_transitions
+    await dispatch_quarantine_transitions(
+        row.project_id,
+        NotificationEventType.TEST_UNQUARANTINED,
+        [{
+            "test_name": row.test_name,
+            "test_fingerprint": row.test_fingerprint,
+            "suite_name": row.suite_name,
+            "detail": "released by QA lead",
+        }],
     )
     return row
 
@@ -736,6 +769,7 @@ async def run_recheck_cycle() -> dict[str, int]:
     if not await _feature_enabled():
         return {"released": 0, "re_quarantined": 0, "insufficient_data": 0}
     released = re_quarantined = insufficient = 0
+    released_rows: list[dict[str, Any]] = []
 
     async with AsyncSessionLocal() as db:
         from app.models.postgres import TestCase, TestRun, TestStatus
@@ -827,6 +861,16 @@ async def run_recheck_cycle() -> dict[str, int]:
 
             if flip_rate < _RECHECK_RELEASE_THRESHOLD:
                 row.status = FlakyQuarantineStatus.RELEASED.value
+                released_rows.append({
+                    "project_id": row.project_id,
+                    "test_name": getattr(row, "test_name", None),
+                    "test_fingerprint": row.test_fingerprint,
+                    "suite_name": getattr(row, "suite_name", None),
+                    "detail": (
+                        f"auto-released after recheck "
+                        f"(flip rate {flip_rate:.0%} over {total} runs)"
+                    ),
+                })
                 released += 1
             else:
                 row.status = FlakyQuarantineStatus.RE_QUARANTINED.value
@@ -837,6 +881,24 @@ async def run_recheck_cycle() -> dict[str, int]:
 
         if rows:
             await db.commit()
+
+    # PMF US-7.1 — test.unquarantined for auto-released rows, AFTER the
+    # commit so the notification never claims a rolled-back release.
+    # RE_QUARANTINED is deliberately silent: the test is still quarantined,
+    # so nothing user-visible transitioned. Grouped per project (one batch
+    # message each); the dispatcher never raises.
+    if released_rows:
+        from app.models.postgres import NotificationEventType
+        from app.services.notification_transitions import (
+            dispatch_quarantine_transitions,
+        )
+        by_project: dict[uuid.UUID, list[dict[str, Any]]] = {}
+        for entry in released_rows:
+            by_project.setdefault(entry["project_id"], []).append(entry)
+        for pid, entries in by_project.items():
+            await dispatch_quarantine_transitions(
+                pid, NotificationEventType.TEST_UNQUARANTINED, entries,
+            )
     from app.core.metrics import quarantine_expired_total
     if released:
         quarantine_expired_total.labels(terminal_state="released").inc(released)

@@ -123,6 +123,15 @@ class NotificationEventType(str, PyEnum):
     AI_ANALYSIS_COMPLETE = "ai_analysis_complete"
     QUALITY_GATE_FAILED = "quality_gate_failed"
     FLAKY_TEST_DETECTED = "flaky_test_detected"
+    # ── Transition events (PMF US-7.1) — fire on state CHANGES, never
+    # per-run. Evaluated by services/notification_transitions.py against
+    # the notification_test_states store; routed through the same
+    # NotificationPreference.events lists as the per-run events above.
+    TEST_NEWLY_FAILING = "test.newly_failing"
+    TEST_RECOVERED = "test.recovered"
+    TEST_NEWLY_FLAKY = "test.newly_flaky"
+    TEST_QUARANTINED = "test.quarantined"
+    TEST_UNQUARANTINED = "test.unquarantined"
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -1036,6 +1045,82 @@ class NotificationPreference(Base):
     email_override: Mapped[Optional[str]] = mapped_column(String(255))
     slack_webhook_url: Mapped[Optional[str]] = mapped_column(String(2000))
     teams_webhook_url: Mapped[Optional[str]] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class NotificationTestState(Base):
+    """Per-(project, test_fingerprint) rolling state for transition-based
+    notifications (PMF US-7.1).
+
+    The transition engine (``services/notification_transitions.py``) updates
+    one row per logical test at run finalization and emits a notification
+    only when the tracked state CHANGES (pass→confirmed-failing,
+    failing→recovered, entered the known-flaky set). ``last_run_id`` is the
+    idempotency anchor: re-finalizing the same run skips rows already
+    stamped with that run, so transitions never double-fire (per-(entity,
+    run) idempotency convention).
+    """
+    __tablename__ = "notification_test_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "test_fingerprint",
+            name="uq_notif_test_state_project_fp",
+        ),
+        # Fingerprint lookups always carry project scope (test_fingerprint
+        # has no project salt); the unique constraint above backs those.
+        # This index serves "all tracked states for a project" sweeps.
+        Index("ix_notif_test_states_project", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Confirmed state of the machine: "passing" | "failing". A test flips to
+    # "failing" only after consecutive_failures reaches the project threshold.
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="passing")
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The state we last actually notified about (post policy filtering).
+    last_notified_state: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Whether the fingerprint was in the known-flaky set (quarantine ∪
+    # flaky-coach cache) the last time it was evaluated. False→True emits
+    # test.newly_flaky; seeded silently when the row is first created so a
+    # long-flaky backlog doesn't flood on the first evaluated run.
+    is_known_flaky: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Idempotency anchor — the run that last advanced this row.
+    last_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class NotificationTransitionPolicy(Base):
+    """Per-project policy for transition-based notifications (PMF US-7.1).
+
+    One row per project. Semantics of a MISSING row = the new-project
+    default: transitions ON, per-run spam OFF. Migration 0103 backfills an
+    explicit row (transitions OFF, per-run ON) for every project existing
+    at upgrade time so EXISTING projects keep their current behaviour with
+    no surprise change; projects created afterwards get the new defaults.
+    """
+    __tablename__ = "notification_transition_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    # Master switch for the transition engine on this project.
+    transitions_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Legacy per-run events (run_failed / run_passed / high_failure_rate).
+    # False = "spam mode off": the run-completion fan-out is suppressed for
+    # this project and only transition events notify.
+    per_run_events_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # JSONB list of transition NotificationEventType values enabled for this
+    # project (subset of the five test.* events).
+    enabled_events: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # N consecutive FAILED/BROKEN results before test.newly_failing fires.
+    consecutive_failure_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 

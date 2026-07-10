@@ -5,13 +5,19 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import (
+    get_current_active_user,
+    require_project_access,
+    require_role,
+)
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import User, UserRole
 from app.models.schemas import (
     NotificationLogResponse,
     NotificationPreferenceCreate,
     NotificationPreferenceResponse,
+    NotificationTransitionPolicyResponse,
+    NotificationTransitionPolicyUpdate,
     TestNotificationRequest,
 )
 from app.services.notification.manager import send_test_notification
@@ -110,6 +116,81 @@ async def mark_all_read(
 ):
     await mark_all_notifications_read(db, current_user)
     await db.commit()
+
+
+# ── Per-project transition policy (PMF US-7.1) ────────────────────────────
+
+@router.get(
+    "/projects/{project_id}/transition-policy",
+    response_model=NotificationTransitionPolicyResponse,
+)
+async def get_transition_policy(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    _: User = Depends(require_project_access()),
+):
+    """The project's transition-notification policy. A missing row means
+    the new-project defaults apply (transitions ON, per-run spam OFF)."""
+    from app.services.notification_transitions import (
+        get_effective_policy,
+        get_policy_row,
+    )
+
+    row = await get_policy_row(db, project_id)
+    if row is not None:
+        return NotificationTransitionPolicyResponse(
+            project_id=project_id,
+            transitions_enabled=row.transitions_enabled,
+            per_run_events_enabled=row.per_run_events_enabled,
+            enabled_events=list(row.enabled_events or []),
+            consecutive_failure_threshold=row.consecutive_failure_threshold,
+            is_default=False,
+        )
+    policy = await get_effective_policy(db, project_id)
+    return NotificationTransitionPolicyResponse(
+        project_id=project_id,
+        transitions_enabled=policy.transitions_enabled,
+        per_run_events_enabled=policy.per_run_events_enabled,
+        enabled_events=list(policy.enabled_events),
+        consecutive_failure_threshold=policy.consecutive_failure_threshold,
+        is_default=True,
+    )
+
+
+@router.put(
+    "/projects/{project_id}/transition-policy",
+    response_model=NotificationTransitionPolicyResponse,
+)
+async def update_transition_policy(
+    project_id: uuid.UUID,
+    payload: NotificationTransitionPolicyUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
+):
+    """Create or replace the project's transition-notification policy.
+    QA_LEAD+."""
+    from app.services.notification_transitions import upsert_policy
+
+    row = await upsert_policy(
+        db,
+        project_id,
+        transitions_enabled=payload.transitions_enabled,
+        per_run_events_enabled=payload.per_run_events_enabled,
+        enabled_events=payload.enabled_events,
+        consecutive_failure_threshold=payload.consecutive_failure_threshold,
+    )
+    await db.commit()
+    await db.refresh(row)
+    return NotificationTransitionPolicyResponse(
+        project_id=project_id,
+        transitions_enabled=row.transitions_enabled,
+        per_run_events_enabled=row.per_run_events_enabled,
+        enabled_events=list(row.enabled_events or []),
+        consecutive_failure_threshold=row.consecutive_failure_threshold,
+        is_default=False,
+    )
 
 
 @router.post("/test")

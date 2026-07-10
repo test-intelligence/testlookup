@@ -29,6 +29,12 @@ const EVENT_LABELS: Record<NotificationEventType, string> = {
   ai_analysis_complete: 'AI analysis complete',
   quality_gate_failed: 'Quality gate failed',
   flaky_test_detected: 'Flaky test detected',
+  // Transition events — fire on state changes only (alert-fatigue fix)
+  'test.newly_failing': 'Test newly failing (transition)',
+  'test.recovered': 'Test recovered (transition)',
+  'test.newly_flaky': 'Test newly flaky (transition)',
+  'test.quarantined': 'Test quarantined (transition)',
+  'test.unquarantined': 'Test released from quarantine (transition)',
 }
 
 const ALL_EVENTS: NotificationEventType[] = Object.keys(EVENT_LABELS) as NotificationEventType[]
@@ -100,7 +106,18 @@ function ChannelCard({
   const [expanded, setExpanded] = useState(!!preference)
   const [enabled, setEnabled] = useState(preference?.enabled ?? true)
   const [events, setEvents] = useState<NotificationEventType[]>(
-    preference?.events ?? ['run_failed', 'high_failure_rate'],
+    preference?.events ?? [
+      'run_failed',
+      'high_failure_rate',
+      // Transition events on by default for new preferences — existing
+      // projects never emit them (their transition policy is off), so this
+      // only lights up for projects using transition-only notifications.
+      'test.newly_failing',
+      'test.recovered',
+      'test.newly_flaky',
+      'test.quarantined',
+      'test.unquarantined',
+    ],
   )
   const [threshold, setThreshold] = useState(preference?.failure_rate_threshold ?? 80)
   const [webhookOrEmail, setWebhookOrEmail] = useState(

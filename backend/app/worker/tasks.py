@@ -1279,6 +1279,34 @@ def dispatch_run_notifications(
 
 
 @celery_app.task(
+    name="app.worker.tasks.dispatch_transition_notifications",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=15,
+    queue="default",
+)
+def dispatch_transition_notifications(self, run_id: str):
+    """Background task: evaluate transition events (PMF US-7.1/US-7.2) for a
+    finalized run and send the batched, cluster-deduped notification.
+
+    Idempotent per run — the state store stamps each fingerprint with the
+    run id, so a retry (or a re-finalized run) advances nothing and sends
+    nothing.
+    """
+    import uuid as _uuid
+    from app.services.notification_transitions import evaluate_run_transitions
+
+    logger.info("[Task %s] Evaluating transition notifications for run=%s", self.request.id, run_id)
+    try:
+        result = _run_async(evaluate_run_transitions(_uuid.UUID(run_id)))
+        logger.info("[Task %s] Transition evaluation done: %s", self.request.id, result)
+        return result
+    except Exception as exc:
+        logger.error("[Task %s] Transition notification dispatch failed: %s", self.request.id, exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(
     name="app.worker.tasks.run_agent_pipeline",
     bind=True,
     max_retries=2,

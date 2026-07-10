@@ -127,6 +127,14 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "Called exclusively from Celery tasks (dispatch_run_notifications "
         "and siblings) via AsyncSessionLocal — not from request handlers.",
     ),
+    "notification_transitions.py": (
+        1,
+        "Celery-task-owned (PMF US-7.1): evaluate_run_transitions runs from "
+        "the dispatch_transition_notifications worker task on its own "
+        "AsyncSessionLocal and commits the notification_test_states advance "
+        "before dispatching. The router-facing policy upsert is stage-only "
+        "(the notifications router handler owns that commit).",
+    ),
     "rag_generation_service.py": (
         1,
         "grounded_generate commits once at the end of the happy path. The "
@@ -426,7 +434,11 @@ def test_allowlist_total_is_bounded() -> None:
     # Raised 51 → 52 on 2026-06-02: the github-checks SSRF review added the
     # same delivery-time blocked-target branch to ``post_check_run_for_run``
     # (3 → 4 for github_checks_service.py), on its own worker session.
-    assert total <= 52, (
+    # Raised 52 → 53 on 2026-07-09: PMF US-7.1 added the transition
+    # notification engine (notification_transitions.py), whose single commit
+    # is Celery-task-owned — the state-store advance must be durable before
+    # dispatch so re-finalization stays idempotent.
+    assert total <= 53, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

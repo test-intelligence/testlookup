@@ -244,6 +244,30 @@ async def _load_and_notify(
 
 # ── Public entry points ───────────────────────────────────────
 
+async def _per_run_events_enabled(project_id: uuid.UUID) -> bool:
+    """Per-project gate for the legacy per-run fan-out (PMF US-7.1).
+
+    Projects created after migration 0103 default to "per-run spam mode
+    off" — only transition events notify. Every project existing at
+    migration time was backfilled with an explicit per_run_events_enabled=
+    True row, so their behaviour is unchanged. Fails OPEN (True) on any
+    lookup error so a policy-table hiccup can never silence notifications
+    for legacy installs.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            from app.services.notification_transitions import get_effective_policy
+            policy = await get_effective_policy(db, project_id)
+            return bool(policy.per_run_events_enabled)
+    except Exception as exc:  # noqa: BLE001 — fail open to legacy behaviour
+        logger.warning(
+            "Per-run notification policy lookup failed for project=%s: %s — defaulting to enabled",
+            project_id,
+            exc,
+        )
+        return True
+
+
 async def dispatch_run_notifications(
     project_id: uuid.UUID,
     run_id: uuid.UUID,
@@ -258,6 +282,16 @@ async def dispatch_run_notifications(
     Evaluate which run-level events apply and send to all subscribed users.
     Called from the `dispatch_run_notifications` Celery task.
     """
+    # Per-project policy gate (PMF US-7.1): new projects default to
+    # transition-only notifications; the per-run fan-out is suppressed.
+    if not await _per_run_events_enabled(project_id):
+        logger.info(
+            "Per-run notifications suppressed by transition policy project=%s build=%s",
+            project_id,
+            build_number,
+        )
+        return
+
     events: list[NotificationEventType] = []
     if failed_tests > 0:
         events.append(NotificationEventType.RUN_FAILED)

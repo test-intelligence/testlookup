@@ -11,6 +11,12 @@ _EVENT_EMOJI = {
     "ai_analysis_complete": ":robot_face:",
     "quality_gate_failed": ":red_circle:",
     "flaky_test_detected": ":ocean:",
+    # Transition events (PMF US-7.1)
+    "test.newly_failing": ":small_red_triangle:",
+    "test.recovered": ":large_green_circle:",
+    "test.newly_flaky": ":yellow_circle:",
+    "test.quarantined": ":lock:",
+    "test.unquarantined": ":unlock:",
 }
 
 _EVENT_COLOUR = {
@@ -20,6 +26,12 @@ _EVENT_COLOUR = {
     "ai_analysis_complete": "#3b82f6",
     "quality_gate_failed": "#dc2626",
     "flaky_test_detected": "#a855f7",
+    # Transition events (PMF US-7.1)
+    "test.newly_failing": "#ef4444",
+    "test.recovered": "#22c55e",
+    "test.newly_flaky": "#eab308",
+    "test.quarantined": "#f97316",
+    "test.unquarantined": "#22c55e",
 }
 
 

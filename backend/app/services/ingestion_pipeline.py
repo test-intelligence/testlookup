@@ -505,6 +505,16 @@ async def finalize_run(
     except Exception as e:
         logger.warning("notification_enqueue_failed", error=str(e))
 
+    # PMF US-7.1/US-7.2 — transition-based notifications. Same isolation
+    # contract as the per-run dispatch above: evaluation runs in its own
+    # Celery task, is idempotent per (fingerprint, run) via the
+    # notification_test_states stamp, and never blocks finalization.
+    try:
+        from app.worker.tasks import dispatch_transition_notifications as _transitions
+        _transitions.delay(run_id=str(rid))
+    except Exception as e:
+        logger.warning("transition_notification_enqueue_failed", error=str(e))
+
     # Trigger agent pipeline (unless the caller opted out, e.g. a manual upload
     # with "skip AI analysis" or a bulk historical import).
     if run_ai:

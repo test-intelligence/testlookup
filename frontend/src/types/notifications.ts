@@ -7,6 +7,12 @@ export type NotificationEventType =
   | 'ai_analysis_complete'
   | 'quality_gate_failed'
   | 'flaky_test_detected'
+  // Transition events (PMF US-7.1) — fire on state changes, not per run
+  | 'test.newly_failing'
+  | 'test.recovered'
+  | 'test.newly_flaky'
+  | 'test.quarantined'
+  | 'test.unquarantined'
 
 export interface NotificationPreference {
   id: string

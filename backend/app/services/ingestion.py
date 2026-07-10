@@ -272,6 +272,19 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     "run_notifications_enqueue_failed", error=str(notify_err),
                 )
 
+            # Transition-based notifications (PMF US-7.1/US-7.2) — own task,
+            # own isolation, idempotent per (fingerprint, run).
+            try:
+                from app.worker.tasks import (
+                    dispatch_transition_notifications as _transitions_task,
+                )
+                _transitions_task.delay(run_id=str(run.id))
+            except Exception as trans_err:
+                logger.warning(
+                    "transition_notifications_enqueue_failed",
+                    error=str(trans_err),
+                )
+
             # Trigger the multi-agent analysis pipeline
             try:
                 from app.worker.tasks import run_agent_pipeline as _pipeline_task
