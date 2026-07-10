@@ -40,6 +40,11 @@ export interface FlakyQuarantineRead {
   owner_user_id: string | null
   owner_name: string | null
   defect_id: string | null
+  // Jira link + mirrored status of the linked defect (PMF US-6.1/US-6.2)
+  defect_jira_key: string | null
+  defect_jira_url: string | null
+  defect_external_status: string | null
+  defect_external_status_conflict: boolean
   sla_days: number | null
   stale_at: string | null
   stale: boolean

@@ -920,6 +920,16 @@ class Defect(Base):
             "resolution_status",
             "severity",
         ),
+        # One-click Jira dedup lookup (migration 0105): every create request
+        # probes (project_id, signature_fingerprint) for an open linked
+        # defect before filing a new issue. Partial — legacy rows have no
+        # signature.
+        Index(
+            "ix_defects_project_signature",
+            "project_id",
+            "signature_fingerprint",
+            postgresql_where=text("signature_fingerprint IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -954,6 +964,24 @@ class Defect(Base):
     approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     policy_evaluation: Mapped[Optional[dict]] = mapped_column(JSON)  # policy check result snapshot
+
+    # ── One-click Jira linking + status sync (PMF US-6.1/US-6.2, migration 0105) ──
+    # Failure signature this defect was filed for (test fingerprint, or a
+    # stable hash of the cluster label). Dedup key for one-click creates.
+    signature_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Bumped each time a create request dedups onto this defect; the Jira
+    # issue gets a "recurred in build X" comment alongside.
+    recurrence_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0",
+    )
+    last_recurrence_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # When the sync-back beat last refreshed the ``jira_status`` mirror.
+    external_status_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Jira reports Done-category while the signature still failed recently →
+    # "closed in Jira but still failing" warning badge.
+    external_status_conflict: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false"),
+    )
 
     # Relationships
     test_case: Mapped[Optional["TestCase"]] = relationship("TestCase", back_populates="defects")

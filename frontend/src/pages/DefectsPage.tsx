@@ -1107,6 +1107,25 @@ function DefectRowEl({
             {row.jiraKey ?? row.jira_ticket_id}
           </span>
         )}
+        {row.jira_ticket_id && row.jira_status && (
+          // US-6.2: Jira status mirrored by the 15-min sync-back beat.
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] ml-1"
+            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+            title="Jira status (mirrored every ~15 min)"
+          >
+            {row.jira_status}
+          </span>
+        )}
+        {row.external_status_conflict && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] ml-1"
+            style={{ border: '1px solid rgba(245,158,11,0.40)', color: '#fcd34d', background: 'rgba(245,158,11,0.10)' }}
+            title="Jira reports this issue as done, but the failure signature still fired within the last 7 days."
+          >
+            closed in Jira but still failing
+          </span>
+        )}
       </td>
       <td className="text-right" style={{ padding: '10px 12px' }}>
         <span className="text-[11.5px] tabular-nums font-semibold" style={{ color: ageColor }}>

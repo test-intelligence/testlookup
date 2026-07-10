@@ -1253,6 +1253,94 @@ class DefectApprovalResponse(BaseModel):
     jira_url: Optional[str] = None
 
 
+# ── One-click Jira defects (PMF US-6.1 / US-6.2 / US-6.3) ─────────────────
+# All status-ish fields are plain strings, not enums — they mirror String
+# columns / external Jira vocabulary and a strict enum here would silently
+# 422 the response when a value drifts (backend/CLAUDE.md pitfall).
+
+class JiraDefectCreateRequest(BaseModel):
+    """Body for POST /projects/{project_id}/defects/jira.
+
+    Exactly one of ``fingerprint`` / ``cluster_id`` identifies the failure.
+    ``target`` picks the delivery: "jira" calls the Jira REST API, "webhook"
+    emits the ``defect.create_requested`` outbound-webhook event instead
+    (US-6.3).
+    """
+    fingerprint: Optional[str] = Field(None, min_length=1, max_length=64)
+    cluster_id: Optional[str] = Field(None, min_length=1, max_length=255)
+    issue_type: str = Field("Bug", max_length=100)
+    jira_project_key: Optional[str] = Field(None, max_length=50)
+    assignee: Optional[str] = Field(None, max_length=128)  # Jira accountId
+    extra_comment: Optional[str] = Field(None, max_length=2000)
+    target: str = Field("jira", pattern="^(jira|webhook)$")
+
+
+class JiraDefectCreateResponse(BaseModel):
+    target: str                                   # "jira" | "webhook"
+    deduplicated: bool = False
+    defect_id: Optional[str] = None
+    jira_key: Optional[str] = None
+    jira_url: Optional[str] = None
+    external_status: Optional[str] = None
+    recurrence_count: int = 0
+    recurrence_comment_posted: bool = False
+    subscriptions_notified: Optional[int] = None  # webhook target only
+    message: str = ""
+
+
+class JiraDefectOccurrences(BaseModel):
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
+    failing_runs: int = 0
+
+
+class JiraDefectContext(BaseModel):
+    branch: Optional[str] = None
+    build_number: Optional[str] = None
+    ci_run_url: Optional[str] = None
+
+
+class JiraDefectExistingLink(BaseModel):
+    defect_id: str
+    jira_key: Optional[str] = None
+    jira_url: Optional[str] = None
+    external_status: Optional[str] = None
+
+
+class JiraDefectPreviewResponse(BaseModel):
+    """Pre-filled payload shown (read-only) in the create dialog."""
+    signature: str
+    summary: str
+    description: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    cluster_id: Optional[str] = None
+    error_message: Optional[str] = None
+    occurrences: JiraDefectOccurrences
+    context: JiraDefectContext
+    ai_analysis: Optional[dict] = None            # {root_cause, confidence, failure_category}
+    deep_link: str
+    latest_run_id: Optional[str] = None
+    existing_defect: Optional[JiraDefectExistingLink] = None
+
+
+class JiraProjectOption(BaseModel):
+    key: str
+    name: Optional[str] = None
+
+
+class JiraDefectMetadataResponse(BaseModel):
+    """Dialog-picker metadata. ``available=false`` + ``reason`` instead of
+    an HTTP error when Jira is offline-gated/unconfigured/unreachable —
+    the UI uses it to disable the action with a tooltip."""
+    available: bool
+    reason: Optional[str] = None                  # offline_mode | disabled | not_configured | unreachable | jira_http_NNN
+    projects: List[JiraProjectOption] = []
+    issue_types: List[str] = []
+    default_project_key: Optional[str] = None
+    webhook_available: bool = False
+
+
 class SummaryModes(BaseModel):
     available: List[str]   # ["executive", "developer", "manager"]
     default: str = "executive"
@@ -3734,6 +3822,12 @@ class FlakyQuarantineRead(BaseModel):
     # Display name resolved by the router (batched lookup) — not an ORM column.
     owner_name: Optional[str] = None
     defect_id: Optional[uuid.UUID] = None
+    # Jira link + mirrored status of the linked defect (US-6.1/US-6.2) —
+    # resolved by the router via a batched Defect lookup, not ORM columns.
+    defect_jira_key: Optional[str] = None
+    defect_jira_url: Optional[str] = None
+    defect_external_status: Optional[str] = None
+    defect_external_status_conflict: bool = False
     sla_days: Optional[int] = None
     stale_at: Optional[datetime] = None
     # Derived from the ORM ``stale`` property: active quarantine past its SLA.

@@ -127,6 +127,10 @@ export interface DefectItem {
   jira_ticket_id?: string
   jira_ticket_url?: string
   jira_status?: string
+  // US-6.2: when the Jira status mirror was last refreshed + whether Jira
+  // says Done while the failure signature still fired recently.
+  external_status_at?: string | null
+  external_status_conflict?: boolean
   failure_category?: string
   resolution_status: string
   ai_confidence_score?: number

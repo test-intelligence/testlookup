@@ -59,8 +59,13 @@ logger = structlog.get_logger("routers.flaky_quarantine")
 
 async def _with_owner_names(db: AsyncSession, rows) -> list[FlakyQuarantineRead]:
     """Serialize rows and attach ``owner_name`` via ONE batched User lookup
-    (PMF US-5.4 — ``owner_user_id`` alone is unreadable on the UI)."""
+    (PMF US-5.4 — ``owner_user_id`` alone is unreadable on the UI), plus the
+    linked defect's Jira key / mirrored status via ONE batched Defect lookup
+    (PMF US-6.1/US-6.2 — the quarantine table renders the Jira link and the
+    "closed in Jira but still failing" conflict badge)."""
     from sqlalchemy import select as _select
+
+    from app.models.postgres import Defect
 
     payloads = [FlakyQuarantineRead.model_validate(r) for r in rows]
     owner_ids = {p.owner_user_id for p in payloads if p.owner_user_id}
@@ -72,6 +77,26 @@ async def _with_owner_names(db: AsyncSession, rows) -> list[FlakyQuarantineRead]
         for p in payloads:
             if p.owner_user_id:
                 p.owner_name = names.get(p.owner_user_id)
+
+    defect_ids = {p.defect_id for p in payloads if p.defect_id}
+    if defect_ids:
+        result = await db.execute(
+            _select(
+                Defect.id,
+                Defect.jira_ticket_id,
+                Defect.jira_ticket_url,
+                Defect.jira_status,
+                Defect.external_status_conflict,
+            ).where(Defect.id.in_(defect_ids))
+        )
+        links = {r.id: r for r in result.all()}
+        for p in payloads:
+            link = links.get(p.defect_id) if p.defect_id else None
+            if link is not None:
+                p.defect_jira_key = link.jira_ticket_id
+                p.defect_jira_url = link.jira_ticket_url
+                p.defect_external_status = link.jira_status
+                p.defect_external_status_conflict = bool(link.external_status_conflict)
     return payloads
 
 

@@ -23,6 +23,7 @@ from app.routers import (
     deep_investigation,
     debug,
     decision_trail,
+    defect_jira,
     digests,
     duplicates,
     feature_flags as feature_flags_router,
@@ -151,6 +152,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     test_execution_reviews.router,     # 0081: per-TestCase human review transitions
     summary_report.router,             # Per-project consolidated summary report + PDF export
     duplicates.router,                 # Phase 4: per-project duplicate authored-test-case review queue
+    defect_jira.router,                # PMF US-6.1/6.3: one-click Jira defects (project-scoped)
 )
 
 

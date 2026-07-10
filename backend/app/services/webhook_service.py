@@ -15,11 +15,14 @@ UI. Retries use exponential backoff; the final outcome lands on a single
 Supported event types (the authoritative list — keep in sync with the
 ``WebhookEventCatalogResponse`` shown in the UI):
 
-* ``run.completed``       — a test run finished post-ingestion
-* ``defect.promoted``     — a failure cluster was promoted into a defect
-* ``release.decided``     — a ReleaseDecision was written (GO/NO_GO/CONDITIONAL)
-* ``flaky.quarantined``   — a QA Lead approved a quarantine request
-* ``quota.exceeded``      — the LLM cost budget hit its hard cap
+* ``run.completed``             — a test run finished post-ingestion
+* ``defect.promoted``           — a failure cluster was promoted into a defect
+* ``defect.create_requested``   — a user asked for a defect with target="webhook"
+                                  (US-6.3 Jira-less fallback; payload carries the
+                                  full prefilled ticket)
+* ``release.decided``           — a ReleaseDecision was written (GO/NO_GO/CONDITIONAL)
+* ``flaky.quarantined``         — a QA Lead approved a quarantine request
+* ``quota.exceeded``            — the LLM cost budget hit its hard cap
 
 Every public entry point is gated by the ``outbound_webhooks`` feature
 flag AND by ``AI_OFFLINE_MODE``. Both off → egress goes through; either
@@ -56,6 +59,16 @@ logger = structlog.get_logger("services.webhook")
 _SUPPORTED_EVENTS: dict[str, str] = {
     "run.completed": "Fired after a test run has finished ingestion and post-processing.",
     "defect.promoted": "Fired when a failure cluster is promoted into a defect with a ticket link.",
+    "defect.create_requested": (
+        "Fired when a user files a one-click defect with target=\"webhook\" "
+        "(US-6.3 — Jira-less fallback). data carries the full prefilled ticket: "
+        "signature, summary, description, issue_type, test_name, suite_name, "
+        "cluster_id, occurrences {first_seen, last_seen, failing_runs}, "
+        "context {branch, build_number, ci_run_url}, ai_analysis "
+        "{root_cause, confidence, failure_category} | null, deep_link, "
+        "extra_comment, requested_by. Point a receiver at it to open tickets "
+        "in GitHub Issues, Azure Boards, or anything else."
+    ),
     "release.decided": "Fired when a ReleaseDecision is written (GO/NO_GO/CONDITIONAL_GO).",
     "flaky.quarantined": "Fired when a QA Lead approves a flaky-test quarantine.",
     "quota.exceeded": "Fired when the LLM cost budget hits its hard cap for a project.",

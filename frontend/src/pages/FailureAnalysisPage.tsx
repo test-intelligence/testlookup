@@ -42,6 +42,10 @@
  *   - "Correct classification" → analysis lookup by fingerprint
  *     (GET /projects/{id}/analyses/lookup) + rating=incorrect feedback
  *     (POST /feedback/{analysis_id}) feeding the training loop.
+ *   - "Create Jira issue" (US-6.1) → server-prefilled, dedup-first defect
+ *     creation via POST /projects/{id}/defects/jira; disabled with a
+ *     tooltip when Jira is offline-gated/unconfigured AND no webhook
+ *     receiver is subscribed (US-6.3 fallback).
  *   - "Start bisect" was REMOVED (not hidden): commit attribution (Epic 8)
  *     hasn't landed, so there is no backend to drive a bisect. Reintroduce
  *     the button alongside that work rather than shipping a dead CTA.
@@ -55,6 +59,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
+import CreateJiraIssueModal, { jiraUnavailableCopy } from '@/components/defects/CreateJiraIssueModal'
 import EmptyState from '@/components/ui/EmptyState'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -62,6 +67,7 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { useAnalysisLookup } from '@/hooks/useAnalysisLookup'
+import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
@@ -984,6 +990,7 @@ function build14CellStrip(trend: TrendPoint[]): RunCell[] {
 
 function WhatsFailingCard({
   topFailingTest, totalRuns, trend, onMute, muteDisabledReason,
+  onCreateJira, createJiraDisabledReason,
 }: {
   topFailingTest: TopFailingItem | null
   totalRuns: number
@@ -992,6 +999,12 @@ function WhatsFailingCard({
   /** When set, the mute button renders disabled with this tooltip —
    *  quarantine proposals need the test's fingerprint + a project scope. */
   muteDisabledReason?: string | null
+  /** US-6.1: opens the one-click Create-Jira-issue dialog. */
+  onCreateJira: () => void
+  /** When set, the Jira button renders disabled with this tooltip —
+   *  needs a fingerprint + project, and a configured (non-offline) Jira
+   *  or a webhook receiver. */
+  createJiraDisabledReason?: string | null
 }) {
   // AI-classified failure kind of the headline test (US-9.2). Prefer the
   // server-derived value; fall back to the category mirror for older
@@ -1156,6 +1169,13 @@ function WhatsFailingCard({
             title={muteDisabledReason ?? 'Propose quarantine for this test with a documented reason'}
           >
             Mute test
+          </GhostBtn>
+          <GhostBtn
+            onClick={onCreateJira}
+            disabled={Boolean(createJiraDisabledReason)}
+            title={createJiraDisabledReason ?? 'File a pre-filled Jira issue for this failure (dedups against open defects)'}
+          >
+            Create Jira issue
           </GhostBtn>
         </div>
       </div>
@@ -2263,6 +2283,9 @@ export default function FailureAnalysisPage() {
   // the analytics payloads identify by fingerprint AND surface prominently.
   const [muteOpen, setMuteOpen] = useState(false)
   const [correctionOpen, setCorrectionOpen] = useState(false)
+  // US-6.1: one-click Jira issue for the headline failing test.
+  const [jiraOpen, setJiraOpen] = useState(false)
+  const { metadata: jiraMeta } = useJiraDefectMetadata(project?.id ?? null)
 
   const actionTarget = model.topFailingTest
   const muteDisabledReason = !project?.id
@@ -2270,6 +2293,17 @@ export default function FailureAnalysisPage() {
     : !actionTarget?.test_fingerprint
       ? 'Test identity (fingerprint) not available yet — cannot propose a quarantine.'
       : null
+  // Disabled when there's no identity/project, or when the metadata probe
+  // says BOTH delivery paths are dead (Jira gated/unconfigured AND no
+  // webhook receiver). While metadata is still loading the button stays
+  // enabled — the dialog itself gates submission.
+  const createJiraDisabledReason = !project?.id
+    ? 'Pick a specific project to create a Jira issue.'
+    : !actionTarget?.test_fingerprint
+      ? 'Test identity (fingerprint) not available yet — cannot file a defect.'
+      : jiraMeta && !jiraMeta.available && !jiraMeta.webhook_available
+        ? jiraUnavailableCopy(jiraMeta.reason)
+        : null
   // Flake context for the mute modal, reused from data already on the page.
   const actionTargetFlakyEntry = useMemo(() => {
     if (!actionTarget) return null
@@ -2705,6 +2739,8 @@ export default function FailureAnalysisPage() {
             trend={trend}
             onMute={() => { if (!muteDisabledReason) setMuteOpen(true) }}
             muteDisabledReason={muteDisabledReason}
+            onCreateJira={() => { if (!createJiraDisabledReason) setJiraOpen(true) }}
+            createJiraDisabledReason={createJiraDisabledReason}
           />
           <FailureCategoryCard
             categories={kindFilteredCategories}
@@ -2769,6 +2805,15 @@ export default function FailureAnalysisPage() {
           fingerprint={actionTarget.test_fingerprint}
           testName={actionTarget.test_name}
           onClose={() => setCorrectionOpen(false)}
+        />
+      )}
+
+      {jiraOpen && actionTarget?.test_fingerprint && project?.id && (
+        <CreateJiraIssueModal
+          projectId={project.id}
+          fingerprint={actionTarget.test_fingerprint}
+          testName={actionTarget.test_name}
+          onClose={() => setJiraOpen(false)}
         />
       )}
 

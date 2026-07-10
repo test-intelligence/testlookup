@@ -745,6 +745,8 @@ async def list_defects(
             d.jira_ticket_id,
             d.jira_ticket_url,
             d.jira_status,
+            d.external_status_at,
+            d.external_status_conflict,
             d.failure_category,
             d.resolution_status,
             d.ai_confidence_score,

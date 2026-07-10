@@ -2358,6 +2358,38 @@ def run_integration_health_probes(self):
     _run_async(_probe())
 
 
+# ── PMF US-6.2: Jira defect status sync-back ─────────────────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.sync_jira_defect_statuses",
+    bind=True,
+    max_retries=0,
+    queue="default",
+)
+def sync_jira_defect_statuses(self):
+    """Periodic task: mirror Jira issue status onto linked OPEN defects.
+
+    The task owns the transaction (no request session exists here); the
+    service stages the ``jira_status`` / ``external_status_at`` /
+    ``external_status_conflict`` mutations and this commit makes them
+    durable. Capped inside the service (~50 issues/cycle) so a big backlog
+    never hammers Jira — the 15-minute beat catches up over cycles.
+    """
+    logger.info("[Task %s] Syncing Jira defect statuses", self.request.id)
+
+    async def _sync():
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.defect_jira_service import sync_external_statuses
+
+        async with AsyncSessionLocal() as db:
+            outcome = await sync_external_statuses(db)
+            await db.commit()
+        logger.info("Jira defect status sync outcome: %s", outcome)
+
+    _run_async(_sync())
+
+
 # ── ENT-05: Scheduled Digest Dispatch ────────────────────────────────────────
 
 

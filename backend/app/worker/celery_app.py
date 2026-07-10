@@ -98,6 +98,14 @@ celery_app.conf.update(
             "task": "app.worker.tasks.run_integration_health_probes",
             "schedule": crontab(minute="*/15"),
         },
+        # PMF US-6.2: mirror Jira status onto linked OPEN defects (same
+        # 15-minute cadence as the integration probes; offset by 5 minutes
+        # so the two don't hit Jira in the same instant). Capped at ~50
+        # issues per cycle inside the service — rate-limit respecting.
+        "jira-defect-status-sync": {
+            "task": "app.worker.tasks.sync_jira_defect_statuses",
+            "schedule": crontab(minute="5-59/15"),
+        },
         # Phase 3 — AI pipeline debouncer flush (every 2 minutes).
         # Drains the per-project SortedSet built by
         # services.ai_pipeline_debouncer.enqueue_pipeline_for_run,

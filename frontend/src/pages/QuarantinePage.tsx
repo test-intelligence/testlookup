@@ -1,16 +1,19 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   ArrowUpCircle,
   Bug,
   Check,
   Clock,
+  ExternalLink,
   FileText,
   RotateCcw,
   ShieldAlert,
   X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import CreateJiraIssueModal from '@/components/defects/CreateJiraIssueModal'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -50,11 +53,13 @@ const TAB_STATUSES: Record<Tab, QuarantineStatus[]> = {
  * secret) but every action button is hidden.
  */
 export default function QuarantinePage() {
-  const { canAccessManagement: hasQaLeadAccess } = usePermissions()
+  const { canAccessManagement: hasQaLeadAccess, isQaEngineer } = usePermissions()
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
 
   const [tab, setTab] = useState<Tab>('proposals')
+  // US-6.1: quarantine row being filed to Jira via the one-click dialog.
+  const [jiraTarget, setJiraTarget] = useState<FlakyQuarantineRead | null>(null)
   const { stats } = useQuarantineStats(projectId)
   const { requests, isLoading, isError, refresh } = useQuarantineList({
     projectId,
@@ -157,12 +162,24 @@ export default function QuarantinePage() {
                   row={row}
                   tab={tab}
                   canAct={hasQaLeadAccess}
+                  canFileJira={isQaEngineer}
+                  onFileJira={(r) => setJiraTarget(r)}
                   onRefresh={() => refresh()}
                 />
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {jiraTarget && (
+        <CreateJiraIssueModal
+          projectId={jiraTarget.project_id}
+          fingerprint={jiraTarget.test_fingerprint}
+          testName={jiraTarget.test_name || jiraTarget.test_fingerprint.slice(0, 16)}
+          onClose={() => setJiraTarget(null)}
+          onCreated={() => void refresh()}
+        />
       )}
     </div>
   )
@@ -194,11 +211,16 @@ function QuarantineRow({
   row,
   tab,
   canAct,
+  canFileJira,
+  onFileJira,
   onRefresh,
 }: {
   row: FlakyQuarantineRead
   tab: Tab
   canAct: boolean
+  /** QA_ENGINEER+ — matches the backend guard on the one-click endpoint. */
+  canFileJira: boolean
+  onFileJira: (row: FlakyQuarantineRead) => void
   onRefresh: () => Promise<unknown>
 }) {
   const [busy, setBusy] = useState(false)
@@ -228,7 +250,7 @@ function QuarantineRow({
       <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] whitespace-nowrap">
         <span className="inline-flex items-center gap-1.5">
           {row.owner_name || '—'}
-          {row.defect_id && (
+          {row.defect_id && !row.defect_jira_key && (
             <Link
               to="/defects"
               title="Internal defect record auto-created for this quarantine"
@@ -236,6 +258,40 @@ function QuarantineRow({
             >
               <Bug className="h-3 w-3" />
             </Link>
+          )}
+          {row.defect_jira_key && (
+            // US-6.1/US-6.2: Jira link + mirrored status badge. The
+            // conflict badge fires when Jira reports Done-category while
+            // the signature still failed recently.
+            <span className="inline-flex items-center gap-1">
+              <a
+                href={row.defect_jira_url ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                title={`Linked Jira issue ${row.defect_jira_key}`}
+                className="inline-flex items-center gap-0.5 text-[var(--color-accent)] hover:underline"
+              >
+                {row.defect_jira_key}
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+              {row.defect_external_status && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+                  title="Jira status (mirrored every ~15 min)"
+                >
+                  {row.defect_external_status}
+                </span>
+              )}
+              {row.defect_external_status_conflict && (
+                <span
+                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-400 bg-amber-500/10"
+                  title="Jira reports this issue as done, but the test still failed within the last 7 days."
+                >
+                  <AlertTriangle className="h-2.5 w-2.5" />
+                  closed in Jira but still failing
+                </span>
+              )}
+            </span>
           )}
         </span>
       </td>
@@ -349,6 +405,20 @@ function QuarantineRow({
               <RotateCcw className="h-3 w-3" /> Release
             </button>
           </div>
+        )}
+        {canFileJira && tab !== 'history' && !row.defect_jira_key && (
+          // US-6.1: one-click Jira issue for quarantined tests that don't
+          // have a linked defect yet. Opens the prefilled review dialog —
+          // the backend dedups against open defects for the fingerprint.
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onFileJira(row)}
+            title="File a pre-filled Jira issue for this flaky test"
+            className="text-xs text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5 ml-2"
+          >
+            <Bug className="h-3 w-3" /> File Jira
+          </button>
         )}
         {tab === 'history' && row.reviewer_notes && (
           <span
