@@ -28,6 +28,13 @@ Design notes
   triggers this after every run and a GitHub outage must not block
   test-case persistence. Errors land in ``last_error`` so Integration
   Health surfaces them instead.
+
+* **Per-test annotations + flaky-aware conclusion (PMF US-4.2)** — the
+  check run carries up to 50 ``output.annotations`` (newly-failed first,
+  then by cluster size; locations best-effort parsed from stack traces),
+  the newly-failed/known-flaky/fixed triad in the summary, and concludes
+  ``neutral`` instead of ``failure`` when EVERY failure is known-flaky /
+  quarantined. See the "Per-test annotations" section below.
 """
 from __future__ import annotations
 
@@ -36,6 +43,8 @@ import ipaddress
 import re
 import socket
 import uuid
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -48,6 +57,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import GitHubIntegration, Project, TestRun, User
+from app.services.run_compare_service import (
+    _classify,
+    _load_test_rows,
+    _status_bucket,
+)
 
 logger = structlog.get_logger("services.github_checks")
 
@@ -304,15 +318,334 @@ async def test_connection(
     }
 
 
+# ── Per-test annotations + flaky-aware enrichment (PMF US-4.2) ─────────────
+#
+# The Checks API accepts up to 50 ``output.annotations`` per create/update
+# request. We attach annotations for the run's failures, prioritized:
+# newly-failed (vs the SAME baseline the PR summary comment uses) first,
+# then the remaining failures ordered by cluster size. "Cluster size" here
+# is the count of failures sharing the same first error-message line — the
+# check posts at finalize time, BEFORE the AI analysis Celery task runs, so
+# ``failure_clusters`` rows don't exist yet; the message-line grouping is a
+# deterministic proxy available at post time.
+#
+# GitHub annotations require a repo-relative ``path`` + ``start_line``. We
+# derive them best-effort from the stack trace (``locate_in_trace``); tests
+# whose location can't be derived honestly are listed in the check's
+# ``output.text`` markdown instead of being pinned to a fake path.
+#
+# Enablement: this enrichment is unconditional within the gates the checks
+# service already has (``github_checks`` feature flag + per-project
+# integration ``enabled`` + ``AI_OFFLINE_MODE``). The feature-flag service
+# resolves unknown keys to False (no code-default mechanism), so a separate
+# flag would have required a seed migration — deliberately not added.
+
+# GitHub caps output.annotations at 50 per request. We send the first 50
+# and note the overflow in output.text — multi-request pagination
+# (PATCH-ing the check run with subsequent batches) is a follow-up.
+_MAX_ANNOTATIONS = 50
+
+# Bounds for annotation messages / output-text lists.
+_ANNOTATION_MESSAGE_MAX_LINES = 5
+_ANNOTATION_MESSAGE_CAP = 800
+_ANNOTATION_TITLE_CAP = 255  # GitHub rejects longer annotation titles
+_NON_LOCATABLE_CAP = 15
+_TEXT_MESSAGE_CAP = 120
+
+# Python traceback frame: File "tests/test_x.py", line 42
+_PY_FRAME_RE = re.compile(r'File "([^"\n]+)", line (\d+)')
+
+# JS/TS stack frame: "at fn (src/x.test.ts:12:34)" / "at src/x.js:12:34".
+# Extension-anchored so it never fires inside Python or Java traces.
+_JS_FRAME_RE = re.compile(
+    r"(?:\(|\bat\s+)"
+    r"((?:webpack://)?[A-Za-z0-9_@$./\\-]+"
+    r"\.(?:jsx?|tsx?|mjs|cjs)):(\d+)(?::\d+)?"
+)
+
+# Frames that live outside the repo — never a valid annotation target.
+_VENDOR_MARKERS = (
+    "site-packages",
+    "dist-packages",
+    "node_modules",
+    "/usr/lib",
+    "<frozen",
+    "importlib._bootstrap",
+)
+
+
+def _normalize_repo_path(raw: str) -> Optional[str]:
+    """Best-effort repo-relative path from a stack-trace frame.
+
+    Returns ``None`` for anything we can't honestly claim is relative to
+    the repo root: absolute paths (POSIX or drive-letter), URLs, ``..``
+    traversal, and vendor/runtime frames. Backslashes normalize to ``/``
+    (Windows CI traces), ``webpack://`` bundler prefixes are stripped.
+    """
+    path = (raw or "").strip().replace("\\", "/")
+    if path.startswith("webpack://"):
+        path = path[len("webpack://"):].lstrip("/")
+    if path.startswith("./"):
+        path = path[2:]
+    if not path or path.startswith("/") or re.match(r"^[A-Za-z]:", path) or "://" in path:
+        return None
+    lowered = path.lower()
+    if any(marker in lowered for marker in _VENDOR_MARKERS):
+        return None
+    if any(part == ".." for part in path.split("/")):
+        return None
+    return path
+
+
+def locate_in_trace(text: Optional[str]) -> Optional[tuple[str, int]]:
+    """Extract a ``(repo_relative_path, line)`` failure location from a
+    stack trace, or ``None`` when no honest location is derivable.
+
+    Supported shapes:
+
+    * **Python** tracebacks — "most recent call last", so the LAST
+      repo-relative ``File "...", line N`` frame is the failure site.
+      Vendor frames (site-packages etc.) after it are skipped.
+    * **JS/TS** stacks — innermost frame comes FIRST, so the first
+      repo-relative ``at ... (path.ts:12:34)`` frame wins;
+      ``node_modules`` and ``node:internal`` frames are skipped.
+    * **Java** surefire frames (``at pkg.Cls.m(Cls.java:42)``) carry a
+      bare file name, NOT a repo-relative path (the ``src/test/java``
+      prefix is unknowable) — deliberately unlocated rather than guessed.
+    """
+    if not text:
+        return None
+    py_frames = [(m.group(1), int(m.group(2))) for m in _PY_FRAME_RE.finditer(text)]
+    for raw, line in reversed(py_frames):
+        path = _normalize_repo_path(raw)
+        if path and line > 0:
+            return path, line
+    for m in _JS_FRAME_RE.finditer(text):
+        path = _normalize_repo_path(m.group(1))
+        line = int(m.group(2))
+        if path and line > 0:
+            return path, line
+    return None
+
+
+def _locate_failure(tc: Any) -> Optional[tuple[str, int]]:
+    """Locate a failing test: full stack trace first, then the (often
+    trace-bearing) error message."""
+    return (
+        locate_in_trace(getattr(tc, "stack_trace", None))
+        or locate_in_trace(getattr(tc, "error_message", None))
+    )
+
+
+def _first_line(message: Optional[str]) -> str:
+    """First non-empty line, backtick-safe, capped — for output-text rows.
+
+    Local twin of ``github_pr_comment_service._first_message_line``: that
+    module imports THIS one at load time, so importing it back here would
+    be a circular import.
+    """
+    stripped = (message or "").strip()
+    if not stripped:
+        return ""
+    line = stripped.splitlines()[0].replace("`", "'").strip()
+    if len(line) > _TEXT_MESSAGE_CAP:
+        return line[:_TEXT_MESSAGE_CAP] + "…"
+    return line
+
+
+def _annotation_message(tc: Any) -> str:
+    """First lines of the failure message, bounded — GitHub requires a
+    non-empty ``message`` on every annotation."""
+    raw = (getattr(tc, "error_message", None) or "").strip()
+    if not raw:
+        return "Test failed (no failure message captured)."
+    lines = [ln.rstrip() for ln in raw.splitlines() if ln.strip()]
+    msg = "\n".join(lines[:_ANNOTATION_MESSAGE_MAX_LINES])
+    if len(msg) > _ANNOTATION_MESSAGE_CAP:
+        msg = msg[:_ANNOTATION_MESSAGE_CAP] + "…"
+    return msg
+
+
+@dataclass
+class _CheckEnrichment:
+    """The run's failures partitioned with the same semantics as the PR
+    summary comment (``github_pr_comment_service._partition_tests``) but
+    keeping the ``(fingerprint, TestCase)`` pairs — annotations need the
+    stack trace and still-failing rows, which the comment partition
+    discards."""
+    newly_failed: list[tuple[str, Any]] = field(default_factory=list)
+    still_failing: list[tuple[str, Any]] = field(default_factory=list)
+    known_flaky: list[tuple[str, Any]] = field(default_factory=list)
+    fixed_count: int = 0
+    has_baseline: bool = False
+
+    @property
+    def all_failures_flaky(self) -> bool:
+        """True when every failing row is known-flaky/quarantined (and at
+        least one failing row exists) — the neutral-conclusion condition."""
+        return bool(self.known_flaky) and not self.newly_failed and not self.still_failing
+
+
+def _partition_for_check(
+    right_tests: dict[str, Any],
+    left_tests: dict[str, Any],
+    flaky_fps: set[str],
+    *,
+    has_baseline: bool,
+) -> _CheckEnrichment:
+    """Mirror of the PR-comment partition semantics: a known-flaky failure
+    lands ONLY in the flaky bucket; without a baseline every non-flaky
+    failure reads as newly failed."""
+    enrich = _CheckEnrichment(has_baseline=has_baseline)
+    for fp, tc in sorted(right_tests.items()):
+        if _status_bucket(tc.status) not in ("failed", "broken"):
+            continue
+        if fp in flaky_fps:
+            enrich.known_flaky.append((fp, tc))
+            continue
+        if not has_baseline:
+            enrich.newly_failed.append((fp, tc))
+            continue
+        left_tc = left_tests.get(fp)
+        cls = _classify(left_tc.status if left_tc else None, tc.status, None, None)
+        if cls == "still_failing":
+            enrich.still_failing.append((fp, tc))
+        else:
+            enrich.newly_failed.append((fp, tc))
+
+    if has_baseline:
+        for fp, left_tc in left_tests.items():
+            if _status_bucket(left_tc.status) not in ("failed", "broken"):
+                continue
+            right_tc = right_tests.get(fp)
+            if right_tc is not None and _status_bucket(right_tc.status) == "passed":
+                enrich.fixed_count += 1
+    return enrich
+
+
+def _cluster_key(tc: Any) -> str:
+    """Failures sharing the same first error-message line cluster together;
+    message-less failures stay singletons instead of clumping."""
+    msg = (getattr(tc, "error_message", None) or "").strip()
+    first = msg.splitlines()[0].strip().lower() if msg else ""
+    return first or f"__solo__:{getattr(tc, 'test_fingerprint', id(tc))}"
+
+
+def _build_annotations(
+    enrich: _CheckEnrichment,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Build the annotation payloads.
+
+    Returns ``(annotations, non_locatable_rows, omitted_locatable_count)``.
+    Priority: newly-failed → still-failing → known-flaky, each group
+    ordered by cluster size (desc) then test name. Known-flaky annotate at
+    ``warning`` level, everything else at ``failure``. Rows with no
+    derivable location go to ``non_locatable_rows`` (rendered in
+    ``output.text``); locatable rows beyond the 50-cap count as omitted.
+    """
+    all_failing = enrich.newly_failed + enrich.still_failing + enrich.known_flaky
+    counts = Counter(_cluster_key(tc) for _, tc in all_failing)
+
+    def _ordered(rows: list[tuple[str, Any]]) -> list[tuple[str, Any]]:
+        return sorted(
+            rows,
+            key=lambda pair: (
+                -counts[_cluster_key(pair[1])],
+                str(getattr(pair[1], "test_name", "") or pair[0]),
+            ),
+        )
+
+    prioritized: list[tuple[str, Any, str]] = (
+        [(fp, tc, "failure") for fp, tc in _ordered(enrich.newly_failed)]
+        + [(fp, tc, "failure") for fp, tc in _ordered(enrich.still_failing)]
+        + [(fp, tc, "warning") for fp, tc in _ordered(enrich.known_flaky)]
+    )
+
+    annotations: list[dict[str, Any]] = []
+    non_locatable: list[dict[str, Any]] = []
+    omitted = 0
+    for fp, tc, level in prioritized:
+        loc = _locate_failure(tc)
+        if loc is None:
+            non_locatable.append({
+                "name": str(getattr(tc, "test_name", None) or fp),
+                "message": _first_line(getattr(tc, "error_message", None)),
+                "flaky": level == "warning",
+            })
+            continue
+        if len(annotations) >= _MAX_ANNOTATIONS:
+            omitted += 1
+            continue
+        path, line = loc
+        annotations.append({
+            "path": path,
+            "start_line": line,
+            "end_line": line,
+            "annotation_level": level,
+            "title": str(getattr(tc, "test_name", None) or fp)[:_ANNOTATION_TITLE_CAP],
+            "message": _annotation_message(tc),
+        })
+    return annotations, non_locatable, omitted
+
+
+async def _gather_enrichment(
+    db: AsyncSession, run: TestRun,
+) -> Optional[_CheckEnrichment]:
+    """Load per-test rows + baseline + flaky set and partition.
+
+    Reuses the PR-comment service's baseline selection and known-flaky
+    fingerprint set (active quarantines ∪ flaky-coach cache) so the check
+    run and the PR comment NEVER disagree about what's newly failed or
+    flaky. Returns ``None`` when the run has no per-test rows (live-stream
+    buffer eviction etc.) — the caller then behaves exactly as before
+    US-4.2 (aggregate-only summary, no neutral override).
+    """
+    # Lazy import: github_pr_comment_service imports this module at load
+    # time, so a module-level import back would be circular.
+    from app.services.github_pr_comment_service import (
+        _flaky_fingerprints,
+        _select_baseline,
+    )
+
+    right_tests = await _load_test_rows(db, run.id)
+    if not right_tests:
+        return None
+    baseline = await _select_baseline(db, run)
+    left_tests = (
+        await _load_test_rows(db, baseline.id) if baseline is not None else {}
+    )
+    # Baseline with missing per-test rows can't support a newly/fixed
+    # split — same no-baseline fallback the PR comment applies.
+    has_baseline = baseline is not None and bool(left_tests)
+    flaky_fps = await _flaky_fingerprints(db, run.project_id)
+    return _partition_for_check(
+        right_tests, left_tests, flaky_fps, has_baseline=has_baseline,
+    )
+
+
 # ── Check run posting ──────────────────────────────────────────────────────
 
 
-def _format_check_summary(run: TestRun, project_name: Optional[str]) -> dict[str, Any]:
+def _format_check_summary(
+    run: TestRun,
+    project_name: Optional[str],
+    enrichment: Optional[_CheckEnrichment] = None,
+) -> dict[str, Any]:
     """Build the ``check_run`` payload from a TestRun row.
 
     The Checks API accepts a name, status, conclusion, and a
     ``output`` block with title/summary/text rendered as markdown.
     Keeps the summary short because GitHub truncates at 4 KB per field.
+
+    ``enrichment`` (US-4.2, optional — ``None`` keeps the pre-US-4.2
+    aggregate-only payload) adds per-test ``output.annotations``, the
+    newly-failed/known-flaky/fixed counts, the non-locatable failure list
+    in ``output.text``, and the flaky-aware conclusion: a run whose
+    failures are ALL known-flaky/quarantined concludes ``neutral``
+    instead of ``failure`` — mirroring the ``ci-verdict`` semantics on
+    the Checks surface. Any real failure still concludes ``failure``;
+    when per-test rows are unavailable we can't prove all-flaky, so the
+    conclusion stays ``failure`` (fail-honest, not fail-open).
     """
     total = int(run.total_tests or 0)
     passed = int(run.passed_tests or 0)
@@ -320,16 +653,19 @@ def _format_check_summary(run: TestRun, project_name: Optional[str]) -> dict[str
     skipped = int(run.skipped_tests or 0)
     broken = int(run.broken_tests or 0)
     pass_rate = float(run.pass_rate or 0)
+    failures = failed + broken
 
-    if failed == 0 and broken == 0:
+    all_flaky = enrichment is not None and enrichment.all_failures_flaky
+
+    if failures == 0:
         conclusion = "success"
         title_icon = "✅"
-    elif failed > 0 or broken > 0:
+    elif all_flaky:
+        conclusion = "neutral"
+        title_icon = "⚠️"
+    else:
         conclusion = "failure"
         title_icon = "❌"
-    else:
-        conclusion = "neutral"
-        title_icon = "ℹ️"
 
     # Deep link back to Run Intelligence. Falls back to relative path if
     # the public base URL isn't configured — the customer's GitHub will
@@ -339,26 +675,87 @@ def _format_check_summary(run: TestRun, project_name: Optional[str]) -> dict[str
     deep_link = f"{base_url}{intel_path}" if base_url else intel_path
 
     proj_label = f"{project_name}" if project_name else "TestLookup"
-    title = f"{title_icon} {proj_label} — {passed}/{total} passed ({pass_rate:.1f}%)"
+    if all_flaky:
+        noun = "failure" if failures == 1 else "failures"
+        title = f"{title_icon} {proj_label} — {failures} {noun} — all known-flaky/quarantined"
+    else:
+        title = f"{title_icon} {proj_label} — {passed}/{total} passed ({pass_rate:.1f}%)"
 
     summary_lines = [
         f"**Build:** {run.build_number or run.id}",
         f"**Branch:** {run.branch or '—'}",
         f"**Passed:** {passed}    **Failed:** {failed}    **Broken:** {broken}    **Skipped:** {skipped}",
         f"**Pass rate:** {pass_rate:.1f}%",
-        "",
-        f"[→ Open Run Intelligence]({deep_link})",
     ]
+
+    annotations: list[dict[str, Any]] = []
+    non_locatable: list[dict[str, Any]] = []
+    omitted = 0
+    if enrichment is not None:
+        annotations, non_locatable, omitted = _build_annotations(enrichment)
+        # Same triad the sticky PR comment reports — one vocabulary.
+        if enrichment.has_baseline:
+            summary_lines.append(
+                f"**Newly failed:** {len(enrichment.newly_failed)}    "
+                f"**Known flaky:** {len(enrichment.known_flaky)}    "
+                f"**Fixed:** {enrichment.fixed_count}"
+            )
+        else:
+            failing = len(enrichment.newly_failed) + len(enrichment.still_failing)
+            summary_lines.append(
+                f"**Failing:** {failing}    "
+                f"**Known flaky:** {len(enrichment.known_flaky)}    "
+                "_(no baseline run — newly-failed vs fixed unavailable)_"
+            )
+        if all_flaky:
+            summary_lines.append(
+                "_All failures are known-flaky/quarantined — "
+                "likely not caused by this change._"
+            )
+
+    summary_lines.extend(["", f"[→ Open Run Intelligence]({deep_link})"])
+
+    text_lines: list[str] = []
+    if omitted > 0:
+        text_lines.extend([
+            f"_+{omitted} more locatable failure annotations omitted — "
+            "GitHub caps annotations at 50 per request._",
+            "",
+        ])
+    if non_locatable:
+        text_lines.extend([
+            f"### Failures without a source location ({len(non_locatable)})",
+            "",
+            "_No repo-relative file/line was derivable from the stack "
+            "trace — listed here instead of annotated._",
+            "",
+        ])
+        for row in non_locatable[:_NON_LOCATABLE_CAP]:
+            entry = f"- `{row['name']}`"
+            if row["message"]:
+                entry += f" — `{row['message']}`"
+            if row["flaky"]:
+                entry += " _(known-flaky)_"
+            text_lines.append(entry)
+        overflow = len(non_locatable) - _NON_LOCATABLE_CAP
+        if overflow > 0:
+            text_lines.append(f"- _+{overflow} more_")
+
+    output: dict[str, Any] = {
+        "title": title,
+        "summary": "\n".join(summary_lines),
+    }
+    if text_lines:
+        output["text"] = "\n".join(text_lines)
+    if annotations:
+        output["annotations"] = annotations
 
     return {
         "name": f"TestLookup · {proj_label}",
         "status": "completed",
         "conclusion": conclusion,
         "completed_at": (run.end_time or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z"),
-        "output": {
-            "title": title,
-            "summary": "\n".join(summary_lines),
-        },
+        "output": output,
         "details_url": deep_link if base_url else None,
     }
 
@@ -405,7 +802,19 @@ async def post_check_run_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
         except Exception:
             project_name = None
 
-        payload = _format_check_summary(run, project_name)
+        # US-4.2 enrichment — best-effort: a failure here degrades to the
+        # aggregate-only check (pre-US-4.2 shape) rather than skipping.
+        enrichment: Optional[_CheckEnrichment] = None
+        try:
+            enrichment = await _gather_enrichment(db, run)
+        except Exception as exc:
+            logger.debug(
+                "github_checks enrichment unavailable",
+                run_id=str(run_id),
+                error=str(exc),
+            )
+
+        payload = _format_check_summary(run, project_name, enrichment)
         payload["head_sha"] = run.commit_hash
 
         url = (
