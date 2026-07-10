@@ -291,21 +291,35 @@ class FlakySentinelAgent(BaseAgent):
         # approval via the quarantine service. Gating on ``verdict.is_flaky``
         # keeps this consistent with the recommendation: a persistent regression
         # (high failure rate, not flaky) must be fixed, not quarantined — hiding
-        # a real defect behind a quarantine is the wrong action. Threshold
-        # matches the acceptance criterion (>= 20% flip rate over 10 runs). The
-        # service is idempotent: repeat runs just refresh the existing PROPOSED
-        # row. Feature-flag gated, never raises.
+        # a real defect behind a quarantine is the wrong action. Thresholds come
+        # from the per-project quarantine lifecycle policy (PMF US-5.6);
+        # defaults match the original acceptance criterion (>= 20% flip rate
+        # over 10 runs). The service is idempotent: repeat runs just refresh
+        # the existing PROPOSED row. Feature-flag gated, never raises.
         quarantine_request_id: str | None = None
-        if verdict.get("is_flaky") and failure_rate >= 0.20 and len(statuses) >= 10:
+        import uuid as _uuid
+        proj_uuid = (
+            project_id if isinstance(project_id, _uuid.UUID)
+            else _uuid.UUID(str(project_id))
+        )
+        flip_rate_floor, min_runs = 0.20, 10
+        try:
+            from app.services.flaky_quarantine_service import get_lifecycle_policy
+            _policy = await get_lifecycle_policy(db, proj_uuid)
+            flip_rate_floor = _policy.detection_flip_rate_threshold
+            min_runs = _policy.detection_min_runs
+        except Exception as exc:  # pragma: no cover — defaults on lookup fault
+            logger.debug("lifecycle policy lookup failed", error=str(exc))
+        if (
+            verdict.get("is_flaky")
+            and failure_rate >= flip_rate_floor
+            and len(statuses) >= min_runs
+        ):
             try:
-                import uuid as _uuid
                 from app.services.flaky_quarantine_service import propose_quarantine
                 from app.models.postgres import TestStatus as _TS
                 passes = sum(1 for s in statuses if s == _TS.PASSED)
                 fails = sum(1 for s in statuses if s in (_TS.FAILED, _TS.BROKEN))
-                # TestCase has no project_id column — derive it from state.
-                # state["project_id"] is a str; coerce to UUID for the service contract.
-                proj_uuid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
                 request = await propose_quarantine(
                     project_id=proj_uuid,
                     test_fingerprint=tc.test_fingerprint,

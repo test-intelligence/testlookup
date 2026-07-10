@@ -68,13 +68,16 @@ from app.models.postgres import (
 logger = structlog.get_logger("services.notification_transitions")
 
 
-# All five transition event values, in render order.
+# All transition event values, in render order. The last two are the
+# quarantine lifecycle events (PMF US-5.4 / US-5.5).
 TRANSITION_EVENT_VALUES: tuple[str, ...] = (
     NotificationEventType.TEST_NEWLY_FAILING.value,
     NotificationEventType.TEST_RECOVERED.value,
     NotificationEventType.TEST_NEWLY_FLAKY.value,
     NotificationEventType.TEST_QUARANTINED.value,
     NotificationEventType.TEST_UNQUARANTINED.value,
+    NotificationEventType.TEST_QUARANTINE_STALE.value,
+    NotificationEventType.TEST_READY_TO_UNQUARANTINE.value,
 )
 
 DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD = 2
@@ -653,27 +656,44 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
 # ── Quarantine workflow hook (event-driven, not run-batched) ────────────────
 
 
+# Icon + title verb per quarantine workflow event. Only events in this map
+# may be dispatched through ``dispatch_quarantine_transitions``.
+_QUARANTINE_EVENT_RENDERING: dict[str, tuple[str, str]] = {
+    NotificationEventType.TEST_QUARANTINED.value: ("🔒", "quarantined"),
+    NotificationEventType.TEST_UNQUARANTINED.value: ("🔓", "released from quarantine"),
+    # PMF US-5.4 — active quarantine exceeded its SLA window.
+    NotificationEventType.TEST_QUARANTINE_STALE.value: ("⏰", "past quarantine SLA"),
+    # PMF US-5.5 — pass-streak threshold reached with auto_promote off.
+    NotificationEventType.TEST_READY_TO_UNQUARANTINE.value: (
+        "✅", "ready to leave quarantine",
+    ),
+}
+
+
 async def dispatch_quarantine_transitions(
     project_id: uuid.UUID,
     event: NotificationEventType,
     tests: list[dict[str, Any]],
 ) -> None:
-    """Send ``test.quarantined`` / ``test.unquarantined`` notifications.
+    """Send quarantine workflow notifications (``test.quarantined`` /
+    ``test.unquarantined`` / ``test.quarantine_stale`` /
+    ``test.ready_to_unquarantine``).
 
     Called from ``flaky_quarantine_service`` at its state-machine hook
-    points (approve → quarantined, release / recheck-release →
-    unquarantined). NEVER raises — a notification outage must not break
-    the quarantine workflow. ``tests`` items carry ``test_name`` and
+    points (approve → quarantined, release / recheck-release / auto-promote
+    → unquarantined, staleness sweep → stale, pass-streak threshold →
+    ready). NEVER raises — a notification outage must not break the
+    quarantine workflow. ``tests`` items carry ``test_name`` and
     optionally ``suite_name`` / ``detail``.
     """
     try:
         from app.core.config import settings
         from app.db.postgres import AsyncSessionLocal
 
-        if event not in (
-            NotificationEventType.TEST_QUARANTINED,
-            NotificationEventType.TEST_UNQUARANTINED,
-        ) or not tests:
+        rendering = _QUARANTINE_EVENT_RENDERING.get(
+            getattr(event, "value", str(event))
+        )
+        if rendering is None or not tests:
             return
 
         async with AsyncSessionLocal() as db:
@@ -686,11 +706,7 @@ async def dispatch_quarantine_transitions(
             ).scalar_one_or_none()
             project_name = project.name if project else str(project_id)
 
-        verb = (
-            "quarantined" if event == NotificationEventType.TEST_QUARANTINED
-            else "released from quarantine"
-        )
-        icon = "🔒" if event == NotificationEventType.TEST_QUARANTINED else "🔓"
+        icon, verb = rendering
         dashboard_url = f"{settings.public_base_url}/flaky-tests"
 
         lines = []

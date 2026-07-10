@@ -1297,6 +1297,24 @@ def dispatch_transition_notifications(self, run_id: str):
     from app.services.notification_transitions import evaluate_run_transitions
 
     logger.info("[Task %s] Evaluating transition notifications for run=%s", self.request.id, run_id)
+
+    # PMF US-5.5 — quarantine stability tracking rides the same finalization
+    # hook. Own try/except: a stability fault must neither block nor retry
+    # the transition dispatch, and the tracker is idempotent per (request,
+    # run) via last_stability_run_id, so a retry of THIS task (triggered by
+    # the transition evaluation below) advances nothing twice.
+    try:
+        from app.services.flaky_quarantine_service import update_quarantine_stability
+        stability = _run_async(update_quarantine_stability(_uuid.UUID(run_id)))
+        if stability.get("tracked"):
+            logger.info(
+                "[Task %s] Quarantine stability update: %s", self.request.id, stability,
+            )
+    except Exception as exc:
+        logger.warning(
+            "[Task %s] Quarantine stability update failed: %s", self.request.id, exc,
+        )
+
     try:
         result = _run_async(evaluate_run_transitions(_uuid.UUID(run_id)))
         logger.info("[Task %s] Transition evaluation done: %s", self.request.id, result)
@@ -2200,6 +2218,9 @@ def run_flaky_quarantine_maintenance(self) -> dict:
       3. ``run_recheck_cycle`` — evaluates RECHECK_SCHEDULED rows against
          recent TestCase history and either releases or re-quarantines
          the test.
+      4. ``mark_stale_quarantines`` (PMF US-5.4) — active quarantines past
+         their SLA window get a once-per-entry ``test.quarantine_stale``
+         notification (anchored on ``stale_notified_at``).
 
     Every pass is a no-op when the ``flaky_auto_quarantine`` feature flag
     is off, so enabling this beat entry is safe on existing deployments.
@@ -2207,6 +2228,7 @@ def run_flaky_quarantine_maintenance(self) -> dict:
     async def _run():
         from app.services.flaky_quarantine_service import (
             expire_stale_proposals,
+            mark_stale_quarantines,
             run_recheck_cycle,
             schedule_pending_rechecks,
         )
@@ -2214,24 +2236,28 @@ def run_flaky_quarantine_maintenance(self) -> dict:
             expired = await expire_stale_proposals()
             rechecks_scheduled = await schedule_pending_rechecks()
             outcomes = await run_recheck_cycle()
+            stale_flagged = await mark_stale_quarantines()
             span.set_attribute("result.expired", int(expired))
             span.set_attribute("result.rechecks_scheduled", int(rechecks_scheduled))
             span.set_attribute("result.released", int(outcomes["released"]))
             span.set_attribute("result.re_quarantined", int(outcomes["re_quarantined"]))
             span.set_attribute("result.insufficient_data", int(outcomes["insufficient_data"]))
+            span.set_attribute("result.stale_flagged", int(stale_flagged))
             logger.info(
                 "[Task %s] flaky quarantine maintenance: expired=%d scheduled=%d "
-                "released=%d re_quarantined=%d insufficient_data=%d",
+                "released=%d re_quarantined=%d insufficient_data=%d stale_flagged=%d",
                 self.request.id,
                 expired,
                 rechecks_scheduled,
                 outcomes["released"],
                 outcomes["re_quarantined"],
                 outcomes["insufficient_data"],
+                stale_flagged,
             )
             return {
                 "expired": expired,
                 "rechecks_scheduled": rechecks_scheduled,
+                "stale_flagged": stale_flagged,
                 **outcomes,
             }
 

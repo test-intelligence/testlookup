@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
+  ArrowUpCircle,
+  Bug,
   Check,
   Clock,
   FileText,
@@ -139,6 +142,7 @@ export default function QuarantinePage() {
               <tr>
                 <th className="text-left px-3 py-2">Test</th>
                 <th className="text-left px-3 py-2">Suite</th>
+                <th className="text-left px-3 py-2">Owner</th>
                 <th className="text-right px-3 py-2">Flip rate</th>
                 <th className="text-right px-3 py-2">Window</th>
                 <th className="text-center px-3 py-2">Status</th>
@@ -221,6 +225,20 @@ function QuarantineRow({
       <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">
         {row.suite_name || '—'}
       </td>
+      <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5">
+          {row.owner_name || '—'}
+          {row.defect_id && (
+            <Link
+              to="/defects"
+              title="Internal defect record auto-created for this quarantine"
+              className="text-[var(--color-accent)] hover:opacity-80"
+            >
+              <Bug className="h-3 w-3" />
+            </Link>
+          )}
+        </span>
+      </td>
       <td className="px-3 py-2 text-right text-xs text-[var(--color-text)]">
         {row.flip_rate != null ? `${(row.flip_rate * 100).toFixed(0)}%` : '—'}
       </td>
@@ -228,7 +246,25 @@ function QuarantineRow({
         {row.flip_window_size ?? '—'}
       </td>
       <td className="px-3 py-2 text-center">
-        <StatusPill status={row.status} />
+        <div className="inline-flex flex-col items-center gap-1">
+          <StatusPill status={row.status} />
+          {row.stale && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-400 bg-rose-500/10"
+              title={row.sla_days != null ? `SLA: ${row.sla_days} days` : undefined}
+            >
+              stale — {daysOverSla(row.stale_at)}d over SLA
+            </span>
+          )}
+          {row.ready_to_promote && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-400 bg-emerald-500/10"
+              title={`${row.consecutive_passes} consecutive passing runs since quarantine`}
+            >
+              Ready to promote
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-3 py-2 text-right text-[11px] text-[var(--color-text-faint)]">
         {new Date(row.updated_at).toLocaleDateString()}
@@ -272,22 +308,47 @@ function QuarantineRow({
           </div>
         )}
         {canAct && tab === 'active' && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              doAction(
-                async () => {
-                  const notes = window.prompt('Release notes (optional)') ?? undefined
-                  return flakyQuarantineService.release(row.id, { notes })
-                },
-                'Quarantine released',
-              )
-            }
-            className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-0.5"
-          >
-            <RotateCcw className="h-3 w-3" /> Release
-          </button>
+          <div className="inline-flex items-center gap-1">
+            {row.ready_to_promote && (
+              <>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    doAction(
+                      // One-click release — the pass streak already proved
+                      // stability, no notes prompt needed.
+                      () =>
+                        flakyQuarantineService.release(row.id, {
+                          notes: `Promoted out of quarantine after ${row.consecutive_passes} consecutive passing runs`,
+                        }),
+                      'Quarantine released',
+                    )
+                  }
+                  className="text-xs text-emerald-400 hover:underline flex items-center gap-0.5 font-medium"
+                >
+                  <ArrowUpCircle className="h-3 w-3" /> Promote out
+                </button>
+                <span className="text-[var(--color-text-faint)]">·</span>
+              </>
+            )}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                doAction(
+                  async () => {
+                    const notes = window.prompt('Release notes (optional)') ?? undefined
+                    return flakyQuarantineService.release(row.id, { notes })
+                  },
+                  'Quarantine released',
+                )
+              }
+              className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-0.5"
+            >
+              <RotateCcw className="h-3 w-3" /> Release
+            </button>
+          </div>
         )}
         {tab === 'history' && row.reviewer_notes && (
           <span
@@ -300,6 +361,13 @@ function QuarantineRow({
       </td>
     </tr>
   )
+}
+
+/** Whole days elapsed since the SLA deadline (US-5.4 "stale — N days over SLA"). */
+function daysOverSla(staleAt: string | null): number {
+  if (!staleAt) return 0
+  const over = Date.now() - new Date(staleAt).getTime()
+  return Math.max(0, Math.floor(over / 86_400_000))
 }
 
 function StatusPill({ status }: { status: QuarantineStatus }) {

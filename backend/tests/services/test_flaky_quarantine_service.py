@@ -47,6 +47,12 @@ def test_snapshot_captures_audit_fields():
         "quarantine_expires_at": None,
         "approved_by_user_id": None,
         "rejected_by_user_id": None,
+        # Lifecycle fields (US-5.4/5.5) default via getattr for pre-0104
+        # test doubles like this SimpleNamespace.
+        "owner_user_id": None,
+        "stale_at": None,
+        "consecutive_passes": 0,
+        "ready_to_promote": False,
     }
 
 

@@ -36,6 +36,15 @@ export interface FlakyQuarantineRead {
   recheck_at: string | null
   rationale: Record<string, unknown> | null
   reviewer_notes: string | null
+  // Lifecycle: owner + SLA + auto-promotion (PMF US-5.4 / US-5.5)
+  owner_user_id: string | null
+  owner_name: string | null
+  defect_id: string | null
+  sla_days: number | null
+  stale_at: string | null
+  stale: boolean
+  consecutive_passes: number
+  ready_to_promote: boolean
   created_at: string
   updated_at: string
 }

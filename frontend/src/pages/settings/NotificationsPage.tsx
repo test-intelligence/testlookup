@@ -35,6 +35,9 @@ const EVENT_LABELS: Record<NotificationEventType, string> = {
   'test.newly_flaky': 'Test newly flaky (transition)',
   'test.quarantined': 'Test quarantined (transition)',
   'test.unquarantined': 'Test released from quarantine (transition)',
+  // Quarantine lifecycle events (US-5.4 / US-5.5)
+  'test.quarantine_stale': 'Quarantine past its SLA (lifecycle)',
+  'test.ready_to_unquarantine': 'Quarantined test ready to release (lifecycle)',
 }
 
 const ALL_EVENTS: NotificationEventType[] = Object.keys(EVENT_LABELS) as NotificationEventType[]

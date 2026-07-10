@@ -18,8 +18,16 @@ Public surface:
 * :func:`active_quarantines_for_project` — read helper used by the
   ingestion pipeline to tag newly-ingested test cases.
 
-* :func:`expire_stale_proposals` / :func:`run_recheck_cycle` — maintenance
-  tasks invoked by the celery beat schedule.
+* :func:`expire_stale_proposals` / :func:`run_recheck_cycle` /
+  :func:`mark_stale_quarantines` — maintenance tasks invoked by the celery
+  beat schedule.
+
+* Quarantine lifecycle (PMF US-5.4 / US-5.5): :func:`get_lifecycle_policy`
+  resolves the per-project policy (missing row → defaults),
+  :func:`update_quarantine_stability` advances the consecutive-pass counter
+  at run finalization and auto-promotes (or flags ``ready_to_promote``) at
+  the policy threshold, and the approve hook resolves an owner, snapshots
+  the SLA, and optionally auto-creates an internal defect record.
 
 Every public entry point short-circuits when the ``flaky_auto_quarantine``
 feature flag is off so existing deployments see no behaviour change.
@@ -27,8 +35,9 @@ feature flag is off so existing deployments see no behaviour change.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import structlog
 from sqlalchemy import select
@@ -38,6 +47,8 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
     FlakyQuarantineRequest,
     FlakyQuarantineStatus,
+    QuarantineLifecyclePolicy,
+    TestStatus,
     User,
 )
 
@@ -73,6 +84,89 @@ _DEFAULT_QUARANTINE_DAYS = 14
 # Flip-rate floor below which a recheck_at row is moved back to RELEASED.
 # A test running 10+ times at <10% flip rate is considered stable enough.
 _RECHECK_RELEASE_THRESHOLD = 0.10
+
+# ── Lifecycle policy defaults (PMF US-5.4 / US-5.5 / US-5.6) ────────────────
+# A project without a quarantine_lifecycle_policies row resolves to these.
+_DEFAULT_SLA_DAYS = 14
+_DEFAULT_PROMOTE_AFTER_PASSES = 20
+_DEFAULT_DETECTION_FLIP_RATE = 0.20
+_DEFAULT_DETECTION_MIN_RUNS = 10
+
+
+@dataclass(frozen=True)
+class EffectiveLifecyclePolicy:
+    """Resolved per-project quarantine lifecycle policy."""
+    sla_days: int = _DEFAULT_SLA_DAYS
+    auto_create_defect: bool = False
+    auto_promote: bool = False
+    promote_after_passes: int = _DEFAULT_PROMOTE_AFTER_PASSES
+    detection_flip_rate_threshold: float = _DEFAULT_DETECTION_FLIP_RATE
+    detection_min_runs: int = _DEFAULT_DETECTION_MIN_RUNS
+
+
+async def get_lifecycle_policy_row(
+    db: AsyncSession, project_id: uuid.UUID,
+) -> Optional[QuarantineLifecyclePolicy]:
+    """The explicit lifecycle policy row for a project, or ``None`` (=
+    code defaults apply). Read-only."""
+    result = await db.execute(
+        select(QuarantineLifecyclePolicy).where(
+            QuarantineLifecyclePolicy.project_id == project_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_lifecycle_policy(
+    db: AsyncSession, project_id: uuid.UUID,
+) -> EffectiveLifecyclePolicy:
+    """Load the project's lifecycle policy, resolving a missing row to the
+    defaults. Read-only."""
+    row = await get_lifecycle_policy_row(db, project_id)
+    if row is None:
+        return EffectiveLifecyclePolicy()
+    return EffectiveLifecyclePolicy(
+        sla_days=int(row.sla_days or _DEFAULT_SLA_DAYS),
+        auto_create_defect=bool(row.auto_create_defect),
+        auto_promote=bool(row.auto_promote),
+        promote_after_passes=int(
+            row.promote_after_passes or _DEFAULT_PROMOTE_AFTER_PASSES
+        ),
+        detection_flip_rate_threshold=float(
+            row.detection_flip_rate_threshold
+            if row.detection_flip_rate_threshold is not None
+            else _DEFAULT_DETECTION_FLIP_RATE
+        ),
+        detection_min_runs=int(row.detection_min_runs or _DEFAULT_DETECTION_MIN_RUNS),
+    )
+
+
+async def upsert_lifecycle_policy(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    sla_days: int,
+    auto_create_defect: bool,
+    auto_promote: bool,
+    promote_after_passes: int,
+    detection_flip_rate_threshold: float,
+    detection_min_runs: int,
+) -> QuarantineLifecyclePolicy:
+    """Create or update the project's lifecycle policy row. Stage-only —
+    the router handler owns ``db.commit()`` (transaction-boundary
+    discipline)."""
+    row = await get_lifecycle_policy_row(db, project_id)
+    if row is None:
+        row = QuarantineLifecyclePolicy(project_id=project_id)
+        db.add(row)
+    row.sla_days = sla_days
+    row.auto_create_defect = auto_create_defect
+    row.auto_promote = auto_promote
+    row.promote_after_passes = promote_after_passes
+    row.detection_flip_rate_threshold = detection_flip_rate_threshold
+    row.detection_min_runs = detection_min_runs
+    await db.flush()
+    return row
 
 
 # ── Feature-flag gate ───────────────────────────────────────────────────────
@@ -193,6 +287,10 @@ async def _audit(
 
 
 def _snapshot(row: FlakyQuarantineRequest) -> dict[str, Any]:
+    # ``getattr`` for the lifecycle fields (migration 0104) so test doubles
+    # built before the columns existed keep working.
+    owner_user_id = getattr(row, "owner_user_id", None)
+    stale_at = getattr(row, "stale_at", None)
     return {
         "status": row.status,
         "flip_rate": row.flip_rate,
@@ -201,7 +299,154 @@ def _snapshot(row: FlakyQuarantineRequest) -> dict[str, Any]:
         "quarantine_expires_at": row.quarantine_expires_at.isoformat() if row.quarantine_expires_at else None,
         "approved_by_user_id": str(row.approved_by_user_id) if row.approved_by_user_id else None,
         "rejected_by_user_id": str(row.rejected_by_user_id) if row.rejected_by_user_id else None,
+        # Lifecycle (PMF US-5.4 / US-5.5)
+        "owner_user_id": str(owner_user_id) if owner_user_id else None,
+        "stale_at": stale_at.isoformat() if stale_at else None,
+        "consecutive_passes": getattr(row, "consecutive_passes", 0) or 0,
+        "ready_to_promote": bool(getattr(row, "ready_to_promote", False)),
     }
+
+
+# ── Lifecycle: owner resolution + activation enrichment (US-5.4) ────────────
+
+
+async def _resolve_owner_user_id(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    suite_name: Optional[str],
+    test_name: Optional[str],
+) -> Optional[uuid.UUID]:
+    """Map the test's suite through the project's ownership rules to a User.
+
+    The ownership rules (``service_ownership_rules`` + the legacy
+    ``component_owner_map``) resolve to a ``(team_name, team_contact)``
+    pair; ``team_contact`` is free-form (email / username / slack handle)
+    — we match it against ``User.email`` / ``User.username``. Returns
+    ``None`` when no rule matches or the contact doesn't map to an active
+    user; the caller falls back to the approving QA lead.
+    """
+    from sqlalchemy import or_ as _or
+
+    from app.models.postgres import Project
+    from app.services.ownership_resolver_service import (
+        load_rules_for_project,
+        resolve_test_ownership,
+    )
+
+    rules = await load_rules_for_project(db, project_id)
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    resolution = resolve_test_ownership(
+        rules,
+        {
+            "suite_name": suite_name or "",
+            "component": suite_name or "",
+            "path": test_name or "",
+        },
+        project.component_owner_map if project else None,
+    )
+    contact = (resolution.team_contact or "").strip()
+    if not contact:
+        return None
+    user = (
+        (
+            await db.execute(
+                select(User)
+                .where(
+                    _or(User.email == contact, User.username == contact),
+                    User.is_active == True,  # noqa: E712
+                )
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    return user.id if user else None
+
+
+async def _lifecycle_activation_context(
+    project_id: uuid.UUID,
+    suite_name: Optional[str],
+    test_name: Optional[str],
+    fallback_user_id: Optional[uuid.UUID],
+) -> tuple[EffectiveLifecyclePolicy, Optional[uuid.UUID]]:
+    """Policy + owner for a quarantine activation — never raises.
+
+    Runs on a FRESH ``AsyncSessionLocal`` (like ``_audit``) so a lookup
+    fault cannot poison the caller's transaction: activation must never
+    fail on ownership-resolution errors. Owner falls back to the approving
+    QA lead (``fallback_user_id``).
+    """
+    policy = EffectiveLifecyclePolicy()
+    owner_id = fallback_user_id
+    try:
+        async with AsyncSessionLocal() as ldb:
+            policy = await get_lifecycle_policy(ldb, project_id)
+            resolved = await _resolve_owner_user_id(
+                ldb, project_id, suite_name, test_name,
+            )
+            if resolved is not None:
+                owner_id = resolved
+    except Exception as exc:
+        logger.warning(
+            "quarantine_lifecycle_context_failed",
+            project_id=str(project_id),
+            error=str(exc),
+        )
+    return policy, owner_id
+
+
+def _stage_internal_defect(
+    db: AsyncSession, row: FlakyQuarantineRequest,
+) -> Optional[uuid.UUID]:
+    """Stage an INTERNAL defect record for an activating quarantine (US-5.4).
+
+    Local record only — Jira posting is Epic 6. The id is generated
+    client-side so no flush is needed; the INSERT rides the caller's
+    commit (the unit of work executes inserts before the quarantine row's
+    UPDATE, satisfying the ``defect_id`` FK). Never raises.
+    """
+    try:
+        from app.core.config import settings
+        from app.models.postgres import Defect
+
+        name = row.test_name or row.test_fingerprint
+        flip = f"{row.flip_rate:.0%}" if row.flip_rate is not None else "unknown"
+        description = (
+            "TestLookup quarantined this test as flaky.\n\n"
+            f"Test: {name}\n"
+            f"Suite: {row.suite_name or 'unknown'}\n"
+            f"Fingerprint: {row.test_fingerprint}\n"
+            f"Flake history: flip rate {flip} over "
+            f"{row.flip_window_size if row.flip_window_size is not None else '?'} runs "
+            f"(pass={row.pass_count if row.pass_count is not None else '?'}, "
+            f"fail={row.fail_count if row.fail_count is not None else '?'})\n"
+            f"Detection: {row.detection_method}\n\n"
+            f"Quarantine review: {settings.public_base_url}/quarantine"
+        )
+        defect = Defect(
+            id=uuid.uuid4(),
+            project_id=row.project_id,
+            title=f"Quarantined flaky test: {name}"[:255],
+            description=description,
+            severity="MEDIUM",
+            component=(row.suite_name or None) and row.suite_name[:255],
+            labels=["flaky", "quarantine", "auto-created"],
+            resolution_status="OPEN",
+            promotion_source="quarantine_lifecycle",
+        )
+        db.add(defect)
+        return defect.id
+    except Exception as exc:
+        logger.warning(
+            "quarantine_defect_autocreate_failed",
+            request_id=str(row.id),
+            project_id=str(row.project_id),
+            error=str(exc),
+        )
+        return None
 
 
 # ── Lookup helpers ──────────────────────────────────────────────────────────
@@ -526,6 +771,25 @@ async def approve(
     row.recheck_at = row.quarantine_expires_at - timedelta(days=1)
     if notes:
         row.reviewer_notes = notes
+
+    # ── Lifecycle enrichment (PMF US-5.4) — owner + SLA + optional internal
+    # defect. Policy/owner lookups run on their own session and never raise:
+    # activation must not fail on ownership-resolution errors.
+    policy, owner_id = await _lifecycle_activation_context(
+        row.project_id, row.suite_name, row.test_name, actor.id,
+    )
+    row.owner_user_id = owner_id
+    row.sla_days = policy.sla_days
+    row.stale_at = now + timedelta(days=policy.sla_days)
+    row.stale_notified_at = None
+    # Reset US-5.5 stability tracking for the fresh quarantine window.
+    row.consecutive_passes = 0
+    row.last_stability_run_id = None
+    row.ready_to_promote = False
+    row.ready_notified_at = None
+    if policy.auto_create_defect and row.defect_id is None:
+        row.defect_id = _stage_internal_defect(db, row)
+
     row.updated_at = now
     await db.commit()
     await db.refresh(row)
@@ -877,6 +1141,17 @@ async def run_recheck_cycle() -> dict[str, int]:
                 row.quarantine_start = now
                 row.quarantine_expires_at = now + timedelta(days=row.quarantine_duration_days)
                 row.recheck_at = row.quarantine_expires_at - timedelta(days=1)
+                # PMF US-5.4/5.5 — a re-quarantine is a fresh window: restart
+                # the SLA clock (when one was snapshotted at activation) and
+                # the pass-streak tracking. getattr keeps pre-0104 test
+                # doubles working.
+                sla_days = getattr(row, "sla_days", None)
+                if sla_days:
+                    row.stale_at = now + timedelta(days=sla_days)
+                    row.stale_notified_at = None
+                row.consecutive_passes = 0
+                row.ready_to_promote = False
+                row.ready_notified_at = None
                 re_quarantined += 1
 
         if rows:
@@ -908,4 +1183,263 @@ async def run_recheck_cycle() -> dict[str, int]:
         "released": released,
         "re_quarantined": re_quarantined,
         "insufficient_data": insufficient,
+    }
+
+
+# ── Lifecycle: staleness sweep (PMF US-5.4) ─────────────────────────────────
+
+
+async def mark_stale_quarantines() -> int:
+    """Flag active quarantines that have out-lived their SLA window.
+
+    Runs from the nightly beat schedule alongside the other maintenance
+    passes. The ``stale`` surfacing itself is DERIVED (``stale_at <= now``
+    on the ORM property), so lists/manifests are current without this
+    sweep — its job is the once-per-entry ``test.quarantine_stale``
+    notification, anchored on ``stale_notified_at`` so a re-run (or the
+    next night) never re-notifies the same entry. Returns the number of
+    entries flagged this pass.
+    """
+    if not await _feature_enabled():
+        return 0
+    now = datetime.now(timezone.utc)
+    flagged: list[dict[str, Any]] = []
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(FlakyQuarantineRequest).where(
+                FlakyQuarantineRequest.status.in_(_ACTIVE_QUARANTINE_STATES),
+                FlakyQuarantineRequest.stale_at != None,  # noqa: E711
+                FlakyQuarantineRequest.stale_at <= now,
+                FlakyQuarantineRequest.stale_notified_at == None,  # noqa: E711
+            )
+        )
+        rows = list(result.scalars().all())
+        for row in rows:
+            row.stale_notified_at = now
+            row.updated_at = now
+            stale_at = row.stale_at
+            if stale_at is not None and stale_at.tzinfo is None:
+                stale_at = stale_at.replace(tzinfo=timezone.utc)
+            days_over = max(0, (now - stale_at).days) if stale_at else 0
+            flagged.append({
+                "project_id": row.project_id,
+                "test_name": row.test_name,
+                "test_fingerprint": row.test_fingerprint,
+                "suite_name": row.suite_name,
+                "detail": (
+                    f"{days_over} day{'s' if days_over != 1 else ''} past its "
+                    f"{row.sla_days or _DEFAULT_SLA_DAYS}-day SLA"
+                ),
+            })
+        if rows:
+            await db.commit()
+
+    # Notify AFTER the commit so the once-only anchor is durable before the
+    # message exists. Grouped per project; the dispatcher never raises.
+    if flagged:
+        from app.models.postgres import NotificationEventType
+        from app.services.notification_transitions import (
+            dispatch_quarantine_transitions,
+        )
+        by_project: dict[uuid.UUID, list[dict[str, Any]]] = {}
+        for entry in flagged:
+            by_project.setdefault(entry["project_id"], []).append(entry)
+        for pid, entries in by_project.items():
+            await dispatch_quarantine_transitions(
+                pid, NotificationEventType.TEST_QUARANTINE_STALE, entries,
+            )
+    return len(flagged)
+
+
+# ── Lifecycle: auto-promotion out of quarantine (PMF US-5.5) ────────────────
+
+
+def advance_consecutive_passes(current: int, case_statuses: Sequence[str]) -> int:
+    """Advance the consecutive-pass counter for ONE finalized run.
+
+    * ANY FAILED/BROKEN result in the run → reset to 0. A single failure
+      resets the whole streak (pinned by a regression test).
+    * Otherwise, at least one PASSED result → +1. One run is one step,
+      regardless of how many retries the run recorded.
+    * SKIPPED/UNKNOWN-only runs are no-signal: the counter is unchanged.
+    """
+    statuses = {
+        s if isinstance(s, str) else getattr(s, "value", str(s))
+        for s in case_statuses
+    }
+    if statuses & {TestStatus.FAILED.value, TestStatus.BROKEN.value}:
+        return 0
+    if TestStatus.PASSED.value in statuses:
+        return int(current or 0) + 1
+    return int(current or 0)
+
+
+async def update_quarantine_stability(run_id: uuid.UUID) -> dict[str, int]:
+    """Advance pass-streak counters for quarantined tests after a run
+    finalizes, and promote at the policy threshold.
+
+    Hooked from the ``dispatch_transition_notifications`` Celery task (the
+    same post-ingestion point the transition engine rides), wrapped in its
+    own try/except there. Idempotent per (request, run) via
+    ``last_stability_run_id`` — a Celery retry or re-finalized run
+    advances nothing.
+
+    At ``promote_after_passes`` consecutive fully-passed runs:
+
+    * ``auto_promote`` ON  → the quarantine is RELEASED (audit-logged,
+      emits the existing ``test.unquarantined``).
+    * ``auto_promote`` OFF → the row is flagged ``ready_to_promote`` and
+      the optional ``test.ready_to_unquarantine`` notification fires once
+      per threshold crossing (anchor: ``ready_notified_at``, cleared when
+      a failure resets the streak).
+    """
+    empty = {"tracked": 0, "auto_released": 0, "ready": 0}
+    if not await _feature_enabled():
+        return empty
+
+    from app.models.postgres import TestCase, TestRun
+
+    tracked = 0
+    released_notifications: list[dict[str, Any]] = []
+    ready_notifications: list[dict[str, Any]] = []
+    pending_audits: list[tuple[str, uuid.UUID, uuid.UUID, dict[str, Any], dict[str, Any]]] = []
+
+    async with AsyncSessionLocal() as db:
+        run = (
+            await db.execute(select(TestRun).where(TestRun.id == run_id))
+        ).scalar_one_or_none()
+        if run is None:
+            return empty
+        project_id = run.project_id
+
+        result = await db.execute(
+            select(FlakyQuarantineRequest).where(
+                FlakyQuarantineRequest.project_id == project_id,
+                FlakyQuarantineRequest.status.in_(_ACTIVE_QUARANTINE_STATES),
+            )
+        )
+        rows = list(result.scalars().all())
+        if not rows:
+            return empty
+
+        fingerprints = {r.test_fingerprint for r in rows}
+        case_result = await db.execute(
+            select(TestCase.test_fingerprint, TestCase.status).where(
+                TestCase.test_run_id == run_id,
+                TestCase.test_fingerprint.in_(fingerprints),
+            )
+        )
+        statuses_by_fp: dict[str, list[str]] = {}
+        for fp, st in case_result.all():
+            statuses_by_fp.setdefault(fp, []).append(
+                st if isinstance(st, str) else getattr(st, "value", str(st))
+            )
+        if not statuses_by_fp:
+            return empty
+
+        policy = await get_lifecycle_policy(db, project_id)
+        threshold = max(1, policy.promote_after_passes)
+        now = datetime.now(timezone.utc)
+
+        for row in rows:
+            case_statuses = statuses_by_fp.get(row.test_fingerprint)
+            if not case_statuses:
+                continue  # quarantined test didn't run in this run
+            if row.last_stability_run_id == run_id:
+                continue  # idempotent per (request, run) — retry-safe
+            row.last_stability_run_id = run_id
+            row.consecutive_passes = advance_consecutive_passes(
+                row.consecutive_passes or 0, case_statuses,
+            )
+            if row.consecutive_passes == 0:
+                # Failure broke the streak: withdraw any pending promotion
+                # and re-arm the once-per-crossing notification anchor.
+                row.ready_to_promote = False
+                row.ready_notified_at = None
+            elif row.consecutive_passes >= threshold:
+                if policy.auto_promote:
+                    before = _snapshot(row)
+                    row.status = FlakyQuarantineStatus.RELEASED.value
+                    row.ready_to_promote = False
+                    pending_audits.append((
+                        "auto_promote_release",
+                        row.id, row.project_id, before, _snapshot(row),
+                    ))
+                    released_notifications.append({
+                        "project_id": row.project_id,
+                        "test_name": row.test_name,
+                        "test_fingerprint": row.test_fingerprint,
+                        "suite_name": row.suite_name,
+                        "detail": (
+                            f"auto-promoted after {row.consecutive_passes} "
+                            f"consecutive passing runs"
+                        ),
+                    })
+                elif not row.ready_to_promote:
+                    before = _snapshot(row)
+                    row.ready_to_promote = True
+                    pending_audits.append((
+                        "ready_to_promote",
+                        row.id, row.project_id, before, _snapshot(row),
+                    ))
+                    if row.ready_notified_at is None:
+                        row.ready_notified_at = now
+                        ready_notifications.append({
+                            "project_id": row.project_id,
+                            "test_name": row.test_name,
+                            "test_fingerprint": row.test_fingerprint,
+                            "suite_name": row.suite_name,
+                            "detail": (
+                                f"{row.consecutive_passes} consecutive passing "
+                                f"runs — release when ready"
+                            ),
+                        })
+            row.updated_at = now
+            tracked += 1
+
+        if tracked:
+            await db.commit()
+
+    # Audit + notify AFTER the commit (same ordering rationale as
+    # ``expire_stale_proposals``): never log/announce a rolled-back change.
+    for action, req_id, proj_id, before, after in pending_audits:
+        await _audit(
+            db, None,
+            action=action,
+            request_id=req_id,
+            project_id=proj_id,
+            before=before,
+            after=after,
+        )
+
+    from app.models.postgres import NotificationEventType
+    from app.services.notification_transitions import (
+        dispatch_quarantine_transitions,
+    )
+    if released_notifications:
+        by_project: dict[uuid.UUID, list[dict[str, Any]]] = {}
+        for entry in released_notifications:
+            by_project.setdefault(entry["project_id"], []).append(entry)
+        for pid, entries in by_project.items():
+            await dispatch_quarantine_transitions(
+                pid, NotificationEventType.TEST_UNQUARANTINED, entries,
+            )
+    if ready_notifications:
+        by_project = {}
+        for entry in ready_notifications:
+            by_project.setdefault(entry["project_id"], []).append(entry)
+        for pid, entries in by_project.items():
+            await dispatch_quarantine_transitions(
+                pid, NotificationEventType.TEST_READY_TO_UNQUARANTINE, entries,
+            )
+
+    if released_notifications:
+        from app.core.metrics import quarantine_expired_total
+        quarantine_expired_total.labels(terminal_state="released").inc(
+            len(released_notifications)
+        )
+    return {
+        "tracked": tracked,
+        "auto_released": len(released_notifications),
+        "ready": len(ready_notifications),
     }

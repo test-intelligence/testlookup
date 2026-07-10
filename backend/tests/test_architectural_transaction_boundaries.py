@@ -220,12 +220,16 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "service writes).",
     ),
     "flaky_quarantine_service.py": (
-        9,
+        11,
         "Tier 1-3: state-machine transitions (propose/approve/reject/"
         "release/expire/recheck) are called from both routers and the "
         "nightly Celery beat maintenance task; each transition owns its "
         "own transaction so a partial batch failure doesn't poison the "
-        "rest of the sweep.",
+        "rest of the sweep. +2 for the PMF US-5.4/US-5.5 lifecycle: the "
+        "staleness sweep (beat) and the run-finalization stability "
+        "tracker (Celery task hook) each own one commit on their own "
+        "AsyncSessionLocal — no request session exists at either call "
+        "site.",
     ),
     "webhook_service.py": (
         10,
@@ -438,7 +442,13 @@ def test_allowlist_total_is_bounded() -> None:
     # notification engine (notification_transitions.py), whose single commit
     # is Celery-task-owned — the state-store advance must be durable before
     # dispatch so re-finalization stays idempotent.
-    assert total <= 53, (
+    # Raised 53 → 55 on 2026-07-09 (PMF US-5.4/US-5.5): the quarantine
+    # lifecycle added two beat/task-owned commits to
+    # flaky_quarantine_service.py (9 → 11) — the staleness sweep and the
+    # run-finalization stability tracker, each on its own AsyncSessionLocal
+    # because no request session exists at either call site, and each must
+    # be durable BEFORE its notification dispatch (once-only anchors).
+    assert total <= 55, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

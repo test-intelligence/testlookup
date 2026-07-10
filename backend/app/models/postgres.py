@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models — all PostgreSQL tables."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum as PyEnum
 from typing import Any, Optional
 
@@ -132,6 +132,10 @@ class NotificationEventType(str, PyEnum):
     TEST_NEWLY_FLAKY = "test.newly_flaky"
     TEST_QUARANTINED = "test.quarantined"
     TEST_UNQUARANTINED = "test.unquarantined"
+    # ── Quarantine lifecycle events (PMF US-5.4 / US-5.5) — event-driven
+    # from flaky_quarantine_service hook points, same as the two above.
+    TEST_QUARANTINE_STALE = "test.quarantine_stale"
+    TEST_READY_TO_UNQUARANTINE = "test.ready_to_unquarantine"
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -3637,6 +3641,97 @@ class FlakyQuarantineRequest(Base):
     # and by humans to record the reason for approve/reject/release.
     rationale: Mapped[Optional[dict]] = mapped_column(JSONB)
     reviewer_notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    # ── Lifecycle: owner + ticket + SLA (PMF US-5.4, migration 0104) ────────
+    # Resolved on activation via the ownership rules for the test's suite,
+    # falling back to the approving QA lead. SET NULL so deleting a user
+    # never breaks the quarantine history.
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    # Auto-created INTERNAL defect record (Jira posting is Epic 6).
+    defect_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("defects.id", ondelete="SET NULL"), nullable=True,
+    )
+    # SLA snapshot taken at activation (project policy default at that
+    # moment). NULL on rows quarantined before 0104 — no SLA is enforced
+    # retroactively for them.
+    sla_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Precomputed ``quarantine_start + sla_days`` — the staleness sweep and
+    # the ``stale`` property compare against this instead of re-deriving.
+    stale_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Set (once) by the staleness sweep when it emits test.quarantine_stale
+    # — the idempotency anchor for the once-per-entry notification.
+    stale_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # ── Lifecycle: auto-promotion out of quarantine (PMF US-5.5) ────────────
+    # Consecutive fully-PASSED runs since activation; a single FAILED/BROKEN
+    # result resets it to 0. Advanced at run finalization by
+    # ``flaky_quarantine_service.update_quarantine_stability``.
+    consecutive_passes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Idempotency stamp: the last run that advanced the counter — a
+    # re-finalized (or Celery-retried) run advances nothing.
+    last_stability_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True,
+    )
+    # True once the pass streak reaches the project policy threshold and
+    # auto_promote is OFF — surfaced on /quarantine + the CI manifest so a
+    # QA lead can one-click release. Reset to False when a failure breaks
+    # the streak.
+    ready_to_promote: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Once-per-crossing anchor for the optional test.ready_to_unquarantine
+    # notification (cleared when a failure resets the streak).
+    ready_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+
+    @property
+    def stale(self) -> bool:
+        """True when this quarantine is currently effective AND has out-lived
+        its SLA window. Derived (not stored) so list/manifest responses are
+        always current without waiting for the sweep."""
+        if self.stale_at is None or self.status not in (
+            FlakyQuarantineStatus.QUARANTINED.value,
+            FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
+            FlakyQuarantineStatus.RE_QUARANTINED.value,
+        ):
+            return False
+        stale_at = self.stale_at
+        if stale_at.tzinfo is None:
+            stale_at = stale_at.replace(tzinfo=timezone.utc)
+        return stale_at <= datetime.now(timezone.utc)
+
+
+class QuarantineLifecyclePolicy(Base):
+    """Per-project quarantine lifecycle configuration (PMF US-5.4/5.5/5.6).
+
+    One row per project; a MISSING row resolves to the defaults in
+    ``flaky_quarantine_service.EffectiveLifecyclePolicy`` (SLA 14 days,
+    no auto-defect, no auto-promote, promote after 20 consecutive passes,
+    detection floor 20% flip rate over 10 runs) — no project-creation hook
+    needed.
+    """
+    __tablename__ = "quarantine_lifecycle_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True,
+    )
+    # US-5.4 — days an active quarantine may sit before it is flagged stale.
+    sla_days: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
+    # US-5.4 — auto-create an internal defect record on activation.
+    auto_create_defect: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # US-5.5 — release automatically at the pass-streak threshold; when
+    # False the row is only flagged ready_to_promote for human release.
+    auto_promote: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    promote_after_passes: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    # US-5.6 — auto-quarantine proposal thresholds consumed by the flaky
+    # sentinel agent (flips-in-window floor).
+    detection_flip_rate_threshold: Mapped[float] = mapped_column(Float, default=0.20, nullable=False)
+    detection_min_runs: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

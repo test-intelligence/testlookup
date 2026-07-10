@@ -17,6 +17,9 @@ _EVENT_EMOJI = {
     "test.newly_flaky": ":yellow_circle:",
     "test.quarantined": ":lock:",
     "test.unquarantined": ":unlock:",
+    # Quarantine lifecycle events (PMF US-5.4 / US-5.5)
+    "test.quarantine_stale": ":alarm_clock:",
+    "test.ready_to_unquarantine": ":white_check_mark:",
 }
 
 _EVENT_COLOUR = {
@@ -32,6 +35,9 @@ _EVENT_COLOUR = {
     "test.newly_flaky": "#eab308",
     "test.quarantined": "#f97316",
     "test.unquarantined": "#22c55e",
+    # Quarantine lifecycle events (PMF US-5.4 / US-5.5)
+    "test.quarantine_stale": "#f59e0b",
+    "test.ready_to_unquarantine": "#22c55e",
 }
 
 

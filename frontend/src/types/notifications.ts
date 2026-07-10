@@ -13,6 +13,9 @@ export type NotificationEventType =
   | 'test.newly_flaky'
   | 'test.quarantined'
   | 'test.unquarantined'
+  // Quarantine lifecycle events (PMF US-5.4 / US-5.5)
+  | 'test.quarantine_stale'
+  | 'test.ready_to_unquarantine'
 
 export interface NotificationPreference {
   id: string

@@ -889,6 +889,9 @@ TRANSITION_EVENT_VALUES: tuple = (
     "test.newly_flaky",
     "test.quarantined",
     "test.unquarantined",
+    # Quarantine lifecycle events (PMF US-5.4 / US-5.5)
+    "test.quarantine_stale",
+    "test.ready_to_unquarantine",
 )
 
 
@@ -3726,6 +3729,17 @@ class FlakyQuarantineRead(BaseModel):
     recheck_at: Optional[datetime] = None
     rationale: Optional[Dict[str, Any]] = None
     reviewer_notes: Optional[str] = None
+    # ── Lifecycle: owner + SLA + auto-promotion (PMF US-5.4 / US-5.5) ──────
+    owner_user_id: Optional[uuid.UUID] = None
+    # Display name resolved by the router (batched lookup) — not an ORM column.
+    owner_name: Optional[str] = None
+    defect_id: Optional[uuid.UUID] = None
+    sla_days: Optional[int] = None
+    stale_at: Optional[datetime] = None
+    # Derived from the ORM ``stale`` property: active quarantine past its SLA.
+    stale: bool = False
+    consecutive_passes: int = 0
+    ready_to_promote: bool = False
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -3768,6 +3782,10 @@ class QuarantineManifestEntry(BaseModel):
     quarantined_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     reason: Optional[str] = None
+    # Lifecycle surfacing (PMF US-5.4 / US-5.5): SLA exceeded / pass-streak
+    # threshold reached with auto_promote off.
+    stale: bool = False
+    ready_to_promote: bool = False
 
 
 class QuarantineManifestResponse(BaseModel):
@@ -3783,6 +3801,30 @@ class QuarantineManifestResponse(BaseModel):
     etag: str
     count: int
     entries: List[QuarantineManifestEntry]
+
+
+class QuarantineLifecyclePolicyUpdate(BaseModel):
+    """Per-project quarantine lifecycle policy (PMF US-5.4 / US-5.5 / US-5.6)."""
+    sla_days: int = Field(14, ge=1, le=365)
+    auto_create_defect: bool = False
+    auto_promote: bool = False
+    promote_after_passes: int = Field(20, ge=1, le=1000)
+    detection_flip_rate_threshold: float = Field(0.20, ge=0.0, le=1.0)
+    detection_min_runs: int = Field(10, ge=1, le=1000)
+
+
+class QuarantineLifecyclePolicyResponse(BaseModel):
+    project_id: uuid.UUID
+    sla_days: int
+    auto_create_defect: bool
+    auto_promote: bool
+    promote_after_passes: int
+    detection_flip_rate_threshold: float
+    detection_min_runs: int
+    # True when the project has no explicit row yet and code defaults apply.
+    is_default: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuarantineStatsResponse(BaseModel):

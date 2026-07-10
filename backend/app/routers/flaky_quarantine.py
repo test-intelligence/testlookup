@@ -36,6 +36,8 @@ from app.models.postgres import User, UserRole
 from app.models.schemas import (
     FlakyQuarantineRead,
     QuarantineDecisionRequest,
+    QuarantineLifecyclePolicyResponse,
+    QuarantineLifecyclePolicyUpdate,
     QuarantineManifestEntry,
     QuarantineManifestResponse,
     QuarantineProposeRequest,
@@ -53,6 +55,24 @@ logger = structlog.get_logger("routers.flaky_quarantine")
 
 
 # ── List / stats ────────────────────────────────────────────────────────────
+
+
+async def _with_owner_names(db: AsyncSession, rows) -> list[FlakyQuarantineRead]:
+    """Serialize rows and attach ``owner_name`` via ONE batched User lookup
+    (PMF US-5.4 — ``owner_user_id`` alone is unreadable on the UI)."""
+    from sqlalchemy import select as _select
+
+    payloads = [FlakyQuarantineRead.model_validate(r) for r in rows]
+    owner_ids = {p.owner_user_id for p in payloads if p.owner_user_id}
+    if owner_ids:
+        result = await db.execute(
+            _select(User.id, User.username).where(User.id.in_(owner_ids))
+        )
+        names = {r.id: r.username for r in result.all()}
+        for p in payloads:
+            if p.owner_user_id:
+                p.owner_name = names.get(p.owner_user_id)
+    return payloads
 
 
 @router.get("", response_model=list[FlakyQuarantineRead])
@@ -78,13 +98,14 @@ async def list_quarantine_requests(
         accessible = await get_accessible_project_ids(db, current_user)
         project_ids = accessible  # None = admin (no filter)
 
-    return await svc.list_requests(
+    rows = await svc.list_requests(
         db,
         project_ids=project_ids,
         status_filter=status_filter,
         live_only=live_only,
         limit=min(max(1, limit), 500),
     )
+    return await _with_owner_names(db, rows)
 
 
 @router.get("/stats", response_model=QuarantineStatsResponse)
@@ -130,7 +151,8 @@ async def get_quarantine_request(
     if row is None:
         raise HTTPException(status_code=404, detail="Quarantine request not found")
     await resolve_project_scope(db, current_user, str(row.project_id))
-    return row
+    payloads = await _with_owner_names(db, [row])
+    return payloads[0]
 
 
 # ── Writes ──────────────────────────────────────────────────────────────────
@@ -277,6 +299,10 @@ async def get_quarantine_manifest(
             quarantined_at=row.quarantine_start,
             expires_at=row.quarantine_expires_at,
             reason=_manifest_reason(row),
+            # Lifecycle surfacing (US-5.4/5.5) — getattr keeps pre-0104 test
+            # doubles working.
+            stale=bool(getattr(row, "stale", False)),
+            ready_to_promote=bool(getattr(row, "ready_to_promote", False)),
         )
         for row, class_name in pairs
     ]
@@ -287,6 +313,83 @@ async def get_quarantine_manifest(
         etag=etag,
         count=len(entries),
         entries=entries,
+    )
+
+
+# ── Quarantine lifecycle policy (US-5.4 / US-5.5 / US-5.6) ─────────────────
+
+
+@manifest_router.get(
+    "/{project_id}/quarantine/policy",
+    response_model=QuarantineLifecyclePolicyResponse,
+)
+async def get_quarantine_lifecycle_policy(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_project_access()),
+):
+    """The project's quarantine lifecycle policy. A missing row means the
+    code defaults apply (SLA 14d, no auto-defect, no auto-promote, promote
+    after 20 passes, detection floor 20% over 10 runs)."""
+    row = await svc.get_lifecycle_policy_row(db, project_id)
+    if row is not None:
+        return QuarantineLifecyclePolicyResponse(
+            project_id=project_id,
+            sla_days=row.sla_days,
+            auto_create_defect=row.auto_create_defect,
+            auto_promote=row.auto_promote,
+            promote_after_passes=row.promote_after_passes,
+            detection_flip_rate_threshold=row.detection_flip_rate_threshold,
+            detection_min_runs=row.detection_min_runs,
+            is_default=False,
+        )
+    policy = await svc.get_lifecycle_policy(db, project_id)
+    return QuarantineLifecyclePolicyResponse(
+        project_id=project_id,
+        sla_days=policy.sla_days,
+        auto_create_defect=policy.auto_create_defect,
+        auto_promote=policy.auto_promote,
+        promote_after_passes=policy.promote_after_passes,
+        detection_flip_rate_threshold=policy.detection_flip_rate_threshold,
+        detection_min_runs=policy.detection_min_runs,
+        is_default=True,
+    )
+
+
+@manifest_router.put(
+    "/{project_id}/quarantine/policy",
+    response_model=QuarantineLifecyclePolicyResponse,
+)
+async def update_quarantine_lifecycle_policy(
+    project_id: uuid.UUID,
+    payload: QuarantineLifecyclePolicyUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
+):
+    """Create or replace the project's quarantine lifecycle policy.
+    QA_LEAD+ — flaky policy ownership is a QA Lead decision."""
+    row = await svc.upsert_lifecycle_policy(
+        db,
+        project_id,
+        sla_days=payload.sla_days,
+        auto_create_defect=payload.auto_create_defect,
+        auto_promote=payload.auto_promote,
+        promote_after_passes=payload.promote_after_passes,
+        detection_flip_rate_threshold=payload.detection_flip_rate_threshold,
+        detection_min_runs=payload.detection_min_runs,
+    )
+    await db.commit()
+    await db.refresh(row)
+    return QuarantineLifecyclePolicyResponse(
+        project_id=project_id,
+        sla_days=row.sla_days,
+        auto_create_defect=row.auto_create_defect,
+        auto_promote=row.auto_promote,
+        promote_after_passes=row.promote_after_passes,
+        detection_flip_rate_threshold=row.detection_flip_rate_threshold,
+        detection_min_runs=row.detection_min_runs,
+        is_default=False,
     )
 
 
