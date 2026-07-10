@@ -257,4 +257,8 @@ jobs:
             echo '```'
             echo ""
             echo "Pin in \`docker-compose.release.yml\` via \`TESTLOOKUP_VERSION=${GITHUB_REF_NAME}\`."
+            echo ""
+            echo "### Upgrading an existing install"
+            echo ""
+            echo "\`make preflight TAG=${GITHUB_REF_NAME}\` (images / pending migrations / disk), \`make backup\`, then \`make upgrade TAG=${GITHUB_REF_NAME}\` — see the [administration guide](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/user-guide/administration.md#backup-restore--upgrades)."
           } >> "$GITHUB_STEP_SUMMARY"

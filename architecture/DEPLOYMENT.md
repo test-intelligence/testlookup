@@ -80,6 +80,22 @@ Overlays specialize it per target:
   deploy-target agnostic — unset `VITE_API_BASE_URL` means same-origin
   relative URLs behind any ingress.
 
+## 6. Day-2 operations
+
+Compose deployments get one-command ops via `scripts/ops/` (all datastore
+access goes through `docker compose exec/run` — no host-side client tools):
+
+- **`make backup` / `make restore FILE=…`** — single-archive backup
+  (pg_dump + mongodump + MinIO volume + manifest with the alembic head);
+  restore refuses schema-mismatched archives unless forced.
+- **`make preflight` / `make upgrade [TAG=vX.Y.Z]`** — pre-upgrade report
+  (images, pending migrations, disk headroom) and the pull → migrate →
+  restart → smoke sequence. No automatic rollback by design — the
+  pre-upgrade backup is the rollback path.
+
+Operator-facing detail: [user-guide/administration.md](../user-guide/administration.md#backup-restore--upgrades);
+capacity planning: [user-guide/sizing.md](../user-guide/sizing.md).
+
 ## Related docs
 
 - First-run walkthrough: [GETTING_STARTED.md](../GETTING_STARTED.md)

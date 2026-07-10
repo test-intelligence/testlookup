@@ -39,6 +39,46 @@ Delivery problems land in the page's **Last error** banner and on Integration He
 - **Performance** (`/settings/performance`) — instance performance diagnostics.
 - **Billing** (`/settings/billing`) — usage/spend views (AI spend also surfaces in the [Intelligence Hub](ai-features.md#run-intelligence-intelligence-runsidintelligence)).
 
+## Backup, restore & upgrades
+
+Day-2 operations are one command each — the scripts live in `scripts/ops/` and drive everything through `docker compose exec/run`, so the host needs nothing beyond docker + bash (on Windows, run them through `make`, which already uses Git Bash). For how much machine and disk to plan for, see the [sizing & capacity guide](sizing.md).
+
+### Backup — `make backup`
+
+Produces **one timestamped archive** under `./backups/` (gitignored) containing a `pg_dump` of PostgreSQL, a `mongodump` of MongoDB, a tar of the MinIO data volume, and a `manifest.json` recording the app version, git SHA, and Alembic migration head. **Redis and ChromaDB are excluded by design** — Redis is the broker/cache (stale queue entries must not be replayed into a restored database) and ChromaDB is rebuilt from Postgres by the hourly reindex beat.
+
+```bash
+make backup                      # → backups/testlookup-backup-<UTC>.tar.gz
+QUIESCE=1 make backup            # stop the app layer during the backup (maximally consistent)
+BACKUP_DIR=/mnt/nas make backup  # custom destination
+```
+
+The database dumps are transactionally consistent even while the stack is live. The MinIO volume tar is file-level — if CI is actively uploading attachments, prefer a quiet moment or `QUIESCE=1`. Copy the archives off-host on your own schedule (cron + rsync is plenty).
+
+### Restore — `make restore`
+
+```bash
+make restore FILE=backups/testlookup-backup-<ts>.tar.gz
+```
+
+Restore stops the app containers, replaces the PostgreSQL/MongoDB/MinIO data, flushes Redis, restarts the stack (the backend applies any pending migrations on boot), waits for readiness, runs the smoke check, and prints a verdict plus a post-restore checklist (ChromaDB reindexes itself within the hour; the checklist includes the command to trigger it immediately).
+
+**The migration-safety gate:** restore *refuses to run* when the deployed code's migration head is **newer** than the backup's — that means you're rolling data back in time under code that has since migrated forward, which is usually an accident. It also refuses when the backup's head is unknown to the deployed code (backup from a *newer* version — upgrade first). Both refusals explain themselves and can be overridden with `FORCE=1` when the rollback is intentional:
+
+```bash
+make restore FILE=backups/<name>.tar.gz FORCE=1 CONFIRM=yes   # non-interactive override
+```
+
+### Upgrade — `make preflight` then `make upgrade`
+
+```bash
+make preflight TAG=v0.2.0   # read-only: current vs target images, pending migrations, disk headroom, newest backup
+make backup                 # your rollback path — do not skip this
+make upgrade TAG=v0.2.0     # pull, migrate, restart in dependency order, health-check, smoke-test
+```
+
+`make upgrade` pulls the target images (`TAG=` applies to the release stack, `docker-compose.release.yml`; the dev stack rebuilds from source instead), runs `alembic upgrade head` *before* replacing the app containers so a migration failure is loud and early, recreates services in dependency order, and verifies health with the same smoke check as `make smoke`. On failure it prints step-by-step rollback instructions referencing your pre-upgrade backup. **There is deliberately no automatic rollback**: data migrations are not safely auto-reversible (downgrades can drop backfilled data or fail halfway), so the trustworthy rollback is the pre-upgrade backup restored onto the previous image tag — which is exactly what the printed instructions walk you through.
+
 ## Admin checklists
 
 **New instance** (after [GETTING_STARTED](../GETTING_STARTED.md)):
