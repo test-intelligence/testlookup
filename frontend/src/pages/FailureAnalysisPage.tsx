@@ -26,24 +26,31 @@
  *
  * Out of scope (Phase 2 — README §"Out of Scope"):
  *   - <600 px mobile (bottom-fixed notice on narrow viewports)
- *   - Bisect-runner modal body
  *   - Workflow stage drawer body
  *   - Decision-trail modal body
- *   - Classifier hint editor
  *   - Print styles
  *
  * Data: derives the verdict from existing useFlakyTests / useTopFailing /
  * useFailureCategories / useTrendData. The README proposes a dedicated
  * /api/projects/:id/failures and a runs sub-resource — neither exists
  * yet, so v1 fills the run strip from the trend tail and synthesizes
- * MTTF / lastGreenSha placeholders. CTAs that need new endpoints
- * (mute, bisect, classifier hint) emit toast placeholders.
+ * MTTF / lastGreenSha placeholders.
+ *
+ * Wired actions (US-2.4):
+ *   - "Mute test" → manual quarantine proposal (POST /api/v1/quarantine,
+ *     QA_LEAD+; lands as PROPOSED pending approval on /quarantine).
+ *   - "Correct classification" → analysis lookup by fingerprint
+ *     (GET /projects/{id}/analyses/lookup) + rating=incorrect feedback
+ *     (POST /feedback/{analysis_id}) feeding the training loop.
+ *   - "Start bisect" was REMOVED (not hidden): commit attribution (Epic 8)
+ *     hasn't landed, so there is no backend to drive a bisect. Reintroduce
+ *     the button alongside that work rather than shipping a dead CTA.
  */
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Clock, Code as CodeIcon,
-  Download, FileText, GitBranch, LayoutGrid, Minus, Search, ShieldCheck,
+  Download, FileText, LayoutGrid, Minus, Search, ShieldCheck,
   TestTube, TriangleAlert, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -54,9 +61,12 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
+import { useAnalysisLookup } from '@/hooks/useAnalysisLookup'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
+import { aiFeedbackService } from '@/services/aiFeedbackService'
+import { flakyQuarantineService } from '@/services/flakyQuarantineService'
 import { postData } from '@/services/http'
 import {
   useFailureCategories, useFlakyTests, useTopFailing, useTrendData,
@@ -970,13 +980,15 @@ function build14CellStrip(trend: TrendPoint[]): RunCell[] {
 }
 
 function WhatsFailingCard({
-  topFailingTest, totalRuns, trend, onBisect, onMute,
+  topFailingTest, totalRuns, trend, onMute, muteDisabledReason,
 }: {
   topFailingTest: TopFailingItem | null
   totalRuns: number
   trend: TrendPoint[]
-  onBisect: () => void
   onMute: () => void
+  /** When set, the mute button renders disabled with this tooltip —
+   *  quarantine proposals need the test's fingerprint + a project scope. */
+  muteDisabledReason?: string | null
 }) {
   // Aggregate failed-run count from trend (which reads test_runs.failed_tests
   // directly). A suite can have failed run aggregates (pass rate < 100%)
@@ -1125,13 +1137,14 @@ function WhatsFailingCard({
         </div>
 
         <div className="flex flex-wrap gap-2 mt-3.5">
-          <PrimaryBtn onClick={onBisect}>
-            <GitBranch className="h-3.5 w-3.5" /> Start bisect
-          </PrimaryBtn>
           <GhostBtn onClick={() => toast('Run logs open in /runs — coming in Phase 2', { icon: '🪵' })}>
             View run logs
           </GhostBtn>
-          <GhostBtn onClick={onMute} title="Mute the test with a documented reason">
+          <GhostBtn
+            onClick={onMute}
+            disabled={Boolean(muteDisabledReason)}
+            title={muteDisabledReason ?? 'Propose quarantine for this test with a documented reason'}
+          >
             Mute test
           </GhostBtn>
         </div>
@@ -1149,10 +1162,12 @@ const CANONICAL_CATEGORIES: { id: string; label: string; color: string; matcher:
   { id: 'infra',     label: 'Infra / runner',     color: 'var(--cat-infra)',     matcher: /infra|runner|ci|env/i },
 ]
 
-function FailureCategoryCard({ categories, totalFailures, uncategorizedPct }: {
+function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect }: {
   categories: FailureCategoryItem[]
   totalFailures: number
   uncategorizedPct: number
+  /** Opens the correct-classification dialog for the top failing test. */
+  onCorrect: () => void
 }) {
   const buckets = new Map<string, number>()
   for (const c of categories) {
@@ -1180,10 +1195,10 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct }: {
               Classifier confidence low — {Math.round(uncategorizedPct)}% of failures are sitting in <em>Unknown</em>.{' '}
               <button
                 type="button"
-                onClick={() => toast('Classifier hint editor — coming in Phase 2', { icon: '🏷️' })}
+                onClick={onCorrect}
                 className="text-[var(--color-accent)] hover:underline"
               >
-                Add a fingerprint hint →
+                Correct the classification →
               </button>
             </span>
           </div>
@@ -1544,7 +1559,10 @@ interface RecRow {
   cta?: { label: string; onClick: () => void }
 }
 
-function buildRecActions(model: StabilityModel): RecRow[] {
+function buildRecActions(
+  model: StabilityModel,
+  actions: { onCorrectClassification: () => void },
+): RecRow[] {
   const recs: RecRow[] = []
   const top = model.topFailingTest
   if (top) {
@@ -1566,8 +1584,8 @@ function buildRecActions(model: StabilityModel): RecRow[] {
       role: 'qa',
       Icon: ShieldCheck,
       label: 'QA · clustering',
-      body: <>Add category hints so future runs auto-route the failing tests instead of sitting in <em>Unknown</em>.</>,
-      cta: { label: 'Open', onClick: () => toast('Classifier hint editor — coming in Phase 2', { icon: '🏷️' }) },
+      body: <>Correct the AI classification so future runs auto-route the failing tests instead of sitting in <em>Unknown</em>.</>,
+      cta: { label: 'Open', onClick: actions.onCorrectClassification },
     })
   }
   recs.push({
@@ -1706,6 +1724,293 @@ function Pill({ children, tone }: { children: React.ReactNode; tone: 'good' | 'w
   )
 }
 
+// ── Failure-category vocabulary ───────────────────────────────────────────
+// Shared by the bulk-classify modal and the correct-classification dialog.
+// Mirrors the backend ``FailureCategory`` enum minus UNKNOWN (correcting a
+// verdict *to* Unknown is a no-op the training loop can't learn from).
+const CATEGORY_CHOICES = [
+  { id: 'FLAKY',             label: 'Flaky',              desc: 'Intermittent — passes on retry; race or fixture issue.' },
+  { id: 'PRODUCT_BUG',       label: 'Product Bug',        desc: 'Regression in the product under test.' },
+  { id: 'INFRASTRUCTURE',    label: 'Infrastructure',     desc: 'Environment / network / platform failure.' },
+  { id: 'TEST_DATA',         label: 'Test Data',          desc: 'Bad fixture, missing seed, stale snapshot.' },
+  { id: 'AUTOMATION_DEFECT', label: 'Automation Defect',  desc: 'Test code is broken, not the product.' },
+] as const
+type CategoryChoiceId = (typeof CATEGORY_CHOICES)[number]['id']
+
+// ── Mute-test (quarantine proposal) modal — US-2.4 ────────────────────────
+// Wires the "Mute test" CTA to the existing flaky-quarantine workflow:
+// submits a manual PROPOSED row via POST /api/v1/quarantine (QA_LEAD+),
+// which then awaits approval on /quarantine. The reason is required — it
+// lands in the proposal's rationale and the quarantine audit trail.
+function MuteTestModal({
+  test, flakyEntry, projectId, onClose,
+}: {
+  test: TopFailingItem
+  flakyEntry: FlakyTestItem | null
+  projectId: string
+  onClose: () => void
+}) {
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const trimmedReason = reason.trim()
+
+  async function handleSubmit() {
+    if (!trimmedReason || !test.test_fingerprint || submitting) return
+    setSubmitting(true)
+    try {
+      const row = await flakyQuarantineService.propose({
+        project_id: projectId,
+        test_fingerprint: test.test_fingerprint,
+        test_name: test.test_name,
+        suite_name: test.suite_name ?? null,
+        detection_method: 'manual',
+        fail_count: test.fail_count,
+        // Carry the measured intermittency when the flaky list has it —
+        // gives the approving QA Lead the same context this page shows.
+        ...(flakyEntry && flakyEntry.source !== 'manual'
+          ? {
+              flip_rate: Math.min(1, flakyEntry.failure_rate_pct / 100),
+              pass_count: Math.max(0, flakyEntry.total_runs - flakyEntry.fail_count),
+            }
+          : {}),
+        rationale: { reason: trimmedReason, source: 'failure-analysis-page' },
+      })
+      toast.success(
+        row.status === 'PROPOSED'
+          ? 'Quarantine proposal created — pending QA Lead approval on /quarantine.'
+          : `Quarantine request updated — now ${row.status} (see /quarantine).`,
+        { duration: 8000 },
+      )
+      onClose()
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to create the quarantine proposal'
+      toast.error(detail)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Mute test (propose quarantine)"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={() => !submitting && onClose()}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
+          Mute test (propose quarantine)
+        </h2>
+        <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+          Proposes <code className="font-mono text-[11.5px]">{test.test_name}</code> for
+          quarantine. A QA Lead approves or rejects the proposal on /quarantine —
+          nothing is muted until then.
+        </p>
+
+        <div
+          className="mt-3 rounded-md border px-3 py-2 text-[12px]"
+          style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+        >
+          {flakyEntry ? (
+            flakyEntry.source === 'manual' ? (
+              <>Already flagged flaky by a human on /my-failures · failed {test.fail_count} time{test.fail_count === 1 ? '' : 's'} in this window.</>
+            ) : (
+              <>Flake history: failed {flakyEntry.fail_count} of {flakyEntry.total_runs} run{flakyEntry.total_runs === 1 ? '' : 's'} ({Math.round(flakyEntry.failure_rate_pct)}% in this window).</>
+            )
+          ) : (
+            <>No intermittency signal in this window — failed {test.fail_count} time{test.fail_count === 1 ? '' : 's'} straight. Muting a consistently-failing test hides a real regression; say why below.</>
+          )}
+        </div>
+
+        <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
+          Reason <span style={{ color: '#fca5a5' }}>*</span>
+          <textarea
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            rows={3}
+            placeholder="Why should this test stop gating runs? (goes to the quarantine audit trail)"
+            className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+          />
+        </label>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || !trimmedReason}
+            title={!trimmedReason ? 'A reason is required' : undefined}
+            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+          >
+            {submitting ? 'Proposing…' : 'Propose quarantine'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Correct-classification dialog — US-2.4 ────────────────────────────────
+// Resolves the test's latest AI analysis by fingerprint, then submits
+// rating=incorrect + corrected_category feedback: the backend overwrites the
+// analysis category and persists an AIFeedback row for the training export.
+function CorrectClassificationModal({
+  projectId, fingerprint, testName, onClose,
+}: {
+  projectId: string
+  fingerprint: string
+  testName: string
+  onClose: () => void
+}) {
+  const { lookup, isLoading, isError } = useAnalysisLookup(projectId, fingerprint)
+  const [selected, setSelected] = useState<CategoryChoiceId | ''>('')
+  const [comment, setComment] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const analysisId = lookup?.analysis_id ?? null
+  const currentCategory = lookup?.failure_category ?? 'UNKNOWN'
+
+  async function handleSubmit() {
+    if (!analysisId || !selected || submitting) return
+    setSubmitting(true)
+    try {
+      await aiFeedbackService.submitFeedback(analysisId, {
+        rating: 'incorrect',
+        corrected_category: selected,
+        ...(comment.trim() ? { comment: comment.trim() } : {}),
+      })
+      toast.success('Correction recorded — feeds the next training export.', { duration: 6000 })
+      onClose()
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        'Failed to record the correction'
+      toast.error(detail)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Correct classification"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={() => !submitting && onClose()}
+    >
+      <div
+        className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
+          Correct classification
+        </h2>
+        <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+          <code className="font-mono text-[11.5px]">{testName}</code>
+        </p>
+
+        {isLoading ? (
+          <p className="mt-4 text-[12.5px] text-[var(--color-text-muted)]">
+            Looking up the AI analysis…
+          </p>
+        ) : isError ? (
+          <p className="mt-4 text-[12.5px]" style={{ color: '#fca5a5' }}>
+            Could not look up the AI analysis — try again in a moment.
+          </p>
+        ) : !analysisId ? (
+          <p className="mt-4 text-[12.5px] text-[var(--color-text-secondary)]">
+            No AI analysis recorded for this test yet. Corrections overwrite an
+            existing AI verdict — once the analyzer has triaged a failure of
+            this test, you can correct it here.
+          </p>
+        ) : (
+          <>
+            <p className="mt-3 text-[12.5px] text-[var(--color-text-secondary)]">
+              Current category:{' '}
+              <span className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">
+                {currentCategory}
+              </span>
+            </p>
+
+            <div className="mt-3 space-y-2" role="radiogroup" aria-label="Corrected category">
+              {CATEGORY_CHOICES.map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected === c.id}
+                  disabled={submitting}
+                  onClick={() => setSelected(c.id)}
+                  className={clsx(
+                    'w-full text-left px-3 py-2.5 rounded-md border transition-colors disabled:opacity-50',
+                    selected === c.id
+                      ? 'border-[var(--color-accent)] bg-[var(--color-bg-hover)]/40'
+                      : 'border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]/40',
+                  )}
+                >
+                  <div className="text-[13px] font-medium text-[var(--color-text)]">{c.label}</div>
+                  <div className="text-[11.5px] text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
+              Comment <span className="text-[var(--color-text-faint)] font-normal">(optional)</span>
+              <textarea
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                rows={2}
+                placeholder="What gave the misclassification away?"
+                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+              />
+            </label>
+          </>
+        )}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+          >
+            {analysisId ? 'Cancel' : 'Close'}
+          </button>
+          {analysisId && (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting || !selected}
+              title={!selected ? 'Pick the corrected category first' : undefined}
+              className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            >
+              {submitting ? 'Recording…' : 'Record correction'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────
 export default function FailureAnalysisPage() {
   const navigate = useNavigate()
@@ -1795,7 +2100,45 @@ export default function FailureAnalysisPage() {
   )
   const verdict = pickVerdict(model)
   const ribbonStages = useMemo(() => buildRibbon(model), [model])
-  const recs = useMemo(() => buildRecActions(model), [model])
+
+  // ── US-2.4 action state: mute-to-quarantine + classifier correction ──
+  // Both actions target the page's headline failing test — the only test
+  // the analytics payloads identify by fingerprint AND surface prominently.
+  const [muteOpen, setMuteOpen] = useState(false)
+  const [correctionOpen, setCorrectionOpen] = useState(false)
+
+  const actionTarget = model.topFailingTest
+  const muteDisabledReason = !project?.id
+    ? 'Pick a specific project to propose a quarantine.'
+    : !actionTarget?.test_fingerprint
+      ? 'Test identity (fingerprint) not available yet — cannot propose a quarantine.'
+      : null
+  // Flake context for the mute modal, reused from data already on the page.
+  const actionTargetFlakyEntry = useMemo(() => {
+    if (!actionTarget) return null
+    return (
+      flaky.find(f => f.test_fingerprint === actionTarget.test_fingerprint) ??
+      flaky.find(f => f.test_name === actionTarget.test_name) ??
+      null
+    )
+  }, [flaky, actionTarget])
+
+  const openCorrection = useCallback(() => {
+    if (!project?.id) {
+      toast.error('Pick a specific project to correct a classification.')
+      return
+    }
+    if (!actionTarget?.test_fingerprint) {
+      toast('No per-test identity available yet — corrections need a failing test with a fingerprint.', { icon: '🏷️' })
+      return
+    }
+    setCorrectionOpen(true)
+  }, [project?.id, actionTarget])
+
+  const recs = useMemo(
+    () => buildRecActions(model, { onCorrectClassification: openCorrection }),
+    [model, openCorrection],
+  )
 
   const isLoading = flakyLoading || categoryLoading || topLoading || trendsLoading
 
@@ -2201,13 +2544,14 @@ export default function FailureAnalysisPage() {
             topFailingTest={model.topFailingTest}
             totalRuns={model.totalRuns}
             trend={trend}
-            onBisect={() => toast('Bisect modal — coming in Phase 2', { icon: '🪓' })}
-            onMute={() => toast('Mute modal — coming in Phase 2', { icon: '🔕' })}
+            onMute={() => { if (!muteDisabledReason) setMuteOpen(true) }}
+            muteDisabledReason={muteDisabledReason}
           />
           <FailureCategoryCard
             categories={categories}
             totalFailures={model.failedRuns}
             uncategorizedPct={model.uncategorizedPct}
+            onCorrect={openCorrection}
           />
           {comparing && (
             comparison ? (
@@ -2250,6 +2594,24 @@ export default function FailureAnalysisPage() {
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
 
+      {muteOpen && actionTarget?.test_fingerprint && project?.id && (
+        <MuteTestModal
+          test={actionTarget}
+          flakyEntry={actionTargetFlakyEntry}
+          projectId={project.id}
+          onClose={() => setMuteOpen(false)}
+        />
+      )}
+
+      {correctionOpen && actionTarget?.test_fingerprint && project?.id && (
+        <CorrectClassificationModal
+          projectId={project.id}
+          fingerprint={actionTarget.test_fingerprint}
+          testName={actionTarget.test_name}
+          onClose={() => setCorrectionOpen(false)}
+        />
+      )}
+
       {classifyOpen && (
         <div
           role="dialog"
@@ -2272,13 +2634,7 @@ export default function FailureAnalysisPage() {
             </p>
 
             <div className="mt-4 space-y-2">
-              {([
-                { id: 'FLAKY',             label: 'Flaky',              desc: 'Intermittent — passes on retry; race or fixture issue.' },
-                { id: 'PRODUCT_BUG',       label: 'Product Bug',        desc: 'Regression in the product under test.' },
-                { id: 'INFRASTRUCTURE',    label: 'Infrastructure',     desc: 'Environment / network / platform failure.' },
-                { id: 'TEST_DATA',         label: 'Test Data',          desc: 'Bad fixture, missing seed, stale snapshot.' },
-                { id: 'AUTOMATION_DEFECT', label: 'Automation Defect',  desc: 'Test code is broken, not the product.' },
-              ] as const).map(c => (
+              {CATEGORY_CHOICES.map(c => (
                 <button
                   key={c.id}
                   type="button"

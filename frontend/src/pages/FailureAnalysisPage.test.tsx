@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,8 +26,27 @@ vi.mock('@/hooks/useAnalyticsView', () => ({
 
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
-  useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { name: string } | null }) => unknown) =>
-    selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
+  useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { id: string; name: string } | null }) => unknown) =>
+    selector({ activeProjectId: 'proj-1', activeProject: { id: 'proj-1', name: 'Project One' } })),
+}))
+
+// US-2.4 wiring — the page posts quarantine proposals + classification
+// corrections through these services and resolves analysis ids via the
+// lookup hook. Mocked so the tests exercise the page's behavior only.
+vi.mock('@/services/flakyQuarantineService', () => ({
+  flakyQuarantineService: {
+    propose: vi.fn(),
+  },
+}))
+
+vi.mock('@/services/aiFeedbackService', () => ({
+  aiFeedbackService: {
+    submitFeedback: vi.fn(),
+  },
+}))
+
+vi.mock('@/hooks/useAnalysisLookup', () => ({
+  useAnalysisLookup: vi.fn(() => ({ lookup: undefined, isLoading: true, isError: false })),
 }))
 
 describe('FailureAnalysisPage', () => {
@@ -507,6 +526,180 @@ describe('FailureAnalysisPage', () => {
     globalThis.Blob = OrigBlob
     URL.createObjectURL = origCreateUrl
     URL.revokeObjectURL = origRevokeUrl
+  })
+})
+
+describe('FailureAnalysisPage — US-2.4 wired actions', () => {
+  beforeEach(() => {
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+    vi.clearAllMocks()
+  })
+
+  /** Seed the metrics hooks with a repeat-failing test scenario. */
+  async function seedFailingScenario({
+    topFailingItem = { test_name: 'checkout_flow', fail_count: 4, test_fingerprint: 'fp-top', suite_name: 'Checkout' },
+    categories = [] as { category: string; count: number }[],
+    flakyItems = [] as unknown[],
+  } = {}) {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: flakyItems }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: categories }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [topFailingItem] },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-07-01', passed: 6, failed: 4, skipped: 0, broken: 0, total: 10, pass_rate: 60 }] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+  }
+
+  function renderPage() {
+    return render(
+      <MemoryRouter initialEntries={['/failure-analysis']}>
+        <Routes>
+          <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('no longer renders the "Start bisect" CTA (removed until commit attribution lands)', async () => {
+    await seedFailingScenario()
+    renderPage()
+
+    // The failing-test card is present…
+    expect(await screen.findByRole('button', { name: /Mute test/i })).toBeInTheDocument()
+    // …but the dead bisect CTA is gone, not just disabled.
+    expect(screen.queryByText(/Start bisect/i)).toBeNull()
+    expect(screen.queryByText(/Bisect modal/i)).toBeNull()
+  })
+
+  it('opens the mute modal and posts a quarantine proposal with the typed reason', async () => {
+    const { flakyQuarantineService } = await import('@/services/flakyQuarantineService')
+    ;(flakyQuarantineService.propose as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'PROPOSED' })
+
+    await seedFailingScenario()
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Mute test/i }))
+    const dialog = await screen.findByRole('dialog', { name: /Mute test \(propose quarantine\)/i })
+
+    // Submit is disabled until a reason is provided (required field).
+    const submit = within(dialog).getByRole('button', { name: /Propose quarantine/i })
+    expect(submit).toBeDisabled()
+    fireEvent.click(submit)
+    expect(flakyQuarantineService.propose).not.toHaveBeenCalled()
+
+    fireEvent.change(within(dialog).getByPlaceholderText(/Why should this test stop gating runs/i), {
+      target: { value: 'Known infra flake, tracked in JIRA-123' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Propose quarantine/i }))
+
+    await waitFor(() => expect(flakyQuarantineService.propose).toHaveBeenCalledTimes(1))
+    expect(flakyQuarantineService.propose).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: 'proj-1',
+      test_fingerprint: 'fp-top',
+      test_name: 'checkout_flow',
+      suite_name: 'Checkout',
+      detection_method: 'manual',
+      rationale: expect.objectContaining({ reason: 'Known infra flake, tracked in JIRA-123' }),
+    }))
+    // Modal closes after a successful proposal.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Mute test/i })).toBeNull())
+  })
+
+  it('disables "Mute test" with a tooltip when the top failing test has no fingerprint', async () => {
+    await seedFailingScenario({
+      topFailingItem: { test_name: 'no_fp_test', fail_count: 3 } as never,
+    })
+    renderPage()
+
+    const muteBtn = await screen.findByRole('button', { name: /Mute test/i })
+    expect(muteBtn).toBeDisabled()
+    expect(muteBtn).toHaveAttribute('title', expect.stringMatching(/fingerprint/i))
+    fireEvent.click(muteBtn)
+    expect(screen.queryByRole('dialog', { name: /Mute test/i })).toBeNull()
+  })
+
+  it('opens the correct-classification dialog and submits rating=incorrect feedback', async () => {
+    const { useAnalysisLookup } = await import('@/hooks/useAnalysisLookup')
+    ;(useAnalysisLookup as ReturnType<typeof vi.fn>).mockReturnValue({
+      lookup: { analysis_id: 'an-1', failure_category: 'UNKNOWN', analyzed_at: '2026-07-01T00:00:00Z' },
+      isLoading: false,
+      isError: false,
+    })
+    const { aiFeedbackService } = await import('@/services/aiFeedbackService')
+    ;(aiFeedbackService.submitFeedback as ReturnType<typeof vi.fn>).mockResolvedValue({ feedback_id: 'fb-1', message: 'ok' })
+
+    // ≥50% UNKNOWN so the category card renders its correction CTA.
+    await seedFailingScenario({ categories: [{ category: 'UNKNOWN', count: 4 }] })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
+    const dialog = await screen.findByRole('dialog', { name: /Correct classification/i })
+
+    // Shows the current category from the lookup.
+    expect(within(dialog).getByText('UNKNOWN')).toBeInTheDocument()
+
+    // Submit needs a selected category first.
+    const submit = within(dialog).getByRole('button', { name: /Record correction/i })
+    expect(submit).toBeDisabled()
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Infrastructure/i }))
+    fireEvent.change(within(dialog).getByPlaceholderText(/What gave the misclassification away/i), {
+      target: { value: 'Stack trace is a DNS timeout' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Record correction/i }))
+
+    await waitFor(() => expect(aiFeedbackService.submitFeedback).toHaveBeenCalledTimes(1))
+    expect(aiFeedbackService.submitFeedback).toHaveBeenCalledWith('an-1', expect.objectContaining({
+      rating: 'incorrect',
+      corrected_category: 'INFRASTRUCTURE',
+      comment: 'Stack trace is a DNS timeout',
+    }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Correct classification/i })).toBeNull())
+  })
+
+  it('shows the "no AI analysis recorded" empty state instead of a form when the lookup finds nothing', async () => {
+    const { useAnalysisLookup } = await import('@/hooks/useAnalysisLookup')
+    ;(useAnalysisLookup as ReturnType<typeof vi.fn>).mockReturnValue({
+      lookup: { analysis_id: null, failure_category: null, analyzed_at: null },
+      isLoading: false,
+      isError: false,
+    })
+
+    await seedFailingScenario({ categories: [{ category: 'UNKNOWN', count: 4 }] })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
+    const dialog = await screen.findByRole('dialog', { name: /Correct classification/i })
+
+    expect(within(dialog).getByText(/No AI analysis recorded for this test yet/i)).toBeInTheDocument()
+    // No submit button in the empty state — nothing to correct.
+    expect(within(dialog).queryByRole('button', { name: /Record correction/i })).toBeNull()
+  })
+
+  it('routes the QA "Recommended actions" entry to the correction dialog (no more placeholder toast)', async () => {
+    const { useAnalysisLookup } = await import('@/hooks/useAnalysisLookup')
+    ;(useAnalysisLookup as ReturnType<typeof vi.fn>).mockReturnValue({
+      lookup: { analysis_id: 'an-1', failure_category: 'UNKNOWN', analyzed_at: '2026-07-01T00:00:00Z' },
+      isLoading: false,
+      isError: false,
+    })
+
+    await seedFailingScenario({ categories: [{ category: 'UNKNOWN', count: 4 }] })
+    renderPage()
+
+    // The QA clustering rec renders with an "Open" CTA — clicking it opens
+    // the same correction dialog the category card uses.
+    const qaRec = (await screen.findByText(/QA · clustering/i)).closest('div[class*="grid"]') as HTMLElement
+    fireEvent.click(within(qaRec).getByRole('button', { name: /^Open$/i }))
+    expect(await screen.findByRole('dialog', { name: /Correct classification/i })).toBeInTheDocument()
   })
 })
 

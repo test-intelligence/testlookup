@@ -109,6 +109,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     agents.router,
     chat.router,
     feedback.router,
+    feedback.lookup_router,            # US-2.4: fingerprint → analysis_id lookup (project-scoped)
     deep_investigation.router,
     release_readiness.router,
     releases.router,

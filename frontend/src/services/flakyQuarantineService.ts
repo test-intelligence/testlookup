@@ -58,6 +58,23 @@ export interface DecisionPayload {
   quarantine_duration_days?: number
 }
 
+/** Manual quarantine proposal (US-2.4 "Mute test" on /failures). Mirrors the
+ *  backend ``QuarantineProposeRequest`` — QA_LEAD+ only; the detection agent
+ *  is the primary path, so most fields are optional detection metadata. */
+export interface QuarantineProposePayload {
+  project_id: string
+  test_fingerprint: string
+  test_name?: string | null
+  suite_name?: string | null
+  detection_method?: string
+  flip_rate?: number | null
+  flip_window_size?: number | null
+  pass_count?: number | null
+  fail_count?: number | null
+  rationale?: Record<string, unknown> | null
+  quarantine_duration_days?: number
+}
+
 export const flakyQuarantineService = {
   list: (params?: {
     project_id?: string
@@ -74,6 +91,9 @@ export const flakyQuarantineService = {
 
   get: (id: string) =>
     getData<FlakyQuarantineRead>(`/api/v1/quarantine/${id}`),
+
+  propose: (payload: QuarantineProposePayload) =>
+    postData<FlakyQuarantineRead>('/api/v1/quarantine', payload),
 
   approve: (id: string, payload: DecisionPayload = {}) =>
     postData<FlakyQuarantineRead>(`/api/v1/quarantine/${id}/approve`, payload),

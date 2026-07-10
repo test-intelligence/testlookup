@@ -72,6 +72,50 @@ async def _invalidate_analysis_cache_for(db: AsyncSession, test_case_id) -> None
         pass
 
 
+async def latest_analysis_for_fingerprint(
+    db: AsyncSession, project_id: uuid.UUID, fingerprint: str,
+) -> dict | None:
+    """Latest AI analysis for a ``(project, test_fingerprint)`` pair (US-2.4).
+
+    The Failure Analysis page identifies tests by fingerprint (from the
+    analytics top-failing/flaky lists) but the feedback endpoints key on
+    ``analysis_id`` — this bridges the two. Project-scoped via the
+    ``TestCase → TestRun`` join because ``test_fingerprint`` is not salted
+    per-project (two projects with a same-named test share a fingerprint).
+
+    Read-only; returns ``None`` when the test has never been analysed.
+    """
+    from app.models.postgres import TestCase, TestRun
+
+    row = (
+        await db.execute(
+            select(
+                AIAnalysis.id,
+                AIAnalysis.failure_category,
+                AIAnalysis.created_at,
+            )
+            .join(TestCase, AIAnalysis.test_case_id == TestCase.id)
+            .join(TestRun, TestCase.test_run_id == TestRun.id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCase.test_fingerprint == fingerprint,
+            )
+            .order_by(AIAnalysis.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    category = row.failure_category
+    return {
+        "analysis_id": row.id,
+        # Normalise enum instances to their wire value; the column is a plain
+        # String(30) so raw driver rows already come back as str.
+        "failure_category": getattr(category, "value", category),
+        "analyzed_at": row.created_at,
+    }
+
+
 async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, current_user) -> dict:
     feedback = (
         await db.execute(

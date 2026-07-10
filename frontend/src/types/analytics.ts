@@ -51,6 +51,13 @@ export interface FailureCategoryItem {
 export interface TopFailingItem {
   test_name: string
   fail_count: number
+  /**
+   * Stable test identity — ``sha256(class_name::test_name)[:16]``, same
+   * formula as ingestion. The backend's top-failing query has always
+   * returned it (it GROUPs BY fingerprint); declared here so the mute-to-
+   * quarantine and analysis-lookup flows (US-2.4) can use it.
+   */
+  test_fingerprint?: string | null
   /** Suite the failing test belongs to (NULL for tests with no suite tag). */
   suite_name?: string | null
   /** Class / module qualifier from the test runner output. */
