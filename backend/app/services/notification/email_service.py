@@ -221,3 +221,47 @@ async def send_notification(
         start_tls=not use_tls,  # STARTTLS for port 587
     )
     logger.info("Email sent to %s — event=%s", to, event_type)
+
+
+async def send_html_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str | None = None,
+    smtp_cfg: dict[str, Any] | None = None,
+) -> None:
+    """
+    Send a pre-rendered HTML email (e.g. a scheduled digest) via SMTP.
+
+    Unlike :func:`send_notification`, the caller owns the full HTML body —
+    no title/body templating is applied. Raises on delivery failure; the
+    caller is responsible for logging / status tracking. This is the
+    delivery function the scheduled-digest dispatcher uses (it previously
+    imported a non-existent ``send_email`` from this module, so digest
+    emails silently failed — fixed alongside PMF US-7.4).
+    """
+    cfg = smtp_cfg if smtp_cfg is not None else await _get_smtp_cfg()
+
+    if not cfg.get("enabled"):
+        logger.debug("SMTP disabled — skipping email to %s", to_email)
+        return
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = cfg.get("from_address", settings.SMTP_FROM)
+    msg["To"] = to_email
+
+    msg.attach(MIMEText(text_body or subject, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    use_tls = bool(cfg.get("tls", True))
+    await aiosmtplib.send(
+        msg,
+        hostname=cfg.get("host", settings.SMTP_HOST),
+        port=int(cfg.get("port", settings.SMTP_PORT)),
+        username=cfg.get("user") or None,
+        password=cfg.get("password") or None,
+        use_tls=use_tls,
+        start_tls=not use_tls,  # STARTTLS for port 587
+    )
+    logger.info("HTML email sent to %s — subject=%s", to_email, subject)

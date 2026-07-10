@@ -3128,6 +3128,27 @@ class OwnershipResolution(BaseModel):
     fallback_reason: Optional[str] = None
 
 
+class TeamChannelUpsert(BaseModel):
+    """Create/replace the notification channel for one ownership team
+    (PMF US-7.3). The team is keyed by name in the URL path."""
+    channel_type: str = Field(..., pattern="^(email|slack|teams)$")
+    target: str = Field(..., min_length=1, max_length=2000)  # webhook URL or email address
+    is_active: bool = True
+
+
+class TeamChannelResponse(BaseModel):
+    """Team → notification channel mapping (PMF US-7.3)."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    team_name: str
+    channel_type: str
+    target: str
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ── Saved Views & Digest Schemas (ENT-05) ────────────────────────────────────
 
 
@@ -3174,6 +3195,9 @@ class DigestSubscriptionCreate(BaseModel):
     scope_type: Optional[str] = Field(default="project", pattern="^(project|release|suite|global)$")
     scope_value: Optional[str] = Field(None, max_length=255)
     trigger_filter: Optional[str] = Field(default="all", pattern="^(all|failed_only|degraded_only)$")
+    # US-7.4: zero-change windows send a one-liner (True, default) or skip
+    # delivery entirely (False).
+    send_when_unchanged: bool = True
 
 
 class DigestSubscriptionUpdate(BaseModel):
@@ -3183,6 +3207,7 @@ class DigestSubscriptionUpdate(BaseModel):
     saved_view_id: Optional[uuid.UUID] = None
     is_active: Optional[bool] = None
     is_paused: Optional[bool] = None
+    send_when_unchanged: Optional[bool] = None
 
 
 class DigestSubscriptionResponse(BaseModel):
@@ -3198,6 +3223,7 @@ class DigestSubscriptionResponse(BaseModel):
     scope_type: Optional[str] = "project"
     scope_value: Optional[str] = None
     trigger_filter: Optional[str] = "all"
+    send_when_unchanged: bool = True
     last_delivered_at: Optional[datetime] = None
     next_delivery_at: Optional[datetime] = None
     delivery_count: int = 0
@@ -3220,6 +3246,15 @@ class DigestContentResponse(BaseModel):
     flaky_test_count: int = 0
     release_decisions: List[dict] = []  # [{run_id, recommendation, risk_score}]
     action_items: List[str] = []
+    # ── Delta digest fields (PMF US-7.4) — present when the digest was
+    # generated against a last-sent watermark (``since``). ``delta`` shape:
+    # {new_failures, new_failures_top, newly_flaky, recovered,
+    #  quarantine_debt: {active, stale, ready_to_promote},
+    #  gate_change: {from, to} | None}
+    changes_since: Optional[str] = None
+    delta: Optional[dict] = None
+    is_zero_change: Optional[bool] = None
+    latest_run_total_tests: Optional[int] = None
 
 
 # ── AI Evaluation Schemas (OPS-02) ───────────────────────────────────────────

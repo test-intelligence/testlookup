@@ -360,12 +360,15 @@ def render_transition_message(
     dashboard_url: str,
     recent_failed_builds: Optional[dict[str, list[str]]] = None,
     max_lines: int = MAX_TRANSITION_LINES,
+    team_name: Optional[str] = None,
 ) -> tuple[str, str]:
     """Compose the single per-run transition message: (title, body).
 
     Every line states the transition and its evidence; the deep link to the
     run/cluster rides in ``dashboard_url`` (rendered as the channel's
-    action button) and on each cluster line.
+    action button) and on each cluster line. ``team_name`` tags an
+    ownership-routed batch (US-7.3) so the receiving team channel can see
+    at a glance why it got the message.
     """
     recent_failed_builds = recent_failed_builds or {}
     lines: list[str] = []
@@ -411,6 +414,8 @@ def render_transition_message(
         f"🔀 {count} test transition{'s' if count != 1 else ''} — "
         f"{project_name} build #{build_number}"
     )
+    if team_name:
+        title = f"{title} · {team_name}"
     return title, "\n".join(lines)
 
 
@@ -591,6 +596,28 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
                     except (ValueError, TypeError):
                         continue
 
+        # Ownership routing inputs (US-7.3) — loaded on the same session
+        # while it is open. ANY failure here fails OPEN: routing degrades
+        # to the project default channels, never drops an event.
+        ownership_rules: list[Any] = []
+        owner_map: Optional[dict] = None
+        team_channels: dict[str, Any] = {}
+        if events:
+            try:
+                from app.services.notification_routing import load_team_channels
+                from app.services.ownership_resolver_service import (
+                    load_rules_for_project,
+                )
+                team_channels = await load_team_channels(db, project_id)
+                ownership_rules = await load_rules_for_project(db, project_id)
+                owner_map = project.component_owner_map if project else None
+            except Exception as exc:  # noqa: BLE001 — fail open to defaults
+                logger.warning(
+                    "transition_routing_load_failed",
+                    run_id=str(run_id), error=str(exc),
+                )
+                ownership_rules, owner_map, team_channels = [], None, {}
+
         # Persist the state-store advance regardless of whether anything
         # fires — the stamp is what makes re-finalization idempotent.
         await db.commit()
@@ -614,21 +641,8 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
     ]
 
     groups, singles = group_newly_failing(newly_failing, cluster_by_tc)
-    title, body = render_transition_message(
-        project_name=project_name,
-        build_number=build_number,
-        groups=groups,
-        single_failing=singles,
-        recovered=recovered,
-        newly_flaky=newly_flaky,
-        dashboard_url=dashboard_url,
-        recent_failed_builds=recent_failed_builds,
-    )
 
-    # One batched message per channel per run: subscribers of ANY present
-    # transition event receive the whole summary once.
     present_events = sorted({e.event for e in events})
-    event_members = [NotificationEventType(v) for v in present_events]
     metadata = {
         "project_name": project_name,
         "build_number": build_number,
@@ -637,20 +651,135 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
         "transition_count": len(events),
     }
 
-    from app.services.notification.manager import _load_and_notify
-    await _load_and_notify(
-        project_id, run_id, event_members,
-        lambda _event: (title, body),
-        metadata,
-    )
+    # ── Ownership routing (US-7.3) ──────────────────────────────────────────
+    # Partition the batch by owner team; deliver owned events directly to
+    # the team's channel and everything else through the default
+    # preference fan-out (today's behaviour) with an "unowned" note.
+    # Routing is engaged only when the project uses ownership at all
+    # (rules or team channels exist) — otherwise the default path is
+    # byte-identical to the pre-US-7.3 message.
+    from app.services import notification_routing as routing
+
+    if team_channels or ownership_rules:
+        from app.services.ownership_resolver_service import resolve_test_ownership
+
+        def _team_of(ev: TransitionEvent) -> Optional[str]:
+            resolution = resolve_test_ownership(
+                ownership_rules,
+                {
+                    "suite_name": ev.suite_name or "",
+                    "component": ev.suite_name or "",
+                    "path": ev.test_name or "",
+                },
+                owner_map,
+            )
+            return resolution.team_name
+
+        team_batches, default_batch = routing.partition_transitions(
+            groups, singles, recovered, newly_flaky, _team_of, team_channels,
+        )
+    else:
+        team_batches = []
+        default_batch = routing.TransitionBatch(
+            groups=list(groups), singles=list(singles),
+            recovered=list(recovered), newly_flaky=list(newly_flaky),
+        )
+
+    # Team-channel deliveries. A failed delivery merges the batch back
+    # into the default fan-out (fail open — never drop an event).
+    log_entries: list[tuple] = []
+    for batch in team_batches:
+        if batch.channel is None:  # defensive — partition always sets it
+            default_batch.merge(batch, routing.FALLBACK_ROUTING_ERROR)
+            continue
+        b_title, b_body = render_transition_message(
+            project_name=project_name,
+            build_number=build_number,
+            groups=batch.groups,
+            single_failing=batch.singles,
+            recovered=batch.recovered,
+            newly_flaky=batch.newly_flaky,
+            dashboard_url=dashboard_url,
+            recent_failed_builds=recent_failed_builds,
+            team_name=batch.channel.team_name,
+        )
+        batch_events = batch.event_values()
+        batch_event = next(
+            (v for v in TRANSITION_EVENT_VALUES if v in batch_events),
+            NotificationEventType.TEST_NEWLY_FAILING.value,
+        )
+        status, error_detail = await routing.send_to_team_channel(
+            batch.channel, b_title, b_body, batch_event, metadata,
+        )
+        log_entries.append(
+            (batch.channel, batch_event, b_title, b_body, status, error_detail)
+        )
+        logger.info(
+            "transition_routing_decision",
+            run_id=str(run_id),
+            project_id=str(project_id),
+            routed_team=batch.channel.team_name,
+            channel_type=batch.channel.channel_type,
+            events=batch.event_count,
+            fallback_reason=(
+                None if status == "sent" else routing.FALLBACK_DELIVERY_FAILED
+            ),
+        )
+        if status != "sent":
+            default_batch.merge(batch, routing.FALLBACK_DELIVERY_FAILED)
+
+    await routing.record_team_delivery_logs(project_id, run_id, log_entries)
+
+    # Default fan-out — one batched message per channel per run:
+    # subscribers of ANY present event receive the whole (unrouted)
+    # summary once, plus the ownership-coverage note when events fell back.
+    if not default_batch.is_empty:
+        title, body = render_transition_message(
+            project_name=project_name,
+            build_number=build_number,
+            groups=default_batch.groups,
+            single_failing=default_batch.singles,
+            recovered=default_batch.recovered,
+            newly_flaky=default_batch.newly_flaky,
+            dashboard_url=dashboard_url,
+            recent_failed_builds=recent_failed_builds,
+        )
+        note = routing.render_unowned_note(default_batch.fallback_counts)
+        if note:
+            body = f"{body}\n{note}" if body else note
+        default_events = sorted(default_batch.event_values())
+        event_members = [NotificationEventType(v) for v in default_events]
+        logger.info(
+            "transition_routing_decision",
+            run_id=str(run_id),
+            project_id=str(project_id),
+            routed_team=None,
+            channel_type="default",
+            events=default_batch.event_count,
+            fallback_counts=default_batch.fallback_counts or None,
+        )
+
+        from app.services.notification.manager import _load_and_notify
+        await _load_and_notify(
+            project_id, run_id, event_members,
+            lambda _event: (title, body),
+            metadata,
+        )
     logger.info(
         "transition_notifications_dispatched",
         run_id=str(run_id),
         project_id=str(project_id),
         events=len(events),
         clusters=len(groups),
+        team_batches=len(team_batches),
+        default_events=default_batch.event_count,
     )
-    return {"events": len(events), "clusters": len(groups)}
+    return {
+        "events": len(events),
+        "clusters": len(groups),
+        "team_batches": len(team_batches),
+        "default_events": default_batch.event_count,
+    }
 
 
 # ── Quarantine workflow hook (event-driven, not run-batched) ────────────────

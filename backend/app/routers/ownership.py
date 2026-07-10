@@ -8,13 +8,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_project_access, require_role
 from app.db.postgres import get_db
-from app.models.postgres import ServiceOwnershipRule, User, UserRole
+from app.models.postgres import (
+    ServiceOwnershipRule,
+    TeamNotificationChannel,
+    User,
+    UserRole,
+)
 from app.models.schemas import (
     OwnershipBulkImportRequest,
     OwnershipResolution,
     OwnershipRuleCreate,
     OwnershipRuleResponse,
     OwnershipRuleUpdate,
+    TeamChannelResponse,
+    TeamChannelUpsert,
 )
 
 logger = logging.getLogger("routers.ownership")
@@ -167,6 +174,91 @@ async def export_ownership_rules(
         .order_by(ServiceOwnershipRule.priority.desc())
     )
     return result.scalars().all()
+
+
+# ── Team notification channels (PMF US-7.3) ──────────────────────────────────
+
+
+@router.get("/team-channels", response_model=list[TeamChannelResponse])
+async def list_team_channels(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+):
+    """List the team → notification-channel mappings for a project.
+
+    Teams are the free-text ``team_name`` values used by the ownership
+    rules; a mapping here makes transition notifications for tests owned
+    by that team route directly to the team's channel.
+    """
+    result = await db.execute(
+        select(TeamNotificationChannel)
+        .where(TeamNotificationChannel.project_id == project_id)
+        .order_by(TeamNotificationChannel.team_name)
+    )
+    return result.scalars().all()
+
+
+@router.put("/team-channels/{team_name}", response_model=TeamChannelResponse)
+async def upsert_team_channel(
+    project_id: uuid.UUID,
+    team_name: str,
+    payload: TeamChannelUpsert,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
+):
+    """Create or replace the notification channel for one team (QA_LEAD+)."""
+    team = team_name.strip()
+    if not team or len(team) > 255:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="team_name must be 1-255 characters",
+        )
+    result = await db.execute(
+        select(TeamNotificationChannel).where(
+            TeamNotificationChannel.project_id == project_id,
+            TeamNotificationChannel.team_name == team,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = TeamNotificationChannel(project_id=project_id, team_name=team)
+        db.add(row)
+    row.channel_type = payload.channel_type
+    row.target = payload.target
+    row.is_active = payload.is_active
+    await db.commit()
+    await db.refresh(row)
+    logger.info(
+        "Team channel upserted: %s → %s (%s) by %s",
+        team, payload.channel_type, project_id, current_user.username,
+    )
+    return row
+
+
+@router.delete("/team-channels/{team_name}", status_code=204)
+async def delete_team_channel(
+    project_id: uuid.UUID,
+    team_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
+):
+    """Remove a team's notification channel (QA_LEAD+). Transition events
+    for that team's tests fall back to the project default channels."""
+    result = await db.execute(
+        select(TeamNotificationChannel).where(
+            TeamNotificationChannel.project_id == project_id,
+            TeamNotificationChannel.team_name == team_name.strip(),
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team channel not found")
+    await db.delete(row)
+    await db.commit()
+    return None
 
 
 @router.get("/resolve/{cluster_id}", response_model=OwnershipResolution)

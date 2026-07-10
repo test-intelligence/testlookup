@@ -135,6 +135,14 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "before dispatching. The router-facing policy upsert is stage-only "
         "(the notifications router handler owns that commit).",
     ),
+    "notification_routing.py": (
+        1,
+        "Celery-task-owned (PMF US-7.3): record_team_delivery_logs persists "
+        "the NotificationLog audit rows for team-channel deliveries. It runs "
+        "inside evaluate_run_transitions (the dispatch_transition_"
+        "notifications worker task) on its own AsyncSessionLocal — no "
+        "request-scoped session exists to hand the commit to.",
+    ),
     "rag_generation_service.py": (
         1,
         "grounded_generate commits once at the end of the happy path. The "
@@ -448,7 +456,12 @@ def test_allowlist_total_is_bounded() -> None:
     # run-finalization stability tracker, each on its own AsyncSessionLocal
     # because no request session exists at either call site, and each must
     # be durable BEFORE its notification dispatch (once-only anchors).
-    assert total <= 55, (
+    # Raised 55 → 56 on 2026-07-10 (PMF US-7.3): ownership-routed
+    # notifications added notification_routing.py, whose single commit is
+    # Celery-task-owned — record_team_delivery_logs persists the
+    # NotificationLog audit rows for team-channel deliveries from inside
+    # the dispatch_transition_notifications worker task.
+    assert total <= 56, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

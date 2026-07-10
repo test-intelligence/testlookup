@@ -27,6 +27,18 @@ export interface OwnershipResolution {
   fallback_reason: string | null;
 }
 
+// US-7.3: team → notification channel mapping (ownership-routed notifications)
+export interface TeamChannel {
+  id: string;
+  project_id: string;
+  team_name: string;
+  channel_type: 'email' | 'slack' | 'teams';
+  target: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string | null;
+}
+
 export const MATCH_TYPES = [
   { value: 'suite_name', label: 'Suite Name' },
   { value: 'component', label: 'Component / Class' },
@@ -94,4 +106,27 @@ export async function exportOwnershipRules(projectId: string): Promise<Ownership
 export async function resolveClusterOwnership(projectId: string, clusterId: string): Promise<OwnershipResolution> {
   const { data } = await api.get<OwnershipResolution>(`/api/v1/projects/${projectId}/ownership/resolve/${clusterId}`);
   return data;
+}
+
+// ── Team notification channels (US-7.3) ─────────────────────────────────────
+
+export async function listTeamChannels(projectId: string): Promise<TeamChannel[]> {
+  const { data } = await api.get<TeamChannel[]>(`/api/v1/projects/${projectId}/ownership/team-channels`);
+  return data;
+}
+
+export async function upsertTeamChannel(projectId: string, teamName: string, payload: {
+  channel_type: 'email' | 'slack' | 'teams';
+  target: string;
+  is_active?: boolean;
+}): Promise<TeamChannel> {
+  const { data } = await api.put<TeamChannel>(
+    `/api/v1/projects/${projectId}/ownership/team-channels/${encodeURIComponent(teamName)}`,
+    payload,
+  );
+  return data;
+}
+
+export async function deleteTeamChannel(projectId: string, teamName: string): Promise<void> {
+  await api.delete(`/api/v1/projects/${projectId}/ownership/team-channels/${encodeURIComponent(teamName)}`);
 }

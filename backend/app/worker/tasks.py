@@ -2424,10 +2424,17 @@ def dispatch_scheduled_digests(self):
         # Step 1: discover due subscriptions. We only read IDs here; the actual
         # claim happens per-row via an atomic UPDATE so concurrent invocations
         # of this task (beat hiccup, worker retry, manual trigger) cannot
-        # double-dispatch the same email.
+        # double-dispatch the same email. ``last_delivered_at`` is captured
+        # NOW (pre-claim) because it is the delta-window watermark (US-7.4)
+        # and the claim UPDATE advances it.
         async with AsyncSessionLocal() as db:
             discovery = await db.execute(
-                select(DigestSubscription.id, DigestSubscription.schedule).where(
+                select(
+                    DigestSubscription.id,
+                    DigestSubscription.schedule,
+                    DigestSubscription.last_delivered_at,
+                    DigestSubscription.send_when_unchanged,
+                ).where(
                     DigestSubscription.is_active.is_(True),
                     DigestSubscription.is_paused.is_(False),
                     DigestSubscription.next_delivery_at <= now,
@@ -2451,10 +2458,13 @@ def dispatch_scheduled_digests(self):
         # claim: missing a digest (which the user can manually re-trigger) is
         # always better than spamming users with duplicates because a crash
         # between send and commit left the row "still due".
-        for sub_id, schedule in due:
+        for sub_id, schedule, last_delivered_at, send_when_unchanged in due:
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
             period = "daily" if schedule == "DAILY" else "weekly"
             is_retro = schedule == "WEEKLY_RETRO"
+            # Delta window (US-7.4): since the previous successful send,
+            # falling back to one schedule period for first-ever deliveries.
+            window_start = last_delivered_at or (now - delta)
 
             # Each claim runs in its own short transaction so the UPDATE is
             # visible to sibling workers immediately.
@@ -2490,6 +2500,7 @@ def dispatch_scheduled_digests(self):
             # row — the claim is already persisted so we will not retry at
             # the next beat tick.
             status = "sent"
+            error_detail = None
             try:
                 async with AsyncSessionLocal() as db:
                     if is_retro:
@@ -2505,8 +2516,11 @@ def dispatch_scheduled_digests(self):
                         if digest is None:
                             digest = await generate_digest(db, project_id, "weekly")
                     else:
-                        digest = await generate_digest(db, project_id, period)
-                    html_body = render_digest_html(digest)
+                        # US-7.4: delta digest — content is structured
+                        # around changes since the last successful send.
+                        digest = await generate_digest(
+                            db, project_id, period, since=window_start,
+                        )
 
                     user_result = await db.execute(
                         select(User).where(User.id == user_id)
@@ -2519,18 +2533,109 @@ def dispatch_scheduled_digests(self):
                         )
                         continue
 
-                    if channel == "email":
+                    # US-7.4: zero-change window + send_when_unchanged=False
+                    # → skip delivery entirely (the claim already advanced,
+                    # so the next digest covers the whole span since this
+                    # skipped one — nothing is lost).
+                    skip_unchanged = (
+                        bool(digest.get("is_zero_change"))
+                        and not bool(send_when_unchanged)
+                    )
+
+                    if skip_unchanged:
+                        status = "skipped"
+                        logger.info(
+                            "Digest for subscription %s skipped — zero-change window",
+                            sub_id,
+                        )
+                    elif channel == "email":
                         try:
-                            from app.services.notification.email_service import send_email
-                            await send_email(
+                            from app.services.notification.email_service import (
+                                send_html_email,
+                            )
+                            await send_html_email(
                                 to_email=user.email,
                                 subject=f"TestLookup — {period.title()} Quality Digest",
-                                html_body=html_body,
+                                html_body=render_digest_html(digest),
                             )
                         except Exception as e:
                             status = "failed"
+                            error_detail = str(e)
                             logger.warning("Digest email failed for %s: %s", user.email, e)
-                    # Slack/Teams handled by notification manager; status stays "sent".
+                    elif channel in ("slack", "teams"):
+                        # Resolve the user's webhook for this channel
+                        # (project-scoped preference first, then global,
+                        # then the instance-wide settings default).
+                        from app.core.config import settings
+                        from app.models.postgres import NotificationPreference
+                        from app.services.digest_content_service import (
+                            render_digest_text,
+                        )
+                        from sqlalchemy import or_ as _or
+                        pref_result = await db.execute(
+                            select(NotificationPreference)
+                            .where(
+                                NotificationPreference.user_id == user_id,
+                                NotificationPreference.channel == channel,
+                                NotificationPreference.enabled.is_(True),
+                                _or(
+                                    NotificationPreference.project_id == project_id,
+                                    NotificationPreference.project_id.is_(None),
+                                ),
+                            )
+                            # Project-scoped preference wins over global
+                            # (Postgres DESC defaults to NULLS FIRST, so be
+                            # explicit).
+                            .order_by(NotificationPreference.project_id.desc().nullslast())
+                        )
+                        prefs = pref_result.scalars().all()
+                        webhook_url = None
+                        for p in prefs:
+                            webhook_url = (
+                                p.slack_webhook_url if channel == "slack"
+                                else p.teams_webhook_url
+                            )
+                            if webhook_url:
+                                break
+                        if not webhook_url:
+                            webhook_url = (
+                                settings.SLACK_WEBHOOK_URL if channel == "slack"
+                                else settings.TEAMS_WEBHOOK_URL
+                            )
+                        if not webhook_url:
+                            status = "failed"
+                            error_detail = f"No {channel} webhook URL configured"
+                        else:
+                            try:
+                                title = (
+                                    f"📰 TestLookup — {period.title()} Quality Digest"
+                                    f" — {digest.get('project_name') or 'All Projects'}"
+                                )
+                                if channel == "slack":
+                                    from app.services.notification import slack_service
+                                    await slack_service.send_notification(
+                                        webhook_url=webhook_url,
+                                        title=title,
+                                        body=render_digest_text(digest),
+                                        event_type="digest_delivery",
+                                        metadata={},
+                                    )
+                                else:
+                                    from app.services.notification import teams_service
+                                    await teams_service.send_notification(
+                                        webhook_url=webhook_url,
+                                        title=title,
+                                        body=render_digest_text(digest),
+                                        event_type="digest_delivery",
+                                        metadata={},
+                                    )
+                            except Exception as e:
+                                status = "failed"
+                                error_detail = str(e)
+                                logger.warning(
+                                    "Digest %s delivery failed for sub %s: %s",
+                                    channel, sub_id, e,
+                                )
 
                     db.add(NotificationLog(
                         user_id=user_id,
@@ -2538,8 +2643,13 @@ def dispatch_scheduled_digests(self):
                         channel=channel,
                         event_type="digest_delivery",
                         title=f"{period.title()} Quality Digest",
-                        body=f"Digest for {digest.get('project_name', 'All Projects')}",
+                        body=(
+                            "Skipped — no changes since last digest"
+                            if status == "skipped"
+                            else f"Digest for {digest.get('project_name', 'All Projects')}"
+                        ),
                         status=status,
+                        error_detail=error_detail,
                     ))
                     await db.commit()
             except Exception as exc:

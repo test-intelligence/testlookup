@@ -1157,6 +1157,42 @@ class NotificationTransitionPolicy(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
+class TeamNotificationChannel(Base):
+    """Per-(project, team) notification target for ownership-routed
+    transition notifications (PMF US-7.3).
+
+    Teams exist only as free-text ``team_name`` strings on
+    ``service_ownership_rules`` rows — many rules can share one team, so
+    the channel lives in its own table keyed by (project, team_name)
+    instead of being duplicated per rule. A transition event whose test
+    resolves (via the ownership rules) to a team with an active row here
+    is delivered directly to that team's channel; everything else falls
+    back to the project's default notification preferences.
+    """
+    __tablename__ = "team_notification_channels"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "team_name",
+            name="uq_team_notif_channel_project_team",
+        ),
+        Index("ix_team_notif_channels_project", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # Matches ServiceOwnershipRule.team_name (free text, case-sensitive).
+    team_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # NotificationChannel value: email | slack | teams.
+    channel_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Channel target: webhook URL (slack/teams) or an email address.
+    target: Mapped[str] = mapped_column(String(2000), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
 class AgentPipelineRun(Base):
     """Tracks a single execution of the multi-agent pipeline for a test run."""
     __tablename__ = "agent_pipeline_runs"
@@ -1447,8 +1483,14 @@ class NotificationLog(Base):
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | sent | failed
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | sent | failed | skipped
     error_detail: Mapped[Optional[str]] = mapped_column(Text)
+    # Ownership routing audit (PMF US-7.3): which team channel this delivery
+    # was routed to, or the reason it fell back to the default channels
+    # (unowned | no_team_channel | mixed_ownership | routing_error |
+    # delivery_failed). NULL for pre-routing rows and non-transition events.
+    routed_team: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    routing_fallback: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -2950,6 +2992,12 @@ class DigestSubscription(Base):
     scope_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="project")   # project | release | suite | global
     scope_value: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)                     # suite name, release id, etc.
     trigger_filter: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="all")    # all | failed_only | degraded_only
+    # PMF US-7.4: zero-change window behaviour. True (default) = send the
+    # "No changes since last digest" one-liner; False = skip delivery
+    # entirely for that window.
+    send_when_unchanged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # ``last_delivered_at`` doubles as the delta-window watermark (US-7.4):
+    # each scheduled delivery reports changes since the previous send.
     last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_delivery_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     delivery_count: Mapped[int] = mapped_column(Integer, default=0)
