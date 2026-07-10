@@ -51,7 +51,7 @@ All SDKs share one config discovery, so you configure once per repo (see `client
 
 ## The MCP server
 
-The `mcp/` directory runs a Model Context Protocol server exposing **49 tools** over your TestLookup data, so an AI assistant can query runs, failures, flakiness, release gates, compliance packs, and more — with the same project scoping and auth as the API.
+The `mcp/` directory runs a Model Context Protocol server exposing **58 tools** over your TestLookup data, so an AI assistant can query runs, failures, flakiness, release gates, compliance packs, and more — with the same project scoping and auth as the API.
 
 ```bash
 python mcp/server.py                    # stdio — for desktop clients (e.g. Claude Desktop)
@@ -60,7 +60,9 @@ python mcp/server.py --transport sse    # SSE on port 8002 — for networked age
 
 Tool coverage mirrors the app's domains: `runs` (including `get_test_step_flips` for step-level flakiness), `search`, `analysis`, `intelligence`, `deep`, `defects`, `quarantine`, `release`, `reports`, `metrics`, `analytics`, `projects`, `governance`, `compliance_pack`, `decision_trail`, `billing`, and a `health_check` that reports the backend's per-dependency health.
 
-Typical assistant workflows: "why did last night's run fail?" (runs + analysis tools), "is this build safe to ship?" (release tools), "which tests should we quarantine?" (quarantine + flakiness tools).
+Beyond reads, the server ships **write-path tools** so an agent can close the triage loop: propose/release quarantines (approval stays with a QA Lead), bulk-promote recovered tests, file deduplicated Jira defects (with a mandatory dry-run preview), correct AI classifications, reassign failures, and manage the notification transition policy. All writes run under the configured login's server-side RBAC and are audit-logged with that identity.
+
+Typical assistant workflows: "why did last night's run fail?" (runs + analysis tools), "is this build safe to ship?" (release tools), "which tests should we quarantine?" (quarantine + flakiness tools). For client setup (Claude Code / Claude Desktop / Cursor / SSE) and five worked end-to-end recipes, see the **[Agent cookbook](agent-cookbook.md)**.
 
 ## Choosing a surface
 

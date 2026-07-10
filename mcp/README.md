@@ -1,6 +1,8 @@
 # TestLookup MCP Server
 
-The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **48 tools**, **9 resources**, and **6 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
+The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **58 tools**, **10 resources**, and **6 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
+
+Beyond reads, the server carries **write-path tools** (PMF US-14.1) so an agent can close the triage loop end-to-end: propose/release quarantines, bulk-promote recovered tests, file deduplicated Jira defects with a dry-run preview, correct AI classifications, reassign failures, and manage notification policy. All writes execute under the configured login's server-side RBAC and are audit-logged with that identity — see the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
 
 ## Quick start
 
@@ -130,7 +132,7 @@ Show the LLM cost budget overview -- which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (48 tools)
+## Tool reference (58 tools)
 
 ### Auth and health
 
@@ -173,6 +175,7 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_coverage_report` | `project_id`, `days?` | Suite coverage: unique tests, per-suite pass rates |
 | `get_defects` | `project_id`, `resolution_status?`, `page?`, `size?` | Defects with Jira links |
 | `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list reads (lightweight, limit-based) |
+| `create_defect` | `project_id`, `fingerprint?/cluster_id?`, `target?`, `issue_type?`, `dry_run?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview; dedup-first (QA_ENGINEER+) |
 | `get_ai_analysis_summary` | `project_id`, `days?` | AI triage coverage and confidence distribution |
 
 ### AI root-cause analysis
@@ -230,6 +233,9 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_quarantine_stats` | `project_id` | Count per status |
 | `approve_quarantine` | `request_id`, `notes?`, `quarantine_duration_days?` | Approve and activate quarantine |
 | `reject_quarantine` | `request_id`, `notes?` | Reject proposal |
+| `propose_quarantine` | `project_id`, `fingerprint`, `reason`, `test_name?`, `suite_name?`, `quarantine_duration_days?` | **Write.** File a PROPOSED request for QA Lead review — never quarantines directly (QA_LEAD+) |
+| `release_quarantine` | `request_id`, `reason` | **Write.** End an active quarantine early; the test counts against gates again (QA_LEAD+) |
+| `promote_ready_quarantines` | `project_id`, `dry_run=true` | **Write (bulk).** dry_run lists `ready_to_promote` entries; `dry_run=false` releases them, max 10/call, each reported (QA_LEAD+) |
 
 ### LLM cost budget
 
@@ -250,7 +256,27 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `list_feature_flags` | -- | All feature flags (admin only) |
 | `check_feature_flag` | `key`, `project_id?` | Evaluate flag for caller's context |
 
-## Resource reference (9 resources)
+### Classification feedback (write path)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `correct_classification` | `project_id`, `fingerprint`, `corrected_category`, `comment?`, `corrected_root_cause?` | **Write.** Override a wrong AI failure category; updates the analysis, evicts the cached verdict, and stores an `ai_feedback` training signal under the caller's identity |
+
+### Failure assignment (write path)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `get_assignment_options` | `test_case_id` | Valid assignees (resolved suite owner + QA_ENGINEER members) |
+| `assign_failure` | `test_case_id`, `new_assignee_user_id` | **Write.** Reassign a FAILED/BROKEN test case to a new owner's my-failures inbox (QA_LEAD/ADMIN on the project) |
+
+### Notification policy
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `get_transition_policy` | `project_id` | Per-project transition-notification policy (which events fire) |
+| `set_transition_policy` | `project_id`, `transitions_enabled?`, `per_run_events_enabled?`, `enabled_events?`, `consecutive_failure_threshold?` | **Write.** Full-replace the policy — affects what every project member is notified about |
+
+## Resource reference (10 resources)
 
 Resources are passive, read-only context URIs that AI clients can fetch as background knowledge.
 
@@ -260,6 +286,7 @@ Resources are passive, read-only context URIs that AI clients can fetch as backg
 | `testlookup://projects/{project_id}` | Full project record + integrations |
 | `testlookup://projects/{project_id}/metrics` | Live dashboard KPIs (last 7 days) |
 | `testlookup://projects/{project_id}/runs/latest` | 10 most recent runs |
+| `testlookup://projects/{project_id}/quarantine-manifest` | CI quarantine manifest: currently-effective quarantines with lifecycle flags |
 | `testlookup://projects/{project_id}/flaky-tests` | Flakiness leaderboard (30 days, top 20) |
 | `testlookup://projects/{project_id}/defects/open` | Open defects |
 | `testlookup://runs/{run_id}` | Full run record + aggregated stats |
@@ -285,7 +312,7 @@ These are documented for transparency and tracked as follow-up work:
 
 - **Input validation**: tools accept any string for enum fields (status, resolution_status); backend validates but MCP tools don't pre-validate
 - **Token lifecycle**: session token is module-level mutable state; no explicit logout; relies on 401 detection for re-auth
-- **Output format**: tools return markdown strings, not structured JSON -- adequate for AI clients but less ideal for programmatic consumers
+- **Output format**: read tools return markdown strings, not structured JSON -- adequate for AI clients but less ideal for programmatic consumers. The US-14.1 write tools return structured dicts (`ok`, `action`, `status_code`/`detail` on failure); migrating reads to the same shape is future work
 - **Concurrency**: the stdio transport is single-threaded; SSE can serve multiple clients but the auth token cache is process-global
 - **Rate limiting**: no per-connection rate limit on the SSE transport -- deploy behind a reverse proxy in production
 

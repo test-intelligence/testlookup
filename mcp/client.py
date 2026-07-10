@@ -137,6 +137,26 @@ async def put(path: str, json_body: Optional[dict] = None) -> Any:
     return resp.json()
 
 
+def error_payload(exc: Exception) -> dict[str, Any]:
+    """Normalize an HTTP/client error into a structured result dict.
+
+    Write tools return dicts (never bare strings) so agents can branch on
+    ``ok`` and surface the backend's ``detail`` message — which carries the
+    server-side RBAC verdict (403), state-machine conflicts (409), and
+    validation errors (422) — instead of a stack trace.
+    """
+    payload: dict[str, Any] = {"ok": False, "error": str(exc)}
+    if isinstance(exc, httpx.HTTPStatusError):
+        payload["status_code"] = exc.response.status_code
+        try:
+            detail = exc.response.json().get("detail")
+        except Exception:
+            detail = exc.response.text[:500] or None
+        if detail is not None:
+            payload["detail"] = detail
+    return payload
+
+
 async def delete(path: str) -> None:
     """DELETE helper — most endpoints return 204 No Content."""
     client = _get_client()

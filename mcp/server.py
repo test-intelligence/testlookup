@@ -23,6 +23,12 @@ Tool Domains:
   - Defects (list by project with severity + Jira link)
   - Governance (release gate policies, saved views, digest subs,
                 ownership rules, feature flags + status check)
+  # PMF US-14.1 — write path (agents close the triage loop)
+  - Quarantine writes (propose, release, bulk-promote ready tests)
+  - Defect creation (one-click Jira / webhook with dry-run preview)
+  - Classification corrections (feedback → training signal)
+  - Failure assignment (reassign + valid-assignee lookup)
+  - Notification policy (transition-policy get/set)
 
 Transport: stdio (default) or SSE
 Auth:      JWT via TESTLOOKUP_USERNAME / TESTLOOKUP_PASSWORD env vars
@@ -61,6 +67,8 @@ from tools import auth, projects, runs, metrics, analytics, analysis, release
 from tools import intelligence, deep, search, reports
 # Tier 2 item 7 — enterprise surface parity.
 from tools import decision_trail, compliance_pack, quarantine, billing, defects, governance
+# PMF US-14.1 — write-path tools so agents can close the triage loop.
+from tools import assignments, feedback, notifications
 from resources import registry
 from prompts import templates
 
@@ -82,7 +90,20 @@ mcp = FastMCP(
         "`reject_quarantine` drive the flaky-test review queue. `get_billing_overview` "
         "shows LLM spend against quotas. `list_defects` + `list_release_gate_policies` + "
         "`list_ownership_rules` expose the governance surface. `check_feature_flag` "
-        "resolves a flag for the current caller."
+        "resolves a flag for the current caller.\n\n"
+        "Write path (US-14.1) — complete the triage loop end-to-end: "
+        "`propose_quarantine` files a proposal for QA Lead review (never a direct "
+        "quarantine), `release_quarantine` ends one early, and "
+        "`promote_ready_quarantines` (dry_run first!) bulk-releases tests that hit "
+        "their pass streak. `create_defect` files a Jira issue or webhook event for a "
+        "failure signature — call it with dry_run=True and show the human the preview "
+        "before creating. `correct_classification` fixes a wrong AI verdict and feeds "
+        "the training loop. `assign_failure` (+ `get_assignment_options`) re-routes a "
+        "failure to the right engineer. `get_transition_policy` / "
+        "`set_transition_policy` manage per-project notification events. All writes "
+        "run under YOUR login's server-side RBAC and are audit-logged with that "
+        "identity — prefer dry_run variants and confirm destructive actions with the "
+        "user first."
     ),
 )
 
@@ -104,8 +125,12 @@ decision_trail.register(mcp)   # Tier 0B — explain why the AI did X
 compliance_pack.register(mcp)  # Tier 1-4 — audit ZIP lifecycle
 quarantine.register(mcp)       # Tier 1-3 — flaky review queue
 billing.register(mcp)          # Tier 1-2 — LLM cost budget
-defects.register(mcp)          # defect list reads
+defects.register(mcp)          # defect list reads + one-click Jira create (US-14.1)
 governance.register(mcp)       # policies, saved views, digests, ownership, flags
+# PMF US-14.1 — write-path tools (agents close the triage loop).
+feedback.register(mcp)         # correct_classification → training signal
+assignments.register(mcp)      # failure reassignment (my-failures inbox)
+notifications.register(mcp)    # transition-notification policy get/set
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)

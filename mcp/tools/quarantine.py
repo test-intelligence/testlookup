@@ -2,12 +2,32 @@
 
 Exposes the review queue, stats, approve, and reject so an AI assistant
 can drive the quarantine workflow on behalf of a QA Lead.
+
+PMF US-14.1 adds the write path: propose, release, and bulk-promote.
+All writes are thin wrappers over ``/api/v1/quarantine`` — RBAC
+(QA_LEAD+) and the ``SettingsAuditLog`` audit trail are enforced
+server-side against the JWT identity the MCP server logged in with.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import client as api  # type: ignore[import]
+
+# Bulk-release safety cap for promote_ready_quarantines (US-14.1).
+PROMOTE_BATCH_CAP = 10
+
+
+def _select_ready_to_promote(rows: list[dict], cap: int = PROMOTE_BATCH_CAP) -> list[dict]:
+    """Pure filter: the first ``cap`` rows flagged ``ready_to_promote``.
+
+    ``ready_to_promote`` is derived server-side (US-5.5): the test has
+    passed ``promote_after_passes`` consecutive times while quarantined
+    but the project's ``auto_promote`` policy is off, so a human (or an
+    agent acting for one) must release it explicitly.
+    """
+    ready = [r for r in rows if r.get("ready_to_promote")]
+    return ready[: max(0, cap)]
 
 
 def register(mcp) -> None:  # noqa: ANN001
@@ -156,3 +176,178 @@ def register(mcp) -> None:  # noqa: ANN001
         except Exception as exc:
             return f"❌ Failed to reject: {exc}"
         return f"Quarantine rejected for `{row.get('test_name') or request_id}`."
+
+    # ── Write path (PMF US-14.1) ───────────────────────────────────────────
+
+    @mcp.tool()
+    async def propose_quarantine(
+        project_id: str,
+        fingerprint: str,
+        reason: str,
+        test_name: Optional[str] = None,
+        suite_name: Optional[str] = None,
+        quarantine_duration_days: int = 14,
+    ) -> dict:
+        """
+        SIDE EFFECT: creates (or refreshes) a PROPOSED quarantine request.
+
+        This is a *proposal*, not a quarantine — the test stays in normal
+        rotation until a QA Lead (human or agent-assisted) approves it via
+        `approve_quarantine`. Human approval stays in the loop by design.
+        Idempotent: an existing live request for the same (project,
+        fingerprint) is merged/refreshed instead of duplicated.
+
+        Requires QA_LEAD+ (enforced server-side against the MCP login
+        identity) and the `flaky_auto_quarantine` feature flag (503 when
+        off). The proposal and every later transition land in the
+        settings audit log with the acting user's id.
+
+        Args:
+            project_id: Project UUID the test belongs to.
+            fingerprint: Test fingerprint (sha256(class::test)[:16] — the
+                same id shown by failure/flaky tools).
+            reason: Why this test should be quarantined — recorded in the
+                proposal's rationale for the reviewing QA Lead.
+            test_name: Optional human-readable test name for the queue.
+            suite_name: Optional suite name for the queue.
+            quarantine_duration_days: Proposed window (1-90, default 14).
+        """
+        body: dict[str, Any] = {
+            "project_id": project_id,
+            "test_fingerprint": fingerprint,
+            "detection_method": "manual",
+            "rationale": {"reason": reason, "source": "mcp"},
+            "quarantine_duration_days": quarantine_duration_days,
+        }
+        if test_name:
+            body["test_name"] = test_name
+        if suite_name:
+            body["suite_name"] = suite_name
+        try:
+            row = await api.post("/api/v1/quarantine", json_body=body)
+        except Exception as exc:
+            return api.error_payload(exc)
+        return {
+            "ok": True,
+            "action": "proposed",
+            "request_id": row.get("id"),
+            "status": row.get("status"),
+            "test_name": row.get("test_name"),
+            "fingerprint": row.get("test_fingerprint"),
+            "next_step": (
+                "Awaiting QA Lead review — approve with approve_quarantine("
+                f"request_id='{row.get('id')}') or reject with reject_quarantine."
+            ),
+        }
+
+    @mcp.tool()
+    async def release_quarantine(request_id: str, reason: str) -> dict:
+        """
+        SIDE EFFECT: ends an active quarantine early — the test returns to
+        normal rotation and counts against release gates again immediately.
+
+        Only valid from an active state (QUARANTINED / RECHECK_SCHEDULED /
+        RE_QUARANTINED); other states return a 409 conflict. Requires
+        QA_LEAD+ (server-side RBAC) and is written to the settings audit
+        log with the acting user and the reason given here.
+
+        Args:
+            request_id: The quarantine request UUID (from
+                list_quarantine_requests or promote_ready_quarantines).
+            reason: Why the quarantine is being released (e.g. "fix for
+                flaky wait merged in #123") — recorded as reviewer notes.
+        """
+        try:
+            row = await api.post(
+                f"/api/v1/quarantine/{request_id}/release",
+                json_body={"notes": reason},
+            )
+        except Exception as exc:
+            return api.error_payload(exc)
+        return {
+            "ok": True,
+            "action": "released",
+            "request_id": row.get("id"),
+            "status": row.get("status"),
+            "test_name": row.get("test_name"),
+            "fingerprint": row.get("test_fingerprint"),
+        }
+
+    @mcp.tool()
+    async def promote_ready_quarantines(
+        project_id: str,
+        dry_run: bool = True,
+    ) -> dict:
+        """
+        Release quarantined tests that are ready to return to rotation.
+
+        "Ready to promote" (US-5.5) = the test passed the project policy's
+        `promote_after_passes` consecutive-pass threshold while quarantined,
+        but `auto_promote` is off so a human decision is required.
+
+        With dry_run=True (the default) this only LISTS the candidates —
+        no side effects. Review the list with the user before re-running
+        with dry_run=False, which releases at most 10 per call (each
+        release is reported individually; failures don't stop the batch).
+        Requires QA_LEAD+; every release is audit-logged server-side.
+
+        Args:
+            project_id: Project UUID to scan.
+            dry_run: True = report candidates only; False = release them
+                (capped at 10 per call).
+        """
+        try:
+            rows = await api.get(
+                "/api/v1/quarantine",
+                params={"project_id": project_id, "live_only": True, "limit": 500},
+            )
+        except Exception as exc:
+            return api.error_payload(exc)
+
+        candidates = _select_ready_to_promote(rows or [])
+        listing = [
+            {
+                "request_id": r.get("id"),
+                "test_name": r.get("test_name"),
+                "fingerprint": r.get("test_fingerprint"),
+                "consecutive_passes": r.get("consecutive_passes"),
+                "status": r.get("status"),
+            }
+            for r in candidates
+        ]
+        if dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "ready_to_promote": listing,
+                "count": len(listing),
+                "note": (
+                    "No changes made. Re-run with dry_run=False to release "
+                    f"these (max {PROMOTE_BATCH_CAP} per call) after the user confirms."
+                ),
+            }
+
+        results = []
+        for entry in listing:
+            try:
+                row = await api.post(
+                    f"/api/v1/quarantine/{entry['request_id']}/release",
+                    json_body={
+                        "notes": (
+                            "Promoted out of quarantine: reached the "
+                            "consecutive-pass threshold (via MCP "
+                            "promote_ready_quarantines)."
+                        )
+                    },
+                )
+                results.append(
+                    {**entry, "released": True, "status": row.get("status")}
+                )
+            except Exception as exc:
+                results.append({**entry, "released": False, **api.error_payload(exc)})
+        return {
+            "ok": all(r.get("released") for r in results) if results else True,
+            "dry_run": False,
+            "released_count": sum(1 for r in results if r.get("released")),
+            "results": results,
+        }
