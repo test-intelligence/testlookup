@@ -422,6 +422,29 @@ async def finalize_run(
             error=str(gh_exc),
         )
 
+    # PMF US-4.1 — sticky PR summary comment. Same isolation contract as
+    # the check-run post above: the service internally gates on
+    # AI_OFFLINE_MODE + the github_checks feature flag + per-integration
+    # pr_comment_mode, only fires for runs carrying PR context
+    # (pr_number + ci_repo, US-4.3) that matches the configured repo,
+    # and never raises — ingestion must not block on a GitHub outage.
+    # Errors land in ``github_integrations.last_error``.
+    try:
+        from app.services.github_pr_comment_service import post_pr_summary_for_run
+        pr_comment_result = await post_pr_summary_for_run(rid)
+        if pr_comment_result and not pr_comment_result.get("skipped"):
+            logger.info(
+                "github_pr_comment_result",
+                run_id=str(rid),
+                result=pr_comment_result,
+            )
+    except Exception as pr_exc:
+        logger.warning(
+            "github_pr_comment_unhandled",
+            run_id=str(rid),
+            error=str(pr_exc),
+        )
+
     # Fetch run for notification data
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(TestRun).where(TestRun.id == rid))

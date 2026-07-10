@@ -13,7 +13,14 @@ import {
   type GitHubConnectionTestResponse,
   type GitHubIntegrationRead,
   type GitHubIntegrationWrite,
+  type PrCommentMode,
 } from '@/services/githubIntegrationService'
+
+const PR_COMMENT_MODES: { value: PrCommentMode; label: string }[] = [
+  { value: 'off', label: 'Off — never comment on PRs' },
+  { value: 'failures_only', label: 'Failures only — comment when tests fail (default)' },
+  { value: 'always', label: 'Always — comment on every PR run' },
+]
 
 /**
  * GitHub Checks integration settings — Tier 1 item 5.
@@ -39,6 +46,7 @@ export default function GitHubIntegrationPage() {
     repo_owner: '',
     repo_name: '',
     api_base_url: 'https://api.github.com',
+    pr_comment_mode: 'failures_only',
   })
   const [patDraft, setPatDraft] = useState<string>('')
   const [testing, setTesting] = useState(false)
@@ -58,6 +66,7 @@ export default function GitHubIntegrationPage() {
           repo_owner: data.repo_owner,
           repo_name: data.repo_name,
           api_base_url: data.api_base_url,
+          pr_comment_mode: data.pr_comment_mode ?? 'failures_only',
         })
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status
@@ -132,6 +141,7 @@ export default function GitHubIntegrationPage() {
         repo_owner: '',
         repo_name: '',
         api_base_url: 'https://api.github.com',
+        pr_comment_mode: 'failures_only',
       })
       setPatDraft('')
       setLastTest(null)
@@ -212,6 +222,30 @@ export default function GitHubIntegrationPage() {
             onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
           />
           <span>Post a check run on every ingested test run</span>
+        </label>
+
+        <label className="text-xs block">
+          <span className="text-[var(--color-text-muted)]">PR summary comment</span>
+          <select
+            value={form.pr_comment_mode}
+            disabled={!canEdit}
+            onChange={(e) =>
+              setForm({ ...form, pr_comment_mode: e.target.value as PrCommentMode })
+            }
+            className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+          >
+            {PR_COMMENT_MODES.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-[var(--color-text-faint)]">
+            When a run carries PR context (auto-detected in CI), TestLookup keeps
+            one sticky comment on the PR summarizing newly-failed, known-flaky,
+            and fixed tests. &quot;Failures only&quot; still updates an existing
+            comment when the PR goes green.
+          </span>
         </label>
 
         {lastTest && (
@@ -299,6 +333,14 @@ export default function GitHubIntegrationPage() {
           <code>POST /repos/&#123;owner&#125;/&#123;repo&#125;/check-runs</code>{' '}
           containing pass/fail counts, branch, build number, and a deep link
           to the Run Intelligence page.
+        </p>
+        <p>
+          <strong>PR summary comment.</strong> When a run arrives with PR
+          context (repo + PR number, auto-detected by the SDKs/CLI in CI) that
+          matches this repository, TestLookup upserts a single sticky comment
+          on the PR listing newly-failed tests vs the baseline run,
+          known-flaky failures (from quarantine + the flaky coach), and tests
+          fixed by the PR. Re-runs update the same comment.
         </p>
         <p>
           <strong>Offline mode:</strong> when <code>AI_OFFLINE_MODE=true</code>{' '}

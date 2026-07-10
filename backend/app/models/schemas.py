@@ -3774,6 +3774,10 @@ class GitHubIntegrationWrite(BaseModel):
     # ``has_pat`` flag is flipped on. When null, the existing secret (if
     # any) is left alone — send an empty string to clear it.
     pat: Optional[str] = Field(None, max_length=200)
+    # PMF US-4.1 — sticky PR summary comment mode. ``failures_only``
+    # still updates an existing marker comment on a green run so a PR
+    # that went red→green shows green.
+    pr_comment_mode: Literal["off", "failures_only", "always"] = "failures_only"
 
 
 class GitHubIntegrationRead(BaseModel):
@@ -3784,6 +3788,7 @@ class GitHubIntegrationRead(BaseModel):
     repo_name: str
     api_base_url: str
     has_pat: bool
+    pr_comment_mode: str = "failures_only"
     last_posted_at: Optional[datetime] = None
     last_error: Optional[str] = None
     last_error_at: Optional[datetime] = None

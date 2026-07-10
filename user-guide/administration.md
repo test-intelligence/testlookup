@@ -19,6 +19,15 @@ The admin surface splits into three concerns: **people & projects**, **connectin
 - **Digests** (`/settings/digests`) — scheduled summary digests (daily/weekly roll-ups to a channel).
 - **Integration Health** (`/settings/integration-health`) — the status board for everything above: which integrations are configured, reachable, and delivering. Check here first when "the webhook didn't fire".
 
+### GitHub (`/settings/github`)
+
+Per-project: one repo (`owner/name` + API base URL for GitHub Enterprise), one PAT (stored encrypted; needs `repo` scope or fine-grained `checks:write` + `issues:write`). Gated by the `github_checks` feature flag and, as always, `AI_OFFLINE_MODE`. Two outbound surfaces:
+
+- **Check runs** — every ingested run with a full 40-char commit SHA posts a check run (pass/fail counts + deep link to Run Intelligence) next to the commit's CI results.
+- **PR summary comment** — when a run arrives with PR context (repo + PR number, [auto-detected by the SDKs/CLI in CI](getting-results-in.md#ci-context-prs)) matching the configured repo, TestLookup keeps **one sticky comment** on that PR: **newly failed** tests vs the baseline run (latest completed run on `main`/`master`, falling back to the latest run on another branch), **known flaky** failures (quarantined tests + flaky-coach detections — labeled as likely not caused by the PR), and tests the PR **fixed**, plus a still-failing-on-baseline count. Re-runs update the same comment — never a second one. The **PR summary comment** mode selector controls it: `off`, `failures_only` (default — but a PR that went red→green still gets its existing comment updated to green), or `always`.
+
+Delivery problems land in the page's **Last error** banner and on Integration Health.
+
 ## Operating the instance
 
 - **AI Settings / AI Evaluation** (`/settings/ai`, `/settings/ai-eval`) — covered in [AI features](ai-features.md#configuring-the-ai-tier-settingsai-settingsai-eval): mode, local model, budgets, and the AI-quality dashboard.

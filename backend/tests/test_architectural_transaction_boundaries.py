@@ -201,6 +201,16 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "upsert_integration was converted to stage-only in Phase E-1 "
         "(2026-04-15). Ratcheted 3 → 4.",
     ),
+    "github_pr_comment_service.py": (
+        1,
+        "Worker-path only (PMF US-4.1): post_pr_summary_for_run is called "
+        "from the ingestion pipeline's post-ingestion orchestration — no "
+        "request session to hand off to. The single commit lives in "
+        "_record_outcome, which writes last_posted_at / last_error / "
+        "last_error_at bookkeeping on the integration row via its own "
+        "AsyncSessionLocal (same Integration Health surface the checks "
+        "service writes).",
+    ),
     "flaky_quarantine_service.py": (
         9,
         "Tier 1-3: state-machine transitions (propose/approve/reject/"

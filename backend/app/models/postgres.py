@@ -3392,6 +3392,16 @@ class GitHubIntegration(Base):
     # through the secret service for the list view.
     has_pat: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # PMF US-4.1 — sticky PR summary comment mode (migration 0102):
+    # off | failures_only | always. ``failures_only`` still UPDATES an
+    # existing marker comment on a green run so a red→green PR shows green.
+    pr_comment_mode: Mapped[str] = mapped_column(
+        String(20),
+        default="failures_only",
+        server_default="failures_only",
+        nullable=False,
+    )
+
     # Last successful post bookkeeping — surfaced on the Integration
     # Health dashboard so stale configs are visible.
     last_posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

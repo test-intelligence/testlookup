@@ -1,5 +1,8 @@
 import { deleteData, getData, postData, putData } from './http'
 
+/** Sticky PR summary comment mode (PMF US-4.1). */
+export type PrCommentMode = 'off' | 'failures_only' | 'always'
+
 export interface GitHubIntegrationRead {
   id: string
   project_id: string
@@ -8,6 +11,7 @@ export interface GitHubIntegrationRead {
   repo_name: string
   api_base_url: string
   has_pat: boolean
+  pr_comment_mode: PrCommentMode
   last_posted_at: string | null
   last_error: string | null
   last_error_at: string | null
@@ -21,6 +25,7 @@ export interface GitHubIntegrationWrite {
   repo_name: string
   api_base_url: string
   pat?: string | null
+  pr_comment_mode: PrCommentMode
 }
 
 export interface GitHubConnectionTestResponse {

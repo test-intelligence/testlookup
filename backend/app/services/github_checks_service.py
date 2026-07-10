@@ -146,6 +146,7 @@ async def upsert_integration(
     repo_name: str,
     api_base_url: str,
     pat: Optional[str],
+    pr_comment_mode: Optional[str] = None,
 ) -> GitHubIntegration:
     """Create or update a project's GitHub integration.
 
@@ -154,6 +155,9 @@ async def upsert_integration(
     * ``None``   — leave the existing secret alone.
     * ``""``     — clear the stored secret + flip ``has_pat=False``.
     * any value  — upsert the secret + flip ``has_pat=True``.
+
+    ``pr_comment_mode`` (PMF US-4.1): ``off`` | ``failures_only`` |
+    ``always``. ``None`` leaves the stored value alone.
     """
     row = await get_integration(db, project_id)
     if row is None:
@@ -173,6 +177,9 @@ async def upsert_integration(
         row.enabled = enabled
         row.updated_by_user_id = actor.id
         row.updated_at = datetime.now(timezone.utc)
+
+    if pr_comment_mode is not None:
+        row.pr_comment_mode = pr_comment_mode
 
     # Token handling — delegated to secret_service so we don't store the
     # plaintext on the DB row.
@@ -205,7 +212,8 @@ async def upsert_integration(
             actor_id=actor.id,
             actor_name=getattr(actor, "username", None) or getattr(actor, "email", None),
             changed_fields=["repo_owner", "repo_name", "api_base_url", "enabled"]
-            + (["pat"] if pat is not None else []),
+            + (["pat"] if pat is not None else [])
+            + (["pr_comment_mode"] if pr_comment_mode is not None else []),
         )
         db.add(entry)
     except Exception as exc:
