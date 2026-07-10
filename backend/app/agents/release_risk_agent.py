@@ -230,6 +230,9 @@ class ReleaseRiskAgent(BaseAgent):
                         "open_defects": open_defects,
                         "open_defects_source": release_memory_context.get("source"),
                         "regression_test_count": len(regression_tests),
+                        # Derived failure-kind breakdown (US-9.3) — consumed
+                        # only by opt-in kind_rules policies; inert otherwise.
+                        "failure_kind_counts": self._failure_kind_counts(analyses),
                     },
                     db=policy_db,
                 )
@@ -294,8 +297,41 @@ class ReleaseRiskAgent(BaseAgent):
                     result["blocking_issues"].append(f"[Policy] {ev.message}")
                 elif not ev.passed and ev.action == "WARN":
                     result["conditions_for_go"].append(f"[Policy] {ev.message}")
+            # Kind-budget downgrade counterfactual (US-9.3) — a downgraded
+            # NO_GO is conditional on the excused failures really being
+            # infra/test-code noise, so surface it as a condition for go.
+            # Only when the downgrade actually survived (a failing BLOCK
+            # rule can restore NO_GO, in which case the counterfactual
+            # lives in the policy_evaluation trail instead).
+            if policy_result.kind_rule_applied and policy_result.kind_counterfactual:
+                result["conditions_for_go"].append(
+                    f"[Policy] {policy_result.kind_counterfactual}"
+                )
 
         return result
+
+    @staticmethod
+    def _failure_kind_counts(analyses: dict) -> dict[str, int]:
+        """Bucket analyzed failures into the derived kind triad (US-9.3).
+
+        Uses the canonical mapping in ``app/services/failure_kind.py`` over
+        each analysis's classifier verdict. Analyses that errored (or carry
+        no category) resolve to ``unknown`` — the kind-aware gate counts
+        unknown as product, so classification gaps can never soften a
+        verdict. Execution status isn't carried on the analysis dicts, so
+        the BROKEN nudge does not apply here (also conservative: those rows
+        stay unknown → product).
+        """
+        from app.services.failure_kind import FAILURE_KINDS, failure_kind
+
+        counts: dict[str, int] = {kind: 0 for kind in FAILURE_KINDS}
+        for analysis in analyses.values():
+            if not isinstance(analysis, dict):
+                counts["unknown"] += 1
+                continue
+            kind = failure_kind(analysis.get("failure_category"), analysis.get("status"))
+            counts[kind] = counts.get(kind, 0) + 1
+        return counts
 
     # ── LLM reasoning (Step 2) ────────────────────────────────────────────────
 
@@ -399,6 +435,11 @@ class ReleaseRiskAgent(BaseAgent):
             ],
             "flaky_finding_count": len(state.get("flaky_findings", [])),
             "test_health_finding_count": len(state.get("test_health_findings", [])),
+            # US-9.3 — frozen kind breakdown so the decision is reproducible
+            # and the policy simulator can replay kind-aware policies.
+            "failure_kind_counts": ReleaseRiskAgent._failure_kind_counts(
+                state.get("analyses", {}) or {}
+            ),
         }
 
     # ── DB helpers ────────────────────────────────────────────────────────────

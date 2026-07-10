@@ -42,6 +42,24 @@ export interface PolicyHardCaps {
   max_new_failures_24h: number;
 }
 
+export interface PolicyKindBudget {
+  /** Failures of this kind the gate will excuse from the NO_GO trigger. */
+  max_failures: number;
+  /** Hard rule: a NO_GO may soften at most to CONDITIONAL_GO — never GO. */
+  downgrade_to: 'CONDITIONAL_GO';
+}
+
+/**
+ * Opt-in failure-kind weighting (US-9.3). Kinds are AI-classified
+ * (derived from the failure-category classifier), never ground truth.
+ * `product` failures always count; `unknown` counts as product.
+ */
+export interface PolicyKindRules {
+  enabled: boolean;
+  infrastructure?: PolicyKindBudget | null;
+  test_code?: PolicyKindBudget | null;
+}
+
 export interface PolicyDocument {
   schema_version: number;
   thresholds: PolicyThresholds;
@@ -50,6 +68,8 @@ export interface PolicyDocument {
   /** Optional on read — older rows omit it; the backend fills defaults on write. */
   pass_rate_bands?: PolicyPassRateBands;
   hard_caps?: PolicyHardCaps;
+  /** Optional on read — older rows omit it; defaults to disabled. */
+  kind_rules?: PolicyKindRules;
 }
 
 export interface PolicySummary {
@@ -117,6 +137,11 @@ export const DEFAULT_HARD_CAPS: PolicyHardCaps = {
   max_p0_defects: 0,
   max_flaky_count: 10,
   max_new_failures_24h: 20,
+};
+
+/** Disabled by default — kind weighting is strictly opt-in. */
+export const DEFAULT_KIND_RULES: PolicyKindRules = {
+  enabled: false,
 };
 
 // ── API ─────────────────────────────────────────────────────────────────────

@@ -52,6 +52,12 @@ class PolicyEvaluationResult:
     effective_thresholds: dict = field(default_factory=dict)
     effective_weights: dict = field(default_factory=dict)
     evaluated_at: str = ""
+    # ── Kind-aware gating trail (US-9.3) ─────────────────────────────────
+    # All three stay at their defaults unless the policy's kind_rules block
+    # is enabled — the identical-when-disabled pin depends on that.
+    kind_breakdown: dict | None = None      # {"product": n, "test_code": n, ...}
+    kind_rule_applied: bool = False         # True when a NO_GO was downgraded
+    kind_counterfactual: str | None = None  # human-readable "would have been…"
 
     def to_dict(self) -> dict:
         """Convert to a JSON-serializable dict for persistence."""
@@ -154,6 +160,154 @@ def _extract_rules(policy: ReleaseGatePolicy | None) -> list[dict]:
     return []
 
 
+def _extract_kind_rules(policy: ReleaseGatePolicy | None) -> dict | None:
+    """Return the policy's ``kind_rules`` block when it is enabled, else None.
+
+    STRICTLY OPT-IN (US-9.3): absent block, ``enabled: false``, or a
+    malformed non-dict value all resolve to None, and None means the verdict
+    computation is byte-identical to the pre-feature behaviour.
+    """
+    if not (policy and policy.rules):
+        return None
+    kind_rules = policy.rules.get("kind_rules")
+    if not isinstance(kind_rules, dict) or not kind_rules.get("enabled", False):
+        return None
+    return kind_rules
+
+
+# Kinds a policy may budget away. ``product`` is deliberately NOT here —
+# product failures can never be excluded — and ``unknown`` failures are
+# conservatively counted as product below.
+_EXCLUDABLE_KINDS: tuple[str, ...] = ("infrastructure", "test_code")
+
+
+def _apply_kind_rules(
+    kind_rules: dict,
+    context: dict,
+    recommendation: str,
+) -> tuple[str, list[RuleEvaluation], dict | None, bool, str | None]:
+    """Apply opt-in failure-kind weighting (US-9.3) to the base recommendation.
+
+    Semantics (all pinned by tests/test_kind_gate_policy.py):
+      * Failures are bucketed by the derived kind triad. ``unknown`` is folded
+        into ``product`` — an unclassified failure must never soften the gate.
+      * A kind with a configured budget whose count is <= max_failures is
+        excluded from the NO_GO trigger; exceeding the budget restores full
+        counting for that kind. Kinds without a budget always count.
+      * If, after exclusions, zero blocking failures remain AND at least one
+        failure was excluded, a base NO_GO is downgraded — at most to
+        CONDITIONAL_GO, never to GO (hard rule; the schema Literal and this
+        function both enforce it).
+      * GO / CONDITIONAL_GO base verdicts are never touched.
+      * Missing/absent kind counts in ``context`` (older snapshots, simulator
+        against pre-feature decisions) → no downgrade, recorded in the trail.
+
+    Returns ``(recommendation, rule_evaluations, kind_breakdown,
+    applied, counterfactual)``. The evaluations always report the breakdown —
+    excluded failures are reported, never hidden.
+    """
+    raw_counts = context.get("failure_kind_counts")
+    if not isinstance(raw_counts, dict):
+        return (
+            recommendation,
+            [RuleEvaluation(
+                rule_id="kind_rules",
+                rule_name="Failure-kind weighting",
+                rule_type="kind_budget",
+                passed=True,
+                action="INFO",
+                message=(
+                    "Failure-kind weighting is enabled but no kind breakdown was "
+                    "available for this run — all failures counted in full."
+                ),
+            )],
+            None,
+            False,
+            None,
+        )
+
+    counts = {k: int(raw_counts.get(k, 0) or 0) for k in ("product", "test_code", "infrastructure", "unknown")}
+    # Conservative fold: unknown-kind failures always count as product.
+    product_effective = counts["product"] + counts["unknown"]
+    total_failures = sum(counts.values())
+
+    evals: list[RuleEvaluation] = []
+    blocking = product_effective
+    excluded_parts: list[str] = []
+    excluded_total = 0
+
+    for kind in _EXCLUDABLE_KINDS:
+        budget = kind_rules.get(kind)
+        count = counts[kind]
+        if not isinstance(budget, dict):
+            # No budget configured for this kind → counts in full.
+            blocking += count
+            continue
+        max_failures = int(budget.get("max_failures", 0) or 0)
+        within = count <= max_failures
+        if within:
+            excluded_total += count
+            if count:
+                excluded_parts.append(f"{count} {kind} failure(s) <= budget {max_failures}")
+        else:
+            blocking += count
+        evals.append(RuleEvaluation(
+            rule_id=f"kind_budget_{kind}",
+            rule_name=f"Failure-kind budget ({kind})",
+            rule_type="kind_budget",
+            passed=within,
+            action="INFO",  # budgets never escalate — they can only soften
+            message=(
+                f"{kind} failures: {count} (budget: {max_failures}) — "
+                "excluded from NO_GO trigger but still reported"
+                if within else
+                f"{kind} failures: {count} exceed budget {max_failures} — counted in full"
+            ),
+            actual_value=count,
+            threshold_value=max_failures,
+        ))
+
+    applied = False
+    counterfactual: str | None = None
+    if (
+        recommendation == "NO_GO"
+        and total_failures > 0
+        and excluded_total > 0
+        and blocking == 0
+    ):
+        # Hard rule: at most CONDITIONAL_GO — never GO.
+        recommendation = "CONDITIONAL_GO"
+        applied = True
+        counterfactual = (
+            "Would have been NO_GO; downgraded to CONDITIONAL_GO because "
+            + " and ".join(excluded_parts)
+            + f" (product failures: {product_effective}"
+            + (f", of which {counts['unknown']} unknown-kind counted as product" if counts["unknown"] else "")
+            + ")"
+        )
+        summary_message = counterfactual
+    elif recommendation == "NO_GO" and product_effective > 0:
+        summary_message = (
+            f"No downgrade: {product_effective} product failure(s) always count"
+            + (f" (includes {counts['unknown']} unknown-kind counted as product)" if counts["unknown"] else "")
+        )
+    else:
+        summary_message = "Failure-kind weighting evaluated — no downgrade applied"
+
+    breakdown = dict(counts)
+    evals.append(RuleEvaluation(
+        rule_id="kind_rules",
+        rule_name="Failure-kind weighting",
+        rule_type="kind_budget",
+        passed=True,
+        action="INFO",
+        message=summary_message,
+        actual_value=blocking,
+        threshold_value=None,
+    ))
+    return recommendation, evals, breakdown, applied, counterfactual
+
+
 async def evaluate_policy(
     project_id: uuid.UUID | str | None,
     dim_scores: dict[str, float],
@@ -191,6 +345,25 @@ async def evaluate_policy(
         hard_floor_factor=thresholds["pass_rate_hard_floor_factor"],
     )
 
+    # ── Kind-aware weighting (US-9.3, strictly opt-in) ────────────────────
+    # Applied to the BASE recommendation only, before rule escalation, so an
+    # explicit failing BLOCK rule below still forces NO_GO regardless of any
+    # kind-budget downgrade. Disabled/absent kind_rules → this whole branch
+    # is a no-op and the verdict path is identical to the pre-feature code.
+    kind_breakdown: dict | None = None
+    kind_rule_applied = False
+    kind_counterfactual: str | None = None
+    kind_evals: list[RuleEvaluation] = []
+    kind_rules = _extract_kind_rules(policy)
+    if kind_rules is not None:
+        (
+            recommendation,
+            kind_evals,
+            kind_breakdown,
+            kind_rule_applied,
+            kind_counterfactual,
+        ) = _apply_kind_rules(kind_rules, context, recommendation)
+
     # Evaluate each rule
     rule_evals: list[RuleEvaluation] = []
     for rule in rules:
@@ -199,6 +372,7 @@ async def evaluate_policy(
         if evaluator:
             evaluation = evaluator(rule, context, dim_scores)
             rule_evals.append(evaluation)
+    rule_evals.extend(kind_evals)
 
     # Escalate recommendation based on rule results
     overall_result = "PASS"
@@ -212,6 +386,17 @@ async def evaluate_policy(
                 if recommendation == "GO":
                     recommendation = "CONDITIONAL_GO"
 
+    # A failing BLOCK rule outranks the kind-budget downgrade (US-9.3): if it
+    # restored NO_GO, correct the trail so it doesn't claim a downgrade that
+    # didn't survive.
+    if kind_rule_applied and recommendation == "NO_GO":
+        kind_rule_applied = False
+        kind_counterfactual = (
+            "Failure-kind budgets were satisfied, but a failing BLOCK rule "
+            "keeps the verdict at NO_GO — kind weighting never bypasses "
+            "explicit policy rules."
+        )
+
     return PolicyEvaluationResult(
         policy_id=str(policy.id) if policy else None,
         policy_version=policy.version if policy else None,
@@ -223,6 +408,9 @@ async def evaluate_policy(
         effective_thresholds=thresholds,
         effective_weights=weights,
         evaluated_at=datetime.now(timezone.utc).isoformat(),
+        kind_breakdown=kind_breakdown,
+        kind_rule_applied=kind_rule_applied,
+        kind_counterfactual=kind_counterfactual,
     )
 
 

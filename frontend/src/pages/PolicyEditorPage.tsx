@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import {
   type PolicyDocument,
+  type PolicyKindBudget,
   type PolicyRule,
   type RuleEvaluation,
   type SimulateResponse,
@@ -11,6 +12,7 @@ import {
   DEFAULT_WEIGHTS,
   DEFAULT_PASS_RATE_BANDS,
   DEFAULT_HARD_CAPS,
+  DEFAULT_KIND_RULES,
   createPolicy,
   deactivatePolicy,
   publishPolicy,
@@ -44,8 +46,14 @@ function emptyDocument(): PolicyDocument {
     rules: [],
     pass_rate_bands: { ...DEFAULT_PASS_RATE_BANDS },
     hard_caps: { ...DEFAULT_HARD_CAPS },
+    kind_rules: { ...DEFAULT_KIND_RULES },
   };
 }
+
+const EXCLUDABLE_KINDS = [
+  { key: 'infrastructure', label: 'Infrastructure', hint: 'Environment, network, platform, runner failures' },
+  { key: 'test_code', label: 'Test code', hint: 'Broken scripts, bad fixtures, flaky test-side races' },
+] as const;
 
 export default function PolicyEditorPage() {
   const { policyId } = useParams<{ policyId: string }>();
@@ -408,6 +416,77 @@ export default function PolicyEditorPage() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Failure-Kind Weighting (opt-in, US-9.3) */}
+      <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
+        <div className="flex justify-between items-center">
+          <h2 className="text-sm font-semibold text-neutral-200">Failure-Kind Weighting</h2>
+          <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+            <input
+              type="checkbox"
+              checked={doc.kind_rules?.enabled ?? false}
+              onChange={e => setDoc(d => ({
+                ...d,
+                kind_rules: { ...(d.kind_rules ?? DEFAULT_KIND_RULES), enabled: e.target.checked },
+              }))}
+              disabled={!isDraft}
+            />
+            Enabled (opt-in)
+          </label>
+        </div>
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          Weight failure kinds differently in the gate verdict. Failure kinds are AI-classified
+          (derived from the failure-category classifier) — not ground truth. Infrastructure or
+          test-code failures within their budget are excluded from the NO-GO trigger but always
+          reported; exceeding a budget restores full counting. Product failures always count, and
+          unknown-kind failures count as product. A NO-GO can be downgraded at most to
+          CONDITIONAL-GO — never to GO. Disabled means verdicts are computed exactly as before.
+        </p>
+        {(doc.kind_rules?.enabled ?? false) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {EXCLUDABLE_KINDS.map(({ key, label, hint }) => {
+              const budget = doc.kind_rules?.[key] ?? null;
+              const setBudget = (next: PolicyKindBudget | null) => setDoc(d => ({
+                ...d,
+                kind_rules: { ...(d.kind_rules ?? DEFAULT_KIND_RULES), enabled: true, [key]: next },
+              }));
+              return (
+                <div key={key} className="bg-gray-900/50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={budget != null}
+                      onChange={e => setBudget(e.target.checked ? { max_failures: 5, downgrade_to: 'CONDITIONAL_GO' } : null)}
+                      disabled={!isDraft}
+                    />
+                    <span className="text-sm text-neutral-200 font-medium">{label} budget</span>
+                  </div>
+                  <p className="text-[10px] text-gray-600">{hint}. No budget = failures of this kind count in full.</p>
+                  {budget != null && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-gray-500">Max failures excused</label>
+                        <input type="number" step="1" min={0} value={budget.max_failures}
+                          onChange={e => setBudget({ ...budget, max_failures: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                          className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500">Downgrade NO-GO to</label>
+                        <select value={budget.downgrade_to}
+                          onChange={() => setBudget({ ...budget, downgrade_to: 'CONDITIONAL_GO' })}
+                          className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft}>
+                          <option value="CONDITIONAL_GO">CONDITIONAL_GO</option>
+                        </select>
+                        <p className="text-[10px] text-gray-600 mt-0.5">Never GO — hard rule.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Dimension Weights */}

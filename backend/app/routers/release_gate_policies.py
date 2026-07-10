@@ -278,6 +278,10 @@ async def simulate_policy(
         "flaky_count": snapshot.get("flaky_finding_count", 0),
         "open_defects": len(snapshot.get("open_defects_by_component", [])),
         "regression_test_count": snapshot.get("regression_test_count", 0),
+        # US-9.3 — kind breakdown frozen at decision time. Absent on
+        # pre-feature snapshots, in which case kind_rules policies simulate
+        # conservatively (no downgrade) and say so in the rule trail.
+        "failure_kind_counts": snapshot.get("failure_kind_counts"),
     }
 
     # Build a mock policy object for the evaluator

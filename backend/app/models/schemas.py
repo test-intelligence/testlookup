@@ -2955,6 +2955,35 @@ class PolicyHardCaps(BaseModel):
     max_new_failures_24h: int = Field(default=20, ge=0, description="New failures in last 24h allowed before downgrade")
 
 
+class PolicyKindBudget(BaseModel):
+    """Failure budget for one excludable failure kind (US-9.3).
+
+    ``max_failures`` is the count of failures of this kind the gate will
+    excuse from the NO_GO trigger. ``downgrade_to`` is deliberately a
+    single-value Literal: a NO_GO may be softened at most to CONDITIONAL_GO —
+    never to GO — so the schema itself makes the hard rule unrepresentable.
+    """
+    max_failures: int = Field(default=0, ge=0)
+    downgrade_to: Literal["CONDITIONAL_GO"] = "CONDITIONAL_GO"
+
+
+class PolicyKindRules(BaseModel):
+    """Opt-in failure-kind weighting for the release gate (US-9.3).
+
+    STRICTLY OPT-IN: ``enabled`` defaults to False and the evaluator treats
+    a disabled/absent block as byte-identical to today's behaviour (pinned by
+    ``tests/test_kind_gate_policy.py``). Kinds come from the derived triad in
+    ``app/services/failure_kind.py`` (AI-classified — never ground truth).
+
+    Only ``infrastructure`` and ``test_code`` may carry budgets. ``product``
+    failures always count and ``unknown`` failures are conservatively counted
+    as product — neither is representable here on purpose.
+    """
+    enabled: bool = False
+    infrastructure: Optional[PolicyKindBudget] = None
+    test_code: Optional[PolicyKindBudget] = None
+
+
 class PolicyDocument(BaseModel):
     """The full policy rule document stored as JSON in release_gate_policies.rules."""
     schema_version: int = 1
@@ -2965,6 +2994,9 @@ class PolicyDocument(BaseModel):
     # default these on read via Pydantic, so no migration is required.
     pass_rate_bands: PolicyPassRateBands = Field(default_factory=PolicyPassRateBands)
     hard_caps: PolicyHardCaps = Field(default_factory=PolicyHardCaps)
+    # Kind-aware gating (US-9.3) — added 2026-07-10. Defaults to disabled on
+    # read for existing rows via Pydantic, so no migration is required.
+    kind_rules: PolicyKindRules = Field(default_factory=PolicyKindRules)
 
 
 class ReleaseGatePolicyCreate(BaseModel):
