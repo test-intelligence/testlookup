@@ -3,7 +3,7 @@ import type {
   DefectIntakePayload,
   DefectIntakeResponse,
   DefectResponse,
-  FailureCategoryItem,
+  FailureCategoriesResponse,
   FlakyTestItem,
   SuiteDetailResponse,
   TopFailingItem,
@@ -21,7 +21,7 @@ export const analyticsService = {
     }),
 
   getFailureCategories: (projectId: string | null, days = 30, suiteName?: string | null) =>
-    getData<{ items: FailureCategoryItem[] }>('/api/v1/analytics/failure-categories', {
+    getData<FailureCategoriesResponse>('/api/v1/analytics/failure-categories', {
       params: { ...projectParam(projectId), days, ...(suiteName ? { suite_name: suiteName } : {}) },
     }),
 

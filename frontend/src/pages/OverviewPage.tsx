@@ -8,7 +8,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
-import { useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
+import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks/useMetrics'
 import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -862,6 +862,10 @@ export default function OverviewPage() {
   const suiteFilter = selectedSuite || null
   const { data: summary, isLoading: summaryLoading } = useDashboardSummary(days, suiteFilter)
   const { data: trends,  isLoading: trendsLoading  } = useTrendData(days, suiteFilter)
+  // Failure-kind triad (US-9.2): the by-kind aggregation ships on the same
+  // failure-categories payload /failures uses, so this KPI is one SWR-cached
+  // fetch — no bespoke endpoint.
+  const { data: failureCategories } = useFailureCategories(days, suiteFilter)
   const { data: recentRuns } = useRuns({ page: 1, size: 100, days })
   const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
   const suiteOptions = useMemo(() => collectSuiteOptions(recentRunItems), [recentRunItems])
@@ -881,6 +885,13 @@ export default function OverviewPage() {
   const newFailures = metricNumber(summary?.new_failures_24h)
   const newFailuresDelta = summary?.new_failures_24h?.trend ?? 0
   const avgDurationMs = summary?.avg_duration_ms?.value as number | undefined
+
+  // Infra-caused failure share (AI-classified failure-kind triad, US-9.2).
+  // null when the window has no analyzed failures — the KPI renders "—".
+  const byKind = (failureCategories as { by_kind?: { kind: string; count: number }[] } | undefined)?.by_kind ?? []
+  const kindTotal = byKind.reduce((s, k) => s + k.count, 0)
+  const infraKindCount = byKind.find(k => k.kind === 'infrastructure')?.count ?? 0
+  const infraPct = kindTotal > 0 ? Math.round((infraKindCount / kindTotal) * 100) : null
 
   const verdict = mapReadinessToVerdict(summary?.release_readiness_band, summary?.release_readiness, totalExecutions)
   const generatedLabel = totalExecutions > 0 ? 'just now' : `awaiting data · last ${days} days`
@@ -910,7 +921,7 @@ export default function OverviewPage() {
   const activeWidgets = new Set(analyticsView.widgetIds)
   const kpiOrder = [
     'total_executions_kpi', 'avg_pass_rate_kpi', 'active_defects_kpi',
-    'flaky_tests_kpi', 'new_failures_kpi', 'avg_duration_kpi',
+    'flaky_tests_kpi', 'new_failures_kpi', 'infra_failures_kpi', 'avg_duration_kpi',
   ]
   const kpiVisible = kpiOrder.filter((id) => activeWidgets.has(id))
 
@@ -1121,6 +1132,20 @@ export default function OverviewPage() {
                 series={failedSeries.length >= 2 ? failedSeries : undefined}
                 emptyMsg={`${days}d · no failures recorded`}
                 delta={deltaFromMetric(summary?.new_failures_24h)}
+                linkTo="/failures"
+                linkLabel="View failures"
+              />
+            )}
+            {activeWidgets.has('infra_failures_kpi') && (
+              <KpiCard
+                label="Infra-caused failures"
+                value={infraPct == null ? '—' : `${infraPct}`}
+                unit={infraPct == null ? undefined : '%'}
+                tone={infraPct == null ? 'neutral' : infraPct === 0 ? 'good' : infraPct >= 30 ? 'bad' : 'warn'}
+                gradId="kpi-infra-kind"
+                emptyMsg={infraPct == null
+                  ? `${days}d · no analyzed failures`
+                  : `AI-classified · ${infraKindCount} of ${kindTotal} failure${kindTotal === 1 ? '' : 's'}`}
                 linkTo="/failures"
                 linkLabel="View failures"
               />

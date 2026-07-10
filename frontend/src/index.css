@@ -212,6 +212,13 @@
     --cat-infra:     var(--color-purple);
     --cat-unknown:   var(--color-text-muted);
 
+    /* Failure-kind triad (US-9.2): Product / Test code / Infrastructure /
+       Unknown — aliases over existing tokens, no new hues. */
+    --kind-product:   var(--status-failed);
+    --kind-test-code: var(--color-purple);
+    --kind-infra:     var(--status-broken);
+    --kind-unknown:   var(--color-text-muted);
+
     /* Compute-graph (/agents Direction-C) surfaces + graph hues */
     --bg-3:          var(--color-bg-hover);
     --border-strong: var(--color-border-light);

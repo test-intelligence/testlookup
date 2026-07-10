@@ -703,6 +703,132 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
   })
 })
 
+describe('FailureAnalysisPage — failure-kind triad (US-9.2)', () => {
+  beforeEach(() => {
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+    vi.clearAllMocks()
+  })
+
+  /** Seed a window with product + infrastructure failures and a by-kind
+   *  aggregation (the backend ships it on the failure-categories payload). */
+  async function seedKindScenario() {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [
+          { category: 'PRODUCT_BUG', count: 5, kind: 'product' },
+          { category: 'INFRASTRUCTURE', count: 2, kind: 'infrastructure' },
+        ],
+        by_kind: [
+          { kind: 'product', count: 5 },
+          { kind: 'test_code', count: 0 },
+          { kind: 'infrastructure', count: 3 },  // includes 1 BROKEN-nudged row
+          { kind: 'unknown', count: 0 },
+        ],
+      },
+      isLoading: false,
+    })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ test_name: 'checkout_flow', fail_count: 5, failure_category: 'PRODUCT_BUG', failure_kind: 'product' }] },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-07-01', passed: 12, failed: 8, skipped: 0, broken: 0, total: 20, pass_rate: 60 }] },
+      isLoading: false,
+    })
+  }
+
+  function renderPage() {
+    return render(
+      <MemoryRouter initialEntries={['/failure-analysis']}>
+        <Routes>
+          <Route path="/failure-analysis" element={<FailureAnalysisPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('renders the kind filter chips with by-kind counts and the AI-classified provenance copy', async () => {
+    await seedKindScenario()
+    renderPage()
+
+    const group = await screen.findByRole('group', { name: /Filter by failure kind \(AI-classified\)/i })
+    // All four kinds stay visible (zero counts included) + the All chip
+    // (5 product + 3 infrastructure = 8 analyzed failures).
+    const allChip = within(group).getByRole('button', { name: /All\s*8/i })
+    expect(allChip).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: /Product\s*5/i })).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: /Test code\s*0/i })).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: /Infrastructure\s*3/i })).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: /Unknown\s*0/i })).toBeInTheDocument()
+    // Provenance copy — kinds are AI-classified, never ground truth.
+    expect(within(group).getByText('AI-classified')).toBeInTheDocument()
+    // "All" starts active.
+    expect(allChip).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('filters the category distribution card when a kind chip is selected', async () => {
+    await seedKindScenario()
+    renderPage()
+
+    const group = await screen.findByRole('group', { name: /Filter by failure kind/i })
+    fireEvent.click(within(group).getByRole('button', { name: /Infrastructure\s*3/i }))
+
+    // Card copy flips to the filtered wording…
+    expect(
+      await screen.findByText(/filtered to AI-classified/i),
+    ).toBeInTheDocument()
+    // …and the card total now reflects only the infrastructure category rows
+    // (2 categorised INFRASTRUCTURE failures; the BROKEN-nudged row has no
+    // category item, which is exactly the category-only fidelity limit).
+    expect(screen.getByText(/^2 failures$/)).toBeInTheDocument()
+
+    // Switching back to All restores the full distribution total (7).
+    fireEvent.click(within(group).getByRole('button', { name: /All\s*8/i }))
+    expect(screen.getByText(/^7 failures$/)).toBeInTheDocument()
+  })
+
+  it("shows a color-coded kind badge on the What's-failing card for the headline test", async () => {
+    await seedKindScenario()
+    renderPage()
+
+    await screen.findAllByText('checkout_flow')
+    // The badge carries the AI-classified provenance in its tooltip.
+    const badges = screen.getAllByTitle(/AI-classified failure kind: Product/i)
+    expect(badges.length).toBeGreaterThan(0)
+  })
+
+  it('derives chip counts client-side when an older payload has no by_kind block', async () => {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    // No ``by_kind`` and no per-item ``kind`` — the page falls back to the
+    // category → kind mirror (AUTOMATION_DEFECT → test_code).
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ category: 'AUTOMATION_DEFECT', count: 4 }] },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-07-01', passed: 6, failed: 4, skipped: 0, broken: 0, total: 10, pass_rate: 60 }] },
+      isLoading: false,
+    })
+
+    renderPage()
+
+    const group = await screen.findByRole('group', { name: /Filter by failure kind/i })
+    expect(within(group).getByRole('button', { name: /Test code\s*4/i })).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: /Product\s*0/i })).toBeInTheDocument()
+  })
+})
+
 describe('buildFailuresCsv', () => {
   // Pure-function tests — no DOM, no render. Pin the CSV shape so a
   // future tweak (extra column, reordered section) doesn't silently

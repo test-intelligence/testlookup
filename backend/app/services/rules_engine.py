@@ -48,10 +48,30 @@ _PATTERNS: list[tuple[list[str], str, str, int]] = [
         70,
     ),
     (
-        ["dns resolution", "name resolution", "unknown host", "getaddrinfo"],
+        ["dns resolution", "name resolution", "unknown host", "getaddrinfo", "eai_again"],
         "INFRASTRUCTURE",
         "DNS resolution failure. Check DNS configuration and network connectivity.",
         75,
+    ),
+    # US-9.4 infra rule-pack additions — classic runner/host exhaustion and
+    # unreachable-network shapes that previously fell through to UNKNOWN.
+    (
+        ["no space left on device", "disk quota exceeded", "enospc"],
+        "INFRASTRUCTURE",
+        "Disk space exhausted on the runner/host (ENOSPC). Clean workspace/artifacts and check volume sizing.",
+        75,
+    ),
+    (
+        ["network is unreachable", "host unreachable", "ehostunreach", "enetunreach", "no route to host"],
+        "INFRASTRUCTURE",
+        "Network/host unreachable. Check routing, firewall rules, and VPN/proxy configuration.",
+        75,
+    ),
+    (
+        ["too many open files", "emfile", "cannot allocate memory", "resource temporarily unavailable"],
+        "INFRASTRUCTURE",
+        "OS resource exhaustion (file descriptors / memory / process limits). Check ulimits and runner sizing.",
+        70,
     ),
     (
         ["certificate", "ssl", "tls", "handshake failure"],

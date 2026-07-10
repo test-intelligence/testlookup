@@ -74,9 +74,12 @@ import {
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type {
-  FailureCategoryItem, FlakyTestItem, TopFailingItem,
+  FailureCategoryItem, FailureKindCount, FlakyTestItem, TopFailingItem,
 } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
+import {
+  FAILURE_KIND_DEFS, failureKindOf, kindDef, type FailureKind,
+} from '@/utils/failureKind'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
@@ -990,6 +993,12 @@ function WhatsFailingCard({
    *  quarantine proposals need the test's fingerprint + a project scope. */
   muteDisabledReason?: string | null
 }) {
+  // AI-classified failure kind of the headline test (US-9.2). Prefer the
+  // server-derived value; fall back to the category mirror for older
+  // cached payloads.
+  const topFailingKind = topFailingTest
+    ? (topFailingTest.failure_kind ?? failureKindOf(topFailingTest.failure_category))
+    : null
   // Aggregate failed-run count from trend (which reads test_runs.failed_tests
   // directly). A suite can have failed run aggregates (pass rate < 100%)
   // while test_cases rows haven't landed — the live-stream Redis-buffer gap
@@ -1045,6 +1054,7 @@ function WhatsFailingCard({
       title="What's failing"
       rightSlot={
         <div className="flex items-center gap-2">
+          {topFailingKind && <FailureKindBadge kind={topFailingKind} />}
           <Pill tone="bad">Hard regression</Pill>
           <Pill tone="neutral">Not flaky</Pill>
         </div>
@@ -1153,21 +1163,131 @@ function WhatsFailingCard({
   )
 }
 
+// ── Failure kind (US-9.2) ─────────────────────────────────────────────────
+// The triad — product / test_code / infrastructure (/ unknown) — is the
+// AI-derived triage axis from backend/app/services/failure_kind.py. It is
+// a classification, not ground truth, so every surface carries the
+// "AI-classified" provenance copy.
+
+/** Compact color-coded pill for a failure kind. Tokens come from the
+ *  existing palette (--kind-* aliases in index.css — no new hex). */
+export function FailureKindBadge({ kind, compact }: { kind: string | null | undefined; compact?: boolean }) {
+  const d = kindDef(kind)
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full font-semibold uppercase whitespace-nowrap"
+      style={{
+        fontSize: compact ? 9.5 : 10,
+        letterSpacing: 'var(--tracking-wide)',
+        padding: compact ? '1px 6px' : '2px 8px',
+        background: `color-mix(in srgb, ${d.color} 14%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${d.color} 35%, transparent)`,
+        color: d.color,
+      }}
+      title={`AI-classified failure kind: ${d.label} — ${d.desc}`}
+    >
+      <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: d.color }} />
+      {d.label}
+    </span>
+  )
+}
+
+/** Chip row that filters the failure surfaces below by AI-classified kind.
+ *  Counts come from the backend's by-kind aggregation (which applies the
+ *  BROKEN-status nudge); zero-count kinds stay visible so the triad reads
+ *  as a stable mental model across windows. */
+function KindFilterChips({
+  byKind, value, onChange,
+}: {
+  byKind: FailureKindCount[]
+  value: FailureKind | 'all'
+  onChange: (v: FailureKind | 'all') => void
+}) {
+  const counts = new Map(byKind.map(k => [k.kind, k.count]))
+  const total = byKind.reduce((s, k) => s + k.count, 0)
+  const chips: { id: FailureKind | 'all'; label: string; count: number; color?: string }[] = [
+    { id: 'all', label: 'All', count: total },
+    ...FAILURE_KIND_DEFS.map(d => ({
+      id: d.id, label: d.label, count: counts.get(d.id) ?? 0, color: d.color,
+    })),
+  ]
+  return (
+    <div
+      role="group"
+      aria-label="Filter by failure kind (AI-classified)"
+      className="flex items-center gap-2 flex-wrap rounded-xl"
+      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '10px 16px', marginBottom: 14 }}
+    >
+      <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        Failure kind
+      </span>
+      <span
+        className="text-[10px] text-[var(--color-text-faint)]"
+        title="Kinds are derived by the failure analyzer from its category verdict and the failure shape — corrections feed the training loop."
+      >
+        AI-classified
+      </span>
+      <span aria-hidden className="w-px h-4 mx-1" style={{ background: 'var(--color-border)' }} />
+      {chips.map(chip => {
+        const active = value === chip.id
+        return (
+          <button
+            key={chip.id}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(chip.id)}
+            className={clsx(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium border transition-colors',
+              active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+            )}
+            style={{
+              background: active
+                ? (chip.color ? `color-mix(in srgb, ${chip.color} 14%, transparent)` : 'var(--color-bg-hover)')
+                : 'transparent',
+              borderColor: active
+                ? (chip.color ? `color-mix(in srgb, ${chip.color} 40%, transparent)` : 'var(--color-border-light)')
+                : 'var(--color-border)',
+            }}
+          >
+            {chip.color && (
+              <span aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: chip.color }} />
+            )}
+            {chip.label}
+            <span className="tabular-nums text-[11px]" style={{ color: active && chip.color ? chip.color : 'var(--color-text-faint)' }}>
+              {chip.count}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── Failure category card ─────────────────────────────────────────────────
-const CANONICAL_CATEGORIES: { id: string; label: string; color: string; matcher: RegExp }[] = [
-  { id: 'unknown',   label: 'Unknown',           color: 'var(--cat-unknown)',   matcher: /unknown|unclassified/i },
-  { id: 'assertion', label: 'Assertion mismatch', color: 'var(--cat-assertion)', matcher: /assert/i },
-  { id: 'timeout',   label: 'Timeout',            color: 'var(--cat-timeout)',   matcher: /timeout|timed.?out/i },
-  { id: 'network',   label: 'Network / 5xx',      color: 'var(--cat-network)',   matcher: /network|http|5\d\d/i },
-  { id: 'infra',     label: 'Infra / runner',     color: 'var(--cat-infra)',     matcher: /infra|runner|ci|env/i },
+// ``kind`` maps each display bucket onto the failure-kind triad so the rows
+// can carry the same color-coded badge as the filter chips. The matchers
+// cover BOTH the backend FailureCategory enum vocabulary (PRODUCT_BUG /
+// TEST_DATA / AUTOMATION_DEFECT / FLAKY / INFRASTRUCTURE / UNKNOWN) and the
+// looser historical strings older payloads carried — previously the enum
+// values (except INFRASTRUCTURE/UNKNOWN) all fell through to the Unknown
+// bucket, which made the card disagree with the kind chips.
+const CANONICAL_CATEGORIES: { id: string; label: string; color: string; matcher: RegExp; kind: FailureKind }[] = [
+  { id: 'unknown',   label: 'Unknown',            color: 'var(--cat-unknown)',    matcher: /unknown|unclassified/i, kind: 'unknown' },
+  { id: 'assertion', label: 'Assertion / product', color: 'var(--cat-assertion)',  matcher: /assert|product/i,       kind: 'product' },
+  { id: 'test_code', label: 'Test code / data',    color: 'var(--kind-test-code)', matcher: /automation|test.?data|test.?code|script|fixture|flaky|intermittent/i, kind: 'test_code' },
+  { id: 'timeout',   label: 'Timeout',             color: 'var(--cat-timeout)',    matcher: /timeout|timed.?out/i,   kind: 'infrastructure' },
+  { id: 'network',   label: 'Network / 5xx',       color: 'var(--cat-network)',    matcher: /network|http|5\d\d/i,   kind: 'infrastructure' },
+  { id: 'infra',     label: 'Infra / runner',      color: 'var(--cat-infra)',      matcher: /infra|runner|ci|env/i,  kind: 'infrastructure' },
 ]
 
-function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect }: {
+function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect, kindFilter = 'all' }: {
   categories: FailureCategoryItem[]
   totalFailures: number
   uncategorizedPct: number
   /** Opens the correct-classification dialog for the top failing test. */
   onCorrect: () => void
+  /** Active failure-kind filter — 'all' shows everything (US-9.2). */
+  kindFilter?: FailureKind | 'all'
 }) {
   const buckets = new Map<string, number>()
   for (const c of categories) {
@@ -1175,13 +1295,24 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
     const id = cat?.id ?? 'unknown'
     buckets.set(id, (buckets.get(id) ?? 0) + c.count)
   }
-  const total = Array.from(buckets.values()).reduce((s, n) => s + n, 0) || totalFailures || 0
+  const total = Array.from(buckets.values()).reduce((s, n) => s + n, 0)
+    || (kindFilter === 'all' ? totalFailures : 0)
 
   return (
-    <CardShell title="Failure category distribution" rightSlot={<span>{total} failure{total === 1 ? '' : 's'}</span>}>
+    <CardShell
+      title="Failure category distribution"
+      rightSlot={
+        <div className="flex items-center gap-2">
+          {kindFilter !== 'all' && <FailureKindBadge kind={kindFilter} compact />}
+          <span>{total} failure{total === 1 ? '' : 's'}</span>
+        </div>
+      }
+    >
       <div className="px-4 py-3.5">
         <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
-          Categories computed by the failure-analyzer. Empty buckets are kept visible — the page
+          Categories computed by the failure-analyzer{kindFilter !== 'all' && (
+            <> — filtered to AI-classified <em>{kindDef(kindFilter).label.toLowerCase()}</em> failures</>
+          )}. Empty buckets are kept visible — the page
           tells you what didn't happen, not just what did.
         </p>
 
@@ -1216,7 +1347,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                 aria-label={`${c.label}: ${pct}% (${count} of ${total})`}
                 className={clsx('grid items-center gap-3', i < arr.length - 1 && 'pb-2 mb-2')}
                 style={{
-                  gridTemplateColumns: '160px 1fr 56px 56px',
+                  gridTemplateColumns: '220px 1fr 56px 56px',
                   borderBottom: i < arr.length - 1 ? '1px dashed var(--color-border)' : '0',
                   paddingTop: 8,
                 }}
@@ -1224,6 +1355,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                 <div className="flex items-center gap-2 min-w-0 text-[12.5px] text-[var(--color-text)]">
                   <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: c.color }} />
                   <span className="truncate">{c.label}</span>
+                  <FailureKindBadge kind={c.kind} compact />
                 </div>
                 <div className="relative h-3.5 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
                   <i
@@ -2065,6 +2197,31 @@ export default function FailureAnalysisPage() {
   const topFailing = useMemo<TopFailingItem[]>(() => normaliseList<TopFailingItem>(topData), [topData])
   const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
 
+  // ── Failure-kind triad (US-9.2) ──────────────────────────────────────
+  // Chip filter over the AI-classified kind. The by-kind aggregation comes
+  // from the backend (it applies the BROKEN-status nudge); when an older
+  // cached payload lacks it, derive category-only counts client-side.
+  const [kindFilter, setKindFilter] = useState<FailureKind | 'all'>('all')
+  const byKind = useMemo<FailureKindCount[]>(() => {
+    const raw = categoryData as { by_kind?: FailureKindCount[] } | undefined
+    if (raw?.by_kind && Array.isArray(raw.by_kind)) return raw.by_kind
+    const counter = new Map<FailureKind, number>()
+    for (const c of categories) {
+      const k = (c.kind as FailureKind | undefined) ?? failureKindOf(c.category)
+      counter.set(k, (counter.get(k) ?? 0) + c.count)
+    }
+    return FAILURE_KIND_DEFS.map(d => ({ kind: d.id, count: counter.get(d.id) ?? 0 }))
+  }, [categoryData, categories])
+  // Category items narrowed to the selected kind. Scoped to the category
+  // distribution card — the verdict / stability model stays computed over
+  // the full window so a filter can't flip the page's headline verdict.
+  const kindFilteredCategories = useMemo<FailureCategoryItem[]>(() => {
+    if (kindFilter === 'all') return categories
+    return categories.filter(
+      c => ((c.kind as FailureKind | undefined) ?? failureKindOf(c.category)) === kindFilter,
+    )
+  }, [categories, kindFilter])
+
   // Comparison stats — only computed when ``comparing`` is true. We
   // split the double-window trend into "prior" (older half) and
   // "current" (newer half) and aggregate each. Trend points are
@@ -2538,6 +2695,8 @@ export default function FailureAnalysisPage() {
         </section>
       )}
 
+      <KindFilterChips byKind={byKind} value={kindFilter} onChange={setKindFilter} />
+
       <div className="grid gap-3.5 body-grid" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
           <WhatsFailingCard
@@ -2548,10 +2707,11 @@ export default function FailureAnalysisPage() {
             muteDisabledReason={muteDisabledReason}
           />
           <FailureCategoryCard
-            categories={categories}
+            categories={kindFilteredCategories}
             totalFailures={model.failedRuns}
             uncategorizedPct={model.uncategorizedPct}
             onCorrect={openCorrection}
+            kindFilter={kindFilter}
           />
           {comparing && (
             comparison ? (

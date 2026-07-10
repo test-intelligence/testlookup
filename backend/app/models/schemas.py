@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 from app.models.postgres import (
     FailureCategory,
@@ -235,6 +235,24 @@ class TestCaseSummary(BaseModel):
     assigned_to_user_id: Optional[uuid.UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def failure_kind(self) -> Optional[str]:
+        """Derived failure-kind triad (US-9.1): product / test_code /
+        infrastructure / unknown. AI-derived from the stored
+        ``failure_category`` + the FAILED-vs-BROKEN status distinction —
+        see ``app/services/failure_kind.py`` for the mapping rationale.
+        None for non-failing rows (a kind only makes sense for failures).
+        """
+        status = getattr(self.status, "value", self.status)
+        if status not in (TestStatus.FAILED.value, TestStatus.BROKEN.value):
+            return None
+        # Lazy import: keeps the models → services dependency one-way at
+        # import time (services import this module heavily).
+        from app.services.failure_kind import failure_kind
+
+        return failure_kind(self.failure_category, status)
 
 
 class TestCaseDetail(TestCaseSummary):

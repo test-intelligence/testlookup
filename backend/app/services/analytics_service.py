@@ -325,10 +325,14 @@ async def failure_categories(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
     suite_filter = _add_suite_param(params, suite_name)
+    # Grouped by (category, status) so the derived failure-kind triad
+    # (US-9.1) can apply its BROKEN nudge; ``items`` keeps its historical
+    # per-category shape by re-aggregating in Python (rows are few).
     query = text(
         f"""
         SELECT
             COALESCE(tc.failure_category, 'UNKNOWN') AS category,
+            tc.status AS status,
             COUNT(*) AS count
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id
@@ -336,12 +340,36 @@ async def failure_categories(
           AND tc.created_at >= :period_start
           {project_filter}
           {suite_filter}
-        GROUP BY category
+        GROUP BY category, tc.status
         ORDER BY count DESC
         """
     )
     result = await db.execute(query, params)
-    return {"items": [dict(row._mapping) for row in result.fetchall()], "period_days": days}
+    raw_rows = [dict(row._mapping) for row in result.fetchall()]
+
+    from app.services.failure_kind import failure_kind, kind_counts
+
+    # Historical per-category items, with the derived kind attached per
+    # item. Item-level kind is category-only — the BROKEN nudge needs a
+    # per-row status, which a category aggregate no longer has.
+    by_category: dict[str, int] = {}
+    for row in raw_rows:
+        by_category[row["category"]] = by_category.get(row["category"], 0) + row["count"]
+    items = [
+        {
+            "category": category,
+            "count": count,
+            "kind": failure_kind(category, None),
+        }
+        for category, count in sorted(by_category.items(), key=lambda kv: -kv[1])
+    ]
+
+    # Parallel by-kind aggregation (product / test_code / infrastructure /
+    # unknown) — AI-derived, zero counts included for stable UI chips.
+    by_kind = kind_counts(
+        (row["category"], row["status"], row["count"]) for row in raw_rows
+    )
+    return {"items": items, "by_kind": by_kind, "period_days": days}
 
 
 async def top_failing_tests(
@@ -380,6 +408,14 @@ async def top_failing_tests(
     )
     result = await db.execute(query, params)
     items = [dict(row._mapping) for row in result.fetchall()]
+
+    # Derived failure kind (US-9.1). Category-only fidelity: this query
+    # aggregates per fingerprint (no per-row status survives MAX()), so the
+    # BROKEN nudge cannot apply here — uncategorised rows stay "unknown".
+    from app.services.failure_kind import failure_kind
+
+    for i in items:
+        i["failure_kind"] = failure_kind(i.get("failure_category"), None)
 
     # Granular enrichment (Phase 5): FAILURE LOCATION — the first FAILED/BROKEN
     # step name for each failing test, read from the LATEST-RUN-ONLY snapshot

@@ -46,6 +46,26 @@ export interface FlakyTestItem {
 export interface FailureCategoryItem {
   category: string
   count: number
+  /**
+   * Derived failure-kind triad (US-9.1): 'product' | 'test_code' |
+   * 'infrastructure' | 'unknown'. AI-derived from the category — see
+   * backend/app/services/failure_kind.py (frontend mirror in
+   * utils/failureKind.ts).
+   */
+  kind?: string
+}
+
+/** One bucket of the by-kind aggregation served alongside category items. */
+export interface FailureKindCount {
+  kind: string
+  count: number
+}
+
+export interface FailureCategoriesResponse {
+  items: FailureCategoryItem[]
+  /** Parallel AI-derived kind aggregation — zero counts included. */
+  by_kind?: FailureKindCount[]
+  period_days?: number
 }
 
 export interface TopFailingItem {
@@ -64,6 +84,11 @@ export interface TopFailingItem {
   class_name?: string | null
   /** AI-resolved failure category (PRODUCT_BUG / INFRASTRUCTURE / FLAKY / …). */
   failure_category?: string | null
+  /**
+   * Derived failure-kind triad (US-9.1), category-only fidelity (the
+   * BROKEN-status nudge can't apply to fingerprint aggregates).
+   */
+  failure_kind?: string | null
   /** ISO timestamp of the most recent failure in the window. */
   last_failed?: string | null
   /**
