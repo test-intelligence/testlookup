@@ -11,13 +11,16 @@ GET  /api/v1/training/status             — model registry + pending example co
 GET  /api/v1/projects/{project_id}/analyses/lookup — latest analysis_id for a
      test fingerprint (US-2.4; lives on ``lookup_router`` so the
      ``require_project_access`` guard applies to the {project_id} scope)
+POST /api/v1/projects/{project_id}/fix-outcomes — record a merged/reverted fix
+     outcome for a fingerprint as an AI-F1 ``human_indirect`` training signal
+     (Agentic plan AI-5; the MCP ``record_fix_outcome`` tool's endpoint)
 """
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_project_access, require_role
@@ -52,6 +55,19 @@ class PromoteModelRequest(BaseModel):
     model_name: str
     eval_accuracy: Optional[float] = None
     baseline_accuracy: Optional[float] = None
+
+
+class FixOutcomeRequest(BaseModel):
+    """AI-5: outcome of a fix informed by TestLookup's diagnosis.
+
+    ``outcome`` is a closed vocabulary validated here (the values map onto
+    FeedbackRating in the service); ``fingerprint`` is the stable test
+    identity (sha256(class::test)[:16]) the analytics surface uses.
+    """
+    fingerprint: str = Field(..., min_length=1, max_length=64)
+    outcome: Literal["fixed", "not_fixed", "reverted"]
+    reference: Optional[str] = Field(default=None, max_length=500)
+    comment: Optional[str] = Field(default=None, max_length=4000)
 
 
 class AnalysisLookupResponse(BaseModel):
@@ -119,6 +135,36 @@ async def lookup_latest_analysis(
     if found is None:
         return AnalysisLookupResponse()
     return AnalysisLookupResponse(**found)
+
+
+@lookup_router.post("/{project_id}/fix-outcomes", status_code=201)
+async def record_fix_outcome(
+    project_id: uuid.UUID,
+    body: FixOutcomeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+):
+    """Record a fix outcome for a fingerprint (Agentic plan AI-5).
+
+    Writes an ``ai_feedback`` row with ``source="fix_outcome"`` against the
+    latest analysis for the (project, fingerprint) pair — the AI-F1 label
+    system maps that source into the ``human_indirect`` provenance bucket.
+    404 when the fingerprint has never been analysed (nothing to grade).
+    Project-scoped via ``require_project_access`` (authorization ratchet);
+    any active project member may record an outcome, matching the feedback
+    endpoints above.
+    """
+    result = await feedback_service.record_fix_outcome(
+        db,
+        project_id,
+        fingerprint=body.fingerprint,
+        outcome=body.outcome,
+        reference=body.reference,
+        comment=body.comment,
+        current_user=current_user,
+    )
+    await db.commit()
+    return result
 
 
 @router.get("/feedback/stats")

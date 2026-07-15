@@ -1,6 +1,6 @@
 # Agent cookbook
 
-Recipes for driving TestLookup from an AI agent — Claude Code, Claude Desktop, Cursor, or any MCP-capable client — through the [MCP server](cli-sdk-mcp.md#the-mcp-server). The server exposes **58 tools** covering both the read path (runs, failures, flakiness, release gates) and, new in US-14.1, the **write path**: an agent can now complete a triage loop end-to-end — investigate a failure, correct a wrong AI classification, propose a quarantine, file the Jira ticket, and re-route the failure to the right engineer.
+Recipes for driving TestLookup from an AI agent — Claude Code, Claude Desktop, Cursor, or any MCP-capable client — through the [MCP server](cli-sdk-mcp.md#the-mcp-server). The server exposes **62 tools** covering the read path (runs, failures, flakiness, release gates), the US-14.1 **write path** — an agent can complete a triage loop end-to-end: investigate a failure, correct a wrong AI classification, propose a quarantine, file the Jira ticket, and re-route the failure to the right engineer — and, new in the agentic plan's AI-5, the **Investigator agent** (start/poll shadow-mode investigations) plus the **fix-outcome learning loop** (`record_fix_outcome`) that lets a coding agent's merged fix teach the classifier.
 
 Everything here is **local-first**: the MCP server talks to *your* TestLookup backend on *your* network. Your test data never leaves your infrastructure — the recipes work fully offline against a default `AI_OFFLINE_MODE=true` deployment with no LLM configured at all (the agent on your side does the reasoning; TestLookup supplies the data and the actions).
 
@@ -139,6 +139,38 @@ The MCP server holds **no privileges of its own** — every tool call becomes a 
 6. `get_transition_policy` → `set_transition_policy(project_id, enabled_events=[..., "test.quarantine_stale", "test.ready_to_unquarantine"])` — so next week's review starts from notifications instead of a manual sweep.
 
 **Outcome:** recovered tests back in rotation, stale quarantines escalated with tickets, and the team subscribed to the lifecycle events that keep the debt visible. Background: [Flaky tests & quarantine](flaky-tests.md).
+
+## Recipe 6 — Investigate a regression end-to-end
+
+> **Prompt:** "Run #612 went red after the 14:20 deploy. Run the Investigator on it, tell me what it concludes, and act on the verdict — but show me before you change anything."
+
+**What fires:**
+
+1. `start_investigation(run_id)` — launches the shadow-mode hypothesis-loop Investigator. The tool's failure modes are answers, not errors: a **409** means one is already running (its id is in the detail — poll that instead), a **403** means the project's agent policy has the Investigator disabled (a QA Lead can enable it), a **429** means today's investigation budget is spent.
+2. Poll `get_investigation(investigation_id)` until the status is terminal — you get the five hypothesis boards (infra / commit onset / environment drift / known-flaky / regression) filling in with confidence scores and evidence as they are weighed.
+3. Read the verdict: `primary_cause`, `confidence`, a narrative, and `recommended_actions`. The `testlookup://runs/{run_id}/investigation` resource carries the same detail as passive context for follow-up questions.
+4. **The Investigator never acts — you do**, via the existing write tools, with the human confirming:
+   - verdict `known_flaky` → `propose_quarantine` with the investigation's evidence as the reason;
+   - verdict `regression` → `create_defect(..., dry_run=True)` for the human to approve, then `assign_failure` to the right owner;
+   - verdict `infra`/`environment` → `correct_classification` on any failure the fast path mislabelled as a product bug.
+5. `list_investigations(project_id)` — the project's recent investigations, for "did we already investigate this yesterday?" checks (the full governance ledger lives in the UI's agent pages).
+
+**Outcome:** a budgeted, auditable diagnosis (every investigation is logged in the agent-runs ledger with its prompt versions and spend) and human-approved actions taken on it — the agent boundary stays exactly at the shadow line.
+
+## Recipe 7 — Fix a flaky test and close the loop
+
+> **Prompt:** "Use the `fix_this_flaky_test` prompt for fingerprint `a1b2c3d4e5f60718` in *payments-service* — I want it actually fixed, not parked."
+
+This is the packaged **`fix_this_flaky_test` prompt** (pass `project_id` + `fingerprint`); it walks any MCP agent through the whole loop, or you can drive the phases yourself:
+
+1. **Evidence:** `get_flaky_tests` → `get_test_case(include_steps=True)` on a failing occurrence → `get_test_step_flips` (the flickering step is usually the bug). If a recent red run exists, `start_investigation` → `get_investigation` for the hypothesis-weighed verdict.
+2. **History:** `list_quarantine_requests` + `get_defects` — earlier quarantines or a "resolved" ticket that recurred mean the previous diagnosis didn't hold.
+3. **Containment:** `propose_quarantine` with the flip evidence (a proposal for QA Lead review — the test stays in rotation until approved), unless it's already quarantined.
+4. **The actual fix (your coding agent's job, outside TestLookup):** reproduce in a loop, fix the root cause — await/poll over sleeps, isolate shared state, pin nondeterministic inputs; no blind retries — and merge through normal review.
+5. **Close the loop:** once merged and verified green, `record_fix_outcome(project_id, fingerprint, outcome="fixed", reference="org/repo#734")`. If the fix didn't hold, record `not_fixed` or `reverted` — the negative signal is just as valuable. The outcome lands as an `ai_feedback` row (source `fix_outcome`) that the [AI-F1 label system](../architecture/AI_EVALUATION.md) buckets as **human_indirect**: it informs the next classifier training cycle but never outranks an explicit human correction.
+6. If the diagnosis category itself was wrong, also `correct_classification`; when the test has proven stable, `release_quarantine` (or let pass-streak promotion return it).
+
+**Outcome:** the test is genuinely fixed, the quarantine debt shrinks instead of growing, and the classifier learned from a verified real-world outcome — the fix loop feeds the triage loop.
 
 ---
 

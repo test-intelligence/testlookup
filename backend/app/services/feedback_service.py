@@ -116,6 +116,132 @@ async def latest_analysis_for_fingerprint(
     }
 
 
+# ── Fix outcomes (Agentic plan AI-5) ─────────────────────────────────────────
+
+# Outcome vocabulary for record_fix_outcome. "fixed" = a fix informed by the
+# diagnosis merged and verified green; "not_fixed" = the attempted fix did not
+# resolve the failure; "reverted" = the fix was rolled back.
+FIX_OUTCOMES = ("fixed", "not_fixed", "reverted")
+
+# Outcome → FeedbackRating mapping. A merged-and-verified fix confirms the
+# analysis verdict (CORRECT ⇒ the analysis category becomes a usable training
+# label via label_provenance.resolve_feedback_label). A failed or reverted fix
+# marks the verdict suspect (INCORRECT) — but carries NO corrected category,
+# so it is honestly unusable as a classification label while still counting
+# as negative-rating signal.
+_FIX_OUTCOME_RATINGS = {
+    "fixed": FeedbackRating.CORRECT,
+    "not_fixed": FeedbackRating.INCORRECT,
+    "reverted": FeedbackRating.INCORRECT,
+}
+
+
+def compose_fix_outcome_comment(
+    outcome: str, reference: str | None = None, comment: str | None = None,
+) -> str:
+    """Fold outcome + reference + free text into the AIFeedback comment.
+
+    ``ai_feedback`` has no dedicated reference column and this signal does not
+    justify a migration — the structured prefix keeps the outcome and the
+    PR/commit reference greppable in exports and the audit UI.
+    """
+    parts = [f"[fix_outcome:{outcome}]"]
+    if reference:
+        parts.append(f"ref={reference}")
+    if comment:
+        parts.append(comment)
+    return " ".join(parts)
+
+
+async def record_fix_outcome(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    fingerprint: str,
+    outcome: str,
+    reference: str | None,
+    comment: str | None,
+    current_user,
+) -> dict:
+    """Record a fix outcome for a test fingerprint as an AI-F1 training signal.
+
+    Closes the coding-agent loop (Agentic plan AI-5): after an agent (or
+    human) ships a fix informed by TestLookup's diagnosis, the merged /
+    reverted outcome lands as an ``ai_feedback`` row with
+    ``source="fix_outcome"`` — mapped by ``label_provenance`` into the
+    ``human_indirect`` bucket (human-originated, but not an explicit rating),
+    never ``human_direct`` and never ``llm_pseudo``.
+
+    Stage-only: the router handler commits.
+    """
+    if outcome not in FIX_OUTCOMES:
+        raise HTTPException(
+            422, detail=f"outcome must be one of {list(FIX_OUTCOMES)}",
+        )
+
+    from app.models.postgres import TestCase, TestRun
+
+    # Latest analysis for the (project, fingerprint) pair — same
+    # project-scoped join discipline as latest_analysis_for_fingerprint
+    # (fingerprints are not salted per project), plus test_case_id which the
+    # feedback row needs.
+    row = (
+        await db.execute(
+            select(
+                AIAnalysis.id,
+                AIAnalysis.test_case_id,
+                AIAnalysis.failure_category,
+            )
+            .join(TestCase, AIAnalysis.test_case_id == TestCase.id)
+            .join(TestRun, TestCase.test_run_id == TestRun.id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCase.test_fingerprint == fingerprint,
+            )
+            .order_by(AIAnalysis.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(
+            404,
+            detail=(
+                "No AI analysis recorded for this fingerprint in this project "
+                "yet — there is no diagnosis to grade. Trigger an analysis "
+                "first, then record the fix outcome."
+            ),
+        )
+
+    rating = _FIX_OUTCOME_RATINGS[outcome]
+    feedback = AIFeedback(
+        analysis_id=row.id,
+        test_case_id=row.test_case_id,
+        user_id=current_user.id,
+        rating=rating,
+        comment=compose_fix_outcome_comment(outcome, reference, comment),
+        source="fix_outcome",
+        exported=False,
+    )
+    db.add(feedback)
+    # Flush so the Python-side uuid default is applied and the returned
+    # feedback_id is real (stage-only — the router handler still commits).
+    await db.flush()
+
+    category = row.failure_category
+    return {
+        "feedback_id": str(feedback.id),
+        "analysis_id": str(row.id),
+        "fingerprint": fingerprint,
+        "outcome": outcome,
+        "rating": rating.value,
+        "analysis_category": getattr(category, "value", category),
+        "label_provenance": "human_indirect",
+        "message": (
+            "Fix outcome recorded as a training signal "
+            f"(source=fix_outcome, rating={rating.value})."
+        ),
+    }
+
+
 async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, current_user) -> dict:
     feedback = (
         await db.execute(

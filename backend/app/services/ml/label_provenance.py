@@ -13,7 +13,9 @@ classified into one of three provenance buckets:
                          ``manual``, ``category_correction``.
   - ``human_indirect`` — a human action implied the label without an explicit
                          rating (Jira-resolution webhook auto-labels:
-                         ``jira_resolved``, ``jira_invalid``).
+                         ``jira_resolved``, ``jira_invalid``; merged/reverted
+                         fix outcomes from the MCP ``record_fix_outcome``
+                         tool: ``fix_outcome``).
   - ``llm_pseudo``     — a high-confidence LLM/ML analysis with **no** human
                          confirmation. Useful for bootstrapping, but it is the
                          model's own opinion, not ground truth.
@@ -51,8 +53,11 @@ MATURITY_HUMAN_CALIBRATED = "human_calibrated"
 # and the MCP correct_classification tool (all route through
 # feedback_service.submit_feedback, which stamps source="manual").
 _DIRECT_FEEDBACK_SOURCES = frozenset({"manual", "category_correction"})
-# Jira-resolution webhook auto-labels (feedback_service.jira_resolution_webhook).
-_INDIRECT_FEEDBACK_SOURCES = frozenset({"jira_resolved", "jira_invalid"})
+# Jira-resolution webhook auto-labels (feedback_service.jira_resolution_webhook)
+# and fix-outcome signals (feedback_service.record_fix_outcome — AI-5): a
+# merged fix validates the diagnosis without an explicit rating, so it is
+# human-originated but indirect.
+_INDIRECT_FEEDBACK_SOURCES = frozenset({"jira_resolved", "jira_invalid", "fix_outcome"})
 
 
 def provenance_for_feedback_source(source: Optional[str]) -> str:

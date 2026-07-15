@@ -27,6 +27,7 @@ PROMPT_TEMPLATE_VERSIONS: dict[str, int] = {
     "mcp.flakiness_investigation": 1,
     "mcp.defect_triage_session": 1,
     "mcp.suite_health_check": 1,
+    "mcp.fix_this_flaky_test": 1,
 }
 
 PROMPT_TEMPLATES: dict[str, str] = {
@@ -246,6 +247,61 @@ Produce a suite health report:
 ## Suite Quality Score: [X/100]
 [Composite score based on pass rate, flakiness, and failure category distribution]
 ---""",
+    "mcp.fix_this_flaky_test": """\
+You are a software engineer tasked with actually FIXING the flaky test with
+fingerprint "{fingerprint}" in project "{project_id}" — not just quarantining it —
+and closing the learning loop so TestLookup's classifier gets smarter from your fix.
+
+## Phase 1 — Gather the evidence
+1. `get_flaky_tests` — project_id="{project_id}", days=30. Find this fingerprint's
+   failure rate, run count, and last failure.
+2. `search_tests` — query the test's name to locate its recent runs; note a recent
+   run_id where it failed.
+3. `get_test_case` (include_steps=True) on that failing occurrence — the exact
+   failing assertion, error message, and step tree.
+4. `get_test_step_flips` — which step flickers across runs? A single flickering
+   step usually IS the bug (timing, ordering, shared state).
+5. Check for an existing Investigator verdict: `list_investigations` for the
+   project — if the failing run was investigated, `get_investigation` for the
+   hypothesis boards and verdict. If nothing exists and the flake reproduced in a
+   recent run, `start_investigation` on that run and poll `get_investigation`
+   until it completes (shadow-mode: it diagnoses, you act).
+
+## Phase 2 — Recall the history
+6. `list_quarantine_requests` — has this test been proposed/quarantined before?
+   Repeated quarantines mean prior "fixes" did not hold — read their notes.
+7. `get_defects` — is there an open or resolved ticket for it? A resolved ticket
+   that recurred is a signal the previous root-cause was wrong.
+
+## Phase 3 — Contain while you fix
+8. If the test is NOT already quarantined or proposed: `propose_quarantine` with
+   the flip evidence as the reason (this files a proposal for QA Lead review —
+   it does not quarantine directly). Skip if a live quarantine already exists.
+
+## Phase 4 — Reproduce and fix locally (outside TestLookup)
+9. Reproduce the flake: run the single test in a loop (10-50 iterations) and
+   under parallel load; try reordering against the tests that precede it in CI.
+10. Fix the root cause the evidence points at — await/poll instead of sleeps,
+    isolate shared state or test data, pin nondeterministic inputs (time,
+    ordering, randomness). Do NOT add a blind retry; that hides the signal.
+11. Prove it: the loop from step 9 must pass consistently, and the fix should
+    merge through your normal review process.
+
+## Phase 5 — Close the loop (do NOT skip)
+12. After the fix has merged AND the test is verified green in CI:
+    `record_fix_outcome(project_id="{project_id}", fingerprint="{fingerprint}",
+    outcome="fixed", reference="<PR or commit>", comment="<what the fix changed>")`.
+    If the fix did not hold or was rolled back, record outcome="not_fixed" or
+    "reverted" instead — a negative outcome is as valuable a training signal
+    as a positive one.
+13. If the diagnosis category was wrong (e.g. labelled FLAKY but it was a real
+    PRODUCT_BUG), also call `correct_classification` with the right category.
+14. If the test was quarantined and has proven stable, `release_quarantine`
+    (or let its pass-streak promotion handle it) so it counts against release
+    gates again.
+
+Report back: the root cause, the fix, the proof it holds, and confirmation the
+outcome was recorded.""",
 }
 
 
@@ -326,4 +382,20 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         return PROMPT_TEMPLATES["mcp.suite_health_check"].format(
             project_id=project_id, suite_name=suite_name,
+        )
+
+    @mcp.prompt()
+    def fix_this_flaky_test(project_id: str, fingerprint: str) -> str:
+        """
+        Packaged fix-this-flaky workflow (Agentic plan AI-5): gather flip
+        evidence + Investigator verdict, recall quarantine/defect history,
+        contain via a quarantine proposal, guide a real local fix, then
+        close the learning loop with record_fix_outcome once merged.
+
+        Args:
+            project_id: Project UUID the test belongs to.
+            fingerprint: Stable test fingerprint (sha256(class::test)[:16]).
+        """
+        return PROMPT_TEMPLATES["mcp.fix_this_flaky_test"].format(
+            project_id=project_id, fingerprint=fingerprint,
         )

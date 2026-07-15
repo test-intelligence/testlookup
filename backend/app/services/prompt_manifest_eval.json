@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-07-15T21:48:22.571009+00:00",
-  "change_id": "wave-b-investigator",
+  "attested_at": "2026-07-15T22:32:57.095557+00:00",
+  "change_id": "wave-c-mcp",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -96,9 +96,9 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "7cf335b5c765874f87469d57eeed32808535d32dfcccd116abaca38848fc76d4",
+  "manifest_digest": "8c302e2f54784eaf35c4dffa00189dcdfaca00097106b3477aef1c6e0a464bd8",
   "mode": "offline_golden",
-  "notes": "AI-1: two new investigator prompts (hypothesis weigh + synthesis narrative); existing prompt texts unchanged.",
+  "notes": "",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",

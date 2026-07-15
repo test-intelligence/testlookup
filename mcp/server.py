@@ -29,6 +29,9 @@ Tool Domains:
   - Classification corrections (feedback → training signal)
   - Failure assignment (reassign + valid-assignee lookup)
   - Notification policy (transition-policy get/set)
+  # Agentic plan AI-5 — MCP-first agent workflows
+  - Investigator agent (start/poll/list shadow-mode investigations)
+  - Fix-outcome learning loop (record merged/reverted fix outcomes)
 
 Transport: stdio (default) or SSE
 Auth:      JWT via TESTLOOKUP_USERNAME / TESTLOOKUP_PASSWORD env vars
@@ -69,6 +72,8 @@ from tools import intelligence, deep, search, reports
 from tools import decision_trail, compliance_pack, quarantine, billing, defects, governance
 # PMF US-14.1 — write-path tools so agents can close the triage loop.
 from tools import assignments, feedback, notifications
+# Agentic plan AI-5 — Investigator over MCP.
+from tools import investigations
 from resources import registry
 from prompts import templates
 
@@ -103,7 +108,16 @@ mcp = FastMCP(
         "`set_transition_policy` manage per-project notification events. All writes "
         "run under YOUR login's server-side RBAC and are audit-logged with that "
         "identity — prefer dry_run variants and confirm destructive actions with the "
-        "user first."
+        "user first.\n\n"
+        "Investigator agent (AI-5): `start_investigation` launches the shadow-mode "
+        "hypothesis-loop Investigator for a run (it diagnoses, never acts — 403/409/429 "
+        "come back as structured, actionable results), `get_investigation` polls the "
+        "detail (hypothesis boards + verdict), `list_investigations` shows a project's "
+        "recent ones, and the `testlookup://runs/{run_id}/investigation` resource "
+        "carries the latest investigation for a run. Close the learning loop with "
+        "`record_fix_outcome` once a fix informed by a diagnosis merges (or is "
+        "reverted) — it lands as a human-indirect training signal for the classifier. "
+        "The `fix_this_flaky_test` prompt packages the whole flaky-fix workflow."
     ),
 )
 
@@ -128,9 +142,11 @@ billing.register(mcp)          # Tier 1-2 — LLM cost budget
 defects.register(mcp)          # defect list reads + one-click Jira create (US-14.1)
 governance.register(mcp)       # policies, saved views, digests, ownership, flags
 # PMF US-14.1 — write-path tools (agents close the triage loop).
-feedback.register(mcp)         # correct_classification → training signal
+feedback.register(mcp)         # correct_classification + record_fix_outcome → training signals
 assignments.register(mcp)      # failure reassignment (my-failures inbox)
 notifications.register(mcp)    # transition-notification policy get/set
+# Agentic plan AI-5 — Investigator agent over MCP (shadow-mode).
+investigations.register(mcp)   # start/poll/list investigations
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)

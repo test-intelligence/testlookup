@@ -92,6 +92,44 @@ def register(mcp) -> None:  # noqa: ANN001
         )
         return json.dumps(data, indent=2, default=str)
 
+    @mcp.resource("testlookup://runs/{run_id}/investigation")
+    async def run_investigation(run_id: str) -> str:
+        """Latest Investigator-agent investigation for a run (AI-5), if any —
+        status, hypothesis boards, and verdict. Null ``investigation`` with a
+        note when the run has never been investigated."""
+        run = await api.get(f"/api/v1/runs/{run_id}")
+        project_id = (run or {}).get("project_id")
+        latest = None
+        if project_id:
+            listing = await api.get(
+                f"/api/v1/projects/{project_id}/investigations",
+                params={"limit": 100, "offset": 0},
+            )
+            # Newest-first list; the first entry for this run is the latest.
+            latest = next(
+                (
+                    item
+                    for item in (listing or {}).get("items", [])
+                    if str(item.get("run_id")) == str(run_id)
+                ),
+                None,
+            )
+        if latest is None:
+            return json.dumps(
+                {
+                    "run_id": run_id,
+                    "investigation": None,
+                    "note": (
+                        "No investigation recorded for this run — use the "
+                        "start_investigation tool to launch one."
+                    ),
+                },
+                indent=2,
+                default=str,
+            )
+        detail = await api.get(f"/api/v1/investigations/{latest['id']}")
+        return json.dumps(detail, indent=2, default=str)
+
     # ── Test Case Resources ───────────────────────────────────────────────────
 
     @mcp.resource("testlookup://tests/{run_id}/{test_id}")

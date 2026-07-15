@@ -1,4 +1,4 @@
-"""MCP tools for AI-classification feedback (PMF US-14.1 / US-2.4).
+"""MCP tools for AI-classification feedback (PMF US-14.1 / US-2.4 / AI-5).
 
 ``correct_classification`` closes the triage loop: when the AI mislabels
 a failure (e.g. INFRASTRUCTURE when it's really a PRODUCT_BUG), an agent
@@ -8,10 +8,18 @@ semantic cache) and stores it as a training signal for the next
 fine-tune cycle — the same path the UI's "correct classification"
 dialog uses.
 
-Thin wrapper over two existing endpoints:
+``record_fix_outcome`` (Agentic plan AI-5) closes the *fix* loop: after a
+fix informed by TestLookup's diagnosis merges (or gets reverted), the
+outcome lands as an ``ai_feedback`` row with ``source="fix_outcome"`` —
+which the AI-F1 label-provenance policy buckets as ``human_indirect``
+(human-originated, but not an explicit rating), so it can never be
+mistaken for a direct correction or an LLM pseudo-label.
+
+Thin wrappers over three endpoints:
   * ``GET  /api/v1/projects/{id}/analyses/lookup?fingerprint=`` — bridge
     from a test fingerprint to the latest ``analysis_id``.
   * ``POST /api/v1/feedback/{analysis_id}`` — the correction itself.
+  * ``POST /api/v1/projects/{id}/fix-outcomes`` — the fix-outcome signal.
 
 Auth/RBAC is server-side: any active project member may submit feedback,
 and the ``ai_feedback`` row records the MCP login identity as the
@@ -32,6 +40,38 @@ FAILURE_CATEGORIES = (
     "FLAKY",
     "UNKNOWN",
 )
+
+
+# Closed outcome vocabulary for record_fix_outcome (mirrors the backend's
+# FIX_OUTCOMES; the endpoint validates too — this pre-check just gives the
+# agent a faster, clearer error).
+FIX_OUTCOMES = ("fixed", "not_fixed", "reverted")
+
+
+def _fix_outcome_body(
+    fingerprint: str,
+    outcome: str,
+    reference: Optional[str] = None,
+    comment: Optional[str] = None,
+) -> dict:
+    """Build + validate the POST body for a fix-outcome signal.
+
+    Raises ValueError on a missing fingerprint or an unknown outcome so the
+    tool can return a structured error without a round-trip.
+    """
+    if not fingerprint or not fingerprint.strip():
+        raise ValueError("fingerprint is required")
+    normalized = outcome.strip().lower()
+    if normalized not in FIX_OUTCOMES:
+        raise ValueError(
+            f"Unknown outcome '{outcome}'. Allowed: {', '.join(FIX_OUTCOMES)}"
+        )
+    body: dict = {"fingerprint": fingerprint.strip(), "outcome": normalized}
+    if reference:
+        body["reference"] = reference
+    if comment:
+        body["comment"] = comment
+    return body
 
 
 def _correction_body(
@@ -127,4 +167,66 @@ def register(mcp) -> None:  # noqa: ANN001
                 "Analysis updated and correction stored as a training "
                 "signal for the next fine-tune cycle."
             ),
+        }
+
+    @mcp.tool()
+    async def record_fix_outcome(
+        project_id: str,
+        fingerprint: str,
+        outcome: str,
+        reference: Optional[str] = None,
+        comment: Optional[str] = None,
+    ) -> dict:
+        """
+        SIDE EFFECT: record the outcome of a fix for a diagnosed test
+        failure — this is how a coding agent's merged fix teaches the
+        classifier (Agentic plan AI-5).
+
+        Call it AFTER the fix's fate is known, not when you open the PR:
+          - "fixed"     → the fix merged and the test is verified green;
+            confirms the diagnosis (the analysis category becomes a
+            training label).
+          - "not_fixed" → the attempted fix did not resolve the failure;
+            marks the diagnosis suspect.
+          - "reverted"  → the fix was rolled back; marks the diagnosis
+            suspect.
+
+        The signal lands as an `ai_feedback` row with source
+        `fix_outcome` under YOUR login identity, bucketed by the AI-F1
+        label-provenance policy as `human_indirect` — it informs training
+        but never outranks an explicit human correction
+        (correct_classification). 404 when the fingerprint has never been
+        analysed in this project (nothing to grade).
+
+        Args:
+            project_id: Project UUID the test belongs to.
+            fingerprint: Test fingerprint (sha256(class::test)[:16]).
+            outcome: One of "fixed", "not_fixed", "reverted".
+            reference: Optional PR/commit/ticket reference (e.g.
+                "org/repo#482", "abc1234").
+            comment: Optional context (what the fix changed, how it was
+                verified).
+        """
+        try:
+            body = _fix_outcome_body(fingerprint, outcome, reference, comment)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        try:
+            data = await api.post(
+                f"/api/v1/projects/{project_id}/fix-outcomes", json_body=body,
+            )
+        except Exception as exc:
+            return api.error_payload(exc)
+        data = data or {}
+        return {
+            "ok": True,
+            "action": "fix_outcome_recorded",
+            "feedback_id": data.get("feedback_id"),
+            "analysis_id": data.get("analysis_id"),
+            "fingerprint": fingerprint,
+            "outcome": body["outcome"],
+            "rating": data.get("rating"),
+            "label_provenance": data.get("label_provenance", "human_indirect"),
+            "note": data.get("message", "Fix outcome recorded."),
         }

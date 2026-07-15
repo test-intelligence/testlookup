@@ -1,8 +1,10 @@
 # TestLookup MCP Server
 
-The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **58 tools**, **10 resources**, and **6 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
+The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **62 tools**, **11 resources**, and **7 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
 
 Beyond reads, the server carries **write-path tools** (PMF US-14.1) so an agent can close the triage loop end-to-end: propose/release quarantines, bulk-promote recovered tests, file deduplicated Jira defects with a dry-run preview, correct AI classifications, reassign failures, and manage notification policy. All writes execute under the configured login's server-side RBAC and are audit-logged with that identity — see the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
+
+The Agentic-plan AI-5 surface makes MCP a first-class agent workflow entry point: `start_investigation` / `get_investigation` / `list_investigations` drive the shadow-mode **Investigator agent** (it diagnoses; the calling agent acts via the write tools), the `testlookup://runs/{run_id}/investigation` resource carries a run's latest verdict, `record_fix_outcome` feeds merged/reverted fix outcomes back into the AI-F1 label system as `human_indirect` training signals, and the `fix_this_flaky_test` prompt packages the whole flaky-fix loop.
 
 ## Quick start
 
@@ -132,7 +134,7 @@ Show the LLM cost budget overview -- which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (58 tools)
+## Tool reference (62 tools)
 
 ### Auth and health
 
@@ -198,6 +200,14 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_failure_clusters` | `run_id` | Failure clusters with representative errors |
 | `get_deep_findings` | `run_id` | Root-cause findings per cluster |
 
+### Investigator agent (AI-5)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `start_investigation` | `run_id` | **Write (safe).** Launch the shadow-mode hypothesis-loop Investigator for a run; 403 (policy disabled) / 409 (already running, carries the active id) / 429 (daily budget) come back as structured results (QA_ENGINEER+) |
+| `get_investigation` | `investigation_id` | Full detail: status, budget vs spend, five hypothesis boards, verdict (primary cause, confidence, narrative, recommended actions) — long prose compact-rendered |
+| `list_investigations` | `project_id`, `limit?` | Recent investigations newest-first with primary cause + confidence |
+
 ### Global search
 
 | Tool | Parameters | Description |
@@ -261,6 +271,7 @@ List open quarantine proposals and approve the one with the highest flip rate
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `correct_classification` | `project_id`, `fingerprint`, `corrected_category`, `comment?`, `corrected_root_cause?` | **Write.** Override a wrong AI failure category; updates the analysis, evicts the cached verdict, and stores an `ai_feedback` training signal under the caller's identity |
+| `record_fix_outcome` | `project_id`, `fingerprint`, `outcome`, `reference?`, `comment?` | **Write.** Record a fix's fate (`fixed` / `not_fixed` / `reverted`) against the latest analysis — lands as a `human_indirect` AI-F1 training signal (source `fix_outcome`); how a coding agent's merged fix teaches the classifier (AI-5) |
 
 ### Failure assignment (write path)
 
@@ -276,7 +287,7 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_transition_policy` | `project_id` | Per-project transition-notification policy (which events fire) |
 | `set_transition_policy` | `project_id`, `transitions_enabled?`, `per_run_events_enabled?`, `enabled_events?`, `consecutive_failure_threshold?` | **Write.** Full-replace the policy — affects what every project member is notified about |
 
-## Resource reference (10 resources)
+## Resource reference (11 resources)
 
 Resources are passive, read-only context URIs that AI clients can fetch as background knowledge.
 
@@ -291,9 +302,10 @@ Resources are passive, read-only context URIs that AI clients can fetch as backg
 | `testlookup://projects/{project_id}/defects/open` | Open defects |
 | `testlookup://runs/{run_id}` | Full run record + aggregated stats |
 | `testlookup://runs/{run_id}/failures` | Failed/broken test cases (up to 200) |
+| `testlookup://runs/{run_id}/investigation` | Latest Investigator-agent investigation for the run (hypotheses + verdict), null with a hint when none exists |
 | `testlookup://tests/{run_id}/{test_id}` | Full test case + error + Allure labels |
 
-## Prompt reference (6 prompts)
+## Prompt reference (7 prompts)
 
 Prompts are reusable investigation workflows that expand into sequences of tool calls.
 
@@ -305,6 +317,7 @@ Prompts are reusable investigation workflows that expand into sequences of tool 
 | `flakiness_investigation` | `project_id`, `threshold_pct?` | Prioritised remediation: quick wins vs strategic improvements |
 | `defect_triage_session` | `project_id` | Structured triage: review defects, identify duplicates, produce P1/P2/P3 list |
 | `suite_health_check` | `project_id`, `suite_name` | Suite analysis: coverage, worst tests, failure patterns, health score |
+| `fix_this_flaky_test` | `project_id`, `fingerprint` | Packaged flaky-fix workflow (AI-5): evidence + Investigator verdict → history recall → quarantine proposal → local reproduce & fix → `record_fix_outcome` on merge |
 
 ## Hardening notes (known gaps)
 

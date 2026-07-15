@@ -37,6 +37,10 @@
       "content_hash": "670026c0afac",
       "version": 1
     },
+    "mcp.fix_this_flaky_test": {
+      "content_hash": "fa9621e63ddf",
+      "version": 1
+    },
     "mcp.flakiness_investigation": {
       "content_hash": "479ef097d997",
       "version": 1
