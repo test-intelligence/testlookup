@@ -11,6 +11,17 @@ is the watermark), the digest is structured around WHAT CHANGED in the window
 quarantine debt, and gate-verdict changes. Absolute totals stay as a
 secondary line. A window with no changes renders as a one-liner (or is
 skipped entirely, per the subscription's ``send_when_unchanged``).
+
+Agentic plan AI-7 (proactive narratives): the delta additionally carries
+``investigations`` — completed Investigator verdicts in the window (count +
+top ≤2 by confidence) — rendered as ONE clearly AI-labeled line; windows
+with zero completed investigations add nothing (not even an empty line),
+and the zero-change predicate ignores investigations entirely (they are
+informational, never a "change"). Weekly project digests also fold in the
+flaky-debt review drafts for teams WITHOUT a US-7.3 channel (teams WITH a
+channel get theirs directly via ``flaky_debt_review``). All narrative text
+is quoted from stored investigation verdicts — generating a digest makes
+NO LLM calls (guarded by ``tests/test_proactive_narratives.py``).
 """
 from __future__ import annotations
 
@@ -22,6 +33,7 @@ from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
+    AgentInvestigation,
     FailureCluster,
     FlakyQuarantineRequest,
     FlakyQuarantineStatus,
@@ -43,11 +55,26 @@ _ACTIVE_QUARANTINE_STATUSES = (
     FlakyQuarantineStatus.RE_QUARANTINED.value,
 )
 
+# Human display names for the Investigator's fixed hypothesis ids (AI-7 —
+# shared with the attached analysis report's investigations section).
+CAUSE_DISPLAY: dict[str, str] = {
+    "infra": "infrastructure",
+    "commit": "code change",
+    "environment": "environment drift",
+    "known_flaky": "known-flaky",
+    "regression": "regression",
+    "unknown": "unknown",
+}
+
+# How many top verdicts the delta carries (AI-7 spec: ≤2).
+_INVESTIGATION_TOP_N = 2
+
 
 def is_zero_change(delta: dict) -> bool:
     """A delta window with no new failures, no newly flaky, no recoveries
     and no gate change is a zero-change window (quarantine debt is a
-    standing stock, not a change — it does not block the one-liner)."""
+    standing stock, not a change — it does not block the one-liner).
+    Completed investigations are informational and deliberately ignored."""
     return (
         int(delta.get("new_failures") or 0) == 0
         and int(delta.get("newly_flaky") or 0) == 0
@@ -204,6 +231,35 @@ async def compute_digest_deltas(
         if gate_before is not None and gate_before != gate_now:
             gate_change = {"from": gate_before, "to": gate_now}
 
+    # ── AI-7: completed Investigator verdicts in the window ─────────────
+    # Read-only over the persisted agent_investigations rows (#383) — the
+    # digest QUOTES stored verdicts, it never re-runs anything.
+    inv_rows = (
+        await db.execute(
+            select(AgentInvestigation.verdict, TestRun.build_number)
+            .join(TestRun, TestRun.id == AgentInvestigation.run_id)
+            .where(
+                AgentInvestigation.project_id == project_id,
+                AgentInvestigation.status == "completed",
+                AgentInvestigation.completed_at >= since,
+                AgentInvestigation.completed_at < now,
+            )
+            .order_by(AgentInvestigation.completed_at.desc())
+        )
+    ).all()
+    inv_top = sorted(
+        (
+            {
+                "run_build": row.build_number,
+                "primary_cause": (row.verdict or {}).get("primary_cause") or "unknown",
+                "confidence": int((row.verdict or {}).get("confidence") or 0),
+            }
+            for row in inv_rows
+        ),
+        key=lambda item: -item["confidence"],
+    )[:_INVESTIGATION_TOP_N]
+    investigations = {"completed": len(inv_rows), "top": inv_top}
+
     return {
         "window_start": since.isoformat(),
         "window_end": now.isoformat(),
@@ -213,6 +269,7 @@ async def compute_digest_deltas(
         "recovered": recovered,
         "quarantine_debt": quarantine_debt,
         "gate_change": gate_change,
+        "investigations": investigations,
     }
 
 
@@ -375,6 +432,35 @@ async def generate_digest(
         digest["delta"] = delta
         digest["is_zero_change"] = is_zero_change(delta) if delta is not None else False
 
+    # ── AI-7: weekly flaky-debt review fold-in ──────────────────────────
+    # Teams WITHOUT a US-7.3 channel get their draft as a digest section
+    # (teams WITH a channel receive theirs directly via the Monday
+    # ``dispatch_weekly_flaky_debt_reviews`` beat). Unconditional-when-
+    # data-exists: an opt-in subscription flag would need a migration
+    # (see the 0106/0107 precedents) and this slice ships without one.
+    # A review fault must never kill the digest.
+    if period == "weekly" and project_id is not None:
+        try:
+            from app.services.flaky_debt_review import build_flaky_debt_reviews
+            from app.services.notification_routing import load_team_channels
+
+            reviews = await build_flaky_debt_reviews(
+                db, project_id, since=cutoff, now=now,
+            )
+            channels = await load_team_channels(db, project_id)
+            folded = [
+                team for team in reviews["teams"] if team["team"] not in channels
+            ]
+            if folded:
+                digest["flaky_debt_review"] = {
+                    "teams": folded,
+                    "routed_team_count": len(reviews["teams"]) - len(folded),
+                }
+        except Exception as exc:  # noqa: BLE001 — review fault must not kill the digest
+            logger.warning(
+                "Flaky-debt review fold-in failed for %s: %s", project_id, exc
+            )
+
     return digest
 
 
@@ -389,6 +475,33 @@ def zero_change_line(digest: dict) -> str:
         details.append(f"pass rate {avg:.1f}%")
     line = "No changes since the last digest"
     return f"{line} — {', '.join(details)}." if details else f"{line}."
+
+
+def investigator_delta_line(delta: dict) -> str | None:
+    """The ONE AI-labeled Investigator line for a delta window (AI-7).
+
+    ``None`` when the window has no completed investigations — zero-
+    investigation windows add nothing, not even an empty line. The text is
+    assembled from the persisted verdicts only (no LLM calls here).
+    """
+    investigations = delta.get("investigations") or {}
+    completed = int(investigations.get("completed") or 0)
+    if completed <= 0:
+        return None
+    parts = []
+    for item in (investigations.get("top") or [])[:_INVESTIGATION_TOP_N]:
+        cause = CAUSE_DISPLAY.get(
+            str(item.get("primary_cause")), str(item.get("primary_cause") or "unknown")
+        )
+        build = item.get("run_build")
+        build_str = f"#{build}" if build else "a run"
+        parts.append(f"{build_str} → {cause} ({int(item.get('confidence') or 0)}%)")
+    tops = f" — {', '.join(parts)}" if parts else ""
+    plural = "s" if completed != 1 else ""
+    return (
+        f"AI Investigator (shadow — informational): {completed} "
+        f"investigation{plural} completed{tops} — evidence in the report"
+    )
 
 
 def _delta_lines(delta: dict) -> list[str]:
@@ -412,6 +525,9 @@ def _delta_lines(delta: dict) -> list[str]:
     gate = delta.get("gate_change")
     if gate:
         lines.append(f"Gate verdict changed: {gate.get('from')} → {gate.get('to')}")
+    investigator_line = investigator_delta_line(delta)
+    if investigator_line:
+        lines.append(investigator_line)
     return lines
 
 
@@ -441,6 +557,12 @@ def render_digest_text(digest: dict) -> str:
     lines.append(totals)
     for item in (digest.get("action_items") or [])[:3]:
         lines.append(f"• {item}")
+    # AI-7: weekly flaky-debt review drafts for teams without their own
+    # channel (each team text carries its own automation label).
+    for team in (digest.get("flaky_debt_review") or {}).get("teams") or []:
+        if team.get("text"):
+            lines.append("")
+            lines.append(str(team["text"]))
     return "\n".join(lines)
 
 
@@ -525,6 +647,14 @@ def render_digest_html(digest: dict) -> str:
             f"<strong>{_e(gate.get('from'))}</strong> → <strong>{_e(gate.get('to'))}</strong></div>"
             if gate else ""
         )
+        # AI-7: one Investigator line, only when the window had completed
+        # investigations (zero-investigation windows add nothing).
+        investigator_line = investigator_delta_line(delta)
+        investigator_html = (
+            f"<div style='font-size:12px;color:#6D28D9;margin-top:6px'>"
+            f"{_e(investigator_line, 500)}</div>"
+            if investigator_line else ""
+        )
         sections.append(f"""
         <div style="background:#F8FAFC;border-left:4px solid #0EA5E9;padding:12px 16px;margin-bottom:16px;border-radius:4px">
             <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#0C4A6E;font-weight:600;margin-bottom:6px">Since last digest</div>
@@ -539,6 +669,7 @@ def render_digest_html(digest: dict) -> str:
                 ({int(debt.get('stale') or 0)} stale, {int(debt.get('ready_to_promote') or 0)} ready to promote)
             </div>
             {gate_html}
+            {investigator_html}
         </div>""")
 
     # Tier 2 item 12 — retro header block prepends the AI-written
@@ -617,6 +748,22 @@ def render_digest_html(digest: dict) -> str:
             </tr></thead>
             <tbody>{rows}</tbody>
         </table>""")
+
+    # AI-7: weekly flaky-debt review — TEXT-ONLY per-team drafts for teams
+    # without their own US-7.3 channel, rendered as escaped preformatted
+    # blocks (each draft opens with its automation label).
+    review_teams = (digest.get("flaky_debt_review") or {}).get("teams") or []
+    review_blocks = "".join(
+        "<pre style='font-size:11.5px;background:#F8FAFC;border:1px solid #E5E7EB;"
+        "border-radius:6px;padding:10px;white-space:pre-wrap;margin:6px 0'>"
+        f"{_e(t.get('text'), 4000)}</pre>"
+        for t in review_teams if t.get("text")
+    )
+    if review_blocks:
+        sections.append(
+            "<h3 style='color:#1E40AF;font-size:14px'>Weekly flaky-debt review</h3>"
+            + review_blocks
+        )
 
     body = "\n".join(sections)
     return f"""<!DOCTYPE html>

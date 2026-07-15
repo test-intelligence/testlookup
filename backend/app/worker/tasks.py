@@ -2749,6 +2749,43 @@ def dispatch_scheduled_digests(self):
 
 
 @celery_app.task(
+    name="app.worker.tasks.dispatch_weekly_flaky_debt_reviews",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+    queue="default",
+)
+def dispatch_weekly_flaky_debt_reviews(self):
+    """Weekly beat (Mondays 07:10 UTC): send each channel-mapped team its
+    flaky-debt review draft through the US-7.3 team channels (Agentic plan
+    AI-7). Teams WITHOUT a channel are deliberately not handled here — their
+    drafts fold into the project's weekly digest as a section instead
+    (``digest_content_service.generate_digest``).
+
+    All content is deterministic TEXT built from the quarantine lifecycle
+    rows — no LLM calls. Per-project failures are logged and skipped inside
+    the service (fail-open); delivery audit rows are written via
+    ``notification_routing.record_team_delivery_logs``.
+    """
+    logger.info("[Task %s] Dispatching weekly flaky-debt reviews", self.request.id)
+    from app.services.flaky_debt_review import deliver_flaky_debt_reviews
+
+    with _beat_span("dispatch_weekly_flaky_debt_reviews") as span:
+        try:
+            counters = _run_async(deliver_flaky_debt_reviews())
+            span.set_attribute("status", "ok")
+        except Exception as exc:
+            span.set_attribute("status", "error")
+            span.set_attribute("error.category", type(exc).__name__)
+            raise
+    logger.info(
+        "[Task %s] Flaky-debt review dispatch completed: %s",
+        self.request.id, counters,
+    )
+    return counters
+
+
+@celery_app.task(
     name="app.worker.tasks.close_stale_live_sessions",
     bind=True,
     queue="default",
