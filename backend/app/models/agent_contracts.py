@@ -369,6 +369,27 @@ class ReportRefinementAgentOutput(ContractedAgentOutput):
     current_stage: str = "flaky_sentinel"
 
 
+class InvestigatorHypothesisOutput(ContractedAgentOutput):
+    """One hypothesis sub-agent's verdict (Agentic plan AI-1).
+
+    ``hypothesis`` carries the pinned wire shape persisted onto
+    ``AgentInvestigation.hypotheses`` (id/title/status/confidence/
+    confidence_basis/summary/evidence/started_at/completed_at).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    hypothesis: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigatorSynthesisOutput(ContractedAgentOutput):
+    """The Investigator's synthesized verdict (Agentic plan AI-1)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    verdict: dict[str, Any] = Field(default_factory=dict)
+
+
 TContract = TypeVar("TContract", bound=ContractedAgentOutput)
 
 

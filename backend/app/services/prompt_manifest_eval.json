@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-07-15T17:32:41.431663+00:00",
-  "change_id": "ai-f2f3-initial",
+  "attested_at": "2026-07-15T21:48:22.571009+00:00",
+  "change_id": "wave-b-investigator",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -96,9 +96,9 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "ac86e45d21662b0367094f190d804262cd4b32bebbadbe7ecf6eb050252d4c1e",
+  "manifest_digest": "7cf335b5c765874f87469d57eeed32808535d32dfcccd116abaca38848fc76d4",
   "mode": "offline_golden",
-  "notes": "Initial manifest (AI-F2): 24 backend prompts moved byte-identically + react_triage v2 (memory recall rule, AI-F3) + 6 MCP templates hash-pinned. Offline golden-dataset gate; duplicate_detection recorded informational (prompt-independent lexical scorer).",
+  "notes": "AI-1: two new investigator prompts (hypothesis weigh + synthesis narrative); existing prompt texts unchanged.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -106,6 +106,8 @@
     "defect_promotion_ticket": "v1:45d88cc4d33b",
     "fast_classifier_system": "v1:9d46ffbbed7b",
     "finetune_reasoning_system": "v1:3ea37c087b6b",
+    "investigator_hypothesis_weigh": "v1:44a0c89134b9",
+    "investigator_synthesis_narrative": "v1:f7d92dd09981",
     "react_triage": "v2:0ad0a868e913",
     "regression_watchman_classify": "v1:2ac1510063fd",
     "release_risk_reasoning": "v1:a152fb254091",

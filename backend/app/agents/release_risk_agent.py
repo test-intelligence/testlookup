@@ -490,3 +490,24 @@ class ReleaseRiskAgent(BaseAgent):
                     input_snapshot=input_snapshot,
                 ))
             await db.commit()
+
+        # AI-1 auto-trigger (shadow): a recorded NO_GO gate decision enqueues
+        # an investigation for the run. Own try/except — a broken
+        # investigator must NEVER affect the release gate. The service
+        # re-checks the agent policy, one-active-per-run, and
+        # max_runs_per_day itself.
+        if decision.get("recommendation") == "NO_GO":
+            try:
+                from app.services.agent_investigation_service import (
+                    maybe_auto_trigger,
+                )
+
+                await maybe_auto_trigger(
+                    uuid.UUID(str(test_run_id)), "auto:gate_no_go"
+                )
+            except Exception as exc:  # noqa: BLE001 — host path isolation
+                self.logger.warning(
+                    "investigator_auto_trigger_hook_failed",
+                    test_run_id=str(test_run_id),
+                    error=str(exc),
+                )

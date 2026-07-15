@@ -25,6 +25,14 @@
       "content_hash": "3ea37c087b6b",
       "version": 1
     },
+    "investigator_hypothesis_weigh": {
+      "content_hash": "44a0c89134b9",
+      "version": 1
+    },
+    "investigator_synthesis_narrative": {
+      "content_hash": "f7d92dd09981",
+      "version": 1
+    },
     "mcp.defect_triage_session": {
       "content_hash": "670026c0afac",
       "version": 1

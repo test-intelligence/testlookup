@@ -1434,6 +1434,50 @@ def run_agent_pipeline(
 
 
 @celery_app.task(
+    name="app.worker.tasks.run_agent_investigation",
+    bind=True,
+    max_retries=0,
+    queue="ai_analysis",
+    time_limit=1800,
+)
+def run_agent_investigation(self, investigation_id: str):
+    """Background task: execute one hypothesis-loop investigation (AI-1).
+
+    Dispatched by the manual endpoint and the auto-trigger hooks
+    (``test.newly_failing`` transitions / gate NO_GO). No retries by design:
+    the workflow's own error path marks the investigation row ``failed``
+    and writes the AgentRun ledger entry, and a blind retry could double-run
+    LLM budgets. Duplicate protection is the one-active-per-run partial
+    unique index at trigger time plus the runner's queued-status check.
+    """
+    _bind_task_context(self, investigation_id=investigation_id)
+    from app.agents.investigator.workflow import run_investigation
+
+    logger.info(
+        "[Task %s] Starting investigation %s", self.request.id, investigation_id,
+    )
+    try:
+        final_state = _run_async(run_investigation(investigation_id))
+        verdict = (final_state or {}).get("verdict") or {}
+        logger.info(
+            "[Task %s] Investigation %s finished: primary_cause=%s",
+            self.request.id, investigation_id, verdict.get("primary_cause"),
+        )
+        return {
+            "investigation_id": investigation_id,
+            "primary_cause": verdict.get("primary_cause"),
+        }
+    except Exception as exc:
+        # The workflow already finalized the row as failed + wrote the
+        # ledger entry; surface the failure to Celery without retrying.
+        logger.error(
+            "[Task %s] Investigation %s failed: %s",
+            self.request.id, investigation_id, exc, exc_info=True,
+        )
+        raise
+
+
+@celery_app.task(
     name="app.worker.tasks.generate_run_compare_report",
     bind=True,
     max_retries=1,

@@ -144,6 +144,17 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "before dispatching. The router-facing policy upsert is stage-only "
         "(the notifications router handler owns that commit).",
     ),
+    "agent_investigation_service.py": (
+        1,
+        "Hook-owned (Agentic AI-1): maybe_auto_trigger fires from inside "
+        "Celery-owned host paths (transition-notification evaluation, the "
+        "release-gate NO_GO persist) with no request session to hand off "
+        "to; it opens its own AsyncSessionLocal, commits the investigation "
+        "row, and only then enqueues the Celery task — the row must be "
+        "durable before the worker can pick it up. Every router-facing "
+        "function in the module (start_investigation, upsert_policy, "
+        "request_cancel, record_agent_run) is stage-only.",
+    ),
     "notification_routing.py": (
         1,
         "Celery-task-owned (PMF US-7.3): record_team_delivery_logs persists "
@@ -473,7 +484,12 @@ def test_allowlist_total_is_bounded() -> None:
     # Raised 56 → 57 on 2026-07-15 (Agentic AI-F2): prompt_registry.py's
     # single commit is CLI-owned — the `--attest` entry point persists the
     # eval-gate run on its own AsyncSessionLocal (no request handler exists).
-    assert total <= 57, (
+    # Raised 57 → 58 on 2026-07-15 (Agentic AI-1): agent_investigation_
+    # service.py's single commit is hook-owned — maybe_auto_trigger runs
+    # inside Celery-owned host paths (transition engine / gate NO_GO) on its
+    # own AsyncSessionLocal and must commit the investigation row before the
+    # worker task is enqueued.
+    assert total <= 58, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

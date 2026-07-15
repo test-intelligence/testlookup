@@ -535,6 +535,14 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
             threshold=policy.consecutive_failure_threshold,
         )
 
+        # AI-1 auto-trigger input: newly-failing DETECTED (pre policy
+        # filter — a project that silenced the notification still wants the
+        # shadow investigation; the investigator has its own agent policy).
+        newly_failing_detected = any(
+            e.event == NotificationEventType.TEST_NEWLY_FAILING.value
+            for e in events
+        )
+
         # Policy filter: state always advances; emission is per-project
         # configurable.
         enabled = set(policy.enabled_events)
@@ -621,6 +629,22 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
         # Persist the state-store advance regardless of whether anything
         # fires — the stamp is what makes re-finalization idempotent.
         await db.commit()
+
+    # AI-1 auto-trigger (shadow): newly-failing transitions enqueue an
+    # investigation for the run. Own try/except — a broken investigator
+    # must NEVER affect the notification path. The service re-checks the
+    # agent policy, one-active-per-run, and max_runs_per_day itself.
+    if newly_failing_detected:
+        try:
+            from app.services.agent_investigation_service import maybe_auto_trigger
+
+            await maybe_auto_trigger(run_id, "auto:newly_failing")
+        except Exception as exc:  # noqa: BLE001 — host path isolation
+            logger.warning(
+                "investigator_auto_trigger_hook_failed",
+                run_id=str(run_id),
+                error=str(exc),
+            )
 
     if not events:
         return {"events": 0}

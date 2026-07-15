@@ -283,6 +283,36 @@ async def _gather_audit_events(
     }
 
 
+async def _gather_agent_activity(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    run_id: Optional[uuid.UUID],
+) -> dict[str, Any]:
+    """AI-3: snapshot the agent-runs ledger entries touching this release's
+    run — what autonomous agents observed/proposed around the gated build
+    (mode, trigger, verdict summary, actions proposed vs taken, spend,
+    prompt-registry digest). Self-guarding like the other surrounding-context
+    sections: a broken ledger embeds an ``error`` payload instead of failing
+    the pack."""
+    from app.models.postgres import AgentRun
+    from app.services.agent_investigation_service import serialize_agent_run
+
+    try:
+        stmt = (
+            select(AgentRun)
+            .where(AgentRun.project_id == project_id)
+            .order_by(AgentRun.created_at.desc())
+            .limit(200)
+        )
+        if run_id is not None:
+            stmt = stmt.where(AgentRun.run_id == run_id)
+        rows = (await db.execute(stmt)).scalars().all()
+        return {"agent_runs": [serialize_agent_run(r) for r in rows]}
+    except Exception as exc:
+        logger.debug("agent activity query failed", error=str(exc))
+        return {"agent_runs": [], "error": str(exc)[:500]}
+
+
 # ── ZIP assembly + signing ─────────────────────────────────────────────────
 
 
@@ -421,6 +451,7 @@ async def _build_pack_payload(
     clusters = await _gather_clusters(db, run.id)
     defects = await _gather_defects(db, release.project_id, run.id)
     audit_events = await _gather_audit_events(db, release, run.id)
+    agent_activity = await _gather_agent_activity(db, release.project_id, run.id)
 
     # Build the files dict. Keys are ZIP paths; values are the raw bytes.
     files: dict[str, bytes] = {
@@ -433,6 +464,7 @@ async def _build_pack_payload(
         "clusters.json": _serialize(clusters),
         "defects.json": _serialize(defects),
         "audit_events.json": _serialize(audit_events),
+        "agent_activity.json": _serialize(agent_activity),
     }
 
     manifest_bytes = _build_manifest(files, generated_at, release, run, decision)

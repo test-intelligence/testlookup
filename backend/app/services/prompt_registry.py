@@ -716,6 +716,74 @@ provide an optimized execution plan. Return ONLY valid JSON:
 Prioritize: smoke tests first, critical path second, regression last. Group by feature area for parallel execution.""",
 )
 
+# agents/investigator/hypotheses.py — shared evidence-weighing prompt for the
+# five hypothesis sub-agents (Wave B, AI-1). Bounded: AT MOST one call per
+# hypothesis per investigation; the deterministic verdict is the fallback.
+_register(
+    "investigator_hypothesis_weigh",
+    1,
+    """\
+You are a QA failure investigator weighing evidence for ONE hypothesis about
+why a test run failed.
+
+Hypothesis under evaluation: {hypothesis_id} — {hypothesis_title}
+
+Deterministic signals (computed from the run's data — treat as ground truth):
+{signals_json}
+
+Evidence lines:
+{evidence_lines}
+
+Deterministic pre-verdict: status={det_status}, confidence={det_confidence}.
+
+GROUNDING RULES:
+- Base your judgement ONLY on the signals and evidence above. Never invent
+  test names, counts, or causes.
+- Do not flip a deterministic "validated" or "invalidated" pre-verdict unless
+  the evidence lines clearly contradict it; prefer adjusting confidence.
+- If the evidence is thin or contradictory, return "inconclusive" with a low
+  confidence and say what is missing.
+
+Respond ONLY with a valid JSON object (no markdown fences):
+{{
+  "status": "validated" | "invalidated" | "inconclusive",
+  "confidence": 0-100,
+  "summary": "1-2 sentences explaining the verdict, citing specific evidence"
+}}""",
+)
+
+# agents/investigator/synthesis.py — verdict narrative (Wave B, AI-1). One
+# call per investigation; a deterministic template renders the narrative when
+# no LLM is configured.
+_register(
+    "investigator_synthesis_narrative",
+    1,
+    """\
+You are a QA failure investigator writing the final verdict narrative for an
+automated investigation of a failing test run.
+
+Primary cause chosen by deterministic precedence rules (do NOT override it):
+{primary_cause}
+
+Hypothesis results:
+{hypotheses_json}
+
+Run context:
+{run_context}
+
+GROUNDING RULES:
+- The primary cause is already decided — explain it, do not re-adjudicate.
+- Cite only counts, test names, and evidence that appear in the data above.
+- If the primary cause is "unknown", honestly state why the evidence was
+  conflicting or insufficient.
+- 2-4 sentences, plain English, for a QA engineer audience.
+
+Respond ONLY with a valid JSON object (no markdown fences):
+{{
+  "narrative": "2-4 sentence explanation of the verdict"
+}}""",
+)
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═════════════════════════════════════════════════════════════════════════════

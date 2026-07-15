@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.deps import get_current_user_or_api_key
 from app.routers import (
+    agent_investigations,
     agent_memory,
     agents,
     ai_evaluation,
@@ -155,6 +156,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     analysis_report.router,            # PMF US-7.5: self-contained HTML analysis report download
     duplicates.router,                 # Phase 4: per-project duplicate authored-test-case review queue
     defect_jira.router,                # PMF US-6.1/6.3: one-click Jira defects (project-scoped)
+    agent_investigations.router,       # AI-1/AI-3: Investigator + agent policies + agent-runs ledger
 )
 
 

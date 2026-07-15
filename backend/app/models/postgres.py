@@ -1193,6 +1193,133 @@ class TeamNotificationChannel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
+class AgentInvestigation(Base):
+    """One Investigator run against a test run (Agentic plan AI-1, shadow).
+
+    Persists the full InvestigationDetail wire shape served by
+    ``GET /api/v1/investigations/{id}``: lifecycle status, mode, trigger,
+    budget + spend JSONB, the per-hypothesis results (written incrementally
+    as hypothesis nodes complete — the UI polls), the synthesis verdict, the
+    prompt-version snapshot, and the cooperative-cancel flag.
+
+    One ACTIVE investigation per run is enforced by the partial unique index
+    ``uq_agent_investigations_one_active_per_run`` (migration 0108) over
+    ``ACTIVE_STATUSES`` — the API's 409 is backed by a real constraint.
+    """
+    __tablename__ = "agent_investigations"
+    __table_args__ = (
+        Index("ix_agent_investigations_project_created", "project_id", "created_at"),
+        Index("ix_agent_investigations_run", "run_id"),
+    )
+
+    # Keep in sync with _ACTIVE_STATUSES_SQL in migration 0108.
+    ACTIVE_STATUSES = ("queued", "running", "synthesizing")
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    # queued | running | synthesizing | completed | cancelled | failed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    # shadow | suggest | act (act reserved — no actions taken this slice)
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="shadow")
+    # manual | auto:newly_failing | auto:gate_no_go
+    triggered_by: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
+    # {"max_llm_calls": int, "max_tokens": int, "max_seconds": int}
+    budget: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # {"llm_calls": int, "tokens": int, "cost_usd": float, "seconds": float}
+    spend: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # List of hypothesis dicts in the pinned wire shape (id/title/status/
+    # confidence/confidence_basis/summary/evidence/started_at/completed_at).
+    hypotheses: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # {"primary_cause", "narrative", "confidence", "recommended_actions"}
+    verdict: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    prompt_versions: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # {"provider": str, "model": str} when an LLM was engaged; NULL offline.
+    model_info: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Cooperative cancel: the cancel endpoint sets the flag; nodes check it
+    # between stages and the runner finalizes status="cancelled".
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cancelled_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class AgentPolicy(Base):
+    """Per-(project, agent) governance policy (Agentic plan AI-3 core).
+
+    A MISSING row resolves in code to the default policy — enabled=True,
+    mode=shadow, budgets 10 runs/day, 30 LLM calls/run, 60000 tokens/run,
+    300 seconds/run (``agent_investigation_service.DEFAULT_BUDGETS``).
+    ``shadow_runs_completed`` is the promotion counter: how many shadow-mode
+    runs have completed, evidence for a later shadow→suggest promotion.
+    """
+    __tablename__ = "agent_policies"
+    __table_args__ = (
+        UniqueConstraint("project_id", "agent_id", name="uq_agent_policies_project_agent"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    agent_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # shadow | suggest | act
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="shadow")
+    # {"max_runs_per_day", "max_llm_calls_per_run", "max_tokens_per_run",
+    #  "max_seconds_per_run"} — missing keys resolve to DEFAULT_BUDGETS.
+    budgets: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    shadow_runs_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    promotion_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class AgentRun(Base):
+    """Agent activity ledger (Agentic plan AI-3): one row per agent
+    execution — what ran, why, what it proposed, what it actually did
+    (always nothing in shadow/suggest), and what it cost.
+
+    Written on every investigation completion/cancel/failure; mirrored as a
+    durable event to the Mongo pipeline event log; snapshotted into release
+    compliance packs (``agent_activity.json``).
+    """
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        Index("ix_agent_runs_project_agent_created", "project_id", "agent_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, default="shadow")
+    trigger: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
+    # completed | cancelled | failed
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    actions_proposed: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    actions_taken: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    prompt_registry_digest: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Optional deep-link into the detail surface (e.g. /investigations/<id>).
+    details_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AgentPipelineRun(Base):
     """Tracks a single execution of the multi-agent pipeline for a test run."""
     __tablename__ = "agent_pipeline_runs"
