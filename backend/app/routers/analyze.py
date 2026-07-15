@@ -110,11 +110,21 @@ async def get_existing_analysis(
         # legacy-shaped rows/mocks may not carry the attribute at all.
         "confidence_basis": (getattr(row, "routing_metadata", None) or {}).get("confidence_basis"),
     }
+
+    # AI-4: evidence checklist for the derived failure kind — the stored
+    # blob when the pipeline persisted one, computed on demand for rows
+    # written before the feature (no backfill). Best-effort: None on failure.
+    kind_evidence = (getattr(row, "routing_metadata", None) or {}).get("kind_evidence")
+    if not isinstance(kind_evidence, dict) or not kind_evidence.get("kind"):
+        from app.services.kind_evidence import compute_kind_evidence_for_test_case
+        kind_evidence = await compute_kind_evidence_for_test_case(db, tc_uuid)
+
     return AnalysisResponse(
         test_case_id=tc_uuid,
         **{k: v for k, v in analysis.items() if k not in {"role_actions", "llm_provider", "llm_model", "requires_human_review"}},
         role_actions=_build_role_actions(analysis),
         confidence_why=_build_confidence_why(analysis),
+        kind_evidence=kind_evidence,
         llm_provider=analysis["llm_provider"],
         llm_model=analysis["llm_model"],
         requires_human_review=analysis["requires_human_review"],

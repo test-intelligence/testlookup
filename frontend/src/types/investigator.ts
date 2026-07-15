@@ -25,7 +25,7 @@ export type HypothesisId = 'infra' | 'commit' | 'environment' | 'known_flaky' | 
 export type HypothesisStatus = 'pending' | 'running' | 'validated' | 'invalidated' | 'inconclusive'
 
 /** Same vocabulary as AI-F4 deep findings (types/deep-investigation.ts). */
-export type ConfidenceBasis = 'empirical' | 'heuristic_estimate' | 'llm_weighted'
+export type ConfidenceBasis = 'empirical' | 'heuristic_estimate' | 'llm_weighted' | 'human_corrected'
 
 export interface InvestigationBudget {
   max_llm_calls: number

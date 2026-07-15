@@ -566,3 +566,36 @@ async def test_test_connection_refuses_blocked_target_without_calling_httpx():
     assert result["success"] is False
     assert "not allowed" in result["message"]
     mock_client.assert_not_called()  # the PAT was never sent anywhere
+
+
+# ── AI-4: kind label on annotations (display-floor gated) ────────────────────
+
+
+def test_annotation_kind_label_appended_when_floor_met():
+    tc = _tc("fp_n", message="connection refused", stack=_PY_TRACE)
+    tc.id = "11111111-1111-1111-1111-111111111111"
+    tc_low = _tc("fp_low", message="mystery", stack=_PY_TRACE)
+    tc_low.id = "22222222-2222-2222-2222-222222222222"
+    enrich = svc._CheckEnrichment(
+        newly_failed=[("fp_n", tc), ("fp_low", tc_low)],
+        has_baseline=True,
+        # kind_labels_for_test_cases already applied the display floor —
+        # the below-floor test case has no entry.
+        kind_labels={tc.id: "Infrastructure (82% conf, AI-classified)"},
+    )
+    annotations, _, _ = svc._build_annotations(enrich)
+    by_title = {a["title"]: a for a in annotations}
+    assert "Kind: Infrastructure (82% conf, AI-classified)" in by_title["test_fp_n"]["message"]
+    assert "Kind:" not in by_title["test_fp_low"]["message"]
+
+
+def test_non_locatable_row_carries_kind_label():
+    tc = _tc("fp_n", message="connection refused", stack=None)
+    tc.id = "11111111-1111-1111-1111-111111111111"
+    enrich = svc._CheckEnrichment(
+        newly_failed=[("fp_n", tc)],
+        has_baseline=True,
+        kind_labels={tc.id: "Infrastructure (82% conf, AI-classified)"},
+    )
+    _, non_locatable, _ = svc._build_annotations(enrich)
+    assert non_locatable[0]["kind"] == "Infrastructure (82% conf, AI-classified)"

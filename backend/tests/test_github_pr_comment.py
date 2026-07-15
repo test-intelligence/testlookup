@@ -479,3 +479,54 @@ async def test_single_retry_on_5xx():
 
     assert result["posted"] is True and result["status_code"] == 201
     assert _http_methods(request_mock) == ["GET", "POST", "POST"]
+
+
+# ── AI-4: kind label on newly-failed rows (display-floor gated) ──────────────
+
+
+def test_kind_label_applied_to_newly_failed_rows_only():
+    """Labels are keyed by test-case id and land ONLY on newly-failed rows —
+    known-flaky and fixed rows never carry a kind label. A row whose id has
+    no label entry (analysis below the display floor, or no analysis yet)
+    renders exactly as before."""
+    tc_new = _tc("fp_new", "FAILED", message="connection refused")
+    tc_new.id = "11111111-1111-1111-1111-111111111111"
+    tc_low = _tc("fp_low", "FAILED", message="mystery")
+    tc_low.id = "22222222-2222-2222-2222-222222222222"
+    tc_flaky = _tc("fp_flaky", "FAILED", message="timeout")
+    tc_flaky.id = "33333333-3333-3333-3333-333333333333"
+    right = {"fp_new": tc_new, "fp_low": tc_low, "fp_flaky": tc_flaky}
+    left = {
+        "fp_new": _tc("fp_new", "PASSED"),
+        "fp_low": _tc("fp_low", "PASSED"),
+        "fp_flaky": _tc("fp_flaky", "PASSED"),
+    }
+    # kind_labels_for_test_cases already applied the display floor — the
+    # below-floor test case simply has no entry.
+    labels = {
+        tc_new.id: "Infrastructure (82% conf, AI-classified)",
+        tc_flaky.id: "Infrastructure (99% conf, AI-classified)",  # must be ignored
+    }
+    part = svc._partition_tests(
+        right, left, {"fp_flaky"}, has_baseline=True, kind_labels=labels,
+    )
+    by_name = {r["name"]: r for r in part.newly_failed}
+    assert by_name["test_fp_new"]["kind"] == "Infrastructure (82% conf, AI-classified)"
+    assert "kind" not in by_name["test_fp_low"]
+    assert all("kind" not in r for r in part.known_flaky)
+
+
+def test_kind_label_rendered_in_comment_body_and_absent_below_floor():
+    tc_new = _tc("fp_new", "FAILED", message="connection refused")
+    tc_new.id = "11111111-1111-1111-1111-111111111111"
+    tc_low = _tc("fp_low", "FAILED", message="mystery")
+    tc_low.id = "22222222-2222-2222-2222-222222222222"
+    part = svc._partition_tests(
+        {"fp_new": tc_new, "fp_low": tc_low}, {}, set(), has_baseline=False,
+        kind_labels={tc_new.id: "Infrastructure (82% conf, AI-classified)"},
+    )
+    body = svc._build_comment_body(_fake_run(), PROJECT_ID, "acme", part, None)
+    assert "_Infrastructure (82% conf, AI-classified)_" in body
+    # The below-floor row renders label-free.
+    low_line = [ln for ln in body.splitlines() if "test_fp_low" in ln][0]
+    assert "AI-classified" not in low_line

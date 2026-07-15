@@ -47,6 +47,13 @@ export interface PolicyKindBudget {
   max_failures: number;
   /** Hard rule: a NO_GO may soften at most to CONDITIONAL_GO — never GO. */
   downgrade_to: 'CONDITIONAL_GO';
+  /**
+   * AI-4 (optional, 0-100): a failure only counts toward the excusable
+   * budget when its per-failure kind confidence meets this floor;
+   * below-floor failures count as product (conservative). null/absent =
+   * no floor — verdicts identical to the pre-floor behavior.
+   */
+  min_confidence_to_excuse?: number | null;
 }
 
 /**

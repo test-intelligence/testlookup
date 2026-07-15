@@ -478,6 +478,9 @@ class _CheckEnrichment:
     known_flaky: list[tuple[str, Any]] = field(default_factory=list)
     fixed_count: int = 0
     has_baseline: bool = False
+    # AI-4: {str(test_case_id): display label} for failures whose kind
+    # confidence met the display floor — empty entries mean no label.
+    kind_labels: dict[str, str] = field(default_factory=dict)
 
     @property
     def all_failures_flaky(self) -> bool:
@@ -565,25 +568,33 @@ def _build_annotations(
     non_locatable: list[dict[str, Any]] = []
     omitted = 0
     for fp, tc, level in prioritized:
+        # AI-4: kind label only when the per-failure kind confidence met the
+        # display floor (kind_labels_for_test_cases applied it) — otherwise
+        # the annotation renders exactly as before.
+        kind_label = enrich.kind_labels.get(str(getattr(tc, "id", "") or ""))
         loc = _locate_failure(tc)
         if loc is None:
             non_locatable.append({
                 "name": str(getattr(tc, "test_name", None) or fp),
                 "message": _first_line(getattr(tc, "error_message", None)),
                 "flaky": level == "warning",
+                "kind": kind_label,
             })
             continue
         if len(annotations) >= _MAX_ANNOTATIONS:
             omitted += 1
             continue
         path, line = loc
+        message = _annotation_message(tc)
+        if kind_label:
+            message = f"{message}\nKind: {kind_label}"
         annotations.append({
             "path": path,
             "start_line": line,
             "end_line": line,
             "annotation_level": level,
             "title": str(getattr(tc, "test_name", None) or fp)[:_ANNOTATION_TITLE_CAP],
-            "message": _annotation_message(tc),
+            "message": message,
         })
     return annotations, non_locatable, omitted
 
@@ -618,9 +629,19 @@ async def _gather_enrichment(
     # split — same no-baseline fallback the PR comment applies.
     has_baseline = baseline is not None and bool(left_tests)
     flaky_fps = await _flaky_fingerprints(db, run.project_id)
-    return _partition_for_check(
+    enrich = _partition_for_check(
         right_tests, left_tests, flaky_fps, has_baseline=has_baseline,
     )
+    # AI-4: display-floor-gated kind labels for the annotation payloads —
+    # same source + floor as the PR comment so the two surfaces agree.
+    from app.services.kind_evidence import kind_labels_for_test_cases
+    failing_ids = [
+        getattr(tc, "id", None)
+        for _fp, tc in (enrich.newly_failed + enrich.still_failing + enrich.known_flaky)
+        if getattr(tc, "id", None) is not None
+    ]
+    enrich.kind_labels = await kind_labels_for_test_cases(db, failing_ids)
+    return enrich
 
 
 # ── Check run posting ──────────────────────────────────────────────────────
@@ -736,6 +757,8 @@ def _format_check_summary(
                 entry += f" — `{row['message']}`"
             if row["flaky"]:
                 entry += " _(known-flaky)_"
+            if row.get("kind"):
+                entry += f" · _{row['kind']}_"
             text_lines.append(entry)
         overflow = len(non_locatable) - _NON_LOCATABLE_CAP
         if overflow > 0:

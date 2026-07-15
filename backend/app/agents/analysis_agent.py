@@ -710,6 +710,34 @@ class AnalysisAgent(BaseAgent):
                 "confidence_rule_id": analysis.get("confidence_rule_id"),
             }
 
+            # AI-4: evidence-checklist enrichment of the derived failure kind.
+            # Deterministic re-weighing of already-available signals (human
+            # corrections, infra shape, fingerprint history, status,
+            # classifier verdict) — NO extra LLM call. Persisted alongside
+            # the rest of the _audit block via AIAnalysis.routing_metadata
+            # (AI-F4 pattern, no migration). Best-effort: a failure here must
+            # never lose the analysis itself.
+            try:
+                from app.services.kind_evidence import assemble_kind_evidence
+
+                analysis["_audit"]["kind_evidence"] = assemble_kind_evidence(
+                    analysis,
+                    status=meta.get("status"),
+                    error_message=meta.get("error_message"),
+                    history=meta.get("flakiness_data"),
+                    correction=(state.get("_human_corrections") or {}).get(
+                        meta.get("test_fingerprint")
+                    ),
+                    prior_analyses=None,  # not enriched at write time; the
+                    # read path recomputes with recall when the blob is absent
+                )
+            except Exception as evidence_exc:  # noqa: BLE001
+                logger.debug(
+                    "kind_evidence_assembly_failed",
+                    test_case_id=tc_id,
+                    error=str(evidence_exc),
+                )
+
             # If the router recorded a fallback, surface it as a decision entry
             # so the stage-level decision_log reflects per-test anomalies.
             if routing.get("fallback_from") and pipeline_run_id:
@@ -753,6 +781,7 @@ class AnalysisAgent(BaseAgent):
                         TestCase.error_message,
                         TestCase.severity,
                         TestCase.test_fingerprint,
+                        TestCase.status,
                     ).where(TestCase.id.in_(tc_ids))
                 )
                 rows = result.all()
@@ -767,6 +796,9 @@ class AnalysisAgent(BaseAgent):
                         "error_message": row.error_message,
                         "severity": row.severity,
                         "test_fingerprint": row.test_fingerprint,
+                        # FAILED-vs-BROKEN feeds the kind-evidence status_signal
+                        # check (AI-4).
+                        "status": getattr(row.status, "value", row.status),
                         "stack_trace": None,  # fetched from MongoDB if available
                     }
                     if row.test_fingerprint:

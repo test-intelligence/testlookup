@@ -74,6 +74,12 @@ async def build_dataset_from_feedback(
                 "feedback_id": str(feedback.id),
                 "analysis_id": str(analysis.id),
                 "source": feedback.source,
+                # AI-4: which engine tier produced the prediction (llm / ml /
+                # rules / human_corrected), recovered from the persisted
+                # routing audit. None for rows written before routing
+                # metadata existed — kind-precision-per-tier reports those
+                # honestly as tier "unknown" instead of guessing.
+                "analysis_tier": (analysis.routing_metadata or {}).get("analysis_mode"),
             },
         }
         items.append(item)
@@ -214,6 +220,92 @@ def compute_classification_metrics(items: list[dict]) -> dict:
         "accuracy": round(accuracy, 4),
         "total": total,
         "correct": correct,
+        # AI-4: derived kind-triad precision (additive sub-key — existing
+        # consumers read the flat keys above unchanged).
+        "kind_metrics": compute_kind_classification_metrics(items),
+    }
+
+
+def compute_kind_classification_metrics(items: list[dict]) -> dict:
+    """Kind-triad classification precision, overall and per engine tier (AI-4).
+
+    The failure *kind* (product / test_code / infrastructure / unknown) is a
+    pure function of the category (``services/failure_kind.py``), so kind
+    precision is computable from any classification item that carries a
+    category on BOTH sides — which the feedback-built datasets and the golden
+    classification items both do. The AI-F4 provenance caveat still applies
+    to what this measures: golden items score classification *agreement* on
+    pre-labeled summaries, not raw-error classification.
+
+    Per-tier attribution comes from ``metadata.analysis_tier`` (recorded from
+    the persisted routing audit by ``build_dataset_from_feedback``). Items
+    without a recorded tier — golden items, or feedback on pre-routing rows —
+    land in tier ``"unknown"`` with an honest note; no tier is ever guessed.
+
+    Honest empty state: ``{"computable": False, "reason": ...}`` when no item
+    carries usable labels — never fake numbers.
+    """
+    from app.services.failure_kind import failure_kind
+
+    usable = [
+        item for item in items
+        if (item.get("input") or {}).get("failure_category")
+        and (item.get("expected_output") or {}).get("failure_category")
+    ]
+    if not usable:
+        return {
+            "computable": False,
+            "reason": (
+                "no items carry a failure_category on both the prediction and "
+                "the expected label — kind precision is not computable"
+            ),
+            "total": len(items),
+        }
+
+    def _kinds(subset: list[dict]) -> list[tuple[str, str]]:
+        return [
+            (
+                failure_kind(item["input"]["failure_category"], None),
+                failure_kind(item["expected_output"]["failure_category"], None),
+            )
+            for item in subset
+        ]
+
+    def _metrics(pairs: list[tuple[str, str]]) -> dict:
+        total = len(pairs)
+        correct = sum(1 for predicted, expected in pairs if predicted == expected)
+        kinds = {k for pair in pairs for k in pair}
+        precisions: list[float] = []
+        for kind in kinds:
+            tp = sum(1 for p, e in pairs if p == kind and e == kind)
+            fp = sum(1 for p, e in pairs if p == kind and e != kind)
+            precisions.append(tp / (tp + fp) if (tp + fp) > 0 else 0.0)
+        return {
+            "precision": round(sum(precisions) / len(precisions), 4) if precisions else None,
+            "accuracy": round(correct / total, 4) if total else None,
+            "total": total,
+            "correct": correct,
+        }
+
+    by_tier: dict[str, list[dict]] = {}
+    for item in usable:
+        tier = str((item.get("metadata") or {}).get("analysis_tier") or "unknown")
+        by_tier.setdefault(tier, []).append(item)
+
+    tiers = {tier: _metrics(_kinds(subset)) for tier, subset in sorted(by_tier.items())}
+    if "unknown" in tiers:
+        tiers["unknown"]["note"] = (
+            "engine tier not recorded on these items (golden items or "
+            "pre-routing-audit rows) — precision here is real but not "
+            "attributable to a specific tier"
+        )
+
+    return {
+        "computable": True,
+        "overall": _metrics(_kinds(usable)),
+        "by_tier": tiers,
+        "total": len(items),
+        "usable": len(usable),
     }
 
 

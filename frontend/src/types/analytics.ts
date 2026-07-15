@@ -61,6 +61,38 @@ export interface FailureKindCount {
   count: number
 }
 
+/** One row of the kind evidence checklist (AI-4). */
+export interface KindEvidenceCheck {
+  /** memory_recall | infra_shape | history_pattern | status_signal | classifier */
+  check: string
+  /** supports | contradicts | neutral | unavailable */
+  verdict: string
+  detail: string
+}
+
+/**
+ * Evidence-checklist record backing an AI-classified failure kind (AI-4).
+ * Mirrors backend/app/services/kind_evidence.py — deterministic re-weighing
+ * of existing signals, no extra LLM call; basis is honest about that
+ * ('heuristic_estimate' unless pinned by a human correction →
+ * 'human_corrected').
+ */
+export interface KindEvidence {
+  schema_version: number
+  kind: string
+  confidence: number
+  confidence_basis: 'heuristic_estimate' | 'human_corrected' | 'empirical' | string
+  pinned_by_human_correction: boolean
+  classifier_confidence: number
+  checks: KindEvidenceCheck[]
+}
+
+export interface KindEvidenceResponse {
+  found: boolean
+  test_case_id: string | null
+  kind_evidence: KindEvidence | null
+}
+
 export interface FailureCategoriesResponse {
   items: FailureCategoryItem[]
   /** Parallel AI-derived kind aggregation — zero counts included. */

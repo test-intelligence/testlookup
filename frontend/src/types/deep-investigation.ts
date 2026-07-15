@@ -42,7 +42,7 @@ export interface DeepFinding {
    *  "seed" (demo data), or "unknown" (legacy rows before tagging). */
   origin?: 'pipeline' | 'seed' | 'unknown'
   /** AI-F4 calibration basis of confidence_score, when known. */
-  confidence_basis?: 'empirical' | 'heuristic_estimate' | null
+  confidence_basis?: 'empirical' | 'heuristic_estimate' | 'human_corrected' | null
 }
 
 export interface ReleaseDecision {

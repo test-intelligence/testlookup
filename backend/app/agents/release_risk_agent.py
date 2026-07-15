@@ -195,6 +195,10 @@ class ReleaseRiskAgent(BaseAgent):
                         # Derived failure-kind breakdown (US-9.3) — consumed
                         # only by opt-in kind_rules policies; inert otherwise.
                         "failure_kind_counts": self._failure_kind_counts(analyses),
+                        # Per-failure kind confidences (AI-4) — consumed only
+                        # by kind budgets with a min_confidence_to_excuse
+                        # floor; inert otherwise.
+                        "failure_kind_confidences": self._failure_kind_confidences(analyses),
                     },
                     db=policy_db,
                 )
@@ -294,6 +298,30 @@ class ReleaseRiskAgent(BaseAgent):
             kind = failure_kind(analysis.get("failure_category"), analysis.get("status"))
             counts[kind] = counts.get(kind, 0) + 1
         return counts
+
+    @staticmethod
+    def _failure_kind_confidences(analyses: dict) -> dict[str, list[int | None]]:
+        """Per-failure kind confidences bucketed by kind (AI-4).
+
+        Parallel to :meth:`_failure_kind_counts` — for each kind, one entry
+        per analyzed failure of that kind carrying its evidence-checklist
+        confidence (``_audit.kind_evidence.confidence``), falling back to the
+        plain classifier confidence, or None when neither is known. Consumed
+        by ``policy_evaluator_service._apply_kind_rules`` when a kind budget
+        sets ``min_confidence_to_excuse`` (None entries are conservatively
+        treated as below any floor).
+        """
+        from app.services.failure_kind import FAILURE_KINDS, failure_kind
+        from app.services.kind_evidence import kind_confidence_of
+
+        confidences: dict[str, list[int | None]] = {kind: [] for kind in FAILURE_KINDS}
+        for analysis in analyses.values():
+            if not isinstance(analysis, dict):
+                confidences["unknown"].append(None)
+                continue
+            kind = failure_kind(analysis.get("failure_category"), analysis.get("status"))
+            confidences.setdefault(kind, []).append(kind_confidence_of(analysis))
+        return confidences
 
     # ── LLM reasoning (Step 2) ────────────────────────────────────────────────
 
@@ -400,6 +428,11 @@ class ReleaseRiskAgent(BaseAgent):
             # US-9.3 — frozen kind breakdown so the decision is reproducible
             # and the policy simulator can replay kind-aware policies.
             "failure_kind_counts": ReleaseRiskAgent._failure_kind_counts(
+                state.get("analyses", {}) or {}
+            ),
+            # AI-4 — frozen per-failure kind confidences so the simulator can
+            # replay policies that set a min_confidence_to_excuse floor.
+            "failure_kind_confidences": ReleaseRiskAgent._failure_kind_confidences(
                 state.get("analyses", {}) or {}
             ),
         }

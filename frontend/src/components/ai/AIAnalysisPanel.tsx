@@ -69,9 +69,15 @@ function ConfidencePanel({ score, why }: { score: number; why: ConfidenceWhy }) 
               className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"
               title={why.confidence_basis === 'empirical'
                 ? 'Calibrated confidence — equals measured precision on labeled eval samples'
-                : 'Estimated heuristic confidence — not empirically calibrated'}
+                : why.confidence_basis === 'human_corrected'
+                  ? 'Confidence pinned by an authoritative human correction of this classification'
+                  : 'Estimated heuristic confidence — not empirically calibrated'}
             >
-              {why.confidence_basis === 'empirical' ? 'calibrated' : 'estimated'}
+              {why.confidence_basis === 'empirical'
+                ? 'calibrated'
+                : why.confidence_basis === 'human_corrected'
+                  ? 'human-corrected'
+                  : 'estimated'}
             </span>
           )}
           <span className={clsx('text-2xl font-bold tabular-nums', confColor)}>{score}%</span>

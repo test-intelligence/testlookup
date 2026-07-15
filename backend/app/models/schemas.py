@@ -688,7 +688,9 @@ class ConfidenceWhy(BaseModel):
     # AI-F4: calibration basis for rules-engine confidences —
     # "empirical" (measured precision on labeled eval samples) or
     # "heuristic_estimate" (engineering estimate, not empirically calibrated).
-    # None for LLM/ML analyses that don't carry a band.
+    # AI-4 adds "human_corrected" (pinned by an authoritative human
+    # correction) to the shared vocabulary. None for LLM/ML analyses that
+    # don't carry a band.
     confidence_basis: Optional[str] = None
 
 
@@ -709,6 +711,11 @@ class AnalysisResponse(BaseModel):
     tools_used: List[str] = []
     # Explains the basis of the confidence score (derived from evidence and tools used).
     confidence_why: ConfidenceWhy = Field(default_factory=ConfidenceWhy)
+    # AI-4: evidence-checklist record for the derived failure kind —
+    # {kind, confidence, confidence_basis, checks: [{check, verdict, detail}]}.
+    # Stored in AIAnalysis.routing_metadata.kind_evidence by the pipeline;
+    # computed on demand for older rows. None when no analysis context exists.
+    kind_evidence: Optional[Dict[str, Any]] = None
     llm_provider: str
     llm_model: str
     requires_human_review: bool
@@ -2976,9 +2983,18 @@ class PolicyKindBudget(BaseModel):
     excuse from the NO_GO trigger. ``downgrade_to`` is deliberately a
     single-value Literal: a NO_GO may be softened at most to CONDITIONAL_GO —
     never to GO — so the schema itself makes the hard rule unrepresentable.
+
+    ``min_confidence_to_excuse`` (AI-4, optional): when set, a failure only
+    counts toward this kind's excusable budget if its per-failure kind
+    confidence (the evidence-checklist confidence, falling back to the
+    classifier confidence) is at or above the floor. Below-floor and
+    unknown-confidence failures count as product — conservative. ``None``
+    (the default) applies no floor: verdicts are byte-identical to the
+    pre-AI-4 US-9.3 behaviour (pinned by tests/test_kind_gate_policy.py).
     """
     max_failures: int = Field(default=0, ge=0)
     downgrade_to: Literal["CONDITIONAL_GO"] = "CONDITIONAL_GO"
+    min_confidence_to_excuse: Optional[int] = Field(default=None, ge=0, le=100)
 
 
 class PolicyKindRules(BaseModel):

@@ -190,3 +190,68 @@ class TestColumnWidths:
 
     def test_model_name_max(self):
         assert len("a" * 200) <= 200
+
+
+class TestKindClassificationMetrics:
+    """AI-4: kind-triad precision, per engine tier, computed honestly."""
+
+    @staticmethod
+    def _item(predicted, expected, tier=None, correct=True):
+        return {
+            "input": {"failure_category": predicted},
+            "expected_output": {"failure_category": expected, "correct": correct},
+            "metadata": {"analysis_tier": tier} if tier else {},
+        }
+
+    def test_not_computable_without_labels_is_honest(self):
+        """No fake numbers: label-less items → computable=False + reason."""
+        from app.services.ai_eval_service import compute_kind_classification_metrics
+
+        result = compute_kind_classification_metrics([])
+        assert result["computable"] is False
+        assert "not computable" in result["reason"]
+
+        result = compute_kind_classification_metrics(
+            [{"input": {}, "expected_output": {"correct": True}}]
+        )
+        assert result["computable"] is False
+
+    def test_kind_precision_from_category_labels(self):
+        """Kind is derived from the categories both sides already carry —
+        a TEST_DATA prediction against an AUTOMATION_DEFECT label is a kind
+        MATCH (both test_code) even though the categories differ."""
+        from app.services.ai_eval_service import compute_kind_classification_metrics
+
+        items = [
+            self._item("PRODUCT_BUG", "PRODUCT_BUG", tier="llm"),
+            self._item("TEST_DATA", "AUTOMATION_DEFECT", tier="llm"),  # kind match
+            self._item("INFRASTRUCTURE", "PRODUCT_BUG", tier="rules", correct=False),
+        ]
+        result = compute_kind_classification_metrics(items)
+        assert result["computable"] is True
+        assert result["overall"]["total"] == 3
+        assert result["overall"]["correct"] == 2  # kind-level agreement
+
+    def test_per_tier_breakdown_with_honest_unknown_tier(self):
+        from app.services.ai_eval_service import compute_kind_classification_metrics
+
+        items = [
+            self._item("PRODUCT_BUG", "PRODUCT_BUG", tier="llm"),
+            self._item("INFRASTRUCTURE", "INFRASTRUCTURE", tier="rules"),
+            self._item("FLAKY", "FLAKY"),  # no tier recorded (golden / legacy)
+        ]
+        result = compute_kind_classification_metrics(items)
+        assert set(result["by_tier"]) == {"llm", "rules", "unknown"}
+        assert result["by_tier"]["llm"]["total"] == 1
+        # the honest disclaimer, not a fake attribution
+        assert "not attributable" in result["by_tier"]["unknown"]["note"]
+
+    def test_classification_metrics_carry_kind_submetrics(self):
+        """Additive sub-key — flat keys unchanged for existing consumers."""
+        from app.services.ai_eval_service import compute_classification_metrics
+
+        items = [self._item("PRODUCT_BUG", "PRODUCT_BUG", tier="ml")]
+        metrics = compute_classification_metrics(items)
+        assert set(metrics) >= {"precision", "recall", "f1_score", "accuracy", "total", "correct"}
+        assert metrics["kind_metrics"]["computable"] is True
+        assert metrics["kind_metrics"]["by_tier"]["ml"]["accuracy"] == 1.0

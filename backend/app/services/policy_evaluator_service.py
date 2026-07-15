@@ -194,6 +194,14 @@ def _apply_kind_rules(
       * A kind with a configured budget whose count is <= max_failures is
         excluded from the NO_GO trigger; exceeding the budget restores full
         counting for that kind. Kinds without a budget always count.
+      * Confidence floor (AI-4, ``min_confidence_to_excuse``): when a budget
+        sets a floor, only failures whose per-failure kind confidence
+        (``context["failure_kind_confidences"]``, produced by the release
+        risk agent from the evidence checklist) is >= the floor are eligible
+        for the budget. Below-floor / unknown-confidence failures count as
+        product (conservative). A null/absent floor keeps this function
+        byte-identical to the US-9.3 behaviour — pinned by
+        tests/test_kind_gate_policy.py.
       * If, after exclusions, zero blocking failures remain AND at least one
         failure was excluded, a base NO_GO is downgraded — at most to
         CONDITIONAL_GO, never to GO (hard rule; the schema Literal and this
@@ -231,10 +239,18 @@ def _apply_kind_rules(
     product_effective = counts["product"] + counts["unknown"]
     total_failures = sum(counts.values())
 
+    # Per-failure kind confidences (AI-4) — only consulted when a budget sets
+    # a min_confidence_to_excuse floor. Absent on pre-feature snapshots.
+    raw_confidences = context.get("failure_kind_confidences")
+    if not isinstance(raw_confidences, dict):
+        raw_confidences = {}
+
     evals: list[RuleEvaluation] = []
     blocking = product_effective
     excluded_parts: list[str] = []
     excluded_total = 0
+    floor_rejected: dict[str, int] = {}
+    any_floor_configured = False
 
     for kind in _EXCLUDABLE_KINDS:
         budget = kind_rules.get(kind)
@@ -244,13 +260,67 @@ def _apply_kind_rules(
             blocking += count
             continue
         max_failures = int(budget.get("max_failures", 0) or 0)
-        within = count <= max_failures
+        floor = budget.get("min_confidence_to_excuse")
+
+        if floor is None:
+            # No floor → byte-identical to the US-9.3 semantics.
+            within = count <= max_failures
+            if within:
+                excluded_total += count
+                if count:
+                    excluded_parts.append(f"{count} {kind} failure(s) <= budget {max_failures}")
+            else:
+                blocking += count
+            evals.append(RuleEvaluation(
+                rule_id=f"kind_budget_{kind}",
+                rule_name=f"Failure-kind budget ({kind})",
+                rule_type="kind_budget",
+                passed=within,
+                action="INFO",  # budgets never escalate — they can only soften
+                message=(
+                    f"{kind} failures: {count} (budget: {max_failures}) — "
+                    "excluded from NO_GO trigger but still reported"
+                    if within else
+                    f"{kind} failures: {count} exceed budget {max_failures} — counted in full"
+                ),
+                actual_value=count,
+                threshold_value=max_failures,
+            ))
+            continue
+
+        # ── Confidence floor path (AI-4) ─────────────────────────────────
+        any_floor_configured = True
+        floor = int(floor)
+        conf_list = raw_confidences.get(kind)
+        eligible = 0
+        if isinstance(conf_list, list):
+            eligible = sum(
+                1 for c in conf_list
+                if isinstance(c, (int, float)) and int(c) >= floor
+            )
+        # Never excuse more failures than the kind actually has (defensive
+        # against count/confidence snapshot drift); missing confidence data
+        # means nothing is eligible — conservative.
+        eligible = min(eligible, count)
+        rejected = count - eligible
+        floor_rejected[kind] = rejected
+        blocking += rejected  # below-floor failures count as product
+
+        within = eligible <= max_failures
         if within:
-            excluded_total += count
-            if count:
-                excluded_parts.append(f"{count} {kind} failure(s) <= budget {max_failures}")
+            excluded_total += eligible
+            if eligible:
+                excluded_parts.append(
+                    f"{eligible} {kind} failure(s) <= budget {max_failures} "
+                    f"(kind confidence >= {floor})"
+                )
         else:
-            blocking += count
+            blocking += eligible
+        floor_note = (
+            f"; {rejected} below the {floor}% confidence floor counted as product"
+            if rejected else
+            f"; all met the {floor}% confidence floor"
+        )
         evals.append(RuleEvaluation(
             rule_id=f"kind_budget_{kind}",
             rule_name=f"Failure-kind budget ({kind})",
@@ -258,10 +328,11 @@ def _apply_kind_rules(
             passed=within,
             action="INFO",  # budgets never escalate — they can only soften
             message=(
-                f"{kind} failures: {count} (budget: {max_failures}) — "
-                "excluded from NO_GO trigger but still reported"
+                f"{kind} failures: {eligible} of {count} eligible (budget: {max_failures}) — "
+                f"excluded from NO_GO trigger but still reported{floor_note}"
                 if within else
-                f"{kind} failures: {count} exceed budget {max_failures} — counted in full"
+                f"{kind} failures: {eligible} eligible of {count} exceed budget {max_failures} "
+                f"— counted in full{floor_note}"
             ),
             actual_value=count,
             threshold_value=max_failures,
@@ -285,16 +356,32 @@ def _apply_kind_rules(
             + (f", of which {counts['unknown']} unknown-kind counted as product" if counts["unknown"] else "")
             + ")"
         )
+        if any_floor_configured:
+            counterfactual += (
+                "; every excused failure met its kind-confidence floor "
+                f"({sum(floor_rejected.values())} floor-rejected)"
+            )
         summary_message = counterfactual
-    elif recommendation == "NO_GO" and product_effective > 0:
+    elif recommendation == "NO_GO" and (product_effective > 0 or sum(floor_rejected.values()) > 0):
+        rejected_total = sum(floor_rejected.values())
         summary_message = (
             f"No downgrade: {product_effective} product failure(s) always count"
             + (f" (includes {counts['unknown']} unknown-kind counted as product)" if counts["unknown"] else "")
+            + (
+                f"; {rejected_total} failure(s) below their kind-confidence floor "
+                "counted as product"
+                if rejected_total else ""
+            )
         )
     else:
         summary_message = "Failure-kind weighting evaluated — no downgrade applied"
 
     breakdown = dict(counts)
+    if any_floor_configured:
+        # AI-4: the trail records how many failures the confidence floor
+        # rejected per kind. Key only present when a floor is configured, so
+        # floor-less policies keep the exact US-9.3 breakdown shape.
+        breakdown["floor_rejected"] = dict(floor_rejected)
     evals.append(RuleEvaluation(
         rule_id="kind_rules",
         rule_name="Failure-kind weighting",

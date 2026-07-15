@@ -45,8 +45,11 @@ Design notes
   fixed / still_failing), so the PR comment always agrees with
   ``/runs/compare``.
 
-* **NO AI content in this slice** — analysis may not have finished when
-  the comment posts; a follow-up story appends AI suggestions.
+* **AI content is limited to the kind label (AI-4)** — a newly-failed row
+  carries its AI-classified failure kind ONLY when the per-failure kind
+  confidence meets ``kind_evidence.KIND_DISPLAY_CONFIDENCE_FLOOR``; below
+  it (or when analysis hasn't finished when the comment posts) the row
+  renders exactly as before. No other AI content in this surface.
 
 * **GitHub etiquette** — 10s timeout, a single retry on 5xx/network
   error, comment listing paginated to 3 pages of 100.
@@ -181,11 +184,17 @@ class _Partition:
     has_baseline: bool = False
 
 
-def _row(tc: Any) -> dict[str, str]:
-    return {
+def _row(tc: Any, kind_label: Optional[str] = None) -> dict[str, str]:
+    row = {
         "name": str(getattr(tc, "test_name", None) or getattr(tc, "test_fingerprint", "?")),
         "message": _first_message_line(getattr(tc, "error_message", None)),
     }
+    # AI-4: kind label only when the analysis met the display floor —
+    # ``kind_labels_for_test_cases`` already applied it, so a missing entry
+    # simply renders the row exactly as before.
+    if kind_label:
+        row["kind"] = kind_label
+    return row
 
 
 def _partition_tests(
@@ -194,6 +203,7 @@ def _partition_tests(
     flaky_fps: set[str],
     *,
     has_baseline: bool,
+    kind_labels: Optional[dict[str, str]] = None,
 ) -> _Partition:
     """Partition the PR run's tests against the baseline.
 
@@ -203,6 +213,10 @@ def _partition_tests(
     "this was already unreliable".
     """
     part = _Partition(has_baseline=has_baseline)
+    labels = kind_labels or {}
+
+    def _label(tc: Any) -> Optional[str]:
+        return labels.get(str(getattr(tc, "id", "") or ""))
 
     for fp, tc in sorted(right_tests.items()):
         bucket = _status_bucket(tc.status)
@@ -212,7 +226,7 @@ def _partition_tests(
             part.known_flaky.append(_row(tc))
             continue
         if not has_baseline:
-            part.newly_failed.append(_row(tc))
+            part.newly_failed.append(_row(tc, kind_label=_label(tc)))
             continue
         left_tc = left_tests.get(fp)
         cls = _classify(
@@ -224,7 +238,7 @@ def _partition_tests(
             # new_failure (incl. absent-from-baseline) and any other
             # status change into failed/broken (e.g. skipped→failed,
             # classified "regressed") reads as newly failed on this PR.
-            part.newly_failed.append(_row(tc))
+            part.newly_failed.append(_row(tc, kind_label=_label(tc)))
 
     if has_baseline:
         for fp, left_tc in sorted(left_tests.items()):
@@ -254,9 +268,14 @@ def _section(
         if deep_link:
             name = f"[{name}]({deep_link})"
         if row["message"]:
-            lines.append(f"- {name} — `{row['message']}`")
+            line = f"- {name} — `{row['message']}`"
         else:
-            lines.append(f"- {name}")
+            line = f"- {name}"
+        # AI-4: kind label, present only when the per-failure kind confidence
+        # met the display floor (below it, no label — noise isn't signal).
+        if row.get("kind"):
+            line += f" · _{row['kind']}_"
+        lines.append(line)
     overflow = len(rows) - cap
     if overflow > 0:
         lines.append(f"- _+{overflow} {overflow_label}_")
@@ -525,8 +544,20 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
         has_baseline = baseline is not None and bool(left_tests)
         flaky_fps = await _flaky_fingerprints(db, run.project_id)
 
+        # AI-4: kind labels for the failing rows (display-floor gated inside
+        # the service — absent entries render exactly as before).
+        from app.services.kind_evidence import kind_labels_for_test_cases
+        failing_ids = [
+            getattr(tc, "id", None)
+            for tc in right_tests.values()
+            if _status_bucket(tc.status) in ("failed", "broken")
+            and getattr(tc, "id", None) is not None
+        ]
+        kind_labels = await kind_labels_for_test_cases(db, failing_ids)
+
         part = _partition_tests(
             right_tests, left_tests, flaky_fps, has_baseline=has_baseline,
+            kind_labels=kind_labels,
         )
         body = _build_comment_body(
             run, run.project_id, project_name, part,

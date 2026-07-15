@@ -98,6 +98,99 @@ async def top_failing_tests(
     )
 
 
+# ── Failure-kind evidence checklist (AI-4) ─────────────────────────────────
+
+@router.get("/kind-evidence")
+async def kind_evidence(
+    project_id: str | None = None,
+    test_fingerprint: str | None = Query(None, min_length=1),
+    test_case_id: str | None = Query(None, min_length=1),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Evidence-checklist record backing the AI-classified failure kind
+    (AI-4) — for the kind-badge popovers. Two lookup modes:
+
+    * ``project_id`` + ``test_fingerprint`` (the /failures aggregates carry
+      fingerprints): resolves the fingerprint's most recent analyzed failure
+      in the project.
+    * ``test_case_id`` (run-detail rows carry the id directly).
+
+    Uses the stored ``routing_metadata.kind_evidence`` blob when the
+    pipeline persisted one, computing on demand otherwise (no backfill).
+    Returns ``{found: false}`` when no analyzed failure matches — the UI
+    renders the plain badge then.
+    """
+    import uuid as _uuid
+
+    from app.models.postgres import AIAnalysis, TestCase, TestRun, TestStatus
+    from app.services.kind_evidence import compute_kind_evidence_for_test_case
+
+    if test_case_id:
+        try:
+            tc_uuid = _uuid.UUID(test_case_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid test_case_id format")
+        # Tenant isolation: the test case's project must be accessible.
+        owner_project = (
+            await db.execute(
+                select(TestRun.project_id)
+                .join(TestCase, TestCase.test_run_id == TestRun.id)
+                .where(TestCase.id == tc_uuid)
+            )
+        ).scalar_one_or_none()
+        if owner_project is None:
+            return {"found": False, "test_case_id": None, "kind_evidence": None}
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None and owner_project not in accessible:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this project",
+            )
+        evidence = await compute_kind_evidence_for_test_case(db, tc_uuid)
+        return {
+            "found": evidence is not None,
+            "test_case_id": str(tc_uuid),
+            "kind_evidence": evidence,
+        }
+
+    if not test_fingerprint:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide test_case_id, or project_id + test_fingerprint",
+        )
+
+    # Pins + 403s exactly like the sibling endpoints; a definite project id
+    # is required because fingerprints are only unique per tenant.
+    scoped, _allowed = await resolve_project_scope(db, current_user, project_id)
+    if scoped is None:
+        raise HTTPException(status_code=422, detail="project_id is required")
+
+    tc_id = (
+        await db.execute(
+            select(TestCase.id)
+            .join(TestRun, TestCase.test_run_id == TestRun.id)
+            .join(AIAnalysis, AIAnalysis.test_case_id == TestCase.id)
+            .where(
+                TestRun.project_id == _uuid.UUID(str(scoped)),
+                TestCase.test_fingerprint == test_fingerprint,
+                TestCase.status.in_([TestStatus.FAILED.value, TestStatus.BROKEN.value]),
+            )
+            .order_by(TestCase.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if tc_id is None:
+        return {"found": False, "test_case_id": None, "kind_evidence": None}
+
+    evidence = await compute_kind_evidence_for_test_case(db, tc_id)
+    return {
+        "found": evidence is not None,
+        "test_case_id": str(tc_id),
+        "kind_evidence": evidence,
+    }
+
+
 # ── Coverage Snapshot ──────────────────────────────────────────────────────
 
 @router.get("/coverage")

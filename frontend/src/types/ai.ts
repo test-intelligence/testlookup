@@ -27,7 +27,7 @@ export interface ConfidenceWhy {
   /** AI-F4 calibration basis: "empirical" = measured precision on labeled
    *  eval samples; "heuristic_estimate" = engineering estimate, not
    *  empirically calibrated. Null/absent for LLM/ML analyses. */
-  confidence_basis?: 'empirical' | 'heuristic_estimate' | null
+  confidence_basis?: 'empirical' | 'heuristic_estimate' | 'human_corrected' | null
 }
 
 export interface AnalysisResult {

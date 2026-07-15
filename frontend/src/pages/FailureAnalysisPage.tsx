@@ -86,6 +86,7 @@ import type { TrendPoint } from '@/types/metrics'
 import {
   FAILURE_KIND_DEFS, failureKindOf, kindDef, type FailureKind,
 } from '@/utils/failureKind'
+import { FailureKindBadge, KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts. Mirrors
@@ -1067,7 +1068,12 @@ function WhatsFailingCard({
       title="What's failing"
       rightSlot={
         <div className="flex items-center gap-2">
-          {topFailingKind && <FailureKindBadge kind={topFailingKind} />}
+          {topFailingKind && (
+            <KindBadgeWithEvidence
+              kind={topFailingKind}
+              testFingerprint={topFailingTest.test_fingerprint}
+            />
+          )}
           <Pill tone="bad">Hard regression</Pill>
           <Pill tone="neutral">Not flaky</Pill>
         </div>
@@ -1189,28 +1195,10 @@ function WhatsFailingCard({
 // a classification, not ground truth, so every surface carries the
 // "AI-classified" provenance copy.
 
-/** Compact color-coded pill for a failure kind. Tokens come from the
- *  existing palette (--kind-* aliases in index.css — no new hex). */
-export function FailureKindBadge({ kind, compact }: { kind: string | null | undefined; compact?: boolean }) {
-  const d = kindDef(kind)
-  return (
-    <span
-      className="inline-flex items-center gap-1 rounded-full font-semibold uppercase whitespace-nowrap"
-      style={{
-        fontSize: compact ? 9.5 : 10,
-        letterSpacing: 'var(--tracking-wide)',
-        padding: compact ? '1px 6px' : '2px 8px',
-        background: `color-mix(in srgb, ${d.color} 14%, transparent)`,
-        border: `1px solid color-mix(in srgb, ${d.color} 35%, transparent)`,
-        color: d.color,
-      }}
-      title={`AI-classified failure kind: ${d.label} — ${d.desc}`}
-    >
-      <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: d.color }} />
-      {d.label}
-    </span>
-  )
-}
+// The badge (and its AI-4 evidence-popover sibling) live in the shared
+// component so RunDetail rows can carry the same treatment. Re-exported
+// here for backward compatibility with existing imports.
+export { FailureKindBadge }
 
 /** Chip row that filters the failure surfaces below by AI-classified kind.
  *  Counts come from the backend's by-kind aggregation (which applies the

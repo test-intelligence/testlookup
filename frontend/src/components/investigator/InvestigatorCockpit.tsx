@@ -65,13 +65,21 @@ const TRIGGER_LABEL: Record<string, string> = {
 
 /** Calibration-basis chip — same pattern as AIAnalysisPanel (AI-F4). */
 function BasisChip({ basis }: { basis: ConfidenceBasis }) {
-  const label = basis === 'empirical' ? 'calibrated' : basis === 'llm_weighted' ? 'llm-weighted' : 'estimated'
+  const label = basis === 'empirical'
+    ? 'calibrated'
+    : basis === 'llm_weighted'
+      ? 'llm-weighted'
+      : basis === 'human_corrected'
+        ? 'human-corrected'
+        : 'estimated'
   const title =
     basis === 'empirical'
       ? 'Calibrated confidence — equals measured precision on labeled eval samples'
       : basis === 'llm_weighted'
         ? 'LLM-weighted confidence — model self-assessment, not empirically calibrated'
-        : 'Estimated heuristic confidence — not empirically calibrated'
+        : basis === 'human_corrected'
+          ? 'Confidence pinned by an authoritative human correction of this classification'
+          : 'Estimated heuristic confidence — not empirically calibrated'
   return (
     <span
       className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"

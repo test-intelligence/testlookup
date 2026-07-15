@@ -9,6 +9,12 @@ the way to the API/UI (``confidence_basis`` on analysis results):
                               must name the corpus and sample count.
   - ``heuristic_estimate``  — no labeled corpus exercises this rule; the value
                               is an engineering estimate.
+  - ``human_corrected``     — a human explicitly corrected this classification
+                              (AI-4); the confidence is pinned by that
+                              authoritative correction, not by a rule band.
+                              Only the kind-evidence checklist
+                              (``services/kind_evidence.py``) emits this basis
+                              — no rules-engine band may carry it.
 
 Provenance audit (2026-07-10, AI-F4):
     The golden datasets in ``app/services/golden_datasets.py`` contain
@@ -28,8 +34,18 @@ from dataclasses import dataclass
 
 BASIS_EMPIRICAL = "empirical"
 BASIS_HEURISTIC = "heuristic_estimate"
+# AI-4: pinned by an authoritative human correction. Part of the shared basis
+# vocabulary (consumed by ConfidenceWhy, the UI basis chips, and the
+# kind-evidence checklist) but deliberately NOT a valid ConfidenceBand basis —
+# a static rule table can never claim human confirmation.
+BASIS_HUMAN_CORRECTED = "human_corrected"
 
 _VALID_BASES = frozenset({BASIS_EMPIRICAL, BASIS_HEURISTIC})
+
+# Every basis string any confidence surface may carry — bands plus the
+# correction pin. Keep the frontend chip mappings in sync
+# (frontend/src/components/ai/AIAnalysisPanel.tsx, investigator BasisChip).
+ALL_CONFIDENCE_BASES = frozenset({BASIS_EMPIRICAL, BASIS_HEURISTIC, BASIS_HUMAN_CORRECTED})
 
 
 @dataclass(frozen=True)

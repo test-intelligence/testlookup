@@ -90,3 +90,33 @@ export function useAiSummary(days = 30) {
     [days],
   )
 }
+
+/**
+ * Evidence checklist behind an AI-classified failure kind (AI-4).
+ * Fetches lazily — pass `enabled=false` until the popover opens.
+ * Fingerprint lookups need a concrete project (fingerprints are only
+ * unique per tenant); test_case_id lookups work in any project mode.
+ */
+export function useKindEvidence(
+  lookup: { testFingerprint?: string | null; testCaseId?: string | null },
+  enabled: boolean,
+) {
+  const projectId = useActiveProjectId()
+  const concreteProjectId = projectId && projectId !== ALL_PROJECTS_ID ? projectId : null
+  const canFetch = enabled && (
+    lookup.testCaseId
+      ? true
+      : Boolean(lookup.testFingerprint && concreteProjectId)
+  )
+  return useSWR(
+    canFetch
+      ? ['analytics-kind-evidence', concreteProjectId, lookup.testCaseId ?? '', lookup.testFingerprint ?? '']
+      : null,
+    () => analyticsService.getKindEvidence({
+      projectId: concreteProjectId,
+      testFingerprint: lookup.testFingerprint,
+      testCaseId: lookup.testCaseId,
+    }),
+    { revalidateOnFocus: false },
+  )
+}

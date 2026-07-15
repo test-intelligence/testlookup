@@ -282,6 +282,10 @@ async def simulate_policy(
         # pre-feature snapshots, in which case kind_rules policies simulate
         # conservatively (no downgrade) and say so in the rule trail.
         "failure_kind_counts": snapshot.get("failure_kind_counts"),
+        # AI-4 — per-failure kind confidences frozen at decision time.
+        # Absent on pre-AI-4 snapshots, in which case confidence-floor
+        # budgets conservatively excuse nothing.
+        "failure_kind_confidences": snapshot.get("failure_kind_confidences"),
     }
 
     # Build a mock policy object for the evaluator

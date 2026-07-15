@@ -5,6 +5,7 @@ import type {
   DefectResponse,
   FailureCategoriesResponse,
   FlakyTestItem,
+  KindEvidenceResponse,
   SuiteDetailResponse,
   TopFailingItem,
 } from '@/types/analytics'
@@ -51,5 +52,24 @@ export const analyticsService = {
   getSuiteDetail: (projectId: string | null, suiteName: string, days = 30) =>
     getData<SuiteDetailResponse>('/api/v1/analytics/suite-detail', {
       params: { ...projectParam(projectId), suite_name: suiteName, days },
+    }),
+
+  /**
+   * Evidence checklist behind an AI-classified failure kind (AI-4).
+   * Lookup by test_case_id (run-detail rows) OR project_id + fingerprint
+   * (/failures aggregates). Fetched lazily — only when a popover opens.
+   */
+  getKindEvidence: (
+    lookup: { projectId?: string | null; testFingerprint?: string | null; testCaseId?: string | null },
+  ) =>
+    getData<KindEvidenceResponse>('/api/v1/analytics/kind-evidence', {
+      params: {
+        ...(lookup.testCaseId
+          ? { test_case_id: lookup.testCaseId }
+          : {
+              ...projectParam(lookup.projectId ?? null),
+              test_fingerprint: lookup.testFingerprint ?? '',
+            }),
+      },
     }),
 }

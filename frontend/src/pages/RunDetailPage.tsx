@@ -21,6 +21,7 @@ import useSWR from 'swr'
 import { api } from '@/services/api'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
+import { KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
 
 interface TestCase {
   id: string
@@ -30,6 +31,10 @@ interface TestCase {
   status: string
   duration_ms?: number
   failure_category?: string
+  // AI-classified failure kind (US-9.1 computed field on TestCaseSummary —
+  // included in the list response, so the badge costs no extra call; the
+  // AI-4 evidence popover fetches on demand by test_case_id when opened).
+  failure_kind?: string | null
   // Phase 1 granular steps: # of top-level steps captured for this test's
   // latest-run snapshot. null when no parser emitted a step tree for this
   // producer; 0 when the parser ran but the test had no steps.
@@ -598,9 +603,14 @@ export default function RunDetailPage() {
                     <td className="td"><StatusBadge status={tc.status} /></td>
                     <td className="td text-[var(--color-text-muted)]">{formatDuration(tc.duration_ms)}</td>
                     <td className="td">
-                      {tc.failure_category && (
-                        <span className="text-xs text-[var(--color-text-muted)]">{tc.failure_category.replace('_', ' ')}</span>
-                      )}
+                      <span className="inline-flex items-center gap-2">
+                        {tc.failure_category && (
+                          <span className="text-xs text-[var(--color-text-muted)]">{tc.failure_category.replace('_', ' ')}</span>
+                        )}
+                        {tc.failure_kind && (tc.status === 'FAILED' || tc.status === 'BROKEN') && (
+                          <KindBadgeWithEvidence kind={tc.failure_kind} testCaseId={tc.id} compact />
+                        )}
+                      </span>
                     </td>
                     <td className="td text-[var(--color-text-faint)]">
                       <ChevronRight className="h-4 w-4" />

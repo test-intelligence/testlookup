@@ -10,6 +10,9 @@ vi.mock('@/hooks/useMetrics', () => ({
   useFailureCategories: vi.fn(),
   useTopFailing: vi.fn(),
   useTrendData: vi.fn(),
+  // AI-4: consumed by the kind badge's evidence popover (lazy — the page
+  // itself never triggers a fetch until a badge is clicked).
+  useKindEvidence: vi.fn(() => ({ data: undefined, isLoading: false })),
 }))
 
 vi.mock('@/hooks/useRuns', () => ({

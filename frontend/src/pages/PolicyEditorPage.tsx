@@ -480,6 +480,30 @@ export default function PolicyEditorPage() {
                         </select>
                         <p className="text-[10px] text-gray-600 mt-0.5">Never GO — hard rule.</p>
                       </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-gray-500" htmlFor={`kind-floor-${key}`}>
+                          Min confidence to excuse (optional, 0-100)
+                        </label>
+                        <input
+                          id={`kind-floor-${key}`}
+                          type="number" step="1" min={0} max={100}
+                          placeholder="No floor"
+                          value={budget.min_confidence_to_excuse ?? ''}
+                          onChange={e => {
+                            const raw = e.target.value.trim();
+                            setBudget({
+                              ...budget,
+                              min_confidence_to_excuse: raw === ''
+                                ? null
+                                : Math.max(0, Math.min(100, parseInt(raw, 10) || 0)),
+                            });
+                          }}
+                          className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                        <p className="text-[10px] text-gray-600 mt-0.5">
+                          Only failures whose AI kind confidence meets the floor are excusable;
+                          below-floor failures count as product. Empty = no floor (behavior unchanged).
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
