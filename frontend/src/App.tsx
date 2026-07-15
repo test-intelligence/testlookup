@@ -112,6 +112,8 @@ const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrat
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
 const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
 const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
+const AIAgentsPage = lazy(() => import('@/pages/settings/AIAgentsPage'))
+const AgentActivityPage = lazy(() => import('@/pages/settings/AgentActivityPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
 const MyFailuresPage = lazy(() => import('@/pages/MyFailuresPage'))
 const SummaryReportPage = lazy(() => import('@/pages/SummaryReportPage'))
@@ -184,6 +186,8 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/webhooks', component: OutboundWebhooksPage },
   { path: 'settings/api-keys', component: ApiKeysPage },
   { path: 'settings/project-data', component: ProjectDataPage },
+  { path: 'settings/ai-agents', component: AIAgentsPage },
+  { path: 'settings/agent-activity', component: AgentActivityPage },
   { path: 'policies', component: PolicyEditorPage },
   { path: 'policies/new', component: PolicyEditorPage },
   { path: 'policies/:policyId', component: PolicyEditorPage },

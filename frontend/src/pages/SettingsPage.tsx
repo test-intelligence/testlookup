@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ScrollText, Sparkles, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -60,6 +60,18 @@ const sections = [
     title: 'Audit Dashboard',
     desc: 'Unified audit trail for security, releases, config changes, and tenant metrics',
     href: '/settings/audit',
+  },
+  {
+    icon: Sparkles,
+    title: 'AI Agents',
+    desc: 'Agent governance: trust-ladder autonomy mode (shadow / suggest / act), budgets, and promotion status per agent',
+    href: '/settings/ai-agents',
+  },
+  {
+    icon: ScrollText,
+    title: 'Agent Activity',
+    desc: 'Governance ledger — every agent run with trigger, spend, and actions proposed or taken',
+    href: '/settings/agent-activity',
   },
   {
     icon: BrainCircuit,

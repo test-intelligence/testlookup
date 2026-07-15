@@ -88,6 +88,17 @@ vi.mock('@/hooks/useLlmBudget', () => ({
   })),
 }))
 
+// AI-1 Investigator cockpit hooks — mocked so its SWR reads never hit the
+// network from jsdom. The cockpit renders its empty state.
+vi.mock('@/hooks/useInvestigation', () => ({
+  useInvestigation: vi.fn(() => ({ data: undefined, mutate: vi.fn() })),
+  useInvestigations: vi.fn(() => ({ data: { items: [], total: 0 }, mutate: vi.fn() })),
+}))
+
+vi.mock('@/hooks/useAgentGovernance', () => ({
+  useAgentPolicies: vi.fn(() => ({ policies: [], investigatorPolicy: null })),
+}))
+
 vi.mock('@/hooks/useDecisionTrail', () => ({
   useDecisionTrail: vi.fn(() => ({
     data: {

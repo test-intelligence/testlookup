@@ -49,6 +49,7 @@ import {
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import InvestigatorCockpit from '@/components/investigator/InvestigatorCockpit'
 import PageShell from '@/components/layout/PageShell'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
@@ -1812,6 +1813,11 @@ export default function DeepInvestigationPage() {
       />
 
       <WorkflowRibbon stages={ribbonStages} model={model} />
+
+      {/* AI-1 Investigator cockpit — hypothesis-loop agent (shadow mode).
+          Project scope mirrors the spend/budget panels: the active project,
+          falling back to the focused run's project in All-Projects mode. */}
+      <InvestigatorCockpit runId={runId ?? null} projectId={budgetProjectId} />
 
       <section aria-label="Investigation inputs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
         <KpiCell
