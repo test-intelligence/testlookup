@@ -35,7 +35,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # of the registry migration is broken — do not update these without
 # understanding why.
 _ORIGINAL_HASHES = {
-    "chat_system": "b52c5b2cf229",
     "summary_system": "3b2f2b5fde10",
     "summary_executive": "9885ab3d7268",
     "summary_incident_view": "470a2488b718",
@@ -83,6 +82,35 @@ def test_moved_prompts_are_byte_identical_to_originals():
             f"({p.content_hash} != {original_hash})"
         )
         assert p.version == 1, f"{pid} bumped without updating this pin"
+
+
+# The ORIGINAL chat_system (v1) hash — v2 deliberately differs (AI-6 copilot:
+# the single-shot prompt must not fabricate tool activity now that some chat
+# answers carry a real tool trace).
+_CHAT_SYSTEM_V1_HASH = "b52c5b2cf229"
+
+
+def test_chat_system_is_deliberate_v2():
+    p = pr.get_prompt("chat_system")
+    assert p.version == 2
+    assert p.content_hash != _CHAT_SYSTEM_V1_HASH
+    assert "How I looked this up" in p.text
+    # v1's structural anchors survived the edit
+    assert "- Current date/time (UTC): {now}" in p.text
+    assert "- Query focus: {intent_label}" in p.text
+    assert "Ground every answer in the retrieved context below" in p.text
+
+
+def test_chat_copilot_react_prompt_registered():
+    p = pr.get_prompt("chat_copilot_react")
+    assert p.version == 1
+    # ReAct structural anchors the loop parser depends on
+    for anchor in ("{tools}", "{tool_names}", "{input}", "{agent_scratchpad}",
+                   "Action Input:", "Final Answer:"):
+        assert anchor in p.text
+    # Bound-loop honesty rules
+    assert "budget is exhausted" in p.text
+    assert "read-only" in p.text
 
 
 def test_react_triage_is_deliberate_v2():
@@ -167,10 +195,10 @@ def test_stale_manifest_entry_is_detected(tmp_path):
 
 
 def test_manifest_change_without_attestation_fails(tmp_path):
-    # A legitimate-looking manifest edit (correct hash for a hypothetical v3)
-    # still fails the attestation check because the digest moved.
+    # A legitimate-looking manifest edit (correct hash for a hypothetical
+    # next version) still fails the attestation check because the digest moved.
     def bump(m):
-        m["prompts"]["chat_system"]["version"] = 2
+        m["prompts"]["chat_system"]["version"] += 1
 
     path = _write_manifest_copy(tmp_path, bump)
     problems = pr.check_attestation(manifest_path=path)

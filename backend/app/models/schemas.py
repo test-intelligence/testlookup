@@ -1412,6 +1412,11 @@ class SendMessageResponse(BaseModel):
     session_id: uuid.UUID
     reply: str
     sources: List[Any] = []
+    # AI-6 copilot: [{tool, summary}] transparency trace and
+    # [{type, label, prefill}] human action handoffs. Both empty on the
+    # single-shot / rules-mode path.
+    tool_trace: List[Any] = []
+    suggested_actions: List[Any] = []
 
 
 # ── Test Case Management Schemas ──────────────────────────────────────────────

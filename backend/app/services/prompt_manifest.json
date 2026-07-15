@@ -9,9 +9,13 @@
       "content_hash": "68e08a32dff5",
       "version": 1
     },
-    "chat_system": {
-      "content_hash": "b52c5b2cf229",
+    "chat_copilot_react": {
+      "content_hash": "e23fd1532d25",
       "version": 1
+    },
+    "chat_system": {
+      "content_hash": "5052234131d8",
+      "version": 2
     },
     "defect_promotion_ticket": {
       "content_hash": "45d88cc4d33b",

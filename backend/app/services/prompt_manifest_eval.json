@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-07-15T22:32:57.095557+00:00",
-  "change_id": "wave-c-mcp",
+  "attested_at": "2026-07-15T22:55:16.361017+00:00",
+  "change_id": "wave-c-merge",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -96,13 +96,14 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "8c302e2f54784eaf35c4dffa00189dcdfaca00097106b3477aef1c6e0a464bd8",
+  "manifest_digest": "eac77883b8c5fedb5d57cf8fc6c963b438ad123f9f8f7b937f9c1d7edc806dd5",
   "mode": "offline_golden",
   "notes": "",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
-    "chat_system": "v1:b52c5b2cf229",
+    "chat_copilot_react": "v1:e23fd1532d25",
+    "chat_system": "v2:5052234131d8",
     "defect_promotion_ticket": "v1:45d88cc4d33b",
     "fast_classifier_system": "v1:9d46ffbbed7b",
     "finetune_reasoning_system": "v1:3ea37c087b6b",

@@ -135,6 +135,12 @@ _SYSTEM_TEMPLATE = get_prompt_text("chat_system")
 _COMPRESS_AFTER = 20   # compress when session exceeds this many user+assistant messages
 _HISTORY_TAIL   = 6    # always keep the most recent N messages verbatim
 
+# ── Copilot tool loop settings (AI-6) ────────────────────────────────────────
+
+# Grace on top of the executor's own max_execution_time before the outer
+# asyncio.wait_for hard-kills the loop.
+_TOOL_LOOP_TIMEOUT_GRACE_SECONDS = 5
+
 
 # ── ConversationAgent ─────────────────────────────────────────────────────────
 
@@ -166,6 +172,42 @@ class ConversationAgent:
 
         # 3. Save user message
         await self._save_message(session_id, "user", user_message, sources=None)
+
+        # 3b. AI-6: bounded tool loop — the default path when an LLM is the
+        # resolved analysis engine AND the session is project-scoped (tools
+        # are tenant-scoped by construction; "all projects" chats keep the
+        # legacy single-shot path). Any loop failure falls back to the
+        # single-shot path below, unchanged.
+        loop_result: Optional[dict] = None
+        if project_id and self._tool_loop_enabled():
+            loop_result = await self._run_tool_loop(
+                user_message, project_id, history, summary_ctx
+            )
+        if loop_result is not None:
+            reply = loop_result["reply"]
+            sources = loop_result["sources"]
+            tool_trace = loop_result["tool_trace"]
+            suggested_actions = loop_result["suggested_actions"]
+            persisted_sources = list(sources)
+            # Persist trace + actions inside the existing sources JSON column
+            # (no migration): special entries the UI unpacks.
+            if tool_trace:
+                persisted_sources.append({"type": "tool_trace", "trace": tool_trace})
+            if suggested_actions:
+                persisted_sources.append(
+                    {"type": "suggested_actions", "actions": suggested_actions}
+                )
+            await self._save_message(
+                session_id, "assistant", reply, sources=persisted_sources
+            )
+            await self._touch_session(session_id)
+            asyncio.create_task(self._maybe_compress_history(session_id))
+            return {
+                "reply": reply,
+                "sources": sources,
+                "tool_trace": tool_trace,
+                "suggested_actions": suggested_actions,
+            }
 
         # 4. Fetch context and project metadata concurrently
         context_coro  = self._retrieve_context(user_message, project_id, intent)
@@ -218,7 +260,139 @@ class ConversationAgent:
         # 9. Compress history if session is getting long (fire-and-forget, non-blocking)
         asyncio.create_task(self._maybe_compress_history(session_id))
 
-        return {"reply": reply, "sources": sources}
+        return {"reply": reply, "sources": sources, "tool_trace": [], "suggested_actions": []}
+
+    # ── Copilot tool loop (AI-6) ─────────────────────────────────────────────
+
+    def _tool_loop_enabled(self) -> bool:
+        """True when the resolved analysis engine is an LLM.
+
+        Mirrors the frontend's ``isLLMAvailable`` gate: in rules/ML mode the
+        loop never engages and chat behaves exactly as before AI-6.
+        """
+        try:
+            from app.services.analysis_router import get_analysis_mode
+            return get_analysis_mode() == "llm"
+        except Exception as exc:
+            logger.debug("tool_loop_mode_check_failed", error=str(exc))
+            return False
+
+    async def _run_tool_loop(
+        self,
+        user_message: str,
+        project_id: str,
+        history: list[dict],
+        summary_ctx: str,
+    ) -> Optional[dict]:
+        """Run the bounded ReAct copilot loop. Returns None on ANY failure so
+        the caller falls back to the single-shot path.
+
+        Bounds: ≤ CHAT_TOOL_LOOP_MAX_CALLS tool calls (executor
+        max_iterations), per-call + total token budgets on tool outputs
+        (server-side, see chat_read_tools), and a hard wall-clock cap of
+        AI_TIMEOUT_SECONDS (executor max_execution_time + outer wait_for).
+
+        Tenancy: the project scope is bound to a ContextVar before the loop
+        starts (exactly the AI-F3 pattern) — the LLM never scopes a query.
+        """
+        from app.tools.chat_read_tools import (
+            CHAT_TOOL_LOOP_MAX_CALLS,
+            build_suggested_actions,
+            chat_tools,
+            get_chat_tool_state,
+            reset_chat_tool_context,
+            set_chat_tool_context,
+        )
+
+        try:
+            import importlib
+
+            from langchain_core.prompts import PromptTemplate
+
+            langchain_agents = importlib.import_module("langchain.agents")
+            create_react_agent = langchain_agents.create_react_agent
+            AgentExecutor = langchain_agents.AgentExecutor
+
+            llm = await get_llm()
+            tools = chat_tools()
+            project_name = await self._fetch_project_name(project_id)
+
+            history_lines = [
+                f"{m['role'].upper()}: {m['content'][:400]}" for m in history[-4:]
+            ]
+            if summary_ctx:
+                history_lines.insert(0, f"SUMMARY OF EARLIER CONVERSATION: {summary_ctx[:600]}")
+
+            prompt = PromptTemplate.from_template(
+                get_prompt_text("chat_copilot_react")
+            ).partial(
+                now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                project_scope=project_name or f"project …{project_id[-8:]}",
+                history="\n".join(history_lines) or "(none)",
+            )
+            agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
+            executor = AgentExecutor(
+                agent=agent,
+                tools=tools,
+                verbose=settings.is_development,
+                max_iterations=CHAT_TOOL_LOOP_MAX_CALLS,
+                handle_parsing_errors=True,
+                return_intermediate_steps=True,
+                max_execution_time=settings.AI_TIMEOUT_SECONDS,
+                early_stopping_method="force",
+            )
+
+            token = set_chat_tool_context(project_id=project_id)
+            try:
+                result = await asyncio.wait_for(
+                    executor.ainvoke({"input": user_message}),
+                    timeout=settings.AI_TIMEOUT_SECONDS + _TOOL_LOOP_TIMEOUT_GRACE_SECONDS,
+                )
+                state = get_chat_tool_state()
+            finally:
+                reset_chat_tool_context(token)
+
+            raw = result.get("output", "")
+            reply = raw if isinstance(raw, str) else str(raw)
+            reply = reply.strip()
+            # Iteration/time-cap stop or empty output → not a usable answer.
+            if not reply or reply.startswith("Agent stopped"):
+                logger.info(
+                    "chat_tool_loop_no_answer",
+                    project_id=project_id,
+                    iterations=len(result.get("intermediate_steps", [])),
+                )
+                return None
+
+            tool_trace = list(state.trace) if state else []
+            suggested_actions = build_suggested_actions(state) if state else []
+            # Source chips mirror the tools consulted (deduplicated, ordered).
+            seen: list[str] = []
+            for entry in tool_trace:
+                if entry["tool"] not in seen:
+                    seen.append(entry["tool"])
+            sources = [{"type": "tool", "id": name} for name in seen][:8]
+
+            logger.info(
+                "chat_tool_loop_answered",
+                project_id=project_id,
+                tool_calls=len(tool_trace),
+                actions=len(suggested_actions),
+            )
+            return {
+                "reply": reply,
+                "sources": sources,
+                "tool_trace": tool_trace,
+                "suggested_actions": suggested_actions,
+            }
+        except asyncio.TimeoutError:
+            logger.warning(
+                "chat_tool_loop_timeout", timeout=settings.AI_TIMEOUT_SECONDS,
+            )
+            return None
+        except Exception as exc:
+            logger.warning("chat_tool_loop_failed", error=str(exc))
+            return None
 
     # ── Intent-aware context retrieval ───────────────────────────────────────
 

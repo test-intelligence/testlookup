@@ -141,4 +141,12 @@ async def send_message(
         user_id=str(current_user.id),
         project_id=str(session.project_id) if session.project_id else payload.project_id,
     )
-    return {"session_id": session.id, "reply": result["reply"], "sources": result["sources"]}
+    return {
+        "session_id": session.id,
+        "reply": result["reply"],
+        "sources": result["sources"],
+        # AI-6: tool-use transparency + human action handoffs (empty on the
+        # single-shot path — older agents may not return the keys at all).
+        "tool_trace": result.get("tool_trace", []),
+        "suggested_actions": result.get("suggested_actions", []),
+    }

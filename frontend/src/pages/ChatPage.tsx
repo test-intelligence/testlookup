@@ -13,8 +13,10 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AppLogo from '@/components/ui/AppLogo'
 import { useChat, useChatSessions, useRunSummaries } from '@/hooks/useChat'
 import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
+import AssistantMessageExtras from '@/components/chat/AssistantMessageExtras'
 import chatService from '@/services/chatService'
 import { useProjectStore } from '@/store/projectStore'
+import { splitMessageSources } from '@/types/chat'
 import type { ChatSession, RunSummary } from '@/types/chat'
 
 // Upper bound on a single chat message. Enforced client-side to avoid sending
@@ -68,6 +70,9 @@ const MessageBubble = memo(function MessageBubble({ role, content, sources }: {
   sources?: Array<{ type: string; id?: string }> | null
 }) {
   const isUser = role === 'user'
+  // AI-6: the copilot's trace + action handoffs travel inside the sources
+  // JSON; strip the carrier entries so chips render only real sources.
+  const { plainSources, toolTrace, suggestedActions } = splitMessageSources(sources ?? null)
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
@@ -93,14 +98,17 @@ const MessageBubble = memo(function MessageBubble({ role, content, sources }: {
             <ReactMarkdown>{content}</ReactMarkdown>
           </div>
         )}
-        {!isUser && sources && sources.length > 0 && (
+        {!isUser && plainSources.length > 0 && (
           <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex flex-wrap gap-1">
-            {sources.map((s, i) => (
+            {plainSources.map((s, i) => (
               <span key={i} className="text-xs bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] px-2 py-0.5 rounded-full">
                 {s.type}
               </span>
             ))}
           </div>
+        )}
+        {!isUser && (
+          <AssistantMessageExtras toolTrace={toolTrace} suggestedActions={suggestedActions} />
         )}
       </div>
     </div>
