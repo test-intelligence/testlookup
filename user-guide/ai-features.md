@@ -24,7 +24,16 @@ Chat over your test data in natural language — "why did last night's payments 
 ## Configuring the AI tier (`/settings/ai`, `/settings/ai-eval`)
 
 - **AI Settings** — analysis mode (rules/ML/LLM/auto), local-LLM (Ollama) model selection, and budget controls. Per-project daily budgets cap LLM spend; over budget, analysis downgrades mode instead of stopping.
-- **AI Evaluation** — the quality dashboard for the AI tier itself: how analyses are rating, feedback volumes, and evaluation runs. If your team corrects verdicts regularly (do — corrections compound), this is where you watch accuracy improve.
+- **AI Evaluation** — the quality dashboard for the AI tier itself: how analyses are rating, feedback volumes, evaluation runs, and **Training Label Health** — how much of the ML training pool is human-verified vs the LLM's own output. If your team corrects verdicts regularly (do — corrections compound), this is where you watch accuracy improve.
+
+## How the ML classifier actually learns
+
+Honesty first: the local ML classifier trains on two very different kinds of labels, and the distinction is tracked end to end.
+
+- **Human labels** — your team confirming or correcting AI verdicts (the feedback card, the classifier-correction dialog, the MCP `correct_classification` tool → *human_direct*) and Jira-resolution auto-labels (*human_indirect*). These are ground truth and always train at full weight.
+- **LLM pseudo-labels** (*llm_pseudo*) — high-confidence analyses nobody has confirmed. They are the model's own opinion. Training on them unchecked teaches the classifier to imitate the LLM, not to learn from you — so they are **capped at 30% of the training set and down-weighted to 0.3** (`ML_PSEUDO_LABEL_CAP` / `ML_PSEUDO_LABEL_WEIGHT`).
+
+With few human labels, pseudo-labels may fill the set up to the training minimum — that is a deliberate bootstrap, and the system says so: below **50 human labels** (`ML_HUMAN_LABEL_FLOOR`) the ML tier reports itself as **bootstrap (LLM-imitating)** in AI Settings, on the AI Evaluation dashboard, and in each analysis's routing decision record. In that state ML mode reproduces the LLM's behavior (cheaply and offline) — it does *not* yet learn from your corrections. Every deployed model records the exact label mix it was trained on (`label_composition` in its metadata, surfaced at `GET /api/v1/ai-eval/label-health`), so "the model learns from your feedback" is a claim you can verify, not marketing. The fastest way out of bootstrap: confirm or correct verdicts on `/failures` — each one is a ground-truth label.
 
 ## What needs what
 

@@ -2249,6 +2249,10 @@ class AIConfigRead(BaseModel):
     ml_model_available: bool = False                  # True if a trained ML model exists
     ml_model_accuracy: Optional[float] = None         # last known accuracy (0-1)
     ml_training_sample_count: int = 0                 # total labeled samples available
+    # AI-F1 label integrity — honest learning-loop status
+    ml_human_label_count: int = 0                     # human-provenance labels (feedback/corrections)
+    ml_human_label_floor: int = 50                    # below this, ML is bootstrap (LLM-imitating)
+    ml_maturity: str = "not_trained"                  # not_trained | bootstrap_llm_imitating | human_calibrated
     # Knowledge RAG feature toggle
     knowledge_rag_enabled: bool = False               # True if grounded test generation is active
 
@@ -3325,6 +3329,9 @@ class AIQualityDashboardResponse(BaseModel):
     recent_eval_runs: List[AIEvalRunResponse] = []
     model_versions: List[dict] = []
     feedback_summary: Optional[dict] = None
+    # AI-F1: human-label coverage of the ML training pool + last-trained
+    # provenance composition (human_direct / human_indirect / llm_pseudo)
+    label_health: Optional[dict] = None
 
 
 # ── Agent Memory Schemas (P3 — Unified Memory & Retrieval) ─────────────────

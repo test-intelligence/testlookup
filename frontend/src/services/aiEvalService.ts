@@ -28,12 +28,40 @@ export interface AIEvalRun {
   duration_ms: number | null;
 }
 
+export interface LabelComposition {
+  counts: Record<string, number>;
+  fractions: Record<string, number>;
+  total: number;
+  human_label_count: number;
+  pseudo_included: number;
+  pseudo_dropped: number;
+  pseudo_cap: number;
+  pseudo_weight: number;
+  cap_exceeded_to_fill_floor: boolean;
+  bootstrap: boolean;
+}
+
+export interface LabelHealth {
+  human_direct: number;
+  human_indirect: number;
+  human_label_total: number;
+  llm_pseudo_candidates: number;
+  human_share_of_pool: number | null;
+  human_label_floor: number;
+  meets_human_label_floor: boolean;
+  ml_maturity: 'not_trained' | 'bootstrap_llm_imitating' | 'human_calibrated';
+  last_trained_composition: LabelComposition | null;
+  pseudo_label_cap: number;
+  pseudo_label_weight: number;
+}
+
 export interface AIQualityDashboard {
   agreement: { total_feedback: number; correct: number; partially_correct: number; incorrect: number; agreement_rate: number | null; period_days: number } | null;
   drift: { task_type: string; current: { accuracy: number | null; f1_score: number | null }; previous: { accuracy: number | null }; drift: number | null; drift_direction: string } | null;
   recent_eval_runs: AIEvalRun[];
   model_versions: Array<{ id: string; track: string; model_name: string; status: string; eval_accuracy: number | null; created_at: string }>;
   feedback_summary: Record<string, unknown> | null;
+  label_health: LabelHealth | null;
 }
 
 export async function getDashboard(days?: number): Promise<AIQualityDashboard> {

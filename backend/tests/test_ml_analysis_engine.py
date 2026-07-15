@@ -481,9 +481,10 @@ class TestTrainerClassDiversityGuard:
         sample = {name: 0.0 for name in FEATURE_NAMES}
         samples = [dict(sample) for _ in range(300)]
         labels = ["PRODUCT_BUG"] * 300
+        provenances = ["human_direct"] * 300
 
         async def _fake_gather():
-            return samples, labels
+            return samples, labels, provenances
 
         monkeypatch.setattr(trainer, "_gather_training_data", _fake_gather)
         result = await trainer.train_classifier()

@@ -44,12 +44,14 @@ async def get_quality_dashboard(
     from app.services.ai_eval_service import (
         compute_agreement_rate,
         detect_quality_drift,
+        get_label_health,
         get_model_version_history,
     )
     from app.services.feedback_service import get_feedback_stats
 
     agreement = await compute_agreement_rate(db, days=days)
     drift = await detect_quality_drift(db, task_type="classification", window_days=min(days, 14))
+    label_health = await get_label_health(db)
 
     # Recent eval runs
     run_result = await db.execute(
@@ -68,7 +70,25 @@ async def get_quality_dashboard(
         recent_eval_runs=recent_runs,
         model_versions=model_versions,
         feedback_summary=feedback_stats,
+        label_health=label_health,
     )
+
+
+@router.get("/label-health")
+async def get_training_label_health(
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Human-label coverage of the ML training pool (AI-F1).
+
+    Reports live counts per label-provenance bucket (human_direct /
+    human_indirect / llm_pseudo), the human-label floor, and the provenance
+    composition the deployed model was actually trained on — so the "learning
+    loop" claim is verifiable instead of implied.
+    """
+    from app.services.ai_eval_service import get_label_health
+
+    return await get_label_health(db)
 
 
 # ── Datasets ─────────────────────────────────────────────────────────────────

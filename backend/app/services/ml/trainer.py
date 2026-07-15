@@ -1,19 +1,31 @@
 """
 ML Model Trainer — trains classification models from labeled data.
 
-Data sources:
-  1. AIFeedback table (human-verified labels — highest quality)
-  2. AIAnalysis table with confidence_score >= 80 (LLM pseudo-labels)
+Data sources (each example carries a label-provenance tag — see
+``app.services.ml.label_provenance``):
+  1. AIFeedback table (human labels — ``human_direct`` for UI/MCP
+     ratings/corrections, ``human_indirect`` for Jira-resolution auto-labels)
+  2. AIAnalysis rows with confidence_score >= 80 and **no** feedback
+     (``llm_pseudo`` — the LLM's own opinion, not ground truth)
+
+Composition policy (AI-F1 — breaks the circular LLM→ML label loop):
+  - human labels are always included at full sample weight;
+  - ``llm_pseudo`` examples are capped at ``ML_PSEUDO_LABEL_CAP`` of the final
+    training set and down-weighted to ``ML_PSEUDO_LABEL_WEIGHT``;
+  - when human labels alone are below ``ML_MIN_TRAINING_SAMPLES``,
+    pseudo-labels may fill up to the minimum, but the deployed model's
+    metadata records the mix (``label_composition``) and the model reports
+    itself as bootstrap below ``ML_HUMAN_LABEL_FLOOR`` human labels.
 
 Training pipeline:
   1. Query labeled data from PostgreSQL (with full history + run context)
-  2. Extract complete 31-feature vectors for all samples
-  3. Compute class weights for imbalanced category handling
-  4. Train HistGradientBoostingClassifier with stratified 5-fold cross-validation
-  5. Select best hyperparameters via RandomizedSearchCV
+  2. Apply the label-provenance composition policy (cap + weights)
+  3. Extract complete 31-feature vectors for all samples
+  4. Compute class weights for imbalanced category handling
+  5. Train HistGradientBoostingClassifier with stratified 5-fold cross-validation
   6. Evaluate on 20% holdout with per-class precision/recall/F1
   7. Log feature importance for diagnostics
-  8. If accuracy >= threshold: save model + update metadata
+  8. If accuracy >= threshold: save model + update metadata (incl. composition)
   9. If accuracy < threshold: keep previous model, log warning
 
 Triggered by:
@@ -37,27 +49,64 @@ logger = logging.getLogger("services.ml.trainer")
 
 
 async def get_training_sample_count() -> int:
-    """Count available labeled samples without running full training."""
+    """Count available labeled samples without running full training.
+
+    Human labels = feedback rows that assert a usable category (confirmed
+    verdicts or explicit corrections). Pseudo-labels = high-confidence
+    analyses with **no** feedback row (an analysis with feedback is already
+    counted on the human side — the old version double-counted these).
+    """
     try:
         from app.db.postgres import AsyncSessionLocal
         from sqlalchemy import text
 
         async with AsyncSessionLocal() as db:
-            # Count AIFeedback entries with explicit labels
+            # Feedback rows carrying a usable label
             result = await db.execute(
-                text("SELECT COUNT(*) FROM ai_feedback WHERE rating IN ('correct', 'incorrect')")
+                text("""
+                    SELECT COUNT(*) FROM ai_feedback
+                    WHERE rating = 'correct'
+                       OR (rating = 'incorrect' AND corrected_category IS NOT NULL)
+                """)
             )
             feedback_count = result.scalar() or 0
 
-            # Count high-confidence AIAnalysis entries (pseudo-labels)
+            # High-confidence analyses without human feedback (pseudo-labels)
             result2 = await db.execute(
-                text("SELECT COUNT(*) FROM ai_analysis WHERE confidence_score >= 80")
+                text("""
+                    SELECT COUNT(*) FROM ai_analysis ai
+                    WHERE ai.confidence_score >= 80
+                      AND ai.failure_category IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM ai_feedback fb WHERE fb.analysis_id = ai.id
+                      )
+                """)
             )
             analysis_count = result2.scalar() or 0
 
             return feedback_count + analysis_count
     except Exception as exc:
         logger.debug("Failed to count training samples: %s", exc)
+        return 0
+
+
+async def get_human_label_count() -> int:
+    """Count human-provenance labels (direct + indirect) usable for training."""
+    try:
+        from app.db.postgres import AsyncSessionLocal
+        from sqlalchemy import text
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                text("""
+                    SELECT COUNT(*) FROM ai_feedback
+                    WHERE rating = 'correct'
+                       OR (rating = 'incorrect' AND corrected_category IS NOT NULL)
+                """)
+            )
+            return result.scalar() or 0
+    except Exception as exc:
+        logger.debug("Failed to count human labels: %s", exc)
         return 0
 
 
@@ -108,14 +157,29 @@ async def train_classifier() -> dict[str, Any]:
         }
 
     from app.services.ml.feature_extractor import FEATURE_NAMES
+    from app.services.ml.label_provenance import apply_composition_policy
 
     # ── 1. Gather training data (with full history + run context) ───────
-    samples, labels = await _gather_training_data()
+    samples, labels, provenances = await _gather_training_data()
+
+    # ── 1b. Composition policy: human labels first, pseudo-labels capped ─
+    samples, labels, provenances, provenance_weights, composition = (
+        apply_composition_policy(
+            samples, labels, provenances,
+            pseudo_cap=settings.ML_PSEUDO_LABEL_CAP,
+            pseudo_weight=settings.ML_PSEUDO_LABEL_WEIGHT,
+            min_samples=settings.ML_MIN_TRAINING_SAMPLES,
+            human_label_floor=settings.ML_HUMAN_LABEL_FLOOR,
+        )
+    )
+    logger.info("Training label composition: %s", composition)
+
     if len(samples) < settings.ML_MIN_TRAINING_SAMPLES:
         return {
             "status": "insufficient_data",
             "message": f"Need {settings.ML_MIN_TRAINING_SAMPLES} samples, have {len(samples)}.",
             "sample_count": len(samples),
+            "label_composition": composition,
         }
 
     # ── 2. Convert to arrays ────────────────────────────────────────────
@@ -152,6 +216,7 @@ async def train_classifier() -> dict[str, Any]:
             "message": f"Need >=2 distinct categories to train, have {distinct_classes}.",
             "sample_count": len(samples),
             "class_distribution": dict(class_dist),
+            "label_composition": composition,
         }
     can_stratify = min_class_count >= 2
     cv_splits = min(5, min_class_count)
@@ -161,14 +226,20 @@ async def train_classifier() -> dict[str, Any]:
     class_weights = _compute_class_weights(y, len(CATEGORY_LABELS))
     logger.info("Class weights: %s", {CATEGORY_LABELS[k]: round(v, 2) for k, v in class_weights.items()})
 
-    # ── 4. Train/test split ─────────────────────────────────────────────
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.20, random_state=42,
+    # ── 4. Train/test split (provenance weights ride along) ─────────────
+    prov_w = np.array(provenance_weights, dtype=float)
+    X_train, X_test, y_train, y_test, prov_w_train, _prov_w_test = train_test_split(
+        X, y, prov_w, test_size=0.20, random_state=42,
         stratify=y if can_stratify else None,
     )
 
     # ── 5. Cross-validation to estimate generalization ──────────────────
-    sample_weights_train = _compute_sample_weights(y_train, class_weights)
+    # Final per-sample weight = class-balance weight × provenance weight,
+    # so pseudo-labels (weight ML_PSEUDO_LABEL_WEIGHT) pull less than human
+    # labels within the same class.
+    sample_weights_train = (
+        _compute_sample_weights(y_train, class_weights) * prov_w_train
+    )
 
     # Train with tuned hyperparameters
     model = HistGradientBoostingClassifier(
@@ -186,10 +257,20 @@ async def train_classifier() -> dict[str, Any]:
 
     if use_cv:
         cv = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)
-        cv_scores = cross_val_score(
-            model, X_train, y_train, cv=cv, scoring="accuracy",
-            fit_params={"sample_weight": sample_weights_train},
-        )
+        # sklearn >=1.6 renamed cross_val_score's ``fit_params`` to ``params``
+        # (with metadata routing disabled, ``params`` is passed straight to
+        # fit, same semantics). Support both since scikit-learn is an
+        # optional dependency with no pinned version.
+        try:
+            cv_scores = cross_val_score(
+                model, X_train, y_train, cv=cv, scoring="accuracy",
+                params={"sample_weight": sample_weights_train},
+            )
+        except TypeError:
+            cv_scores = cross_val_score(
+                model, X_train, y_train, cv=cv, scoring="accuracy",
+                fit_params={"sample_weight": sample_weights_train},
+            )
         logger.info(
             "Cross-validation scores (%s-fold): %s (mean=%.3f ± %.3f)",
             cv_splits, [round(s, 3) for s in cv_scores], cv_scores.mean(), cv_scores.std(),
@@ -210,8 +291,13 @@ async def train_classifier() -> dict[str, Any]:
     # ── 7. Evaluate on held-out test set ────────────────────────────────
     y_pred = model.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
+    # ``labels=`` is required: without it sklearn derives the class list from
+    # the data and raises when fewer than all six categories are present in
+    # the (train ∪ test) labels — the common case early in a deployment.
     report = classification_report(
-        y_test, y_pred, target_names=CATEGORY_LABELS, output_dict=True, zero_division=0
+        y_test, y_pred,
+        labels=list(range(len(CATEGORY_LABELS))),
+        target_names=CATEGORY_LABELS, output_dict=True, zero_division=0,
     )
 
     # Per-class precision/recall/F1
@@ -273,6 +359,12 @@ async def train_classifier() -> dict[str, Any]:
             "test_count": len(X_test),
             "class_distribution": dict(class_dist),
             "class_weights": {CATEGORY_LABELS[k]: round(v, 2) for k, v in class_weights.items()},
+            # AI-F1: label-provenance mix this model was actually trained on
+            # (counts + fractions per human_direct/human_indirect/llm_pseudo,
+            # pseudo cap/weight, and whether the cap was exceeded to reach the
+            # minimum sample floor). Consumers: routing decision records,
+            # /api/v1/ai-eval/label-health, AI settings honesty caveat.
+            "label_composition": composition,
             "feature_names": FEATURE_NAMES,
             "feature_importance": importances,
             "category_labels": CATEGORY_LABELS,
@@ -304,6 +396,7 @@ async def train_classifier() -> dict[str, Any]:
             "version": version,
             "feature_importance": importances,
             "per_class_metrics": per_class,
+            "label_composition": composition,
         }
     else:
         logger.warning(
@@ -317,30 +410,76 @@ async def train_classifier() -> dict[str, Any]:
             "threshold": settings.ML_ACCURACY_THRESHOLD,
             "sample_count": len(samples),
             "per_class_metrics": per_class,
+            "label_composition": composition,
         }
 
 
-async def _gather_training_data() -> tuple[list[dict], list[str]]:
+async def _gather_training_data() -> tuple[list[dict], list[str], list[str]]:
     """Gather labeled feature vectors from DB with full history and run context.
 
     Queries test case data, historical pass/fail stats, and run-level context
     to produce complete feature vectors. This ensures training uses the same
     feature set as inference.
 
-    Returns (features_list, labels_list) where each feature is a dict
-    from feature_extractor and each label is a FailureCategory string.
+    Returns ``(features_list, labels_list, provenances_list)`` — aligned
+    lists where each feature is a dict from feature_extractor, each label is
+    a FailureCategory string, and each provenance is one of the
+    ``label_provenance`` buckets:
+
+      - human labels come from ``ai_feedback`` rows that assert a usable
+        category (confirmed verdicts, or corrections). One label per test
+        case: explicit UI/MCP feedback (``human_direct``) beats Jira webhook
+        auto-labels (``human_indirect``), newest first.
+      - ``llm_pseudo`` labels come from high-confidence analyses with **no**
+        feedback row. Analyses that received feedback are excluded here —
+        confirmed ones are already on the human side, and corrected ones had
+        their ``failure_category`` overwritten by the correction, so counting
+        them again would duplicate the human label.
     """
     from app.services.ml.feature_extractor import extract_features
+    from app.services.ml.label_provenance import LLM_PSEUDO
 
     samples: list[dict] = []
     labels: list[str] = []
+    provenances: list[str] = []
 
     try:
         from app.db.postgres import AsyncSessionLocal
         from sqlalchemy import text
 
         async with AsyncSessionLocal() as db:
-            # Fetch analyses joined with test case, run context, and historical stats
+            # ── Human labels: feedback rows with a usable category ────────
+            # DISTINCT ON keeps one row per test case, preferring explicit
+            # UI/MCP feedback over Jira auto-labels, then the newest row.
+            human_result = await db.execute(text("""
+                SELECT DISTINCT ON (fb.test_case_id)
+                    tc.id AS tc_id,
+                    tc.error_message,
+                    tc.duration_ms,
+                    tc.severity,
+                    fb.rating,
+                    fb.corrected_category,
+                    fb.source AS feedback_source,
+                    ai.failure_category,
+                    tr.pass_rate AS run_pass_rate,
+                    tr.total_tests,
+                    tr.failed_tests AS run_failed_tests,
+                    tr.started_at AS run_started_at
+                FROM ai_feedback fb
+                JOIN ai_analysis ai ON ai.id = fb.analysis_id
+                JOIN test_cases tc ON tc.id = fb.test_case_id
+                JOIN test_runs tr ON tr.id = tc.test_run_id
+                WHERE fb.rating = 'correct'
+                   OR (fb.rating = 'incorrect' AND fb.corrected_category IS NOT NULL)
+                ORDER BY fb.test_case_id,
+                         (CASE WHEN fb.source IN ('manual', 'category_correction')
+                               THEN 0 ELSE 1 END),
+                         fb.created_at DESC
+                LIMIT 50000
+            """))
+            human_rows = human_result.fetchall()
+
+            # ── Pseudo-labels: high-confidence analyses without feedback ──
             result = await db.execute(text("""
                 SELECT
                     tc.id AS tc_id,
@@ -355,15 +494,18 @@ async def _gather_training_data() -> tuple[list[dict], list[str]]:
                     tr.started_at AS run_started_at
                 FROM ai_analysis ai
                 JOIN test_cases tc ON tc.id = ai.test_case_id
-                JOIN test_runs tr ON tr.id = tc.run_id
+                JOIN test_runs tr ON tr.id = tc.test_run_id
                 WHERE ai.confidence_score >= 80
                   AND ai.failure_category IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ai_feedback fb WHERE fb.analysis_id = ai.id
+                  )
                 LIMIT 50000
             """))
             analysis_rows = result.fetchall()
 
             # Build a set of test case IDs to batch-fetch history
-            tc_ids = [row.tc_id for row in analysis_rows]
+            tc_ids = [row.tc_id for row in human_rows] + [row.tc_id for row in analysis_rows]
 
             # Batch-fetch historical stats per test (by test_name matching)
             # Using a subquery to compute pass/fail counts from prior runs
@@ -392,18 +534,14 @@ async def _gather_training_data() -> tuple[list[dict], list[str]]:
                         "median_duration_ms": float(hrow.median_duration_ms) if hrow.median_duration_ms else 0,
                     }
 
-            for row in analysis_rows:
-                tc_id_str = str(row.tc_id)
-                history = history_map.get(tc_id_str, {})
-
-                # Build run context from the test run
+            def _features_for(row) -> dict:
+                history = history_map.get(str(row.tc_id), {})
                 run_context: dict[str, Any] = {
                     "pass_rate": float(row.run_pass_rate) if row.run_pass_rate is not None else 0,
                     "failed_tests": row.run_failed_tests or 0,
                     "start_time": row.run_started_at,
                 }
-
-                features = extract_features(
+                return extract_features(
                     test_case={
                         "error_message": row.error_message,
                         "duration_ms": row.duration_ms,
@@ -412,10 +550,37 @@ async def _gather_training_data() -> tuple[list[dict], list[str]]:
                     history=history,
                     run_context=run_context,
                 )
-                samples.append(features)
+
+            from app.services.ml.label_provenance import (
+                provenance_for_feedback_source,
+                resolve_feedback_label,
+            )
+
+            human_tc_ids: set[str] = set()
+            for row in human_rows:
+                label = resolve_feedback_label(
+                    row.rating, row.corrected_category, row.failure_category,
+                )
+                if not label:
+                    continue
+                human_tc_ids.add(str(row.tc_id))
+                samples.append(_features_for(row))
+                labels.append(label)
+                provenances.append(
+                    provenance_for_feedback_source(row.feedback_source)
+                )
+
+            for row in analysis_rows:
+                # Feedback keys on analysis_id; a test case can have multiple
+                # analyses over time, so also skip any test case that already
+                # carries a human label to avoid conflicting duplicates.
+                if str(row.tc_id) in human_tc_ids:
+                    continue
+                samples.append(_features_for(row))
                 labels.append(row.failure_category)
+                provenances.append(LLM_PSEUDO)
 
     except Exception as exc:
         logger.error("Failed to gather training data: %s", exc)
 
-    return samples, labels
+    return samples, labels, provenances

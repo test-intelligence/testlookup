@@ -397,6 +397,13 @@ class Settings(BaseSettings):
     ML_MIN_TRAINING_SAMPLES: int = 200               # minimum labeled samples before ML activates
     ML_RETRAIN_ENABLED: bool = True                  # enable nightly Celery-beat retraining
     ML_ACCURACY_THRESHOLD: float = 0.80              # minimum accuracy to deploy a new model
+    # ── Label integrity (AI-F1): break the circular LLM→ML pseudo-label loop ──
+    # LLM pseudo-labels (high-confidence analyses with no human confirmation) are
+    # capped as a fraction of the final training set and down-weighted so human
+    # labels dominate what the classifier learns.
+    ML_PSEUDO_LABEL_CAP: float = 0.30                # max fraction of training set from LLM pseudo-labels
+    ML_PSEUDO_LABEL_WEIGHT: float = 0.3              # sample_weight for pseudo-labels (human labels = 1.0)
+    ML_HUMAN_LABEL_FLOOR: int = 50                   # below this many human labels, ML reports bootstrap mode
 
     # ── Anomaly Detection Tunables ────────────────────────────────────────────────
     # Pass-rate regression

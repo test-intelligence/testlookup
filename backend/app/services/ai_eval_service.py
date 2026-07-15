@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -79,6 +79,92 @@ async def build_dataset_from_feedback(
         items.append(item)
 
     return items
+
+
+# ── Label health (AI-F1 honesty surfacing) ──────────────────────────────────
+
+
+async def get_label_health(db: AsyncSession) -> dict:
+    """Human-label coverage of the ML training pool + last-trained mix.
+
+    Returns live counts by provenance bucket (``human_direct`` /
+    ``human_indirect`` feedback labels, ``llm_pseudo`` candidate analyses),
+    the configured human-label floor, and the ``label_composition`` the
+    currently deployed model was actually trained on (from its metadata) —
+    so the UI can state honestly whether ML mode learns from corrections or
+    is still bootstrap (LLM-imitating).
+    """
+    from app.core.config import settings
+    from app.services.ml.label_provenance import (
+        HUMAN_DIRECT,
+        model_maturity_from_metadata,
+        provenance_for_feedback_source,
+    )
+
+    usable_label = or_(
+        AIFeedback.rating == "correct",
+        and_(
+            AIFeedback.rating == "incorrect",
+            AIFeedback.corrected_category.isnot(None),
+        ),
+    )
+
+    # Human labels grouped by source → provenance bucket
+    rows = await db.execute(
+        select(AIFeedback.source, func.count(AIFeedback.id))
+        .where(usable_label)
+        .group_by(AIFeedback.source)
+    )
+    human_direct = 0
+    human_indirect = 0
+    for source, count in rows.all():
+        if provenance_for_feedback_source(source) == HUMAN_DIRECT:
+            human_direct += count
+        else:
+            human_indirect += count
+    human_total = human_direct + human_indirect
+
+    # Pseudo-label candidates: high-confidence analyses with no feedback row
+    pseudo_count = (
+        await db.execute(
+            select(func.count(AIAnalysis.id)).where(
+                AIAnalysis.confidence_score >= 80,
+                AIAnalysis.failure_category.isnot(None),
+                ~exists().where(AIFeedback.analysis_id == AIAnalysis.id),
+            )
+        )
+    ).scalar() or 0
+
+    # Last-trained composition from the deployed model's metadata (file read,
+    # best-effort — the live counts above must not depend on it).
+    last_composition = None
+    maturity = "not_trained"
+    try:
+        from app.services.ml.classifier import MLClassifier
+
+        info = MLClassifier.get_model_info()
+        maturity = model_maturity_from_metadata(info, settings.ML_HUMAN_LABEL_FLOOR)
+        composition = info.get("label_composition")
+        if isinstance(composition, dict):
+            last_composition = composition
+    except Exception:  # pragma: no cover — metadata read is best-effort
+        pass
+
+    floor = settings.ML_HUMAN_LABEL_FLOOR
+    pool_total = human_total + pseudo_count
+    return {
+        "human_direct": human_direct,
+        "human_indirect": human_indirect,
+        "human_label_total": human_total,
+        "llm_pseudo_candidates": pseudo_count,
+        "human_share_of_pool": round(human_total / pool_total, 4) if pool_total else None,
+        "human_label_floor": floor,
+        "meets_human_label_floor": human_total >= floor,
+        "ml_maturity": maturity,
+        "last_trained_composition": last_composition,
+        "pseudo_label_cap": settings.ML_PSEUDO_LABEL_CAP,
+        "pseudo_label_weight": settings.ML_PSEUDO_LABEL_WEIGHT,
+    }
 
 
 # ── Metrics computation ──────────────────────────────────────────────────────

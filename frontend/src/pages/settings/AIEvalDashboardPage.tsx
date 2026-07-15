@@ -164,6 +164,71 @@ export default function AIEvalDashboardPage() {
                 </div>
               )}
 
+              {/* Training label health (AI-F1) */}
+              {dashboard.label_health && (
+                <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    <h2 className="text-sm font-semibold text-neutral-200">Training Label Health</h2>
+                    <span className={clsx('px-2 py-0.5 rounded text-[10px] font-medium', {
+                      'bg-green-900/40 text-green-400': dashboard.label_health.ml_maturity === 'human_calibrated',
+                      'bg-amber-900/40 text-amber-400': dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating',
+                      'bg-gray-700 text-[var(--color-text-muted)]': dashboard.label_health.ml_maturity === 'not_trained',
+                    })}>
+                      {dashboard.label_health.ml_maturity === 'human_calibrated' ? 'Human-calibrated'
+                        : dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating' ? 'Bootstrap (LLM-imitating)'
+                        : 'Not trained'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <div className={clsx('text-2xl font-bold', dashboard.label_health.meets_human_label_floor ? 'text-green-400' : 'text-amber-400')}>
+                        {dashboard.label_health.human_label_total}
+                      </div>
+                      <div className="text-[10px] text-gray-500">
+                        Human Labels (floor: {dashboard.label_health.human_label_floor})
+                      </div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.label_health.human_direct}</div>
+                      <div className="text-[10px] text-gray-500">Direct Corrections</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.label_health.llm_pseudo_candidates}</div>
+                      <div className="text-[10px] text-gray-500">LLM Pseudo-labels</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--color-text)]">
+                        {dashboard.label_health.human_share_of_pool != null
+                          ? `${(dashboard.label_health.human_share_of_pool * 100).toFixed(1)}%`
+                          : 'N/A'}
+                      </div>
+                      <div className="text-[10px] text-gray-500">Human Share of Pool</div>
+                    </div>
+                  </div>
+                  {dashboard.label_health.last_trained_composition && (
+                    <p className="text-xs text-gray-500 mt-3">
+                      Deployed model trained on{' '}
+                      {dashboard.label_health.last_trained_composition.human_label_count} human label
+                      {dashboard.label_health.last_trained_composition.human_label_count === 1 ? '' : 's'}
+                      {' '}({((1 - (dashboard.label_health.last_trained_composition.fractions?.llm_pseudo ?? 0)) * 100).toFixed(0)}%)
+                      {' '}+ {dashboard.label_health.last_trained_composition.counts?.llm_pseudo ?? 0} LLM pseudo-label
+                      {(dashboard.label_health.last_trained_composition.counts?.llm_pseudo ?? 0) === 1 ? '' : 's'}
+                      {' '}(weight {dashboard.label_health.last_trained_composition.pseudo_weight})
+                      {dashboard.label_health.last_trained_composition.cap_exceeded_to_fill_floor
+                        ? ' — pseudo-label cap exceeded to reach the minimum training-set size.'
+                        : '.'}
+                    </p>
+                  )}
+                  {dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating' && (
+                    <p className="text-xs text-amber-400/80 mt-2">
+                      Below the human-label floor the ML classifier is trained mostly on the LLM&apos;s
+                      own high-confidence verdicts — it imitates the LLM rather than learning from your
+                      corrections. Confirm or correct AI verdicts to move it to human-calibrated.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Drift detection */}
               {dashboard.drift && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">

@@ -119,6 +119,7 @@ describe('workflowPresets', () => {
         recent_eval_runs: [{ id: 'eval-1', dataset_id: 'ds-1', model_name: 'gpt', task_type: 'classification', precision: 0.91, recall: 0.9, f1_score: 0.9, accuracy: 0.92, agreement_rate: 0.83, total_items: 10, correct_items: 9, fallback_used: false, evaluated_at: '2026-04-03T15:00:00Z', duration_ms: 200 }],
         model_versions: [{ id: 'mv-1', track: 'main', model_name: 'gpt', status: 'active', eval_accuracy: 0.92, created_at: '2026-04-03T15:00:00Z' }],
         feedback_summary: null,
+        label_health: null,
       },
       [{ id: 'baseline-1', task_type: 'classification', agent_name: 'summary', prompt_version: '1', model_name: 'gpt', baseline_accuracy: 0.9, baseline_f1: 0.88, min_accuracy: 0.85, min_f1: 0.84, max_regression_pct: 0.1, created_at: '2026-04-03T15:00:00Z' }],
       {

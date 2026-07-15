@@ -274,7 +274,23 @@ def _classify_ml(
         from app.services.ml.classifier import MLClassifier
 
         features = extract_features(test_case, history, run_context)
-        return MLClassifier.classify(features)
+        result = MLClassifier.classify(features)
+        if routing is not None:
+            # AI-F1 honesty: record whether this model actually learned from
+            # human labels or is still imitating LLM pseudo-labels
+            # ("bootstrap_llm_imitating" below ML_HUMAN_LABEL_FLOOR human
+            # labels in its training composition).
+            try:
+                from app.services.ml.label_provenance import (
+                    model_maturity_from_metadata,
+                )
+                routing["ml_maturity"] = model_maturity_from_metadata(
+                    MLClassifier.get_model_info(),
+                    settings.ML_HUMAN_LABEL_FLOOR,
+                )
+            except Exception:  # noqa: BLE001 — honesty tag is best-effort
+                routing["ml_maturity"] = None
+        return result
     except RuntimeError as exc:
         # Model not available — fall back to rules
         reason = f"ml_model_unavailable: {exc}"

@@ -236,6 +236,47 @@ async def _load_ai_config(db: AsyncSession) -> dict:
     }
 
 
+async def _ml_status() -> dict:
+    """Best-effort ML tier status for AIConfigRead (never raises).
+
+    Includes the AI-F1 honesty fields: how many human-provenance labels
+    exist and whether the deployed model is bootstrap (LLM-imitating) or
+    actually calibrated on human corrections.
+    """
+    status = {
+        "ml_model_available": False,
+        "ml_model_accuracy": None,
+        "ml_training_sample_count": 0,
+        "ml_human_label_count": 0,
+        "ml_human_label_floor": settings.ML_HUMAN_LABEL_FLOOR,
+        "ml_maturity": "not_trained",
+    }
+    try:
+        from app.services.ml.classifier import MLClassifier
+        from app.services.ml.label_provenance import model_maturity_from_metadata
+        status["ml_model_available"] = MLClassifier.is_available()
+        info = MLClassifier.get_model_info()
+        status["ml_model_accuracy"] = info.get("accuracy")
+        status["ml_training_sample_count"] = info.get("sample_count", 0)
+        status["ml_maturity"] = model_maturity_from_metadata(
+            info, settings.ML_HUMAN_LABEL_FLOOR,
+        )
+    except Exception:
+        pass
+    try:
+        from app.services.ml.trainer import (
+            get_human_label_count,
+            get_training_sample_count,
+        )
+        status["ml_training_sample_count"] = max(
+            status["ml_training_sample_count"], await get_training_sample_count()
+        )
+        status["ml_human_label_count"] = await get_human_label_count()
+    except Exception:
+        pass
+    return status
+
+
 @router.get("/ai", response_model=AIConfigRead)
 async def get_ai_config(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
@@ -243,23 +284,7 @@ async def get_ai_config(
 ) -> AIConfigRead:
     cfg = await _load_ai_config(db)
 
-    # ML model status (best-effort — non-blocking)
-    ml_available = False
-    ml_accuracy = None
-    ml_samples = 0
-    try:
-        from app.services.ml.classifier import MLClassifier
-        ml_available = MLClassifier.is_available()
-        info = MLClassifier.get_model_info()
-        ml_accuracy = info.get("accuracy")
-        ml_samples = info.get("sample_count", 0)
-    except Exception:
-        pass
-    try:
-        from app.services.ml.trainer import get_training_sample_count
-        ml_samples = max(ml_samples, await get_training_sample_count())
-    except Exception:
-        pass
+    ml = await _ml_status()
 
     return AIConfigRead(
         llm_provider=cfg["llm_provider"],
@@ -276,10 +301,8 @@ async def get_ai_config(
         openai_key_set=bool(cfg.get("openai_api_key")),
         google_key_set=bool(cfg.get("google_api_key")),
         analysis_mode=cfg.get("analysis_mode", "auto"),
-        ml_model_available=ml_available,
-        ml_model_accuracy=ml_accuracy,
-        ml_training_sample_count=ml_samples,
         knowledge_rag_enabled=cfg.get("knowledge_rag_enabled", False),
+        **ml,
     )
 
 
@@ -327,17 +350,7 @@ async def update_ai_config(
     logger.info("AI configuration updated by user_id=%s (fields: %s)", current_user.id, list(updates.keys()))
 
     # ML model status for response
-    ml_available = False
-    ml_accuracy = None
-    ml_samples = 0
-    try:
-        from app.services.ml.classifier import MLClassifier
-        ml_available = MLClassifier.is_available()
-        info = MLClassifier.get_model_info()
-        ml_accuracy = info.get("accuracy")
-        ml_samples = info.get("sample_count", 0)
-    except Exception:
-        pass
+    ml = await _ml_status()
 
     return AIConfigRead(
         llm_provider=merged["llm_provider"],
@@ -354,10 +367,8 @@ async def update_ai_config(
         openai_key_set=bool(merged.get("openai_api_key")),
         google_key_set=bool(merged.get("google_api_key")),
         analysis_mode=merged.get("analysis_mode", "auto"),
-        ml_model_available=ml_available,
-        ml_model_accuracy=ml_accuracy,
-        ml_training_sample_count=ml_samples,
         knowledge_rag_enabled=merged.get("knowledge_rag_enabled", False),
+        **ml,
     )
 
 

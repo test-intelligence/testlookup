@@ -51,6 +51,10 @@ export interface AIConfigRead {
   ml_model_available: boolean
   ml_model_accuracy: number | null
   ml_training_sample_count: number
+  // AI-F1 label integrity — honest learning-loop status
+  ml_human_label_count: number
+  ml_human_label_floor: number
+  ml_maturity: 'not_trained' | 'bootstrap_llm_imitating' | 'human_calibrated'
   // Knowledge RAG
   knowledge_rag_enabled: boolean
 }

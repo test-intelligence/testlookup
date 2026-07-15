@@ -120,6 +120,11 @@ export default function AIConfigPage() {
                       Ready ({((config.ml_model_accuracy ?? 0) * 100).toFixed(0)}% accuracy)
                     </span>
                   )}
+                  {mode.value === 'ml' && config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
+                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                      Bootstrap (LLM-imitating)
+                    </span>
+                  )}
                   <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{mode.desc}</p>
                 </div>
               </label>
@@ -132,6 +137,23 @@ export default function AIConfigPage() {
               <span className="text-[var(--color-text-muted)]">
                 Need {config.ml_training_sample_count} / 200 labeled samples.
                 The system will use Rules mode as fallback until a model is trained.
+              </span>
+            </div>
+          )}
+          {/* AI-F1 honesty caveat: below the human-label floor, ML mode imitates
+              the LLM's own labels — do not claim it learns from corrections. */}
+          {(form.analysis_mode === 'ml' || form.analysis_mode === 'auto') &&
+            config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
+            <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+              <span className="font-medium">ML classifier is in bootstrap mode (LLM-imitating).</span>
+              <span className="text-[var(--color-text-muted)]">
+                The current model was trained mostly on the LLM&apos;s own high-confidence
+                verdicts, not on human-verified labels
+                ({config.ml_human_label_count} of {config.ml_human_label_floor} human
+                labels needed). Until your team confirms or corrects more AI verdicts,
+                ML mode largely reproduces the LLM&apos;s behavior rather than learning
+                from your corrections. Label composition is tracked per model on the
+                AI Evaluation dashboard.
               </span>
             </div>
           )}
