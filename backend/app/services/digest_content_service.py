@@ -444,6 +444,41 @@ def render_digest_text(digest: dict) -> str:
     return "\n".join(lines)
 
 
+# PMF US-7.5 — appended to Slack/Teams digest text when the subscription
+# has the email report attachment enabled (content otherwise unchanged).
+REPORT_ATTACHMENT_NOTE = "Full analysis report attached to the email digest"
+
+# Apologetic note appended to the email digest body when the attachment
+# build failed (the digest itself must still deliver — never-raises).
+REPORT_BUILD_FAILED_NOTE = (
+    "The attached analysis report could not be generated for this digest — "
+    "sorry. The live report is available from the dashboard."
+)
+
+
+def digest_text_with_attachment_note(text: str, attachment_enabled: bool) -> str:
+    """Append the one-line attachment pointer to a Slack/Teams digest
+    rendering (US-7.5). Content is unchanged when the flag is off."""
+    if not attachment_enabled:
+        return text
+    return f"{text}\n{REPORT_ATTACHMENT_NOTE}"
+
+
+def append_digest_html_note(html: str, note: str) -> str:
+    """Insert a small note just before ``</body>`` of a rendered digest
+    email (used for the attachment-build-failure apology). Falls back to
+    plain concatenation when the marker is missing."""
+    import html as _html_mod
+
+    snippet = (
+        f'<p style="font-size:12px;color:#B45309;margin-top:12px">'
+        f"{_html_mod.escape(note)}</p>"
+    )
+    if "</body>" in html:
+        return html.replace("</body>", f"{snippet}</body>", 1)
+    return html + snippet
+
+
 def render_digest_html(digest: dict) -> str:
     """Render a digest dict as a standalone HTML email body."""
     import html as _html

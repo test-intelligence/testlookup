@@ -95,6 +95,9 @@ export default function SummaryReportPage() {
   // Aggregation mode is page-local (no other page has the concept).
   const [mode, setMode] = useState<SummaryReportMode>(() => loadStoredMode())
   const [isDownloading, setIsDownloading] = useState(false)
+  // US-7.5: on-demand download of the self-contained HTML analysis report
+  // (the same document daily/weekly digest emails attach).
+  const [downloadingReport, setDownloadingReport] = useState<'1d' | '7d' | null>(null)
 
   useEffect(() => {
     try { localStorage.setItem(LS_MODE_KEY, mode) } catch { /* ignore */ }
@@ -130,6 +133,35 @@ export default function SummaryReportPage() {
       toast.error((err as Error).message || 'Failed to download PDF')
     } finally {
       setIsDownloading(false)
+    }
+  }
+
+  const handleDownloadAnalysisReport = async (window: '1d' | '7d') => {
+    if (!project?.id) {
+      toast.error('Select a single project before exporting.')
+      return
+    }
+    setDownloadingReport(window)
+    try {
+      const blob = await summaryReportService.downloadAnalysisReport({
+        project_id: project.id,
+        window,
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const slug = (project.name || 'project').toLowerCase().replace(/\s+/g, '-')
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      a.download = `testlookup-report-${slug}-${stamp}${window === '7d' ? '-weekly' : ''}.html`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast.success('Analysis report downloaded')
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Failed to download analysis report')
+    } finally {
+      setDownloadingReport(null)
     }
   }
 
@@ -170,20 +202,40 @@ export default function SummaryReportPage() {
         title="Summary Report"
         subtitle={`Project: ${project.name} · ${MODE_LABELS[mode].hint}`}
         actions={
-          <button
-            type="button"
-            onClick={handleDownloadPdf}
-            disabled={isDownloading || !hasData}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              background: hasData ? 'rgba(68,147,248,0.14)' : 'transparent',
-              borderColor: hasData ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
-              color: hasData ? '#93c5fd' : 'var(--color-text-muted)',
-            }}
-          >
-            <Download className="h-3.5 w-3.5" />
-            {isDownloading ? 'Generating…' : 'Export PDF'}
-          </button>
+          <div className="flex items-center gap-2">
+            {(['1d', '7d'] as const).map(w => (
+              <button
+                key={w}
+                type="button"
+                onClick={() => handleDownloadAnalysisReport(w)}
+                disabled={downloadingReport !== null}
+                title={`Self-contained HTML analysis report for the last ${w === '1d' ? 'day' : '7 days'} — the same document digest emails attach.`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background: 'transparent',
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {downloadingReport === w ? 'Generating…' : `Analysis report (${w})`}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloading || !hasData}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                background: hasData ? 'rgba(68,147,248,0.14)' : 'transparent',
+                borderColor: hasData ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
+                color: hasData ? '#93c5fd' : 'var(--color-text-muted)',
+              }}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {isDownloading ? 'Generating…' : 'Export PDF'}
+            </button>
+          </div>
         }
       />
 

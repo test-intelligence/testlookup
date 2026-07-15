@@ -2434,6 +2434,7 @@ def dispatch_scheduled_digests(self):
                     DigestSubscription.schedule,
                     DigestSubscription.last_delivered_at,
                     DigestSubscription.send_when_unchanged,
+                    DigestSubscription.report_attachment,
                 ).where(
                     DigestSubscription.is_active.is_(True),
                     DigestSubscription.is_paused.is_(False),
@@ -2458,7 +2459,7 @@ def dispatch_scheduled_digests(self):
         # claim: missing a digest (which the user can manually re-trigger) is
         # always better than spamming users with duplicates because a crash
         # between send and commit left the row "still due".
-        for sub_id, schedule, last_delivered_at, send_when_unchanged in due:
+        for sub_id, schedule, last_delivered_at, send_when_unchanged, report_attachment in due:
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
             period = "daily" if schedule == "DAILY" else "weekly"
             is_retro = schedule == "WEEKLY_RETRO"
@@ -2550,13 +2551,42 @@ def dispatch_scheduled_digests(self):
                         )
                     elif channel == "email":
                         try:
-                            from app.services.notification.email_service import (
-                                send_html_email,
+                            from app.services.digest_content_service import (
+                                REPORT_BUILD_FAILED_NOTE,
+                                append_digest_html_note,
                             )
-                            await send_html_email(
+                            from app.services.notification.email_service import (
+                                send_html_email_with_attachments,
+                            )
+
+                            html_body = render_digest_html(digest)
+                            attachments = None
+                            if report_attachment:
+                                # US-7.5: attach the self-contained HTML
+                                # analysis report. NEVER blocks the digest —
+                                # a failed build (or a non-project-scoped
+                                # subscription) sends the digest with an
+                                # apologetic note instead.
+                                from app.services.analysis_report_service import (
+                                    build_digest_report_attachment,
+                                )
+                                attachment = await build_digest_report_attachment(
+                                    db, project_id, period,
+                                )
+                                if attachment is not None:
+                                    filename, report_html = attachment
+                                    attachments = [
+                                        (filename, report_html, "text/html"),
+                                    ]
+                                else:
+                                    html_body = append_digest_html_note(
+                                        html_body, REPORT_BUILD_FAILED_NOTE,
+                                    )
+                            await send_html_email_with_attachments(
                                 to_email=user.email,
                                 subject=f"TestLookup — {period.title()} Quality Digest",
-                                html_body=render_digest_html(digest),
+                                html_body=html_body,
+                                attachments=attachments,
                             )
                         except Exception as e:
                             status = "failed"
@@ -2569,6 +2599,7 @@ def dispatch_scheduled_digests(self):
                         from app.core.config import settings
                         from app.models.postgres import NotificationPreference
                         from app.services.digest_content_service import (
+                            digest_text_with_attachment_note,
                             render_digest_text,
                         )
                         from sqlalchemy import or_ as _or
@@ -2611,12 +2642,19 @@ def dispatch_scheduled_digests(self):
                                     f"📰 TestLookup — {period.title()} Quality Digest"
                                     f" — {digest.get('project_name') or 'All Projects'}"
                                 )
+                                # US-7.5: content is unchanged for Slack/Teams;
+                                # when the attachment is enabled, one appended
+                                # line points at the email digest carrying it.
+                                digest_body = digest_text_with_attachment_note(
+                                    render_digest_text(digest),
+                                    bool(report_attachment),
+                                )
                                 if channel == "slack":
                                     from app.services.notification import slack_service
                                     await slack_service.send_notification(
                                         webhook_url=webhook_url,
                                         title=title,
-                                        body=render_digest_text(digest),
+                                        body=digest_body,
                                         event_type="digest_delivery",
                                         metadata={},
                                     )
@@ -2625,7 +2663,7 @@ def dispatch_scheduled_digests(self):
                                     await teams_service.send_notification(
                                         webhook_url=webhook_url,
                                         title=title,
-                                        body=render_digest_text(digest),
+                                        body=digest_body,
                                         event_type="digest_delivery",
                                         metadata={},
                                     )

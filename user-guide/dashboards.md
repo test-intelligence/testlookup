@@ -27,6 +27,8 @@ The exportable roll-up (pick a single project). Its **Aggregation mode** is the 
 
 If the summary "doesn't match" another page, it's almost always the aggregation mode or the window — both are shown on the page.
 
+The page also offers **Download analysis report (1d / 7d)** — the self-contained HTML analysis report that daily/weekly email digests can attach (see [Administration → Digests](administration.md)). It bundles the executive summary, runs, failures for investigation, flaky & quarantine, slowest tests, release gate, defects, and ownership into one offline-readable file, using the same window semantics as this page.
+
 ## Value Metrics (`/value-metrics`)
 
 The ROI page: **defects auto-grouped**, **duplicate tickets prevented**, triage time saved, flaky tests identified, **automated go/no-go assessments**, and AI reports generated — the numbers for the "what is this tool saving us" conversation.

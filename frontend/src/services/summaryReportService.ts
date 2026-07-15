@@ -41,4 +41,20 @@ export const summaryReportService = {
     })
     return response.data as Blob
   },
+
+  /**
+   * US-7.5: the self-contained HTML analysis report — the same document
+   * the digest dispatcher attaches to daily/weekly digest emails.
+   * ``GET /api/v1/projects/{id}/reports/analysis?window=1d|7d``.
+   */
+  downloadAnalysisReport: async (params: {
+    project_id: string
+    window: '1d' | '7d'
+  }): Promise<Blob> => {
+    const response = await api.get(
+      `/api/v1/projects/${params.project_id}/reports/analysis`,
+      { params: { window: params.window }, responseType: 'blob' },
+    )
+    return response.data as Blob
+  },
 }

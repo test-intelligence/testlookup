@@ -34,6 +34,8 @@ export default function DigestsPage() {
   const [newSubChannel, setNewSubChannel] = useState<'email' | 'slack' | 'teams'>('email');
   const [newSubTriggerFilter, setNewSubTriggerFilter] = useState<'all' | 'failed_only' | 'degraded_only'>('all');
   const [newSubScopeValue, setNewSubScopeValue] = useState('');
+  // US-7.5: attach the self-contained HTML analysis report (email + daily/weekly only).
+  const [newSubReportAttachment, setNewSubReportAttachment] = useState(false);
 
   // Saved views
   const { views, isLoading: viewsLoading, isError: viewsError, mutate: mutateViews } =
@@ -58,6 +60,9 @@ export default function DigestsPage() {
         channel: newSubChannel,
         ...(newSubSchedule === 'PER_SUITE' && newSubScopeValue ? { scope_type: 'suite' as const, scope_value: newSubScopeValue.trim() } : {}),
         ...(newSubSchedule === 'PER_RUN' ? { trigger_filter: newSubTriggerFilter } : {}),
+        ...(newSubChannel === 'email' && (newSubSchedule === 'DAILY' || newSubSchedule === 'WEEKLY')
+          ? { report_attachment: newSubReportAttachment }
+          : {}),
       });
       toast.success('Subscription created');
       setNewSubName('');
@@ -203,6 +208,26 @@ export default function DigestsPage() {
                 </button>
               </div>
 
+              {newSubChannel === 'email' && (newSubSchedule === 'DAILY' || newSubSchedule === 'WEEKLY') && (
+                <label className="flex items-start gap-2 text-sm text-[var(--color-text-muted)] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newSubReportAttachment}
+                    onChange={e => setNewSubReportAttachment(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="text-[var(--color-text)]">Attach analysis report</span>
+                    <span className="block text-xs text-[var(--color-text-muted)]">
+                      Adds a self-contained HTML report (runs, failures, flaky &amp; quarantine,
+                      slowest tests, release gate, defects, ownership) covering the digest window
+                      — 1 day for daily, 7 days for weekly. Email digests only; requires a
+                      project-scoped subscription.
+                    </span>
+                  </span>
+                </label>
+              )}
+
               {subs.length === 0 && <div className="text-center py-8 text-gray-500">No digest subscriptions. Create one above.</div>}
               {subs.map(sub => (
                 <div key={sub.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-center">
@@ -217,6 +242,7 @@ export default function DigestsPage() {
                       {sub.schedule.replace('_', ' ')} via {sub.channel}
                       {sub.scope_value ? ` · Scope: ${sub.scope_value}` : ''}
                       {sub.trigger_filter && sub.trigger_filter !== 'all' ? ` · ${sub.trigger_filter.replace('_', ' ')}` : ''}
+                      {sub.report_attachment ? ' · Report attached' : ''}
                       {' '}· Delivered: {sub.delivery_count} times
                       {sub.next_delivery_at && ` · Next: ${new Date(sub.next_delivery_at).toLocaleDateString()}`}
                     </p>

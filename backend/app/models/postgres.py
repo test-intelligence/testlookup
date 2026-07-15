@@ -2996,6 +2996,9 @@ class DigestSubscription(Base):
     # "No changes since last digest" one-liner; False = skip delivery
     # entirely for that window.
     send_when_unchanged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # PMF US-7.5: attach the self-contained HTML analysis report (1d for
+    # DAILY, 7d for WEEKLY) to email digest deliveries. Default off.
+    report_attachment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # ``last_delivered_at`` doubles as the delta-window watermark (US-7.4):
     # each scheduled delivery reports changes since the previous send.
     last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

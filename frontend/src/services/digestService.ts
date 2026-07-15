@@ -17,6 +17,9 @@ export interface DigestSubscription {
   scope_type: ScopeType | null;
   scope_value: string | null;
   trigger_filter: TriggerFilter | null;
+  send_when_unchanged: boolean;
+  /** US-7.5: attach the self-contained HTML analysis report to email digests. */
+  report_attachment: boolean;
   last_delivered_at: string | null;
   next_delivery_at: string | null;
   delivery_count: number;
@@ -53,6 +56,7 @@ export async function createSubscription(payload: {
   scope_type?: ScopeType;
   scope_value?: string | null;
   trigger_filter?: TriggerFilter;
+  report_attachment?: boolean;
 }): Promise<DigestSubscription> {
   const { data } = await api.post<DigestSubscription>('/api/v1/digests/subscriptions', payload);
   return data;
@@ -67,6 +71,7 @@ export async function updateSubscription(id: string, payload: {
   trigger_filter?: TriggerFilter;
   is_active?: boolean;
   is_paused?: boolean;
+  report_attachment?: boolean;
 }): Promise<DigestSubscription> {
   const { data } = await api.patch<DigestSubscription>(`/api/v1/digests/subscriptions/${id}`, payload);
   return data;

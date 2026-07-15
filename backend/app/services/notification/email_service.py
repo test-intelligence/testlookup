@@ -1,6 +1,7 @@
 """Async SMTP email delivery via aiosmtplib."""
 import logging
 from datetime import datetime, timezone
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
@@ -265,3 +266,74 @@ async def send_html_email(
         start_tls=not use_tls,  # STARTTLS for port 587
     )
     logger.info("HTML email sent to %s — subject=%s", to_email, subject)
+
+
+async def send_html_email_with_attachments(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str | None = None,
+    attachments: list[tuple[str, str, str]] | None = None,
+    smtp_cfg: dict[str, Any] | None = None,
+) -> None:
+    """
+    Send a pre-rendered HTML email carrying file attachments (PMF US-7.5).
+
+    ``attachments`` is a list of ``(filename, content, mime_type)`` tuples
+    (content as ``str``; mime like ``"text/html"``). The MIME layout is a
+    ``multipart/mixed`` envelope whose first part is the usual
+    ``multipart/alternative`` (plain + HTML body), followed by one part per
+    attachment with ``Content-Disposition: attachment``.
+
+    With no attachments this delegates to :func:`send_html_email` so the
+    two paths stay byte-identical for plain digests. Raises on delivery
+    failure — the caller owns logging / status tracking.
+    """
+    if not attachments:
+        await send_html_email(
+            to_email, subject, html_body, text_body=text_body, smtp_cfg=smtp_cfg,
+        )
+        return
+
+    cfg = smtp_cfg if smtp_cfg is not None else await _get_smtp_cfg()
+
+    if not cfg.get("enabled"):
+        logger.debug("SMTP disabled — skipping email to %s", to_email)
+        return
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"] = cfg.get("from_address", settings.SMTP_FROM)
+    msg["To"] = to_email
+
+    alternative = MIMEMultipart("alternative")
+    alternative.attach(MIMEText(text_body or subject, "plain"))
+    alternative.attach(MIMEText(html_body, "html"))
+    msg.attach(alternative)
+
+    for filename, content, mime_type in attachments:
+        maintype, _, subtype = (mime_type or "application/octet-stream").partition("/")
+        if maintype == "text":
+            part = MIMEText(content, subtype or "plain", "utf-8")
+        else:
+            part = MIMEApplication(
+                content.encode("utf-8") if isinstance(content, str) else content,
+                _subtype=subtype or "octet-stream",
+            )
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(part)
+
+    use_tls = bool(cfg.get("tls", True))
+    await aiosmtplib.send(
+        msg,
+        hostname=cfg.get("host", settings.SMTP_HOST),
+        port=int(cfg.get("port", settings.SMTP_PORT)),
+        username=cfg.get("user") or None,
+        password=cfg.get("password") or None,
+        use_tls=use_tls,
+        start_tls=not use_tls,  # STARTTLS for port 587
+    )
+    logger.info(
+        "HTML email with %d attachment(s) sent to %s — subject=%s",
+        len(attachments), to_email, subject,
+    )

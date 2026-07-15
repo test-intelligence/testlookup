@@ -12,6 +12,7 @@ from app.routers import (
     agents,
     ai_evaluation,
     admin_maintenance,
+    analysis_report,
     analyze,
     analytics,
     api_keys,
@@ -151,6 +152,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     my_failures.router,                # 0080: per-user "My Failures" inbox of auto-assigned failures
     test_execution_reviews.router,     # 0081: per-TestCase human review transitions
     summary_report.router,             # Per-project consolidated summary report + PDF export
+    analysis_report.router,            # PMF US-7.5: self-contained HTML analysis report download
     duplicates.router,                 # Phase 4: per-project duplicate authored-test-case review queue
     defect_jira.router,                # PMF US-6.1/6.3: one-click Jira defects (project-scoped)
 )

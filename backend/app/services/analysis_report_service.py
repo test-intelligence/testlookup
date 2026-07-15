@@ -1,0 +1,1233 @@
+"""
+Analysis Report Service — self-contained HTML analysis report (PMF US-7.5).
+
+Builds ONE standalone HTML document carrying the full set of metrics a QA
+team needs to investigate a window's (1d / 7d) test results, attached to
+daily/weekly digest emails and downloadable via
+``GET /api/v1/projects/{project_id}/reports/analysis``.
+
+Design rules:
+
+* **Single-source metrics** — every number comes from the same service the
+  dashboard uses (``summary_report_service`` for the executive summary,
+  ``analytics_service`` for top-failing/kinds/defects,
+  ``digest_content_service.compute_digest_deltas`` for new-vs-recurring +
+  quarantine debt + gate change, ``ownership_resolver_service`` for team
+  grouping). The report must MATCH the dashboard; nothing is re-derived.
+* **Zero external assets** — inline ``<style>``, charts as tiny inline SVG
+  bars/sparklines generated here, no remote images/scripts. A sprinkle of
+  vanilla JS collapses sections but the content is readable without it.
+* **Graceful omission** — each section collects independently; a section
+  whose subsystem has no data or configuration renders one explanatory
+  line instead of breaking the report. ``collect`` never raises.
+* **Bounded size** — hard row caps with "+K more — open dashboard"
+  overflow lines, aggressive string truncation, and a final size guard
+  (< 2 MB, with a shrunken re-render then a minimal fallback document).
+* **Escaping** — ALL user-originated strings (test names, suite names,
+  error messages, cluster labels…) pass through ``_e`` (``html.escape``),
+  the same approach ``render_digest_html`` uses.
+"""
+from __future__ import annotations
+
+import html as _html
+import logging
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.models.postgres import (
+    FailureCluster,
+    FlakyQuarantineRequest,
+    Project,
+    ReleaseDecision,
+    TestCase,
+    TestRun,
+    TestStatus,
+)
+
+logger = logging.getLogger("services.analysis_report")
+
+# ── Window vocabulary ────────────────────────────────────────────────────────
+
+WINDOW_DAYS: dict[str, int] = {"1d": 1, "7d": 7}
+ALLOWED_WINDOWS: tuple[str, ...] = tuple(WINDOW_DAYS)
+
+# ── Row caps (US-7.5 spec) ───────────────────────────────────────────────────
+
+DEFAULT_CAPS: dict[str, int] = {
+    "runs": 50,
+    "top_failing": 20,
+    "clusters": 10,
+    "slowest": 10,
+    "defects": 20,
+    "flip_rate": 5,
+    "ownership": 15,
+}
+
+# Shrunken caps used for the one retry when the rendered document exceeds
+# the size bound (huge error messages / thousands-of-runs edge cases).
+SHRUNK_CAPS: dict[str, int] = {k: max(3, v // 5) for k, v in DEFAULT_CAPS.items()}
+
+MAX_REPORT_BYTES = 2 * 1024 * 1024  # 2 MB
+
+_FAILED_STATUSES = (TestStatus.FAILED.value, TestStatus.BROKEN.value)
+
+
+# ── Escaping ─────────────────────────────────────────────────────────────────
+
+
+def _e(text, max_len: int = 300) -> str:
+    """HTML-escape a user-originated string, truncating long values.
+
+    Same discipline as ``digest_content_service.render_digest_html``: every
+    test name / suite / error message / label goes through here before it
+    touches the document.
+    """
+    s = _html.escape(str(text if text is not None else ""))
+    return s[:max_len] + "…" if len(s) > max_len else s
+
+
+def _cap(items: list, cap: int) -> tuple[list, int]:
+    """Return (visible rows, overflow count)."""
+    items = items or []
+    return items[:cap], max(0, len(items) - cap)
+
+
+def _overflow_line(count: int, base_url: str, path: str, colspan: int | None = None) -> str:
+    if count <= 0:
+        return ""
+    link = f'<a href="{_e(base_url + path, 500)}">open dashboard</a>'
+    inner = f'<span class="muted">+{count} more — {link}</span>'
+    if colspan:
+        return f'<tr><td colspan="{colspan}">{inner}</td></tr>'
+    return f"<p>{inner}</p>"
+
+
+# ── Inline SVG helpers (no libraries) ────────────────────────────────────────
+
+
+def _svg_hbar(pct: float | None, color: str = "#059669", width: int = 120) -> str:
+    """A single horizontal bar (e.g. pass rate) as inline SVG."""
+    p = max(0.0, min(100.0, float(pct or 0.0)))
+    fill = round(width * p / 100.0, 1)
+    return (
+        f'<svg width="{width}" height="10" viewBox="0 0 {width} 10" '
+        f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{p:.1f}%">'
+        f'<rect width="{width}" height="10" rx="2" fill="#E5E7EB"/>'
+        f'<rect width="{fill}" height="10" rx="2" fill="{color}"/></svg>'
+    )
+
+
+def _svg_day_sparkline(buckets: list[dict], width: int = 420, height: int = 64) -> str:
+    """Day-by-day bar sparkline: bar height = runs, label = pass rate.
+
+    ``buckets`` come from :func:`fill_day_buckets` — one dict per day with
+    ``date`` (ISO), ``runs`` and ``pass_rate`` (nullable).
+    """
+    if not buckets:
+        return ""
+    n = len(buckets)
+    gap = 6
+    bar_w = max(8, (width - gap * (n + 1)) // n)
+    max_runs = max((b["runs"] for b in buckets), default=0) or 1
+    chart_h = height - 26  # room for labels
+    parts = [
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Runs per day">'
+    ]
+    x = gap
+    for b in buckets:
+        runs = int(b["runs"] or 0)
+        bar_h = max(2, round(chart_h * runs / max_runs)) if runs else 2
+        y = 4 + (chart_h - bar_h)
+        pr = b.get("pass_rate")
+        color = "#059669" if (pr is None or pr >= 90) else ("#D97706" if pr >= 75 else "#DC2626")
+        label = f"{pr:.0f}%" if pr is not None else "—"
+        day_label = _e(str(b["date"])[5:10], 20)  # MM-DD
+        parts.append(
+            f'<rect x="{x}" y="{y}" width="{bar_w}" height="{bar_h}" rx="2" fill="{color}">'
+            f"<title>{day_label}: {runs} runs, pass rate {label}</title></rect>"
+            f'<text x="{x + bar_w / 2}" y="{height - 14}" font-size="8" '
+            f'text-anchor="middle" fill="#6B7280">{label}</text>'
+            f'<text x="{x + bar_w / 2}" y="{height - 4}" font-size="8" '
+            f'text-anchor="middle" fill="#9CA3AF">{day_label}</text>'
+        )
+        x += bar_w + gap
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _svg_kind_bar(by_kind: list[dict], width: int = 420) -> str:
+    """Stacked failure-kind triad bar (product / test_code / infrastructure / unknown)."""
+    colors = {
+        "product": "#DC2626",
+        "test_code": "#D97706",
+        "infrastructure": "#0EA5E9",
+        "unknown": "#9CA3AF",
+    }
+    total = sum(int(k.get("count") or 0) for k in (by_kind or []))
+    if total <= 0:
+        return ""
+    parts = [
+        f'<svg width="{width}" height="14" viewBox="0 0 {width} 14" '
+        f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Failure kinds">'
+    ]
+    x = 0.0
+    for k in by_kind:
+        count = int(k.get("count") or 0)
+        if count <= 0:
+            continue
+        w = width * count / total
+        color = colors.get(str(k.get("kind")), "#9CA3AF")
+        parts.append(
+            f'<rect x="{x:.1f}" width="{w:.1f}" height="14" fill="{color}">'
+            f"<title>{_e(k.get('kind'))}: {count}</title></rect>"
+        )
+        x += w
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+# ── Weekly day-bucket math (pure, testable) ──────────────────────────────────
+
+
+def fill_day_buckets(
+    rows: list[tuple],
+    start: datetime,
+    days: int,
+) -> list[dict]:
+    """Fill a contiguous list of per-day buckets from aggregate rows.
+
+    ``rows`` are ``(day_datetime, runs, passed, evaluated)`` tuples (the
+    day-bucket query's output). Days with no runs appear with ``runs=0`` /
+    ``pass_rate=None`` so the sparkline shows the true shape of the week.
+    Pass rate is the weighted rate the dashboard uses: passed / evaluated
+    (evaluated = passed + failed + broken; skips don't count).
+    """
+    by_day: dict[str, tuple[int, int, int]] = {}
+    for day, runs, passed, evaluated in rows:
+        key = day.date().isoformat() if hasattr(day, "date") else str(day)[:10]
+        prev = by_day.get(key, (0, 0, 0))
+        by_day[key] = (
+            prev[0] + int(runs or 0),
+            prev[1] + int(passed or 0),
+            prev[2] + int(evaluated or 0),
+        )
+    buckets: list[dict] = []
+    for i in range(days):
+        d = (start + timedelta(days=i)).date().isoformat()
+        runs, passed, evaluated = by_day.get(d, (0, 0, 0))
+        buckets.append({
+            "date": d,
+            "runs": runs,
+            "pass_rate": round(passed / evaluated * 100.0, 1) if evaluated else None,
+        })
+    return buckets
+
+
+# ── Filename helper ──────────────────────────────────────────────────────────
+
+
+def report_attachment_filename(project_slug: str | None, now: datetime, window: str) -> str:
+    """``testlookup-report-<project-slug>-<YYYYMMDD>[-weekly].html``"""
+    slug = "".join(
+        c if (c.isalnum() or c == "-") else "-" for c in (project_slug or "project").lower()
+    ).strip("-") or "project"
+    suffix = "-weekly" if window == "7d" else ""
+    return f"testlookup-report-{slug}-{now.strftime('%Y%m%d')}{suffix}.html"
+
+
+# ── Section collectors ───────────────────────────────────────────────────────
+#
+# Each collector is independent: it returns the section's data dict and may
+# raise — ``collect_analysis_report_data`` catches per-section and records
+# an omission reason instead. Collectors reuse existing services wherever
+# one exists (single-source rule).
+
+
+async def _collect_summary(
+    db: AsyncSession, project_id: uuid.UUID, days: int, start: datetime, now: datetime,
+) -> dict:
+    from app.services.analytics_service import coverage_stats
+    from app.services.summary_report_service import _window_totals, build_summary_report
+
+    # The dashboard's own aggregation — unique-across-window semantics
+    # (matches /reports/summary and /coverage). Dashboard parity is pinned
+    # by tests: these numbers are used verbatim.
+    summary = await build_summary_report(db, project_id, days=days, mode="window")
+
+    # Executions + suite count come from the same aggregation /coverage uses.
+    coverage = await coverage_stats(db, str(project_id), days)
+    coverage_summary = coverage.get("summary") or {}
+
+    # Delta vs the equal-length prior window, using the SAME totals helper.
+    prior_totals, prior_runs, _dur, _latest = await _window_totals(
+        db, project_id, start - timedelta(days=days), start,
+    )
+    prior_evaluated = prior_totals.evaluated
+    prior_rate = (
+        round(prior_totals.passed / prior_evaluated * 100.0, 1) if prior_evaluated else None
+    )
+    data: dict = {
+        "summary": summary,
+        "coverage_summary": coverage_summary,
+        "prior": {"weighted_pass_rate_pct": prior_rate, "run_count": prior_runs},
+    }
+
+    if days > 1:
+        day_rows = (
+            await db.execute(
+                select(
+                    func.date_trunc("day", TestRun.created_at).label("day"),
+                    func.count(TestRun.id),
+                    func.coalesce(func.sum(TestRun.passed_tests), 0),
+                    func.coalesce(
+                        func.sum(
+                            TestRun.passed_tests + TestRun.failed_tests + TestRun.broken_tests
+                        ),
+                        0,
+                    ),
+                )
+                .where(
+                    TestRun.project_id == project_id,
+                    TestRun.created_at >= start,
+                    TestRun.created_at < now,
+                )
+                .group_by("day")
+            )
+        ).all()
+        data["day_buckets"] = fill_day_buckets([tuple(r) for r in day_rows], start, days)
+    return data
+
+
+async def _collect_runs(
+    db: AsyncSession, project_id: uuid.UUID, start: datetime, now: datetime, cap: int,
+) -> dict:
+    total = int(
+        (
+            await db.execute(
+                select(func.count(TestRun.id)).where(
+                    TestRun.project_id == project_id,
+                    TestRun.created_at >= start,
+                    TestRun.created_at < now,
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    rows = (
+        (
+            await db.execute(
+                select(TestRun)
+                .where(
+                    TestRun.project_id == project_id,
+                    TestRun.created_at >= start,
+                    TestRun.created_at < now,
+                )
+                .order_by(TestRun.created_at.desc())
+                .limit(cap)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items = [
+        {
+            "id": str(r.id),
+            "build_number": r.build_number,
+            "branch": r.branch,
+            "pr_number": r.pr_number,
+            "status": r.status,
+            "pass_rate": r.pass_rate,
+            "duration_ms": r.duration_ms,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": total}
+
+
+async def _collect_failures(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    days: int,
+    start: datetime,
+    now: datetime,
+    caps: dict[str, int],
+) -> dict:
+    from app.services.analytics_service import failure_categories, top_failing_tests
+    from app.services.digest_content_service import compute_digest_deltas
+
+    # New-vs-recurring split reuses the US-7.4 delta definition verbatim.
+    delta = await compute_digest_deltas(db, project_id, start, now)
+
+    top = await top_failing_tests(
+        db, str(project_id), days, limit=caps["top_failing"] + 1,
+    )
+    top_items = top.get("items") or []
+
+    # First-line error enrichment: one batched DISTINCT ON query — the most
+    # recent in-window error message per fingerprint. No N+1.
+    fps = [t["test_fingerprint"] for t in top_items if t.get("test_fingerprint")]
+    if fps:
+        err_rows = (
+            await db.execute(
+                select(TestCase.test_fingerprint, TestCase.error_message)
+                .join(TestRun, TestRun.id == TestCase.test_run_id)
+                .where(
+                    TestRun.project_id == project_id,
+                    TestCase.created_at >= start,
+                    TestCase.created_at < now,
+                    TestCase.status.in_(_FAILED_STATUSES),
+                    TestCase.test_fingerprint.in_(fps),
+                )
+                .distinct(TestCase.test_fingerprint)
+                .order_by(TestCase.test_fingerprint, TestCase.created_at.desc())
+            )
+        ).all()
+        err_by_fp = {r[0]: r[1] for r in err_rows}
+        for t in top_items:
+            msg = err_by_fp.get(t.get("test_fingerprint")) or ""
+            t["error_first_line"] = msg.strip().splitlines()[0] if msg.strip() else None
+
+    cluster_rows = (
+        (
+            await db.execute(
+                select(FailureCluster)
+                .join(TestRun, TestRun.id == FailureCluster.test_run_id)
+                .where(
+                    TestRun.project_id == project_id,
+                    TestRun.created_at >= start,
+                    TestRun.created_at < now,
+                )
+                .order_by(FailureCluster.size.desc())
+                .limit(caps["clusters"] + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    clusters = [
+        {
+            "label": c.label,
+            "size": int(c.size or 0),
+            "classification": c.regression_classification or "unclassified",
+        }
+        for c in cluster_rows
+    ]
+
+    kinds = await failure_categories(db, str(project_id), days)
+
+    return {
+        "delta": delta,
+        "top_failing": top_items,
+        "clusters": clusters,
+        "by_kind": kinds.get("by_kind") or [],
+    }
+
+
+async def _collect_flaky(
+    db: AsyncSession, project_id: uuid.UUID, delta: dict | None, cap: int,
+) -> dict:
+    from app.services.metrics_service import _count_flaky_tests
+
+    known_flaky = await _count_flaky_tests(db, str(project_id), None)
+
+    # Top flip-rate tests — cheap read off the quarantine request rows the
+    # flaky coach already populates (no recomputation).
+    flip_rows = (
+        (
+            await db.execute(
+                select(FlakyQuarantineRequest)
+                .where(
+                    FlakyQuarantineRequest.project_id == project_id,
+                    FlakyQuarantineRequest.flip_rate.isnot(None),
+                )
+                .order_by(FlakyQuarantineRequest.flip_rate.desc())
+                .limit(cap)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    top_flip = [
+        {
+            "test_name": r.test_name,
+            "suite_name": r.suite_name,
+            "flip_rate": float(r.flip_rate or 0.0),
+            "status": r.status,
+        }
+        for r in flip_rows
+    ]
+    return {
+        "known_flaky": int(known_flaky or 0),
+        "newly_flaky": int((delta or {}).get("newly_flaky") or 0),
+        "quarantine_debt": (delta or {}).get("quarantine_debt")
+        or {"active": 0, "stale": 0, "ready_to_promote": 0},
+        "top_flip_rate": top_flip,
+    }
+
+
+async def _collect_slowest(
+    db: AsyncSession, project_id: uuid.UUID, start: datetime, now: datetime, cap: int,
+) -> dict:
+    rows = (
+        await db.execute(
+            select(
+                TestCase.test_name,
+                TestCase.suite_name,
+                TestCase.duration_ms,
+                TestCase.status,
+            )
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCase.created_at >= start,
+                TestCase.created_at < now,
+                TestCase.duration_ms.isnot(None),
+            )
+            .order_by(TestCase.duration_ms.desc())
+            .limit(cap)
+        )
+    ).all()
+    return {
+        "items": [
+            {
+                "test_name": r.test_name,
+                "suite_name": r.suite_name,
+                "duration_ms": int(r.duration_ms or 0),
+                "status": r.status,
+            }
+            for r in rows
+        ]
+    }
+
+
+async def _collect_gate(
+    db: AsyncSession, project_id: uuid.UUID, start: datetime, now: datetime,
+) -> dict:
+    decision = (
+        (
+            await db.execute(
+                select(ReleaseDecision)
+                .join(TestRun, TestRun.id == ReleaseDecision.test_run_id)
+                .where(
+                    TestRun.project_id == project_id,
+                    ReleaseDecision.created_at >= start,
+                    ReleaseDecision.created_at < now,
+                )
+                .order_by(ReleaseDecision.created_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if decision is None:
+        return {"decision": None}
+    evaluation = decision.policy_evaluation or {}
+    return {
+        "decision": {
+            "recommendation": decision.recommendation,
+            "risk_score": decision.risk_score,
+            "conditions_for_go": decision.conditions_for_go or [],
+            "blocking_issues": decision.blocking_issues or [],
+            "kind_counterfactual": (
+                evaluation.get("kind_counterfactual")
+                if isinstance(evaluation, dict)
+                else None
+            ),
+            "created_at": decision.created_at.isoformat() if decision.created_at else None,
+        }
+    }
+
+
+async def _collect_defects(db: AsyncSession, project_id: uuid.UUID, cap: int) -> dict:
+    from app.services.analytics_service import list_defects
+
+    result = await list_defects(
+        db, str(project_id), resolution_status="OPEN", page=1, size=cap,
+    )
+    return {"items": result.get("items") or [], "total": int(result.get("total") or 0)}
+
+
+# Cap on how many distinct failing tests we resolve for the ownership
+# grouping (fnmatch per rule per test — keep it bounded).
+_OWNERSHIP_TEST_CAP = 500
+
+
+async def _collect_ownership(
+    db: AsyncSession, project_id: uuid.UUID, start: datetime, now: datetime, cap: int,
+) -> dict:
+    from app.services.ownership_resolver_service import (
+        load_rules_for_project,
+        resolve_test_ownership,
+    )
+
+    rules = await load_rules_for_project(db, project_id)
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    component_owner_map = project.component_owner_map if project else None
+    if not rules and not component_owner_map:
+        return {"configured": False, "teams": []}
+
+    fail_rows = (
+        await db.execute(
+            select(
+                TestCase.test_fingerprint,
+                func.max(TestCase.test_name).label("test_name"),
+                func.max(TestCase.suite_name).label("suite_name"),
+                func.max(TestCase.class_name).label("class_name"),
+                func.max(TestCase.package_name).label("package_name"),
+                func.max(TestCase.full_name).label("full_name"),
+                func.max(TestCase.owner).label("owner"),
+                func.max(TestCase.feature).label("feature"),
+                func.max(TestCase.epic).label("epic"),
+                func.count(TestCase.id).label("failures"),
+            )
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCase.created_at >= start,
+                TestCase.created_at < now,
+                TestCase.status.in_(_FAILED_STATUSES),
+                TestCase.test_fingerprint.isnot(None),
+            )
+            .group_by(TestCase.test_fingerprint)
+            .order_by(func.count(TestCase.id).desc())
+            .limit(_OWNERSHIP_TEST_CAP)
+        )
+    ).all()
+
+    teams: dict[str, dict] = {}
+    for row in fail_rows:
+        attrs = {
+            "suite_name": row.suite_name or "",
+            "component": row.class_name or "",
+            "package": row.package_name or "",
+            "path": row.full_name or "",
+            "label": row.feature or row.epic or "",
+            "owner": row.owner or "",
+        }
+        resolution = resolve_test_ownership(rules, attrs, component_owner_map)
+        team = resolution.team_name or "Unassigned"
+        bucket = teams.setdefault(team, {"team": team, "tests": 0, "failures": 0})
+        bucket["tests"] += 1
+        bucket["failures"] += int(row.failures or 0)
+
+    ranked = sorted(teams.values(), key=lambda t: -t["failures"])[:cap]
+    return {"configured": True, "teams": ranked}
+
+
+# ── Top-level collection ─────────────────────────────────────────────────────
+
+
+async def collect_analysis_report_data(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    window: str,
+    now: datetime | None = None,
+    caps: dict[str, int] | None = None,
+) -> dict:
+    """Gather every section's data. Never raises: a failing/empty subsystem
+    records an omission reason and the report renders around it."""
+    if window not in WINDOW_DAYS:
+        raise ValueError(f"invalid window: {window!r} (allowed: {ALLOWED_WINDOWS})")
+    caps = caps or DEFAULT_CAPS
+    days = WINDOW_DAYS[window]
+    now = now or datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+
+    data: dict = {
+        "project": {
+            "id": str(project_id),
+            "name": project.name if project else str(project_id),
+            "slug": project.slug if project else "project",
+        },
+        "window": {
+            "key": window,
+            "days": days,
+            "start": start.isoformat(),
+            "end": now.isoformat(),
+        },
+        "generated_at": now.isoformat(),
+        "base_url": settings.public_base_url,
+        "caps": caps,
+        "sections": {},
+    }
+
+    async def _section(name: str, coro, empty_reason: str) -> dict | None:
+        try:
+            section_data: dict = await coro
+        except Exception as exc:  # noqa: BLE001 — one broken subsystem must not kill the report
+            logger.warning(
+                "Analysis report section %s failed for project %s: %s",
+                name, project_id, exc,
+            )
+            data["sections"][name] = {"ok": False, "reason": empty_reason, "data": None}
+            return None
+        data["sections"][name] = {"ok": True, "reason": None, "data": section_data}
+        return section_data
+
+    await _section(
+        "summary",
+        _collect_summary(db, project_id, days, start, now),
+        "Executive summary unavailable — the metrics service reported an error.",
+    )
+    await _section(
+        "runs",
+        _collect_runs(db, project_id, start, now, caps["runs"]),
+        "Runs table unavailable.",
+    )
+    failures = await _section(
+        "failures",
+        _collect_failures(db, project_id, days, start, now, caps),
+        "Failure analysis unavailable for this window.",
+    )
+    delta = (failures or {}).get("delta")
+    await _section(
+        "flaky",
+        _collect_flaky(db, project_id, delta, caps["flip_rate"]),
+        "Flaky / quarantine data unavailable.",
+    )
+    await _section(
+        "slowest",
+        _collect_slowest(db, project_id, start, now, caps["slowest"]),
+        "Duration data unavailable.",
+    )
+    await _section(
+        "gate",
+        _collect_gate(db, project_id, start, now),
+        "Release gate data unavailable.",
+    )
+    await _section(
+        "defects",
+        _collect_defects(db, project_id, caps["defects"]),
+        "Defect data unavailable.",
+    )
+    await _section(
+        "ownership",
+        _collect_ownership(db, project_id, start, now, caps["ownership"]),
+        "Ownership data unavailable.",
+    )
+    return data
+
+
+# ── Rendering ────────────────────────────────────────────────────────────────
+
+_CSS = """
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+ max-width:860px;margin:0 auto;padding:20px;color:#1F2937;background:#fff}
+h1{font-size:20px;color:#1E3A5F;margin:0 0 2px}
+h2{font-size:14px;color:#1E40AF;border-bottom:1px solid #E5E7EB;padding-bottom:4px;
+ margin:22px 0 8px;cursor:pointer}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{background:#1E3A5F;color:#fff;text-align:left;padding:5px 8px;font-weight:600}
+td{padding:4px 8px;border-bottom:1px solid #F3F4F6;vertical-align:top}
+code{background:#F3F4F6;border-radius:3px;padding:1px 4px;font-size:11px;
+ word-break:break-all}
+.muted{color:#6B7280;font-size:12px}
+.tiles{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+.tile{background:#F8FAFC;border:1px solid #E5E7EB;border-radius:8px;
+ padding:10px 14px;text-align:center;min-width:86px}
+.tile b{display:block;font-size:20px}
+.tile span{font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.5px}
+.badge{display:inline-block;border-radius:4px;padding:1px 6px;font-size:10.5px;font-weight:600}
+.badge.green{background:#D1FAE5;color:#065F46}
+.badge.red{background:#FEE2E2;color:#991B1B}
+.badge.amber{background:#FEF3C7;color:#92400E}
+.badge.gray{background:#F3F4F6;color:#374151}
+a{color:#1D4ED8}
+.section-body.collapsed{display:none}
+.footer{margin-top:24px;padding-top:10px;border-top:1px solid #E5E7EB;
+ font-size:11px;color:#9CA3AF}
+"""
+
+# Content stays readable without JS — this only toggles section collapse.
+_JS = """
+document.querySelectorAll('h2[data-toggle]').forEach(function(h){
+  h.addEventListener('click',function(){
+    var b=h.nextElementSibling;
+    if(b)b.classList.toggle('collapsed');
+  });
+});
+"""
+
+
+def _status_badge(status: str | None) -> str:
+    s = str(status or "").upper()
+    cls = {"PASSED": "green", "FAILED": "red", "BROKEN": "red", "GO": "green",
+           "NO_GO": "red", "CONDITIONAL_GO": "amber", "IN_PROGRESS": "amber"}.get(s, "gray")
+    return f'<span class="badge {cls}">{_e(s or "—", 40)}</span>'
+
+
+def _fmt_duration(ms) -> str:
+    ms = int(ms or 0)
+    if ms >= 60_000:
+        return f"{ms / 60_000:.1f}m"
+    if ms >= 1000:
+        return f"{ms / 1000:.1f}s"
+    return f"{ms}ms"
+
+
+def _section_html(title: str, section: dict | None, body_when_ok: str, empty_line: str) -> str:
+    """Wrap a section: explanatory line when omitted/empty, body otherwise."""
+    if section is None or not section.get("ok"):
+        reason = (section or {}).get("reason") or empty_line
+        body = f'<p class="muted">{_e(reason, 500)}</p>'
+    else:
+        body = body_when_ok or f'<p class="muted">{_e(empty_line, 500)}</p>'
+    return (
+        f'<h2 data-toggle="1">{_e(title, 120)}</h2>'
+        f'<div class="section-body">{body}</div>'
+    )
+
+
+def render_analysis_report_html(data: dict) -> str:
+    """Pure renderer: data envelope → one self-contained HTML document."""
+    sections = data.get("sections") or {}
+    caps = data.get("caps") or DEFAULT_CAPS
+    base_url = data.get("base_url") or ""
+    project = data.get("project") or {}
+    window = data.get("window") or {}
+    days = int(window.get("days") or 1)
+    window_label = "Weekly (7d)" if days > 1 else "Daily (1d)"
+    start_s = str(window.get("start") or "")[:16].replace("T", " ")
+    end_s = str(window.get("end") or "")[:16].replace("T", " ")
+
+    out: list[str] = []
+
+    # ── 1. Header ────────────────────────────────────────────────────────
+    runs_section = sections.get("runs") or {}
+    run_total = ((runs_section.get("data") or {}).get("total")) if runs_section.get("ok") else None
+    run_count_str = f"{run_total} runs" if run_total is not None else "runs n/a"
+    out.append(
+        f"<h1>TestLookup — Analysis Report</h1>"
+        f'<p class="muted">{_e(project.get("name"), 200)} · {window_label} · '
+        f"{_e(start_s, 40)} → {_e(end_s, 40)} UTC · {run_count_str} · "
+        f'generated {_e(str(data.get("generated_at") or ""), 40)}<br>'
+        f'<a href="{_e(base_url + "/overview", 500)}">Open TestLookup dashboard</a></p>'
+    )
+
+    # ── 2. Executive summary ─────────────────────────────────────────────
+    summary_body = ""
+    summary_section = sections.get("summary")
+    if summary_section and summary_section.get("ok"):
+        s = (summary_section.get("data") or {}).get("summary") or {}
+        totals = s.get("totals") or {}
+        prior = (summary_section.get("data") or {}).get("prior") or {}
+        rate = totals.get("weighted_pass_rate_pct")
+        prior_rate = prior.get("weighted_pass_rate_pct")
+        delta_str = ""
+        if rate is not None and prior_rate is not None:
+            rate_delta = round(float(rate) - float(prior_rate), 1)
+            color = "#059669" if rate_delta >= 0 else "#DC2626"
+            delta_str = (
+                f' <span style="color:{color};font-size:12px">'
+                f"({'+' if rate_delta >= 0 else ''}{rate_delta:.1f}% vs prior {days}d)</span>"
+            )
+        cov = (summary_section.get("data") or {}).get("coverage_summary") or {}
+        suites_count = int(cov.get("suite_count") or 0) or len(s.get("suites") or [])
+        executions = cov.get("total_executions")
+        tiles = [
+            ("Pass rate", f"{rate:.1f}%{delta_str}" if rate is not None else "—"),
+            ("Executions", str(int(executions)) if executions is not None else None),
+            ("Unique tests", str(int(totals.get("total_test_cases") or 0))),
+            ("Suites", str(suites_count)),
+            ("Runs", str(int(s.get("run_count") or 0))),
+            ("Passed", str(int(totals.get("passed") or 0))),
+            ("Failed", str(int(totals.get("failed") or 0))),
+            ("Broken", str(int(totals.get("broken") or 0))),
+            ("Skipped", str(int(totals.get("skipped") or 0))),
+        ]
+        tile_html = "".join(
+            f'<div class="tile"><b>{v}</b><span>{_e(k, 40)}</span></div>'
+            for k, v in tiles if v is not None
+        )
+        summary_body = (
+            f'<div class="tiles">{tile_html}</div>'
+            f'<p class="muted">Unique tests are counted across the whole window '
+            f"(same semantics as the Summary Report and Coverage pages); each "
+            f"test's status is its most recent execution in the window.</p>"
+        )
+        buckets = (summary_section.get("data") or {}).get("day_buckets")
+        if buckets:
+            summary_body += (
+                "<p class=\"muted\" style=\"margin-bottom:2px\">Runs + pass rate per day</p>"
+                + _svg_day_sparkline(buckets)
+            )
+    out.append(_section_html(
+        "Executive summary", summary_section, summary_body,
+        "No test results were recorded in this window.",
+    ))
+
+    # ── 3. Runs table ────────────────────────────────────────────────────
+    runs_body = ""
+    if runs_section.get("ok"):
+        rd = runs_section.get("data") or {}
+        shown, overflow = _cap(rd.get("items") or [], caps["runs"])
+        if shown:
+            row_parts: list[str] = []
+            for r in shown:
+                pr_cell = f"PR #{int(r['pr_number'])}" if r.get("pr_number") else "—"
+                rate_val = r.get("pass_rate")
+                rate_cell = f"{float(rate_val):.1f}%" if rate_val is not None else "—"
+                row_parts.append(
+                    "<tr>"
+                    f'<td><a href="{_e(base_url + "/runs/" + str(r.get("id")), 500)}">'
+                    f'#{_e(r.get("build_number"), 60)}</a></td>'
+                    f'<td>{_e(r.get("branch") or "—", 80)}</td>'
+                    f"<td>{pr_cell}</td>"
+                    f'<td>{_status_badge(r.get("status"))}</td>'
+                    f"<td>{rate_cell} {_svg_hbar(rate_val, width=60)}</td>"
+                    f'<td>{_fmt_duration(r.get("duration_ms"))}</td>'
+                    "</tr>"
+                )
+            rows = "".join(row_parts)
+            runs_body = (
+                "<table><thead><tr><th>Build</th><th>Branch</th><th>PR</th>"
+                "<th>Status</th><th>Pass rate</th><th>Duration</th></tr></thead>"
+                f"<tbody>{rows}"
+                f'{_overflow_line(max(overflow, int(rd.get("total") or 0) - len(shown)), base_url, "/runs", colspan=6)}'
+                "</tbody></table>"
+            )
+    out.append(_section_html(
+        "Runs", runs_section, runs_body, "No runs in this window.",
+    ))
+
+    # ── 4. Failures for investigation ────────────────────────────────────
+    failures_section = sections.get("failures")
+    failures_body = ""
+    if failures_section and failures_section.get("ok"):
+        fd = failures_section.get("data") or {}
+        parts: list[str] = []
+        delta = fd.get("delta")
+        if delta:
+            top3 = ", ".join(_e(t, 120) for t in (delta.get("new_failures_top") or []))
+            top3_str = f" (top: {top3})" if top3 else ""
+            parts.append(
+                f'<p><b style="color:#DC2626">{int(delta.get("new_failures") or 0)}</b> '
+                f"new failing test(s){top3_str} · "
+                f"<b style=\"color:#059669\">{int(delta.get('recovered') or 0)}</b> "
+                f"recovered — everything else failing in this window is recurring "
+                f"(was already failing before the window started).</p>"
+            )
+        top_shown, top_overflow = _cap(fd.get("top_failing") or [], caps["top_failing"])
+        if top_shown:
+            row_parts = []
+            for t in top_shown:
+                err = t.get("error_first_line")
+                err_cell = f"<code>{_e(err, 200)}</code>" if err else "—"
+                row_parts.append(
+                    "<tr>"
+                    f'<td><a href="{_e(base_url + "/failures", 500)}">'
+                    f'{_e(t.get("test_name"), 160)}</a></td>'
+                    f'<td>{_e(t.get("suite_name") or "—", 100)}</td>'
+                    f'<td>{int(t.get("fail_count") or 0)}</td>'
+                    f'<td><span class="badge gray">{_e(t.get("failure_kind") or "unknown", 30)}</span></td>'
+                    f"<td>{err_cell}</td>"
+                    "</tr>"
+                )
+            rows = "".join(row_parts)
+            parts.append(
+                "<h3 style='font-size:12.5px;margin:10px 0 4px'>Top failing tests</h3>"
+                "<table><thead><tr><th>Test</th><th>Suite</th><th>Fails</th>"
+                "<th>Kind</th><th>First error line</th></tr></thead>"
+                f"<tbody>{rows}{_overflow_line(top_overflow, base_url, '/failures', colspan=5)}</tbody></table>"
+            )
+        cluster_shown, cluster_overflow = _cap(fd.get("clusters") or [], caps["clusters"])
+        if cluster_shown:
+            rows = "".join(
+                "<tr>"
+                f'<td>{_e(c.get("label"), 200)}</td>'
+                f'<td>{int(c.get("size") or 0)}</td>'
+                f'<td>{_e(c.get("classification"), 60)}</td>'
+                "</tr>"
+                for c in cluster_shown
+            )
+            parts.append(
+                "<h3 style='font-size:12.5px;margin:10px 0 4px'>Top failure clusters</h3>"
+                "<table><thead><tr><th>Cluster</th><th>Size</th><th>Classification</th></tr></thead>"
+                f"<tbody>{rows}{_overflow_line(cluster_overflow, base_url, '/failures', colspan=3)}</tbody></table>"
+            )
+        by_kind = fd.get("by_kind") or []
+        if any(int(k.get("count") or 0) for k in by_kind):
+            legend = " · ".join(
+                f"{_e(k.get('kind'), 30)}: {int(k.get('count') or 0)}" for k in by_kind
+            )
+            parts.append(
+                "<h3 style='font-size:12.5px;margin:10px 0 4px'>Failure kinds "
+                "(product / test code / infrastructure)</h3>"
+                + _svg_kind_bar(by_kind)
+                + f'<p class="muted">{legend}</p>'
+            )
+        failures_body = "".join(parts)
+    out.append(_section_html(
+        "Failures for investigation", failures_section, failures_body,
+        "No failures in this window — nothing to investigate.",
+    ))
+
+    # ── 5. Flaky & quarantine ────────────────────────────────────────────
+    flaky_section = sections.get("flaky")
+    flaky_body = ""
+    if flaky_section and flaky_section.get("ok"):
+        fl = flaky_section.get("data") or {}
+        debt = fl.get("quarantine_debt") or {}
+        flaky_body = (
+            f'<p>Known-flaky tests: <b>{int(fl.get("known_flaky") or 0)}</b> · '
+            f'newly flaky in window: <b>{int(fl.get("newly_flaky") or 0)}</b> · '
+            f'quarantine debt: <b>{int(debt.get("active") or 0)}</b> active '
+            f'({int(debt.get("stale") or 0)} stale, '
+            f'{int(debt.get("ready_to_promote") or 0)} ready to promote)</p>'
+        )
+        top_flip = fl.get("top_flip_rate") or []
+        if top_flip:
+            rows = "".join(
+                "<tr>"
+                f'<td>{_e(t.get("test_name"), 160)}</td>'
+                f'<td>{_e(t.get("suite_name") or "—", 100)}</td>'
+                f'<td>{float(t.get("flip_rate") or 0) * 100:.0f}% {_svg_hbar(float(t.get("flip_rate") or 0) * 100, color="#D97706", width=60)}</td>'
+                f'<td>{_e(t.get("status"), 40)}</td>'
+                "</tr>"
+                for t in top_flip
+            )
+            flaky_body += (
+                "<table><thead><tr><th>Test</th><th>Suite</th><th>Flip rate</th>"
+                f"<th>Status</th></tr></thead><tbody>{rows}</tbody></table>"
+            )
+    out.append(_section_html(
+        "Flaky & quarantine", flaky_section, flaky_body,
+        "No flaky-test or quarantine data for this project.",
+    ))
+
+    # ── 6. Slowest tests ─────────────────────────────────────────────────
+    slowest_section = sections.get("slowest")
+    slowest_body = ""
+    if slowest_section and slowest_section.get("ok"):
+        items = (slowest_section.get("data") or {}).get("items") or []
+        if items:
+            max_ms = max(int(i.get("duration_ms") or 0) for i in items) or 1
+            rows = "".join(
+                "<tr>"
+                f'<td>{_e(i.get("test_name"), 160)}</td>'
+                f'<td>{_e(i.get("suite_name") or "—", 100)}</td>'
+                f'<td>{_fmt_duration(i.get("duration_ms"))} '
+                f'{_svg_hbar(100.0 * int(i.get("duration_ms") or 0) / max_ms, color="#0EA5E9", width=60)}</td>'
+                f'<td>{_status_badge(i.get("status"))}</td>'
+                "</tr>"
+                for i in items[: caps["slowest"]]
+            )
+            slowest_body = (
+                "<table><thead><tr><th>Test</th><th>Suite</th><th>Duration</th>"
+                f"<th>Status</th></tr></thead><tbody>{rows}</tbody></table>"
+            )
+    out.append(_section_html(
+        "Slowest tests", slowest_section, slowest_body,
+        "No duration data captured in this window.",
+    ))
+
+    # ── 7. Release gate ──────────────────────────────────────────────────
+    gate_section = sections.get("gate")
+    gate_body = ""
+    if gate_section and gate_section.get("ok"):
+        decision = (gate_section.get("data") or {}).get("decision")
+        if decision:
+            parts = [
+                f"<p>Latest verdict in window: {_status_badge(decision.get('recommendation'))} "
+                f"· risk score <b>{int(decision.get('risk_score') or 0)}</b>/100</p>"
+            ]
+            conditions = decision.get("conditions_for_go") or []
+            if conditions:
+                items = "".join(f"<li>{_e(c, 300)}</li>" for c in conditions[:10])
+                parts.append(f"<p><b>Conditions for GO:</b></p><ul style='font-size:12px'>{items}</ul>")
+            blocking = decision.get("blocking_issues") or []
+            if blocking:
+                items = "".join(f"<li>{_e(b, 300)}</li>" for b in blocking[:10])
+                parts.append(f"<p><b>Blocking issues:</b></p><ul style='font-size:12px'>{items}</ul>")
+            if decision.get("kind_counterfactual"):
+                parts.append(
+                    f'<p class="muted">Kind-rule note: {_e(decision.get("kind_counterfactual"), 400)}</p>'
+                )
+            gate_body = "".join(parts)
+    out.append(_section_html(
+        "Release gate", gate_section, gate_body,
+        "No release gate decisions in this window.",
+    ))
+
+    # ── 8. Defects ───────────────────────────────────────────────────────
+    defects_section = sections.get("defects")
+    defects_body = ""
+    if defects_section and defects_section.get("ok"):
+        dd = defects_section.get("data") or {}
+        shown, overflow = _cap(dd.get("items") or [], caps["defects"])
+        if shown:
+            defect_rows: list[str] = []
+            for defect in shown:
+                key = defect.get("jira_ticket_id")
+                url = defect.get("jira_ticket_url")
+                key_html = (
+                    f'<a href="{_e(url, 500)}">{_e(key, 40)}</a>' if key and url
+                    else _e(key or "(internal)", 40)
+                )
+                conflict = (
+                    ' <span class="badge amber">closed in Jira but still failing</span>'
+                    if defect.get("external_status_conflict")
+                    else ""
+                )
+                defect_rows.append(
+                    "<tr>"
+                    f"<td>{key_html}</td>"
+                    f'<td>{_e(defect.get("jira_status") or defect.get("resolution_status") or "—", 40)}{conflict}</td>'
+                    f'<td>{_e(defect.get("test_name") or "—", 160)}</td>'
+                    f'<td>{_e(defect.get("failure_category") or "—", 40)}</td>'
+                    "</tr>"
+                )
+            defects_body = (
+                "<table><thead><tr><th>Key</th><th>Status</th><th>Test</th>"
+                "<th>Category</th></tr></thead>"
+                f"<tbody>{''.join(defect_rows)}"
+                f'{_overflow_line(max(overflow, int(dd.get("total") or 0) - len(shown)), base_url, "/defects", colspan=4)}'
+                "</tbody></table>"
+            )
+    out.append(_section_html(
+        "Open defects", defects_section, defects_body,
+        "No open linked defects.",
+    ))
+
+    # ── 9. Ownership ─────────────────────────────────────────────────────
+    ownership_section = sections.get("ownership")
+    ownership_body = ""
+    if ownership_section and ownership_section.get("ok"):
+        od = ownership_section.get("data") or {}
+        if not od.get("configured"):
+            ownership_body = (
+                '<p class="muted">No ownership rules configured — set them up in '
+                f'<a href="{_e(base_url + "/ownership", 500)}">the Ownership Editor</a> '
+                "to see failures grouped by owning team.</p>"
+            )
+        else:
+            teams = od.get("teams") or []
+            if teams:
+                rows = "".join(
+                    "<tr>"
+                    f'<td>{_e(t.get("team"), 100)}</td>'
+                    f'<td>{int(t.get("tests") or 0)}</td>'
+                    f'<td>{int(t.get("failures") or 0)}</td>'
+                    "</tr>"
+                    for t in teams
+                )
+                ownership_body = (
+                    "<table><thead><tr><th>Team</th><th>Failing tests</th>"
+                    f"<th>Failures</th></tr></thead><tbody>{rows}</tbody></table>"
+                )
+    out.append(_section_html(
+        "Failures by owning team", ownership_section, ownership_body,
+        "No failures to attribute in this window.",
+    ))
+
+    out.append(
+        f'<div class="footer">Generated by TestLookup · '
+        f'<a href="{_e(base_url + "/reports/summary", 500)}">Live summary report</a> · '
+        f'window {_e(start_s, 40)} → {_e(end_s, 40)} UTC. '
+        f"Figures use the dashboard's window semantics (unique tests across the window).</div>"
+    )
+
+    return (
+        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"UTF-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        f"<title>TestLookup analysis report — {_e(project.get('name'), 120)}</title>"
+        f"<style>{_CSS}</style></head><body>"
+        + "".join(out)
+        + f"<script>{_JS}</script></body></html>"
+    )
+
+
+def _minimal_report_html(data: dict, reason: str) -> str:
+    """Last-resort fallback when even the shrunken render exceeds the size
+    bound: header + a pointer to the dashboard, guaranteed tiny."""
+    base_url = data.get("base_url") or ""
+    project = data.get("project") or {}
+    return (
+        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"UTF-8\">"
+        f"<title>TestLookup analysis report — {_e(project.get('name'), 120)}</title>"
+        "</head><body style=\"font-family:sans-serif;padding:20px\">"
+        "<h1>TestLookup — Analysis Report</h1>"
+        f"<p>{_e(project.get('name'), 200)}</p>"
+        f"<p>{_e(reason, 300)}</p>"
+        f'<p><a href="{_e(base_url + "/reports/summary", 500)}">'
+        "Open the live report in TestLookup instead</a></p></body></html>"
+    )
+
+
+def enforce_size_bound(html: str, data: dict) -> str:
+    """Keep the document under ``MAX_REPORT_BYTES``: re-render once with
+    shrunken caps, then fall back to the minimal document."""
+    if len(html.encode("utf-8")) <= MAX_REPORT_BYTES:
+        return html
+    logger.warning(
+        "Analysis report exceeded %d bytes — re-rendering with shrunken caps",
+        MAX_REPORT_BYTES,
+    )
+    shrunk = dict(data)
+    shrunk["caps"] = SHRUNK_CAPS
+    html = render_analysis_report_html(shrunk)
+    if len(html.encode("utf-8")) <= MAX_REPORT_BYTES:
+        return html
+    return _minimal_report_html(
+        data,
+        "The full report exceeded the attachment size bound even after trimming.",
+    )
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+
+async def build_analysis_report_html(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    window: str,
+    now: datetime | None = None,
+) -> str:
+    """Build the complete self-contained HTML analysis report."""
+    data = await collect_analysis_report_data(db, project_id, window, now=now)
+    html = render_analysis_report_html(data)
+    return enforce_size_bound(html, data)
+
+
+async def build_digest_report_attachment(
+    db: AsyncSession,
+    project_id: uuid.UUID | None,
+    period: str,
+    now: datetime | None = None,
+) -> tuple[str, str] | None:
+    """Dispatcher-facing wrapper: ``(filename, html)`` or ``None``.
+
+    NEVER raises — a broken report must not block the digest itself (the
+    dispatcher appends an apologetic note instead). ``None`` is also
+    returned for non-project-scoped subscriptions: the report is a
+    per-project document.
+    """
+    try:
+        if project_id is None:
+            return None
+        now = now or datetime.now(timezone.utc)
+        window = "7d" if period == "weekly" else "1d"
+        html = await build_analysis_report_html(db, project_id, window, now=now)
+        slug = (
+            await db.execute(select(Project.slug).where(Project.id == project_id))
+        ).scalar_one_or_none()
+        return report_attachment_filename(slug, now, window), html
+    except Exception as exc:  # noqa: BLE001 — never-raises discipline
+        logger.warning(
+            "Analysis report attachment build failed for project %s: %s",
+            project_id, exc,
+        )
+        return None

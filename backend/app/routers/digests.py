@@ -53,6 +53,9 @@ async def create_subscription(
         name=payload.name,
         schedule=payload.schedule,
         channel=payload.channel,
+        send_when_unchanged=payload.send_when_unchanged,
+        # US-7.5: attached HTML analysis report (email digests only).
+        report_attachment=payload.report_attachment,
         next_delivery_at=now + delta,
     )
     db.add(sub)

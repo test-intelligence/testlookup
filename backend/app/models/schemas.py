@@ -3198,6 +3198,9 @@ class DigestSubscriptionCreate(BaseModel):
     # US-7.4: zero-change windows send a one-liner (True, default) or skip
     # delivery entirely (False).
     send_when_unchanged: bool = True
+    # US-7.5: attach the self-contained HTML analysis report to email
+    # digests (1d for DAILY, 7d for WEEKLY). Default off.
+    report_attachment: bool = False
 
 
 class DigestSubscriptionUpdate(BaseModel):
@@ -3208,6 +3211,7 @@ class DigestSubscriptionUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_paused: Optional[bool] = None
     send_when_unchanged: Optional[bool] = None
+    report_attachment: Optional[bool] = None
 
 
 class DigestSubscriptionResponse(BaseModel):
@@ -3224,6 +3228,7 @@ class DigestSubscriptionResponse(BaseModel):
     scope_value: Optional[str] = None
     trigger_filter: Optional[str] = "all"
     send_when_unchanged: bool = True
+    report_attachment: bool = False
     last_delivered_at: Optional[datetime] = None
     next_delivery_at: Optional[datetime] = None
     delivery_count: int = 0
