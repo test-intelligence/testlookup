@@ -34,8 +34,13 @@ from app.models.llm_schemas import (
 )
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
+from app.services.prompt_registry import get_prompt, get_prompt_text
 from app.services.redaction_service import redact_text
 from app.services.resilience import truncate_to_token_budget
+
+
+def _prompt_version_tag(prompt_id: str) -> str:
+    return get_prompt(prompt_id).version_tag
 
 logger = structlog.get_logger("agents.summary")
 
@@ -46,108 +51,30 @@ _LAYER_TIMEOUT_SECONDS = min(120, settings.AI_TIMEOUT_SECONDS)
 # Semantic enrichment is useful but non-critical; keep summary generation moving
 # if vector search or embedding infrastructure is slow.
 _SIMILAR_FAILURES_TIMEOUT_SECONDS = min(10, max(2, settings.AI_TIMEOUT_SECONDS // 30))
+# Registry-derived version tags (AI-F2): v<version>:<hash12> of the exact
+# prompt bytes in use — recorded in summary provenance.
 _SUMMARY_PROMPT_VERSIONS = {
-    "system": "agents.summary_agent.SYSTEM_PROMPT:v1",
-    "executive_summary": "agents.summary_agent.EXEC_SUMMARY_PROMPT:v1",
-    "incident_view": "agents.summary_agent.INCIDENT_VIEW_PROMPT:v1",
-    "evidence_pack": "agents.summary_agent.EVIDENCE_PACK_PROMPT:v1",
-    "action_plan": "agents.summary_agent.ACTION_PLAN_PROMPT:v1",
+    "system": _prompt_version_tag("summary_system"),
+    "executive_summary": _prompt_version_tag("summary_executive"),
+    "incident_view": _prompt_version_tag("summary_incident_view"),
+    "evidence_pack": _prompt_version_tag("summary_evidence_pack"),
+    "action_plan": _prompt_version_tag("summary_action_plan"),
 }
 
 
-_SYSTEM_PROMPT = """\
-You are a QA Engineering Lead writing a structured post-run analysis report.
-Be factual, direct, and actionable. Focus on failures and risks.
-Do not pad the report. Base every statement strictly on the data provided.
-
-GROUNDING RULES:
-- If data is missing or unavailable, state "Insufficient data" — never fabricate details.
-- If pass rate is not provided, do not guess a number.
-- Only reference test names, error messages, and stack traces that appear in the data.
-- Use exact numbers from the data (pass rates, failure counts) — never approximate.
-"""
+# Prompt texts live in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_SYSTEM_PROMPT = get_prompt_text("summary_system")
 
 # ── Layer prompts ─────────────────────────────────────────────────────────────
 
-_EXEC_SUMMARY_PROMPT = """\
-{system}
+_EXEC_SUMMARY_PROMPT = get_prompt_text("summary_executive")
 
-Write EXACTLY 3 sentences summarising this test run for an engineering manager.
-Include: pass rate, most critical failure category, and release readiness signal.
+_INCIDENT_VIEW_PROMPT = get_prompt_text("summary_incident_view")
 
-Data:
-{context}
+_EVIDENCE_PACK_PROMPT = get_prompt_text("summary_evidence_pack")
 
-Return ONLY the 3-sentence paragraph. No bullet points, no headers."""
-
-
-_INCIDENT_VIEW_PROMPT = """\
-{system}
-
-From the test run data below, produce a structured incident view.
-Respond ONLY with a valid JSON object (no markdown fences):
-
-{{
-  "what_failed": "concise description of what components/flows failed",
-  "likely_cause": "the most probable root cause (1 sentence)",
-  "scope": "affected services / suites / environments",
-  "criticality": "CRITICAL | HIGH | MEDIUM | LOW",
-  "release_impact": "GO | CONDITIONAL_GO | NO_GO",
-  "failure_breakdown": {{
-    "product_bugs": 0,
-    "infrastructure": 0,
-    "test_data": 0,
-    "automation_defect": 0,
-    "flaky": 0,
-    "unknown": 0
-  }}
-}}
-
-Data:
-{context}"""
-
-
-_EVIDENCE_PACK_PROMPT = """\
-{system}
-
-Extract an evidence pack from the analysis data below.
-Respond ONLY with a valid JSON object (no markdown fences):
-
-{{
-  "top_stack_traces": ["excerpt 1", "excerpt 2"],
-  "log_anomalies": ["anomaly description 1"],
-  "flaky_test_ids": ["test_id_1"],
-  "similar_historical_failures": ["description of past similar failure"],
-  "data_sources_used": ["stacktrace", "splunk", "flakiness_db", "ocp_events"]
-}}
-
-Only include items that are present in the analysis data. Use empty arrays if none.
-
-Data:
-{context}"""
-
-
-_ACTION_PLAN_PROMPT = """\
-{system}
-
-Based on this test run analysis, produce a concrete action plan.
-Respond ONLY with a valid JSON object (no markdown fences):
-
-{{
-  "immediate_mitigation": "what to do right now to unblock the team",
-  "fix_recommendations": ["specific fix 1", "specific fix 2"],
-  "validation_steps": ["how to verify the fix", "regression test to run"],
-  "rollback_guidance": "when and how to rollback if needed",
-  "owner_hints": {{
-    "qa": "what QA should do",
-    "developer": "what the developer should do",
-    "sre": "what SRE/ops should do",
-    "release_manager": "what release manager should decide"
-  }}
-}}
-
-Data:
-{context}"""
+_ACTION_PLAN_PROMPT = get_prompt_text("summary_action_plan")
 
 
 def _hash_text(value: object) -> str | None:

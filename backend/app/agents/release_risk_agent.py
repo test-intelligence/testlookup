@@ -54,54 +54,16 @@ from app.services.criticality_service import (
 from app.models.llm_schemas import ReleaseReasoning, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
+from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 
 logger = structlog.get_logger("agents.release_risk")
 
 _LLM_REASONING_TIMEOUT = min(90, settings.AI_TIMEOUT_SECONDS)
 
-_REASONING_PROMPT = """\
-You are a QA release gate analyst. The automated risk scoring model produced these results:
-
-Deterministic Risk Scores (0-100 each):
-{scores_json}
-
-Composite Risk Score: {composite}/100
-Automated Recommendation: {recommendation}
-
-Test Run Context:
-{summary}
-
-Failure Details:
-{failures}
-
-GROUNDING RULES:
-- The recommendation field ({recommendation}) is DETERMINISTIC — do not override or contradict it.
-- Your job is to EXPLAIN the score, not re-evaluate it.
-- If failure details are empty, state "No failures detected" — never fabricate failure descriptions.
-- Only list blocking_issues that are directly supported by the failure data above.
-- List conditions_for_go ONLY when recommendation is CONDITIONAL_GO; leave empty for GO or NO_GO.
-
-EXAMPLE (CONDITIONAL_GO with blocking issues):
-{{
-  "reasoning": "Composite risk score of 38/100 driven primarily by 3 product bugs in the checkout flow and an elevated regression signal. Pass rate of 91% is above threshold but the checkout failures affect a critical user journey.",
-  "blocking_issues": ["Checkout payment validation fails on amounts > $999", "Cart total mismatch after coupon removal"],
-  "conditions_for_go": ["Fix both checkout bugs and rerun the e2e-checkout suite"]
-}}
-
-EXAMPLE (GO with no issues):
-{{
-  "reasoning": "Composite risk score of 12/100 with all dimensions in the green zone. 98.5% pass rate with only minor flaky test recurrences. No new regressions detected.",
-  "blocking_issues": [],
-  "conditions_for_go": []
-}}
-
-Respond ONLY with a valid JSON object:
-{{
-  "reasoning": "...",
-  "blocking_issues": ["issue1", "issue2"],
-  "conditions_for_go": ["condition1"]
-}}"""
+# Prompt text lives in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_REASONING_PROMPT = get_prompt_text("release_risk_reasoning")
 
 # Composite risk thresholds below which LLM is skipped (cost optimization)
 _EXTREME_GO_THRESHOLD = 10         # Clearly safe — skip LLM

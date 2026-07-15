@@ -127,6 +127,15 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "Called exclusively from Celery tasks (dispatch_run_notifications "
         "and siblings) via AsyncSessionLocal — not from request handlers.",
     ),
+    "prompt_registry.py": (
+        1,
+        "CLI-owned transaction (AI-F2): `python -m app.services.prompt_registry "
+        "--attest <change-id>` opens its own AsyncSessionLocal to run the "
+        "eval gate and persist the AIEvalGateRun row for the attestation — "
+        "a developer-tooling entry point with no request handler to hand "
+        "the commit to. The runtime API surface of the module (get_prompt / "
+        "registry_versions / manifests) never touches the DB.",
+    ),
     "notification_transitions.py": (
         1,
         "Celery-task-owned (PMF US-7.1): evaluate_run_transitions runs from "
@@ -461,7 +470,10 @@ def test_allowlist_total_is_bounded() -> None:
     # Celery-task-owned — record_team_delivery_logs persists the
     # NotificationLog audit rows for team-channel deliveries from inside
     # the dispatch_transition_notifications worker task.
-    assert total <= 56, (
+    # Raised 56 → 57 on 2026-07-15 (Agentic AI-F2): prompt_registry.py's
+    # single commit is CLI-owned — the `--attest` entry point persists the
+    # eval-gate run on its own AsyncSessionLocal (no request handler exists).
+    assert total <= 57, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )

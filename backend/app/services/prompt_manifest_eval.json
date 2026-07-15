@@ -1,0 +1,130 @@
+{
+  "attested_at": "2026-07-15T17:32:41.431663+00:00",
+  "change_id": "ai-f2f3-initial",
+  "eval_gate_run_id": null,
+  "gate_results": [
+    {
+      "agent_name": "AnalysisAgent",
+      "informational": false,
+      "metrics": {
+        "accuracy": 0.8333,
+        "f1_score": 0.9013,
+        "total": 12
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.8333 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 12 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "PASS",
+      "task_type": "classification"
+    },
+    {
+      "agent_name": "AnalysisAgent",
+      "informational": false,
+      "metrics": {
+        "accuracy": 0.8,
+        "f1_score": 0.8,
+        "total": 5
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.8000 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 5 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "PASS",
+      "task_type": "root_cause"
+    },
+    {
+      "agent_name": "DefectPromotionAgent",
+      "informational": true,
+      "metrics": {
+        "accuracy": 0.5,
+        "f1_score": 0.0,
+        "total": 6
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.5000 (no baseline \u2014 using 0.70 default)",
+          "passed": false,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 6 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "FAIL",
+      "task_type": "duplicate_detection"
+    },
+    {
+      "agent_name": "ReleaseRiskAgent",
+      "informational": false,
+      "metrics": {
+        "accuracy": 1.0,
+        "f1_score": 1.0,
+        "total": 6
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 1.0000 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 6 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "PASS",
+      "task_type": "release_decision"
+    }
+  ],
+  "manifest_digest": "ac86e45d21662b0367094f190d804262cd4b32bebbadbe7ecf6eb050252d4c1e",
+  "mode": "offline_golden",
+  "notes": "Initial manifest (AI-F2): 24 backend prompts moved byte-identically + react_triage v2 (memory recall rule, AI-F3) + 6 MCP templates hash-pinned. Offline golden-dataset gate; duplicate_detection recorded informational (prompt-independent lexical scorer).",
+  "prompt_versions": {
+    "anomaly_narrative": "v1:0298a3b5009f",
+    "chat_compression": "v1:68e08a32dff5",
+    "chat_system": "v1:b52c5b2cf229",
+    "defect_promotion_ticket": "v1:45d88cc4d33b",
+    "fast_classifier_system": "v1:9d46ffbbed7b",
+    "finetune_reasoning_system": "v1:3ea37c087b6b",
+    "react_triage": "v2:0ad0a868e913",
+    "regression_watchman_classify": "v1:2ac1510063fd",
+    "release_risk_reasoning": "v1:a152fb254091",
+    "run_compare_report": "v1:5272dd391090",
+    "run_compare_system": "v1:bbba41240c3f",
+    "summary_action_plan": "v1:ecf7e2106438",
+    "summary_evidence_pack": "v1:54b0e91c81d9",
+    "summary_executive": "v1:9885ab3d7268",
+    "summary_incident_view": "v1:470a2488b718",
+    "summary_renderer_developer": "v1:58d153d90e99",
+    "summary_renderer_manager": "v1:fb02a6a74429",
+    "summary_renderer_system": "v1:42fc12956d2f",
+    "summary_system": "v1:3b2f2b5fde10",
+    "test_case_coverage": "v1:16988c2ae516",
+    "test_case_generate": "v1:fb6a09db0b78",
+    "test_case_plan_optimizer": "v1:97d09e4d78eb",
+    "test_case_review": "v1:43f1dfbc6c86",
+    "test_case_strategy": "v1:2070533050ae"
+  },
+  "schema_version": 1,
+  "verdict": "PASS"
+}

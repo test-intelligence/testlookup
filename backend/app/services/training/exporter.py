@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, and_, update as sa_update
 
 from app.core.config import settings
+from app.services.prompt_registry import get_prompt_text
 from app.db.mongo import Collections, get_mongo_db
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AIAnalysis, AIFeedback, Defect, FeedbackRating, TestCase
@@ -402,7 +403,6 @@ class TrainingDataExporter:
 
 
 # System prompt used when formatting reasoning track examples
-_REASONING_SYSTEM_PROMPT = (
-    "You are an expert QA/SRE analyst. Use your investigation tools to determine "
-    "the root cause of the failing test and return a structured JSON analysis."
-)
+# Prompt text lives in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_REASONING_SYSTEM_PROMPT = get_prompt_text("finetune_reasoning_system")

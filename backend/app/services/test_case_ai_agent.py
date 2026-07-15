@@ -19,6 +19,7 @@ from langchain.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.services.llm_factory import get_llm
+from app.services.prompt_registry import get_prompt_text
 
 logger = logging.getLogger(__name__)
 
@@ -58,31 +59,7 @@ async def generate_test_cases_tool(requirements: str) -> str:
         JSON string with a list of test case objects.
     """
     llm = await get_llm()
-    system = SystemMessage(content="""You are an expert QA engineer. Given a requirements description,
-generate comprehensive test cases following best practices. Return ONLY valid JSON with this structure:
-{
-  "test_cases": [
-    {
-      "title": "string - concise test case title",
-      "objective": "string - what this test verifies",
-      "preconditions": "string - what must be true before running",
-      "steps": [
-        {"step_number": 1, "action": "string", "expected_result": "string"}
-      ],
-      "expected_result": "string - overall expected outcome",
-      "test_data": "string - required test data",
-      "test_type": "unit|integration|e2e|smoke|regression|security|performance",
-      "priority": "critical|high|medium|low",
-      "severity": "blocker|critical|major|minor|trivial",
-      "feature_area": "string",
-      "tags": ["tag1", "tag2"],
-      "estimated_duration_minutes": 5
-    }
-  ],
-  "coverage_summary": "string - what areas are covered",
-  "gaps_noted": ["string - any areas that couldn't be covered from the description"]
-}
-Generate 3-8 test cases covering: happy path, edge cases, error conditions, boundary values.""")
+    system = SystemMessage(content=get_prompt_text("test_case_generate"))
 
     human = HumanMessage(content=f"Generate test cases for:\n\n{_redact_for_llm(requirements)}")
     try:
@@ -110,31 +87,7 @@ async def review_test_quality_tool(test_case_json: str) -> str:
         JSON string with quality assessment and improvement suggestions.
     """
     llm = await get_llm()
-    system = SystemMessage(content="""You are a senior QA architect reviewing test cases for quality.
-Evaluate the test case and return ONLY valid JSON:
-{
-  "quality_score": 85,
-  "grade": "B+",
-  "summary": "string - 1-2 sentence overall assessment",
-  "score_breakdown": {
-    "clarity": 90,
-    "completeness": 80,
-    "atomicity": 85,
-    "maintainability": 80,
-    "coverage": 75
-  },
-  "issues": [
-    {"severity": "high|medium|low", "category": "string", "description": "string", "step": null}
-  ],
-  "suggestions": [
-    {"field": "steps|title|preconditions|expected_result|test_data", "suggestion": "string"}
-  ],
-  "best_practices_violations": ["string"],
-  "coverage_gaps": ["string - what edge cases or scenarios are missing"],
-  "positive_aspects": ["string - what is done well"]
-}
-Criteria: Clear title, measurable steps, single responsibility, explicit expected results,
-proper test data definition, no UI-dependency in unit tests, reproducible.""")
+    system = SystemMessage(content=get_prompt_text("test_case_review"))
 
     human = HumanMessage(content=f"Review this test case:\n\n{_redact_for_llm(test_case_json)}")
     try:
@@ -162,19 +115,7 @@ async def analyze_coverage_gaps_tool(requirements: str, existing_tests_summary: 
         JSON string with coverage analysis and gap report.
     """
     llm = await get_llm()
-    system = SystemMessage(content="""You are a QA coverage analyst. Analyze requirements vs existing tests.
-Return ONLY valid JSON:
-{
-  "coverage_score": 72,
-  "covered_areas": ["string - requirements fully covered"],
-  "partial_coverage": [{"area": "string", "missing": "string"}],
-  "uncovered_areas": ["string - requirements with no test coverage"],
-  "recommended_new_tests": [
-    {"title": "string", "priority": "high|medium|low", "rationale": "string"}
-  ],
-  "risk_assessment": "string - what risks exist due to coverage gaps",
-  "summary": "string"
-}""")
+    system = SystemMessage(content=get_prompt_text("test_case_coverage"))
 
     human = HumanMessage(
         content=f"Requirements:\n{_redact_for_llm(requirements)}\n\n"
@@ -204,29 +145,7 @@ async def generate_test_strategy_tool(project_context: str) -> str:
         JSON string with complete test strategy sections.
     """
     llm = await get_llm()
-    system = SystemMessage(content="""You are a QA Director creating a test strategy document.
-Return ONLY valid JSON:
-{
-  "objective": "string - overall testing objective",
-  "scope": "string - what is in scope",
-  "out_of_scope": "string - what is explicitly excluded",
-  "test_approach": "string - high-level testing approach and philosophy",
-  "test_types": [
-    {"type": "string", "priority": "high|medium|low", "tools": ["string"], "coverage_target_pct": 80, "rationale": "string"}
-  ],
-  "risk_assessment": [
-    {"risk": "string", "likelihood": "high|medium|low", "impact": "high|medium|low", "mitigation": "string"}
-  ],
-  "entry_criteria": ["string - conditions before testing begins"],
-  "exit_criteria": ["string - conditions for testing to be considered complete"],
-  "environments": [
-    {"name": "string", "type": "dev|staging|prod|local", "purpose": "string"}
-  ],
-  "automation_approach": "string - automation strategy and framework recommendations",
-  "defect_management": "string - how defects are tracked, prioritized, and resolved",
-  "metrics": ["string - key quality metrics to track"],
-  "summary": "string - executive summary"
-}""")
+    system = SystemMessage(content=get_prompt_text("test_case_strategy"))
 
     human = HumanMessage(content=f"Create a test strategy for:\n\n{_redact_for_llm(project_context)}")
     try:
@@ -254,22 +173,7 @@ async def optimize_test_plan_tool(test_cases_json: str, constraints: str) -> str
         JSON string with optimized execution order and rationale.
     """
     llm = await get_llm()
-    system = SystemMessage(content="""You are a test planning optimizer. Given test cases and constraints,
-provide an optimized execution plan. Return ONLY valid JSON:
-{
-  "optimized_order": [
-    {"title": "string", "execution_order": 1, "rationale": "string", "estimated_duration_minutes": 5}
-  ],
-  "execution_phases": [
-    {"phase": "string", "description": "string", "test_titles": ["string"]}
-  ],
-  "total_estimated_duration_minutes": 120,
-  "parallel_execution_possible": true,
-  "parallel_groups": [["title1", "title2"], ["title3"]],
-  "risk_areas_first": true,
-  "optimization_notes": "string"
-}
-Prioritize: smoke tests first, critical path second, regression last. Group by feature area for parallel execution.""")
+    system = SystemMessage(content=get_prompt_text("test_case_plan_optimizer"))
 
     human = HumanMessage(
         content=f"Test cases:\n{_redact_for_llm(test_cases_json)}\n\n"

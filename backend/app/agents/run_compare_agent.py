@@ -8,36 +8,17 @@ import structlog
 
 from app.models.agent_contracts import RunCompareAgentOutput, validate_agent_contract
 from app.services.llm_json_parser import parse_llm_json
+from app.services.prompt_registry import get_prompt_text
 
 logger = structlog.get_logger("agents.run_compare")
 
 PROMPT_VERSION = "run_compare_v1"
 
-_SYSTEM_PROMPT = """\
-You are a QA regression analyst comparing two test runs.
-Use only the deterministic comparison data provided. Do not invent root causes.
-If evidence is missing, say "Insufficient AI analysis evidence".
-Return only valid JSON.
-"""
+# Prompt texts live in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_SYSTEM_PROMPT = get_prompt_text("run_compare_system")
 
-_REPORT_PROMPT = """\
-{system}
-
-Comparison data:
-{context}
-
-Return this JSON shape:
-{{
-  "executive_summary": "2-4 sentence summary with exact counts",
-  "risk_level": "LOW|MEDIUM|HIGH|CRITICAL",
-  "key_differences": ["specific difference"],
-  "new_risks": ["new risk"],
-  "resolved_risks": ["resolved risk"],
-  "duration_concerns": ["duration concern"],
-  "recommended_actions": ["action"],
-  "confidence": 0,
-  "confidence_reason": "why this confidence"
-}}"""
+_REPORT_PROMPT = get_prompt_text("run_compare_report")
 
 
 class RunCompareAgent:

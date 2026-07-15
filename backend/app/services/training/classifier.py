@@ -18,21 +18,13 @@ from typing import Any, Optional, cast
 from app.core.config import settings
 from app.services.llm_factory import get_llm
 from app.services.model_registry import ModelRegistry
+from app.services.prompt_registry import get_prompt_text
 
 logger = logging.getLogger("training.classifier")
 
-_CLASSIFIER_SYSTEM = """You are a test failure classifier for an automated QA system.
-
-Classify the failing test into exactly one category:
-  PRODUCT_BUG         — application code is broken (assertion failed on business logic)
-  INFRASTRUCTURE      — environment/infra issue (timeouts, 5xx, pod OOMKilled, DB unreachable)
-  TEST_DATA           — missing/stale/wrong test data (404 on resource, setup failed)
-  AUTOMATION_DEFECT   — test code is broken (NullPointerException in test class, locator changed)
-  FLAKY               — intermittent / non-deterministic failure (race condition, async timing)
-  UNKNOWN             — insufficient information to classify
-
-Return ONLY a JSON object:
-{"category": "CATEGORY", "confidence": 0-100, "reasoning": "1-2 sentences"}"""
+# Prompt text lives in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_CLASSIFIER_SYSTEM = get_prompt_text("fast_classifier_system")
 
 
 class FastClassifier:

@@ -39,6 +39,7 @@ from app.services.category_normalizer import normalize_category
 from app.models.llm_schemas import ClusterClassification, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
+from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 
 _LLM_CLASSIFY_TIMEOUT = min(90, settings.AI_TIMEOUT_SECONDS)
@@ -52,49 +53,9 @@ _MIN_BASELINE_RUNS = 3         # Minimum baseline runs to trust history verdict
 _MIN_FINGERPRINT_OVERLAP = 1   # Minimum fingerprint matches to count as "seen in baseline"
 
 
-_CLASSIFY_PROMPT = """\
-You are a QA regression analyst. For each failure cluster, classify it as one of:
-  - "new_regression": first-time failure, not seen in recent baseline runs
-  - "known_flaky_recurrence": test has flaked before, not caused by code changes
-  - "environmental_anomaly": failure caused by infra/environment, not the application
-
-GROUNDING RULES:
-- If cluster history is empty or insufficient, state "Insufficient baseline data" in evidence — never guess.
-- Confidence must reflect actual evidence strength: <40 if no history, 40-70 if partial, >70 only with clear signals.
-- Do NOT override the deterministic pre-classification unless you have strong contradictory evidence.
-
-EXAMPLE (good output):
-{{
-  "cl_001": {{
-    "classification": "new_regression",
-    "confidence": 82,
-    "evidence": "3 tests failed for the first time; none appeared in the last 10 baseline runs."
-  }}
-}}
-
-EXAMPLE (missing data):
-{{
-  "cl_002": {{
-    "classification": "new_regression",
-    "confidence": 30,
-    "evidence": "Insufficient baseline data — only 1 historical run available."
-  }}
-}}
-
-Cluster data:
-{clusters_json}
-
-Historical context:
-{history_json}
-
-Respond ONLY with a JSON object mapping cluster_id to a classification:
-{{
-  "cl_001": {{
-    "classification": "new_regression" | "known_flaky_recurrence" | "environmental_anomaly",
-    "confidence": 0-100,
-    "evidence": "one sentence explaining why"
-  }}
-}}"""
+# Prompt text lives in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_CLASSIFY_PROMPT = get_prompt_text("regression_watchman_classify")
 
 
 class RegressionWatchman(BaseAgent):

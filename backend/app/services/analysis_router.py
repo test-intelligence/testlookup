@@ -211,6 +211,19 @@ async def classify_test(
 
     # Attach the routing record. Private dispatchers may have updated routing
     # in-place (e.g., ML fallback to rules) — reflect the final state here.
+    # AI-F2: stamp the registry version tags of the prompts the engine that
+    # actually ran depends on (empty for the prompt-free rules/ML engines),
+    # so the decision record traces back to exact prompt bytes.
+    try:
+        from app.services.prompt_registry import prompt_versions_used
+
+        routing["prompt_versions"] = (
+            prompt_versions_used("react_triage", "fast_classifier_system")
+            if routing.get("mode_used") == AnalysisMode.LLM
+            else {}
+        )
+    except Exception:  # pragma: no cover — stamping must never break routing
+        routing["prompt_versions"] = {}
     result["_routing"] = routing
     return result
 

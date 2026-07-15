@@ -80,7 +80,26 @@ def _runtime_version_snapshot() -> dict[str, str]:
             versions[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
             continue
+    # AI-F2: the prompt set is a versioned artifact too — a prompt edit changes
+    # agent output exactly like a package bump. Stable digest over the
+    # registered prompt id → version/hash map.
+    try:
+        from app.services.prompt_registry import registry_digest
+
+        versions["prompt_registry"] = registry_digest()[:12]
+    except Exception:  # pragma: no cover — snapshot must never break the pipeline
+        pass
     return versions
+
+
+def _prompt_registry_versions() -> dict[str, str]:
+    """Never-raising wrapper over the registry's full version-tag map."""
+    try:
+        from app.services.prompt_registry import registry_versions
+
+        return registry_versions()
+    except Exception:  # pragma: no cover — stamping must never break the pipeline
+        return {}
 
 
 async def _resolve_analysis_mode_snapshot() -> dict[str, Any]:
@@ -1259,6 +1278,11 @@ async def _mark_pipeline_done(
                     "agent_contracts": final_state.get("agent_contracts", {}),
                     "final_state_checksum_sha256": _canonical_checksum(final_state),
                     "runtime_versions": _runtime_version_snapshot(),
+                    # AI-F2: full id → v<version>:<hash12> map of every
+                    # registered prompt, recorded once per pipeline so any
+                    # verdict from this run can be replayed against the exact
+                    # prompt bytes that produced it.
+                    "prompt_versions": _prompt_registry_versions(),
                 }
 
         # Mark stages that were never reached (still "pending") as "skipped".

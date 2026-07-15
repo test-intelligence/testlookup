@@ -36,6 +36,7 @@ from app.models.agent_contracts import (
 )
 from app.models.postgres import TestCase, TestCaseHistory, TestRun, TestStatus
 from app.services.llm_factory import get_llm
+from app.services.prompt_registry import get_prompt_text
 
 logger = structlog.get_logger("agents.anomaly")
 
@@ -641,11 +642,12 @@ class AnomalyDetectionAgent(BaseAgent):
             f"- [{a['severity']}] {a['description']}" for a in items
         )
 
-        prompt = (
-            f"Summarise these test anomalies in 2-3 sentences for an engineering team.\n"
-            f"Pass rate: {pass_rate:.1f}%  |  Total tests: {total_tests}\n"
-            f"Findings:\n{descriptions}\n\n"
-            f"Mention the most critical finding first and suggest a concrete next action."
+        # Registry-versioned template (AI-F2); rendered output is
+        # byte-identical to the previous inline f-string.
+        prompt = get_prompt_text("anomaly_narrative").format(
+            pass_rate=pass_rate,
+            total_tests=total_tests,
+            descriptions=descriptions,
         )
 
         try:

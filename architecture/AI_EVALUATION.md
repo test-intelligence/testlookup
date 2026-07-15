@@ -85,6 +85,61 @@ This is the enforcement point, and it mirrors the shape of the product
   and the docstring states the contract plainly: *prompt, model, or routing
   changes should not ship if the gate returns FAIL.*
 
+## 4b. Prompt registry + enforced manifest ratchet (AI-F2)
+
+Since 2026-07-15 every prompt that reaches an LLM is a **versioned artifact**
+in `backend/app/services/prompt_registry.py` (`PromptDef(id, version, text)`,
+~24 backend prompts) — call sites import `get_prompt_text("<id>")` instead of
+holding inline constants. MCP prompt templates
+(`mcp/prompts/templates.py::PROMPT_TEMPLATES`) join the same scheme under
+`mcp.*` ids. Two JSON artifacts live next to the registry:
+
+- **`prompt_manifest.json`** — pins `sha256(text)[:12]` + version per prompt.
+- **`prompt_manifest_eval.json`** — the eval-gate **attestation** for the
+  current manifest digest: change id, verdict, gate results, and the
+  `AIEvalGateRun` id when run against a live DB.
+
+The CI blocker is the **`ai.prompt-manifest-sync`** guard in
+`scripts/quality_gate.py` (stdlib-only: it re-hashes prompts by `ast`-parsing
+the two source files, never importing them). It fails when:
+
+1. any prompt's text hash ≠ its manifest pin (forcing a deliberate version
+   bump + manifest rewrite), or a manifest entry is stale/missing;
+2. the manifest digest changed **without a fresh attestation**, or the
+   attested verdict is not `PASS` — i.e. *a prompt edit cannot ship without
+   an eval-gate run*.
+
+Workflow for changing a prompt:
+
+```bash
+# 1. edit the text in prompt_registry.py (or PROMPT_TEMPLATES) + bump version
+cd backend
+python -m app.services.prompt_registry --write-manifest
+python -m app.services.prompt_registry --attest <change-id>   # runs §4's gate, records the run id
+# no DB reachable? score against the in-repo golden datasets instead:
+python -m app.services.prompt_registry --attest <change-id> --offline
+python -m app.services.prompt_registry --check                # what CI will assert
+# 2. commit the prompt edit + prompt_manifest.json + prompt_manifest_eval.json together
+```
+
+Offline attestation notes: it applies `eval_gate_service._evaluate_rules`
+with no baseline (default thresholds) over the golden datasets and records
+`"mode": "offline_golden"` so reviewers can tell it apart from a
+baseline-compared gate run; the `duplicate_detection` gate is recorded as
+*informational* there (its offline scorer is a prompt-independent lexical
+heuristic — a prompt change cannot regress it). MCP templates are hash-pinned
+but their eval story is thinner: they steer an external assistant's tool
+calls rather than a scored model output, so the attestation covers them as
+hash-pinned + reviewed, not metric-gated.
+
+Runtime provenance: the registry's version tags (`v<version>:<hash12>`) are
+stamped into the pipeline version snapshot
+(`workflow._runtime_version_snapshot` → `prompt_registry` digest, plus the
+full `prompt_versions` map in `execution_metadata`), the per-test `_audit`
+block (analysis_agent), and the `_routing` decision record
+(analysis_router) — so any stored verdict traces back to the exact prompt
+bytes that produced it.
+
 ## 5. Model registry (`model_registry`)
 
 Per **track** (e.g. classification, root-cause), the registry records which

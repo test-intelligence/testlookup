@@ -36,6 +36,7 @@ from app.models.postgres import (
     TestRun,
 )
 from app.services.llm_factory import get_llm
+from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 
 logger = structlog.get_logger("agents.conversation")
@@ -124,31 +125,10 @@ def classify_intent(query: str) -> QueryIntent:
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
+# Versioned in the prompt registry (AI-F2) — edit there, with a manifest bump
+# + eval-gate attestation.
 
-_SYSTEM_TEMPLATE = """\
-You are TestLookup, an expert assistant for software quality analysis embedded in a CI/CD testing platform.
-
-**Session context:**
-- Current date/time (UTC): {now}
-- Project scope: {project_scope}
-- Query focus: {intent_label}
-
-**Available data:**
-You have access to structured test execution data:
-- Test run history: build numbers, branches, pass rates, failure counts, timestamps
-- AI root-cause analyses: per-test failure categories, confidence scores, recommended actions
-- Run summaries: AI-generated executive and detailed markdown reports
-- Historical flakiness data: stability rates across recent runs
-- Defect triage records: Jira ticket references, resolution status
-
-**Instructions:**
-- Ground every answer in the retrieved context below — do not invent metrics or test names
-- Quote specific values (build numbers, pass rates, test names) directly from the context
-- For trend questions, compute and state actual deltas (e.g., "pass rate dropped from 87% → 71%")
-- For comparison questions, use a markdown table
-- If the context lacks data for a precise answer, say exactly what is missing
-- Keep responses concise and actionable for a QA engineer audience
-"""
+_SYSTEM_TEMPLATE = get_prompt_text("chat_system")
 
 # ── Memory settings ───────────────────────────────────────────────────────────
 
@@ -271,6 +251,14 @@ class ConversationAgent:
             if analysis_ctx:
                 parts.append(f"### Failure Root-Cause Analyses\n{analysis_ctx}")
                 sources.extend(analysis_src)
+            # AI-F3: when the question references a specific test, add that
+            # test's fingerprint history (human corrections, prior analyses,
+            # quarantine one-liner) via the shared memory-recall service.
+            recall_ctx = await self._fetch_fingerprint_recall(query, project_id)
+            if recall_ctx:
+                parts.append(
+                    f"### Prior History for the Referenced Test (memory recall)\n{recall_ctx}"
+                )
 
         elif intent == QueryIntent.FLAKINESS:
             # Flakiness-specific data first, supplemented by recent runs
@@ -613,6 +601,69 @@ class ConversationAgent:
 
         return await asyncio.to_thread(_sync_search)
 
+    async def _fetch_fingerprint_recall(
+        self, query: str, project_id: Optional[str]
+    ) -> str:
+        """AI-F3: fingerprint-history recall when the query names a test.
+
+        Matches recently-failing test names against the query text (recall is
+        project-scoped, so this is skipped without a project), then reuses the
+        same ``memory_recall`` service the ReAct tool consumes. Best-effort —
+        any failure returns an empty string so chat keeps working.
+        """
+        if not project_id or not query:
+            return ""
+        try:
+            import uuid as _uuid
+
+            from app.services.memory_recall import (
+                recall_failure_history,
+                render_recall_report,
+            )
+
+            from app.models.postgres import TestStatus
+
+            q_lower = query.lower()
+            async with AsyncSessionLocal() as db:
+                rows = (
+                    await db.execute(
+                        select(TestCase.test_name, TestCase.test_fingerprint)
+                        .join(TestRun, TestRun.id == TestCase.test_run_id)
+                        .where(
+                            TestRun.project_id == project_id,
+                            TestCase.status.in_(
+                                [TestStatus.FAILED.value, TestStatus.BROKEN.value]
+                            ),
+                            TestCase.test_fingerprint.isnot(None),
+                        )
+                        .order_by(TestCase.created_at.desc())
+                        .limit(300)
+                    )
+                ).all()
+                matched = next(
+                    (
+                        r for r in rows
+                        if r.test_name and len(r.test_name) >= 6
+                        and r.test_name.lower() in q_lower
+                    ),
+                    None,
+                )
+                if matched is None:
+                    return ""
+                recall = await recall_failure_history(
+                    db,
+                    _uuid.UUID(str(project_id)),
+                    test_fingerprint=matched.test_fingerprint,
+                    error_text=query,
+                    test_name=matched.test_name,
+                )
+            if not recall.get("has_history"):
+                return ""
+            return render_recall_report(recall)
+        except Exception as exc:
+            logger.debug("fingerprint_recall_fetch_error", error=str(exc))
+            return ""
+
     async def _fetch_project_name(self, project_id: Optional[str]) -> Optional[str]:
         """Fetch project name for system prompt grounding."""
         if not project_id:
@@ -729,11 +780,10 @@ class ConversationAgent:
                 return
             _LAST_COMPRESSION_HASH[session_id] = content_hash
 
-            compression_prompt = (
-                "Summarise the following QA analysis chat conversation in 4-6 bullet points. "
-                "Preserve: specific test names, build numbers, pass rates, failure categories, "
-                "key findings, and any decisions or actions discussed. Be concise.\n\n"
-                f"{transcript}"
+            # Registry-versioned template (AI-F2); rendered output is
+            # byte-identical to the previous inline f-string.
+            compression_prompt = get_prompt_text("chat_compression").format(
+                transcript=transcript,
             )
 
             # Generate summary with timeout (outside DB session to avoid holding connection)

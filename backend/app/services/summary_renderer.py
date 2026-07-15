@@ -13,50 +13,17 @@ import re
 from typing import Any, cast
 
 from app.services.summary_assembler import build_context_string, extract_citations
+from app.services.prompt_registry import get_prompt_text
 
 logger = logging.getLogger("services.summary_renderer")
 
-_SYSTEM_PROMPT = """\
-You are a QA Engineering Lead writing a structured post-run analysis report.
-Be factual, direct, and actionable. Focus on failures and risks.
-Do not pad the report. Base every statement strictly on the data provided.
-"""
+# Prompt text lives in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_SYSTEM_PROMPT = get_prompt_text("summary_renderer_system")
 
-_DEVELOPER_PROMPT = """\
-{system}
+_DEVELOPER_PROMPT = get_prompt_text("summary_renderer_developer")
 
-You are explaining a test run failure to the engineering team who will fix it.
-Produce a developer-focused summary in JSON (no markdown fences):
-
-{{
-  "headline": "one-sentence summary of the dominant failure",
-  "root_cause_analysis": "2-3 sentences on the likely root cause with technical detail",
-  "evidence_highlights": ["key evidence item 1", "key evidence item 2"],
-  "fix_recommendations": ["specific fix 1", "specific fix 2", "specific fix 3"],
-  "validation_steps": ["how to verify the fix"],
-  "similar_historical_context": "mention if similar failures occurred recently (or 'No similar historical failures found')"
-}}
-
-Data:
-{context}"""
-
-_MANAGER_PROMPT = """\
-{system}
-
-You are summarising a test run for an engineering manager or release manager.
-Produce a manager-focused summary in JSON (no markdown fences):
-
-{{
-  "executive_summary": "2-3 sentences: business impact, release signal, next action",
-  "release_recommendation": "GO | CONDITIONAL_GO | NO_GO — and why in one sentence",
-  "scope_of_impact": "which features/services are affected",
-  "key_risks": ["top risk 1", "top risk 2"],
-  "recommended_decisions": ["decision needed from manager 1", "decision needed 2"],
-  "timeline_guidance": "urgency — e.g. 'Fix required before this sprint release'"
-}}
-
-Data:
-{context}"""
+_MANAGER_PROMPT = get_prompt_text("summary_renderer_manager")
 
 
 async def render_developer_summary(

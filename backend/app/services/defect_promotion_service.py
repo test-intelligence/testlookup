@@ -36,31 +36,13 @@ from app.services.action_policy import (
     check_defect_promotion_policy,
 )
 from app.services.criticality_service import get_scoring_model_info, score_cluster
+from app.services.prompt_registry import get_prompt_text
 
 logger = logging.getLogger("services.defect_promotion")
 
-_DEFECT_PROMPT = """\
-You are a senior QA lead promoting a failure cluster to a defect ticket.
-
-Cluster Information:
-{cluster_json}
-
-Root Cause Analyses for member tests:
-{analyses_json}
-
-Evidence:
-{evidence_json}
-
-Produce a Jira-ready defect in JSON format:
-{{
-  "title": "concise defect title (max 80 chars)",
-  "description": "structured defect description with: What/Steps to reproduce/Expected/Actual/Environment",
-  "severity": "CRITICAL | HIGH | MEDIUM | LOW",
-  "component": "affected component or service name",
-  "owner_team": "probable team responsible (e.g. payments-backend, auth-service, frontend)",
-  "labels": ["regression", "automated-test", "cluster-promoted"],
-  "duplicate_hint": "brief description to help detect similar open tickets (for dedup query)"
-}}"""
+# Prompt text lives in the prompt registry (AI-F2) — edit there, with a
+# manifest bump + eval-gate attestation.
+_DEFECT_PROMPT = get_prompt_text("defect_promotion_ticket")
 
 
 async def get_llm(*args, **kwargs):

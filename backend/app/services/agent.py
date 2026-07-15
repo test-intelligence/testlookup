@@ -1,12 +1,14 @@
 """
 LangChain ReAct agent service.
-Runs a Thought → Action → Observation loop using 5 investigation tools
+Runs a Thought → Action → Observation loop using 6 investigation tools
 to produce a structured root-cause analysis for any test failure.
 
 Includes:
   - Fast-path classifier (single LLM call)
   - Token budget management (auto-truncation before LLM calls)
   - Redis-based analysis caching (identical failures skip LLM)
+  - Memory recall (AI-F3): prior corrections/analyses surfaced via the
+    project-scoped recall_similar_failures tool
 """
 import importlib
 import json
@@ -25,6 +27,7 @@ from app.services.input_sanitizer import (
 )
 from app.services.llm_factory import get_llm
 from app.services.pipeline_event_log import emit_event as _emit_event
+from app.services.prompt_registry import get_prompt_text
 from app.services.resilience import (
     compute_analysis_cache_key,
     truncate_to_token_budget,
@@ -33,55 +36,9 @@ from app.services.resilience import (
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("services.agent")
 
-SYSTEM_PROMPT = """You are an expert Software Quality Assurance Architect and Site Reliability Engineer.
-Your objective is to analyse failed automated test cases, identify the root cause, and produce
-a clear, structured, actionable defect analysis.
-
-You have access to five investigation tools:
-{tools}
-
-STRICT RULES:
-1. Base ALL conclusions strictly on data returned by your tools. NEVER guess or hallucinate root causes.
-2. If tool responses are empty or inconclusive, state: "Insufficient telemetry to determine root cause."
-3. Always check for infrastructure/environment issues BEFORE assuming the application code is broken.
-4. Check for flakiness history before classifying a failure as a product bug.
-5. You MUST use at least the stack trace tool before forming any conclusion.
-
-After completing your investigation, return ONLY a valid JSON object with this exact schema:
-{{
-  "root_cause_summary": "string (2-4 sentences explaining the root cause in plain English)",
-  "failure_category": "PRODUCT_BUG | INFRASTRUCTURE | TEST_DATA | AUTOMATION_DEFECT | FLAKY",
-  "backend_error_found": true | false,
-  "pod_issue_found": true | false,
-  "is_flaky": true | false,
-  "confidence_score": integer 0-100,
-  "recommended_actions": ["action 1", "action 2", "action 3"],
-  "role_actions": {{
-    "qa": "1 sentence: what the QA engineer should do next",
-    "developer": "1 sentence: what the developer responsible for this code should do",
-    "sre": "1 sentence: what the SRE/platform team should investigate or monitor",
-    "release_manager": "1 sentence: release gate recommendation (hold / proceed with conditions / clear to release)"
-  }},
-  "evidence_references": [
-    {{"source": "stacktrace | splunk | ocp_events | flakiness", "reference_id": "...", "excerpt": "..."}}
-  ]
-}}
-
-Available tools: {tool_names}
-
-Use the following format:
-Thought: your reasoning about what to investigate next
-Action: the tool name to use
-Action Input: the input to the tool
-Observation: the tool's output
-... (repeat Thought/Action/Observation as needed)
-Thought: I now have enough information to form a conclusion
-Final Answer: {{valid JSON object as specified above}}
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
+# Versioned in the prompt registry (AI-F2): edits happen THERE, with a manifest
+# bump + eval-gate attestation. v2 teaches the loop the memory recall tool.
+SYSTEM_PROMPT = get_prompt_text("react_triage")
 
 
 def _get_tools():
@@ -90,6 +47,7 @@ def _get_tools():
     from app.tools.fetch_rest_payload import fetch_rest_api_payload
     from app.tools.fetch_stacktrace import fetch_allure_stacktrace
     from app.tools.query_splunk import query_splunk_logs
+    from app.tools.recall_memory import recall_similar_failures
 
     return [
         fetch_allure_stacktrace,
@@ -97,6 +55,7 @@ def _get_tools():
         query_splunk_logs,
         check_test_flakiness,
         analyze_openshift_pod_events,
+        recall_similar_failures,
     ]
 
 
@@ -112,6 +71,7 @@ async def run_triage_agent(
     pipeline_run_id: Optional[str] = None,
     run_id: Optional[str] = None,
     project_id: Optional[str] = None,
+    test_fingerprint: Optional[str] = None,
 ) -> dict:
     """
     Execute the LangChain ReAct triage agent for a failed test case.
@@ -120,7 +80,7 @@ async def run_triage_agent(
     If the classifier is confident enough (>= CLASSIFIER_CONFIDENCE_THRESHOLD),
     returns immediately without running the full ReAct agent.
 
-    Slow path: falls through to the full ReAct agent with 5 investigation tools.
+    Slow path: falls through to the full ReAct agent with 6 investigation tools.
 
     Stores full audit trail to MongoDB in both cases.
     Returns structured analysis dict.
@@ -129,6 +89,9 @@ async def run_triage_agent(
     analysis caches (exact Redis + semantic ChromaDB) so one tenant's cached
     analysis — which on the slow path embeds project-specific Splunk/OCP
     evidence — is never served to another tenant on an identical failure.
+    ``project_id`` + ``test_fingerprint`` also feed the recall_similar_failures
+    tool's server-side context (AI-F3) — recall is project-scoped by
+    construction, never by LLM-provided input.
     """
     # ── Phase 4: Sanitise inputs before any LLM/tool interaction ────────────
     if service_name:
@@ -230,112 +193,125 @@ async def run_triage_agent(
 
     logger.info("Starting AI triage for test: %s (provider: %s)", test_name, settings.LLM_PROVIDER)
 
-    with _tracer.start_as_current_span(
-        "agent.react_triage",
-        attributes={
-            "agent.test_case_id": test_case_id,
-            "agent.test_name": test_name[:200],
-            "agent.llm_provider": settings.LLM_PROVIDER,
-            "agent.llm_model": settings.LLM_MODEL,
-        },
-    ) as triage_span:
-        try:
-            result = await executor.ainvoke({"input": user_question})
-            raw_output = result.get("output", "{}")
-            intermediate_steps = result.get("intermediate_steps", [])
+    # Bind the investigation identity for the recall_similar_failures tool
+    # (AI-F3). Server-side ContextVar — the LLM never supplies identifiers, so
+    # recall stays project-scoped even if the model passes garbage input.
+    from app.tools.recall_memory import reset_recall_context, set_recall_context
+    _recall_token = set_recall_context(
+        project_id=project_id,
+        test_fingerprint=test_fingerprint,
+        test_name=test_name,
+        error_message=error_message,
+    )
+    try:
+        with _tracer.start_as_current_span(
+            "agent.react_triage",
+            attributes={
+                "agent.test_case_id": test_case_id,
+                "agent.test_name": test_name[:200],
+                "agent.llm_provider": settings.LLM_PROVIDER,
+                "agent.llm_model": settings.LLM_MODEL,
+            },
+        ) as triage_span:
+            try:
+                result = await executor.ainvoke({"input": user_question})
+                raw_output = result.get("output", "{}")
+                intermediate_steps = result.get("intermediate_steps", [])
 
-            # Parse JSON from agent output
-            analysis = _parse_agent_output(raw_output)
-            if analysis.get("schema_validated") is False:
+                # Parse JSON from agent output
+                analysis = _parse_agent_output(raw_output)
+                if analysis.get("schema_validated") is False:
+                    await _emit_event(
+                        pipeline_run_id or "",
+                        "schema_validation_failed",
+                        test_case_id=test_case_id,
+                        detail={
+                            "agent": "react_triage",
+                            "schema": "RootCauseAnalysis",
+                            "error": str(analysis.get("schema_validation_error") or "")[:500],
+                        },
+                    )
+                analysis["llm_provider"] = settings.LLM_PROVIDER
+                analysis["llm_model"] = settings.LLM_MODEL
+                analysis["requires_human_review"] = analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD
+                # Record which tools were actually invoked so the frontend can show honest stage progress.
+                tools_used = _extract_tools_used(intermediate_steps)
+                analysis["tools_used"] = tools_used
+
+                # Record tool call details as OTEL span events and pipeline events
+                _record_tool_spans(triage_span, intermediate_steps)
                 await _emit_event(
                     pipeline_run_id or "",
-                    "schema_validation_failed",
+                    "llm_called",
                     test_case_id=test_case_id,
                     detail={
-                        "agent": "react_triage",
-                        "schema": "RootCauseAnalysis",
-                        "error": str(analysis.get("schema_validation_error") or "")[:500],
+                        "provider": settings.LLM_PROVIDER,
+                        "model": settings.LLM_MODEL,
+                        "tools_used": tools_used,
+                        "iterations": len(intermediate_steps),
+                        "confidence": analysis.get("confidence_score", 0),
+                        "category": analysis.get("failure_category", "UNKNOWN"),
                     },
                 )
-            analysis["llm_provider"] = settings.LLM_PROVIDER
-            analysis["llm_model"] = settings.LLM_MODEL
-            analysis["requires_human_review"] = analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD
-            # Record which tools were actually invoked so the frontend can show honest stage progress.
-            tools_used = _extract_tools_used(intermediate_steps)
-            analysis["tools_used"] = tools_used
 
-            # Record tool call details as OTEL span events and pipeline events
-            _record_tool_spans(triage_span, intermediate_steps)
-            await _emit_event(
-                pipeline_run_id or "",
-                "llm_called",
-                test_case_id=test_case_id,
-                detail={
-                    "provider": settings.LLM_PROVIDER,
-                    "model": settings.LLM_MODEL,
-                    "tools_used": tools_used,
-                    "iterations": len(intermediate_steps),
-                    "confidence": analysis.get("confidence_score", 0),
-                    "category": analysis.get("failure_category", "UNKNOWN"),
-                },
-            )
+                triage_span.set_attribute("agent.tools_used", ",".join(tools_used))
+                triage_span.set_attribute("agent.confidence_score", analysis.get("confidence_score", 0))
+                triage_span.set_attribute("agent.failure_category", analysis.get("failure_category", "UNKNOWN"))
+                triage_span.set_attribute("agent.iterations", len(intermediate_steps))
 
-            triage_span.set_attribute("agent.tools_used", ",".join(tools_used))
-            triage_span.set_attribute("agent.confidence_score", analysis.get("confidence_score", 0))
-            triage_span.set_attribute("agent.failure_category", analysis.get("failure_category", "UNKNOWN"))
-            triage_span.set_attribute("agent.iterations", len(intermediate_steps))
+            except Exception as e:
+                logger.error("Agent execution failed: %s", e, exc_info=True)
+                triage_span.set_attribute("agent.error", str(e)[:500])
+                error_str = str(e).lower()
 
-        except Exception as e:
-            logger.error("Agent execution failed: %s", e, exc_info=True)
-            triage_span.set_attribute("agent.error", str(e)[:500])
-            error_str = str(e).lower()
-
-            # ── Model not installed → fall back to rules engine silently ──────
-            _model_not_found = (
-                "model" in error_str and "not found" in error_str
-            ) or (
-                "404" in error_str and ("model" in error_str or "pull" in error_str)
-            )
-            if _model_not_found:
-                logger.warning(
-                    "LLM model '%s' not available (%s) — falling back to rules engine",
-                    settings.LLM_MODEL, str(e)[:120],
+                # ── Model not installed → fall back to rules engine silently ──────
+                _model_not_found = (
+                    "model" in error_str and "not found" in error_str
+                ) or (
+                    "404" in error_str and ("model" in error_str or "pull" in error_str)
                 )
-                # Open the circuit breaker so subsequent tasks skip the LLM
-                try:
-                    from app.streams.circuit_breaker import LLMCircuitBreaker
-                    await LLMCircuitBreaker.record_failure()
-                    await LLMCircuitBreaker.record_failure()
-                    await LLMCircuitBreaker.record_failure()
-                    await LLMCircuitBreaker.record_failure()
-                    await LLMCircuitBreaker.record_failure()  # 5 failures → OPEN
-                except Exception:
-                    pass
-                try:
-                    from app.services.rules_engine import RulesEngine
-                    analysis = RulesEngine.classify_test(
-                        error_message=error_message,
-                        test_name=test_name,
-                        stack_trace=stack_trace,
+                if _model_not_found:
+                    logger.warning(
+                        "LLM model '%s' not available (%s) — falling back to rules engine",
+                        settings.LLM_MODEL, str(e)[:120],
                     )
-                    analysis["llm_provider"] = settings.LLM_PROVIDER
-                    analysis["llm_model"] = settings.LLM_MODEL
-                    analysis["analysis_engine"] = "rules"
-                    analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
-                except Exception as rules_exc:
-                    logger.error("Rules engine fallback also failed: %s", rules_exc)
-                    analysis = _fallback_analysis(_model_missing_hint(settings.LLM_MODEL))
+                    # Open the circuit breaker so subsequent tasks skip the LLM
+                    try:
+                        from app.streams.circuit_breaker import LLMCircuitBreaker
+                        await LLMCircuitBreaker.record_failure()
+                        await LLMCircuitBreaker.record_failure()
+                        await LLMCircuitBreaker.record_failure()
+                        await LLMCircuitBreaker.record_failure()
+                        await LLMCircuitBreaker.record_failure()  # 5 failures → OPEN
+                    except Exception:
+                        pass
+                    try:
+                        from app.services.rules_engine import RulesEngine
+                        analysis = RulesEngine.classify_test(
+                            error_message=error_message,
+                            test_name=test_name,
+                            stack_trace=stack_trace,
+                        )
+                        analysis["llm_provider"] = settings.LLM_PROVIDER
+                        analysis["llm_model"] = settings.LLM_MODEL
+                        analysis["analysis_engine"] = "rules"
+                        analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
+                    except Exception as rules_exc:
+                        logger.error("Rules engine fallback also failed: %s", rules_exc)
+                        analysis = _fallback_analysis(_model_missing_hint(settings.LLM_MODEL))
 
-            # ── Token limit ───────────────────────────────────────────────────
-            elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
-                logger.warning("Token limit exceeded — returning fallback with truncation hint")
-                analysis = _fallback_analysis(
-                    f"Input exceeded LLM context window. Error: {str(e)[:200]}. "
-                    "Consider reducing stack trace length or enabling a model with larger context."
-                )
-            else:
-                analysis = _fallback_analysis(str(e))
-            intermediate_steps = []
+                # ── Token limit ───────────────────────────────────────────────────
+                elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
+                    logger.warning("Token limit exceeded — returning fallback with truncation hint")
+                    analysis = _fallback_analysis(
+                        f"Input exceeded LLM context window. Error: {str(e)[:200]}. "
+                        "Consider reducing stack trace length or enabling a model with larger context."
+                    )
+                else:
+                    analysis = _fallback_analysis(str(e))
+                intermediate_steps = []
+    finally:
+        reset_recall_context(_recall_token)
 
     # Store full audit trail to MongoDB
     await _store_audit_trail(test_case_id, user_question, analysis, intermediate_steps)

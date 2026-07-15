@@ -41,6 +41,7 @@ from app.models.postgres import AIAnalysis, TestCase, TestStatus
 from app.services.agent import run_triage_agent
 from app.services.artifact_store import store_artifact
 from app.services.category_normalizer import normalize_category_in_analysis
+from app.services.prompt_registry import prompt_versions_used as _prompt_versions_used
 
 import structlog
 
@@ -621,6 +622,9 @@ class AnalysisAgent(BaseAgent):
                             pipeline_run_id=pipeline_run_id,
                             # Scope the analysis caches to this tenant.
                             project_id=str(state.get("project_id")) if state.get("project_id") else None,
+                            # Feeds the recall_similar_failures tool's
+                            # server-side, project-scoped context (AI-F3).
+                            test_fingerprint=meta.get("test_fingerprint"),
                         ),
                         timeout=settings.AI_TIMEOUT_SECONDS,
                     )
@@ -682,8 +686,13 @@ class AnalysisAgent(BaseAgent):
                     "stack_trace_sha256": _hash_text(meta.get("stack_trace")),
                     "classification_context_sha256": _hash_json(fingerprint_context),
                 },
+                # Registry-derived version tags (AI-F2): v<version>:<hash12>
+                # of the exact prompt bytes in use, plus the code-level agent
+                # version label.
                 "prompt_versions": {
-                    "react_triage": "services.agent.SYSTEM_PROMPT:v1",
+                    **_prompt_versions_used(
+                        "react_triage", "fast_classifier_system",
+                    ),
                     "analysis_agent": "agents.analysis_agent:v2",
                 },
                 "model_config_snapshot": {

@@ -1,0 +1,126 @@
+{
+  "hash_algorithm": "sha256[:12]",
+  "prompts": {
+    "anomaly_narrative": {
+      "content_hash": "0298a3b5009f",
+      "version": 1
+    },
+    "chat_compression": {
+      "content_hash": "68e08a32dff5",
+      "version": 1
+    },
+    "chat_system": {
+      "content_hash": "b52c5b2cf229",
+      "version": 1
+    },
+    "defect_promotion_ticket": {
+      "content_hash": "45d88cc4d33b",
+      "version": 1
+    },
+    "fast_classifier_system": {
+      "content_hash": "9d46ffbbed7b",
+      "version": 1
+    },
+    "finetune_reasoning_system": {
+      "content_hash": "3ea37c087b6b",
+      "version": 1
+    },
+    "mcp.defect_triage_session": {
+      "content_hash": "670026c0afac",
+      "version": 1
+    },
+    "mcp.flakiness_investigation": {
+      "content_hash": "479ef097d997",
+      "version": 1
+    },
+    "mcp.investigate_failure": {
+      "content_hash": "590cb27ee41f",
+      "version": 1
+    },
+    "mcp.release_readiness_report": {
+      "content_hash": "952071abb759",
+      "version": 1
+    },
+    "mcp.suite_health_check": {
+      "content_hash": "b6bfbd9fe1cd",
+      "version": 1
+    },
+    "mcp.weekly_quality_digest": {
+      "content_hash": "b96eda2d909a",
+      "version": 1
+    },
+    "react_triage": {
+      "content_hash": "0ad0a868e913",
+      "version": 2
+    },
+    "regression_watchman_classify": {
+      "content_hash": "2ac1510063fd",
+      "version": 1
+    },
+    "release_risk_reasoning": {
+      "content_hash": "a152fb254091",
+      "version": 1
+    },
+    "run_compare_report": {
+      "content_hash": "5272dd391090",
+      "version": 1
+    },
+    "run_compare_system": {
+      "content_hash": "bbba41240c3f",
+      "version": 1
+    },
+    "summary_action_plan": {
+      "content_hash": "ecf7e2106438",
+      "version": 1
+    },
+    "summary_evidence_pack": {
+      "content_hash": "54b0e91c81d9",
+      "version": 1
+    },
+    "summary_executive": {
+      "content_hash": "9885ab3d7268",
+      "version": 1
+    },
+    "summary_incident_view": {
+      "content_hash": "470a2488b718",
+      "version": 1
+    },
+    "summary_renderer_developer": {
+      "content_hash": "58d153d90e99",
+      "version": 1
+    },
+    "summary_renderer_manager": {
+      "content_hash": "fb02a6a74429",
+      "version": 1
+    },
+    "summary_renderer_system": {
+      "content_hash": "42fc12956d2f",
+      "version": 1
+    },
+    "summary_system": {
+      "content_hash": "3b2f2b5fde10",
+      "version": 1
+    },
+    "test_case_coverage": {
+      "content_hash": "16988c2ae516",
+      "version": 1
+    },
+    "test_case_generate": {
+      "content_hash": "fb6a09db0b78",
+      "version": 1
+    },
+    "test_case_plan_optimizer": {
+      "content_hash": "97d09e4d78eb",
+      "version": 1
+    },
+    "test_case_review": {
+      "content_hash": "43f1dfbc6c86",
+      "version": 1
+    },
+    "test_case_strategy": {
+      "content_hash": "2070533050ae",
+      "version": 1
+    }
+  },
+  "schema_version": 1
+}

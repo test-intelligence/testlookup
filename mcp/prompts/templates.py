@@ -3,26 +3,35 @@ MCP Prompt Templates — reusable investigation workflows.
 
 Prompts chain multiple tools into a structured workflow. AI Assistants expand them
 into tool calls automatically when a user invokes the prompt.
+
+Template texts live in ``PROMPT_TEMPLATES`` (rendered with ``str.format``) so
+the backend's prompt manifest can hash-pin them (AI-F2): the
+``ai.prompt-manifest-sync`` quality gate parses this module via ``ast`` — never
+imports it — and fails CI when a template's bytes drift from
+``backend/app/services/prompt_manifest.json`` without a deliberate manifest
+bump + eval-gate attestation. Bump ``PROMPT_TEMPLATE_VERSIONS`` on any text
+change. (The MCP eval story is thinner than the backend agents' — these
+prompts steer an external assistant's tool calls rather than a scored model
+output, so the attestation covers them as hash-pinned + reviewed, not
+metric-gated.)
 """
 
 from __future__ import annotations
 
-from mcp.types import GetPromptResult, PromptMessage, TextContent  # type: ignore[import]
+# Bump the matching version on ANY template text change, then regenerate the
+# manifest + attestation (see backend/app/services/prompt_registry.py docstring).
+PROMPT_TEMPLATE_VERSIONS: dict[str, int] = {
+    "mcp.investigate_failure": 1,
+    "mcp.release_readiness_report": 1,
+    "mcp.weekly_quality_digest": 1,
+    "mcp.flakiness_investigation": 1,
+    "mcp.defect_triage_session": 1,
+    "mcp.suite_health_check": 1,
+}
 
-
-def register(mcp) -> None:  # noqa: ANN001
-
-    @mcp.prompt()
-    def investigate_failure(test_case_id: str, project_id: str) -> str:
-        """
-        Full investigation workflow for a failing test case.
-        Retrieves the error, triggers AI root-cause analysis, and summarises findings.
-
-        Args:
-            test_case_id: UUID of the failing test case.
-            project_id: Project UUID the test belongs to.
-        """
-        return f"""You are a QA engineer investigating a test failure. Follow these steps exactly:
+PROMPT_TEMPLATES: dict[str, str] = {
+    "mcp.investigate_failure": """\
+You are a QA engineer investigating a test failure. Follow these steps exactly:
 
 1. Call `get_dashboard_metrics` with project_id="{project_id}" to understand current quality context.
 2. Call `search_tests` with the test_case_id="{test_case_id}" as the query to find the run context (get the run_id).
@@ -42,18 +51,9 @@ Compile a structured investigation report with:
 - **Actions:** The 3 recommended actions from the analysis
 - **Context:** How this relates to the project's overall quality (from dashboard metrics)
 
-Be concise and actionable. A developer should be able to read this in under 2 minutes and know exactly what to do next."""
-
-    @mcp.prompt()
-    def release_readiness_report(project_id: str, release_version: str = "next") -> str:
-        """
-        Generate an executive-ready go/no-go release assessment for a project.
-
-        Args:
-            project_id: Project UUID.
-            release_version: Release label for the report header (e.g., "v2.4.0").
-        """
-        return f"""You are a QA lead preparing a release readiness report for version **{release_version}**.
+Be concise and actionable. A developer should be able to read this in under 2 minutes and know exactly what to do next.""",
+    "mcp.release_readiness_report": """\
+You are a QA lead preparing a release readiness report for version **{release_version}**.
 Run these steps in order, then compile the final report:
 
 1. Call `check_release_readiness` with project_id="{project_id}" — this is the primary signal.
@@ -92,18 +92,9 @@ Produce a release readiness report with this structure:
 [1-2 sentence plain-English recommendation for the release manager]
 ---
 
-Be specific with numbers. Use the actual data from the tools — do not fabricate metrics."""
-
-    @mcp.prompt()
-    def weekly_quality_digest(project_id: str) -> str:
-        """
-        Generate a weekly quality digest suitable for sharing with the team.
-        Covers pass rate trend, top issues, flakiness, and AI triage stats.
-
-        Args:
-            project_id: Project UUID.
-        """
-        return f"""You are a QA engineer preparing the weekly quality digest for the team.
+Be specific with numbers. Use the actual data from the tools — do not fabricate metrics.""",
+    "mcp.weekly_quality_digest": """\
+You are a QA engineer preparing the weekly quality digest for the team.
 Collect data by running these tools:
 
 1. `get_dashboard_metrics` — project_id="{project_id}", days=7 (current week)
@@ -142,19 +133,9 @@ Write the digest in this format:
 [3-5 concrete, prioritised items the team should address]
 ---
 
-Keep the tone factual and data-driven. This will be shared in Slack."""
-
-    @mcp.prompt()
-    def flakiness_investigation(project_id: str, threshold_pct: int = 30) -> str:
-        """
-        Deep-dive investigation into flaky tests above a failure rate threshold.
-        Produces a prioritised remediation plan.
-
-        Args:
-            project_id: Project UUID.
-            threshold_pct: Minimum failure rate to include (default 30%).
-        """
-        return f"""You are a senior QA engineer investigating test flakiness.
+Keep the tone factual and data-driven. This will be shared in Slack.""",
+    "mcp.flakiness_investigation": """\
+You are a senior QA engineer investigating test flakiness.
 The goal is to produce a prioritised remediation plan for tests with ≥{threshold_pct}% failure rate.
 
 Steps:
@@ -189,18 +170,9 @@ For each test above {threshold_pct}% failure rate, in order of severity:
 
 ## Estimated Impact
 [If top N tests were fixed, what would the pass rate improvement be?]
----"""
-
-    @mcp.prompt()
-    def defect_triage_session(project_id: str) -> str:
-        """
-        Structured defect triage session — review all open defects, identify
-        duplicates, confirm still-failing, and recommend prioritisation.
-
-        Args:
-            project_id: Project UUID.
-        """
-        return f"""You are a QA lead running a defect triage session.
+---""",
+    "mcp.defect_triage_session": """\
+You are a QA lead running a defect triage session.
 Goal: Review all open defects, confirm their status, and produce a prioritised triage list.
 
 Steps:
@@ -235,19 +207,9 @@ Produce a triage summary:
 
 ## Recommend DUPLICATE
 [Tests with identical error patterns that may map to the same root cause]
----"""
-
-    @mcp.prompt()
-    def suite_health_check(project_id: str, suite_name: str) -> str:
-        """
-        Focused health check for a specific test suite.
-        Returns coverage, worst tests, and failure pattern analysis.
-
-        Args:
-            project_id: Project UUID.
-            suite_name: Name of the test suite to analyse.
-        """
-        return f"""You are analysing the health of the **{suite_name}** test suite.
+---""",
+    "mcp.suite_health_check": """\
+You are analysing the health of the **{suite_name}** test suite.
 
 Steps:
 1. `search_tests` — query="{suite_name}", project_id="{project_id}", days=30
@@ -283,4 +245,85 @@ Produce a suite health report:
 
 ## Suite Quality Score: [X/100]
 [Composite score based on pass rate, flakiness, and failure category distribution]
----"""
+---""",
+}
+
+
+def register(mcp) -> None:  # noqa: ANN001
+
+    @mcp.prompt()
+    def investigate_failure(test_case_id: str, project_id: str) -> str:
+        """
+        Full investigation workflow for a failing test case.
+        Retrieves the error, triggers AI root-cause analysis, and summarises findings.
+
+        Args:
+            test_case_id: UUID of the failing test case.
+            project_id: Project UUID the test belongs to.
+        """
+        return PROMPT_TEMPLATES["mcp.investigate_failure"].format(
+            test_case_id=test_case_id, project_id=project_id,
+        )
+
+    @mcp.prompt()
+    def release_readiness_report(project_id: str, release_version: str = "next") -> str:
+        """
+        Generate an executive-ready go/no-go release assessment for a project.
+
+        Args:
+            project_id: Project UUID.
+            release_version: Release label for the report header (e.g., "v2.4.0").
+        """
+        return PROMPT_TEMPLATES["mcp.release_readiness_report"].format(
+            project_id=project_id, release_version=release_version,
+        )
+
+    @mcp.prompt()
+    def weekly_quality_digest(project_id: str) -> str:
+        """
+        Generate a weekly quality digest suitable for sharing with the team.
+        Covers pass rate trend, top issues, flakiness, and AI triage stats.
+
+        Args:
+            project_id: Project UUID.
+        """
+        return PROMPT_TEMPLATES["mcp.weekly_quality_digest"].format(project_id=project_id)
+
+    @mcp.prompt()
+    def flakiness_investigation(project_id: str, threshold_pct: int = 30) -> str:
+        """
+        Deep-dive investigation into flaky tests above a failure rate threshold.
+        Produces a prioritised remediation plan.
+
+        Args:
+            project_id: Project UUID.
+            threshold_pct: Minimum failure rate to include (default 30%).
+        """
+        return PROMPT_TEMPLATES["mcp.flakiness_investigation"].format(
+            project_id=project_id, threshold_pct=threshold_pct,
+        )
+
+    @mcp.prompt()
+    def defect_triage_session(project_id: str) -> str:
+        """
+        Structured defect triage session — review all open defects, identify
+        duplicates, confirm still-failing, and recommend prioritisation.
+
+        Args:
+            project_id: Project UUID.
+        """
+        return PROMPT_TEMPLATES["mcp.defect_triage_session"].format(project_id=project_id)
+
+    @mcp.prompt()
+    def suite_health_check(project_id: str, suite_name: str) -> str:
+        """
+        Focused health check for a specific test suite.
+        Returns coverage, worst tests, and failure pattern analysis.
+
+        Args:
+            project_id: Project UUID.
+            suite_name: Name of the test suite to analyse.
+        """
+        return PROMPT_TEMPLATES["mcp.suite_health_check"].format(
+            project_id=project_id, suite_name=suite_name,
+        )

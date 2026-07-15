@@ -33,13 +33,16 @@ is *not* run in CI, so a baseline change must be reviewed in a PR.
 from __future__ import annotations
 
 import argparse
+import ast
+import hashlib
 import io
+import json
 import re
 import sys
 import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_DIR = REPO_ROOT / "scripts" / "quality-gate-baselines"
@@ -737,6 +740,209 @@ def _agents_routing_metadata_populated() -> list[Violation]:
     return []
 
 
+# ── AI prompt-manifest guard (AI-F2) ─────────────────────────────────────────
+# Every LLM prompt is registered in backend/app/services/prompt_registry.py
+# (MCP templates in mcp/prompts/templates.py::PROMPT_TEMPLATES) and pinned —
+# sha256(text)[:12] + version — in prompt_manifest.json. A prompt edit without
+# a deliberate manifest bump fails here; a manifest bump without a fresh
+# eval-gate attestation (prompt_manifest_eval.json) also fails here. This is
+# the CI blocker that makes "no prompt change ships without an eval run" real.
+# Stdlib-only mirror of app.services.prompt_registry's checks: sources are
+# parsed via ast, never imported.
+
+_PROMPT_REGISTRY_PATH = REPO_ROOT / "backend" / "app" / "services" / "prompt_registry.py"
+_PROMPT_MANIFEST_PATH = REPO_ROOT / "backend" / "app" / "services" / "prompt_manifest.json"
+_PROMPT_ATTESTATION_PATH = REPO_ROOT / "backend" / "app" / "services" / "prompt_manifest_eval.json"
+_MCP_PROMPT_TEMPLATES_PATH = REPO_ROOT / "mcp" / "prompts" / "templates.py"
+_PROMPT_HASH_LEN = 12
+_PROMPT_ATTEST_HINT = (
+    "cd backend && python -m app.services.prompt_registry --write-manifest && "
+    "python -m app.services.prompt_registry --attest <change-id> "
+    "(add --offline without a live DB)"
+)
+
+
+def _prompt_content_hash(text: str) -> str:
+    """MUST mirror app.services.prompt_registry.content_hash."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:_PROMPT_HASH_LEN]
+
+
+def _prompt_manifest_digest(prompts: dict) -> str:
+    """MUST mirror app.services.prompt_registry.manifest_digest."""
+    canonical = json.dumps(prompts, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _extract_registry_prompts(path: Path) -> tuple[dict, list[tuple[int, str]]]:
+    """``{id: {"version", "content_hash", "line"}}`` from ``_register(...)`` calls."""
+    prompts: dict = {}
+    problems: list[tuple[int, str]] = []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError) as exc:
+        return {}, [(0, f"cannot parse prompt registry: {exc}")]
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_register"
+        ):
+            continue
+        try:
+            pid = ast.literal_eval(node.args[0])
+            version = int(ast.literal_eval(node.args[1]))
+            text = ast.literal_eval(node.args[2])
+        except (ValueError, TypeError, IndexError):
+            problems.append((
+                node.lineno,
+                "_register(...) call is not fully literal — the manifest "
+                "guard cannot hash it; keep prompt texts as plain string "
+                "literals",
+            ))
+            continue
+        prompts[pid] = {
+            "version": version,
+            "content_hash": _prompt_content_hash(str(text)),
+            "line": node.lineno,
+        }
+    if not prompts and not problems:
+        problems.append((0, "no _register(...) calls found in the prompt registry"))
+    return prompts, problems
+
+
+def _extract_mcp_prompts(path: Path) -> tuple[dict, list[tuple[int, str]]]:
+    """``{id: {"version", "content_hash", "line"}}`` from ``PROMPT_TEMPLATES``."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError) as exc:
+        return {}, [(0, f"cannot parse MCP prompt templates: {exc}")]
+    templates: dict = {}
+    versions: dict = {}
+    line = 0
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names = [node.target.id]
+            value = node.value
+        else:
+            continue
+        if value is None:
+            continue
+        try:
+            if "PROMPT_TEMPLATES" in names:
+                templates = dict(ast.literal_eval(value))
+                line = node.lineno
+            elif "PROMPT_TEMPLATE_VERSIONS" in names:
+                versions = dict(ast.literal_eval(value))
+        except (ValueError, TypeError):
+            return {}, [(node.lineno, "PROMPT_TEMPLATES is not a literal dict")]
+    if not templates:
+        return {}, [(0, "no PROMPT_TEMPLATES dict found in MCP templates module")]
+    return {
+        pid: {
+            "version": int(versions.get(pid, 1)),
+            "content_hash": _prompt_content_hash(str(text)),
+            "line": line,
+        }
+        for pid, text in templates.items()
+    }, []
+
+
+def _ai_prompt_manifest_sync(
+    registry_path: Optional[Path] = None,
+    manifest_path: Optional[Path] = None,
+    attestation_path: Optional[Path] = None,
+    mcp_path: Optional[Path] = None,
+) -> list[Violation]:
+    registry_path = registry_path or _PROMPT_REGISTRY_PATH
+    manifest_path = manifest_path or _PROMPT_MANIFEST_PATH
+    attestation_path = attestation_path or _PROMPT_ATTESTATION_PATH
+    mcp_path = mcp_path or _MCP_PROMPT_TEMPLATES_PATH
+
+    violations: list[Violation] = []
+
+    current: dict = {}
+    reg_prompts, reg_problems = _extract_registry_prompts(registry_path)
+    for line, msg in reg_problems:
+        violations.append(Violation(registry_path, line, msg))
+    current.update({pid: (entry, registry_path) for pid, entry in reg_prompts.items()})
+
+    if mcp_path.exists():
+        mcp_prompts, mcp_problems = _extract_mcp_prompts(mcp_path)
+        for line, msg in mcp_problems:
+            violations.append(Violation(mcp_path, line, msg))
+        current.update({pid: (entry, mcp_path) for pid, entry in mcp_prompts.items()})
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        pinned = manifest["prompts"]
+        assert isinstance(pinned, dict)
+    except (OSError, ValueError, KeyError, AssertionError) as exc:
+        violations.append(Violation(
+            manifest_path, 0,
+            f"prompt manifest missing/unreadable ({exc}) — {_PROMPT_ATTEST_HINT}",
+        ))
+        return violations
+
+    for pid, (entry, src_path) in sorted(current.items()):
+        pin = pinned.get(pid)
+        if pin is None:
+            violations.append(Violation(
+                src_path, entry["line"],
+                f"prompt {pid!r} is not pinned in the manifest — {_PROMPT_ATTEST_HINT}",
+            ))
+            continue
+        if pin.get("content_hash") != entry["content_hash"]:
+            violations.append(Violation(
+                src_path, entry["line"],
+                f"prompt {pid!r} text drifted from the manifest (hash "
+                f"{entry['content_hash']} != pinned {pin.get('content_hash')}). "
+                f"Bump its version, then: {_PROMPT_ATTEST_HINT}",
+            ))
+        elif pin.get("version") != entry["version"]:
+            violations.append(Violation(
+                src_path, entry["line"],
+                f"prompt {pid!r} version {entry['version']} != pinned "
+                f"{pin.get('version')} — {_PROMPT_ATTEST_HINT}",
+            ))
+    for pid in sorted(pinned):
+        if pid not in current:
+            violations.append(Violation(
+                manifest_path, 0,
+                f"manifest pins {pid!r} but no such prompt is registered "
+                f"(stale entry) — {_PROMPT_ATTEST_HINT}",
+            ))
+
+    # Attestation: the manifest digest must carry a green eval-gate run.
+    digest = _prompt_manifest_digest(pinned)
+    try:
+        attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        violations.append(Violation(
+            attestation_path, 0,
+            f"eval-gate attestation missing/unreadable ({exc}) — a prompt-"
+            f"manifest change requires an eval run: {_PROMPT_ATTEST_HINT}",
+        ))
+        return violations
+    if attestation.get("manifest_digest") != digest:
+        violations.append(Violation(
+            attestation_path, 0,
+            "prompt manifest changed WITHOUT a fresh eval-gate attestation "
+            f"(attested digest {str(attestation.get('manifest_digest'))[:12]}… != "
+            f"current {digest[:12]}…) — {_PROMPT_ATTEST_HINT}",
+        ))
+    if attestation.get("verdict") != "PASS":
+        violations.append(Violation(
+            attestation_path, 0,
+            f"attested eval-gate verdict is {attestation.get('verdict')!r}, not "
+            "PASS — the prompt change did not clear the eval gate; fix the "
+            "regression (or re-baseline deliberately) and re-attest",
+        ))
+    return violations
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 GUARDS: list[Guard] = [
@@ -829,6 +1035,21 @@ GUARDS: list[Guard] = [
         description="analysis_router.classify_test populates the _routing dict on every return.",
         check=_agents_routing_metadata_populated,
         fix_hint="Set `result['_routing'] = {...}` before returning from classify_test (mode_requested / mode_resolved / mode_used / fallback_*).",
+    ),
+    Guard(
+        name="ai.prompt-manifest-sync",
+        description=(
+            "Every LLM prompt (registry + MCP templates) matches its pinned "
+            "hash in prompt_manifest.json, and the manifest digest carries a "
+            "green eval-gate attestation (prompt_manifest_eval.json)."
+        ),
+        check=_ai_prompt_manifest_sync,
+        fix_hint=(
+            "Bump the prompt's version in app/services/prompt_registry.py "
+            "(or PROMPT_TEMPLATE_VERSIONS for mcp.* prompts), then: "
+            + _PROMPT_ATTEST_HINT
+            + ". See architecture/AI_EVALUATION.md."
+        ),
     ),
     Guard(
         name="homelab.build-tag-placeholder",
