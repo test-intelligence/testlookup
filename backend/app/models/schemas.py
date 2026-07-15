@@ -685,6 +685,11 @@ class ConfidenceWhy(BaseModel):
     data_sources: List[str] = []
     is_llm_inference: bool = False
     investigation_depth: str = "fast_path"  # "fast_path" | "standard" | "deep"
+    # AI-F4: calibration basis for rules-engine confidences —
+    # "empirical" (measured precision on labeled eval samples) or
+    # "heuristic_estimate" (engineering estimate, not empirically calibrated).
+    # None for LLM/ML analyses that don't carry a band.
+    confidence_basis: Optional[str] = None
 
 
 class AnalysisResponse(BaseModel):

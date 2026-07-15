@@ -11,7 +11,7 @@ The **Intelligence Hub** is the cross-run view: recent activity, per-run intelli
 
 ## Deep Investigation (`/deep-investigate`, `/deep-investigate/:runId`)
 
-Deep Investigation is the heavyweight workflow for a bad run: it clusters the run's failures (you can tune the **clustering threshold**), investigates each cluster, and reports per-cluster confidence. Options include **auto-draft defects** and **auto-create Jira tickets** from investigation results (Jira requires the integration to be enabled — outbound integrations are off in offline mode). Past investigations are browsable, so an investigation is a durable artifact, not a one-off chat.
+Deep Investigation is the heavyweight workflow for a bad run: it clusters the run's failures (you can tune the **clustering threshold**), investigates each cluster, and reports per-cluster confidence. Findings are persisted per `(run, cluster)` by the pipeline itself and carry an **origin** tag (`pipeline` for real analysis, `seed` for demo data), so you can always tell computed findings from seeded examples. Options include **auto-draft defects** and **auto-create Jira tickets** from investigation results (Jira requires the integration to be enabled — outbound integrations are off in offline mode). Past investigations are browsable, so an investigation is a durable artifact, not a one-off chat.
 
 ## Agent Pipeline (`/agents`, `/agents/run/:runId`)
 
@@ -20,6 +20,19 @@ The **Agent Pipeline** page is the operational view of the analysis pipeline its
 ## Ask AI (`/chat`)
 
 Chat over your test data in natural language — "why did last night's payments run fail?", "which suites got flakier this month?". Answers are grounded in your project's data (the same APIs the dashboard uses), scoped to the selected project. The same capability is available to external assistants via the [MCP server](cli-sdk-mcp.md#the-mcp-server).
+
+## What confidence scores actually mean
+
+Every analysis carries a 0–100 **confidence score**, but the number's *meaning* depends on which engine produced it — and TestLookup now labels that explicitly (the **confidence basis**, shown as a `calibrated` / `estimated` chip next to the score):
+
+- **Rules engine** — each of the ~23 rules (6 statistical heuristics + 17 error-message patterns) has a *named confidence band* defined in one auditable table (`backend/app/services/confidence_bands.py`), each with a documented basis:
+  - `heuristic_estimate` — an engineering estimate of how often the rule is right. **This is currently the basis for every rules-engine band**: no labeled corpus of raw error messages exists yet to measure per-rule precision, and the values are preserved from the original engine so behavior is stable. The UI tooltip reads "estimated heuristic confidence — not empirically calibrated".
+  - `empirical` — reserved for bands whose value equals measured precision on a labeled evaluation dataset (with the corpus and sample count recorded in the band's provenance). When such a corpus lands, bands flip to this basis individually.
+  - One band is *dynamic*: the historical-flakiness heuristic grows with evidence — `min(85, 50 + 2 × runs of history)` — because ten runs of pass/fail history genuinely say more than five.
+- **LLM analyses** — the model's self-reported confidence, then *adjusted* by deterministic validators (capped when there's no evidence, when no tools ran, when the summary is too thin; small bonus for multiple corroborating sources). Every adjustment is recorded in the per-test decision audit.
+- **ML classifier** — the model's class probability.
+
+Downstream thresholds read the score uniformly regardless of basis: results below the review threshold (default 70 in-engine, `AI_CONFIDENCE_THRESHOLD=80` in the pipeline) are flagged **requires human review**; auto-triage and defect auto-actions gate on the same knobs. The basis label exists so a human deciding whether to *trust* a 75 knows whether that 75 was measured or estimated.
 
 ## Configuring the AI tier (`/settings/ai`, `/settings/ai-eval`)
 

@@ -736,6 +736,32 @@ _live_app = _build_live_graph().compile()
 _deep_app = _build_deep_graph().compile()
 
 
+async def _persist_deep_outputs(
+    test_run_id: str,
+    pipeline_run_id: str,
+    final_state: dict[str, Any],
+) -> dict[str, Any]:
+    """AI-F4: persist FailureCluster + DeepFinding rows for a deep run and
+    populate ``state["deep_findings"]`` (which agent_memory_service consumes).
+
+    Non-fatal: a persistence error must not fail an otherwise-successful
+    pipeline — the state result is still returned to the caller.
+    """
+    try:
+        from app.agents.deep_persistence import persist_deep_results
+
+        findings = await persist_deep_results(test_run_id, pipeline_run_id, final_state)
+        if findings:
+            final_state["deep_findings"] = findings
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "deep_persistence_failed",
+            test_run_id=str(test_run_id),
+            error=str(exc),
+        )
+    return final_state
+
+
 # ── Public entry points ───────────────────────────────────────────────────────
 
 async def run_offline_pipeline(
@@ -837,6 +863,12 @@ async def run_offline_pipeline(
             cast(dict[str, Any], final_state),
             workflow_type=workflow_type,
         )
+        if workflow_type == "deep":
+            # AI-F4: persist clusters + synthesized findings so the
+            # /deep-investigate endpoints serve real pipeline output.
+            final_state = await _persist_deep_outputs(
+                test_run_id, pipeline_run_id, final_state
+            )
         await _mark_pipeline_done(pipeline_run_id, success=True, final_state=final_state)
         await emit_event(
             pipeline_run_id,
@@ -956,6 +988,11 @@ async def run_deep_pipeline(
         final_state = attach_workflow_plan_and_verification(
             cast(dict[str, Any], final_state),
             workflow_type="deep",
+        )
+        # AI-F4: persist clusters + synthesized findings so the
+        # /deep-investigate endpoints serve real pipeline output.
+        final_state = await _persist_deep_outputs(
+            test_run_id, pipeline_run_id, final_state
         )
         await _mark_pipeline_done(pipeline_run_id, success=True, final_state=final_state)
         await emit_event(

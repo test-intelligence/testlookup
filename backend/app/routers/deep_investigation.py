@@ -70,6 +70,14 @@ class DeepFindingResponse(BaseModel):
     affected_services: Optional[list]
     contract_violations: Optional[list]
     recommended_actions: Optional[list]
+    # AI-F4: who wrote the row — "pipeline" (real deep-pipeline output via
+    # agents/deep_persistence.py), "seed" (demo data), or "unknown" (legacy
+    # rows written before origin tagging). Lets consumers distinguish real
+    # analysis from seeded fiction.
+    origin: str = "unknown"
+    # AI-F4: calibration basis of confidence_score when known —
+    # "empirical" | "heuristic_estimate" | None.
+    confidence_basis: Optional[str] = None
 
 
 @router.post("/{run_id}", response_model=TriggerDeepResponse)
@@ -167,20 +175,26 @@ async def get_deep_findings(
         )
         findings = result.scalars().all()
 
-    return [
-        DeepFindingResponse(
-            cluster_id=f.cluster_id,
-            root_cause=f.root_cause,
-            failure_category=f.failure_category,
-            confidence_score=f.confidence_score,
-            causal_chain=f.causal_chain,
-            evidence=f.evidence,
-            affected_services=f.affected_services,
-            contract_violations=f.contract_violations,
-            recommended_actions=f.recommended_actions,
-        )
-        for f in findings
-    ]
+    return [_to_finding_response(f) for f in findings]
+
+
+def _to_finding_response(f: DeepFinding) -> DeepFindingResponse:
+    """Map a DeepFinding row to its response, surfacing the origin tag
+    (pipeline vs seed vs legacy-unknown) from the log_evidence blob."""
+    log_evidence = f.log_evidence if isinstance(f.log_evidence, dict) else {}
+    return DeepFindingResponse(
+        cluster_id=f.cluster_id,
+        root_cause=f.root_cause,
+        failure_category=f.failure_category,
+        confidence_score=f.confidence_score,
+        causal_chain=f.causal_chain,
+        evidence=f.evidence,
+        affected_services=f.affected_services,
+        contract_violations=f.contract_violations,
+        recommended_actions=f.recommended_actions,
+        origin=str(log_evidence.get("origin") or "unknown"),
+        confidence_basis=log_evidence.get("confidence_basis"),
+    )
 
 
 @router.get(

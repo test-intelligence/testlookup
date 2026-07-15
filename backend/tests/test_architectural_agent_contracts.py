@@ -51,6 +51,10 @@ INFRA_ALLOWLIST: frozenset[str] = frozenset({
     # and aggregate_confidence() folded into other agents' contracts; not
     # itself an analytic agent with a contracted output.
     "evidence.py",
+    # Deep-pipeline persistence writer (AI-F4): synthesizes/upserts
+    # FailureCluster + DeepFinding rows from other agents' already-contracted
+    # outputs; emits no analytic payload of its own.
+    "deep_persistence.py",
 })
 
 AGENTS_DIR = Path(__file__).resolve().parents[1] / "app" / "agents"

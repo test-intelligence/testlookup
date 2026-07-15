@@ -62,7 +62,20 @@ function ConfidencePanel({ score, why }: { score: number; why: ConfidenceWhy }) 
     <div className="theme-bg-secondary border theme-border rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Confidence + Why</p>
-        <span className={clsx('text-2xl font-bold tabular-nums', confColor)}>{score}%</span>
+        <span className="flex items-center gap-2">
+          {/* AI-F4: calibration basis — subtle chip with an explanatory tooltip */}
+          {why.confidence_basis && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"
+              title={why.confidence_basis === 'empirical'
+                ? 'Calibrated confidence — equals measured precision on labeled eval samples'
+                : 'Estimated heuristic confidence — not empirically calibrated'}
+            >
+              {why.confidence_basis === 'empirical' ? 'calibrated' : 'estimated'}
+            </span>
+          )}
+          <span className={clsx('text-2xl font-bold tabular-nums', confColor)}>{score}%</span>
+        </span>
       </div>
 
       {/* Investigation method */}

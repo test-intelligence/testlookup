@@ -900,6 +900,10 @@ async def _seed_failure_clusters(
                     {"source": "prometheus","excerpt": "payments-svc error_rate=0.34 (baseline: 0.02)"},
                 ],
                 affected_services=["payments-svc", "api-gateway"],
+                # AI-F4: demo rows are tagged so the findings endpoint (and the
+                # no-seed-only-data guard) can distinguish them from real
+                # pipeline output (origin="pipeline").
+                log_evidence={"origin": "seed"},
                 recommended_actions=[
                     "Increase connection pool size in payments-svc Helm values",
                     "Add retry logic with exponential backoff to test harness",

@@ -1397,7 +1397,16 @@ class FailureCluster(Base):
 
 
 class DeepFinding(Base):
-    """Deep investigation result per failure cluster."""
+    """Deep investigation result per failure cluster.
+
+    Writers (AI-F4): the deep pipeline persists one row per
+    (test_run_id, cluster_id) via ``agents/deep_persistence.py``
+    (``log_evidence.origin == "pipeline"``); the demo seed scripts tag
+    theirs ``origin == "seed"``. ``causal_chain`` / ``affected_services`` /
+    ``contract_violations`` are only populated by seeds today — no wired
+    agent computes them (ContractAgent / LogIntelligenceAgent exist but
+    are not part of any workflow graph).
+    """
     __tablename__ = "deep_findings"
     __table_args__ = (
         Index("ix_deep_findings_run", "test_run_id"),

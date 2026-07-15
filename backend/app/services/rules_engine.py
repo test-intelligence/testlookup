@@ -16,116 +16,124 @@ Usage:
 import structlog
 from typing import Any
 
+from app.services.confidence_bands import (
+    get_band,
+    historical_flakiness_confidence,
+)
+
 logger = structlog.get_logger("services.rules_engine")
 
 
 # ── Keyword Patterns ────────────────────────────────────────────────────────
+# Confidence for each pattern lives in the band table
+# (services/confidence_bands.py) keyed by rule_id, alongside its documented
+# basis ("empirical" vs "heuristic_estimate"). AI-F4.
 
-_PATTERNS: list[tuple[list[str], str, str, int]] = [
-    # (keywords, category, summary_template, confidence)
+_PATTERNS: list[tuple[str, list[str], str, str]] = [
+    # (rule_id, keywords, category, summary_template)
     (
+        "pattern.oom",
         ["oomkilled", "out of memory", "memory limit", "oom", "killed process"],
         "INFRASTRUCTURE",
         "Container/process ran out of memory (OOMKilled). Check resource limits and memory leaks.",
-        75,
     ),
     (
+        "pattern.connection_refused",
         ["connection refused", "connection reset", "econnrefused", "econnreset", "broken pipe"],
         "INFRASTRUCTURE",
         "Network connectivity issue: connection refused or reset. Check upstream service health.",
-        70,
     ),
     (
+        "pattern.timeout",
         ["timeout", "timed out", "deadline exceeded", "socket timeout", "read timeout"],
         "INFRASTRUCTURE",
         "Request or operation timed out. Check service latency, network, and timeout configuration.",
-        65,
     ),
     (
+        "pattern.http_5xx",
         ["502 bad gateway", "503 service unavailable", "504 gateway timeout", "500 internal server"],
         "INFRASTRUCTURE",
         "HTTP server error (5xx). Upstream service returned an error — check health and logs.",
-        70,
     ),
     (
+        "pattern.dns",
         ["dns resolution", "name resolution", "unknown host", "getaddrinfo", "eai_again"],
         "INFRASTRUCTURE",
         "DNS resolution failure. Check DNS configuration and network connectivity.",
-        75,
     ),
     # US-9.4 infra rule-pack additions — classic runner/host exhaustion and
     # unreachable-network shapes that previously fell through to UNKNOWN.
     (
+        "pattern.disk_full",
         ["no space left on device", "disk quota exceeded", "enospc"],
         "INFRASTRUCTURE",
         "Disk space exhausted on the runner/host (ENOSPC). Clean workspace/artifacts and check volume sizing.",
-        75,
     ),
     (
+        "pattern.network_unreachable",
         ["network is unreachable", "host unreachable", "ehostunreach", "enetunreach", "no route to host"],
         "INFRASTRUCTURE",
         "Network/host unreachable. Check routing, firewall rules, and VPN/proxy configuration.",
-        75,
     ),
     (
+        "pattern.resource_exhaustion",
         ["too many open files", "emfile", "cannot allocate memory", "resource temporarily unavailable"],
         "INFRASTRUCTURE",
         "OS resource exhaustion (file descriptors / memory / process limits). Check ulimits and runner sizing.",
-        70,
     ),
     (
+        "pattern.tls",
         ["certificate", "ssl", "tls", "handshake failure"],
         "INFRASTRUCTURE",
         "TLS/SSL certificate or handshake failure. Check certificate validity and trust chain.",
-        70,
     ),
     (
+        "pattern.not_found",
         ["404 not found", "resource not found", "no such file", "filenotfound", "path not found"],
         "TEST_DATA",
         "Resource not found (404). Check test data setup and environment state.",
-        65,
     ),
     (
+        "pattern.setup_fixture",
         ["setup failed", "before method", "beforeeach", "beforeall", "fixture", "@before", "precondition"],
         "TEST_DATA",
         "Test setup or fixture failed before the test could run. Check test data prerequisites.",
-        60,
     ),
     (
+        "pattern.null_reference",
         ["nullpointerexception", "undefined is not", "cannot read propert", "typeerror: null", "nonetype"],
         "AUTOMATION_DEFECT",
         "Null/undefined reference encountered. Review test code for missing null checks.",
-        65,
     ),
     (
+        "pattern.ui_locator",
         ["element not found", "no such element", "locator", "selector", "stale element", "element not interactable"],
         "AUTOMATION_DEFECT",
         "UI element locator failed. Check for UI changes, timing issues, or incorrect selectors.",
-        65,
     ),
     (
+        "pattern.missing_dependency",
         ["class not found", "classnotfound", "nosuchmethod", "import error", "module not found"],
         "AUTOMATION_DEFECT",
         "Missing class or module. Check dependencies and classpath configuration.",
-        70,
     ),
     (
+        "pattern.flaky_keywords",
         ["flaky", "intermittent", "race condition", "eventually", "retry exceeded", "sporadic"],
         "FLAKY",
         "Failure matches flaky/intermittent test patterns. Verify with re-run before investigating.",
-        55,
     ),
     (
+        "pattern.assertion",
         ["assertion", "expected", "but was", "assertequals", "assertthat", "assert_equal", "should be"],
         "PRODUCT_BUG",
         "Assertion failure: expected vs actual value mismatch. Likely a product bug or spec change.",
-        55,
     ),
     (
+        "pattern.auth",
         ["permission denied", "access denied", "forbidden", "unauthorized", "401", "403"],
         "TEST_DATA",
         "Authentication or authorization failure. Check test credentials and access permissions.",
-        60,
     ),
 ]
 
@@ -175,7 +183,8 @@ class RulesEngine:
                     summary=f"Test has a {hist_failure_rate*100:.0f}% historical failure rate "
                             f"({hist_fail}/{hist_total} runs). Exhibits flaky behavior — "
                             f"passes and fails non-deterministically.",
-                    confidence=min(85, 50 + int(hist_total * 2)),
+                    rule_id="heuristic.historical_flakiness",
+                    confidence=historical_flakiness_confidence(hist_total),
                     is_flaky=True,
                     actions=[
                         "Quarantine test to prevent blocking releases",
@@ -191,7 +200,7 @@ class RulesEngine:
                 category="PRODUCT_BUG",
                 summary=f"Test passed {consecutive_passes} consecutive times before this failure. "
                         f"Likely a new regression introduced by recent code changes.",
-                confidence=70,
+                rule_id="heuristic.regression_after_streak",
                 is_flaky=False,
                 actions=[
                     "Check recent commits for the affected component",
@@ -209,7 +218,7 @@ class RulesEngine:
                     category="INFRASTRUCTURE",
                     summary=f"Test took {duration_ms}ms — {ratio:.1f}x the historical median "
                             f"({median_duration}ms). Likely a performance degradation or infra issue.",
-                    confidence=60,
+                    rule_id="heuristic.duration_anomaly",
                     is_flaky=False,
                     actions=[
                         "Check service latency and resource utilization",
@@ -225,7 +234,7 @@ class RulesEngine:
                 category="INFRASTRUCTURE" if "timeout" in error_lower or "connection" in error_lower else "TEST_DATA",
                 summary=f"Suite-level failure: {suite_failure_rate*100:.0f}% of tests in this suite failed. "
                         f"Likely a shared dependency, environment, or test data issue.",
-                confidence=70,
+                rule_id="heuristic.suite_level_failure",
                 is_flaky=False,
                 actions=[
                     "Check shared test fixtures and setup/teardown",
@@ -235,12 +244,12 @@ class RulesEngine:
             )
 
         # ── 5. Keyword pattern matching ─────────────────────────────────
-        for keywords, category, summary, confidence in _PATTERNS:
+        for rule_id, keywords, category, summary in _PATTERNS:
             if any(kw in error_lower for kw in keywords):
                 return _build_result(
                     category=category,
                     summary=summary,
-                    confidence=confidence,
+                    rule_id=rule_id,
                     is_flaky=(category == "FLAKY"),
                     actions=_default_actions(category),
                 )
@@ -252,7 +261,7 @@ class RulesEngine:
                 category="INFRASTRUCTURE",
                 summary=f"Failures detected across {cross_suite_rate*100:.0f}% of test suites "
                         f"in this run. Broad blast radius suggests infrastructure or environment issue.",
-                confidence=60,
+                rule_id="heuristic.cross_suite_blast",
                 is_flaky=False,
                 actions=[
                     "Check shared infrastructure components (database, network, services)",
@@ -264,7 +273,7 @@ class RulesEngine:
         return _build_result(
             category="UNKNOWN",
             summary="Could not determine failure cause from available data. Manual review required.",
-            confidence=30,
+            rule_id="heuristic.unknown_fallback",
             is_flaky=False,
             actions=["Review stack trace and error message manually", "Check recent code changes"],
         )
@@ -414,10 +423,21 @@ class RulesEngine:
 def _build_result(
     category: str,
     summary: str,
-    confidence: int,
+    rule_id: str,
     is_flaky: bool,
     actions: list[str],
+    confidence: int | None = None,
 ) -> dict[str, Any]:
+    """Build an AIAnalysis-shaped result.
+
+    ``confidence`` defaults to the rule's band value; only dynamic rules
+    (historical flakiness) pass an explicit computed value. ``confidence_basis``
+    ("empirical" | "heuristic_estimate") and ``confidence_rule_id`` carry the
+    band's documented basis through the analysis record (AI-F4).
+    """
+    band = get_band(rule_id)
+    if confidence is None:
+        confidence = band.confidence
     return {
         "root_cause_summary": summary,
         "failure_category": category,
@@ -432,6 +452,8 @@ def _build_result(
         "tools_used": [],
         "llm_provider": "none",
         "llm_model": "rules_engine",
+        "confidence_basis": band.basis,
+        "confidence_rule_id": rule_id,
     }
 
 

@@ -844,12 +844,12 @@ async def _seed_failure_clusters_and_findings(
                         id, test_run_id, cluster_id, root_cause,
                         failure_category, confidence_score,
                         causal_chain, evidence, affected_services,
-                        contract_violations, recommended_actions, created_at
+                        contract_violations, log_evidence, recommended_actions, created_at
                     ) VALUES (
                         :id, :run_id, :cluster_id, :root_cause,
                         :category, :confidence,
                         :causal_chain, :evidence, :affected_services,
-                        :contract_violations, :recommended_actions, :created_at
+                        :contract_violations, :log_evidence, :recommended_actions, :created_at
                     ) ON CONFLICT DO NOTHING
                 """), {
                     "id": str(uuid.uuid4()),
@@ -865,6 +865,10 @@ async def _seed_failure_clusters_and_findings(
                     ]),
                     "affected_services": json.dumps(tpl["affected_services"]),
                     "contract_violations": json.dumps([]),
+                    # AI-F4: demo rows are tagged so the findings endpoint (and
+                    # the no-seed-only-data guard) can distinguish them from
+                    # real pipeline output (origin="pipeline").
+                    "log_evidence": json.dumps({"origin": "seed"}),
                     "recommended_actions": json.dumps(tpl["recommended_actions"]),
                     "created_at": run_time + timedelta(seconds=rng.randint(60, 180)),
                 })

@@ -38,6 +38,11 @@ export interface DeepFinding {
   affected_services: string[] | null
   contract_violations: ContractViolation[] | null
   recommended_actions: string[] | null
+  /** AI-F4: row provenance — "pipeline" (real deep-pipeline output),
+   *  "seed" (demo data), or "unknown" (legacy rows before tagging). */
+  origin?: 'pipeline' | 'seed' | 'unknown'
+  /** AI-F4 calibration basis of confidence_score, when known. */
+  confidence_basis?: 'empirical' | 'heuristic_estimate' | null
 }
 
 export interface ReleaseDecision {

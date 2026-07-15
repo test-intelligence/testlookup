@@ -36,6 +36,9 @@ def _build_confidence_why(analysis: dict) -> ConfidenceWhy:
         data_sources=data_sources,
         is_llm_inference=n_tools > 0,
         investigation_depth=depth,
+        # AI-F4: present when the rules engine classified (carried on the
+        # analysis dict, or recovered from routing_metadata on stored rows).
+        confidence_basis=analysis.get("confidence_basis"),
     )
 
 
@@ -102,6 +105,10 @@ async def get_existing_analysis(
         "llm_provider":        row.llm_provider or "unknown",
         "llm_model":           row.llm_model or "unknown",
         "requires_human_review": row.requires_human_review if row.requires_human_review is not None else True,
+        # AI-F4: the pipeline persists confidence_basis inside the
+        # routing_metadata JSONB audit blob (no dedicated column). getattr:
+        # legacy-shaped rows/mocks may not carry the attribute at all.
+        "confidence_basis": (getattr(row, "routing_metadata", None) or {}).get("confidence_basis"),
     }
     return AnalysisResponse(
         test_case_id=tc_uuid,

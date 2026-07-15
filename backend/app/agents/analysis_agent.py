@@ -693,6 +693,12 @@ class AnalysisAgent(BaseAgent):
                     "max_tokens": settings.LLM_MAX_TOKENS,
                 },
                 "confidence_adjustments": analysis.pop("_confidence_adjustments", []),
+                # AI-F4: basis of the confidence number — "heuristic_estimate"
+                # (rules-engine band, no empirical calibration) vs "empirical".
+                # None for LLM/ML paths that don't set it. Persisted via
+                # AIAnalysis.routing_metadata (JSONB) — no schema migration.
+                "confidence_basis": analysis.get("confidence_basis"),
+                "confidence_rule_id": analysis.get("confidence_rule_id"),
             }
 
             # If the router recorded a fallback, surface it as a decision entry
