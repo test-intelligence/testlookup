@@ -165,6 +165,10 @@ async def list_my_assigned_failures(
             TestCase.canonical_test_case_id,
             TestCase.triage_status,
             TestCase.triage_notes,
+            # US-8.4: assignee + stack trace drive the read-time "via
+            # CODEOWNERS: …" reason derivation below.
+            TestCase.assigned_to_user_id,
+            TestCase.stack_trace,
             TestRun.build_number,
             TestRun.project_id,
             Project.name.label("project_name"),
@@ -177,6 +181,13 @@ async def list_my_assigned_failures(
         .limit(size)
     )
     rows = (await db.execute(list_stmt)).all()
+
+    # US-8.4: derive a compact "via CODEOWNERS: <pattern>" reason for rows
+    # whose located path matches a path rule resolving to the row's assignee.
+    # Best-effort + bounded to the page — never raises.
+    from app.services.codeowners_service import codeowners_reasons_for_rows
+
+    assignment_reasons = await codeowners_reasons_for_rows(db, list(rows))
 
     # Per-test failure count inside the same window. Grouped by the natural
     # identity (project + suite + class + test name) so the same test across
@@ -252,6 +263,7 @@ async def list_my_assigned_failures(
             run_seq=run_seq_map.get(str(r.test_run_id)),
             failure_count=count_by_key.get(key, 1),
             last_failure_step=step_by_canonical.get(r.canonical_test_case_id),
+            assignment_reason=assignment_reasons.get(r.id),
         ))
 
     pages = math.ceil(total / size) if size > 0 else 0

@@ -3,15 +3,17 @@ import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import {
   type OwnershipRule,
+  CODEOWNERS_SERVICE,
   MATCH_TYPES,
   createOwnershipRule,
   deleteOwnershipRule,
   deleteTeamChannel,
+  importCodeowners,
   updateOwnershipRule,
   upsertTeamChannel,
 } from '../services/ownershipService';
 import { useProjectStore, ALL_PROJECTS_ID } from '../store/projectStore';
-import { useOwnershipRules } from '../hooks/useOwnershipRules';
+import { useCodeownersCoverage, useOwnershipRules } from '../hooks/useOwnershipRules';
 import { useTeamChannels } from '../hooks/useTeamChannels';
 
 type ChannelType = 'email' | 'slack' | 'teams';
@@ -27,11 +29,15 @@ export default function OwnershipEditorPage() {
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId;
 
   const { rules, isLoading: loading, isError, refresh } = useOwnershipRules(projectId);
+  const { coverage, refresh: refreshCoverage } = useCodeownersCoverage(projectId);
   const {
     channels,
     isError: isChannelsError,
     refresh: refreshChannels,
   } = useTeamChannels(projectId);
+
+  // CODEOWNERS import dialog (US-8.3)
+  const [showImport, setShowImport] = useState(false);
 
   // Team-channel edit buffers (US-7.3), keyed by team name
   const [channelEdits, setChannelEdits] = useState<
@@ -167,11 +173,38 @@ export default function OwnershipEditorPage() {
             Rules are evaluated by priority (highest first).
           </p>
         </div>
-        <button onClick={() => setShowForm(!showForm)}
-          className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-neutral-200 text-sm">
-          {showForm ? 'Cancel' : 'Add Rule'}
-        </button>
+        <div className="flex items-center gap-2">
+          {coverage && coverage.path_rules > 0 && (
+            <span
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]"
+              title={`${coverage.matched}/${coverage.located} recently-failing test paths matched a path rule (last ${coverage.lookback_days}d). ${coverage.codeowners_rules} CODEOWNERS rule(s).`}
+            >
+              Coverage
+              <strong className="text-[var(--color-text)] tabular-nums">{coverage.coverage_pct}%</strong>
+            </span>
+          )}
+          <button onClick={() => setShowImport(true)}
+            className="px-4 py-2 border border-[var(--color-border)] text-[var(--color-text-secondary)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
+            Import CODEOWNERS
+          </button>
+          <button onClick={() => setShowForm(!showForm)}
+            className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-neutral-200 text-sm">
+            {showForm ? 'Cancel' : 'Add Rule'}
+          </button>
+        </div>
       </div>
+
+      {showImport && (
+        <ImportCodeownersDialog
+          projectId={projectId}
+          onClose={() => setShowImport(false)}
+          onImported={() => {
+            setShowImport(false);
+            refresh();
+            refreshCoverage();
+          }}
+        />
+      )}
 
       {isError && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">Failed to load ownership rules</div>}
 
@@ -242,7 +275,18 @@ export default function OwnershipEditorPage() {
             )}>
               <span className="text-xs font-mono text-[var(--color-text)]">{rule.match_type}</span>
               <span className="text-neutral-200 truncate font-mono text-xs" title={rule.match_pattern}>{rule.match_pattern}</span>
-              <span className="text-gray-300 truncate">{rule.service_name}</span>
+              <span className="text-gray-300 truncate flex items-center gap-1.5">
+                {rule.service_name === CODEOWNERS_SERVICE ? (
+                  <span
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[rgba(68,147,248,0.14)] text-[#93c5fd] border border-[rgba(68,147,248,0.30)]"
+                    title="Imported from a CODEOWNERS file"
+                  >
+                    CODEOWNERS
+                  </span>
+                ) : (
+                  rule.service_name
+                )}
+              </span>
               <span className="text-gray-300 truncate">{rule.team_name}</span>
               <span className="text-gray-500 truncate text-xs">{rule.team_contact || '—'}</span>
               <span className="text-[var(--color-text-muted)] text-xs">{rule.priority}</span>
@@ -332,6 +376,141 @@ export default function OwnershipEditorPage() {
           <li>Resolved ownership appears on cluster cards and pre-fills defect promotion forms</li>
         </ol>
         <p className="mt-2">Patterns support glob syntax: <code className="bg-gray-900 px-1 rounded">auth-*</code> matches <code className="bg-gray-900 px-1 rounded">auth-login</code>, <code className="bg-gray-900 px-1 rounded">auth-register</code>, etc.</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Import CODEOWNERS dialog (US-8.3) ─────────────────────────────────────────
+
+function ImportCodeownersDialog({
+  projectId,
+  onClose,
+  onImported,
+}: {
+  projectId: string;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [source, setSource] = useState<'github' | 'text'>('text');
+  const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Preview count: non-comment, non-blank lines that carry an owner token.
+  // Cheap local heuristic so the confirm button can show what will be imported.
+  const previewCount =
+    source === 'text'
+      ? text
+          .split('\n')
+          .map(l => l.trim())
+          .filter(l => l && !l.startsWith('#') && l.split(/\s+/).length >= 2).length
+      : null;
+
+  const handleImport = async () => {
+    if (source === 'text' && !text.trim()) {
+      toast.error('Paste a CODEOWNERS file or switch to GitHub fetch');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await importCodeowners(projectId, {
+        source,
+        text: source === 'text' ? text : undefined,
+      });
+      toast.success(
+        `Imported ${result.rules_created} rule${result.rules_created === 1 ? '' : 's'}` +
+          (result.rules_replaced ? ` (replaced ${result.rules_replaced})` : ''),
+      );
+      onImported();
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail || (err instanceof Error ? err.message : 'Import failed'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl w-full max-w-lg p-5"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-sm font-semibold text-[var(--color-text)] m-0 mb-1">Import CODEOWNERS</h2>
+        <p className="text-xs text-[var(--color-text-muted)] mb-3">
+          Maps each CODEOWNERS line to a <code className="font-mono">path</code> ownership rule.
+          Re-importing replaces prior CODEOWNERS-sourced rules and leaves hand-authored rules untouched.
+        </p>
+
+        <div role="radiogroup" aria-label="Import source" className="flex items-center gap-1.5 mb-3">
+          {(['text', 'github'] as const).map(opt => {
+            const active = source === opt;
+            return (
+              <button
+                key={opt}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setSource(opt)}
+                className={clsx(
+                  'px-3 py-1.5 text-xs rounded-full border transition-colors',
+                  active
+                    ? 'bg-[rgba(68,147,248,0.14)] border-[rgba(68,147,248,0.30)] text-[#93c5fd]'
+                    : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-hover)]',
+                )}
+              >
+                {opt === 'text' ? 'Paste text' : 'Fetch from GitHub'}
+              </button>
+            );
+          })}
+        </div>
+
+        {source === 'text' ? (
+          <>
+            <textarea
+              value={text}
+              onChange={e => setText(e.target.value)}
+              rows={10}
+              placeholder={'# comment\nsrc/api/**  @org/backend\ndocs/  @alice\n'}
+              className="w-full text-xs font-mono px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
+            />
+            {previewCount != null && (
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                {previewCount} owner line{previewCount === 1 ? '' : 's'} detected
+              </p>
+            )}
+          </>
+        ) : (
+          <div className="text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded px-3 py-3">
+            Fetches <code className="font-mono">.github/CODEOWNERS</code> (then{' '}
+            <code className="font-mono">CODEOWNERS</code>, <code className="font-mono">docs/CODEOWNERS</code>)
+            over the project&apos;s GitHub integration. Requires the integration configured and enabled,
+            and offline mode off.
+          </div>
+        )}
+
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleImport}
+            disabled={submitting || (source === 'text' && !text.trim())}
+            className="text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+          >
+            {submitting ? 'Importing…' : 'Import'}
+          </button>
+        </div>
       </div>
     </div>
   );

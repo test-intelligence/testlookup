@@ -355,6 +355,14 @@ function FailureRow({
             failed at: <span className="font-mono text-[var(--color-text-muted)]">{item.last_failure_step}</span>
           </div>
         )}
+        {item.assignment_reason && (
+          <div
+            className="text-[10.5px] text-[var(--color-text-faint)] truncate max-w-[360px]"
+            title={`Assigned ${item.assignment_reason}`}
+          >
+            <span className="text-[var(--color-text-muted)]">{item.assignment_reason}</span>
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)] align-middle">
         {item.suite_name ? (

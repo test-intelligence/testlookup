@@ -55,6 +55,12 @@ export interface MyFailureItem {
    * captured steps, so rendering must tolerate its absence.
    */
   last_failure_step?: string | null
+  /**
+   * Why this failure landed with the current assignee, when it was resolved
+   * via a path/CODEOWNERS ownership rule (US-8.4). e.g. "via CODEOWNERS:
+   * src/api/**". Absent for pool/manager/explicit-owner assignments.
+   */
+  assignment_reason?: string | null
 }
 
 export interface MyFailureListResponse {

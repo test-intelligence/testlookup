@@ -117,6 +117,14 @@ async def assign_failed_tests_to_suite_owners(
 
     Resolution per failure:
       1. Explicit ``TestSuiteOwner`` row for the (project, suite_name).
+      1b. **Path/CODEOWNERS owner** (US-8.4): derive the failure's
+         repo-relative file path from its stack trace / error message
+         (``locate_in_trace``), glob-match it against the project's active
+         ``path`` ownership rules, and resolve the matched owner ``@handle``
+         to a User by username/email. Assigns by *path ownership*, never by
+         last committer (monorepo guardrail: owner ≠ author is the point).
+         Non-locatable failures (e.g. Java traces) and unresolvable handles
+         (``@org/team`` or unknown ``@handle``) skip this step.
       2. Otherwise distribute across the **project's QA Lead pool** via
          a deterministic hash of ``test_fingerprint`` — repeat failures
          of the same test always land with the same person, but the
@@ -140,7 +148,7 @@ async def assign_failed_tests_to_suite_owners(
 
     Returns ``{assigned, already_assigned, unassigned}`` for observability.
     """
-    counts = {"assigned": 0, "already_assigned": 0, "unassigned": 0}
+    counts = {"assigned": 0, "already_assigned": 0, "unassigned": 0, "path_owner": 0}
 
     # 1. Fetch failed/broken cases for this run. ``test_fingerprint`` is
     # the stable identity that the pool-distribution hash keys off of;
@@ -152,6 +160,10 @@ async def assign_failed_tests_to_suite_owners(
             TestCase.suite_name,
             TestCase.assigned_to_user_id,
             TestCase.test_fingerprint,
+            # US-8.4: the stack trace / error message drive path-owner
+            # resolution (locate_in_trace → repo-relative path → path rule).
+            TestCase.stack_trace,
+            TestCase.error_message,
         )
         .where(
             TestCase.test_run_id == run_id,
@@ -236,11 +248,35 @@ async def assign_failed_tests_to_suite_owners(
             if row.owner_user_id is not None:
                 owner_by_suite[row.suite_name] = row.owner_user_id
 
+    # 4b. Path/CODEOWNERS ownership (US-8.4). Load the project's active
+    # ``path`` rules once and pre-resolve every single-user owner handle to a
+    # User id. This precedence sits BETWEEN the explicit ``TestSuiteOwner``
+    # lookup and the QA-lead pool: an explicit human suite owner still wins,
+    # but a path/CODEOWNERS owner beats round-robin distribution. Monorepo
+    # guardrail: we assign by PATH ownership, never by who committed — a
+    # last-committer surface deliberately does not exist here. Non-locatable
+    # failures (no derivable path, e.g. Java traces) fall through to the
+    # QA-lead pool. An owner handle that resolves to no User (e.g. ``@org/team``
+    # or an unknown ``@handle``) is skipped — we never assign to a stranger.
+    from app.services import codeowners_service
+
+    path_rules = await codeowners_service.load_path_rules(db, project_id)
+    handle_map: dict[str, uuid.UUID] = {}
+    if path_rules:
+        handles = {
+            h
+            for h in (
+                codeowners_service.owner_handle_for_rule(r) for r in path_rules
+            )
+            if h
+        }
+        handle_map = await codeowners_service.resolve_handles_to_users(db, handles)
+
     # 5. Bucket the failure ids by resolved owner. Each failure
     # independently resolves its owner via the chain documented in the
-    # docstring — explicit suite-owner row > QA-Lead-pool distribution
-    # > manager fallback > ADMIN-pool distribution > NULL. WRITES are
-    # batched: one UPDATE per (resolved owner) bucket below.
+    # docstring — explicit suite-owner row > path/CODEOWNERS owner >
+    # QA-Lead-pool distribution > manager fallback > ADMIN-pool distribution
+    # > NULL. WRITES are batched: one UPDATE per (resolved owner) bucket below.
     salt = str(project_id)
     by_owner: dict[uuid.UUID, list[uuid.UUID]] = {}
     for f in failures:
@@ -251,6 +287,19 @@ async def assign_failed_tests_to_suite_owners(
         owner_id: Optional[uuid.UUID] = (
             owner_by_suite.get(suite_key) if suite_key else None
         )
+        # Path/CODEOWNERS owner — only when no explicit suite owner matched.
+        if owner_id is None and path_rules:
+            path = codeowners_service.locate_failure_path(
+                f.stack_trace, f.error_message,
+            )
+            if path:
+                rule = codeowners_service.match_path_rule(path, path_rules)
+                if rule is not None:
+                    handle = codeowners_service.owner_handle_for_rule(rule)
+                    resolved = handle_map.get(handle.lower()) if handle else None
+                    if resolved is not None:
+                        owner_id = resolved
+                        counts["path_owner"] += 1
         if owner_id is None and qa_lead_pool:
             owner_id = _pick_pool_member(qa_lead_pool, f.test_fingerprint, salt)
         if owner_id is None and manager_id is not None:
@@ -283,6 +332,7 @@ async def assign_failed_tests_to_suite_owners(
         assigned=counts["assigned"],
         already_assigned=counts["already_assigned"],
         unassigned=counts["unassigned"],
+        path_owner_assigned=counts["path_owner"],
         distinct_owners=len(by_owner),
         qa_lead_pool_size=len(qa_lead_pool),
         admin_pool_size=len(admin_pool),

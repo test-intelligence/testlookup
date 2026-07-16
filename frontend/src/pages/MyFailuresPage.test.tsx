@@ -154,6 +154,27 @@ describe('MyFailuresPage', () => {
     expect(screen.getByText('42')).toBeInTheDocument()
   })
 
+  it('shows the CODEOWNERS assignment reason when present (US-8.4)', async () => {
+    mockList.mockResolvedValue(makeResponse([
+      {
+        id: 'cc2', test_name: 'test_api_call',
+        suite_name: 'ApiSuite',
+        status: 'FAILED', severity: 'major',
+        error_message: 'boom',
+        created_at: new Date(Date.now() - 60_000).toISOString(),
+        test_run_id: 'run-2', build_number: '7',
+        project_id: 'p1', project_name: 'P',
+        navigation_url: '/runs/run-2/tests/cc2',
+        class_name: null, failure_category: null, duration_ms: null,
+        assignment_reason: 'via CODEOWNERS: src/api/**',
+      },
+    ]))
+
+    renderPage()
+
+    expect(await screen.findByText('via CODEOWNERS: src/api/**')).toBeInTheDocument()
+  })
+
   it('shows the run datetime inline beside the run identifier', async () => {
     // "Run #N" repeats per (project, suite); the run's start datetime is shown
     // inline (not just on hover) so same-numbered runs are distinguishable.

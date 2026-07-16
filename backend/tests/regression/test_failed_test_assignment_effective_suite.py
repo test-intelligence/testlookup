@@ -53,10 +53,12 @@ def test_actionable_status_values():
 # ── end-to-end resolver: effective-suite via primary_suite_name ─────────────
 
 class _R:
-    def __init__(self, all_=None, first_=None, scalar_=None):
+    def __init__(self, all_=None, first_=None, scalar_=None, scalars_=None):
         self._all = all_ or []
         self._first = first_
         self._scalar = scalar_
+        # US-8.4: ``load_path_rules`` reads ``result.scalars().all()``.
+        self._scalars = scalars_ if scalars_ is not None else []
 
     def all(self):
         return self._all
@@ -66,6 +68,9 @@ class _R:
 
     def scalar_one_or_none(self):
         return self._scalar
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: self._scalars)
 
 
 class _DB:
@@ -107,6 +112,7 @@ async def test_failure_with_null_suite_uses_run_primary_suite_owner():
         _R(all_=[]),                                         # 3. QA-lead/admin pool (empty)
         _R(scalar_="Smoke"),                                 # 4. run.primary_suite_name (the fix)
         _R(all_=[SimpleNamespace(suite_name="Smoke", owner_user_id=suite_owner)]),  # 5. owner rows
+        _R(scalars_=[]),                                     # 6. US-8.4 path rules (none)
     ]
     db = _DB(selects)
 
@@ -115,7 +121,7 @@ async def test_failure_with_null_suite_uses_run_primary_suite_owner():
     # Assigned via the Smoke suite owner — NOT left unassigned, and the
     # default-suite path was never taken (no get_or_create_default_suite call,
     # which would have needed an extra unscripted SELECT).
-    assert counts == {"assigned": 1, "already_assigned": 0, "unassigned": 0}
+    assert counts == {"assigned": 1, "already_assigned": 0, "unassigned": 0, "path_owner": 0}
     assert len(db.updates) == 1
 
 
@@ -136,10 +142,11 @@ async def test_already_assigned_rows_are_preserved():
         _R(all_=[]),                     # pool
         _R(scalar_=None),                # run.primary_suite_name
         _R(all_=[]),                     # owner rows (suite_names_in_run = {"Smoke"})
+        _R(scalars_=[]),                 # US-8.4 path rules (none)
     ]
     db = _DB(selects)
 
     counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
 
-    assert counts == {"assigned": 0, "already_assigned": 1, "unassigned": 0}
+    assert counts == {"assigned": 0, "already_assigned": 1, "unassigned": 0, "path_owner": 0}
     assert db.updates == []  # never overwrites an existing assignment

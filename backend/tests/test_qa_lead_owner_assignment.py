@@ -60,6 +60,18 @@ def _first_result(value):
     return res
 
 
+def _scalars_result(rows):
+    """A MagicMock whose .scalars().all() yields ``rows`` — used for the
+    US-8.4 path-rules load (``codeowners_service.load_path_rules``) that runs
+    after the TestSuiteOwner batch fetch. An empty list means "no path rules",
+    so the path-owner precedence step is skipped."""
+    scal = MagicMock()
+    scal.all = MagicMock(return_value=rows)
+    res = MagicMock()
+    res.scalars = MagicMock(return_value=scal)
+    return res
+
+
 def _user(role: str, *, uid: uuid.UUID | None = None):
     return SimpleNamespace(id=uid or uuid.uuid4(), role=role)
 
@@ -406,7 +418,7 @@ async def test_assign_empty_run_returns_zero_counts():
     db.execute = AsyncMock(return_value=_all_result([]))
 
     counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
-    assert counts == {"assigned": 0, "already_assigned": 0, "unassigned": 0}
+    assert counts == {"assigned": 0, "already_assigned": 0, "unassigned": 0, "path_owner": 0}
 
 
 @pytest.mark.asyncio
@@ -425,6 +437,7 @@ async def test_assign_unassigned_when_no_owner_anywhere():
         _all_result([]),                    # no QA_LEAD/ADMIN project members
         _scalar_result(None),               # run.primary_suite_name (effective-suite)
         _all_result([]),                    # no TestSuiteOwner rows
+        _scalars_result([]),                # US-8.4: no path rules
     ])
 
     counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
@@ -449,6 +462,7 @@ async def test_assign_resolves_via_test_suite_owner():
         _all_result([]),  # member fallback probe — irrelevant, explicit owner wins
         _scalar_result(None),  # run.primary_suite_name (effective-suite)
         _all_result([SimpleNamespace(suite_name="Smoke", owner_user_id=owner_id)]),
+        _scalars_result([]),  # US-8.4: no path rules
         MagicMock(),  # UPDATE result
     ])
 
@@ -474,6 +488,7 @@ async def test_assign_falls_back_to_default_qa_lead():
         _all_result([]),       # _resolve_qa_lead_pool — no QA_LEAD/ADMIN members
         _scalar_result(None),  # run.primary_suite_name (effective-suite)
         _all_result([]),       # no explicit suite owner
+        _scalars_result([]),   # US-8.4: no path rules
         MagicMock(),           # UPDATE
     ])
 
@@ -500,6 +515,7 @@ async def test_assign_skips_already_assigned():
         _all_result([]),  # member fallback probe — row already assigned, ignored
         _scalar_result(None),  # run.primary_suite_name (effective-suite)
         _all_result([SimpleNamespace(suite_name="Smoke", owner_user_id=new_owner)]),
+        _scalars_result([]),  # US-8.4: no path rules
     ])
 
     counts = await assign_failed_tests_to_suite_owners(db, uuid.uuid4(), uuid.uuid4())
@@ -537,6 +553,7 @@ async def test_assign_falls_back_to_project_member_when_owner_config_unset():
         _all_result(member_rows),           # project members include a QA_LEAD
         _scalar_result(None),               # run.primary_suite_name (effective-suite)
         _all_result([]),                    # no explicit TestSuiteOwner row
+        _scalars_result([]),                # US-8.4: no path rules
         MagicMock(),                        # UPDATE
     ])
 
@@ -565,6 +582,7 @@ async def test_assign_falls_back_to_admin_when_no_qa_lead_member():
         ]),
         _scalar_result(None),  # run.primary_suite_name (effective-suite)
         _all_result([]),
+        _scalars_result([]),  # US-8.4: no path rules
         MagicMock(),  # UPDATE
     ])
 
@@ -605,6 +623,7 @@ async def test_assign_distributes_across_qa_lead_pool():
         _all_result(member_rows),           # 2-QA-Lead pool
         _scalar_result(None),               # run.primary_suite_name (effective-suite)
         _all_result([]),                    # no TestSuiteOwner
+        _scalars_result([]),                # US-8.4: no path rules
         MagicMock(),                        # UPDATE bucket 1
         MagicMock(),                        # UPDATE bucket 2
     ])
@@ -638,6 +657,7 @@ async def test_assign_default_qa_lead_folded_into_pool():
         _all_result([]),                      # no QA_LEAD project members yet
         _scalar_result(None),                 # run.primary_suite_name (effective-suite)
         _all_result([]),                      # no TestSuiteOwner
+        _scalars_result([]),                  # US-8.4: no path rules
         MagicMock(),                          # UPDATE
     ])
 
@@ -667,6 +687,7 @@ async def test_assign_mixed_batch():
         _all_result([]),  # _resolve_qa_lead_pool — empty; default_qa_lead is folded in
         _scalar_result(None),  # run.primary_suite_name (effective-suite)
         _all_result([SimpleNamespace(suite_name="A", owner_user_id=explicit_owner)]),
+        _scalars_result([]),  # US-8.4: no path rules
         MagicMock(),  # UPDATE bucket 1 (explicit_owner)
         MagicMock(),  # UPDATE bucket 2 (default_qa_lead via pool)
     ])

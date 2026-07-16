@@ -14,6 +14,7 @@ import { SWRConfig } from 'swr'
 
 vi.mock('@/services/ownershipService', () => ({
   listOwnershipRules: vi.fn(),
+  getCodeownersCoverage: vi.fn(),
 }))
 
 // The hook keys on ['ownership-rules', projectId], so each test needs its own
@@ -74,5 +75,43 @@ describe('useOwnershipRules', () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(result.current.rules).toEqual([])
+  })
+})
+
+const COVERAGE = {
+  path_rules: 4,
+  codeowners_rules: 3,
+  sampled: 20,
+  located: 10,
+  matched: 7,
+  coverage_pct: 70,
+  lookback_days: 30,
+}
+
+describe('useCodeownersCoverage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('fetches coverage for a resolved project', async () => {
+    const { getCodeownersCoverage } = await import('@/services/ownershipService')
+    ;(getCodeownersCoverage as ReturnType<typeof vi.fn>).mockResolvedValue(COVERAGE)
+
+    const { useCodeownersCoverage } = await import('./useOwnershipRules')
+    const { result } = renderHook(() => useCodeownersCoverage('p1'), { wrapper })
+
+    await waitFor(() => expect(result.current.coverage).toEqual(COVERAGE))
+    expect(getCodeownersCoverage).toHaveBeenCalledWith('p1')
+  })
+
+  it('does not fetch when there is no resolved project', async () => {
+    const { getCodeownersCoverage } = await import('@/services/ownershipService')
+
+    const { useCodeownersCoverage } = await import('./useOwnershipRules')
+    const { result } = renderHook(() => useCodeownersCoverage(null), { wrapper })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(getCodeownersCoverage).not.toHaveBeenCalled()
+    expect(result.current.coverage).toBeNull()
   })
 })

@@ -15,6 +15,9 @@ from app.models.postgres import (
     UserRole,
 )
 from app.models.schemas import (
+    CodeownersCoverage,
+    CodeownersImportRequest,
+    CodeownersImportResponse,
     OwnershipBulkImportRequest,
     OwnershipResolution,
     OwnershipRuleCreate,
@@ -174,6 +177,87 @@ async def export_ownership_rules(
         .order_by(ServiceOwnershipRule.priority.desc())
     )
     return result.scalars().all()
+
+
+# ── CODEOWNERS import (PMF US-8.3) ────────────────────────────────────────────
+
+
+@router.post("/codeowners/import", response_model=CodeownersImportResponse, status_code=201)
+async def import_codeowners(
+    project_id: uuid.UUID,
+    payload: CodeownersImportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    _: User = Depends(require_project_access()),
+):
+    """Import a GitHub CODEOWNERS file into ``path`` ownership rules (QA_LEAD+).
+
+    Two acquisition paths:
+      * ``source="text"`` — the raw CODEOWNERS body is in ``payload.text``
+        (air-gapped / paste-upload). No egress.
+      * ``source="github"`` — fetched over the configured GitHub connector.
+        422s (with the connector's reason) when offline / flag-off / not
+        configured / file absent, so the caller can surface why.
+
+    Idempotent: replaces the project's prior CODEOWNERS-sourced rules only,
+    leaving hand-authored rules untouched. This router owns the commit.
+    """
+    from app.services import codeowners_service
+
+    if payload.source == "text":
+        text = payload.text or ""
+        if not text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="source='text' requires a non-empty CODEOWNERS body",
+            )
+    else:  # github
+        text, detail = await codeowners_service.fetch_codeowners_text(db, project_id)
+        if text is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not fetch CODEOWNERS from GitHub ({detail})",
+            )
+
+    summary = await codeowners_service.import_codeowners_rules(
+        db, project_id=project_id, text=text, actor_id=current_user.id,
+    )
+    # Coverage is computed after the flush so it sees the freshly imported rows.
+    coverage = await codeowners_service.compute_coverage(db, project_id)
+    await db.commit()
+
+    logger.info(
+        "CODEOWNERS imported for project %s: %d rules (source=%s) by %s",
+        project_id, summary["rules_created"], payload.source, current_user.username,
+    )
+    return CodeownersImportResponse(
+        imported=summary["imported"],
+        rules_created=summary["rules_created"],
+        rules_replaced=summary["rules_replaced"],
+        source=payload.source,
+        coverage=CodeownersCoverage(**coverage),
+    )
+
+
+@router.get("/codeowners/coverage", response_model=CodeownersCoverage)
+async def codeowners_coverage(
+    project_id: uuid.UUID,
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+):
+    """Percentage of recent failing-test paths matched by a ``path`` rule.
+
+    Bounded lookback (``days``, clamped 1-365) over a capped sample of recent
+    FAILED/BROKEN test cases. ``coverage_pct`` is over the *locatable* failures.
+    """
+    from app.services import codeowners_service
+
+    lookback = max(1, min(int(days), 365))
+    coverage = await codeowners_service.compute_coverage(
+        db, project_id, lookback_days=lookback,
+    )
+    return CodeownersCoverage(**coverage)
 
 
 # ── Team notification channels (PMF US-7.3) ──────────────────────────────────

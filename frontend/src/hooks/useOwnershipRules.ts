@@ -1,5 +1,10 @@
 import useSWR from 'swr'
-import { type OwnershipRule, listOwnershipRules } from '@/services/ownershipService'
+import {
+  type CodeownersCoverage,
+  type OwnershipRule,
+  getCodeownersCoverage,
+  listOwnershipRules,
+} from '@/services/ownershipService'
 
 /**
  * Ownership-rules fetch as an SWR hook.
@@ -25,6 +30,26 @@ export function useOwnershipRules(projectId: string | null) {
 
   return {
     rules: data ?? [],
+    isLoading,
+    isError: !!error,
+    refresh: mutate,
+  }
+}
+
+/**
+ * CODEOWNERS coverage badge data (US-8.3). Keyed on `projectId`; no fetch when
+ * there is no resolved project (mirrors `useOwnershipRules`). `refresh` lets
+ * the page re-pull after an import updates the rule set.
+ */
+export function useCodeownersCoverage(projectId: string | null) {
+  const { data, error, isLoading, mutate } = useSWR<CodeownersCoverage>(
+    projectId ? (['codeowners-coverage', projectId] as const) : null,
+    ([, pid]: readonly [string, string]) => getCodeownersCoverage(pid),
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  )
+
+  return {
+    coverage: data ?? null,
     isLoading,
     isError: !!error,
     refresh: mutate,

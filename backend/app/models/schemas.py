@@ -556,6 +556,11 @@ class MyFailureItem(BaseModel):
     # ``None`` when the test has no granular step snapshot or no failing step —
     # additive/optional so existing clients are unaffected.
     last_failure_step: Optional[str] = None
+    # Why this failure landed with the current assignee, when it was resolved
+    # via a path/CODEOWNERS ownership rule (US-8.4). Derived read-time, e.g.
+    # "via CODEOWNERS: src/api/**". ``None`` for pool/manager/explicit-owner
+    # assignments — additive/optional so existing clients are unaffected.
+    assignment_reason: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -3145,6 +3150,37 @@ class OwnershipBulkImportRequest(BaseModel):
     """Bulk import of ownership rules."""
     rules: List[OwnershipBulkImportItem] = Field(..., min_length=1, max_length=500)
     replace_existing: bool = False
+
+
+class CodeownersImportRequest(BaseModel):
+    """Import a CODEOWNERS file into ``path`` ownership rules (US-8.3).
+
+    ``source == "text"`` carries the raw file body in ``text`` (air-gapped /
+    paste-upload). ``source == "github"`` fetches it over the configured
+    GitHub connector and ``text`` is ignored.
+    """
+    source: str = Field(..., pattern="^(github|text)$")
+    text: Optional[str] = Field(None, max_length=1_000_000)
+
+
+class CodeownersCoverage(BaseModel):
+    """Coverage of recent failing-test paths by ``path`` ownership rules."""
+    path_rules: int = 0
+    codeowners_rules: int = 0
+    sampled: int = 0
+    located: int = 0
+    matched: int = 0
+    coverage_pct: float = 0.0
+    lookback_days: int = 30
+
+
+class CodeownersImportResponse(BaseModel):
+    """Summary of a CODEOWNERS import."""
+    imported: int
+    rules_created: int
+    rules_replaced: int
+    source: str
+    coverage: CodeownersCoverage
 
 
 class OwnershipResolution(BaseModel):

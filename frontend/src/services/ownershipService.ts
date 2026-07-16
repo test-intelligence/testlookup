@@ -1,5 +1,10 @@
 import { api } from './api';
 
+// Provenance marker the backend writes to ``service_name`` on rules imported
+// from a CODEOWNERS file (US-8.3). Used to visually tag those rows and scope
+// re-import replacement. Kept as a literal constant, not inlined at call sites.
+export const CODEOWNERS_SERVICE = 'CODEOWNERS';
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface OwnershipRule {
@@ -100,6 +105,48 @@ export async function bulkImportRules(projectId: string, rules: Array<{
 
 export async function exportOwnershipRules(projectId: string): Promise<OwnershipRule[]> {
   const { data } = await api.get<OwnershipRule[]>(`/api/v1/projects/${projectId}/ownership/rules/export`);
+  return data;
+}
+
+// ── CODEOWNERS import (US-8.3) ──────────────────────────────────────────────
+
+export interface CodeownersCoverage {
+  path_rules: number;
+  codeowners_rules: number;
+  sampled: number;
+  located: number;
+  matched: number;
+  coverage_pct: number;
+  lookback_days: number;
+}
+
+export interface CodeownersImportResult {
+  imported: number;
+  rules_created: number;
+  rules_replaced: number;
+  source: 'github' | 'text';
+  coverage: CodeownersCoverage;
+}
+
+export async function importCodeowners(
+  projectId: string,
+  payload: { source: 'github' | 'text'; text?: string },
+): Promise<CodeownersImportResult> {
+  const { data } = await api.post<CodeownersImportResult>(
+    `/api/v1/projects/${projectId}/ownership/codeowners/import`,
+    payload,
+  );
+  return data;
+}
+
+export async function getCodeownersCoverage(
+  projectId: string,
+  days = 30,
+): Promise<CodeownersCoverage> {
+  const { data } = await api.get<CodeownersCoverage>(
+    `/api/v1/projects/${projectId}/ownership/codeowners/coverage`,
+    { params: { days } },
+  );
   return data;
 }
 
