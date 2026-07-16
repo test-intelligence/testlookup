@@ -682,6 +682,7 @@ def ingest_uploaded_results(self, run_id: str, payload: dict, user_id: str):
                     pr_number=payload.get("pr_number"),
                     ci_actor=payload.get("ci_actor"),
                     ci_run_url=payload.get("ci_run_url"),
+                    commit_range=payload.get("commit_range"),
                 )
                 count = await ingest_test_results(db, run, payload["results"])
                 await db.commit()
@@ -737,6 +738,7 @@ def ingest_uploaded_file(
     pr_number: int = None,
     ci_actor: str = None,
     ci_run_url: str = None,
+    commit_range: list = None,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -842,6 +844,7 @@ def ingest_uploaded_file(
                     pr_number=pr_number,
                     ci_actor=ci_actor,
                     ci_run_url=ci_run_url,
+                    commit_range=commit_range,
                 )
                 if archive_prefix:
                     run.minio_prefix = archive_prefix  # link the archived raw upload (dir prefix)

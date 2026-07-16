@@ -21,6 +21,7 @@ from app.routers import (
     audit_dashboard,
     auth,
     chat,
+    commit_attribution,
     compliance_packs,
     deep_investigation,
     debug,
@@ -119,6 +120,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     releases.router,
     reports.router,
     run_intelligence.router,
+    commit_attribution.router,       # Epic 8 US-8.1/US-8.2: commit range + suspect ranking
     scoring.router,
     onboarding.router,
     test_health.router,

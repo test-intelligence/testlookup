@@ -46,15 +46,17 @@
  *     creation via POST /projects/{id}/defects/jira; disabled with a
  *     tooltip when Jira is offline-gated/unconfigured AND no webhook
  *     receiver is subscribed (US-6.3 fallback).
- *   - "Start bisect" was REMOVED (not hidden): commit attribution (Epic 8)
- *     hasn't landed, so there is no backend to drive a bisect. Reintroduce
- *     the button alongside that work rather than shipping a dead CTA.
+ *   - "Start bisect" was RE-ADDED (Epic 8 US-8.2): it now reveals the
+ *     Suspects panel ("Who / what changed") — ranked commits landed since the
+ *     last green run, scored by path overlap with the failing test (backend
+ *     GET /api/v1/runs/{id}/suspects). Bisect = "show the suspect commit range
+ *     for this failure". Framed as suspects, never culprits (monorepo caveat).
  */
 import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowRight, Check, ChevronRight, Clock, Code as CodeIcon,
-  Download, FileText, LayoutGrid, Minus, Search, ShieldCheck,
+  Download, FileText, GitBranch, GitCommit, LayoutGrid, Minus, Search, ShieldCheck,
   TestTube, TriangleAlert, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -66,6 +68,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import WidgetPicker from '@/components/analytics/WidgetPicker'
+import { useSuspects } from '@/hooks/useCommitAttribution'
 import { useAnalysisLookup } from '@/hooks/useAnalysisLookup'
 import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
@@ -991,7 +994,7 @@ function build14CellStrip(trend: TrendPoint[]): RunCell[] {
 
 function WhatsFailingCard({
   topFailingTest, totalRuns, trend, onMute, muteDisabledReason,
-  onCreateJira, createJiraDisabledReason,
+  onCreateJira, createJiraDisabledReason, onShowSuspects, showSuspectsDisabledReason,
 }: {
   topFailingTest: TopFailingItem | null
   totalRuns: number
@@ -1006,6 +1009,11 @@ function WhatsFailingCard({
    *  needs a fingerprint + project, and a configured (non-offline) Jira
    *  or a webhook receiver. */
   createJiraDisabledReason?: string | null
+  /** Epic 8 US-8.2: reveals/scrolls to the Suspects panel — the re-added
+   *  bisect affordance (bisect = "show the suspect commit range for this
+   *  failure"). Disabled when there's no failed run to attribute against. */
+  onShowSuspects?: () => void
+  showSuspectsDisabledReason?: string | null
 }) {
   // AI-classified failure kind of the headline test (US-9.2). Prefer the
   // server-derived value; fall back to the category mirror for older
@@ -1183,9 +1191,161 @@ function WhatsFailingCard({
           >
             Create Jira issue
           </GhostBtn>
+          {/* Epic 8 US-8.2 — re-added bisect affordance. Bisect here means
+              "show the suspect commit range for this failure": it reveals the
+              Suspects panel (ranked commits since the last green run). */}
+          <GhostBtn
+            onClick={onShowSuspects}
+            disabled={Boolean(showSuspectsDisabledReason)}
+            title={showSuspectsDisabledReason ?? 'Bisect: show the suspect commits between the last green run and this failure'}
+          >
+            <GitBranch className="h-3.5 w-3.5" /> Start bisect
+          </GhostBtn>
         </div>
       </div>
     </CardShell>
+  )
+}
+
+// ── Suspects panel (Epic 8 US-8.2) ────────────────────────────────────────
+// "Who / what changed" — the re-added bisect surface. Ranks the commits
+// landed since the last green run as SUSPECTS (never culprits) for the
+// headline failing test, with the overlapping-files rationale expandable and
+// commit deep links. Honest empty state when there's no commit range.
+export function SuspectsPanel({
+  runId, fingerprint, panelId,
+}: {
+  runId: string | null
+  fingerprint?: string | null
+  panelId?: string
+}) {
+  const { ranking, suspects, available, caveat, hasLocationSignal, isLoading } =
+    useSuspects(runId, { fingerprint: fingerprint ?? undefined })
+
+  // No failed run to attribute against — don't render a dead card.
+  if (!runId) return null
+
+  const source = ranking?.source
+  return (
+    <div id={panelId} data-testid="suspects-panel">
+      <CardShell
+        title="Who / what changed"
+        rightSlot={
+          <>
+            <GitCommit className="h-3.5 w-3.5" />
+            <Pill tone="neutral">Suspects</Pill>
+          </>
+        }
+      >
+        <div className="px-4 py-3.5">
+          {isLoading ? (
+            <p className="text-[12.5px] text-[var(--color-text-muted)] m-0">
+              Resolving the commit range…
+            </p>
+          ) : !available || suspects.length === 0 ? (
+            <div className="text-[12.5px] text-[var(--color-text-muted)]">
+              <p className="m-0">
+                No commit range available for this failure yet
+                {source === 'unavailable'
+                  ? ' — no GitHub connector is configured and no commit list was supplied on ingest.'
+                  : '.'}
+              </p>
+              <p className="mt-1.5 mb-0 text-[11.5px] text-[var(--color-text-faint)]">
+                Configure the GitHub integration, or have your CI push the commit
+                range on ingest, to see ranked suspects here.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Suspects-not-culprits + monorepo caveat, surfaced verbatim. */}
+              <p className="m-0 mb-2.5 text-[11.5px] text-[var(--color-text-faint)] flex items-start gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>{caveat}</span>
+              </p>
+              {!hasLocationSignal && (
+                <p className="m-0 mb-2.5 text-[11.5px] text-[var(--color-text-faint)]">
+                  No source location was derivable for this test — commits are
+                  ordered by recency, not path overlap. Read as a range to inspect.
+                </p>
+              )}
+              <ul className="list-none m-0 p-0 flex flex-col gap-2">
+                {suspects.map((s, i) => (
+                  <li
+                    key={s.sha}
+                    className="rounded-md border"
+                    style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+                  >
+                    <div className="flex items-start justify-between gap-2 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">#{i + 1}</span>
+                          {s.commit_url ? (
+                            <a
+                              href={s.commit_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-mono text-[12.5px] font-medium text-[var(--color-accent)] hover:underline"
+                            >
+                              {(s.sha || '').slice(0, 8)}
+                            </a>
+                          ) : (
+                            <span className="font-mono text-[12.5px] font-medium text-[var(--color-text)]">
+                              {(s.sha || '').slice(0, 8)}
+                            </span>
+                          )}
+                          <span className="text-[12px] text-[var(--color-text-muted)] truncate">
+                            {s.author ?? 'unknown author'}
+                          </span>
+                        </div>
+                        <div className="text-[12px] text-[var(--color-text-secondary)] truncate mt-0.5">
+                          {s.message || '(no message)'}
+                        </div>
+                      </div>
+                      <span
+                        className="shrink-0 tabular-nums text-[12px] font-semibold px-2 py-0.5 rounded"
+                        title="Suspect score (0–100): path overlap dominates, recency breaks ties"
+                        style={{ background: 'var(--color-bg-card)', color: 'var(--color-text)' }}
+                      >
+                        {s.score.toFixed(0)}
+                      </span>
+                    </div>
+                    {/* Every ranking is inspectable — which files overlapped. */}
+                    <details className="px-3 pb-2">
+                      <summary className="text-[11.5px] text-[var(--color-text-muted)] cursor-pointer select-none">
+                        Why this suspect
+                      </summary>
+                      <div className="mt-1.5 text-[11.5px] text-[var(--color-text-faint)] flex flex-col gap-1">
+                        <div>
+                          Recency rank {s.rationale.recency_rank} · overlap score{' '}
+                          {s.rationale.overlap_score.toFixed(2)} ·{' '}
+                          {s.rationale.changed_file_count} file
+                          {s.rationale.changed_file_count === 1 ? '' : 's'} changed
+                          {s.rationale.author_touched_module_before
+                            ? ' · author touched this module elsewhere in the range'
+                            : ''}
+                        </div>
+                        {s.rationale.overlapping_files.length > 0 ? (
+                          <div>
+                            <span className="text-[var(--color-text-muted)]">Overlapping files:</span>
+                            <ul className="list-none m-0 mt-1 p-0 flex flex-col gap-0.5">
+                              {s.rationale.overlapping_files.map(f => (
+                                <li key={f} className="font-mono text-[11px] truncate">{f}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : (
+                          <div className="italic">No file overlapped the failing test's path.</div>
+                        )}
+                      </div>
+                    </details>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      </CardShell>
+    </div>
   )
 }
 
@@ -2729,6 +2889,23 @@ export default function FailureAnalysisPage() {
             muteDisabledReason={muteDisabledReason}
             onCreateJira={() => { if (!createJiraDisabledReason) setJiraOpen(true) }}
             createJiraDisabledReason={createJiraDisabledReason}
+            onShowSuspects={() => {
+              document
+                .getElementById('suspects-panel')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+            showSuspectsDisabledReason={
+              latestFailedRun?.id
+                ? null
+                : 'No failed run in this window to attribute commits against.'
+            }
+          />
+          {/* Epic 8 US-8.2 — the bisect surface: ranked suspect commits for the
+              latest failing run. Honest empty state when no commit range. */}
+          <SuspectsPanel
+            runId={latestFailedRun?.id ?? null}
+            fingerprint={model.topFailingTest?.test_fingerprint ?? null}
+            panelId="suspects-panel"
           />
           <FailureCategoryCard
             categories={kindFilteredCategories}

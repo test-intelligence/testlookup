@@ -67,6 +67,7 @@ async def create_run_from_payload(
     pr_number: Optional[int] = None,
     ci_actor: Optional[str] = None,
     ci_run_url: Optional[str] = None,
+    commit_range: Optional[list] = None,
 ) -> TestRun:
     """
     Create a TestRun record for API-ingested data.
@@ -115,6 +116,9 @@ async def create_run_from_payload(
             ):
                 if value is not None and getattr(existing, field) is None:
                     setattr(existing, field, value)
+            # US-8.1 — persist a caller-supplied commit range (air-gapped
+            # attribution path). Staged under this session; caller commits.
+            await _store_supplied_commit_range(db, existing, commit_range)
             logger.info("Reusing existing run", run_id=str(existing.id), build=build_number)
             return existing
     else:
@@ -152,8 +156,30 @@ async def create_run_from_payload(
     )
     db.add(run)
     await db.flush()
+    # US-8.1 — persist a caller-supplied commit range (air-gapped attribution
+    # path). Staged under this session; the caller owns the commit.
+    await _store_supplied_commit_range(db, run, commit_range)
     logger.info("Created new run", run_id=str(run.id), build=build_number, project=project_id)
     return run
+
+
+async def _store_supplied_commit_range(
+    db: AsyncSession, run: TestRun, commit_range: Optional[list],
+) -> None:
+    """Best-effort persist of a caller-supplied commit range (US-8.1).
+
+    Never raises — a malformed commit list must not fail ingestion. Empty /
+    absent lists are a no-op (finalize's connector path may still resolve one).
+    """
+    if not commit_range:
+        return
+    try:
+        from app.services.commit_attribution_service import store_supplied_range
+        await store_supplied_range(db, run, commit_range)
+    except Exception as exc:
+        logger.warning(
+            "supplied_commit_range_store_failed", run_id=str(run.id), error=str(exc),
+        )
 
 
 async def ingest_test_results(
@@ -444,6 +470,19 @@ async def finalize_run(
             run_id=str(rid),
             error=str(pr_exc),
         )
+
+    # Epic 8 US-8.1 — resolve + persist this run's commit range (commits
+    # since the last green run). Own session, idempotent per run: a
+    # caller-supplied range (air-gapped path) already stored at ingest wins;
+    # otherwise the connector path fetches it when GitHub is configured +
+    # online; otherwise an honest ``unavailable`` row is persisted. Gated by
+    # AI_OFFLINE_MODE + the github_checks flag inside the service — never
+    # raises into the pipeline.
+    from app.services.commit_attribution_service import resolve_commit_range
+    await _run_isolated(
+        "commit_range",
+        lambda d: resolve_commit_range(d, rid),
+    )
 
     # Fetch run for notification data
     async with AsyncSessionLocal() as db:

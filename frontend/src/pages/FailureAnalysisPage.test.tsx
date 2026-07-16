@@ -571,15 +571,14 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     )
   }
 
-  it('no longer renders the "Start bisect" CTA (removed until commit attribution lands)', async () => {
+  it('re-adds the "Start bisect" CTA (Epic 8 US-8.2 — wired to the Suspects surface)', async () => {
     await seedFailingScenario()
     renderPage()
 
     // The failing-test card is present…
     expect(await screen.findByRole('button', { name: /Mute test/i })).toBeInTheDocument()
-    // …but the dead bisect CTA is gone, not just disabled.
-    expect(screen.queryByText(/Start bisect/i)).toBeNull()
-    expect(screen.queryByText(/Bisect modal/i)).toBeNull()
+    // …and the bisect CTA is back — it reveals the Suspects panel.
+    expect(screen.getByRole('button', { name: /Start bisect/i })).toBeInTheDocument()
   })
 
   it('opens the mute modal and posts a quarantine proposal with the typed reason', async () => {

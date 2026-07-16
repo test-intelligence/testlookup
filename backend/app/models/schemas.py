@@ -1982,6 +1982,27 @@ class AITaskStatusResponse(BaseModel):
     error: Optional[str] = None
 
 
+# ── Commit attribution (Epic 8 US-8.1) ────────────────────────────────────────
+
+class SuppliedCommit(BaseModel):
+    """One commit in a caller-supplied commit range (US-8.1 air-gapped path).
+
+    CI/SDK callers that already know the commits landed since the last green
+    run can push them on ingest so TestLookup needs NO outbound VCS call.
+    Bounded so a payload can't balloon: ``files`` is capped and the enclosing
+    ``commit_range`` list is capped on each ingest schema.
+    """
+    sha: str = Field(..., min_length=1, max_length=64)
+    author: Optional[str] = Field(None, max_length=255)
+    message: Optional[str] = Field(None, max_length=2000)
+    files: Optional[List[str]] = Field(None, max_length=500)
+    committed_at: Optional[str] = Field(None, max_length=40)
+
+
+# Max commits accepted on a single ingest's supplied commit range.
+_COMMIT_RANGE_MAX = 100
+
+
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
 class LiveSessionCreate(BaseModel):
@@ -2022,6 +2043,9 @@ class LiveSessionCreate(BaseModel):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
+    # list so air-gapped callers get suspect ranking with no VCS call.
+    commit_range: Optional[List[SuppliedCommit]] = Field(None, max_length=_COMMIT_RANGE_MAX)
 
 
 class LiveSessionResponse(BaseModel):
@@ -2143,6 +2167,10 @@ class IngestPayload(BaseModel):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
+    # list ([{sha, author, message, files}]) so callers can supply the range
+    # since the last green run and get suspect ranking with no VCS call.
+    commit_range: Optional[List[SuppliedCommit]] = Field(None, max_length=_COMMIT_RANGE_MAX)
 
 
 class IngestResponse(BaseModel):

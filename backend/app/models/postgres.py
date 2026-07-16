@@ -1587,6 +1587,40 @@ class FailureCluster(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class RunCommitRange(Base):
+    """Commit range associated with a run — Epic 8 US-8.1 (migration 0110).
+
+    One row per run (``run_id`` UNIQUE, idempotent per run). Records the
+    commits landed since the run's last-green baseline. ``source``:
+    ``connector`` (fetched from the GitHub integration), ``supplied``
+    (caller pushed the list on ingest — air-gapped path, no VCS call;
+    supplied always wins over connector), or ``unavailable`` (neither
+    path yielded data — honest empty state). ``commits`` is a bounded
+    list of ``{sha, author, message, files, committed_at}`` ordered
+    oldest→newest. Suspect ranking (US-8.2) reads this table.
+    """
+    __tablename__ = "run_commit_ranges"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_run_commit_ranges_run"),
+        Index("ix_run_commit_ranges_project", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    base_commit: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    head_commit: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    base_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="unavailable")
+    commits: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class DeepFinding(Base):
     """Deep investigation result per failure cluster.
 

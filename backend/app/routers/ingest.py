@@ -151,6 +151,10 @@ async def ingest_file(
     pr_number: int = Form(None, ge=1),
     ci_actor: str = Form(None, max_length=120),
     ci_run_url: str = Form(None, max_length=1000),
+    # Commit attribution (US-8.1, air-gapped path) — an optional JSON-encoded
+    # list of ``{sha, author, message, files}`` the CLI can supply so suspect
+    # ranking needs no outbound VCS call. Parsed + bounded below.
+    commit_range: str = Form(None),
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
 ):
@@ -248,6 +252,19 @@ async def ingest_file(
 
     run_id = str(uuid.uuid4())
 
+    # US-8.1 — parse the optional supplied commit range (JSON string on the
+    # multipart form). Malformed JSON is ignored rather than 400'd: attribution
+    # is a best-effort enrichment, not a gate on ingesting the results.
+    commit_range_arg = None
+    if commit_range:
+        import json
+        try:
+            parsed = json.loads(commit_range)
+            if isinstance(parsed, list):
+                commit_range_arg = parsed[:100]
+        except (ValueError, TypeError):
+            logger.warning("file_ingest_commit_range_unparseable", run_id=run_id)
+
     # NB: the raw upload is archived in the worker (off the request path), which
     # already receives the bytes — see _archive_raw_upload. Keeps the 202 fast.
     task = ingest_uploaded_file.delay(
@@ -270,6 +287,7 @@ async def ingest_file(
         pr_number=pr_number,
         ci_actor=ci_actor,
         ci_run_url=ci_run_url,
+        commit_range=commit_range_arg,
     )
 
     # Seed a 'pending' status so the very first client poll (which may land

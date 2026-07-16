@@ -125,10 +125,19 @@ def _with_ci_context(metadata: dict, payload) -> dict:
         for f in _CI_CONTEXT_FIELDS
         if getattr(payload, f, None) is not None
     }
-    if not ci:
+    # US-8.1 — stash a caller-supplied commit range (air-gapped attribution)
+    # alongside the CI context. LiveSession has no column for it; upsert_test_run
+    # reads it back at persist time and persists the range for the run.
+    supplied_range = getattr(payload, "commit_range", None)
+    if not ci and not supplied_range:
         return metadata
     merged = dict(metadata)
-    merged["ci_context"] = {**ci, **(merged.get("ci_context") or {})}
+    if ci:
+        merged["ci_context"] = {**ci, **(merged.get("ci_context") or {})}
+    if supplied_range and not merged.get("commit_range"):
+        merged["commit_range"] = [
+            c.model_dump() if hasattr(c, "model_dump") else c for c in supplied_range
+        ]
     return merged
 
 
@@ -1115,3 +1124,17 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
         logger.info(
             f"test_run_updated_for_live_session run_id={run_uuid} session_id={session.id}"
         )
+
+    # US-8.1 — persist a caller-supplied commit range stashed at session
+    # create. Staged under this session (handler commits); best-effort so a
+    # malformed list never fails live-run persistence.
+    supplied_range = (getattr(session, "extra_metadata", None) or {}).get("commit_range")
+    if supplied_range:
+        try:
+            await db.flush()
+            from app.services.commit_attribution_service import store_supplied_range
+            await store_supplied_range(db, run, supplied_range)
+        except Exception as exc:
+            logger.warning(
+                f"live_supplied_commit_range_store_failed run_id={run_uuid} error={exc}"
+            )
