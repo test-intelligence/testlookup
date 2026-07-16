@@ -27,6 +27,12 @@ vi.mock('@/services/agentGovernanceService', () => ({
   },
 }))
 
+// The Fixer card (AI-2) has its own config resource + tests — stub it here so
+// this file stays a hermetic test of the governance policies.
+vi.mock('@/components/fixer/FixerConfigCard', () => ({
+  default: () => <div data-testid="fixer-config-card-stub" />,
+}))
+
 const POLICY = {
   agent_id: 'investigator',
   enabled: true,
@@ -72,6 +78,9 @@ describe('AIAgentsPage', () => {
     expect(screen.getByText(/7/)).toBeInTheDocument()
     expect(screen.getByText(/shadow runs completed/)).toBeInTheDocument()
     expect(screen.getByText(/promotion review at 10/)).toBeInTheDocument()
+
+    // The Fixer card (AI-2) coexists alongside the Investigator card.
+    expect(screen.getByTestId('fixer-config-card-stub')).toBeInTheDocument()
   })
 
   it('PUTs the exact contract payload {enabled, mode, budgets} on save', async () => {
@@ -121,5 +130,6 @@ describe('AIAgentsPage', () => {
 
     expect(screen.getByText(/select a specific project/i)).toBeInTheDocument()
     expect(screen.queryByTestId('agent-policy-investigator')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('fixer-config-card-stub')).not.toBeInTheDocument()
   })
 })

@@ -18,12 +18,13 @@ import { useActiveProjectId } from '@/hooks/useProjectScopedSWR'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import type { AgentRunEntry } from '@/types/investigator'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import FixAttemptsSection from '@/components/fixer/FixAttemptsSection'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 
 const PAGE_SIZE = 50
 
 /** Known governable agents; the dropdown also absorbs ids seen in the data. */
-const KNOWN_AGENTS = ['investigator']
+const KNOWN_AGENTS = ['investigator', 'fixer']
 
 function StatusChip({ status }: { status: string }) {
   const tone =
@@ -248,6 +249,9 @@ export default function AgentActivityPage() {
           </div>
         </div>
       )}
+
+      {/* Fix Attempts (AI-2) — the Fixer's per-test attempt ledger. */}
+      {scopedProjectId && <FixAttemptsSection projectId={scopedProjectId} />}
     </div>
   )
 }

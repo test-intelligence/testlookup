@@ -20,6 +20,7 @@ import { agentGovernanceService } from '@/services/agentGovernanceService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import type { AgentMode, AgentPolicy, AgentPolicyBudgets } from '@/types/investigator'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import FixerConfigCard from '@/components/fixer/FixerConfigCard'
 
 const AGENT_LABEL: Record<string, { title: string; desc: string }> = {
   investigator: {
@@ -243,24 +244,31 @@ export default function AIAgentsPage() {
             Agent policies are per-project — select a specific project from the top bar to manage them.
           </p>
         </div>
-      ) : isLoading ? (
-        <div className="flex justify-center py-10"><LoadingSpinner size="lg" /></div>
-      ) : error ? (
-        <p className="text-sm text-[var(--color-text-muted)]">Could not load agent policies.</p>
-      ) : policies.length === 0 ? (
-        <p className="text-sm text-[var(--color-text-muted)]">No governable agents are registered for this project yet.</p>
       ) : (
-        policies.map((p) => (
-          <PolicyCard
-            // Key on the server state so a successful save (or an external
-            // change surfaced by revalidation) re-seeds the form — no
-            // set-state-in-effect syncing.
-            key={`${p.agent_id}:${p.enabled}:${p.mode}:${p.budgets.max_runs_per_day}:${p.budgets.max_llm_calls_per_run}:${p.budgets.max_tokens_per_run}:${p.budgets.max_seconds_per_run}`}
-            policy={p}
-            projectId={scopedProjectId}
-            onSaved={() => void mutate()}
-          />
-        ))
+        <>
+          {isLoading ? (
+            <div className="flex justify-center py-10"><LoadingSpinner size="lg" /></div>
+          ) : error ? (
+            <p className="text-sm text-[var(--color-text-muted)]">Could not load agent policies.</p>
+          ) : policies.length === 0 ? (
+            <p className="text-sm text-[var(--color-text-muted)]">No governable agents are registered for this project yet.</p>
+          ) : (
+            policies.map((p) => (
+              <PolicyCard
+                // Key on the server state so a successful save (or an external
+                // change surfaced by revalidation) re-seeds the form — no
+                // set-state-in-effect syncing.
+                key={`${p.agent_id}:${p.enabled}:${p.mode}:${p.budgets.max_runs_per_day}:${p.budgets.max_llm_calls_per_run}:${p.budgets.max_tokens_per_run}:${p.budgets.max_seconds_per_run}`}
+                policy={p}
+                projectId={scopedProjectId}
+                onSaved={() => void mutate()}
+              />
+            ))
+          )}
+          {/* Fixer (AI-2) has its own config resource — it renders regardless
+              of the agent-policies list state. */}
+          <FixerConfigCard projectId={scopedProjectId} />
+        </>
       )}
     </div>
   )

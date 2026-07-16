@@ -21,6 +21,12 @@ vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
 }))
 
+// The Fix Attempts section (AI-2) has its own hooks + tests — stub it here so
+// this file stays a hermetic test of the governance ledger.
+vi.mock('@/components/fixer/FixAttemptsSection', () => ({
+  default: () => <div data-testid="fix-attempts-section-stub" />,
+}))
+
 const ENTRY: AgentRunEntry = {
   id: 'ar-1',
   agent_id: 'investigator',
@@ -112,5 +118,12 @@ describe('AgentActivityPage', () => {
 
     expect(screen.getByText('No agent activity yet')).toBeInTheDocument()
     expect(screen.getByText(/Every run by a governed AI agent/i)).toBeInTheDocument()
+  })
+
+  it('renders the Fix Attempts section for a scoped project', async () => {
+    await mockRuns([ENTRY])
+    renderPage()
+
+    expect(screen.getByTestId('fix-attempts-section-stub')).toBeInTheDocument()
   })
 })
