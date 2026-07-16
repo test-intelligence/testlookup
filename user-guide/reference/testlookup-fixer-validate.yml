@@ -1,0 +1,54 @@
+# Reference validation workflow for the TestLookup Fixer (AI-2),
+# WorkflowDispatchRunner (runner.type = "workflow_dispatch").
+#
+# The Fixer dispatches this workflow with inputs {ref, test_selector, reruns}
+# and polls the run conclusion: success => validated, anything else => failed.
+# It changes NOTHING in your repo on its own — validation is read-only here;
+# the draft PR (suggest mode) is opened separately via the GitHub API.
+#
+# Place this at .github/workflows/testlookup-fixer-validate.yml and set
+# fixer.runner.workflow_ref = "testlookup-fixer-validate.yml".
+name: TestLookup Fixer — validate flaky fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref (branch/sha) to validate
+        required: true
+      test_selector:
+        description: Test selector/nodeid to rerun
+        required: true
+      reruns:
+        description: Number of reruns (validated iff all pass)
+        required: false
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt || true
+          pip install pytest
+      - name: Rerun the test N times (validated iff all pass)
+        run: |
+          set -e
+          N="${{ github.event.inputs.reruns }}"
+          for i in $(seq 1 "$N"); do
+            echo "::group::rerun $i/$N"
+            python -m pytest -x "${{ github.event.inputs.test_selector }}"
+            echo "::endgroup::"
+          done

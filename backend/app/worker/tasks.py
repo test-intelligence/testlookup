@@ -1478,6 +1478,116 @@ def run_agent_investigation(self, investigation_id: str):
 
 
 @celery_app.task(
+    name="app.worker.tasks.run_fixer_run_task",
+    bind=True,
+    max_retries=0,
+    queue="ai_analysis",
+    time_limit=3600,
+)
+def run_fixer_run_task(self, project_id: str, fixer_run_id: str, triggered_by: str = "scheduled"):
+    """Background task: execute one budgeted Fixer run (AI-2).
+
+    Dispatched by the manual endpoint and the scheduler beats. No retries by
+    design: a blind retry could double-run validation budgets / re-open PRs.
+    The workflow writes the ``agent_runs`` ledger entry on completion.
+    """
+    _bind_task_context(self, project_id=project_id, fixer_run_id=fixer_run_id)
+    from app.agents.fixer.workflow import run_fixer_run
+
+    logger.info(
+        "[Task %s] Starting fixer run %s (project %s)",
+        self.request.id, fixer_run_id, project_id,
+    )
+    try:
+        result = _run_async(run_fixer_run(project_id, fixer_run_id, triggered_by))
+        logger.info(
+            "[Task %s] Fixer run %s finished: %s",
+            self.request.id, fixer_run_id, (result or {}).get("counters"),
+        )
+        return result
+    except Exception as exc:
+        logger.error(
+            "[Task %s] Fixer run %s failed: %s",
+            self.request.id, fixer_run_id, exc, exc_info=True,
+        )
+        raise
+
+
+@celery_app.task(
+    name="app.worker.tasks.dispatch_scheduled_fixer_runs",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=300,
+)
+def dispatch_scheduled_fixer_runs(self, schedule: str):
+    """Beat: enqueue a Fixer run for every project whose fixer policy is
+    enabled with ``schedule == <schedule>`` (daily|weekly). Each run re-checks
+    its own gate; already-running projects are skipped."""
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import AgentPolicy
+    from app.services import fixer_service
+
+    async def _run() -> int:
+        dispatched = 0
+        async with AsyncSessionLocal() as db:
+            rows = (
+                await db.execute(
+                    select(AgentPolicy).where(
+                        AgentPolicy.agent_id == "fixer",
+                        AgentPolicy.enabled.is_(True),
+                    )
+                )
+            ).scalars().all()
+            candidates = [
+                r for r in rows
+                if fixer_service.serialize_fixer_config(r)["schedule"] == schedule
+            ]
+        for policy in candidates:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await fixer_service.gate_fixer_run(db, policy.project_id)
+            except Exception:  # noqa: BLE001 — disabled/running/runner-missing: skip
+                continue
+            fixer_run_id = _uuid.uuid4()
+            if fixer_service.enqueue_fixer_run(policy.project_id, fixer_run_id, f"scheduled:{schedule}"):
+                dispatched += 1
+        return dispatched
+
+    count = _run_async(_run())
+    logger.info("[Task %s] dispatched %s scheduled fixer runs (%s)", self.request.id, count, schedule)
+    return {"schedule": schedule, "dispatched": count}
+
+
+@celery_app.task(
+    name="app.worker.tasks.poll_fixer_pr_outcomes",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=600,
+)
+def poll_fixer_pr_outcomes(self):
+    """Beat: poll open fixer-created PRs; merged → record_fix_outcome(fixed),
+    closed-unmerged → not_fixed (AI-5 feedback loop). No-op offline."""
+    from app.agents.fixer.pipeline import poll_open_fixer_prs
+    from app.db.postgres import AsyncSessionLocal
+
+    async def _run() -> dict:
+        async with AsyncSessionLocal() as db:
+            summary = await poll_open_fixer_prs(db)
+            await db.commit()
+            return summary
+
+    summary = _run_async(_run())
+    logger.info("[Task %s] fixer PR outcome poll: %s", self.request.id, summary)
+    return summary
+
+
+@celery_app.task(
     name="app.worker.tasks.generate_run_compare_report",
     bind=True,
     max_retries=1,

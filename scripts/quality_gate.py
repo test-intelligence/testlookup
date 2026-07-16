@@ -557,6 +557,12 @@ _SUPPORT_AGENT_FILES = {
     # helper; it is a pure-local scoring utility with no agent class and no
     # observability contract.
     "evidence.py",
+    # Fixer (AI-2) support modules — NOT LangGraph pipeline agents. runners.py
+    # holds the sandbox ValidationRunner executors (subprocess/HTTP), pipeline.py
+    # holds pure stage helpers (candidate selection, glob rejection, PR opener,
+    # outcome poller). Their audit surface is the fix_attempts rows + the
+    # agent_runs ledger, not the BaseAgent stage/decision contract.
+    "runners.py", "pipeline.py",
 }
 
 

@@ -381,41 +381,49 @@ async def maybe_auto_trigger(run_id: uuid.UUID, trigger: str) -> Optional[uuid.U
 # ── Ledger (AI-3) ────────────────────────────────────────────────────────────
 
 
-async def record_agent_run(
+async def write_agent_run_row(
     db: AsyncSession,
-    investigation: AgentInvestigation,
     *,
+    agent_id: str,
+    project_id: uuid.UUID,
+    run_id: Optional[uuid.UUID],
+    mode: str,
+    trigger: str,
     status: str,
     summary: str,
+    details_path: str,
+    event_source_id: str,
+    stage_name: str,
     actions_proposed: Optional[list[str]] = None,
+    actions_taken: Optional[list[str]] = None,
     tokens: int = 0,
     cost_usd: float = 0.0,
     duration_ms: int = 0,
     prompt_registry_digest: Optional[str] = None,
 ) -> AgentRun:
-    """Write the AgentRun ledger row for an investigation outcome and mirror
-    a durable ``agent_run_recorded`` event to the Mongo pipeline event log.
-    Stage-only on the PG side (caller commits); the Mongo mirror is
-    best-effort (append-only stream, never blocks the ledger write).
+    """Generic AgentRun ledger writer shared by every governed agent (AI-3).
 
-    ``actions_taken`` is ALWAYS ``[]`` this slice — shadow and suggest modes
-    are observation-only, and ``act`` is reserved.
+    Writes one ``agent_runs`` row and mirrors a durable
+    ``agent_run_recorded`` event to the Mongo pipeline event log. Stage-only
+    on the PG side (caller commits); the Mongo mirror is best-effort. The
+    Investigator (:func:`record_agent_run`) and the Fixer both funnel through
+    here so the ledger shape + audit mirror stay identical across agents.
     """
     entry = AgentRun(
-        agent_id=AGENT_ID_INVESTIGATOR,
-        project_id=investigation.project_id,
-        run_id=investigation.run_id,
-        mode=investigation.mode,
-        trigger=investigation.triggered_by,
+        agent_id=agent_id,
+        project_id=project_id,
+        run_id=run_id,
+        mode=mode,
+        trigger=trigger,
         status=status,
         summary=(summary or "")[:2000],
         actions_proposed=list(actions_proposed or []),
-        actions_taken=[],
+        actions_taken=list(actions_taken or []),
         tokens=int(tokens or 0),
         cost_usd=float(cost_usd or 0.0),
         duration_ms=int(duration_ms or 0),
         prompt_registry_digest=prompt_registry_digest,
-        details_path=f"/investigations/{investigation.id}",
+        details_path=details_path,
     )
     db.add(entry)
     await db.flush()
@@ -425,9 +433,9 @@ async def record_agent_run(
         from app.services.pipeline_event_log import emit_event
 
         await emit_event(
-            str(investigation.id),
+            event_source_id,
             "agent_run_recorded",
-            stage_name="investigator",
+            stage_name=stage_name,
             detail={
                 "agent_run_id": str(entry.id),
                 "agent_id": entry.agent_id,
@@ -448,10 +456,49 @@ async def record_agent_run(
     except Exception as exc:  # noqa: BLE001 — mirror is best-effort
         logger.warning(
             "agent_run_mongo_mirror_failed",
-            investigation_id=str(investigation.id),
+            agent_id=agent_id,
+            event_source_id=event_source_id,
             error=str(exc),
         )
     return entry
+
+
+async def record_agent_run(
+    db: AsyncSession,
+    investigation: AgentInvestigation,
+    *,
+    status: str,
+    summary: str,
+    actions_proposed: Optional[list[str]] = None,
+    tokens: int = 0,
+    cost_usd: float = 0.0,
+    duration_ms: int = 0,
+    prompt_registry_digest: Optional[str] = None,
+) -> AgentRun:
+    """Write the AgentRun ledger row for an investigation outcome (AI-3).
+
+    ``actions_taken`` is ALWAYS ``[]`` this slice — shadow and suggest modes
+    are observation-only, and ``act`` is reserved.
+    """
+    return await write_agent_run_row(
+        db,
+        agent_id=AGENT_ID_INVESTIGATOR,
+        project_id=investigation.project_id,
+        run_id=investigation.run_id,
+        mode=investigation.mode,
+        trigger=investigation.triggered_by,
+        status=status,
+        summary=summary,
+        details_path=f"/investigations/{investigation.id}",
+        event_source_id=str(investigation.id),
+        stage_name="investigator",
+        actions_proposed=actions_proposed,
+        actions_taken=[],
+        tokens=tokens,
+        cost_usd=cost_usd,
+        duration_ms=duration_ms,
+        prompt_registry_digest=prompt_registry_digest,
+    )
 
 
 # ── Wire serialization (pinned API contract) ─────────────────────────────────

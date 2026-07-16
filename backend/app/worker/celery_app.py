@@ -64,6 +64,7 @@ celery_app.conf.update(
         "app.worker.tasks.generate_ai_test_cases_task":     {"queue": "ai_analysis"},
         "app.worker.tasks.create_ai_test_plan_task":         {"queue": "ai_analysis"},
         "app.worker.tasks.generate_ai_strategy_task":        {"queue": "ai_analysis"},
+        "app.worker.tasks.run_fixer_run_task":               {"queue": "ai_analysis"},
         "app.worker.training_tasks.export_training_data":   {"queue": "default"},
         "app.worker.training_tasks.check_finetune_trigger": {"queue": "default"},
         "app.worker.training_tasks.run_finetune_pipeline":  {"queue": "default"},
@@ -192,6 +193,25 @@ celery_app.conf.update(
         "monday-weekly-flaky-debt-reviews": {
             "task": "app.worker.tasks.dispatch_weekly_flaky_debt_reviews",
             "schedule": crontab(hour=7, minute=10, day_of_week="monday"),
+        },
+        # Agentic plan AI-2 (the Fixer): scheduled fixer runs. No-op unless a
+        # project's fixer policy is enabled with the matching schedule. Daily
+        # at 06:00 UTC; weekly on Mondays at 06:15 UTC.
+        "daily-fixer-runs": {
+            "task": "app.worker.tasks.dispatch_scheduled_fixer_runs",
+            "schedule": crontab(hour=6, minute=0),
+            "args": ("daily",),
+        },
+        "weekly-fixer-runs": {
+            "task": "app.worker.tasks.dispatch_scheduled_fixer_runs",
+            "schedule": crontab(hour=6, minute=15, day_of_week="monday"),
+            "args": ("weekly",),
+        },
+        # AI-2 outcome loop: poll open fixer-created PR states every 30 min and
+        # feed merged/closed outcomes back through record_fix_outcome (AI-5).
+        "poll-fixer-pr-outcomes": {
+            "task": "app.worker.tasks.poll_fixer_pr_outcomes",
+            "schedule": crontab(minute="*/30"),
         },
         # P2-3 (DB audit 2026-05-16): nightly check for orphan TestSuite
         # rows left behind by finalize_run's per-step isolation. Emits a

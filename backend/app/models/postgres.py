@@ -1320,6 +1320,70 @@ class AgentRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class FixAttempt(Base):
+    """One (fixer run, candidate test, attempt) of the Fixer (Agentic plan AI-2).
+
+    The Fixer selects flaky/quarantined tests, generates a test-code-only
+    candidate fix, validates it by rerunning the test in a sandbox, and — in
+    suggest mode only — opens a DRAFT PR. This row is the progress surface
+    the UI polls (``GET .../fixer/attempts``) and the per-stage audit trail.
+
+    ``status`` walks the pinned lifecycle: ``selected`` → ``diagnosing`` →
+    ``generating`` → ``validating`` → one terminal of ``validated`` (all
+    reruns passed; shadow mode, or suggest with no PR opened),
+    ``rejected_globs`` (the diff touched a non-test file — rejected BEFORE
+    any execution), ``failed_validation`` (the fix did not validate),
+    ``pr_opened`` (validated + a draft PR was created), ``error`` (infra
+    trouble — no runner, docker unavailable, generation offline), or
+    ``skipped_budget`` (a budget cap or the kill switch stopped it).
+
+    Invariant: a PR is opened ONLY from ``validated`` in suggest mode.
+    ``error`` and ``failed_validation`` NEVER produce a ``pr_url``.
+    """
+    __tablename__ = "fix_attempts"
+    __table_args__ = (
+        Index("ix_fix_attempts_project_created", "project_id", "created_at"),
+        Index("ix_fix_attempts_fixer_run", "fixer_run_id"),
+    )
+
+    # Terminal statuses (never advance further). Kept in sync with the router
+    # contract and the pipeline. ``validated`` is terminal in shadow mode and
+    # the pre-PR state in suggest mode.
+    TERMINAL_STATUSES = (
+        "validated", "rejected_globs", "failed_validation",
+        "pr_opened", "error", "skipped_budget",
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # Correlation id grouping every attempt in one fixer run (not a FK — a
+    # fixer run's standalone record is its agent_runs ledger row).
+    fixer_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    test_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="selected")
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    patch_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Full unified diff (test-code-only). NULL when nothing was generated.
+    patch: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    validation_reruns: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    validation_passed: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    runner_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    runner_log_digest: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # True when the policy opened container egress (default is --network=none).
+    egress_opened: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pr_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    pr_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # open | merged | closed — maintained by the outcome poller beat.
+    pr_state: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    ledger_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AgentPipelineRun(Base):
     """Tracks a single execution of the multi-agent pipeline for a test run."""
     __tablename__ = "agent_pipeline_runs"

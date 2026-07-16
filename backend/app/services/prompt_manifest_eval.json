@@ -1,6 +1,6 @@
 {
-  "attested_at": "2026-07-15T22:55:16.361017+00:00",
-  "change_id": "wave-c-merge",
+  "attested_at": "2026-07-16T00:33:16.127005+00:00",
+  "change_id": "wave-d-fixer",
   "eval_gate_run_id": null,
   "gate_results": [
     {
@@ -96,9 +96,9 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "eac77883b8c5fedb5d57cf8fc6c963b438ad123f9f8f7b937f9c1d7edc806dd5",
+  "manifest_digest": "95735d7147f0fc22ff1ad5fc1f451c6aaaec969960998d6a4be02b9da64bb40c",
   "mode": "offline_golden",
-  "notes": "",
+  "notes": "AI-2 Fixer: fixer_generate_patch v1",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -107,6 +107,7 @@
     "defect_promotion_ticket": "v1:45d88cc4d33b",
     "fast_classifier_system": "v1:9d46ffbbed7b",
     "finetune_reasoning_system": "v1:3ea37c087b6b",
+    "fixer_generate_patch": "v1:a9267b59f0a0",
     "investigator_hypothesis_weigh": "v1:44a0c89134b9",
     "investigator_synthesis_narrative": "v1:f7d92dd09981",
     "react_triage": "v2:0ad0a868e913",

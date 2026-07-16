@@ -835,6 +835,46 @@ Respond ONLY with a valid JSON object (no markdown fences):
 }}""",
 )
 
+# agents/fixer/generation.py — the Fixer's single fix-generation prompt (AI-2).
+# Test-code-only: the model may ONLY edit the failing test's own code to remove
+# non-determinism; touching product/source files is structurally rejected
+# before any execution, so the prompt is emphatic about the boundary.
+_register(
+    "fixer_generate_patch",
+    1,
+    """\
+You are a senior test-automation engineer fixing a FLAKY test. A flaky test
+passes and fails non-deterministically without any product change. Your job is
+to make ONLY the test's own code deterministic — never to change product code.
+
+Failing test:
+{test_name}
+
+Diagnosis (from prior investigation / flip history / memory recall):
+{diagnosis}
+
+Current test source (the ONLY file you may edit):
+{test_source}
+
+STRICT RULES:
+1. Edit ONLY the test file shown above. NEVER modify application/product code,
+   configuration, CI files, or dependencies. A diff touching anything outside
+   the test globs is rejected and wasted.
+2. Fix the flakiness at its source: replace fixed sleeps with explicit waits,
+   remove order/timing dependence, seed randomness, stabilise fixtures, make
+   assertions robust to benign ordering. Do NOT weaken the assertion's intent
+   or skip/xfail the test to make it "pass".
+3. Keep the change minimal and self-contained.
+4. If you cannot fix it from the test code alone, say so — do not guess.
+
+Respond ONLY with a valid JSON object (no markdown fences):
+{{
+  "can_fix": true | false,
+  "reasoning": "2-3 sentences: the flake source and your fix (or why test-only cannot fix it)",
+  "patch": "a unified diff (git format, ---/+++ headers) editing ONLY the test file, or empty string when can_fix is false"
+}}""",
+)
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═════════════════════════════════════════════════════════════════════════════

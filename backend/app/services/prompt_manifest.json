@@ -29,6 +29,10 @@
       "content_hash": "3ea37c087b6b",
       "version": 1
     },
+    "fixer_generate_patch": {
+      "content_hash": "a9267b59f0a0",
+      "version": 1
+    },
     "investigator_hypothesis_weigh": {
       "content_hash": "44a0c89134b9",
       "version": 1

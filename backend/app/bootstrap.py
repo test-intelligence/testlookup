@@ -30,6 +30,7 @@ from app.routers import (
     duplicates,
     feature_flags as feature_flags_router,
     feedback,
+    fixer,
     flaky_quarantine,
     github_integration,
     identity_events,
@@ -157,6 +158,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     duplicates.router,                 # Phase 4: per-project duplicate authored-test-case review queue
     defect_jira.router,                # PMF US-6.1/6.3: one-click Jira defects (project-scoped)
     agent_investigations.router,       # AI-1/AI-3: Investigator + agent policies + agent-runs ledger
+    fixer.router,                      # AI-2: the Fixer — config + run + fix-attempts
 )
 
 
