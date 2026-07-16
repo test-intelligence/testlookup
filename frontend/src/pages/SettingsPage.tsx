@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ScrollText, Sparkles, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, GitMerge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ScrollText, Sparkles, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -102,6 +102,12 @@ const sections = [
     title: 'GitHub Integration',
     desc: 'Post check runs to PRs on every test run — per-project repo + token + offline-mode aware',
     href: '/settings/github',
+  },
+  {
+    icon: GitMerge,
+    title: 'GitLab Integration',
+    desc: 'Post commit statuses + sticky MR comments on every test run — per-project path + token, self-managed aware',
+    href: '/settings/gitlab',
   },
   {
     icon: Webhook,

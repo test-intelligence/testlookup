@@ -34,6 +34,7 @@ from app.routers import (
     fixer,
     flaky_quarantine,
     github_integration,
+    gitlab_integration,
     identity_events,
     ingest,
     integration_health,
@@ -151,6 +152,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     flaky_quarantine.manifest_router,  # US-5.1: CI quarantine manifest (project-scoped)
     compliance_packs.router,           # Tier 1 item 4: release compliance export pack
     github_integration.router,         # Tier 1 item 5: GitHub Checks integration
+    gitlab_integration.router,         # PMF Epic 3: GitLab MR notes + commit statuses
     webhooks_outbound.router,          # Tier 2 item 6: outbound webhook subscriptions
     suites.router,                     # Phase 3: TestSuite + CanonicalTestCase CRUD
     my_failures.router,                # 0080: per-user "My Failures" inbox of auto-assigned failures

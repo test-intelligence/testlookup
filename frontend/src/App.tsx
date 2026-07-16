@@ -109,6 +109,7 @@ const FeatureFlagsPage = lazy(() => import('@/pages/settings/FeatureFlagsPage'))
 const BillingPage = lazy(() => import('@/pages/settings/BillingPage'))
 const QuarantinePage = lazy(() => import('@/pages/QuarantinePage'))
 const GitHubIntegrationPage = lazy(() => import('@/pages/settings/GitHubIntegrationPage'))
+const GitLabIntegrationPage = lazy(() => import('@/pages/settings/GitLabIntegrationPage'))
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
 const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
 const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
@@ -183,6 +184,7 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/feature-flags', component: FeatureFlagsPage },
   { path: 'settings/billing', component: BillingPage },
   { path: 'settings/github', component: GitHubIntegrationPage },
+  { path: 'settings/gitlab', component: GitLabIntegrationPage },
   { path: 'settings/webhooks', component: OutboundWebhooksPage },
   { path: 'settings/api-keys', component: ApiKeysPage },
   { path: 'settings/project-data', component: ProjectDataPage },

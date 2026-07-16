@@ -4187,6 +4187,39 @@ class GitHubConnectionTestResponse(BaseModel):
     repo_html_url: Optional[str] = None
 
 
+# ── GitLab Integration (PMF Epic 3 US-3.1/3.2/3.3) ──────────────────────────
+#
+# Contract note (frontend built in parallel — implement verbatim): the PAT is
+# NEVER returned; ``has_token`` is the only token signal on GET. PUT accepts an
+# optional write-only ``token`` that sets/rotates the PAT via secret_service.
+
+
+class GitLabConfig(BaseModel):
+    """GET/PUT payload for ``/projects/{id}/integrations/gitlab``.
+
+    On GET the PAT is never returned — ``has_token`` is the only token signal.
+    On PUT ``token`` is the optional write-only field: ``None`` leaves the
+    stored secret alone, ``""`` clears it, any value sets/rotates it.
+    """
+    enabled: bool = False
+    base_url: str = Field("https://gitlab.com", max_length=500)
+    project_path: str = Field("", max_length=500)
+    mr_comment_mode: Literal["off", "failures_only", "always"] = "failures_only"
+    commit_status_enabled: bool = True
+    # Write-only — accepted on PUT, never populated on GET.
+    token: Optional[str] = Field(None, max_length=200)
+    # Read-only mirrors — ignored on PUT, populated on GET.
+    has_token: bool = False
+    last_error: Optional[str] = None
+    last_error_at: Optional[datetime] = None
+
+
+class GitLabConnectionTestResponse(BaseModel):
+    ok: bool
+    detail: str
+    project_id_resolved: Optional[str] = None
+
+
 # ── Outbound Webhooks (Tier 2 item 6) ───────────────────────────────────────
 
 

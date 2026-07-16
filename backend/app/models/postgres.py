@@ -3820,6 +3820,75 @@ class GitHubIntegration(Base):
     )
 
 
+class GitLabIntegration(Base):
+    """Per-project GitLab integration config (PMF Epic 3 US-3.1).
+
+    Mirror of ``GitHubIntegration`` for GitLab (self-managed or gitlab.com).
+    Drives the sticky **MR note** (US-3.2) and **commit status** (US-3.2)
+    outbound surfaces. The PAT lives in ``secret_service`` under scope
+    ``gitlab_integration``, key ``project:{project_id}:pat`` — never a column,
+    so a DB dump cannot recover active tokens.
+    """
+    __tablename__ = "gitlab_integrations"
+    __table_args__ = (
+        Index("ix_gitlab_integrations_project", "project_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Self-managed instances override this to e.g. ``https://gitlab.mycorp.com``.
+    # The API root is ``{base_url}/api/v4``. No trailing slash.
+    base_url: Mapped[str] = mapped_column(
+        String(500),
+        default="https://gitlab.com",
+        server_default="https://gitlab.com",
+        nullable=False,
+    )
+
+    # URL-encoded ``group/project`` path OR numeric project id. Matches the
+    # run's ``ci_repo`` (``CI_PROJECT_PATH``) for the MR-note repo guard.
+    project_path: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
+
+    # Sticky MR note mode — off | failures_only | always. ``failures_only``
+    # still UPDATES an existing marker note on a green run so a red→green MR
+    # shows green.
+    mr_comment_mode: Mapped[str] = mapped_column(
+        String(20),
+        default="failures_only",
+        server_default="failures_only",
+        nullable=False,
+    )
+
+    # Whether to POST a commit status (pipeline "check") per run verdict.
+    commit_status_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False,
+    )
+
+    # Cosmetic — the real token lives in secret_service. Lets the UI show
+    # "token configured" without roundtripping the secret service.
+    has_pat: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Integration Health bookkeeping.
+    last_posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    last_error_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
 # ── Release Compliance Export Pack (Tier 1 item 4) ─────────────────────────
 #
 # One row per generated signoff ZIP. The actual pack lives in MinIO — this

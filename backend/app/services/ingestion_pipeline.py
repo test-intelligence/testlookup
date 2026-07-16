@@ -471,6 +471,33 @@ async def finalize_run(
             error=str(pr_exc),
         )
 
+    # PMF Epic 3 US-3.2 — GitLab MR note + commit status. Same isolation
+    # contract as the GitHub surfaces above: both services internally gate on
+    # AI_OFFLINE_MODE + the ``gitlab`` feature flag + per-integration
+    # enabled/mode toggles, only fire for runs carrying MR context
+    # (pr_number == CI_MERGE_REQUEST_IID + ci_repo == CI_PROJECT_PATH) that
+    # matches the configured project, and never raise — ingestion must not
+    # block on a GitLab outage. Errors land in ``gitlab_integrations.last_error``.
+    try:
+        from app.services.gitlab_integration_service import (
+            post_commit_status_for_run,
+            post_mr_note_for_run,
+        )
+        gl_note_result = await post_mr_note_for_run(rid)
+        if gl_note_result and not gl_note_result.get("skipped"):
+            logger.info("gitlab_mr_note_result", run_id=str(rid), result=gl_note_result)
+        gl_status_result = await post_commit_status_for_run(rid)
+        if gl_status_result and not gl_status_result.get("skipped"):
+            logger.info(
+                "gitlab_commit_status_result", run_id=str(rid), result=gl_status_result,
+            )
+    except Exception as gl_exc:
+        logger.warning(
+            "gitlab_integration_unhandled",
+            run_id=str(rid),
+            error=str(gl_exc),
+        )
+
     # Epic 8 US-8.1 — resolve + persist this run's commit range (commits
     # since the last green run). Own session, idempotent per run: a
     # caller-supplied range (air-gapped path) already stored at ingest wins;

@@ -1,0 +1,83 @@
+# Reference GitLab CI recipe for TestLookup (PMF Epic 3 US-3.3).
+#
+# Two independent ways to get results into TestLookup from a GitLab pipeline:
+#
+#   1. `testlookup_upload`  — run your tests to a JUnit XML artifact, then
+#      upload the file after the job (works even when tests fail).
+#   2. `testlookup_live`    — stream test-by-test via the Python SDK while the
+#      suite runs (watch progress on the Live page, no report file needed).
+#
+# Pick ONE (upload is the simplest; live streaming is nicer for long suites).
+# Both auto-detect GitLab CI context — provider, `CI_PROJECT_PATH`,
+# `CI_MERGE_REQUEST_IID`, actor, and the job URL — so a run opened from a
+# merge request gets the sticky **MR note** and **commit status** once the
+# GitLab integration is configured in TestLookup
+# (Settings → Integrations → GitLab). Nothing here needs a GitLab token: the
+# MR note + commit status are posted server-side by TestLookup using the PAT
+# you store in that settings page.
+#
+# Required CI/CD variables (Settings → CI/CD → Variables, masked):
+#   TESTLOOKUP_API_URL   e.g. https://testlookup.mycorp.com
+#   TESTLOOKUP_API_KEY   a TestLookup API key (masked, protected)
+#   TESTLOOKUP_PROJECT   the TestLookup project UUID
+#
+# GitLab auto-provides CI_PROJECT_PATH / CI_MERGE_REQUEST_IID / GITLAB_CI /
+# CI_JOB_URL — the SDK/CLI read them; do NOT set them by hand.
+
+stages:
+  - test
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Option 1 — JUnit artifact upload (recommended default)
+# ─────────────────────────────────────────────────────────────────────────────
+testlookup_upload:
+  stage: test
+  image: python:3.11-slim
+  variables:
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  script:
+    # Run the suite to a JUnit file. `|| true` so a red suite still uploads —
+    # failures are exactly what TestLookup analyzes.
+    - pip install pytest
+    - pytest --junitxml=results.xml || true
+    # Install + upload the CLI. `--format auto` sniffs JUnit/pytest/etc.
+    - pip install "testlookup @ git+https://github.com/your-org/testlookup#subdirectory=cli" || pip install ./cli
+    - >
+      testlookup upload results.xml
+      --project "$TESTLOOKUP_PROJECT"
+      --api-url "$TESTLOOKUP_API_URL"
+      --format auto
+  artifacts:
+    when: always
+    reports:
+      junit: results.xml
+    paths:
+      - results.xml
+    expire_in: 1 week
+  # Run on merge requests so pr_number == CI_MERGE_REQUEST_IID is captured.
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Option 2 — Live streaming via the Python SDK (test-by-test)
+# ─────────────────────────────────────────────────────────────────────────────
+# Streams `test_started` / `test_finished` events while the suite runs, then
+# `run_complete` finalizes the run. Same CI-context auto-detection as above.
+testlookup_live:
+  stage: test
+  image: python:3.11-slim
+  variables:
+    # The reporter reads these (or a testlookup.yaml). See
+    # client/testlookup.yaml.example.
+    TESTLOOKUP_API_URL: "$TESTLOOKUP_API_URL"
+    TESTLOOKUP_API_KEY: "$TESTLOOKUP_API_KEY"
+    TESTLOOKUP_PROJECT: "$TESTLOOKUP_PROJECT"
+  script:
+    - pip install "testlookup-reporter @ git+https://github.com/your-org/testlookup#subdirectory=client" || pip install ./client
+    # The pytest plugin opens a live session and streams results. `|| true`
+    # so the job still reports run_complete on a red suite.
+    - pytest -p testlookup_reporter || true
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

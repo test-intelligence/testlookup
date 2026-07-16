@@ -29,6 +29,15 @@ Per-project: one repo (`owner/name` + API base URL for GitHub Enterprise), one P
 
 Delivery problems land in the page's **Last error** banner and on Integration Health.
 
+### GitLab (`/settings/integrations/gitlab`)
+
+Per-project GitLab integration for self-managed instances and gitlab.com — the same shape as GitHub, for teams whose VCS is GitLab. One **base URL** (defaults to `https://gitlab.com`; set `https://gitlab.mycorp.com` for a self-managed instance — the API root is `{base}/api/v4`), one **project path** (`group/project`, or a numeric project id), and one **PAT** (stored encrypted via the secret service, never returned by the API — the config only reports `has_token`; needs `api` scope, or a project/group access token with the same). Gated by the `gitlab` feature flag and, as always, `AI_OFFLINE_MODE`. Two outbound surfaces, both posted server-side after a run finalizes (no GitLab token in your CI):
+
+- **MR note** — when a run arrives with merge-request context (`CI_PROJECT_PATH` + `CI_MERGE_REQUEST_IID`, [auto-detected by the SDKs/CLI in GitLab CI](getting-results-in.md#ci-context-prs)) matching the configured project path, TestLookup keeps **one sticky note** on that MR: **newly failed** tests vs the baseline run, **known flaky** failures, and tests the MR **fixed**, plus a still-failing-on-baseline count — the *identical* body, baseline selection, and classification as the GitHub PR summary comment (they never disagree). Re-runs update the same note (keyed by a hidden marker) — never a second one. The **MR note** mode selector controls it: `off`, `failures_only` (default — a red→green MR still gets its existing note updated to green), or `always`.
+- **Commit status** — when enabled (**Commit status** toggle, on by default), every ingested run with a commit SHA posts a pipeline commit status on that commit (`success` when green, `failed` on any failure) with a deep link back to Run Intelligence, so the MR's pipeline widget reflects TestLookup's verdict.
+
+The repo guard is strict: an MR IID is project-scoped, so a run's `ci_repo` must equal the configured project path (case-insensitive) before anything is posted. Use the **Test connection** button to confirm the base URL + PAT resolve the project (it calls `GET /api/v4/projects/:path` and reports the resolved numeric id). CI recipe: [`reference/testlookup-gitlab-ci.yml`](reference/testlookup-gitlab-ci.yml) covers both the JUnit-artifact upload and the live-streaming SDK path. Delivery problems land in **Last error** and on Integration Health.
+
 ## Operating the instance
 
 - **AI Settings / AI Evaluation** (`/settings/ai`, `/settings/ai-eval`) — covered in [AI features](ai-features.md#configuring-the-ai-tier-settingsai-settingsai-eval): mode, local model, budgets, and the AI-quality dashboard.

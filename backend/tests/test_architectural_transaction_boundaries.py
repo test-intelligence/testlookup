@@ -247,6 +247,17 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "AsyncSessionLocal (same Integration Health surface the checks "
         "service writes).",
     ),
+    "gitlab_integration_service.py": (
+        5,
+        "Worker-path only (PMF Epic 3 US-3.2): post_mr_note_for_run and "
+        "post_commit_status_for_run are called from the ingestion pipeline's "
+        "post-ingestion orchestration — no request session to hand off to. "
+        "Commits: _record_outcome bookkeeping (1, MR-note path) plus "
+        "post_commit_status_for_run's four delivery-outcome branches "
+        "(blocked-target / retry-exception / success / non-success) on its "
+        "own worker AsyncSessionLocal — mirrors github_checks_service. "
+        "upsert_integration is stage-only (router owns the commit).",
+    ),
     "flaky_quarantine_service.py": (
         11,
         "Tier 1-3: state-machine transitions (propose/approve/reject/"
@@ -489,7 +500,12 @@ def test_allowlist_total_is_bounded() -> None:
     # inside Celery-owned host paths (transition engine / gate NO_GO) on its
     # own AsyncSessionLocal and must commit the investigation row before the
     # worker task is enqueued.
-    assert total <= 58, (
+    # Raised 58 → 63 on 2026-07-16: PMF Epic 3 (US-3.2) added
+    # gitlab_integration_service.py, whose 5 commits are all Celery-worker-
+    # owned (MR-note _record_outcome bookkeeping + the four commit-status
+    # delivery-outcome branches on their own AsyncSessionLocal) — the exact
+    # mirror of github_checks_service / github_pr_comment_service.
+    assert total <= 63, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )
