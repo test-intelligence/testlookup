@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-25 — Design-audit token ratchet: VerdictBand blocker-severity icons
+
+- **`frontend/src/components/releases/VerdictBand.tsx`** — the release-health hero band's per-blocker severity icons now use per-theme status tokens instead of raw Tailwind palette classes: `resolved` → `text-[var(--status-passed)]`, `warn` → `text-[var(--status-broken)]`, `red` → `text-[var(--status-failed)]` (was `text-emerald-400` / `text-amber-400` / `text-red-400`). Fixes light-theme legibility for these icons and drops the file's `no-restricted-syntax` (palette) warning count to zero. The `GATE_ACCENT` map already used `--gate-*` tokens and is unchanged.
+- **Regression test** (`frontend/src/components/releases/VerdictBand.test.tsx`) — renders the band with one blocker of each severity and asserts each maps to its status token, guarding against a regression back to the raw palette classes.
+
 ### 2026-07-16 — GitLab integration: MR notes + commit statuses + CI recipe (PMF backlog Epic 3 US-3.1/3.2/3.3)
 
 - **Per-project GitLab connector (US-3.1, `backend/app/services/gitlab_integration_service.py` + `backend/app/routers/gitlab_integration.py`)** — mirrors the GitHub integration for GitLab (self-managed or gitlab.com). Config contract (frontend built in parallel): `GET`/`PUT /api/v1/projects/{project_id}/integrations/gitlab` ↔ `GitLabConfig` (`enabled`, `base_url`, `project_path`, `mr_comment_mode`, `commit_status_enabled`, `has_token`, `last_error`, `last_error_at`); the PAT is **never returned** — `has_token` is the only token signal, and `PUT` accepts an optional write-only `token` that sets/rotates it via `secret_service` (scope `gitlab_integration`, key `project:{id}:pat`). `POST .../integrations/gitlab/test` → `{ok, detail, project_id_resolved}` probes `GET /api/v4/projects/:path`. `PUT`/`test` are QA_LEAD+; `GET` is project-member and returns the **default** config (disabled, `https://gitlab.com`, empty path) when unconfigured rather than 404. All routes are `require_project_access`-guarded (authorization ratchet). Self-managed base URLs supported (`{base}/api/v4`); `group/project` paths are URL-encoded (`%2F`) for the API path, numeric ids pass through.
