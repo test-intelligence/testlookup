@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-07-27 — Theme tokens: Integrations settings "(set)" indicators (palette ratchet)
+
+- **`frontend/src/pages/settings/IntegrationsPage.tsx`** — the four "(set)" credential indicators (shown next to Jira / Splunk / OpenShift / GitHub secret fields once a token is stored) migrated from the raw `text-emerald-400` palette class to the per-theme success token `text-[var(--status-passed)]`. Raw palette greens are illegible in the light theme; the token resolves per-theme via `index.css`. Semantic role: "credential is configured/present" → success. Drops the file's `no-restricted-syntax` (palette) warning count to zero.
+- **Regression test** (`IntegrationsPage.test.tsx`, new) — asserts one "(set)" indicator renders per stored-token provider, that the indicator carries `text-[var(--status-passed)]` and no `emerald` class, and that it is omitted when no token is stored.
+
 ### 2026-07-16 — GitLab integration: MR notes + commit statuses + CI recipe (PMF backlog Epic 3 US-3.1/3.2/3.3)
 
 - **Per-project GitLab connector (US-3.1, `backend/app/services/gitlab_integration_service.py` + `backend/app/routers/gitlab_integration.py`)** — mirrors the GitHub integration for GitLab (self-managed or gitlab.com). Config contract (frontend built in parallel): `GET`/`PUT /api/v1/projects/{project_id}/integrations/gitlab` ↔ `GitLabConfig` (`enabled`, `base_url`, `project_path`, `mr_comment_mode`, `commit_status_enabled`, `has_token`, `last_error`, `last_error_at`); the PAT is **never returned** — `has_token` is the only token signal, and `PUT` accepts an optional write-only `token` that sets/rotates it via `secret_service` (scope `gitlab_integration`, key `project:{id}:pat`). `POST .../integrations/gitlab/test` → `{ok, detail, project_id_resolved}` probes `GET /api/v4/projects/:path`. `PUT`/`test` are QA_LEAD+; `GET` is project-member and returns the **default** config (disabled, `https://gitlab.com`, empty path) when unconfigured rather than 404. All routes are `require_project_access`-guarded (authorization ratchet). Self-managed base URLs supported (`{base}/api/v4`); `group/project` paths are URL-encoded (`%2F`) for the API path, numeric ids pass through.
