@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-01 — MCP server: pin `mcp<2.0.0` (CrashLoopBackOff on fresh builds)
+
+- **`mcp/requirements.txt` — `mcp>=1.0.0` → `mcp>=1.0.0,<2.0.0`.** A fresh image build resolved the new mcp 2.x, which removes `mcp.server.fastmcp` — `server.py:67` raises `ModuleNotFoundError` at startup and the pod CrashLoopBackOffs (caught deploying to the homelab 2026-08-01; July images had mcp 1.28.1). The server is written against the 1.x FastMCP API; upgrading to 2.x is a separate migration.
+
 ### 2026-07-16 — GitLab integration hardening (post-merge review fixes)
 
 - **Read/write schema split (drift-proof GET)** — `GitLabConfig` split into `GitLabConfigWrite` (PUT body: strict `mr_comment_mode` Literal, `^https?://`-validated `base_url`, write-only `token`) and `GitLabConfigRead` (structurally token-free; `mr_comment_mode` is a plain `str`, GitHub-sibling pattern), and `_to_config` coerces any drifted row value to `failures_only` — a manually fixed-up / partially rolled-back row can no longer turn GET into a ResponseValidationError 500 (empty settings page). `response_model_exclude={"token"}` is gone; the read model simply has no token field.
