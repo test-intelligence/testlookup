@@ -2672,17 +2672,28 @@ class EvidenceArtifact(Base):
 
 
 class AIProvenanceRecord(Base):
-    """Tracks which model/method produced each AI conclusion."""
+    """Tracks which model/method produced each AI conclusion.
+
+    Retention (US-11.4, migration 0113): provenance is AUDIT-class data —
+    it must outlive the run it describes. ``run_id`` therefore detaches
+    (``SET NULL``) when the run is purged on the runs clock, and the row
+    itself is deleted only by the retention audit clock via the dedicated
+    ``project_id`` scope column (backfilled from test_runs in 0113).
+    """
     __tablename__ = "ai_provenance_records"
     __table_args__ = (
         Index("ix_provenance_entity", "entity_type", "entity_id"),
         Index("ix_provenance_run", "run_id"),
+        Index("ix_provenance_project", "project_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)        # run_summary | cluster_analysis | release_decision | defect_candidate
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=True)
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True,
+    )
     model_name: Mapped[Optional[str]] = mapped_column(String(200))
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
     confidence: Mapped[Optional[int]] = mapped_column(Integer)                  # 0-100
@@ -4155,6 +4166,62 @@ class ValueMetricAssumptions(Base):
     # Minutes of defect-filing/round-trip time avoided per duplicate failure absorbed.
     defect_filing_minutes: Mapped[float] = mapped_column(
         Float, default=15.0, server_default=text("15.0"), nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+
+class ProjectRetentionPolicy(Base):
+    """Per-project data retention policy (PMF US-11.4, migration 0113).
+
+    One row per project; a MISSING row resolves to the code defaults in
+    ``retention_service.EffectiveRetentionPolicy`` (disabled; raw events
+    90 d, runs 365 d, artifacts 180 d, audit 2555 d ≈ 7 y) — no
+    project-creation hook needed (``ValueMetricAssumptions`` pattern).
+
+    Four retention classes, each with its own clock:
+
+    * ``raw_events_days``  — live event docs + ``TestRun.event_archive`` +
+      raw ingest payloads in Mongo.
+    * ``runs_days``        — TestRun rows (Postgres CASCADE) + run-scoped
+      Mongo docs + the run's MinIO uploads.
+    * ``artifacts_days``   — MinIO report/upload/pipeline artifacts.
+    * ``audit_days``       — access/test-case audit rows, AI provenance,
+      pipeline event log, expired compliance packs. Must be ≥
+      ``runs_days`` (enforced in the service) so audit records always
+      outlive the runs they describe. ``settings_audit_log`` (which holds
+      the purge-audit records themselves) is NEVER purged.
+
+    Every defaulted column carries a matching ``server_default`` so the
+    migration DDL and the ORM cannot drift (the #433 lesson).
+    """
+    __tablename__ = "project_retention_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True,
+    )
+    # Purges only run for projects that explicitly opted in.
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
+    raw_events_days: Mapped[int] = mapped_column(
+        Integer, default=90, server_default=text("90"), nullable=False,
+    )
+    runs_days: Mapped[int] = mapped_column(
+        Integer, default=365, server_default=text("365"), nullable=False,
+    )
+    artifacts_days: Mapped[int] = mapped_column(
+        Integer, default=180, server_default=text("180"), nullable=False,
+    )
+    audit_days: Mapped[int] = mapped_column(
+        Integer, default=2555, server_default=text("2555"), nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

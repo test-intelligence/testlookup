@@ -113,6 +113,7 @@ const GitLabIntegrationPage = lazy(() => import('@/pages/settings/GitLabIntegrat
 const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhooksPage'))
 const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
 const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
+const RetentionPage = lazy(() => import('@/pages/settings/RetentionPage'))
 const AIAgentsPage = lazy(() => import('@/pages/settings/AIAgentsPage'))
 const AgentActivityPage = lazy(() => import('@/pages/settings/AgentActivityPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
@@ -188,6 +189,7 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/webhooks', component: OutboundWebhooksPage },
   { path: 'settings/api-keys', component: ApiKeysPage },
   { path: 'settings/project-data', component: ProjectDataPage },
+  { path: 'settings/retention', component: RetentionPage },
   { path: 'settings/ai-agents', component: AIAgentsPage },
   { path: 'settings/agent-activity', component: AgentActivityPage },
   { path: 'policies', component: PolicyEditorPage },

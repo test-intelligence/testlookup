@@ -60,6 +60,10 @@ async def ensure_indexes() -> None:
         (Collections.RUN_SUMMARIES, [("test_run_id", 1)], {"unique": True}),
         # Live event timeline — session_id + seq.
         (Collections.LIVE_EXECUTION_EVENTS, [("session_id", 1), ("seq", 1)], {}),
+        # Retention purge (US-11.4): the webhook ingest path writes these
+        # docs keyed by run_id (routers/live.py), and the purge deletes by
+        # run_id — without this index every purge collection-scans.
+        (Collections.LIVE_EXECUTION_EVENTS, [("run_id", 1)], {}),
     ]
     for coll, keys, kwargs in specs:
         try:

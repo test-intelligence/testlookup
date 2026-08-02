@@ -32,6 +32,27 @@ class StorageProvider(ABC):
     async def get_presigned_url(self, key: str, expiry: int = 3600, bucket: str | None = None) -> str:
         raise NotImplementedError()
 
+    @abstractmethod
+    async def delete_object(self, key: str, bucket: str | None = None) -> None:
+        """Delete a single object. Missing objects are a no-op (idempotent —
+        the retention purge must be safely re-runnable)."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def delete_prefix(self, prefix: str, bucket: str | None = None) -> int:
+        """Delete every object under ``prefix``; returns the number deleted.
+
+        ``prefix`` must be non-empty (an empty/"/" prefix would wipe the
+        whole bucket — callers must never get that for free).
+        """
+        raise NotImplementedError()
+
+
+def _require_prefix(prefix: str) -> None:
+    """Refuse bucket-wiping prefixes for delete_prefix implementations."""
+    if not prefix or not prefix.strip("/").strip():
+        raise ValueError("delete_prefix requires a non-empty prefix")
+
 
 class S3StorageProvider(StorageProvider):
     """S3/MinIO compatible storage provider with connection pooling."""
@@ -101,6 +122,31 @@ class S3StorageProvider(StorageProvider):
                 Params={"Bucket": bucket, "Key": key},
                 ExpiresIn=expiry,
             ))
+
+    async def delete_object(self, key: str, bucket: str | None = None) -> None:
+        bucket = bucket or settings.MINIO_BUCKET_NAME
+        async with self.get_client_context() as s3:
+            # S3 DeleteObject is idempotent — deleting a missing key succeeds.
+            await s3.delete_object(Bucket=bucket, Key=key)
+
+    async def delete_prefix(self, prefix: str, bucket: str | None = None) -> int:
+        _require_prefix(prefix)
+        bucket = bucket or settings.MINIO_BUCKET_NAME
+        deleted = 0
+        async with self.get_client_context() as s3:
+            paginator = s3.get_paginator("list_objects_v2")
+            keys: list[str] = []
+            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                keys.extend(obj["Key"] for obj in page.get("Contents", []))
+            # DeleteObjects caps at 1000 keys per request.
+            for i in range(0, len(keys), 1000):
+                batch = keys[i:i + 1000]
+                await s3.delete_objects(
+                    Bucket=bucket,
+                    Delete={"Objects": [{"Key": k} for k in batch], "Quiet": True},
+                )
+                deleted += len(batch)
+        return deleted
 
 
 class LocalStorageProvider(StorageProvider):
@@ -191,6 +237,37 @@ class LocalStorageProvider(StorageProvider):
         # but could return a generic local path or API route representing it.
         # For our ingestion use case, it's rarely used to redirect clients.
         return cast(str, self._get_full_path(key, bucket).as_uri())
+
+    async def delete_object(self, key: str, bucket: str | None = None) -> None:
+        # _get_full_path runs the traversal guard — deleting with an
+        # unvalidated key would be worse than reading with one.
+        full_path = self._get_full_path(key, bucket)
+
+        def _delete():
+            if full_path.is_file():
+                full_path.unlink()
+
+        await asyncio.to_thread(_delete)
+
+    async def delete_prefix(self, prefix: str, bucket: str | None = None) -> int:
+        _require_prefix(prefix)
+        # list_objects yields keys RELATIVE to the bucket dir (so a
+        # traversal-shaped prefix simply matches nothing); each key is
+        # still funneled through the _get_full_path guard before unlink.
+        objects = await self.list_objects(prefix, bucket)
+        deleted = 0
+        for obj in objects:
+            full_path = self._get_full_path(obj["Key"], bucket)
+
+            def _delete(p=full_path) -> bool:
+                if p.is_file():
+                    p.unlink()
+                    return True
+                return False
+
+            if await asyncio.to_thread(_delete):
+                deleted += 1
+        return deleted
 
 
 @lru_cache(maxsize=1)

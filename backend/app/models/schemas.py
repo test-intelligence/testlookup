@@ -4554,3 +4554,70 @@ class DefectIntakeResponse(BaseModel):
     ai_confidence_score: Optional[int] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── Retention policies (PMF US-11.4) ─────────────────────────────────────────
+
+
+class RetentionPolicyWrite(BaseModel):
+    """PUT body for ``/projects/{id}/retention-policy``.
+
+    All fields optional — omitted fields keep their current (or default)
+    value. Per-field bounds 422 here; the cross-field ``audit_days >=
+    runs_days`` check runs in the service on the MERGED values (a partial
+    body can't be validated field-locally).
+    """
+    enabled: Optional[bool] = None
+    raw_events_days: Optional[int] = Field(None, ge=7, le=3650)
+    runs_days: Optional[int] = Field(None, ge=30, le=3650)
+    artifacts_days: Optional[int] = Field(None, ge=7, le=3650)
+    audit_days: Optional[int] = Field(None, ge=365, le=3650)
+
+
+class RetentionLastPurge(BaseModel):
+    """Latest execute-mode purge, parsed from the settings_audit_log
+    purge-audit rows (``setting_key = "retention_purge:{project_id}"``)."""
+    at: datetime
+    mode: str = "execute"
+    counts: dict = Field(default_factory=dict)  # per-store counts
+
+
+class RetentionPolicyRead(BaseModel):
+    """GET/PUT response — the EFFECTIVE policy plus its source
+    (``default`` = no row, ``custom`` = project row exists)."""
+    enabled: bool
+    raw_events_days: int
+    runs_days: int
+    artifacts_days: int
+    audit_days: int
+    source: str = "default"
+    last_purge: Optional[RetentionLastPurge] = None
+
+
+class RetentionPreviewCandidates(BaseModel):
+    """Per-class candidate counts a purge WOULD delete right now."""
+    runs: int
+    test_cases: int
+    mongo_docs: dict[str, int] = Field(default_factory=dict)
+    minio_objects: int
+    event_archive_rows: int
+    audit_rows: int
+    provenance_rows: int
+    compliance_packs_expired: int
+
+
+class RetentionPreviewResponse(BaseModel):
+    """POST ``.../retention-policy/preview`` — dry-run, writes nothing."""
+    cutoffs: dict[str, datetime]
+    candidates: RetentionPreviewCandidates
+
+
+class RetentionPurgeRequest(BaseModel):
+    """POST ``.../retention-policy/purge`` — typed-name confirmation
+    (``project_reset`` convention): must equal the project name exactly."""
+    confirmation_name: str = Field(..., min_length=1, max_length=255)
+
+
+class RetentionPurgeQueued(BaseModel):
+    """202 body — the execute-mode purge was enqueued to Celery."""
+    queued: bool = True

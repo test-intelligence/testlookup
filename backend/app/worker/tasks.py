@@ -3798,3 +3798,133 @@ def run_duplicate_detection(
         result["cases_scanned"], result["sampled_projects"], result["errors"],
     )
     return result
+
+
+# ── Retention purge (PMF US-11.4) ───────────────────────────────────────────
+
+
+async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any]:
+    """Execute-mode retention purge — one project or the nightly sweep.
+
+    Kept as a module-level coroutine (not a closure) so the beat-sweep
+    behavior — per-project isolation, audit-after-commit — is directly
+    unit-testable without Celery plumbing.
+
+    Per project:
+
+    1. its OWN session runs ``retention_service.run_purge`` (service stages,
+       the worker owns the commit — transaction ratchet);
+    2. the purge-audit row is written AFTER that commit on a SEPARATE
+       session (``flaky_quarantine_service`` pattern: auditing inside the
+       purge transaction would make the log claim deletions that could
+       still roll back);
+    3. a try/except per project so one failing project can't stop the sweep
+       — the failure lands in the audit row's ``errors`` list.
+
+    A project with zero candidates still gets an audit row with zeroed
+    counts — the explicit "the sweep ran and found nothing" signal.
+    """
+    import time as _time
+    import uuid as _uuid_mod
+
+    from sqlalchemy import select as _select
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import ProjectRetentionPolicy, SettingsAuditLog
+    from app.services import retention_service
+
+    if project_id:
+        targets = [_uuid_mod.UUID(str(project_id))]
+    else:
+        async with AsyncSessionLocal() as db:
+            targets = list(
+                (
+                    await db.execute(
+                        _select(ProjectRetentionPolicy.project_id).where(
+                            ProjectRetentionPolicy.enabled == True  # noqa: E712
+                        )
+                    )
+                ).scalars().all()
+            )
+
+    summary: dict[str, Any] = {"projects": len(targets), "errors": 0, "results": {}}
+    for pid in targets:
+        started = _time.monotonic()
+        errors: list[str] = []
+        out: dict[str, Any] | None = None
+        try:
+            async with AsyncSessionLocal() as db:
+                out = await retention_service.run_purge(
+                    db, project_id=pid, mode="execute"
+                )
+                await db.commit()
+        except Exception as exc:
+            errors.append(str(exc)[:500])
+            summary["errors"] += 1
+            logger.warning(
+                "[retention] purge failed for project %s: %s", pid, exc,
+            )
+        duration_ms = int((_time.monotonic() - started) * 1000)
+
+        # Purge-audit record — settings_audit_log is itself NEVER purged,
+        # which is what keeps these records durable past every window.
+        try:
+            async with AsyncSessionLocal() as audit_db:
+                audit_db.add(
+                    SettingsAuditLog(
+                        setting_key=(
+                            f"{retention_service.PURGE_AUDIT_KEY_PREFIX}{pid}"
+                        ),
+                        action="purge",
+                        actor_name="retention-scheduler",
+                        changed_fields={
+                            "project_id": str(pid),
+                            "mode": "execute",
+                            "cutoffs": (out or {}).get("cutoffs"),
+                            "counts": (out or {}).get("counts"),
+                            "duration_ms": duration_ms,
+                            "errors": errors,
+                        },
+                    )
+                )
+                await audit_db.commit()
+        except Exception as exc:
+            logger.warning(
+                "[retention] purge-audit write failed for project %s: %s",
+                pid, exc,
+            )
+
+        summary["results"][str(pid)] = {
+            "counts": (out or {}).get("counts"),
+            "errors": errors,
+        }
+    return summary
+
+
+@celery_app.task(
+    name="app.worker.tasks.run_retention_purges",
+    queue="default",
+    bind=True,
+    max_retries=0,
+)
+def run_retention_purges(self, project_id: str | None = None) -> dict:
+    """Nightly retention purge sweep (02:00 UTC beat), or a single-project
+    execute-mode purge when enqueued from the router with ``project_id``.
+
+    The beat path only touches projects whose policy row is ``enabled``;
+    the explicit-project path was already gated by the router (ADMIN +
+    typed-name confirmation + 409-when-disabled).
+    """
+    async def _run():
+        with _beat_span("run_retention_purges") as span:
+            out = await _retention_purge_sweep(project_id)
+            span.set_attribute("result.projects", int(out.get("projects", 0)))
+            span.set_attribute("result.errors", int(out.get("errors", 0)))
+            span.set_attribute("explicit_project", bool(project_id))
+            logger.info(
+                "[Task %s] retention purge sweep: projects=%d errors=%d",
+                self.request.id, out.get("projects", 0), out.get("errors", 0),
+            )
+            return out
+
+    return cast(dict, _run_async(_run()))

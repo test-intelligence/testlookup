@@ -49,6 +49,35 @@ The repo guard is strict: an MR IID is project-scoped, so a run's `ci_repo` must
 - **Performance** (`/settings/performance`) — instance performance diagnostics.
 - **Billing** (`/settings/billing`) — usage/spend views (AI spend also surfaces in the [Intelligence Hub](ai-features.md#run-intelligence-intelligence-runsidintelligence)).
 
+## Data retention & purge
+
+Per-project retention policies keep disk usage bounded without giving up your audit trail. Policies are **off by default** — nothing is ever purged until an ADMIN enables a project's policy. Everything is served by `GET/PUT /api/v1/projects/{id}/retention-policy` plus the `preview` and `purge` sub-endpoints.
+
+Four retention classes, each with its own clock (days):
+
+| Class | Default | What it covers |
+|---|---|---|
+| Raw events | 90 | Live-stream event archives on runs (`event_archive`), raw ingest payloads (Allure/TestNG/REST) and live event documents in MongoDB. |
+| Runs | 365 | Test runs and everything that hangs off them in PostgreSQL (test cases, analyses, clusters, decisions — the full cascade), plus run-scoped MongoDB documents (execution logs, pod events, run summaries, AI analysis traces). |
+| Artifacts | 180 | Object storage: raw report uploads under the run's prefix and pipeline intermediate artifacts. |
+| Audit | 2555 (~7 y) | Access/test-management audit rows, AI provenance records, the immutable pipeline event log, and **expired** compliance packs. Must be ≥ the runs window — audit records always outlive the runs they describe. |
+
+Bounds: raw events/artifacts 7–3650, runs 30–3650, audit 365–3650 days.
+
+**Preview-first workflow (recommended):**
+1. `POST .../retention-policy/preview` — a synchronous dry run that returns the per-class cutoffs and exactly what a purge would delete right now (runs, test cases, per-collection Mongo docs, object counts, audit rows, expired packs). Preview works while the policy is still disabled and writes nothing — it's how you decide what windows to set.
+2. Tune the windows with `PUT .../retention-policy` and enable the policy.
+3. Either wait for the nightly sweep (02:00 UTC, enabled projects only) or trigger `POST .../retention-policy/purge` with the project's name typed as `confirmation_name` (mismatch → 422; disabled policy → 409). The purge runs in the background worker.
+
+Every execute-mode purge — scheduled or manual — writes a **purge-audit record** (`settings_audit_log`, key `retention_purge:<project_id>`) with the cutoffs, per-store deletion counts, duration, and any errors. The latest one is surfaced as `last_purge` on the policy GET.
+
+**What is NEVER purged:**
+- `settings_audit_log` itself — it holds the purge-audit records and all settings/secret change history; it has no retention window at all.
+- Compliance packs **before** their own `retention_expires_at` (default ~7 years, set at generation time). The audit-class pass only removes packs whose own expiry has passed.
+- Anything in a project whose policy is disabled.
+
+Notes: the purge is re-entrant — if a sweep is interrupted mid-way, the next run picks up the remainder (deletions across PostgreSQL/MongoDB/object storage are idempotent). Setting the raw-events window below 15 days will strip live-run event archives that the live-run recovery safety net could otherwise still replay. For a full, immediate wipe of a project use **Project Data** reset instead — retention is for steady-state aging, not resets.
+
 ## Backup, restore & upgrades
 
 Day-2 operations are one command each — the scripts live in `scripts/ops/` and drive everything through `docker compose exec/run`, so the host needs nothing beyond docker + bash (on Windows, run them through `make`, which already uses Git Bash). For how much machine and disk to plan for, see the [sizing & capacity guide](sizing.md).

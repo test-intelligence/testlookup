@@ -54,6 +54,7 @@ from app.routers import (
     release_readiness,
     releases,
     reports,
+    retention,
     run_compare,
     run_intelligence,
     runs,
@@ -132,6 +133,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     api_keys.router,
     value_metrics.router,
     value_metric_assumptions.router,  # PMF US-12.1: per-project hours-saved assumptions
+    retention.router,                 # PMF US-11.4: per-project retention policies + purge
     scim.token_router,              # SCIM token management (admin-only, JWT-protected)
     identity_events.router,          # Identity audit events (admin-only, JWT-protected)
     release_gate_policies.router,    # Release gate policy CRUD (ENT-02)

@@ -69,12 +69,23 @@ celery_app.conf.update(
         "app.worker.training_tasks.check_finetune_trigger": {"queue": "default"},
         "app.worker.training_tasks.run_finetune_pipeline":  {"queue": "default"},
         "app.worker.tasks.reindex_search":                    {"queue": "default"},
+        "app.worker.tasks.run_retention_purges":            {"queue": "default"},
         "app.worker.tasks.*":                               {"queue": "default"},
     },
     beat_schedule={
         "daily-coverage-snapshot": {
             "task": "app.worker.tasks.take_coverage_snapshot",
             "schedule": crontab(hour=0, minute=5),
+        },
+        # PMF US-11.4: per-project retention purge. 02:00 UTC — the slot is
+        # free (coverage snapshot 00:05, training export Sundays 02:00 is
+        # queue-parallel, finetune check 03:00). Only projects whose
+        # project_retention_policies row is enabled are touched; per-project
+        # try/except inside the task so one failure can't stop the sweep;
+        # each project gets a settings_audit_log purge record.
+        "nightly-retention-purge": {
+            "task": "app.worker.tasks.run_retention_purges",
+            "schedule": crontab(hour=2, minute=0),
         },
         # Continuous learning pipeline
         "weekly-training-export": {
