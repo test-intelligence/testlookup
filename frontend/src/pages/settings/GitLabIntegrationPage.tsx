@@ -1,6 +1,17 @@
 import { useState } from 'react'
-import { ArrowLeft, CheckCircle2, GitMerge, Save, ShieldCheck, TestTube, XCircle } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  GitMerge,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  TestTube,
+  XCircle,
+} from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
@@ -18,14 +29,31 @@ import {
   type MrCommentMode,
 } from '@/types/gitlab'
 
-const MR_COMMENT_MODES: { value: MrCommentMode; label: string }[] = [
-  { value: 'off', label: 'Off — never comment on merge requests' },
-  { value: 'failures_only', label: 'Failures only — comment when tests fail (default)' },
-  { value: 'always', label: 'Always — comment on every merge-request run' },
-]
+// Exhaustiveness-checked against the MrCommentMode union: adding a mode to the
+// type without a label here is a compile error.
+const MR_COMMENT_LABELS: Record<MrCommentMode, string> = {
+  off: 'Off — never comment on merge requests',
+  failures_only: 'Failures only — comment when tests fail (default)',
+  always: 'Always — comment on every merge-request run',
+}
+
+/** Narrow a raw <select> value via the label record's keys (no blind cast). */
+function isMrCommentMode(value: string): value is MrCommentMode {
+  return value in MR_COMMENT_LABELS
+}
 
 /** Local form shape — the write payload without the write-only token. */
 type FormState = Omit<GitLabConfigWrite, 'token'>
+
+function toFormState(config: GitLabConfig): FormState {
+  return {
+    enabled: config.enabled,
+    base_url: config.base_url,
+    project_path: config.project_path,
+    mr_comment_mode: config.mr_comment_mode,
+    commit_status_enabled: config.commit_status_enabled,
+  }
+}
 
 /**
  * GitLab integration settings — PMF backlog Epic 3.
@@ -37,7 +65,9 @@ type FormState = Omit<GitLabConfigWrite, 'token'>
  *
  * The PAT is write-only per the pinned contract: it is never returned;
  * `has_token` is the only signal. When a token is stored the page shows
- * "Token set" plus a "Replace token" affordance; otherwise an input.
+ * "Token set" plus "Replace token" / "Remove token" affordances; otherwise
+ * an input. "Remove token" sends `token: ""` (the contract's clear semantics)
+ * on the next save.
  *
  * Project-scoped — in All Projects mode we prompt the user to pick one.
  */
@@ -48,40 +78,41 @@ export default function GitLabIntegrationPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID || !activeProjectId
 
   const projectKey = isAllProjects ? null : activeProjectId
-  const { data: config, isLoading, mutate } = useGitlabIntegration(projectKey)
+  const { data: config, error, isLoading, mutate } = useGitlabIntegration(projectKey)
 
-  const [form, setForm] = useState<FormState>({
-    enabled: DEFAULT_GITLAB_CONFIG.enabled,
-    base_url: DEFAULT_GITLAB_CONFIG.base_url,
-    project_path: DEFAULT_GITLAB_CONFIG.project_path,
-    mr_comment_mode: DEFAULT_GITLAB_CONFIG.mr_comment_mode,
-    commit_status_enabled: DEFAULT_GITLAB_CONFIG.commit_status_enabled,
-  })
+  const [form, setForm] = useState<FormState>(toFormState(DEFAULT_GITLAB_CONFIG))
   // Token UX: when a token is stored, the input is hidden behind "Replace
   // token"; `replacing` reveals it. `tokenDraft` is the pending new value.
+  // `removingToken` arms the contract's `token: ""` clear on the next save.
   const [replacing, setReplacing] = useState(false)
   const [tokenDraft, setTokenDraft] = useState('')
+  const [removingToken, setRemovingToken] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [lastTest, setLastTest] = useState<GitLabConnectionTest | null>(null)
+  // Any in-progress edit (field change, token keystroke, armed removal) sets
+  // `dirty`; it gates the render-time re-seed below so a background SWR
+  // revalidation can never wipe unsaved edits (including a half-typed PAT).
+  const [dirty, setDirty] = useState(false)
 
   // Seed the form from the resolved config using the React-endorsed
   // "adjust state during render" reset pattern (no effect): whenever SWR hands
   // us a new config reference (initial load or post-save mutate), reset the
-  // form + token UX to it. SWR returns a stable reference for unchanged data,
-  // so this settles after one render.
+  // form + token UX to it — unless the user has unsaved edits (`dirty`). SWR
+  // returns a stable reference for unchanged data, so this settles after one
+  // render. A successful save clears `dirty` and re-seeds explicitly.
   const [seededConfig, setSeededConfig] = useState<GitLabConfig | undefined>(undefined)
-  if (config && config !== seededConfig) {
+  if (config && config !== seededConfig && !dirty) {
     setSeededConfig(config)
-    setForm({
-      enabled: config.enabled,
-      base_url: config.base_url,
-      project_path: config.project_path,
-      mr_comment_mode: config.mr_comment_mode,
-      commit_status_enabled: config.commit_status_enabled,
-    })
+    setForm(toFormState(config))
     setReplacing(false)
     setTokenDraft('')
+    setRemovingToken(false)
+  }
+
+  function edit(patch: Partial<FormState>) {
+    setForm((f) => ({ ...f, ...patch }))
+    setDirty(true)
   }
 
   if (isAllProjects) {
@@ -102,33 +133,77 @@ export default function GitLabIntegrationPage() {
 
   if (isLoading) return <LoadingSpinner size="lg" />
 
+  // Failed GET with nothing cached: rendering the DEFAULT-seeded form here
+  // would let a single Save silently overwrite a working integration with
+  // defaults — so surface the error and withhold the form entirely.
+  if (error && !config) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+          <Link to="/settings" className="flex items-center gap-1 hover:text-[var(--color-text)]">
+            <ArrowLeft className="h-3 w-3" /> Settings
+          </Link>
+        </div>
+        <PageHeader
+          title="GitLab Integration"
+          subtitle={`Post commit statuses and MR comments for ${activeProject?.name || 'this project'}`}
+          actions={<ExperimentalBadge />}
+        />
+        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-4 text-xs text-rose-300 space-y-2">
+          <p className="flex items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <strong>Could not load the GitLab integration settings.</strong>
+          </p>
+          <p>
+            The saved configuration could not be fetched, so the form is hidden — saving now could
+            overwrite a working configuration with defaults.
+          </p>
+          <button
+            type="button"
+            onClick={() => mutate()}
+            className="btn-secondary text-xs flex items-center gap-1.5"
+          >
+            <RefreshCw className="h-3 w-3" /> Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const hasToken = config?.has_token ?? false
   // Only reveal the token input when there is no stored token, or the user
-  // clicked "Replace token".
-  const showTokenInput = !hasToken || replacing
+  // clicked "Replace token" — and never while a removal is armed.
+  const showTokenInput = !removingToken && (!hasToken || replacing)
 
   async function save() {
     if (!activeProjectId || isAllProjects) return
     setSaving(true)
     try {
-      // Send `token` ONLY when the user entered one — omit otherwise so the
-      // stored PAT is left unchanged per the contract.
+      // Token semantics per the contract: omit → keep the stored PAT,
+      // "" → clear it (Remove token), value → set/rotate it.
       const payload: GitLabConfigWrite = { ...form }
-      if (showTokenInput && tokenDraft) payload.token = tokenDraft
+      if (removingToken) payload.token = ''
+      else if (showTokenInput && tokenDraft) payload.token = tokenDraft
       const saved = await gitlabIntegrationService.update(activeProjectId, payload)
-      await mutate(saved, { revalidate: false })
+      setSeededConfig(saved)
+      setForm(toFormState(saved))
       setTokenDraft('')
       setReplacing(false)
+      setRemovingToken(false)
+      setDirty(false)
+      await mutate(saved, { revalidate: false })
       toast.success('GitLab integration saved')
     } catch (err) {
-      toast.error(`Failed to save: ${(err as Error).message}`)
+      // Axios failures: the shared interceptor already toasts the server's
+      // error detail — a second generic toast here would only bury it.
+      if (!isAxiosError(err)) toast.error(`Failed to save: ${(err as Error).message}`)
     } finally {
       setSaving(false)
     }
   }
 
   async function test() {
-    if (!activeProjectId || isAllProjects || testing) return
+    if (!activeProjectId || isAllProjects || testing || dirty) return
     setTesting(true)
     try {
       const result = await testGitlabConnection(activeProjectId)
@@ -136,7 +211,8 @@ export default function GitLabIntegrationPage() {
       if (result.ok) toast.success('Connection OK')
       else toast.error(result.detail)
     } catch (err) {
-      toast.error(`Test failed: ${(err as Error).message}`)
+      // Axios failures already toast via the shared interceptor.
+      if (!isAxiosError(err)) toast.error(`Test failed: ${(err as Error).message}`)
     } finally {
       setTesting(false)
     }
@@ -175,7 +251,7 @@ export default function GitLabIntegrationPage() {
         <FieldText
           label="GitLab base URL"
           value={form.base_url}
-          onChange={(v) => setForm({ ...form, base_url: v })}
+          onChange={(v) => edit({ base_url: v })}
           disabled={!canEdit}
           placeholder="https://gitlab.com"
           help="For self-managed instances: your GitLab URL (e.g. https://gitlab.corp.com)."
@@ -184,22 +260,39 @@ export default function GitLabIntegrationPage() {
         <FieldText
           label="Project path"
           value={form.project_path}
-          onChange={(v) => setForm({ ...form, project_path: v })}
+          onChange={(v) => edit({ project_path: v })}
           disabled={!canEdit}
           placeholder="my-group/my-project"
           help="The group/project path (or nested group/subgroup/project)."
         />
 
         {/* PAT — write-only per the contract. */}
-        {showTokenInput ? (
+        {removingToken ? (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1 text-[var(--status-broken)]">
+              <AlertTriangle className="h-3.5 w-3.5" /> Token will be removed when you save
+            </span>
+            <button
+              type="button"
+              onClick={() => setRemovingToken(false)}
+              className="text-[11px] text-[var(--color-text-muted)] hover:underline"
+            >
+              Cancel — keep the stored token
+            </button>
+          </div>
+        ) : showTokenInput ? (
           <div className="space-y-1">
             <FieldText
               label="Personal / Project Access Token"
               value={tokenDraft}
-              onChange={setTokenDraft}
+              onChange={(v) => {
+                setTokenDraft(v)
+                setDirty(true)
+              }}
               disabled={!canEdit}
               placeholder="glpat-..."
               type="password"
+              autoComplete="new-password"
               help="Needs the api scope (or read_api + write MR/commit-status). Stored encrypted; never displayed after saving."
             />
             {hasToken && replacing && canEdit && (
@@ -229,6 +322,24 @@ export default function GitLabIntegrationPage() {
                 Replace token
               </button>
             )}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      'Remove the stored GitLab token? The removal is applied when you save.',
+                    )
+                  ) {
+                    setRemovingToken(true)
+                    setDirty(true)
+                  }
+                }}
+                className="text-rose-400 hover:underline"
+              >
+                Remove token
+              </button>
+            )}
           </div>
         )}
 
@@ -237,7 +348,7 @@ export default function GitLabIntegrationPage() {
             type="checkbox"
             checked={form.enabled}
             disabled={!canEdit}
-            onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+            onChange={(e) => edit({ enabled: e.target.checked })}
           />
           <span>Enable GitLab integration for this project</span>
         </label>
@@ -247,7 +358,7 @@ export default function GitLabIntegrationPage() {
             type="checkbox"
             checked={form.commit_status_enabled}
             disabled={!canEdit}
-            onChange={(e) => setForm({ ...form, commit_status_enabled: e.target.checked })}
+            onChange={(e) => edit({ commit_status_enabled: e.target.checked })}
           />
           <span>Post a commit status (pipeline check) on every ingested run</span>
         </label>
@@ -257,14 +368,15 @@ export default function GitLabIntegrationPage() {
           <select
             value={form.mr_comment_mode}
             disabled={!canEdit}
-            onChange={(e) =>
-              setForm({ ...form, mr_comment_mode: e.target.value as MrCommentMode })
-            }
+            onChange={(e) => {
+              const value = e.target.value
+              if (isMrCommentMode(value)) edit({ mr_comment_mode: value })
+            }}
             className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
           >
-            {MR_COMMENT_MODES.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
+            {Object.entries(MR_COMMENT_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
               </option>
             ))}
           </select>
@@ -323,7 +435,12 @@ export default function GitLabIntegrationPage() {
             <button
               type="button"
               onClick={test}
-              disabled={testing}
+              disabled={testing || dirty}
+              title={
+                dirty
+                  ? 'Save your changes first — Test uses the saved configuration'
+                  : undefined
+              }
               className="btn-secondary text-xs flex items-center gap-1.5"
             >
               <TestTube className="h-3 w-3" />
@@ -366,6 +483,7 @@ function FieldText({
   disabled,
   placeholder,
   type = 'text',
+  autoComplete,
   help,
 }: {
   label: string
@@ -374,6 +492,7 @@ function FieldText({
   disabled?: boolean
   placeholder?: string
   type?: 'text' | 'password'
+  autoComplete?: string
   help?: string
 }) {
   return (
@@ -385,6 +504,7 @@ function FieldText({
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
         placeholder={placeholder}
+        autoComplete={autoComplete}
         className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
       />
       {help && <span className="mt-1 block text-[var(--color-text-faint)]">{help}</span>}

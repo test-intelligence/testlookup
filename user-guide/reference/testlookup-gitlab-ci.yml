@@ -12,12 +12,12 @@
 # `CI_MERGE_REQUEST_IID`, actor, and the job URL — so a run opened from a
 # merge request gets the sticky **MR note** and **commit status** once the
 # GitLab integration is configured in TestLookup
-# (Settings → Integrations → GitLab). Nothing here needs a GitLab token: the
-# MR note + commit status are posted server-side by TestLookup using the PAT
-# you store in that settings page.
+# (Settings → GitLab Integration, `/settings/gitlab`). Nothing here needs a
+# GitLab token: the MR note + commit status are posted server-side by
+# TestLookup using the PAT you store in that settings page.
 #
 # Required CI/CD variables (Settings → CI/CD → Variables, masked):
-#   TESTLOOKUP_API_URL   e.g. https://testlookup.mycorp.com
+#   TESTLOOKUP_URL       e.g. https://testlookup.mycorp.com
 #   TESTLOOKUP_API_KEY   a TestLookup API key (masked, protected)
 #   TESTLOOKUP_PROJECT   the TestLookup project UUID
 #
@@ -40,12 +40,19 @@ testlookup_upload:
     # failures are exactly what TestLookup analyzes.
     - pip install pytest
     - pytest --junitxml=results.xml || true
-    # Install + upload the CLI. `--format auto` sniffs JUnit/pytest/etc.
-    - pip install "testlookup @ git+https://github.com/your-org/testlookup#subdirectory=cli" || pip install ./cli
+    # git is required for the pip git+https install below (slim images ship
+    # without it).
+    - apt-get update -qq && apt-get install -y -qq git
+    # >>> REPLACE THIS URL <<< with the repo your team mirrors TestLookup
+    # from — the CLI distribution (`testlookup-cli`) lives in the repo's
+    # cli/ subdirectory.
+    - pip install "testlookup-cli @ git+https://gitlab.example.com/YOUR-GROUP/testlookup.git#subdirectory=cli"
+    # Upload. The CLI reads TESTLOOKUP_URL + TESTLOOKUP_API_KEY from the
+    # environment; `--format auto` sniffs JUnit/pytest/etc.
     - >
-      testlookup upload results.xml
+      testlookup upload file results.xml
       --project "$TESTLOOKUP_PROJECT"
-      --api-url "$TESTLOOKUP_API_URL"
+      --build "$CI_PIPELINE_IID"
       --format auto
   artifacts:
     when: always
@@ -64,20 +71,39 @@ testlookup_upload:
 # ─────────────────────────────────────────────────────────────────────────────
 # Streams `test_started` / `test_finished` events while the suite runs, then
 # `run_complete` finalizes the run. Same CI-context auto-detection as above.
+# The reporter reads TESTLOOKUP_URL / TESTLOOKUP_API_KEY / TESTLOOKUP_PROJECT
+# from the environment (or a testlookup.yaml — see
+# client/testlookup.yaml.example).
 testlookup_live:
   stage: test
   image: python:3.11-slim
   variables:
-    # The reporter reads these (or a testlookup.yaml). See
-    # client/testlookup.yaml.example.
-    TESTLOOKUP_API_URL: "$TESTLOOKUP_API_URL"
-    TESTLOOKUP_API_KEY: "$TESTLOOKUP_API_KEY"
-    TESTLOOKUP_PROJECT: "$TESTLOOKUP_PROJECT"
+    # Pin the run's build number to the pipeline so the verification step
+    # below can find the run it just streamed.
+    TESTLOOKUP_BUILD: "$CI_PIPELINE_IID"
   script:
-    - pip install "testlookup-reporter @ git+https://github.com/your-org/testlookup#subdirectory=client" || pip install ./client
-    # The pytest plugin opens a live session and streams results. `|| true`
-    # so the job still reports run_complete on a red suite.
-    - pytest -p testlookup_reporter || true
+    # git is required for the pip git+https installs below.
+    - apt-get update -qq && apt-get install -y -qq git
+    # >>> REPLACE THIS URL <<< (same mirror note as above): the reporter
+    # distribution (`testlookup-reporter`) lives in client/, the CLI
+    # (`testlookup-cli`, used to verify ingestion below) in cli/.
+    - pip install "testlookup-reporter @ git+https://gitlab.example.com/YOUR-GROUP/testlookup.git#subdirectory=client"
+    - pip install "testlookup-cli @ git+https://gitlab.example.com/YOUR-GROUP/testlookup.git#subdirectory=cli"
+    # The pytest plugin opens a live session and streams results. Tolerate
+    # RED TESTS (exit 1 — failures are what TestLookup analyzes) but fail
+    # the job on any other exit code (2/3/4 = broken config, unusable
+    # reporter, or an interrupted session — a blanket `|| true` here would
+    # leave a green job that silently ingested nothing).
+    - pytest -p testlookup_reporter; rc=$?; if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then echo "pytest exited $rc — reporter/config problem, not test failures"; exit "$rc"; fi
+    # Verify ingestion actually happened: the run streamed above must exist
+    # in TestLookup under this pipeline's build number.
+    - >
+      RUN_ID=$(testlookup runs list --project "$TESTLOOKUP_PROJECT" --output json
+      | python -c "import json,os,sys; runs=json.load(sys.stdin); m=[r for r in runs if str(r.get('build_number'))==os.environ['CI_PIPELINE_IID']]; print(m[0]['id'] if m else '')")
+    - if [ -z "$RUN_ID" ]; then echo "TestLookup has no run for pipeline $CI_PIPELINE_IID — the reporter streamed nothing (check TESTLOOKUP_URL / TESTLOOKUP_API_KEY / TESTLOOKUP_PROJECT)"; exit 1; fi
+    # Optional gate — exit 0 when the only failures are quarantined/known-
+    # flaky, 1 on real failures (drop this line if you only want ingestion).
+    - testlookup ci-verdict --run "$RUN_ID" --project "$TESTLOOKUP_PROJECT" --timeout-seconds 120
   rules:
     - if: $CI_MERGE_REQUEST_IID
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

@@ -3840,7 +3840,9 @@ class GitLabIntegration(Base):
         nullable=False,
         unique=True,
     )
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
 
     # Self-managed instances override this to e.g. ``https://gitlab.mycorp.com``.
     # The API root is ``{base_url}/api/v4``. No trailing slash.
@@ -3872,7 +3874,9 @@ class GitLabIntegration(Base):
 
     # Cosmetic — the real token lives in secret_service. Lets the UI show
     # "token configured" without roundtripping the secret service.
-    has_pat: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    has_pat: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
 
     # Integration Health bookkeeping.
     last_posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

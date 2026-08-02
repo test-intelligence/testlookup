@@ -10,9 +10,12 @@ import type { GitLabConfig, GitLabConnectionTest } from '@/types/gitlab'
  * the key is null (no fetch) in All-Projects mode.
  */
 export function useGitlabIntegration(projectId: string | null) {
+  // Narrow once into a const so the closure keeps the non-null type — no
+  // unreachable `?? ''` fallback in the fetcher.
+  const id = projectId
   return useSWR<GitLabConfig>(
-    projectId ? `/api/v1/projects/${projectId}/integrations/gitlab` : null,
-    () => gitlabIntegrationService.get(projectId ?? ''),
+    id === null ? null : `/api/v1/projects/${id}/integrations/gitlab`,
+    id === null ? null : () => gitlabIntegrationService.get(id),
     { revalidateOnFocus: false },
   )
 }

@@ -4194,21 +4194,37 @@ class GitHubConnectionTestResponse(BaseModel):
 # optional write-only ``token`` that sets/rotates the PAT via secret_service.
 
 
-class GitLabConfig(BaseModel):
-    """GET/PUT payload for ``/projects/{id}/integrations/gitlab``.
+class GitLabConfigWrite(BaseModel):
+    """PUT body for ``/projects/{id}/integrations/gitlab``.
 
-    On GET the PAT is never returned — ``has_token`` is the only token signal.
-    On PUT ``token`` is the optional write-only field: ``None`` leaves the
-    stored secret alone, ``""`` clears it, any value sets/rotates it.
+    ``token`` is the optional write-only field: ``None`` leaves the stored
+    secret alone, ``""`` clears it, any value sets/rotates it. The PAT is
+    NEVER present on the read side (see ``GitLabConfigRead``).
+    """
+    enabled: bool = False
+    # Scheme is mandatory — a schemeless host has no urlparse netloc, which
+    # would silently no-op the SSRF egress guard downstream.
+    base_url: str = Field("https://gitlab.com", max_length=500, pattern=r"^https?://")
+    project_path: str = Field("", max_length=500)
+    mr_comment_mode: Literal["off", "failures_only", "always"] = "failures_only"
+    commit_status_enabled: bool = True
+    token: Optional[str] = Field(None, max_length=200)
+
+
+class GitLabConfigRead(BaseModel):
+    """GET/PUT response for ``/projects/{id}/integrations/gitlab``.
+
+    Structurally token-free — the PAT can never leak through this model;
+    ``has_token`` is the only token signal. ``mr_comment_mode`` is a plain
+    ``str`` on the read side (GitHub-sibling pattern): the column is an
+    unconstrained ``String(20)``, and a drifted row value must degrade
+    gracefully instead of turning GET into a ResponseValidationError 500.
     """
     enabled: bool = False
     base_url: str = Field("https://gitlab.com", max_length=500)
     project_path: str = Field("", max_length=500)
-    mr_comment_mode: Literal["off", "failures_only", "always"] = "failures_only"
+    mr_comment_mode: str = "failures_only"
     commit_status_enabled: bool = True
-    # Write-only — accepted on PUT, never populated on GET.
-    token: Optional[str] = Field(None, max_length=200)
-    # Read-only mirrors — ignored on PUT, populated on GET.
     has_token: bool = False
     last_error: Optional[str] = None
     last_error_at: Optional[datetime] = None

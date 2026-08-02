@@ -93,6 +93,22 @@ def _api_root(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/api/v4"
 
 
+def _normalize_base_url(base_url: Optional[str]) -> str:
+    """Normalize a configured base URL: default, strip, no trailing slash,
+    and ALWAYS carry an explicit http(s) scheme.
+
+    The router's write schema already rejects schemeless values (422), but
+    this is the belt for any other caller: a schemeless host has no urlparse
+    netloc, which silently no-ops the SSRF egress guard downstream.
+    """
+    cleaned = (base_url or "").strip().rstrip("/")
+    if not cleaned:
+        return "https://gitlab.com"
+    if not cleaned.lower().startswith(("http://", "https://")):
+        cleaned = f"https://{cleaned}"
+    return cleaned
+
+
 def _project_ref(project_path: str) -> str:
     """URL-encode a ``group/project`` path (``/`` → ``%2F``) for the API path.
     A numeric project id passes through unchanged."""
@@ -160,18 +176,18 @@ async def upsert_integration(
     if row is None:
         row = GitLabIntegration(
             project_id=project_id,
-            base_url=(base_url or "https://gitlab.com").rstrip("/"),
+            base_url=_normalize_base_url(base_url),
             project_path=(project_path or "").strip(),
             enabled=enabled,
             updated_by_user_id=actor.id,
         )
         db.add(row)
     else:
-        row.base_url = (base_url or "https://gitlab.com").rstrip("/")
+        row.base_url = _normalize_base_url(base_url)
         row.project_path = (project_path or "").strip()
         row.enabled = enabled
         row.updated_by_user_id = actor.id
-        row.updated_at = datetime.now(timezone.utc)
+        # updated_at is owned by the column's onupdate=func.now().
 
     if mr_comment_mode is not None:
         row.mr_comment_mode = mr_comment_mode
@@ -542,7 +558,13 @@ async def _find_existing_note(
         for note in notes:
             if str(note.get("body") or "").startswith(marker):
                 note_id = note.get("id")
-                return int(note_id) if note_id is not None else None
+                if note_id is None:
+                    # A marker match without an id can't be updated — but it
+                    # must NOT degrade into "no note found" (the caller would
+                    # POST a duplicate on every re-run). Keep scanning for a
+                    # usable match instead.
+                    continue
+                return int(note_id)
         if len(notes) < _NOTE_PAGE_SIZE:
             break
     return None
@@ -712,126 +734,164 @@ def _commit_status_payload(
     return payload
 
 
+class _CommitStatusContext:
+    __slots__ = ("integration_id", "project_id", "url", "pat", "payload")
+
+    def __init__(self, **kw: Any) -> None:
+        for k in self.__slots__:
+            setattr(self, k, kw[k])
+
+
+async def _gather_commit_status_context(
+    run_id: uuid.UUID,
+) -> _CommitStatusContext | dict[str, Any]:
+    """Phase 1 — all DB reads for the commit-status post. Returns a
+    ``{"skipped": ...}`` dict for every non-participating case; the session
+    closes before any HTTP happens (same design as ``_gather_mr_context``,
+    documented there — a pooled connection must never sit pinned across a
+    GitLab round-trip)."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(TestRun).where(TestRun.id == run_id))
+        run = result.scalar_one_or_none()
+        if run is None:
+            return {"skipped": "run_not_found"}
+        if not run.commit_hash:
+            return {"skipped": "no_commit_sha"}
+
+        integration = await get_integration(db, run.project_id)
+        if integration is None or not integration.enabled:
+            return {"skipped": "integration_disabled_or_missing"}
+        if not integration.commit_status_enabled:
+            return {"skipped": "commit_status_disabled"}
+        # Mandatory repo guard, mirroring the MR-note path: an empty
+        # project_path would build ``/projects//statuses/…`` and a run
+        # without a CI repo must not post onto whatever project happens to
+        # be configured.
+        if not (integration.project_path or "").strip():
+            return {"skipped": "no_project_path"}
+        if not (run.ci_repo or "").strip():
+            return {"skipped": "repo_mismatch"}
+        if run.ci_repo.strip().lower() != integration.project_path.strip().lower():
+            return {"skipped": "repo_mismatch"}
+
+        from app.services import secret_service
+        pat = await secret_service.read_secret(
+            db, SECRET_SCOPE, _secret_key(run.project_id),
+        )
+        if not pat:
+            return {"skipped": "no_token_configured"}
+
+        project_name: Optional[str] = None
+        try:
+            proj_row = await db.execute(
+                select(Project.name).where(Project.id == run.project_id)
+            )
+            project_name = proj_row.scalar_one_or_none()
+        except Exception:
+            project_name = None
+
+        # commit_hash is CI-supplied and unvalidated — quote it so ``?``,
+        # ``#``, ``/`` or ``..`` can't rewrite the authenticated request path.
+        url = (
+            f"{_api_root(integration.base_url)}/projects/"
+            f"{_project_ref(integration.project_path)}/statuses/"
+            f"{quote(str(run.commit_hash), safe='')}"
+        )
+        return _CommitStatusContext(
+            integration_id=integration.id,
+            project_id=run.project_id,
+            url=url,
+            pat=pat,
+            payload=_commit_status_payload(run, project_name),
+        )
+
+
 async def post_commit_status_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
     """Post a commit status to GitLab for a completed run.
 
     Best-effort — always returns a dict describing what happened but never
     raises. Skips (``{"skipped": "<reason>"}``) when the integration is
     disabled / offline / missing config / commit-status toggle off / no
-    commit SHA.
+    commit SHA. Phase 1 reads everything into a context and closes the
+    session; no DB session is held across the HTTP round-trip; outcomes are
+    persisted via ``_record_outcome`` (its own short session).
     """
     try:
         if not await _post_allowed():
             return {"skipped": "feature_flag_off_or_offline_mode"}
 
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(TestRun).where(TestRun.id == run_id))
-            run = result.scalar_one_or_none()
-            if run is None:
-                return {"skipped": "run_not_found"}
-            if not run.commit_hash:
-                return {"skipped": "no_commit_sha"}
+        gathered = await _gather_commit_status_context(run_id)
+        if isinstance(gathered, dict):
+            return gathered
+        ctx = gathered
 
-            integration = await get_integration(db, run.project_id)
-            if integration is None or not integration.enabled:
-                return {"skipped": "integration_disabled_or_missing"}
-            if not integration.commit_status_enabled:
-                return {"skipped": "commit_status_disabled"}
-            # Same repo guard as the MR note — a commit status is posted to the
-            # configured project, so the run's CI repo must match.
-            if run.ci_repo and run.ci_repo.strip().lower() != (
-                integration.project_path or ""
-            ).strip().lower():
-                return {"skipped": "repo_mismatch"}
-
-            from app.services import secret_service
-            pat = await secret_service.read_secret(
-                db, SECRET_SCOPE, _secret_key(run.project_id),
+        block = await _ssrf_block_reason(ctx.url)
+        if block:
+            await _record_outcome(
+                ctx.integration_id, error=f"blocked unsafe target: {block}",
             )
-            if not pat:
-                return {"skipped": "no_token_configured"}
-
-            project_name: Optional[str] = None
-            try:
-                proj_row = await db.execute(
-                    select(Project.name).where(Project.id == run.project_id)
-                )
-                project_name = proj_row.scalar_one_or_none()
-            except Exception:
-                project_name = None
-
-            payload = _commit_status_payload(run, project_name)
-            url = (
-                f"{_api_root(integration.base_url)}/projects/"
-                f"{_project_ref(integration.project_path)}/statuses/{run.commit_hash}"
-            )
-
-            block = await _ssrf_block_reason(url)
-            if block:
-                integration.last_error = f"blocked unsafe target: {block}"
-                integration.last_error_at = datetime.now(timezone.utc)
-                await db.commit()
-                logger.warning(
-                    "gitlab_status blocked unsafe target",
-                    project_id=str(run.project_id),
-                    run_id=str(run_id),
-                    reason=block,
-                )
-                return {"skipped": "blocked_unsafe_target", "reason": block}
-
-            headers = _headers(pat)
-
-            async def _do_post() -> httpx.Response:
-                return await _request("POST", url, headers=headers, json_body=payload)
-
-            from app.services.resilience import async_retry
-            try:
-                resp: httpx.Response = await async_retry(
-                    _do_post,
-                    max_retries=3,
-                    base_delay=1.0,
-                    operation_name="gitlab_commit_status_post",
-                )
-            except Exception as exc:
-                integration.last_error = f"{type(exc).__name__}: {str(exc)[:480]}"
-                integration.last_error_at = datetime.now(timezone.utc)
-                await db.commit()
-                logger.warning(
-                    "gitlab_status post failed",
-                    project_id=str(run.project_id),
-                    run_id=str(run_id),
-                    error=str(exc),
-                )
-                return {"error": str(exc)}
-
-            if resp.status_code in (200, 201):
-                integration.last_posted_at = datetime.now(timezone.utc)
-                integration.last_error = None
-                integration.last_error_at = None
-                await db.commit()
-                logger.info(
-                    "gitlab_status posted",
-                    project_id=str(run.project_id),
-                    run_id=str(run_id),
-                    status_code=resp.status_code,
-                    state=payload["state"],
-                )
-                return {
-                    "posted": True,
-                    "status_code": resp.status_code,
-                    "state": payload["state"],
-                }
-
-            integration.last_error = f"HTTP {resp.status_code}: {resp.text[:480]}"
-            integration.last_error_at = datetime.now(timezone.utc)
-            await db.commit()
             logger.warning(
-                "gitlab_status rejected",
-                project_id=str(run.project_id),
+                "gitlab_status blocked unsafe target",
+                project_id=str(ctx.project_id),
+                run_id=str(run_id),
+                reason=block,
+            )
+            return {"skipped": "blocked_unsafe_target", "reason": block}
+
+        headers = _headers(ctx.pat)
+
+        async def _do_post() -> httpx.Response:
+            return await _request(
+                "POST", ctx.url, headers=headers, json_body=ctx.payload,
+            )
+
+        from app.services.resilience import async_retry
+        try:
+            resp: httpx.Response = await async_retry(
+                _do_post,
+                max_retries=3,
+                base_delay=1.0,
+                operation_name="gitlab_commit_status_post",
+            )
+        except Exception as exc:
+            await _record_outcome(
+                ctx.integration_id,
+                error=f"{type(exc).__name__}: {str(exc)[:480]}",
+            )
+            logger.warning(
+                "gitlab_status post failed",
+                project_id=str(ctx.project_id),
+                run_id=str(run_id),
+                error=str(exc),
+            )
+            return {"error": str(exc)}
+
+        if resp.status_code in (200, 201):
+            await _record_outcome(ctx.integration_id, error=None)
+            logger.info(
+                "gitlab_status posted",
+                project_id=str(ctx.project_id),
                 run_id=str(run_id),
                 status_code=resp.status_code,
+                state=ctx.payload["state"],
             )
-            return {"error": f"HTTP {resp.status_code}", "status_code": resp.status_code}
+            return {
+                "posted": True,
+                "status_code": resp.status_code,
+                "state": ctx.payload["state"],
+            }
+
+        await _record_outcome(
+            ctx.integration_id,
+            error=f"HTTP {resp.status_code}: {resp.text[:480]}",
+        )
+        logger.warning(
+            "gitlab_status rejected",
+            project_id=str(ctx.project_id),
+            run_id=str(run_id),
+            status_code=resp.status_code,
+        )
+        return {"error": f"HTTP {resp.status_code}", "status_code": resp.status_code}
     except Exception as exc:  # noqa: BLE001 — never raise into the pipeline
         logger.warning(
             "gitlab_status unhandled failure", run_id=str(run_id), error=str(exc),

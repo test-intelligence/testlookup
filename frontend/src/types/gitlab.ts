@@ -57,7 +57,7 @@ export interface GitLabConnectionTest {
 }
 
 /** Contract-default config returned by the backend when unconfigured. */
-export const DEFAULT_GITLAB_CONFIG: GitLabConfig = {
+export const DEFAULT_GITLAB_CONFIG: GitLabConfig = Object.freeze({
   enabled: false,
   base_url: 'https://gitlab.com',
   project_path: '',
@@ -66,4 +66,4 @@ export const DEFAULT_GITLAB_CONFIG: GitLabConfig = {
   has_token: false,
   last_error: null,
   last_error_at: null,
-}
+})

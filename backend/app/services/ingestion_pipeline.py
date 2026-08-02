@@ -478,24 +478,32 @@ async def finalize_run(
     # (pr_number == CI_MERGE_REQUEST_IID + ci_repo == CI_PROJECT_PATH) that
     # matches the configured project, and never raise — ingestion must not
     # block on a GitLab outage. Errors land in ``gitlab_integrations.last_error``.
+    # Each surface gets its OWN try/except (GitHub precedent above) so an
+    # MR-note failure can never suppress the commit-status post.
     try:
-        from app.services.gitlab_integration_service import (
-            post_commit_status_for_run,
-            post_mr_note_for_run,
-        )
+        from app.services.gitlab_integration_service import post_mr_note_for_run
         gl_note_result = await post_mr_note_for_run(rid)
         if gl_note_result and not gl_note_result.get("skipped"):
             logger.info("gitlab_mr_note_result", run_id=str(rid), result=gl_note_result)
+    except Exception as gl_note_exc:
+        logger.warning(
+            "gitlab_mr_note_unhandled",
+            run_id=str(rid),
+            error=str(gl_note_exc),
+        )
+
+    try:
+        from app.services.gitlab_integration_service import post_commit_status_for_run
         gl_status_result = await post_commit_status_for_run(rid)
         if gl_status_result and not gl_status_result.get("skipped"):
             logger.info(
                 "gitlab_commit_status_result", run_id=str(rid), result=gl_status_result,
             )
-    except Exception as gl_exc:
+    except Exception as gl_status_exc:
         logger.warning(
-            "gitlab_integration_unhandled",
+            "gitlab_commit_status_unhandled",
             run_id=str(rid),
-            error=str(gl_exc),
+            error=str(gl_status_exc),
         )
 
     # Epic 8 US-8.1 — resolve + persist this run's commit range (commits

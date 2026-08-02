@@ -3,8 +3,9 @@ GitLab integration API — PMF backlog Epic 3 (US-3.1).
 
 Endpoints (config contract — frontend built in parallel):
 
-* ``GET  /api/v1/projects/{project_id}/integrations/gitlab``      → GitLabConfig
-* ``PUT  /api/v1/projects/{project_id}/integrations/gitlab``      → GitLabConfig
+* ``GET  /api/v1/projects/{project_id}/integrations/gitlab``      → GitLabConfigRead
+* ``PUT  /api/v1/projects/{project_id}/integrations/gitlab``      → GitLabConfigRead
+  (body: GitLabConfigWrite)
 * ``POST /api/v1/projects/{project_id}/integrations/gitlab/test`` → test result
 
 The PAT is NEVER returned — ``has_token`` is the only token signal on GET.
@@ -31,23 +32,38 @@ from app.core.deps import (
     require_role,
 )
 from app.models.postgres import GitLabIntegration, User, UserRole
-from app.models.schemas import GitLabConfig, GitLabConnectionTestResponse
+from app.models.schemas import (
+    GitLabConfigRead,
+    GitLabConfigWrite,
+    GitLabConnectionTestResponse,
+)
 from app.services import gitlab_integration_service as svc
 
 router = APIRouter(prefix="/api/v1/projects", tags=["GitLab Integration"])
 logger = structlog.get_logger("routers.gitlab_integration")
 
+# The write model enforces this vocabulary; the column is an unconstrained
+# String(20), so reads coerce anything drifted back to the safe default
+# instead of 500ing the settings page.
+_VALID_MR_COMMENT_MODES = frozenset({"off", "failures_only", "always"})
 
-def _to_config(row: Optional[GitLabIntegration]) -> GitLabConfig:
-    """Serialize a row to the config contract — the PAT is NEVER included;
-    ``has_token`` is the only token signal. ``None`` → default config."""
+
+def _to_config(row: Optional[GitLabIntegration]) -> GitLabConfigRead:
+    """Serialize a row to the config contract — the read model is
+    structurally token-free; ``has_token`` is the only token signal.
+    ``None`` → default config."""
     if row is None:
-        return GitLabConfig()
-    return GitLabConfig(
+        return GitLabConfigRead()
+    mode = (
+        row.mr_comment_mode
+        if row.mr_comment_mode in _VALID_MR_COMMENT_MODES
+        else "failures_only"
+    )
+    return GitLabConfigRead(
         enabled=row.enabled,
         base_url=row.base_url,
         project_path=row.project_path,
-        mr_comment_mode=row.mr_comment_mode,  # type: ignore[arg-type]
+        mr_comment_mode=mode,
         commit_status_enabled=row.commit_status_enabled,
         has_token=row.has_pat,
         last_error=row.last_error,
@@ -57,8 +73,7 @@ def _to_config(row: Optional[GitLabIntegration]) -> GitLabConfig:
 
 @router.get(
     "/{project_id}/integrations/gitlab",
-    response_model=GitLabConfig,
-    response_model_exclude={"token"},
+    response_model=GitLabConfigRead,
 )
 async def get_gitlab_integration(
     project_id: uuid.UUID,
@@ -73,12 +88,11 @@ async def get_gitlab_integration(
 
 @router.put(
     "/{project_id}/integrations/gitlab",
-    response_model=GitLabConfig,
-    response_model_exclude={"token"},
+    response_model=GitLabConfigRead,
 )
 async def upsert_gitlab_integration(
     project_id: uuid.UUID,
-    payload: GitLabConfig,
+    payload: GitLabConfigWrite,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     _: User = Depends(require_project_access()),
@@ -98,6 +112,16 @@ async def upsert_gitlab_integration(
         commit_status_enabled=payload.commit_status_enabled,
         token=payload.token,
     )
+    logger.info(
+        "gitlab integration upserted",
+        project_id=str(project_id),
+        enabled=payload.enabled,
+        actor_id=str(current_user.id),
+        token_action=(
+            "unchanged" if payload.token is None
+            else ("cleared" if payload.token == "" else "rotated")
+        ),
+    )
     return _to_config(row)
 
 
@@ -113,4 +137,10 @@ async def test_gitlab_integration(
 ):
     """Probe the configured project + PAT and report reachability. QA_LEAD+."""
     result = await svc.test_connection(db, project_id)
+    logger.info(
+        "gitlab connection tested",
+        project_id=str(project_id),
+        actor_id=str(current_user.id),
+        ok=bool(result.get("ok")),
+    )
     return GitLabConnectionTestResponse(**result)

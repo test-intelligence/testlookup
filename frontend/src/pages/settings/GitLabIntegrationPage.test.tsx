@@ -3,13 +3,19 @@
  *
  * Covers the load-bearing contract behaviours:
  *   - PUT payload shape: token sent ONLY when the user entered one; base_url,
- *     project_path, mr_comment_mode, commit_status_enabled carried verbatim.
+ *     project_path, mr_comment_mode, commit_status_enabled carried verbatim;
+ *     "Remove token" sends the contract's `token: ""` clear.
+ *   - Failed GET → error state, NO form/Save (a Save from the default-seeded
+ *     form would wipe a working config with defaults).
+ *   - Dirty edits disable "Test connection" (it tests the SAVED config).
  *   - Test-connection surfaces ok/detail + resolved project id.
- *   - has_token UX: "Token set" + "Replace token" when true; input when false.
- *   - MR comment mode select updates the payload.
+ *   - has_token UX: "Token set" + "Replace token" when true; input when false;
+ *     token input cleared/re-hidden after a successful save.
+ *   - All-Projects mode → select-a-project empty state, zero fetches.
+ *   - Permission-denied (canAccessManagement: false) → read-only, no buttons.
  *
- * The service module and project store are mocked; SWR data is mocked so the
- * page renders synchronously without a network layer.
+ * The service layer and project store are mocked; the REAL SWR hook runs
+ * under an isolated SWRConfig so seeding/revalidation behaviour is covered.
  */
 import { createElement } from 'react'
 import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
@@ -20,38 +26,37 @@ import type { GitLabConfig } from '@/types/gitlab'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
 
+const mockGet = vi.fn()
 const mockUpdate = vi.fn()
 const mockTest = vi.fn()
 
 vi.mock('@/services/gitlabIntegrationService', () => ({
   gitlabIntegrationService: {
-    get: vi.fn(),
+    get: (...a: unknown[]) => mockGet(...a),
     update: (...a: unknown[]) => mockUpdate(...a),
     test: (...a: unknown[]) => mockTest(...a),
   },
 }))
 
-// The hook is mocked so we control the "config" the page seeds its form from,
-// and so no real fetch runs.
-let mockConfig: GitLabConfig | undefined
-vi.mock('@/hooks/useGitlabIntegration', () => ({
-  useGitlabIntegration: () => ({ data: mockConfig, isLoading: false, mutate: vi.fn() }),
-  testGitlabConnection: (...a: unknown[]) => mockTest(...a),
-}))
-
+let mockCanManage = true
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ canAccessManagement: true }),
+  usePermissions: () => ({ canAccessManagement: mockCanManage }),
 }))
 
-// Project store: a specific (non-All-Projects) project selected.
-vi.mock('@/store/projectStore', async () => {
-  const ALL_PROJECTS_ID = '__ALL_PROJECTS__'
-  const state = {
-    activeProjectId: 'proj-1',
-    activeProject: { id: 'proj-1', name: 'Checkout' },
-  }
-  const useProjectStore = (sel: (s: typeof state) => unknown) => sel(state)
-  return { useProjectStore, ALL_PROJECTS_ID }
+// Project store: mutable state so tests can flip into All-Projects mode.
+// ALL_PROJECTS_ID is the REAL constant (importActual) so the page's sentinel
+// comparison is tested against the production value, not an invented one.
+const storeState: {
+  activeProjectId: string | null
+  activeProject: { id: string; name: string } | null
+} = {
+  activeProjectId: 'proj-1',
+  activeProject: { id: 'proj-1', name: 'Checkout' },
+}
+vi.mock('@/store/projectStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/store/projectStore')>()
+  const useProjectStore = (sel: (s: typeof storeState) => unknown) => sel(storeState)
+  return { useProjectStore, ALL_PROJECTS_ID: actual.ALL_PROJECTS_ID }
 })
 
 vi.mock('react-hot-toast', () => ({
@@ -90,7 +95,14 @@ async function renderPage() {
   return render(
     createElement(
       SWRConfig,
-      { value: { provider: () => new Map(), dedupingInterval: 0 } },
+      {
+        value: {
+          provider: () => new Map(),
+          dedupingInterval: 0,
+          shouldRetryOnError: false,
+          revalidateOnFocus: false,
+        },
+      },
       createElement(GitLabIntegrationPage),
     ),
   )
@@ -99,15 +111,19 @@ async function renderPage() {
 describe('GitLabIntegrationPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCanManage = true
+    storeState.activeProjectId = 'proj-1'
+    storeState.activeProject = { id: 'proj-1', name: 'Checkout' }
+    mockGet.mockResolvedValue(baseConfig())
     mockUpdate.mockResolvedValue(baseConfig())
     mockTest.mockResolvedValue({ ok: true, detail: 'Reached GitLab', project_id_resolved: '42' })
   })
   afterEach(() => {
-    mockConfig = undefined
+    vi.restoreAllMocks()
   })
 
   it('omits token from the PUT payload when the user did not enter one', async () => {
-    mockConfig = baseConfig({ has_token: true, project_path: 'acme/webapp' })
+    mockGet.mockResolvedValue(baseConfig({ has_token: true, project_path: 'acme/webapp' }))
     await renderPage()
 
     await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
@@ -130,7 +146,7 @@ describe('GitLabIntegrationPage', () => {
   })
 
   it('includes token in the PUT payload when the user enters one', async () => {
-    mockConfig = baseConfig({ has_token: false })
+    mockGet.mockResolvedValue(baseConfig({ has_token: false }))
     await renderPage()
 
     const tokenInput = await screen.findByPlaceholderText('glpat-...')
@@ -148,7 +164,7 @@ describe('GitLabIntegrationPage', () => {
   })
 
   it('carries edited base_url, project_path, commit_status and mode into the payload', async () => {
-    mockConfig = baseConfig({ has_token: true })
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
     await renderPage()
 
     await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
@@ -175,7 +191,7 @@ describe('GitLabIntegrationPage', () => {
   })
 
   it('shows an input (not "Token set") when no token is stored', async () => {
-    mockConfig = baseConfig({ has_token: false })
+    mockGet.mockResolvedValue(baseConfig({ has_token: false }))
     await renderPage()
 
     expect(await screen.findByPlaceholderText('glpat-...')).toBeTruthy()
@@ -184,7 +200,7 @@ describe('GitLabIntegrationPage', () => {
   })
 
   it('reveals the token input via "Replace token" when a token is stored', async () => {
-    mockConfig = baseConfig({ has_token: true })
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
     await renderPage()
 
     await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
@@ -194,10 +210,47 @@ describe('GitLabIntegrationPage', () => {
     expect(screen.getByPlaceholderText('glpat-...')).toBeTruthy()
   })
 
-  it('surfaces test-connection ok/detail + resolved project id', async () => {
-    mockConfig = baseConfig({ has_token: true })
+  it('clears and re-hides the token input after a successful save', async () => {
+    mockGet.mockResolvedValue(baseConfig({ has_token: false }))
+    mockUpdate.mockResolvedValue(baseConfig({ has_token: true }))
     await renderPage()
 
+    const tokenInput = await screen.findByPlaceholderText('glpat-...')
+    await act(async () => {
+      fireEvent.change(tokenInput, { target: { value: 'glpat-secret' } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save'))
+    })
+
+    // The saved response (has_token: true) re-seeds the token UX: the input
+    // is gone (draft cleared with it) and "Token set" is shown instead.
+    await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
+    expect(screen.queryByPlaceholderText('glpat-...')).toBeNull()
+  })
+
+  it('sends token: "" on save after "Remove token" is confirmed', async () => {
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
+    fireEvent.click(screen.getByText('Remove token'))
+    expect(screen.getByText(/Token will be removed when you save/)).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save'))
+    })
+
+    const payload = mockUpdate.mock.calls[0][1]
+    expect(payload.token).toBe('')
+  })
+
+  it('surfaces test-connection ok/detail + resolved project id', async () => {
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
+    await renderPage()
+
+    await screen.findByText('Test connection')
     await act(async () => {
       fireEvent.click(screen.getByText('Test connection'))
     })
@@ -208,10 +261,11 @@ describe('GitLabIntegrationPage', () => {
   })
 
   it('surfaces a failed connection test detail', async () => {
-    mockConfig = baseConfig({ has_token: true })
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
     mockTest.mockResolvedValue({ ok: false, detail: '401 Unauthorized', project_id_resolved: null })
     await renderPage()
 
+    await screen.findByText('Test connection')
     await act(async () => {
       fireEvent.click(screen.getByText('Test connection'))
     })
@@ -220,16 +274,89 @@ describe('GitLabIntegrationPage', () => {
     expect(screen.queryByText(/resolved project id/)).toBeNull()
   })
 
-  it('renders an integration-health warning when last_error is present', async () => {
-    mockConfig = baseConfig({
-      has_token: true,
-      last_error: 'commit status POST failed: 403',
-      last_error_at: '2026-07-15T10:00:00Z',
+  it('disables "Test connection" while the form is dirty', async () => {
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
+    const testButton = screen.getByText('Test connection').closest('button') as HTMLButtonElement
+    expect(testButton.disabled).toBe(false)
+
+    fireEvent.change(screen.getByPlaceholderText('my-group/my-project'), {
+      target: { value: 'team/other' },
     })
+
+    expect(testButton.disabled).toBe(true)
+    expect(testButton.title).toBe('Save your changes first — Test uses the saved configuration')
+
+    // A successful save clears the dirty state and re-enables Test.
+    await act(async () => {
+      fireEvent.click(screen.getByText('Save'))
+    })
+    expect(testButton.disabled).toBe(false)
+  })
+
+  it('renders an integration-health warning when last_error is present', async () => {
+    mockGet.mockResolvedValue(
+      baseConfig({
+        has_token: true,
+        last_error: 'commit status POST failed: 403',
+        last_error_at: '2026-07-15T10:00:00Z',
+      }),
+    )
     await renderPage()
 
     await waitFor(() =>
       expect(screen.getByText(/commit status POST failed: 403/)).toBeTruthy(),
     )
+  })
+
+  it('renders the select-a-project empty state in All-Projects mode without fetching', async () => {
+    const { ALL_PROJECTS_ID } = await import('@/store/projectStore')
+    // Guard against the mock drifting from the production sentinel.
+    expect(ALL_PROJECTS_ID).toBe('all')
+    storeState.activeProjectId = ALL_PROJECTS_ID
+    storeState.activeProject = null
+    await renderPage()
+
+    expect(await screen.findByText('Select a project')).toBeTruthy()
+    expect(mockGet).not.toHaveBeenCalled()
+    expect(mockUpdate).not.toHaveBeenCalled()
+    expect(screen.queryByText('Save')).toBeNull()
+  })
+
+  it('renders an error state without Save when the GET fails', async () => {
+    mockGet.mockRejectedValue(new Error('network down'))
+    await renderPage()
+
+    await waitFor(() =>
+      expect(screen.getByText(/Could not load the GitLab integration settings/)).toBeTruthy(),
+    )
+    // The form is withheld: a Save from the default-seeded form would wipe a
+    // working configuration with defaults.
+    expect(screen.queryByText('Save')).toBeNull()
+    expect(screen.queryByText('Test connection')).toBeNull()
+    expect(screen.getByText('Retry')).toBeTruthy()
+
+    // Retry refetches; a successful response swaps in the real form.
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
+    await act(async () => {
+      fireEvent.click(screen.getByText('Retry'))
+    })
+    await waitFor(() => expect(screen.getByText('Save')).toBeTruthy())
+    expect(screen.getByText('Token set')).toBeTruthy()
+  })
+
+  it('hides Save/Test/Replace for viewers without management access', async () => {
+    mockCanManage = false
+    mockGet.mockResolvedValue(baseConfig({ has_token: true }))
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
+    expect(screen.queryByText('Save')).toBeNull()
+    expect(screen.queryByText('Test connection')).toBeNull()
+    expect(screen.queryByText('Replace token')).toBeNull()
+    expect(screen.queryByText('Remove token')).toBeNull()
+    expect(screen.getByText(/You need the QA Lead role or higher/)).toBeTruthy()
   })
 })

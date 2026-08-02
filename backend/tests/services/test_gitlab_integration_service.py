@@ -40,21 +40,6 @@ class FakeResponse:
         return self._json
 
 
-class _FakeSessionCM:
-    def __init__(self):
-        self.session = AsyncMock()
-
-    async def __aenter__(self):
-        return self.session
-
-    async def __aexit__(self, *exc):
-        return False
-
-
-def _fake_session_factory():
-    return MagicMock(return_value=_FakeSessionCM())
-
-
 def _fake_run(**overrides):
     base = dict(
         id=RUN_ID,
@@ -92,15 +77,6 @@ def _fake_integration(**overrides):
     )
     base.update(overrides)
     return SimpleNamespace(**base)
-
-
-def _tc(fp, status, name=None, message=None):
-    return SimpleNamespace(
-        test_fingerprint=fp,
-        status=status,
-        test_name=name or f"test_{fp}",
-        error_message=message,
-    )
 
 
 def _ctx(**overrides):
@@ -242,6 +218,23 @@ async def test_connection_no_token_configured():
     assert "No token stored" in result["detail"]
 
 
+@pytest.mark.asyncio
+async def test_connection_failure_never_leaks_pat_into_result():
+    from app.core.config import settings
+    pat = "glpat_supersecret_value"
+    resp = FakeResponse(401, text="401 Unauthorized")
+    with patch.object(settings, "AI_OFFLINE_MODE", False), \
+         patch.object(svc, "get_integration", AsyncMock(return_value=_fake_integration())), \
+         patch("app.services.secret_service.read_secret", AsyncMock(return_value=pat)), \
+         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
+         patch.object(svc, "_request", AsyncMock(return_value=resp)) as req_mock:
+        result = await svc.test_connection(AsyncMock(), PROJECT_ID)
+    assert result["ok"] is False
+    # The PAT travels ONLY in the PRIVATE-TOKEN header, never in the result.
+    assert req_mock.await_args.kwargs["headers"]["PRIVATE-TOKEN"] == pat
+    assert pat not in str(result)
+
+
 # ── MR-note body reuse ───────────────────────────────────────────────────────
 
 
@@ -354,6 +347,85 @@ async def test_mr_note_posts_new_note_when_marker_absent():
     assert post_call.args[1].endswith(
         "/projects/acme%2Fwebapp/merge_requests/42/notes"
     )
+    # PAT transport contract: GitLab authenticates via the PRIVATE-TOKEN
+    # header — renaming the header key must fail this file, not just 401
+    # in production.
+    assert post_call.kwargs["headers"]["PRIVATE-TOKEN"] == "glpat_x"
+
+
+# ── Note-list pagination (marker beyond page 1) ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_note_search_paginates_and_updates_marker_on_page_2():
+    marker = svc._marker(PROJECT_ID)
+    page1 = [{"id": i, "body": f"human note {i}"} for i in range(100)]
+    page2 = [{"id": 555, "body": marker + "\nold body"}]
+    responses = [
+        FakeResponse(200, json_data=page1),
+        FakeResponse(200, json_data=page2),
+        FakeResponse(200, json_data={"id": 555}),
+    ]
+    request_mock = AsyncMock(side_effect=responses)
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "_gather_mr_context", AsyncMock(return_value=_ctx())), \
+         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
+         patch.object(svc, "_record_outcome", AsyncMock()), \
+         patch.object(svc, "_request", request_mock):
+        result = await svc.post_mr_note_for_run(RUN_ID)
+
+    # The marker note on page 2 is found and UPDATED — no duplicate POST.
+    assert result["posted"] is True and result["updated"] is True
+    assert _http_methods(request_mock) == ["GET", "GET", "PUT"]
+    assert request_mock.await_args_list[0].kwargs["params"]["page"] == 1
+    assert request_mock.await_args_list[1].kwargs["params"]["page"] == 2
+    assert request_mock.await_args_list[2].args[1].endswith("/notes/555")
+
+
+@pytest.mark.asyncio
+async def test_note_search_stops_after_short_first_page():
+    # 1 note (< per_page) and no marker → exactly ONE list GET, then POST new.
+    responses = [
+        FakeResponse(200, json_data=[{"id": 1, "body": "human note"}]),
+        FakeResponse(201, json_data={"id": 9}),
+    ]
+    request_mock = AsyncMock(side_effect=responses)
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "_gather_mr_context", AsyncMock(return_value=_ctx())), \
+         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
+         patch.object(svc, "_record_outcome", AsyncMock()), \
+         patch.object(svc, "_request", request_mock):
+        result = await svc.post_mr_note_for_run(RUN_ID)
+
+    assert result["posted"] is True
+    methods = _http_methods(request_mock)
+    assert methods == ["GET", "POST"]  # short page terminated the scan
+
+
+@pytest.mark.asyncio
+async def test_marker_note_with_missing_id_is_skipped_not_treated_as_absent():
+    # An id-less marker match must NOT degrade into "no note found" (which
+    # would POST a duplicate on every re-run) — the scan continues and the
+    # later well-formed marker note is updated.
+    marker = svc._marker(PROJECT_ID)
+    responses = [
+        FakeResponse(200, json_data=[
+            {"body": marker + "\nid-less marker note"},
+            {"id": 7, "body": marker + "\nwell-formed marker note"},
+        ]),
+        FakeResponse(200, json_data={"id": 7}),
+    ]
+    request_mock = AsyncMock(side_effect=responses)
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "_gather_mr_context", AsyncMock(return_value=_ctx())), \
+         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
+         patch.object(svc, "_record_outcome", AsyncMock()), \
+         patch.object(svc, "_request", request_mock):
+        result = await svc.post_mr_note_for_run(RUN_ID)
+
+    assert result["updated"] is True
+    assert _http_methods(request_mock) == ["GET", "PUT"]
+    assert request_mock.await_args_list[1].args[1].endswith("/notes/7")
 
 
 # ── failures_only mode + green run ──────────────────────────────────────────
@@ -601,6 +673,190 @@ async def test_commit_status_offline_skips():
     assert result == {"skipped": "feature_flag_off_or_offline_mode"}
 
 
+@pytest.mark.asyncio
+async def test_commit_status_blocked_target_never_sends_token():
+    # Removing the SSRF guard from the commit-status path must fail here:
+    # a blocked target means ZERO HTTP awaits (the PAT is never sent) and
+    # the block is recorded for Integration Health.
+    factory = _session_cm_returning(_fake_run(), _fake_integration())
+    request_mock = AsyncMock()
+    record_mock = AsyncMock()
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "AsyncSessionLocal", factory), \
+         patch("app.services.secret_service.read_secret", AsyncMock(return_value="glpat_x")), \
+         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value="blocked_target:169.254.169.254")), \
+         patch.object(svc, "_record_outcome", record_mock), \
+         patch.object(svc, "_request", request_mock):
+        result = await svc.post_commit_status_for_run(RUN_ID)
+
+    assert result == {
+        "skipped": "blocked_unsafe_target",
+        "reason": "blocked_target:169.254.169.254",
+    }
+    request_mock.assert_not_awaited()
+    record_mock.assert_awaited_once_with(
+        INTEGRATION_ID, error="blocked unsafe target: blocked_target:169.254.169.254",
+    )
+
+
+@pytest.mark.asyncio
+async def test_commit_status_repo_mismatch_skips_without_http():
+    factory = _session_cm_returning(
+        _fake_run(ci_repo="other/repo"), _fake_integration(),
+    )
+    request_mock = AsyncMock()
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "AsyncSessionLocal", factory), \
+         patch.object(svc, "_request", request_mock):
+        result = await svc.post_commit_status_for_run(RUN_ID)
+
+    assert result == {"skipped": "repo_mismatch"}
+    request_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_status_null_ci_repo_skips():
+    # The repo guard is MANDATORY (mirrors the MR path): a run without a CI
+    # repo must not post onto whatever project happens to be configured.
+    factory = _session_cm_returning(_fake_run(ci_repo=None), _fake_integration())
+    request_mock = AsyncMock()
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "AsyncSessionLocal", factory), \
+         patch.object(svc, "_request", request_mock):
+        result = await svc.post_commit_status_for_run(RUN_ID)
+
+    assert result == {"skipped": "repo_mismatch"}
+    request_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_status_empty_project_path_skips():
+    # An empty project_path would build /projects//statuses/… — guard it.
+    factory = _session_cm_returning(
+        _fake_run(), _fake_integration(project_path=""),
+    )
+    request_mock = AsyncMock()
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "AsyncSessionLocal", factory), \
+         patch.object(svc, "_request", request_mock):
+        result = await svc.post_commit_status_for_run(RUN_ID)
+
+    assert result == {"skipped": "no_project_path"}
+    request_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_status_url_quotes_commit_hash():
+    # commit_hash is CI-supplied — path metacharacters must not rewrite the
+    # authenticated request path.
+    factory = _session_cm_returning(
+        _fake_run(commit_hash="dead/../beef?x=1"), _fake_integration(),
+    )
+    resp = FakeResponse(201, json_data={"id": 5})
+    with patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "AsyncSessionLocal", factory), \
+         patch("app.services.secret_service.read_secret", AsyncMock(return_value="glpat_x")), \
+         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
+         patch.object(svc, "_record_outcome", AsyncMock()), \
+         patch.object(svc, "_request", AsyncMock(return_value=resp)) as req_mock:
+        result = await svc.post_commit_status_for_run(RUN_ID)
+
+    assert result["posted"] is True
+    posted_url = req_mock.await_args.args[1]
+    assert posted_url.endswith("/statuses/dead%2F..%2Fbeef%3Fx%3D1")
+
+
+# ── upsert_integration token contract (None / "" / value) ──────────────────
+
+
+def _fake_db():
+    """Stage-only fake AsyncSession: sync add, async flush/commit so the
+    never-commits contract is assertable."""
+    db = MagicMock()
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+    return db
+
+
+def _actor():
+    return SimpleNamespace(id=uuid.uuid4(), username="lead", email="lead@x")
+
+
+@pytest.mark.asyncio
+async def test_upsert_token_none_leaves_secret_and_has_pat_alone():
+    db = _fake_db()
+    row = _fake_integration(has_pat=True)
+    store_mock = AsyncMock()
+    with patch.object(svc, "get_integration", AsyncMock(return_value=row)), \
+         patch("app.services.secret_service.store_secret", store_mock):
+        result = await svc.upsert_integration(
+            db, project_id=PROJECT_ID, actor=_actor(), enabled=True,
+            base_url="https://gitlab.com", project_path="acme/webapp",
+            token=None,
+        )
+    store_mock.assert_not_awaited()
+    assert result.has_pat is True  # untouched
+    db.commit.assert_not_awaited()  # stage-only: router owns the commit
+
+
+@pytest.mark.asyncio
+async def test_upsert_token_empty_clears_secret_and_has_pat():
+    db = _fake_db()
+    row = _fake_integration(has_pat=True)
+    store_mock = AsyncMock()
+    with patch.object(svc, "get_integration", AsyncMock(return_value=row)), \
+         patch("app.services.secret_service.store_secret", store_mock):
+        result = await svc.upsert_integration(
+            db, project_id=PROJECT_ID, actor=_actor(), enabled=True,
+            base_url="https://gitlab.com", project_path="acme/webapp",
+            token="",
+        )
+    store_mock.assert_awaited_once()
+    assert store_mock.await_args.args[3] == ""  # secret cleared
+    assert result.has_pat is False
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_upsert_token_value_stores_secret_and_sets_has_pat():
+    db = _fake_db()
+    row = _fake_integration(has_pat=False)
+    store_mock = AsyncMock()
+    with patch.object(svc, "get_integration", AsyncMock(return_value=row)), \
+         patch("app.services.secret_service.store_secret", store_mock):
+        result = await svc.upsert_integration(
+            db, project_id=PROJECT_ID, actor=_actor(), enabled=True,
+            base_url="https://gitlab.com", project_path="acme/webapp",
+            token="glpat_x",
+        )
+    store_mock.assert_awaited_once()
+    assert store_mock.await_args.args[3] == "glpat_x"
+    assert result.has_pat is True
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_upsert_normalizes_schemeless_base_url():
+    # Belt for non-router callers: a schemeless host would silently no-op
+    # the SSRF guard (empty urlparse netloc) — the service enforces a scheme.
+    db = _fake_db()
+    with patch.object(svc, "get_integration", AsyncMock(return_value=None)):
+        result = await svc.upsert_integration(
+            db, project_id=PROJECT_ID, actor=_actor(), enabled=False,
+            base_url="gitlab.mycorp.com/", project_path="acme/webapp",
+        )
+    assert result.base_url == "https://gitlab.mycorp.com"
+    db.commit.assert_not_awaited()
+
+
+def test_normalize_base_url_contract():
+    assert svc._normalize_base_url(None) == "https://gitlab.com"
+    assert svc._normalize_base_url("") == "https://gitlab.com"
+    assert svc._normalize_base_url("https://gitlab.com/") == "https://gitlab.com"
+    assert svc._normalize_base_url("http://gitlab.internal") == "http://gitlab.internal"
+    assert svc._normalize_base_url("gitlab.mycorp.com") == "https://gitlab.mycorp.com"
+
+
 # ── Config contract serialization (router helper) ───────────────────────────
 
 
@@ -609,9 +865,9 @@ def test_config_contract_never_leaks_token_and_reflects_has_pat():
     row = _fake_integration(has_pat=True, last_error="boom")
     cfg = _to_config(row)
     dumped = cfg.model_dump()
-    # PAT never surfaces; has_token reflects has_pat.
+    # The read model is structurally token-free; has_token reflects has_pat.
+    assert "token" not in dumped
     assert dumped["has_token"] is True
-    assert dumped.get("token") is None
     assert dumped["enabled"] is True
     assert dumped["base_url"] == "https://gitlab.com"
     assert dumped["project_path"] == "acme/webapp"
@@ -629,6 +885,26 @@ def test_config_contract_defaults_when_unconfigured():
     assert cfg["mr_comment_mode"] == "failures_only"
     assert cfg["commit_status_enabled"] is True
     assert cfg["has_token"] is False
+
+
+def test_config_contract_coerces_drifted_mr_comment_mode():
+    # The column is an unconstrained String(20): a drifted row value must
+    # degrade to the safe default on GET, never ResponseValidationError-500
+    # the settings page.
+    from app.routers.gitlab_integration import _to_config
+    cfg = _to_config(_fake_integration(mr_comment_mode="something_drifted"))
+    assert cfg.mr_comment_mode == "failures_only"
+
+
+def test_write_schema_rejects_schemeless_base_url():
+    import pydantic
+    from app.models.schemas import GitLabConfigWrite
+    with pytest.raises(pydantic.ValidationError):
+        GitLabConfigWrite(base_url="gitlab.mycorp.com")
+    # The stored default must still pass, and the write vocabulary is strict.
+    assert GitLabConfigWrite().base_url == "https://gitlab.com"
+    with pytest.raises(pydantic.ValidationError):
+        GitLabConfigWrite(mr_comment_mode="something_drifted")
 
 
 # ── Migration 0111 contract ─────────────────────────────────────────────────
