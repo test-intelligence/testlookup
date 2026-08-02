@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_accessible_project_ids, get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import User
-from app.services.value_metrics_service import get_value_metrics
+from app.services.value_metrics_service import get_methodology, get_value_metrics
 
 router = APIRouter(prefix="/api/v1/value-metrics", tags=["Value Metrics"])
 
@@ -26,10 +26,13 @@ def _project_in_scope(project_id: str, accessible: set) -> bool:
 async def get_metrics(
     project_id: Optional[str] = Query(None),
     days: int = Query(30, ge=1, le=365),
+    months: int = Query(6, ge=1, le=24),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Return operational value metrics for a project (or all) over a time window."""
+    """Return operational value metrics for a project (or all) over a time
+    window, including the US-12.1 engineer-hours-saved model (``months``
+    bounds the monthly trend)."""
     accessible = await get_accessible_project_ids(db, current_user)
     if accessible is not None:
         # Non-admin: verify the provided project_id too — otherwise a caller
@@ -37,7 +40,17 @@ async def get_metrics(
         if not project_id or not _project_in_scope(project_id, accessible):
             return {}
     pid = uuid.UUID(project_id) if project_id else None
-    return await get_value_metrics(db, project_id=pid, days=days)
+    return await get_value_metrics(db, project_id=pid, days=days, months=months)
+
+
+@router.get("/methodology")
+async def get_methodology_page(
+    current_user: User = Depends(get_current_active_user),
+):
+    """US-12.1: the hours-saved model documented — legs, formulas, caveats,
+    defaults, research anchors. Static content; login-only, not
+    project-scoped."""
+    return get_methodology()
 
 
 @router.get("/by-team")

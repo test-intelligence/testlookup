@@ -4125,6 +4125,47 @@ class QuarantineLifecyclePolicy(Base):
     )
 
 
+class ValueMetricAssumptions(Base):
+    """Per-project tunable assumptions for the engineer-hours-saved model
+    (PMF US-12.1, migration 0112).
+
+    One row per project; a MISSING row resolves to the defaults in
+    ``value_metrics_service.EffectiveAssumptions`` (triage 20 min/failure,
+    blocked-run wait 30 min, defect filing 15 min) — no project-creation
+    hook needed (same pattern as ``QuarantineLifecyclePolicy``).
+
+    Every defaulted column carries a matching ``server_default`` so the
+    migration DDL and the ORM cannot drift (the #433 lesson).
+    """
+    __tablename__ = "value_metric_assumptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True,
+    )
+    # Minutes of engineer time avoided per auto-clustered failure. Default 20
+    # sits inside the published 15-25 min refocus/context-switch band.
+    triage_minutes_per_failure: Mapped[float] = mapped_column(
+        Float, default=20.0, server_default=text("20.0"), nullable=False,
+    )
+    # Minutes of wait cost avoided per CI run unblocked by quarantine.
+    blocked_run_wait_minutes: Mapped[float] = mapped_column(
+        Float, default=30.0, server_default=text("30.0"), nullable=False,
+    )
+    # Minutes of defect-filing/round-trip time avoided per duplicate failure absorbed.
+    defect_filing_minutes: Mapped[float] = mapped_column(
+        Float, default=15.0, server_default=text("15.0"), nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+
 class ProjectLlmUsage(Base):
     """Running per-period LLM cost meter for a project.
 

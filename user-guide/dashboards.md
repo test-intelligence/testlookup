@@ -31,7 +31,7 @@ The page also offers **Download analysis report (1d / 7d)** — the self-contain
 
 ## Value Metrics (`/value-metrics`)
 
-The ROI page: **defects auto-grouped**, **duplicate tickets prevented**, triage time saved, flaky tests identified, **automated go/no-go assessments**, and AI reports generated — the numbers for the "what is this tool saving us" conversation.
+The ROI page: the **engineer-hours-saved headline** (last 30 days, with FTE equivalent and a monthly trend), plus the operational counters — **defects auto-grouped**, **duplicate tickets prevented**, flaky tests identified, **automated go/no-go assessments**, and AI reports generated. The headline's math, per-project tunable assumptions, and honesty caveats are documented in [Value Metrics — the engineer-hours-saved model](value-metrics.md).
 
 ## Search (`/search`)
 

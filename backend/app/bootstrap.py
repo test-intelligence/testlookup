@@ -72,6 +72,7 @@ from app.routers import (
     test_health,
     test_management,
     users,
+    value_metric_assumptions,
     value_metrics,
     webhooks,
     webhooks_outbound,
@@ -130,6 +131,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     users.projects_router,
     api_keys.router,
     value_metrics.router,
+    value_metric_assumptions.router,  # PMF US-12.1: per-project hours-saved assumptions
     scim.token_router,              # SCIM token management (admin-only, JWT-protected)
     identity_events.router,          # Identity audit events (admin-only, JWT-protected)
     release_gate_policies.router,    # Release gate policy CRUD (ENT-02)

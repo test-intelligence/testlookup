@@ -9,6 +9,7 @@ import WidgetPicker from '@/components/analytics/WidgetPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks/useMetrics'
+import { useValueMetricsKpi } from '@/hooks/useValueMetrics'
 import { useRuns } from '@/hooks/useRuns'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -795,6 +796,11 @@ function MicroStrip({ summary, days }: { summary: DashboardSummary | undefined; 
 }
 
 // ── Helpers for KPI strip data ───────────────────────────────────────────
+/** Compact hours: 1 decimal under 100h, whole hours above (US-12.2 KPI). */
+function formatHoursSaved(h: number): string {
+  return String(h >= 100 ? Math.round(h) : Math.round(h * 10) / 10)
+}
+
 function metricNumber(m: DashboardMetricValue | undefined): number {
   if (!m) return 0
   if (typeof m.value === 'number') return m.value
@@ -866,6 +872,13 @@ export default function OverviewPage() {
   // failure-categories payload /failures uses, so this KPI is one SWR-cached
   // fetch — no bespoke endpoint.
   const { data: failureCategories } = useFailureCategories(days, suiteFilter)
+  // Eng-hours saved (US-12.2): rendered ONLY when the hours-saved model has
+  // enough data (`available`). When it doesn't, the card is omitted entirely —
+  // no dash-card, no week-one "0 hours" embarrassment.
+  const { metrics: valueMetrics } = useValueMetricsKpi()
+  const hoursSaved30d = valueMetrics?.available === true && valueMetrics.headline != null
+    ? valueMetrics.headline.hours_saved_30d
+    : null
   const { data: recentRuns } = useRuns({ page: 1, size: 100, days })
   const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
   const suiteOptions = useMemo(() => collectSuiteOptions(recentRunItems), [recentRunItems])
@@ -1072,7 +1085,7 @@ export default function OverviewPage() {
       </div>
 
       {/* KPI strip */}
-      {kpiVisible.length > 0 && (
+      {(kpiVisible.length > 0 || hoursSaved30d != null) && (
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
             {activeWidgets.has('total_executions_kpi') && (
               <KpiCard
@@ -1157,6 +1170,20 @@ export default function OverviewPage() {
                 tone="neutral"
                 gradId="kpi-duration"
                 emptyMsg={avgDurationMs ? `${days}d · avg only` : 'Needs ≥ 3 timed runs'}
+              />
+            )}
+            {/* US-12.2 — Eng-hours saved. Only rendered when the hours-saved
+                model reports available=true; otherwise omitted (no dash-card). */}
+            {hoursSaved30d != null && valueMetrics && (
+              <KpiCard
+                label="Eng-hours saved"
+                value={formatHoursSaved(hoursSaved30d)}
+                unit="h"
+                tone="good"
+                gradId="kpi-hours-saved"
+                emptyMsg={`30d · ≈ ${valueMetrics.headline.fte_equivalent_30d.toFixed(1)} FTE · estimated`}
+                linkTo="/value-metrics"
+                linkLabel="View value metrics"
               />
             )}
         </div>

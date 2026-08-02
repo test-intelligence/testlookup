@@ -32,13 +32,6 @@ from app.models.postgres import (
 logger = logging.getLogger("services.team_value_metrics")
 
 
-# Minutes of engineering time saved by each category of automation
-# action. Mirrors the constants in ``value_metrics_service`` so the
-# workspace and team-level numbers agree on their conversion rates.
-_MINUTES_PER_CLUSTER_TRIAGE = 15
-_MINUTES_PER_DUPLICATE_AVOIDED = 30
-
-
 def _match_owner(
     suite_name: Optional[str],
     test_name: Optional[str],
@@ -73,6 +66,12 @@ async def get_team_value_metrics(
     UI can show relative contribution.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # US-12.1: the per-project tunable assumptions are the single rate card
+    # for both the workspace and the team-level numbers.
+    from app.services.value_metrics_service import get_effective_assumptions
+
+    assumptions = await get_effective_assumptions(db, project_id)
 
     # Load the project's ownership rules once.
     rules_result = await db.execute(
@@ -192,10 +191,12 @@ async def get_team_value_metrics(
             team_buckets[team]["mttr_hours"] = round(accum[0] / accum[1], 2)
 
     for team, bucket in team_buckets.items():
-        # Same rate card as the workspace service so numbers agree.
-        bucket["estimated_minutes_saved"] = (
-            bucket["defect_count"] * _MINUTES_PER_CLUSTER_TRIAGE
-            + bucket["defect_count"] * _MINUTES_PER_DUPLICATE_AVOIDED // 3
+        # Same rate card as the workspace service so numbers agree: per-defect
+        # triage minutes plus a third of the filing minutes (roughly one in
+        # three defects would otherwise have been filed as a duplicate).
+        bucket["estimated_minutes_saved"] = int(
+            bucket["defect_count"] * assumptions.triage_minutes_per_failure
+            + bucket["defect_count"] * assumptions.defect_filing_minutes / 3
         )
         # Denormalized pass rate for the UI tile.
         total = bucket["test_count"]

@@ -56,15 +56,17 @@ class TestServiceImport:
         from app.services.value_metrics_service import get_value_metrics
         assert callable(get_value_metrics)
 
-    def test_constants_defined(self):
+    def test_default_assumptions_defined(self):
+        # US-12.1 replaced the hardcoded rate constants with tunable
+        # per-project assumptions; the code defaults live here.
         from app.services.value_metrics_service import (
-            _MINUTES_PER_CLUSTER_TRIAGE,
-            _MINUTES_PER_DUPLICATE_AVOIDED,
-            _MINUTES_PER_INTELLIGENCE_REPORT,
+            DEFAULT_BLOCKED_RUN_WAIT_MINUTES,
+            DEFAULT_DEFECT_FILING_MINUTES,
+            DEFAULT_TRIAGE_MINUTES_PER_FAILURE,
         )
-        assert _MINUTES_PER_CLUSTER_TRIAGE > 0
-        assert _MINUTES_PER_DUPLICATE_AVOIDED > 0
-        assert _MINUTES_PER_INTELLIGENCE_REPORT > 0
+        assert DEFAULT_TRIAGE_MINUTES_PER_FAILURE == 20.0
+        assert DEFAULT_BLOCKED_RUN_WAIT_MINUTES == 30.0
+        assert DEFAULT_DEFECT_FILING_MINUTES == 15.0
 
 
 class TestRouterEndpoints:
@@ -83,23 +85,29 @@ class TestRouterEndpoints:
 
 class TestTimeSavedFormula:
     def test_zero_inputs(self):
-        from app.services.value_metrics_service import (
-            _MINUTES_PER_CLUSTER_TRIAGE as ct,
-            _MINUTES_PER_DUPLICATE_AVOIDED as da,
-            _MINUTES_PER_INTELLIGENCE_REPORT as ir,
+        from app.services.value_metrics_service import EffectiveAssumptions
+
+        a = EffectiveAssumptions()
+        minutes = (
+            0 * a.triage_minutes_per_failure
+            + 0 * a.defect_filing_minutes
+            + 0 * a.triage_minutes_per_failure
         )
-        minutes = 0 * ct + 0 * da + 0 * ir
         assert minutes == 0
 
     def test_positive_inputs(self):
-        from app.services.value_metrics_service import (
-            _MINUTES_PER_CLUSTER_TRIAGE as ct,
-            _MINUTES_PER_DUPLICATE_AVOIDED as da,
-            _MINUTES_PER_INTELLIGENCE_REPORT as ir,
+        # Legacy scalar mapping: cluster triage + intelligence report use
+        # the per-failure triage minutes; duplicates use the filing minutes.
+        from app.services.value_metrics_service import EffectiveAssumptions
+
+        a = EffectiveAssumptions()  # defaults 20 / 30 / 15
+        minutes = (
+            10 * a.triage_minutes_per_failure
+            + 5 * a.defect_filing_minutes
+            + 20 * a.triage_minutes_per_failure
         )
-        minutes = 10 * ct + 5 * da + 20 * ir
-        assert minutes == 10 * 15 + 5 * 30 + 20 * 20  # 150 + 150 + 400 = 700
-        assert minutes == 700
+        assert minutes == 10 * 20 + 5 * 15 + 20 * 20  # 200 + 75 + 400 = 675
+        assert minutes == 675
 
     def test_hours_conversion(self):
         minutes = 150
@@ -108,17 +116,24 @@ class TestTimeSavedFormula:
 
 
 class TestResponseShape:
+    # Legacy keys preserved for old consumers…
+    LEGACY_FIELDS = {
+        "period_days", "project_id",
+        "triage_time_saved_minutes", "triage_time_saved_hours",
+        "defects_auto_grouped", "tests_grouped",
+        "duplicate_tickets_avoided", "defects_promoted",
+        "flaky_tests_identified", "quarantine_recommended",
+        "risky_releases_blocked", "releases_conditional",
+        "release_overrides", "intelligence_reports_generated",
+    }
+    # …plus the US-12.1 hours-saved model keys (pinned contract).
+    MODEL_FIELDS = {
+        "available", "insufficient_data_reason", "headline", "monthly",
+        "assumptions", "assumptions_source", "methodology_version",
+    }
+
     def test_expected_fields(self):
-        expected_fields = {
-            "period_days", "project_id",
-            "triage_time_saved_minutes", "triage_time_saved_hours",
-            "defects_auto_grouped", "tests_grouped",
-            "duplicate_tickets_avoided", "defects_promoted",
-            "flaky_tests_identified", "quarantine_recommended",
-            "risky_releases_blocked", "releases_conditional",
-            "release_overrides", "intelligence_reports_generated",
-        }
-        # Verify all fields are present in a mock response
+        expected_fields = self.LEGACY_FIELDS | self.MODEL_FIELDS
         mock_response = {field: 0 for field in expected_fields}
         mock_response["project_id"] = None
         assert set(mock_response.keys()) == expected_fields

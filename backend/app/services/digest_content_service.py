@@ -461,6 +461,25 @@ async def generate_digest(
                 "Flaky-debt review fold-in failed for %s: %s", project_id, exc
             )
 
+    # ── US-12.2: engineer-hours-saved headline ──────────────────────────
+    # Only set when the availability gate passes (enough history + a
+    # nonzero leg in the last 30 days) — the renderers stay silent when
+    # the key is absent, and the zero-change short-circuits return before
+    # ever reaching it. A headline fault must never kill the digest.
+    if project_id is not None:
+        try:
+            from app.services.value_metrics_service import compute_headline
+
+            headline = await compute_headline(db, project_id)
+            if headline.get("available"):
+                digest["value_headline_hours_30d"] = round(
+                    float(headline.get("hours_saved_30d") or 0.0), 1
+                )
+        except Exception as exc:  # noqa: BLE001 — headline fault must not kill the digest
+            logger.warning(
+                "Value headline computation failed for %s: %s", project_id, exc
+            )
+
     return digest
 
 
@@ -555,6 +574,13 @@ def render_digest_text(digest: dict) -> str:
         totals += f" · pass rate {avg:.1f}%{trend_str}"
     totals += f" · {digest.get('flaky_test_count', 0)} flaky"
     lines.append(totals)
+    # US-12.2: headline only present when the availability gate passed.
+    hours_saved = digest.get("value_headline_hours_30d")
+    if hours_saved is not None:
+        lines.append(
+            f"≈ {hours_saved:g} engineer-hours saved in the last 30 days "
+            "(see /value-metrics)"
+        )
     for item in (digest.get("action_items") or [])[:3]:
         lines.append(f"• {item}")
     # AI-7: weekly flaky-debt review drafts for teams without their own
@@ -697,6 +723,19 @@ def render_digest_html(digest: dict) -> str:
         trend_str = f' <span style="color:{color}">({sign}{trend:.1f}%)</span>'
 
     avg_pr_display = f"{avg_pr:.1f}%" if avg_pr is not None else "N/A"
+
+    # US-12.2: hours-saved stat tile — only when the availability gate
+    # passed (the key is absent otherwise).
+    hours_saved = digest.get("value_headline_hours_30d")
+    value_tile = (
+        f"""
+        <div style="background:#EEF2FF;border-radius:8px;padding:12px 16px;text-align:center;min-width:100px">
+            <div style="font-size:20px;font-weight:bold;color:#4338CA">≈ {hours_saved:g} h</div>
+            <div style="font-size:11px;color:#6B7280">Eng-hours saved (30d)</div>
+        </div>"""
+        if hours_saved is not None else ""
+    )
+
     sections.append(f"""
     <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
         <div style="background:#F0FDF4;border-radius:8px;padding:12px 16px;text-align:center;min-width:100px">
@@ -714,7 +753,7 @@ def render_digest_html(digest: dict) -> str:
         <div style="background:#FFFBEB;border-radius:8px;padding:12px 16px;text-align:center;min-width:80px">
             <div style="font-size:20px;font-weight:bold;color:#D97706">{digest.get('flaky_test_count', 0)}</div>
             <div style="font-size:11px;color:#6B7280">Flaky Tests</div>
-        </div>
+        </div>{value_tile}
     </div>""")
 
     # Action items

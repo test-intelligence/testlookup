@@ -4194,6 +4194,26 @@ class GitHubConnectionTestResponse(BaseModel):
 # optional write-only ``token`` that sets/rotates the PAT via secret_service.
 
 
+class ValueMetricAssumptionsWrite(BaseModel):
+    """PUT body for ``/projects/{id}/value-metrics/assumptions`` (US-12.1).
+
+    All fields optional — omitted fields keep their current (or default)
+    value. Bounds: 0 < x <= 480 minutes; anything outside 422s.
+    """
+    triage_minutes_per_failure: Optional[float] = Field(None, gt=0, le=480)
+    blocked_run_wait_minutes: Optional[float] = Field(None, gt=0, le=480)
+    defect_filing_minutes: Optional[float] = Field(None, gt=0, le=480)
+
+
+class ValueMetricAssumptionsRead(BaseModel):
+    """GET/PUT response — the EFFECTIVE assumptions plus their source
+    (``default`` = no row, ``custom`` = project row exists)."""
+    triage_minutes_per_failure: float
+    blocked_run_wait_minutes: float
+    defect_filing_minutes: float
+    source: str = "default"
+
+
 class GitLabConfigWrite(BaseModel):
     """PUT body for ``/projects/{id}/integrations/gitlab``.
 

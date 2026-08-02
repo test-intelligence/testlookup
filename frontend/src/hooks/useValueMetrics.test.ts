@@ -3,7 +3,9 @@
  *
  * Regression guard for the ValueMetricsPage migration off a load-on-mount
  * `useEffect` (set-state-in-effect): verifies the SWR hook still fetches with
- * the project + window key and surfaces the metrics declaratively.
+ * the project + window key and surfaces the metrics declaratively. Extended
+ * for US-12.1: the key/fetch now carry the `months` window for the
+ * hours-saved monthly series (contract default 6).
  */
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -13,6 +15,7 @@ vi.mock('react-hot-toast', () => ({ default: { error: vi.fn() } }))
 vi.mock('@/services/valueMetricsService', () => ({
   valueMetricsService: {
     get: vi.fn(),
+    getMethodology: vi.fn(),
   },
 }))
 
@@ -31,6 +34,18 @@ const sampleMetrics = {
   releases_conditional: 1,
   release_overrides: 0,
   intelligence_reports_generated: 4,
+  // US-12.1 hours-saved model keys (pinned contract)
+  available: true,
+  insufficient_data_reason: null,
+  headline: { hours_saved_30d: 12.5, fte_equivalent_30d: 0.3 },
+  monthly: [],
+  assumptions: {
+    triage_minutes_per_failure: 15,
+    blocked_run_wait_minutes: 30,
+    defect_filing_minutes: 10,
+  },
+  assumptions_source: 'default',
+  methodology_version: 1,
 }
 
 describe('useValueMetrics', () => {
@@ -38,7 +53,7 @@ describe('useValueMetrics', () => {
     vi.clearAllMocks()
   })
 
-  it('fetches with the provided projectId and days', async () => {
+  it('fetches with the provided projectId, days and default months', async () => {
     const { valueMetricsService } = await import('@/services/valueMetricsService')
     ;(valueMetricsService.get as ReturnType<typeof vi.fn>).mockResolvedValue(sampleMetrics)
 
@@ -46,7 +61,7 @@ describe('useValueMetrics', () => {
     const { result } = renderHook(() => useValueMetrics('proj-1', 90))
 
     await waitFor(() => expect(result.current.metrics).toEqual(sampleMetrics))
-    expect(valueMetricsService.get).toHaveBeenCalledWith('proj-1', 90)
+    expect(valueMetricsService.get).toHaveBeenCalledWith('proj-1', 90, 6)
     expect(result.current.isError).toBe(false)
   })
 
@@ -58,7 +73,18 @@ describe('useValueMetrics', () => {
     const { result } = renderHook(() => useValueMetrics(undefined, 7))
 
     await waitFor(() => expect(result.current.metrics).toEqual(sampleMetrics))
-    expect(valueMetricsService.get).toHaveBeenCalledWith(undefined, 7)
+    expect(valueMetricsService.get).toHaveBeenCalledWith(undefined, 7, 6)
+  })
+
+  it('honours an explicit months window in the fetch and key', async () => {
+    const { valueMetricsService } = await import('@/services/valueMetricsService')
+    ;(valueMetricsService.get as ReturnType<typeof vi.fn>).mockResolvedValue(sampleMetrics)
+
+    const { useValueMetrics } = await import('./useValueMetrics')
+    const { result } = renderHook(() => useValueMetrics('proj-1', 30, 12))
+
+    await waitFor(() => expect(result.current.metrics).toEqual(sampleMetrics))
+    expect(valueMetricsService.get).toHaveBeenCalledWith('proj-1', 30, 12)
   })
 
   it('surfaces an error and toasts when the fetch fails', async () => {

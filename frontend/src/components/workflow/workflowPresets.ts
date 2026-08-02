@@ -10,7 +10,7 @@ import type { SearchResponse } from '@/types/search'
 import type { DashboardSummary, DashboardMetricValue } from '@/types/analytics'
 import type { TrendResponse } from '@/types/metrics'
 import type { CoverageSummary, CoverageSuite, DefectItem } from '@/types/analytics'
-import type { ValueMetrics } from '@/services/valueMetricsService'
+import type { ValueMetricsLegacy } from '@/types/valueMetrics'
 import type { FailureCluster, DeepFinding } from '@/types/deep-investigation'
 
 type DashboardSummaryLike = DashboardSummary | null | undefined
@@ -43,7 +43,9 @@ type DefectLike = DefectItem | {
   suite_name?: string
 }
 
-type ValueMetricsLike = ValueMetrics | null | undefined
+// The value workflow only reads the legacy flat counters, so it accepts the
+// legacy base — the full hours-saved payload (ValueMetrics) still assigns.
+type ValueMetricsLike = ValueMetricsLegacy | null | undefined
 
 type DeepFindingLike = DeepFinding | null | undefined
 
