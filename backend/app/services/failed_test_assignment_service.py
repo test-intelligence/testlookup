@@ -25,15 +25,17 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from dataclasses import dataclass, field
 from typing import Optional
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     Project,
     ProjectMember,
+    ServiceOwnershipRule,
     TestCase,
     TestRun,
     TestStatus,
@@ -108,10 +110,82 @@ def _pick_pool_member(
     return pool[idx]
 
 
+@dataclass
+class ProjectAssignmentContext:
+    """Project-invariant lookups for the per-run resolver.
+
+    Built once per project so ``backfill_unassigned_failures`` doesn't re-run
+    the same 4-7 queries for every one of up to 200 runs (audit 2026-07 #13).
+    ``path_rules is None`` means "not loaded yet" — the resolver loads them
+    lazily the first time a failure actually reaches the path-owner branch
+    and caches them back onto the context.
+    """
+
+    default_qa_lead_id: Optional[uuid.UUID]
+    manager_id: Optional[uuid.UUID]
+    qa_lead_pool: list[uuid.UUID]
+    admin_pool: list[uuid.UUID]
+    path_rules: Optional[list[ServiceOwnershipRule]] = None
+    handle_map: dict[str, uuid.UUID] = field(default_factory=dict)
+
+
+async def _load_project_context(
+    db: AsyncSession, project_id: uuid.UUID,
+) -> ProjectAssignmentContext:
+    """Load the project-invariant assignment inputs (pools + config)."""
+    project_row = (
+        await db.execute(
+            select(Project.default_qa_lead_user_id, Project.manager_user_id)
+            .where(Project.id == project_id)
+        )
+    ).first()
+    default_qa_lead_id: Optional[uuid.UUID] = (
+        project_row[0] if project_row else None
+    )
+    manager_id: Optional[uuid.UUID] = project_row[1] if project_row else None
+
+    qa_lead_pool, admin_pool = await _resolve_qa_lead_pool(db, project_id)
+    if default_qa_lead_id and default_qa_lead_id not in qa_lead_pool:
+        # Honour the configured default even if it isn't a member row yet.
+        qa_lead_pool = [default_qa_lead_id, *qa_lead_pool]
+    return ProjectAssignmentContext(
+        default_qa_lead_id=default_qa_lead_id,
+        manager_id=manager_id,
+        qa_lead_pool=qa_lead_pool,
+        admin_pool=admin_pool,
+    )
+
+
+async def _ensure_path_rules_loaded(
+    db: AsyncSession, project_id: uuid.UUID, ctx: ProjectAssignmentContext,
+) -> None:
+    """Lazily load the project's path rules + member-scoped handle map onto
+    ``ctx`` — deferred until a failure actually reaches the path-owner
+    precedence branch, and cached across runs when ``ctx`` is shared."""
+    if ctx.path_rules is not None:
+        return
+    from app.services import codeowners_service
+
+    ctx.path_rules = await codeowners_service.load_path_rules(db, project_id)
+    if ctx.path_rules:
+        handles = {
+            h
+            for h in (
+                codeowners_service.owner_handle_for_rule(r) for r in ctx.path_rules
+            )
+            if h
+        }
+        if handles:
+            ctx.handle_map = await codeowners_service.resolve_handles_to_users(
+                db, handles, project_id=project_id,
+            )
+
+
 async def assign_failed_tests_to_suite_owners(
     db: AsyncSession,
     project_id: uuid.UUID,
     run_id: uuid.UUID,
+    context: Optional[ProjectAssignmentContext] = None,
 ) -> dict[str, int]:
     """Assign every actionable failure in ``run_id`` to a triager.
 
@@ -146,6 +220,10 @@ async def assign_failed_tests_to_suite_owners(
       * Writes only to rows currently NULL so human reassignments are
         preserved.
 
+    ``context`` (optional) supplies pre-loaded project-invariant lookups —
+    the backfill passes one per project so 200 runs don't re-run the same
+    queries; the default ``None`` keeps the single-run path self-contained.
+
     Returns ``{assigned, already_assigned, unassigned}`` for observability.
     """
     counts = {"assigned": 0, "already_assigned": 0, "unassigned": 0, "path_owner": 0}
@@ -154,6 +232,8 @@ async def assign_failed_tests_to_suite_owners(
     # the stable identity that the pool-distribution hash keys off of;
     # ``suite_name`` may be NULL for cases that landed in the default
     # suite — handle those via the default-suite fallback below.
+    # Traces are consumed only by the path locator — select a bounded
+    # 4000-char prefix, not whole multi-MB blobs.
     failures_result = await db.execute(
         select(
             TestCase.id,
@@ -162,8 +242,8 @@ async def assign_failed_tests_to_suite_owners(
             TestCase.test_fingerprint,
             # US-8.4: the stack trace / error message drive path-owner
             # resolution (locate_in_trace → repo-relative path → path rule).
-            TestCase.stack_trace,
-            TestCase.error_message,
+            func.substr(TestCase.stack_trace, 1, 4000).label("stack_trace"),
+            func.substr(TestCase.error_message, 1, 4000).label("error_message"),
         )
         .where(
             TestCase.test_run_id == run_id,
@@ -174,26 +254,17 @@ async def assign_failed_tests_to_suite_owners(
     if not failures:
         return counts
 
-    # 2. Resolve the project-level fields + QA Lead pool. Pool is built
-    # from QA_LEAD members + the configured default (if any) so a
-    # default QA lead who isn't yet a project member still receives
-    # their share — useful during the brief window after a project is
-    # created and before membership is fully provisioned.
-    project_row = (
-        await db.execute(
-            select(Project.default_qa_lead_user_id, Project.manager_user_id)
-            .where(Project.id == project_id)
-        )
-    ).first()
-    default_qa_lead_id: Optional[uuid.UUID] = (
-        project_row[0] if project_row else None
-    )
-    manager_id: Optional[uuid.UUID] = project_row[1] if project_row else None
-
-    qa_lead_pool, admin_pool = await _resolve_qa_lead_pool(db, project_id)
-    if default_qa_lead_id and default_qa_lead_id not in qa_lead_pool:
-        # Honour the configured default even if it isn't a member row yet.
-        qa_lead_pool = [default_qa_lead_id, *qa_lead_pool]
+    # 2. Resolve the project-level fields + QA Lead pool (or reuse the
+    # caller's pre-loaded context). Pool is built from QA_LEAD members +
+    # the configured default (if any) so a default QA lead who isn't yet a
+    # project member still receives their share — useful during the brief
+    # window after a project is created and before membership is fully
+    # provisioned.
+    if context is None:
+        context = await _load_project_context(db, project_id)
+    manager_id = context.manager_id
+    qa_lead_pool = context.qa_lead_pool
+    admin_pool = context.admin_pool
 
     # 3. Resolve the default-suite name so cases with NULL suite_name (rare
     # post-Phase 2 but still possible from legacy ingest paths) map to its
@@ -248,29 +319,19 @@ async def assign_failed_tests_to_suite_owners(
             if row.owner_user_id is not None:
                 owner_by_suite[row.suite_name] = row.owner_user_id
 
-    # 4b. Path/CODEOWNERS ownership (US-8.4). Load the project's active
-    # ``path`` rules once and pre-resolve every single-user owner handle to a
-    # User id. This precedence sits BETWEEN the explicit ``TestSuiteOwner``
-    # lookup and the QA-lead pool: an explicit human suite owner still wins,
-    # but a path/CODEOWNERS owner beats round-robin distribution. Monorepo
-    # guardrail: we assign by PATH ownership, never by who committed — a
-    # last-committer surface deliberately does not exist here. Non-locatable
-    # failures (no derivable path, e.g. Java traces) fall through to the
-    # QA-lead pool. An owner handle that resolves to no User (e.g. ``@org/team``
-    # or an unknown ``@handle``) is skipped — we never assign to a stranger.
+    # 4b. Path/CODEOWNERS ownership (US-8.4). This precedence sits BETWEEN
+    # the explicit ``TestSuiteOwner`` lookup and the QA-lead pool: an
+    # explicit human suite owner still wins, but a path/CODEOWNERS owner
+    # beats round-robin distribution. Monorepo guardrail: we assign by PATH
+    # ownership, never by who committed — a last-committer surface
+    # deliberately does not exist here. Non-locatable failures (no derivable
+    # path, e.g. Java traces) fall through to the QA-lead pool. An owner
+    # handle that resolves to no *project-member* User (``@org/team``, an
+    # unknown ``@handle``, or a non-member) is skipped — we never assign to
+    # a stranger. Rules + the member-scoped handle map are loaded LAZILY on
+    # the first failure that actually reaches this branch (most runs with
+    # explicit suite owners never pay for it) and cached on ``context``.
     from app.services import codeowners_service
-
-    path_rules = await codeowners_service.load_path_rules(db, project_id)
-    handle_map: dict[str, uuid.UUID] = {}
-    if path_rules:
-        handles = {
-            h
-            for h in (
-                codeowners_service.owner_handle_for_rule(r) for r in path_rules
-            )
-            if h
-        }
-        handle_map = await codeowners_service.resolve_handles_to_users(db, handles)
 
     # 5. Bucket the failure ids by resolved owner. Each failure
     # independently resolves its owner via the chain documented in the
@@ -288,18 +349,22 @@ async def assign_failed_tests_to_suite_owners(
             owner_by_suite.get(suite_key) if suite_key else None
         )
         # Path/CODEOWNERS owner — only when no explicit suite owner matched.
-        if owner_id is None and path_rules:
-            path = codeowners_service.locate_failure_path(
-                f.stack_trace, f.error_message,
-            )
-            if path:
-                rule = codeowners_service.match_path_rule(path, path_rules)
-                if rule is not None:
-                    handle = codeowners_service.owner_handle_for_rule(rule)
-                    resolved = handle_map.get(handle.lower()) if handle else None
-                    if resolved is not None:
-                        owner_id = resolved
-                        counts["path_owner"] += 1
+        if owner_id is None:
+            await _ensure_path_rules_loaded(db, project_id, context)
+            if context.path_rules:
+                path = codeowners_service.locate_failure_path(
+                    f.stack_trace, f.error_message,
+                )
+                if path:
+                    rule = codeowners_service.match_path_rule(path, context.path_rules)
+                    if rule is not None:
+                        handle = codeowners_service.owner_handle_for_rule(rule)
+                        resolved = (
+                            context.handle_map.get(handle.lower()) if handle else None
+                        )
+                        if resolved is not None:
+                            owner_id = resolved
+                            counts["path_owner"] += 1
         if owner_id is None and qa_lead_pool:
             owner_id = _pick_pool_member(qa_lead_pool, f.test_fingerprint, salt)
         if owner_id is None and manager_id is not None:
@@ -313,9 +378,12 @@ async def assign_failed_tests_to_suite_owners(
 
     # 6. One UPDATE per owner bucket. The ``assigned_to_user_id IS NULL``
     # guard is redundant given step 5's filter but kept for safety in case
-    # of concurrent writes from a parallel pipeline.
+    # of concurrent writes from a parallel pipeline — which is exactly why
+    # the count reports the UPDATE's rowcount (effect), not len(ids)
+    # (intent). Falls back to len(ids) only when the driver doesn't report
+    # a rowcount.
     for owner_id, ids in by_owner.items():
-        await db.execute(
+        result = await db.execute(
             update(TestCase)
             .where(
                 TestCase.id.in_(ids),
@@ -323,7 +391,8 @@ async def assign_failed_tests_to_suite_owners(
             )
             .values(assigned_to_user_id=owner_id)
         )
-        counts["assigned"] += len(ids)
+        rc = getattr(result, "rowcount", None)
+        counts["assigned"] += rc if isinstance(rc, int) and rc >= 0 else len(ids)
 
     logger.info(
         "failed_tests_assigned",
@@ -353,6 +422,11 @@ async def backfill_unassigned_failures(
     actionable TestCase with ``assigned_to_user_id IS NULL`` and re-runs the
     per-run resolver. Idempotent because the resolver itself only writes to
     rows currently NULL.
+
+    Project-invariant lookups (owner config, QA-lead/admin pools, path rules
+    + handle map) are loaded ONCE per project and shared across that
+    project's runs — previously each of up to 200 runs re-ran all of them
+    (~1,400 queries per sweep; audit 2026-07 #13).
     """
     stmt = (
         select(TestRun.id, TestRun.project_id)
@@ -370,8 +444,15 @@ async def backfill_unassigned_failures(
 
     pairs = list((await db.execute(stmt)).all())
     totals = {"runs": 0, "assigned": 0, "unassigned": 0}
+    contexts: dict[uuid.UUID, ProjectAssignmentContext] = {}
     for run_id, pid in pairs:
-        counts = await assign_failed_tests_to_suite_owners(db, pid, run_id)
+        ctx = contexts.get(pid)
+        if ctx is None:
+            ctx = await _load_project_context(db, pid)
+            contexts[pid] = ctx
+        counts = await assign_failed_tests_to_suite_owners(
+            db, pid, run_id, context=ctx,
+        )
         totals["runs"] += 1
         totals["assigned"] += counts.get("assigned", 0)
         totals["unassigned"] += counts.get("unassigned", 0)

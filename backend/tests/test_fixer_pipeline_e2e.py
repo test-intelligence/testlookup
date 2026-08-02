@@ -101,7 +101,7 @@ def _wire(monkeypatch, store, *, config, candidates, kill_switch=False, github=N
         return config
     monkeypatch.setattr(fixer_service, "get_effective_config", _cfg)
 
-    async def _select(_db, _pid):
+    async def _select(_db, _pid, max_tests=None):
         return list(candidates)
     monkeypatch.setattr(pipeline, "select_candidates", _select)
 
@@ -109,9 +109,15 @@ def _wire(monkeypatch, store, *, config, candidates, kill_switch=False, github=N
         return {"text": "flip 60%", "sources": ["flip_history"]}
     monkeypatch.setattr(pipeline, "gather_diagnosis", _diag)
 
-    async def _kill(_pid):
+    async def _kill(_pid, _db=None):
         return kill_switch
     monkeypatch.setattr(workflow, "_kill_switch_tripped", _kill)
+
+    # The finalize path releases the cross-process dispatch lock via Redis —
+    # keep the e2e harness hermetic.
+    async def _release(_pid):
+        return None
+    monkeypatch.setattr(fixer_service, "release_fixer_run_lock", _release)
 
     async def _ghctx(_pid):
         return github
@@ -323,6 +329,36 @@ async def test_max_attempts_per_test_skips_budget(monkeypatch):
 
 
 # ── Kill switch (cooperative stop) ───────────────────────────────────────────
+
+
+# ── Stored reasons never leak the PAT (defensive scrub in the workflow) ──────
+
+
+@pytest.mark.asyncio
+async def test_stored_error_reason_never_contains_pat(monkeypatch):
+    from app.agents.fixer.state import ValidationResult
+
+    pat = "ghp_WorkflowSecretToken42"
+
+    class _LeakyRunner(FakeRunner):
+        async def run_validation(self, spec):
+            return ValidationResult(
+                status=RESULT_ERROR, runs=[],
+                error=f"clone failed: https://{pat}@github.com/o/r.git 403",
+            )
+
+    store = _Store()
+    _wire(monkeypatch, store, config=_config("suggest", "docker"), candidates=[_cand()],
+          github={"api_base_url": "https://api.github.com", "repo_owner": "o",
+                  "repo_name": "r", "pat": pat, "repo_url": "u", "default_branch": "main"})
+    await workflow.run_fixer_run(
+        str(PROJECT_ID), str(uuid.uuid4()), "manual",
+        runner_override=_LeakyRunner(), generate_fn=_gen_ok,
+    )
+    assert _status(store) == ["error"]
+    reason = store.attempts[0].reason or ""
+    assert pat not in reason
+    assert "***" in reason
 
 
 @pytest.mark.asyncio

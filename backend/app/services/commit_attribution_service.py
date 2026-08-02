@@ -41,15 +41,20 @@ a verdict.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
 import structlog
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
     FailureCluster,
     RunCommitRange,
@@ -76,14 +81,26 @@ SOURCE_UNAVAILABLE = "unavailable"
 # Bound the connector fetch — a compare across a stale baseline could span
 # thousands of commits; ranking beyond ~100 adds noise, not signal.
 _MAX_COMMITS = 100
-# Per-commit changed-file detail is one API call each; cap the fan-out.
-_MAX_COMMIT_FILE_FETCHES = 100
+# Per-commit changed-file detail is one API call each; cap the fan-out. 25 is
+# deliberate: per the module docstring the ranking is a path-overlap heuristic
+# whose signal decays fast across a long range — detail beyond the first 25
+# commits adds API-rate-limit burn, not ranking signal.
+_MAX_COMMIT_FILE_FETCHES = 25
+# Concurrent per-commit detail fetches per gather batch.
+_DETAIL_FETCH_CHUNK = 8
 _HTTP_TIMEOUT = 10.0
+
+# An ``unavailable`` row younger than this suppresses re-resolution — without
+# it every GET /commit-range on a range-less run re-ran the connector (up to
+# 1 + _MAX_COMMIT_FILE_FETCHES GitHub calls per request; rate-limit burn).
+_RERESOLVE_COOLDOWN = timedelta(hours=6)
 
 # First-line message cap for storage / display.
 _MESSAGE_CAP = 200
 # Files list cap per commit (defensive — supplied lists are already bounded).
 _FILES_PER_COMMIT_CAP = 500
+# Per-file path string cap (defensive — a supplied entry could be multi-MB).
+_FILE_PATH_CAP = 512
 
 # Deterministic scoring weights. Path overlap dominates so a commit that
 # touched the failing test's package outranks a merely-recent one; recency
@@ -242,7 +259,11 @@ def _normalize_supplied_commit(raw: Any) -> Optional[dict[str, Any]]:
     if not sha:
         return None
     files_raw = raw.get("files") or []
-    files = [str(f) for f in files_raw][:_FILES_PER_COMMIT_CAP] if isinstance(files_raw, list) else []
+    files = (
+        [str(f)[:_FILE_PATH_CAP] for f in files_raw[:_FILES_PER_COMMIT_CAP]]
+        if isinstance(files_raw, list)
+        else []
+    )
     return {
         "sha": sha[:64],
         "author": (str(raw["author"])[:255] if raw.get("author") else None),
@@ -323,20 +344,37 @@ async def _last_green_run(db: AsyncSession, run: TestRun) -> Optional[TestRun]:
     return result.scalar_one_or_none()
 
 
-async def _gh_get(url: str, headers: dict[str, str], params: Optional[dict[str, Any]] = None) -> httpx.Response:
-    """Single GET against the GitHub API. Patched in tests."""
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+async def _gh_get(
+    url: str,
+    headers: dict[str, str],
+    params: Optional[dict[str, Any]] = None,
+    client: Optional[httpx.AsyncClient] = None,
+) -> httpx.Response:
+    """Single GET against the GitHub API. Patched in tests.
+
+    Pass ``client`` to reuse one pooled connection for a whole fetch; without
+    it a throwaway client is created (kept for one-off callers + the patch
+    seam's default)."""
+    if client is not None:
         return await client.get(url, headers=headers, params=params)
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as one_shot:
+        return await one_shot.get(url, headers=headers, params=params)
 
 
-async def _fetch_connector_range(
-    db: AsyncSession, run: TestRun, base: str, head: str,
-) -> Optional[list[dict[str, Any]]]:
-    """Fetch commits ``base..head`` + per-commit changed files from the
-    configured GitHub integration. Returns the normalized commit list, or
-    ``None`` when the connector isn't usable (no integration / no PAT / SSRF
-    block / HTTP failure). Never raises — attribution is best-effort.
-    """
+@dataclass
+class _ConnectorTarget:
+    """Plain-value connector coordinates read out of the DB up front so the
+    HTTP phase runs with no session open."""
+
+    api_base: str
+    repo: str
+    pat: str
+
+
+async def _connector_target(db: AsyncSession, run: TestRun) -> Optional[_ConnectorTarget]:
+    """Resolve integration + PAT into plain values (DB reads only, no HTTP).
+    ``None`` when the connector isn't usable (no integration / repo mismatch /
+    no PAT)."""
     integration = await get_integration(db, run.project_id)
     if integration is None or not integration.enabled:
         return None
@@ -351,59 +389,106 @@ async def _fetch_connector_range(
     pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(run.project_id))
     if not pat:
         return None
+    return _ConnectorTarget(api_base=api_base, repo=repo, pat=pat)
 
-    compare_url = f"{api_base}/repos/{repo}/compare/{base}...{head}"
+
+async def _fetch_commit_files(
+    target: _ConnectorTarget,
+    sha: str,
+    headers: dict[str, str],
+    client: Optional[httpx.AsyncClient],
+) -> list[str]:
+    """Changed files for one commit; empty list on any network failure."""
+    try:
+        detail = await _gh_get(
+            f"{target.api_base}/repos/{target.repo}/commits/{sha}",
+            headers,
+            client=client,
+        )
+        if detail.status_code == 200 and detail.content:
+            return [
+                str(f.get("filename"))[:_FILE_PATH_CAP]
+                for f in (detail.json().get("files") or [])
+                if f.get("filename")
+            ][:_FILES_PER_COMMIT_CAP]
+    except httpx.HTTPError as exc:
+        logger.debug("commit_range commit-detail fetch failed", sha=sha[:8], error=str(exc))
+    return []
+
+
+async def _fetch_connector_range(
+    target: _ConnectorTarget, base: str, head: str, *, run_id: uuid.UUID,
+) -> Optional[list[dict[str, Any]]]:
+    """Fetch commits ``base..head`` + per-commit changed files from GitHub.
+
+    Pure HTTP — takes plain connector coordinates, holds NO DB session. One
+    pooled ``httpx.AsyncClient`` serves the compare call and the per-commit
+    detail fan-out (gathered in chunks of ``_DETAIL_FETCH_CHUNK``). Returns
+    the normalized commit list, or ``None`` when the target is SSRF-blocked
+    or the compare call fails. Network failures never raise.
+    """
+    compare_url = f"{target.api_base}/repos/{target.repo}/compare/{base}...{head}"
     block = await _ssrf_block_reason(compare_url)
     if block:
-        logger.warning("commit_range connector blocked unsafe target", run_id=str(run.id), reason=block)
+        logger.warning("commit_range connector blocked unsafe target", run_id=str(run_id), reason=block)
         return None
 
     headers = {
-        "Authorization": f"Bearer {pat}",
+        "Authorization": f"Bearer {target.pat}",
         "Accept": "application/vnd.github+json",
         "User-Agent": "TestLookup/1.0",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    try:
-        resp = await _gh_get(compare_url, headers)
-    except Exception as exc:
-        logger.warning("commit_range compare fetch failed", run_id=str(run.id), error=str(exc))
-        return None
-    if resp.status_code != 200:
-        logger.warning("commit_range compare rejected", run_id=str(run.id), status_code=resp.status_code)
-        return None
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        try:
+            resp = await _gh_get(compare_url, headers, client=client)
+        except httpx.HTTPError as exc:
+            logger.warning("commit_range compare fetch failed", run_id=str(run_id), error=str(exc))
+            return None
+        if resp.status_code != 200:
+            logger.warning("commit_range compare rejected", run_id=str(run_id), status_code=resp.status_code)
+            return None
 
-    body = resp.json() if resp.content else {}
-    raw_commits = (body.get("commits") or [])[:_MAX_COMMITS]  # oldest→newest
-    commits: list[dict[str, Any]] = []
-    for idx, rc in enumerate(raw_commits):
-        sha = str(rc.get("sha") or "").strip()
-        if not sha:
-            continue
-        commit_meta = rc.get("commit") or {}
-        author_meta = commit_meta.get("author") or {}
-        files: list[str] = []
+        body = resp.json() if resp.content else {}
+        raw_commits = (body.get("commits") or [])[:_MAX_COMMITS]  # oldest→newest
+        metas: list[dict[str, Any]] = []
+        for rc in raw_commits:
+            sha = str(rc.get("sha") or "").strip()
+            if not sha:
+                continue
+            commit_meta = rc.get("commit") or {}
+            author_meta = commit_meta.get("author") or {}
+            metas.append({
+                "sha": sha[:64],
+                "author": (str(author_meta.get("name"))[:255] if author_meta.get("name") else None),
+                "message": _first_line(commit_meta.get("message")),
+                "files": [],
+                "committed_at": (str(author_meta.get("date"))[:40] if author_meta.get("date") else None),
+            })
+
         # The compare payload doesn't carry per-commit files — fetch commit
-        # detail for the first N commits (bounded fan-out).
-        if idx < _MAX_COMMIT_FILE_FETCHES:
-            try:
-                detail = await _gh_get(f"{api_base}/repos/{repo}/commits/{sha}", headers)
-                if detail.status_code == 200 and detail.content:
-                    files = [
-                        str(f.get("filename"))
-                        for f in (detail.json().get("files") or [])
-                        if f.get("filename")
-                    ][:_FILES_PER_COMMIT_CAP]
-            except Exception as exc:
-                logger.debug("commit_range commit-detail fetch failed", sha=sha[:8], error=str(exc))
-        commits.append({
-            "sha": sha[:64],
-            "author": (str(author_meta.get("name"))[:255] if author_meta.get("name") else None),
-            "message": _first_line(commit_meta.get("message")),
-            "files": files,
-            "committed_at": (str(author_meta.get("date"))[:40] if author_meta.get("date") else None),
-        })
-    return commits
+        # detail for the first N commits (bounded fan-out). Re-check the
+        # resolved api_base host ONCE before the fan-out (DNS-rebinding
+        # window since the compare check) rather than per commit.
+        to_fetch = [m["sha"] for m in metas[:_MAX_COMMIT_FILE_FETCHES]]
+        detail_block = await _ssrf_block_reason(target.api_base)
+        if detail_block:
+            logger.warning(
+                "commit_range detail fetch blocked unsafe target",
+                run_id=str(run_id),
+                reason=detail_block,
+            )
+        elif to_fetch:
+            files_by_sha: dict[str, list[str]] = {}
+            for start in range(0, len(to_fetch), _DETAIL_FETCH_CHUNK):
+                chunk = to_fetch[start:start + _DETAIL_FETCH_CHUNK]
+                results = await asyncio.gather(
+                    *(_fetch_commit_files(target, sha, headers, client) for sha in chunk)
+                )
+                files_by_sha.update(zip(chunk, results))
+            for m in metas:
+                m["files"] = files_by_sha.get(m["sha"], [])
+    return metas
 
 
 # ── Persistence (idempotent per run) ─────────────────────────────────────────
@@ -425,21 +510,36 @@ async def _upsert_range(
     base_run_id: Optional[uuid.UUID],
     source: str,
     commits: list[dict[str, Any]],
-) -> RunCommitRange:
+) -> Optional[RunCommitRange]:
     """Stage (insert or update) the range row for a run. Does NOT commit —
-    the caller owns the transaction (transaction-boundary ratchet)."""
-    row = await _get_row(db, run.id)
-    if row is None:
-        row = RunCommitRange(run_id=run.id, project_id=run.project_id)
-        db.add(row)
-    row.base_commit = base_commit
-    row.head_commit = head_commit
-    row.base_run_id = base_run_id
-    row.source = source
-    row.commits = commits
-    row.resolved_at = datetime.now(timezone.utc)
-    await db.flush()
-    return row
+    the caller owns the transaction (transaction-boundary ratchet).
+
+    Uses ``INSERT .. ON CONFLICT (run_id) DO UPDATE`` so a concurrent resolve
+    (finalize + lazy GET racing) can't raise ``IntegrityError`` and poison the
+    caller's session. Non-supplied writes carry a ``WHERE source != supplied``
+    guard so a racing supplied insert is never clobbered (supplied wins).
+    """
+    values: dict[str, Any] = {
+        "base_commit": base_commit,
+        "head_commit": head_commit,
+        "base_run_id": base_run_id,
+        "source": source,
+        "commits": commits,
+        "resolved_at": datetime.now(timezone.utc),
+    }
+    stmt = pg_insert(RunCommitRange).values(
+        id=uuid.uuid4(), run_id=run.id, project_id=run.project_id, **values,
+    )
+    if source == SOURCE_SUPPLIED:
+        stmt = stmt.on_conflict_do_update(index_elements=["run_id"], set_=values)
+    else:
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["run_id"],
+            set_=values,
+            where=RunCommitRange.source != SOURCE_SUPPLIED,
+        )
+    await db.execute(stmt)
+    return await _get_row(db, run.id)
 
 
 async def store_supplied_range(
@@ -464,45 +564,92 @@ async def store_supplied_range(
     )
 
 
+def within_resolve_cooldown(resolved_at: Optional[datetime]) -> bool:
+    """True when a prior resolution attempt is recent enough that re-running
+    the connector would be rate-limit burn, not new information."""
+    if resolved_at is None:
+        return False
+    ts = resolved_at if resolved_at.tzinfo else resolved_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts) < _RERESOLVE_COOLDOWN
+
+
+def needs_resolution(serialized: dict[str, Any]) -> bool:
+    """Whether a serialized range (from ``get_commit_range``) warrants a lazy
+    resolution attempt: no row yet, or an ``unavailable`` row whose last
+    attempt is older than the cooldown. The GET handlers gate on this so a
+    range-less run can't be turned into a GitHub-call amplifier."""
+    if serialized.get("available"):
+        return False
+    if serialized.get("source") not in (None, SOURCE_UNAVAILABLE):
+        return False
+    raw = serialized.get("resolved_at")
+    if not raw:
+        return True
+    try:
+        resolved = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return True
+    return not within_resolve_cooldown(resolved)
+
+
 async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str, Any]:
     """Resolve + STAGE the commit range for a run (stage-only, no commit).
 
     Called from finalize (via ``_run_isolated``, which owns the commit) and the
     endpoint's lazy path (the router owns the commit on a dedicated write
     session). Priority: an existing ``supplied`` (or non-empty connector) row
-    is kept as-is; otherwise try the connector; otherwise stage an honest
-    ``unavailable`` row. Best-effort — never raises (returns ``{"error": ...}``).
+    is kept as-is; an ``unavailable`` row younger than the 6h cooldown skips;
+    otherwise try the connector; otherwise stage an honest ``unavailable`` row.
+
+    Session discipline (audit 2026-07 #11): all DB reads happen on a
+    short-lived internal session that is CLOSED before any HTTP; the GitHub
+    fan-out then runs with no session/transaction open; only the final upsert
+    touches the caller's session (which owns the commit). Network/DB failures
+    return ``{"error": ...}``; programming errors surface to the caller's
+    isolated-step handler.
     """
     try:
-        result = await db.execute(select(TestRun).where(TestRun.id == run_id))
-        run = result.scalar_one_or_none()
-        if run is None:
-            return {"skipped": "run_not_found"}
-
-        existing = await _get_row(db, run_id)
-        if existing is not None and (
-            existing.source == SOURCE_SUPPLIED or existing.commits
-        ):
-            # Supplied wins; a non-empty connector row is already resolved.
-            return {"skipped": "already_resolved", "source": existing.source}
-
-        head = run.commit_hash
-        commits: Optional[list[dict[str, Any]]] = None
-        base_run: Optional[TestRun] = None
+        # ── Phase 1: DB reads → plain values, on a short-lived session ──────
+        target: Optional[_ConnectorTarget] = None
         base_commit: Optional[str] = None
+        base_run_id: Optional[uuid.UUID] = None
+        async with AsyncSessionLocal() as read_db:
+            result = await read_db.execute(select(TestRun).where(TestRun.id == run_id))
+            run = result.scalar_one_or_none()
+            if run is None:
+                return {"skipped": "run_not_found"}
 
-        if head and await _post_allowed(db):
-            base_run = await _last_green_run(db, run)
-            base_commit = base_run.commit_hash if base_run else None
-            if base_commit and base_commit != head:
-                commits = await _fetch_connector_range(db, run, base_commit, head)
+            existing = await _get_row(read_db, run_id)
+            if existing is not None:
+                if existing.source == SOURCE_SUPPLIED or existing.commits:
+                    # Supplied wins; a non-empty connector row is already resolved.
+                    return {"skipped": "already_resolved", "source": existing.source}
+                if within_resolve_cooldown(existing.resolved_at):
+                    return {"skipped": "cooldown", "source": existing.source}
 
+            head = run.commit_hash
+            if head and await _post_allowed(read_db):
+                base_run = await _last_green_run(read_db, run)
+                if base_run is not None:
+                    base_commit = base_run.commit_hash
+                    base_run_id = base_run.id
+                if base_commit and base_commit != head:
+                    target = await _connector_target(read_db, run)
+
+        # ── Phase 2: HTTP fan-out — no session open ─────────────────────────
+        commits: Optional[list[dict[str, Any]]] = None
+        if target is not None and base_commit and head:
+            commits = await _fetch_connector_range(
+                target, base_commit, head, run_id=run_id,
+            )
+
+        # ── Phase 3: stage on the caller's session (caller owns the commit) ─
         if commits:
             await _upsert_range(
                 db, run,
                 base_commit=base_commit,
                 head_commit=head,
-                base_run_id=base_run.id if base_run else None,
+                base_run_id=base_run_id,
                 source=SOURCE_CONNECTOR,
                 commits=commits,
             )
@@ -512,12 +659,13 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
             db, run,
             base_commit=base_commit,
             head_commit=head,
-            base_run_id=base_run.id if base_run else None,
+            base_run_id=base_run_id,
             source=SOURCE_UNAVAILABLE,
             commits=[],
         )
         return {"source": SOURCE_UNAVAILABLE}
-    except Exception as exc:  # noqa: BLE001 — best-effort, never break finalize
+    except (httpx.HTTPError, SQLAlchemyError) as exc:
+        # Best-effort for infra faults only — programming errors must surface.
         logger.warning("commit_range resolve failed", run_id=str(run_id), error=str(exc))
         return {"error": str(exc)}
 
@@ -637,8 +785,9 @@ def score_commits(
     overlapping_files: list[list[str]] = []
     for c in commits:
         files = c.get("files") or []
-        matched = [f for f in files if path_overlap(loc, f) > 0.0]
-        best = max((path_overlap(loc, f) for f in files), default=0.0)
+        scored = [(f, path_overlap(loc, f)) for f in files]  # score once per file
+        matched = [f for f, s in scored if s > 0.0]
+        best = max((s for _f, s in scored), default=0.0)
         overlaps.append(best)
         overlapping_files.append(matched)
 

@@ -219,9 +219,16 @@ async def import_codeowners(
                 detail=f"Could not fetch CODEOWNERS from GitHub ({detail})",
             )
 
-    summary = await codeowners_service.import_codeowners_rules(
-        db, project_id=project_id, text=text, actor_id=current_user.id,
-    )
+    try:
+        summary = await codeowners_service.import_codeowners_rules(
+            db, project_id=project_id, text=text, actor_id=current_user.id,
+        )
+    except ValueError as exc:
+        # e.g. the file parses to more than MAX_IMPORT_ENTRIES entries.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     # Coverage is computed after the flush so it sees the freshly imported rows.
     coverage = await codeowners_service.compute_coverage(db, project_id)
     await db.commit()

@@ -30,12 +30,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import shlex
 import shutil
-import stat
 import tempfile
+import time
+import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any, Optional, Sequence
 
 import structlog
 
@@ -46,6 +49,7 @@ from app.agents.fixer.state import (
     RunAttempt,
     ValidationResult,
     ValidationSpec,
+    is_valid_runner_image,
 )
 
 logger = structlog.get_logger("agents.fixer.runners")
@@ -54,6 +58,26 @@ logger = structlog.get_logger("agents.fixer.runners")
 # selector. Substituted as a SINGLE argv element — never concatenated into a
 # shell string.
 _SELECTOR_PLACEHOLDER = "{test_selector}"
+
+# A ref that looks like a commit SHA (abbrev or full) — needs an explicit
+# fetch under --depth 1 because shallow clones don't carry arbitrary SHAs.
+_SHA_LIKE_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+# Env var names that may be forwarded into the sandbox (guards against a
+# poisoned allowlist entry like ``-e`` smuggling extra docker flags).
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def redact_secrets(text: str, *secrets: Optional[str]) -> str:
+    """Replace every known secret value in ``text`` with ``***``. Used on any
+    captured output that can leave the runner (stored reasons are API-readable
+    via the fix-attempts endpoints — a clone error would otherwise echo the
+    token-bearing remote URL)."""
+    out = text or ""
+    for secret in secrets:
+        if secret:
+            out = out.replace(secret, "***")
+    return out
 
 
 class ValidationRunner(ABC):
@@ -117,6 +141,8 @@ def build_docker_run_argv(
     user: str,
     allow_network_egress: bool,
     timeout_s: int,
+    name: Optional[str] = None,
+    env_allowlist: Sequence[str] = (),
 ) -> list[str]:
     """Argv for one ephemeral, sandboxed rerun. Strict LIST — no shell.
 
@@ -124,7 +150,17 @@ def build_docker_run_argv(
     opened egress, cpu/memory caps, non-root ``--user``, read-write bind of
     ONLY the cloned workspace (no secret/DB mounts), and an in-container
     ``timeout`` wrapper so a hung test cannot outlive its budget.
+
+    ``image`` is re-validated here (defense in depth — the config write path
+    already validates): a value like ``--privileged`` would otherwise land in
+    docker run's flag position and break the sandbox.
+
+    ``env_allowlist`` names are forwarded via bare ``-e NAME`` (pass-through
+    from the worker env — the value never appears in the argv/process list).
+    Nothing else from the worker environment reaches the container.
     """
+    if not is_valid_runner_image(image):
+        raise ValueError(f"invalid runner_image {image!r} — refusing to build docker argv")
     network = "bridge" if allow_network_egress else "none"
     argv = [
         "docker", "run", "--rm",
@@ -134,9 +170,15 @@ def build_docker_run_argv(
         "--pids-limit", "512",
         "--user", user,
         "--workdir", "/work",
-        # Bind ONLY the workspace. No -e/--env-file: nothing from the worker
-        # environment (secrets, DB creds) reaches the container.
+        # Bind ONLY the workspace.
         "-v", workspace + ":/work",
+    ]
+    if name:
+        argv += ["--name", name]
+    for env_name in env_allowlist:
+        if _ENV_NAME_RE.match(str(env_name)):
+            argv += ["-e", str(env_name)]
+    argv += [
         "--entrypoint", "",
         image,
         # In-container hard timeout so a hang is killed even if the outer
@@ -209,6 +251,11 @@ class DockerEphemeralRunner(ValidationRunner):
                 proc.kill()
             except ProcessLookupError:
                 pass
+            # Reap the killed process so it never lingers as a zombie.
+            try:
+                await proc.wait()
+            except Exception:  # noqa: BLE001 — best-effort reap
+                pass
             return 124, "timeout"
         return int(proc.returncode or 0), (out or b"").decode("utf-8", "replace")
 
@@ -221,21 +268,52 @@ class DockerEphemeralRunner(ValidationRunner):
             return ValidationResult(
                 status=RESULT_ERROR, runs=[], error="runner_image not configured",
             )
+        if not is_valid_runner_image(spec.runner_image):
+            # First layer of the two-layer check (build_docker_run_argv raises
+            # as the hard backstop): a malformed image is an infra error, and
+            # in particular NEVER reaches docker run's flag position.
+            return ValidationResult(
+                status=RESULT_ERROR, runs=[],
+                error=f"invalid runner_image {str(spec.runner_image)[:100]!r}",
+            )
 
         workspace = tempfile.mkdtemp(prefix="fixer-ws-")
         try:
             # 1. Shallow clone at ref — token confined to the clone argv.
+            #    Any captured output is redacted before it can leave the
+            #    runner: a clone failure echoes the token-bearing remote URL,
+            #    and the stored reason is API-readable.
             clone_argv = build_clone_argv(spec.repo_url, spec.ref, workspace, spec.clone_token)
             rc, out = await self._run(clone_argv, timeout_s=min(120, spec.timeout_s))
             if rc != 0:
+                safe_out = redact_secrets(out, spec.clone_token)
                 return ValidationResult(
-                    status=RESULT_ERROR, runs=[], error=f"clone failed: {out[-300:]}",
+                    status=RESULT_ERROR, runs=[], error=f"clone failed: {safe_out[-300:]}",
                 )
-            # Best-effort checkout of the exact ref (SHA or branch).
-            await self._run(
-                ["git", "-C", workspace, "checkout", "--quiet", spec.ref],
-                timeout_s=60,
-            )
+            # Checkout the exact ref and VERIFY it took — validating the wrong
+            # ref would be dishonest. SHA-like refs need an explicit fetch
+            # under --depth 1 (shallow clones don't carry arbitrary SHAs).
+            if _SHA_LIKE_RE.match(spec.ref or ""):
+                rc, out = await self._run(
+                    ["git", "-C", workspace, "fetch", "--depth", "1", "origin", spec.ref],
+                    timeout_s=min(120, spec.timeout_s),
+                )
+                if rc == 0:
+                    rc, out = await self._run(
+                        ["git", "-C", workspace, "checkout", "--quiet", "FETCH_HEAD"],
+                        timeout_s=60,
+                    )
+            else:
+                rc, out = await self._run(
+                    ["git", "-C", workspace, "checkout", "--quiet", spec.ref],
+                    timeout_s=60,
+                )
+            if rc != 0:
+                safe_out = redact_secrets(out, spec.clone_token)
+                return ValidationResult(
+                    status=RESULT_ERROR, runs=[],
+                    error=f"checkout of ref {spec.ref!r} failed: {safe_out[-300:]}",
+                )
 
             # 2. Apply the candidate patch.
             patch_path = os.path.join(workspace, ".fixer.patch")
@@ -251,9 +329,12 @@ class DockerEphemeralRunner(ValidationRunner):
                 )
             os.remove(patch_path)
 
-            # Make the workspace writable by the non-root container user
-            # (pytest writes __pycache__ / .pytest_cache).
-            _chmod_tree_world_writable(workspace)
+            # Workspace ownership: the worker runs as the fixed non-root UID
+            # 1000 (backend/Dockerfile useradd -u 1000) and the container runs
+            # with --user 1000:1000 (self._user default), so the clone is
+            # already writable by the container user (pytest caches etc.).
+            # The previous 0o777 tree walk let ANY local user inject code
+            # into the workspace between clone and run — deliberately removed.
 
             # 3. Run the command M times in ephemeral containers.
             command_tokens = build_command_tokens(
@@ -261,6 +342,7 @@ class DockerEphemeralRunner(ValidationRunner):
             )
             runs: list[RunAttempt] = []
             for n in range(1, max(1, spec.reruns) + 1):
+                container_name = f"fixer-{uuid.uuid4().hex}"
                 argv = build_docker_run_argv(
                     image=spec.runner_image,
                     command_tokens=command_tokens,
@@ -270,10 +352,16 @@ class DockerEphemeralRunner(ValidationRunner):
                     user=self._user,
                     allow_network_egress=spec.allow_network_egress,
                     timeout_s=spec.timeout_s,
+                    name=container_name,
+                    env_allowlist=spec.env_allowlist,
                 )
-                started = asyncio.get_event_loop().time()
+                started = time.monotonic()
                 rc, out = await self._run(argv, timeout_s=spec.timeout_s + 30)
-                duration_ms = int((asyncio.get_event_loop().time() - started) * 1000)
+                duration_ms = int((time.monotonic() - started) * 1000)
+                if rc == 124:
+                    # Killing the docker CLI client leaves the container
+                    # running — remove it by name (best-effort).
+                    await self._run(["docker", "rm", "-f", container_name], timeout_s=30)
                 runs.append(RunAttempt(
                     n=n, passed=(rc == 0), duration_ms=duration_ms, log_digest=_digest(out),
                 ))
@@ -285,28 +373,11 @@ class DockerEphemeralRunner(ValidationRunner):
                 logs_ref=None,
             )
         except Exception as exc:  # noqa: BLE001 — infra fault is error, not failed
-            logger.warning("docker_runner_error", error=str(exc))
-            return ValidationResult(status=RESULT_ERROR, runs=[], error=str(exc)[:300])
+            safe = redact_secrets(str(exc), spec.clone_token)
+            logger.warning("docker_runner_error", error=safe)
+            return ValidationResult(status=RESULT_ERROR, runs=[], error=safe[:300])
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
-
-
-def _chmod_tree_world_writable(root: str) -> None:
-    """Best-effort: let the non-root container user write pytest caches."""
-    try:
-        for dirpath, dirnames, filenames in os.walk(root):
-            for name in [dirpath] + [os.path.join(dirpath, d) for d in dirnames]:
-                try:
-                    os.chmod(name, 0o777)
-                except OSError:
-                    pass
-            for f in filenames:
-                try:
-                    os.chmod(os.path.join(dirpath, f), stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-                except OSError:
-                    pass
-    except OSError:
-        pass
 
 
 # ── WorkflowDispatchRunner ───────────────────────────────────────────────────
@@ -361,11 +432,19 @@ class WorkflowDispatchRunner(ValidationRunner):
             "User-Agent": "TestLookup/1.0",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        # Correlation id: threaded through the dispatch inputs so the poll can
+        # match OUR run (a reference workflow is expected to echo it into its
+        # run-name/display title). Without it, "latest run" could be anyone's.
+        correlation_id = uuid.uuid4().hex
         inputs = {
             "ref": spec.ref,
             "test_selector": spec.test_identity.test_selector,
             "reruns": str(spec.reruns),
+            "correlation_id": correlation_id,
         }
+        # Captured BEFORE the dispatch so the poll's created-filter can never
+        # see runs older than our dispatch.
+        dispatched_at = datetime.now(timezone.utc)
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.post(
@@ -380,9 +459,19 @@ class WorkflowDispatchRunner(ValidationRunner):
         except Exception as exc:  # noqa: BLE001
             return ValidationResult(status=RESULT_ERROR, runs=[], error=f"dispatch failed: {exc}")
 
-        conclusion = await self._poll_conclusion(headers, spec.workflow_ref)
+        conclusion, last_note = await self._poll_conclusion(
+            headers, spec.workflow_ref,
+            correlation_id=correlation_id, head_branch=spec.ref, since=dispatched_at,
+        )
         if conclusion is None:
-            return ValidationResult(status=RESULT_ERROR, runs=[], error="workflow run not observed before poll timeout")
+            # Honest "not observed": no run we can attribute to this dispatch
+            # completed before the deadline. An unrelated run's conclusion is
+            # NEVER used.
+            detail = f" (last: {last_note})" if last_note else ""
+            return ValidationResult(
+                status=RESULT_ERROR, runs=[],
+                error=f"dispatched workflow run not observed before poll timeout{detail}",
+            )
         passed = conclusion == "success"
         return ValidationResult(
             status=RESULT_VALIDATED if passed else RESULT_FAILED,
@@ -390,30 +479,72 @@ class WorkflowDispatchRunner(ValidationRunner):
             logs_ref=None,
         )
 
-    async def _poll_conclusion(self, headers: dict[str, str], workflow_ref: str) -> Optional[str]:
+    @staticmethod
+    def match_dispatched_run(
+        runs: list[dict[str, Any]], *, correlation_id: str, head_branch: Optional[str],
+    ) -> Optional[dict[str, Any]]:
+        """Pick OUR dispatched run out of a workflow_runs listing. Preference:
+        the correlation id echoed into the run ``name``/``display_title``;
+        fall back to a ``head_branch`` match. ``None`` when nothing matches —
+        an unrelated run must never be treated as ours."""
+        for run in runs:
+            title = f"{run.get('name') or ''} {run.get('display_title') or ''}"
+            if correlation_id and correlation_id in title:
+                return run
+        if head_branch:
+            for run in runs:
+                if run.get("head_branch") == head_branch:
+                    return run
+        return None
+
+    async def _poll_conclusion(
+        self,
+        headers: dict[str, str],
+        workflow_ref: str,
+        *,
+        correlation_id: str,
+        head_branch: Optional[str],
+        since: datetime,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Poll for OUR dispatched run's conclusion. Returns
+        ``(conclusion, last_note)`` — conclusion None when no attributable run
+        completed before the deadline; last_note carries the most recent
+        error/status so the timeout message is diagnosable."""
         import httpx
 
         runs_url = (
             f"{self._api_base_url}/repos/{self._repo_owner}/{self._repo_name}"
-            f"/actions/workflows/{workflow_ref}/runs?per_page=1"
+            f"/actions/workflows/{workflow_ref}/runs"
         )
-        deadline = asyncio.get_event_loop().time() + self._poll_timeout_s
-        while asyncio.get_event_loop().time() < deadline:
+        params = {
+            "event": "workflow_dispatch",
+            "created": ">=" + since.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "per_page": "10",
+        }
+        deadline = time.monotonic() + self._poll_timeout_s
+        last_note: Optional[str] = None
+        while time.monotonic() < deadline:
             await asyncio.sleep(10)
             try:
                 async with httpx.AsyncClient(timeout=20.0) as client:
-                    resp = await client.get(runs_url, headers=headers)
+                    resp = await client.get(runs_url, headers=headers, params=params)
                 if resp.status_code != 200:
+                    last_note = f"poll HTTP {resp.status_code}"
                     continue
                 runs = (resp.json() or {}).get("workflow_runs") or []
-                if not runs:
+                matched = self.match_dispatched_run(
+                    runs, correlation_id=correlation_id, head_branch=head_branch,
+                )
+                if matched is None:
+                    last_note = "no run matching this dispatch observed yet"
                     continue
-                latest = runs[0]
-                if latest.get("status") == "completed":
-                    return str(latest.get("conclusion") or "")
-            except Exception:  # noqa: BLE001
+                if matched.get("status") == "completed":
+                    return str(matched.get("conclusion") or ""), last_note
+                last_note = f"matched run {matched.get('id')} status={matched.get('status')}"
+            except Exception as exc:  # noqa: BLE001
+                last_note = f"{type(exc).__name__}: {exc}"
                 continue
-        return None
+        return None, last_note
 
 
 # ── FakeRunner (tests) ───────────────────────────────────────────────────────

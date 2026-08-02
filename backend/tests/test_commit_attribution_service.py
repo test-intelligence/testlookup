@@ -9,9 +9,11 @@ Covers:
 * supplied-commit normalization + bounds,
 * commit deep-link derivation (github.com + GHE + no-repo),
 * the range read model's honest ``available`` flag,
-* the connector fetch (compare + per-commit files, repo-mismatch, no-PAT,
-  SSRF block) with the GitHub HTTP layer mocked at ``svc._gh_get``,
-* the resolve-and-store orchestration (supplied wins, connector, unavailable),
+* the connector fetch (compare + chunked per-commit file fan-out,
+  repo-mismatch, no-PAT, SSRF block incl. the once-per-fetch detail re-check)
+  with the GitHub HTTP layer mocked at ``svc._gh_get``,
+* the resolve-and-store orchestration (supplied wins, connector, unavailable,
+  and the 6h re-resolve cooldown that kills GET-amplified connector calls),
 * the migration 0110 contract.
 
 DB egress is avoided by patching the service's own read/write helpers and a
@@ -20,6 +22,7 @@ fake ``AsyncSessionLocal`` — mirroring ``test_github_pr_comment.py``.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -233,6 +236,14 @@ def test_normalize_supplied_range_non_list():
     assert svc.normalize_supplied_range("nope") == []
 
 
+def test_normalize_supplied_range_caps_per_file_path_length():
+    # A multi-MB path string must not land in JSONB verbatim.
+    raw = [{"sha": "a" * 40, "files": ["x" * 100_000, "ok.py"]}]
+    out = svc.normalize_supplied_range(raw)
+    assert len(out[0]["files"][0]) == svc._FILE_PATH_CAP
+    assert out[0]["files"][1] == "ok.py"
+
+
 # ── Deep-link derivation ─────────────────────────────────────────────────────
 
 
@@ -312,7 +323,7 @@ async def test_rank_suspects_ranks_with_range():
     assert out["suspects"][0]["commit_url"].endswith(f"/commit/{'a' * 40}")
 
 
-# ── Connector fetch ──────────────────────────────────────────────────────────
+# ── Connector target (DB reads → plain values) ──────────────────────────────
 
 
 def _integration(**overrides):
@@ -326,9 +337,44 @@ def _integration(**overrides):
     return SimpleNamespace(**base)
 
 
+def _target(**overrides):
+    base = dict(api_base="https://api.github.com", repo="acme/webapp", pat="pat")
+    base.update(overrides)
+    return svc._ConnectorTarget(**base)
+
+
+@pytest.mark.asyncio
+async def test_connector_target_success():
+    run = _run()
+    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())), \
+         patch("app.services.secret_service.read_secret", AsyncMock(return_value="pat")):
+        target = await svc._connector_target(MagicMock(), run)
+    assert target is not None
+    assert target.api_base == "https://api.github.com"
+    assert target.repo == "acme/webapp"
+    assert target.pat == "pat"
+
+
+@pytest.mark.asyncio
+async def test_connector_target_repo_mismatch():
+    run = _run(ci_repo="other/repo")
+    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())):
+        assert await svc._connector_target(MagicMock(), run) is None
+
+
+@pytest.mark.asyncio
+async def test_connector_target_no_pat():
+    run = _run()
+    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())), \
+         patch("app.services.secret_service.read_secret", AsyncMock(return_value=None)):
+        assert await svc._connector_target(MagicMock(), run) is None
+
+
+# ── Connector fetch (pure HTTP; no DB session) ───────────────────────────────
+
+
 @pytest.mark.asyncio
 async def test_fetch_connector_range_success():
-    run = _run()
     compare_body = {
         "commits": [
             {"sha": "a" * 40, "commit": {"author": {"name": "Al", "date": "2026-01-01"}, "message": "fix"}},
@@ -336,95 +382,227 @@ async def test_fetch_connector_range_success():
     }
     detail_body = {"files": [{"filename": "services/payments/charge.py"}]}
 
-    async def fake_gh_get(url, headers, params=None):
+    async def fake_gh_get(url, headers, params=None, client=None):
         if "/compare/" in url:
             return FakeResponse(200, compare_body)
         return FakeResponse(200, detail_body)
 
-    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())), \
-         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
-         patch.object(svc, "_gh_get", side_effect=fake_gh_get), \
-         patch("app.services.secret_service.read_secret", AsyncMock(return_value="pat")):
-        commits = await svc._fetch_connector_range(MagicMock(), run, "b" * 40, "h" * 40)
+    with patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
+         patch.object(svc, "_gh_get", side_effect=fake_gh_get):
+        commits = await svc._fetch_connector_range(_target(), "b" * 40, "h" * 40, run_id=RUN_ID)
     assert commits is not None
     assert commits[0]["sha"] == "a" * 40
     assert commits[0]["files"] == ["services/payments/charge.py"]
 
 
 @pytest.mark.asyncio
-async def test_fetch_connector_range_repo_mismatch():
-    run = _run(ci_repo="other/repo")
-    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())):
-        commits = await svc._fetch_connector_range(MagicMock(), run, "b" * 40, "h" * 40)
-    assert commits is None
-
-
-@pytest.mark.asyncio
-async def test_fetch_connector_range_no_pat():
-    run = _run()
-    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())), \
-         patch("app.services.secret_service.read_secret", AsyncMock(return_value=None)):
-        commits = await svc._fetch_connector_range(MagicMock(), run, "b" * 40, "h" * 40)
-    assert commits is None
-
-
-@pytest.mark.asyncio
 async def test_fetch_connector_range_ssrf_block():
-    run = _run()
-    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())), \
-         patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value="blocked_target:127.0.0.1")), \
-         patch("app.services.secret_service.read_secret", AsyncMock(return_value="pat")):
-        commits = await svc._fetch_connector_range(MagicMock(), run, "b" * 40, "h" * 40)
+    with patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value="blocked_target:127.0.0.1")), \
+         patch.object(svc, "_gh_get", AsyncMock()) as gh:
+        commits = await svc._fetch_connector_range(_target(), "b" * 40, "h" * 40, run_id=RUN_ID)
     assert commits is None
+    gh.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_host_rechecked_once_and_blocks_fan_out():
+    """The api_base host is re-checked ONCE before the detail fan-out (DNS
+    rebinding window); when it blocks, commits still return without files
+    and no detail GET fires."""
+    compare_body = {
+        "commits": [
+            {"sha": f"{i:040x}", "commit": {"author": {"name": "Al"}, "message": "m"}}
+            for i in range(3)
+        ]
+    }
+    calls: list[str] = []
+
+    async def fake_gh_get(url, headers, params=None, client=None):
+        calls.append(url)
+        return FakeResponse(200, compare_body)
+
+    ssrf = AsyncMock(side_effect=[None, "blocked_target:rebind"])
+    with patch.object(svc, "_ssrf_block_reason", ssrf), \
+         patch.object(svc, "_gh_get", side_effect=fake_gh_get):
+        commits = await svc._fetch_connector_range(_target(), "b" * 40, "h" * 40, run_id=RUN_ID)
+    assert commits is not None and len(commits) == 3
+    assert all(c["files"] == [] for c in commits)
+    assert len(calls) == 1  # compare only — zero detail GETs
+    assert ssrf.await_count == 2  # compare URL + api_base host, once each
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_fan_out_is_capped():
+    """Only the first ``_MAX_COMMIT_FILE_FETCHES`` commits get a detail GET."""
+    n = svc._MAX_COMMIT_FILE_FETCHES + 10
+    compare_body = {
+        "commits": [
+            {"sha": f"{i:040x}", "commit": {"author": {"name": "Al"}, "message": "m"}}
+            for i in range(n)
+        ]
+    }
+    detail_urls: list[str] = []
+
+    async def fake_gh_get(url, headers, params=None, client=None):
+        if "/compare/" in url:
+            return FakeResponse(200, compare_body)
+        detail_urls.append(url)
+        return FakeResponse(200, {"files": [{"filename": "x.py"}]})
+
+    with patch.object(svc, "_ssrf_block_reason", AsyncMock(return_value=None)), \
+         patch.object(svc, "_gh_get", side_effect=fake_gh_get):
+        commits = await svc._fetch_connector_range(_target(), "b" * 40, "h" * 40, run_id=RUN_ID)
+    assert commits is not None and len(commits) == n
+    assert len(detail_urls) == svc._MAX_COMMIT_FILE_FETCHES
+    assert commits[0]["files"] == ["x.py"]
+    assert commits[-1]["files"] == []  # beyond the cap: no detail fetched
 
 
 # ── resolve orchestration (stage-only; caller owns the commit) ───────────────
 
 
-def _db_returning(run):
-    """Fake AsyncSession whose ``execute`` yields ``run`` (the initial load)."""
-    db = MagicMock()
+def _fake_session_local(run, *, capture=None):
+    """A stand-in for ``svc.AsyncSessionLocal`` whose read session yields
+    ``run`` for the initial TestRun load. ``_get_row`` / ``_post_allowed`` /
+    ``_last_green_run`` / ``_connector_target`` are patched separately."""
+    read_db = MagicMock()
     result = MagicMock()
     result.scalar_one_or_none = MagicMock(return_value=run)
-    db.execute = AsyncMock(return_value=result)
-    return db
+    read_db.execute = AsyncMock(return_value=result)
+    if capture is not None:
+        capture.append(read_db)
+
+    class _SessionLocal:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return read_db
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return _SessionLocal()
 
 
 @pytest.mark.asyncio
 async def test_resolve_supplied_wins_over_connector():
     run = _run()
     existing = SimpleNamespace(source=svc.SOURCE_SUPPLIED, commits=[_commit("a" * 40, ["x"])])
-    with patch.object(svc, "_get_row", AsyncMock(return_value=existing)), \
+    with patch.object(svc, "AsyncSessionLocal", _fake_session_local(run)), \
+         patch.object(svc, "_get_row", AsyncMock(return_value=existing)), \
          patch.object(svc, "_fetch_connector_range", AsyncMock()) as fetch:
-        out = await svc.resolve_commit_range(_db_returning(run), RUN_ID)
+        out = await svc.resolve_commit_range(MagicMock(), RUN_ID)
     assert out["skipped"] == "already_resolved"
     fetch.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_resolve_connector_path():
+async def test_resolve_cooldown_suppresses_reresolution():
+    """A fresh ``unavailable`` row skips the connector entirely — repeated
+    GETs must not amplify into GitHub calls (audit finding #5)."""
+    run = _run()
+    existing = SimpleNamespace(
+        source=svc.SOURCE_UNAVAILABLE,
+        commits=[],
+        resolved_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    with patch.object(svc, "AsyncSessionLocal", _fake_session_local(run)), \
+         patch.object(svc, "_get_row", AsyncMock(return_value=existing)), \
+         patch.object(svc, "_post_allowed", AsyncMock()) as post_allowed, \
+         patch.object(svc, "_fetch_connector_range", AsyncMock()) as fetch, \
+         patch.object(svc, "_upsert_range", AsyncMock()) as upsert:
+        out = await svc.resolve_commit_range(MagicMock(), RUN_ID)
+    assert out == {"skipped": "cooldown", "source": svc.SOURCE_UNAVAILABLE}
+    post_allowed.assert_not_called()
+    fetch.assert_not_called()
+    upsert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_stale_unavailable_row_reresolves():
+    """An ``unavailable`` row older than the cooldown re-runs the connector."""
     run = _run()
     base_run = _run(id=uuid.uuid4(), commit_hash="b" * 40)
-    with patch.object(svc, "_get_row", AsyncMock(return_value=None)), \
+    existing = SimpleNamespace(
+        source=svc.SOURCE_UNAVAILABLE,
+        commits=[],
+        resolved_at=datetime.now(timezone.utc) - svc._RERESOLVE_COOLDOWN - timedelta(minutes=1),
+    )
+    with patch.object(svc, "AsyncSessionLocal", _fake_session_local(run)), \
+         patch.object(svc, "_get_row", AsyncMock(return_value=existing)), \
          patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
          patch.object(svc, "_last_green_run", AsyncMock(return_value=base_run)), \
+         patch.object(svc, "_connector_target", AsyncMock(return_value=_target())), \
          patch.object(svc, "_fetch_connector_range", AsyncMock(return_value=[_commit("a" * 40, ["x.py"])])), \
          patch.object(svc, "_upsert_range", AsyncMock()) as upsert:
-        out = await svc.resolve_commit_range(_db_returning(run), RUN_ID)
+        out = await svc.resolve_commit_range(MagicMock(), RUN_ID)
+    assert out["source"] == svc.SOURCE_CONNECTOR
+    assert upsert.await_args.kwargs["source"] == svc.SOURCE_CONNECTOR
+
+
+@pytest.mark.asyncio
+async def test_resolve_connector_path_stages_on_caller_session():
+    """HTTP runs against plain values; the upsert lands on the CALLER's
+    session (which owns the commit), not the internal read session."""
+    run = _run()
+    base_run = _run(id=uuid.uuid4(), commit_hash="b" * 40)
+    caller_db = MagicMock()
+    fetch = AsyncMock(return_value=[_commit("a" * 40, ["x.py"])])
+    with patch.object(svc, "AsyncSessionLocal", _fake_session_local(run)), \
+         patch.object(svc, "_get_row", AsyncMock(return_value=None)), \
+         patch.object(svc, "_post_allowed", AsyncMock(return_value=True)), \
+         patch.object(svc, "_last_green_run", AsyncMock(return_value=base_run)), \
+         patch.object(svc, "_connector_target", AsyncMock(return_value=_target())), \
+         patch.object(svc, "_fetch_connector_range", fetch), \
+         patch.object(svc, "_upsert_range", AsyncMock()) as upsert:
+        out = await svc.resolve_commit_range(caller_db, RUN_ID)
     assert out["source"] == svc.SOURCE_CONNECTOR
     assert out["commit_count"] == 1
+    # Fetch got plain values (target + refs), no session.
+    assert fetch.await_args.args[0].repo == "acme/webapp"
+    # The stage hit the caller's session.
+    assert upsert.await_args.args[0] is caller_db
     assert upsert.await_args.kwargs["source"] == svc.SOURCE_CONNECTOR
+    assert upsert.await_args.kwargs["base_run_id"] == base_run.id
 
 
 @pytest.mark.asyncio
 async def test_resolve_unavailable_when_offline_no_base():
     run = _run()
-    with patch.object(svc, "_get_row", AsyncMock(return_value=None)), \
+    with patch.object(svc, "AsyncSessionLocal", _fake_session_local(run)), \
+         patch.object(svc, "_get_row", AsyncMock(return_value=None)), \
          patch.object(svc, "_post_allowed", AsyncMock(return_value=False)), \
          patch.object(svc, "_upsert_range", AsyncMock()) as upsert:
-        out = await svc.resolve_commit_range(_db_returning(run), RUN_ID)
+        out = await svc.resolve_commit_range(MagicMock(), RUN_ID)
     assert out["source"] == svc.SOURCE_UNAVAILABLE
     assert upsert.await_args.kwargs["source"] == svc.SOURCE_UNAVAILABLE
+
+
+# ── cooldown / needs_resolution gate (router amplification kill) ─────────────
+
+
+def test_within_resolve_cooldown():
+    now = datetime.now(timezone.utc)
+    assert svc.within_resolve_cooldown(None) is False
+    assert svc.within_resolve_cooldown(now - timedelta(minutes=10)) is True
+    assert svc.within_resolve_cooldown(now - svc._RERESOLVE_COOLDOWN - timedelta(seconds=5)) is False
+    # Naive datetimes (driver without tz) are treated as UTC, not a crash.
+    naive_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert svc.within_resolve_cooldown(naive_utc - timedelta(minutes=1)) is True
+
+
+def test_needs_resolution_matrix():
+    fresh = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    stale = (datetime.now(timezone.utc) - svc._RERESOLVE_COOLDOWN - timedelta(minutes=1)).isoformat()
+    # No row yet → resolve.
+    assert svc.needs_resolution({"available": False, "source": svc.SOURCE_UNAVAILABLE, "resolved_at": None}) is True
+    # Resolved (supplied/connector) → never re-resolve from the GET path.
+    assert svc.needs_resolution({"available": True, "source": svc.SOURCE_SUPPLIED}) is False
+    # Fresh unavailable row → cooldown suppresses.
+    assert svc.needs_resolution({"available": False, "source": svc.SOURCE_UNAVAILABLE, "resolved_at": fresh}) is False
+    # Stale unavailable row → try again.
+    assert svc.needs_resolution({"available": False, "source": svc.SOURCE_UNAVAILABLE, "resolved_at": stale}) is True
 
 
 @pytest.mark.asyncio
@@ -441,6 +619,47 @@ async def test_store_supplied_range_stages_row():
 async def test_store_supplied_range_empty_is_noop():
     out = await svc.store_supplied_range(MagicMock(), _run(), [])
     assert out is None
+
+
+# ── upsert race hardening (INSERT .. ON CONFLICT) ────────────────────────────
+
+
+def _compiled_upsert_sql(db):
+    from sqlalchemy.dialects import postgresql
+
+    stmt = db.execute.await_args.args[0]
+    return str(stmt.compile(dialect=postgresql.dialect()))
+
+
+@pytest.mark.asyncio
+async def test_upsert_range_connector_uses_on_conflict_with_supplied_guard():
+    db = MagicMock()
+    db.execute = AsyncMock()
+    with patch.object(svc, "_get_row", AsyncMock(return_value="row")):
+        out = await svc._upsert_range(
+            db, _run(),
+            base_commit="b" * 40, head_commit="h" * 40, base_run_id=None,
+            source=svc.SOURCE_CONNECTOR, commits=[_commit("a" * 40, ["x.py"])],
+        )
+    sql = _compiled_upsert_sql(db)
+    assert "ON CONFLICT (run_id) DO UPDATE" in sql  # no read-then-insert race
+    assert "run_commit_ranges.source !=" in sql      # never clobbers supplied
+    assert out == "row"
+
+
+@pytest.mark.asyncio
+async def test_upsert_range_supplied_overwrites_unconditionally():
+    db = MagicMock()
+    db.execute = AsyncMock()
+    with patch.object(svc, "_get_row", AsyncMock(return_value="row")):
+        await svc._upsert_range(
+            db, _run(),
+            base_commit=None, head_commit="h" * 40, base_run_id=None,
+            source=svc.SOURCE_SUPPLIED, commits=[_commit("a" * 40, ["x.py"])],
+        )
+    sql = _compiled_upsert_sql(db)
+    assert "ON CONFLICT (run_id) DO UPDATE" in sql
+    assert "run_commit_ranges.source !=" not in sql  # supplied always wins
 
 
 # ── Migration 0110 contract ──────────────────────────────────────────────────

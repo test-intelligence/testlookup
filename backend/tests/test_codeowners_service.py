@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -67,23 +67,27 @@ class _ScriptedDB:
 
 
 class _ImportDB:
-    """Fake session for import: returns ``existing`` from the scope SELECT,
-    records adds / deletes / flush."""
+    """Fake session for import: the bulk DELETE reports ``replaced_count``
+    via rowcount, the band-overlap count SELECT reports
+    ``hand_authored_in_band``; adds / flush / statements recorded."""
 
-    def __init__(self, existing):
-        self.existing = existing
+    def __init__(self, replaced_count=0, hand_authored_in_band=0):
+        self.replaced_count = replaced_count
+        self.hand_authored_in_band = hand_authored_in_band
         self.added = []
-        self.deleted = []
         self.flushed = False
+        self.statements = []
 
     async def execute(self, stmt, *a, **k):
-        return _scalars(self.existing)
+        self.statements.append(stmt)
+        if getattr(stmt, "is_delete", False):
+            return SimpleNamespace(rowcount=self.replaced_count)
+        res = MagicMock()
+        res.scalar = MagicMock(return_value=self.hand_authored_in_band)
+        return res
 
     def add(self, obj):
         self.added.append(obj)
-
-    async def delete(self, obj):
-        self.deleted.append(obj)
 
     async def flush(self):
         self.flushed = True
@@ -106,8 +110,9 @@ def test_parse_multi_owner_and_email():
     text = "src/  @org/team @bob carol@example.com\n"
     entries = cs.parse_codeowners(text)
     assert entries[0].owners == ["@org/team", "@bob", "carol@example.com"]
-    # trailing slash → **; leading slash stripped in _pattern_to_glob
-    assert entries[0].glob == "src/**"
+    # The raw pattern is preserved verbatim — matching semantics live in
+    # ``_codeowners_pattern_to_regex``, not in a stored normalisation.
+    assert entries[0].pattern == "src/"
 
 
 def test_parse_line_without_owner_dropped():
@@ -122,10 +127,95 @@ def test_parse_preserves_order_for_last_match_wins():
     assert [e.owners[0] for e in entries] == ["@default", "@api-team"]
 
 
-def test_pattern_to_glob_variants():
-    assert cs._pattern_to_glob("/build/") == "build/**"
-    assert cs._pattern_to_glob("*.py") == "*.py"
-    assert cs._pattern_to_glob("/src/api") == "src/api"
+# ════════════════════════════════════════════════════════════════════════════
+# GitHub-faithful glob semantics (audit 2026-07 finding #9)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def _m(pattern: str, path: str) -> bool:
+    return bool(cs._codeowners_pattern_to_regex(pattern).match(path))
+
+
+def test_glob_single_star_does_not_cross_segments():
+    # GitHub's own docs example: docs/* owns docs/getting-started.md but
+    # NOT docs/build-app/troubleshooting.md.
+    assert _m("docs/*", "docs/a.md")
+    assert not _m("docs/*", "docs/a/b.md")
+
+
+def test_glob_double_star_crosses_segments():
+    assert _m("docs/**", "docs/a.md")
+    assert _m("docs/**", "docs/a/b.md")
+    assert not _m("docs/**", "src/a.md")
+
+
+def test_glob_extension_matches_any_depth():
+    assert _m("*.py", "a.py")
+    assert _m("*.py", "src/deep/nested/a.py")
+    assert not _m("*.py", "a.pyc")
+
+
+def test_glob_leading_slash_is_root_anchored():
+    assert _m("/build/*", "build/a.o")
+    assert not _m("/build/*", "sub/build/a.o")
+    assert not _m("/build/*", "build/a/b.o")
+
+
+def test_glob_dir_rule_matches_everything_under():
+    # ``apps/`` (no interior slash) = any apps directory anywhere.
+    assert _m("apps/", "apps/a.py")
+    assert _m("apps/", "apps/x/y.py")
+    assert _m("apps/", "foo/apps/z.py")
+    assert not _m("apps/", "apps.py")
+
+
+def test_glob_interior_slash_anchors_to_root():
+    assert _m("src/api/**", "src/api/v1/h.py")
+    assert not _m("src/api/**", "vendor/src/api/v1/h.py")
+
+
+def test_glob_question_mark_single_non_slash_char():
+    assert _m("docs/?.md", "docs/a.md")
+    assert not _m("docs/?.md", "docs/ab.md")
+    assert not _m("docs/?.md", "docs/x/a.md")
+
+
+def test_glob_double_star_middle_matches_zero_dirs():
+    assert _m("a/**/b.py", "a/b.py")
+    assert _m("a/**/b.py", "a/x/y/b.py")
+
+
+def test_glob_leading_double_star():
+    assert _m("**/foo.py", "foo.py")
+    assert _m("**/foo.py", "a/b/foo.py")
+
+
+def test_glob_bare_name_matches_dir_contents_anywhere():
+    assert _m("docs", "docs")
+    assert _m("docs", "docs/a.md")
+    assert _m("docs", "x/docs/a.md")
+    assert not _m("docs", "mydocs/a.md")
+
+
+def test_glob_star_matches_everything():
+    assert _m("*", "a.py")
+    assert _m("*", "deep/nested/a.py")
+
+
+def test_glob_legacy_normalized_rows_still_match():
+    # Rows imported before this fix stored fnmatch-normalised globs
+    # (leading slash stripped, trailing slash → ``**``) — they must keep
+    # matching equivalently under the new matcher.
+    assert _m("build/**", "build/x/y.o")      # was "/build/"
+    assert _m("src/**", "src/a/b.py")          # was "src/"
+
+
+def test_match_path_rule_nested_docs_behavior_change():
+    # THE behaviour change called out in the CHANGELOG: docs/* no longer
+    # matches nested paths (previously fnmatch let * span /).
+    rules = [_rule("docs/*", "@docs")]
+    assert cs.match_path_rule("docs/readme.md", rules) is not None
+    assert cs.match_path_rule("docs/build/x.md", rules) is None
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -138,7 +228,7 @@ async def test_import_creates_path_rules_with_provenance_and_priority():
     pid = uuid.uuid4()
     actor = uuid.uuid4()
     text = "*  @default\nsrc/api/**  @api @backup\n"
-    db = _ImportDB(existing=[])
+    db = _ImportDB()
 
     summary = await db_import(db, pid, text, actor)
 
@@ -157,18 +247,47 @@ async def test_import_creates_path_rules_with_provenance_and_priority():
 
 
 @pytest.mark.asyncio
-async def test_import_replaces_only_codeowners_rows():
+async def test_import_replaces_via_one_bulk_delete():
     pid = uuid.uuid4()
-    # The scope SELECT (service_name == "CODEOWNERS") returns only the two
-    # imported rows; a hand-authored rule would never be in this result set.
-    prior = [_rule("old/**", "@x"), _rule("older/**", "@y")]
-    db = _ImportDB(existing=prior)
+    db = _ImportDB(replaced_count=2)
 
     summary = await db_import(db, pid, "src/**  @z\n", uuid.uuid4())
 
-    assert summary["rules_replaced"] == 2
-    assert db.deleted == prior  # only the CODEOWNERS-sourced rows deleted
+    assert summary["rules_replaced"] == 2  # from the DELETE's rowcount
     assert len(db.added) == 1
+    # Exactly one bulk DELETE (scoped by the provenance marker), never a
+    # per-row ORM delete loop.
+    delete_stmts = [s for s in db.statements if getattr(s, "is_delete", False)]
+    assert len(delete_stmts) == 1
+    assert "service_name" in str(delete_stmts[0])
+    assert "CODEOWNERS" in delete_stmts[0].compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_import_stores_raw_patterns_verbatim():
+    db = _ImportDB()
+    await db_import(db, uuid.uuid4(), "/build/  @ops\ndocs/*  @docs\n", None)
+    assert [r.match_pattern for r in db.added] == ["/build/", "docs/*"]
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_oversized_files():
+    text = "\n".join(f"/p{i}  @u" for i in range(cs.MAX_IMPORT_ENTRIES + 1))
+    db = _ImportDB()
+    with pytest.raises(ValueError, match="import cap"):
+        await db_import(db, uuid.uuid4(), text, None)
+    assert db.statements == []  # rejected before any DB write
+    assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_import_warns_when_hand_authored_rules_sit_in_imported_band():
+    db = _ImportDB(hand_authored_in_band=2)
+    with patch.object(cs.logger, "warning") as warn:
+        await db_import(db, uuid.uuid4(), "a/  @x\nb/  @y\n", None)
+    assert warn.called
+    assert warn.call_args.args[0] == "codeowners_import_priority_band_overlap"
+    assert warn.call_args.kwargs["hand_authored_rules_in_band"] == 2
 
 
 async def db_import(db, pid, text, actor):
@@ -200,10 +319,35 @@ async def test_resolve_handles_to_users_by_username_and_email():
         SimpleNamespace(id=C, username="carol", email="carol@z.com"),
     ]))
     # "alice" resolves by username; "carol@z.com" by email; "bob@y.com" unmatched.
-    mapping = await cs.resolve_handles_to_users(db, {"alice", "carol@z.com", "bob@y.com"})
+    mapping = await cs.resolve_handles_to_users(
+        db, {"alice", "carol@z.com", "bob@y.com"}, project_id=uuid.uuid4(),
+    )
     assert mapping["alice"] == U
     assert mapping["carol@z.com"] == C
     assert "bob@y.com" not in mapping  # unmatched → absent → caller skips
+
+
+@pytest.mark.asyncio
+async def test_resolve_handles_query_is_member_scoped():
+    """The SQL joins ProjectMember on project_id — CODEOWNERS handles must
+    resolve only to project members (never route failures + stack traces to
+    a non-member; audit 2026-07)."""
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=_all([]))
+    await cs.resolve_handles_to_users(db, {"alice"}, project_id=uuid.uuid4())
+    stmt = db.execute.await_args.args[0]
+    sql = str(stmt)
+    assert "project_members" in sql
+    assert "project_members.project_id" in sql
+
+
+@pytest.mark.asyncio
+async def test_resolve_handles_empty_set_short_circuits():
+    db = AsyncMock()
+    db.execute = AsyncMock()
+    out = await cs.resolve_handles_to_users(db, set(), project_id=uuid.uuid4())
+    assert out == {}
+    db.execute.assert_not_called()
 
 
 def test_match_path_rule_priority_first():

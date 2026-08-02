@@ -32,13 +32,13 @@ from app.agents.fixer.state import (
     VALID_FIXER_MODES,
     VALID_RUNNER_TYPES,
     VALID_SCHEDULES,
+    is_valid_runner_image,
 )
 from app.core.deps import (
     get_current_active_user,
     get_db,
     require_project_access,
     require_project_role,
-    require_role,
 )
 from app.models.postgres import FixAttempt, ProjectMember, User, UserRole
 from app.services import fixer_service as svc
@@ -103,6 +103,18 @@ class FixerRunner(BaseModel):
     def _valid_type(cls, v: str) -> str:
         if v not in VALID_RUNNER_TYPES:
             raise ValueError(f"runner.type must be one of {list(VALID_RUNNER_TYPES)}")
+        return v
+
+    @field_validator("runner_image")
+    @classmethod
+    def _valid_image(cls, v: Optional[str]) -> Optional[str]:
+        # Security: the image lands in ``docker run``'s argv — reject anything
+        # that isn't a well-formed image reference (e.g. ``--privileged``).
+        if v is not None and not is_valid_runner_image(v):
+            raise ValueError(
+                "runner_image must be a docker image reference "
+                "(lowercase repo path, optional :tag / @sha256 digest)"
+            )
         return v
 
 
@@ -183,9 +195,12 @@ async def start_fixer_run(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
-    _writer: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    # Project-scoped role (not the global one): a project VIEWER with a
+    # global QA_ENGINEER role must not be able to trigger runs here —
+    # mirrors the config PUT's require_project_role(QA_LEAD).
+    _writer: User = Depends(require_project_role(UserRole.QA_ENGINEER)),
 ) -> dict[str, Any]:
-    """Trigger a manual fixer run (QA_ENGINEER+)."""
+    """Trigger a manual fixer run (project QA_ENGINEER+)."""
     try:
         await svc.gate_fixer_run(db, project_id)
     except svc.FixerDisabled:
@@ -211,7 +226,13 @@ async def start_fixer_run(
         )
 
     fixer_run_id = uuid.uuid4()
-    svc.enqueue_fixer_run(project_id, fixer_run_id, triggered_by="manual")
+    if not svc.enqueue_fixer_run(project_id, fixer_run_id, triggered_by="manual"):
+        # The gate acquired the dispatch lock; nothing was queued, so free it.
+        await svc.release_fixer_run_lock(project_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The fixer run could not be queued (task broker unavailable). Try again shortly.",
+        )
     return {"fixer_run_id": str(fixer_run_id)}
 
 

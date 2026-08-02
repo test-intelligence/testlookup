@@ -5,11 +5,18 @@ existing ``service_ownership_rules`` table — **no new table, no migration**.
 A CODEOWNERS line ``glob  @owner1 @owner2`` becomes one rule:
 
     match_type    = "path"
-    match_pattern = <glob, gitignore→fnmatch normalised>
+    match_pattern = <the raw CODEOWNERS pattern, verbatim>
     service_name  = "CODEOWNERS"          ← provenance marker (see below)
     team_name     = <primary owner handle, e.g. "@org/team" or "@alice">
     team_contact  = <full space-joined owner list>
     priority      = <file order; LATER lines get HIGHER priority>
+
+Matching is GitHub-CODEOWNERS-faithful (``_codeowners_pattern_to_regex``):
+``*`` never crosses ``/`` (so ``docs/*`` matches only direct children —
+use ``docs/**`` for nested), ``**`` spans segments, a pattern without a
+``/`` matches at any depth, and a leading ``/`` (or any interior ``/``)
+anchors to the repo root. Rows imported before this change (stored in the
+old fnmatch-normalised form, e.g. ``build/**``) still match equivalently.
 
 Provenance
 ----------
@@ -34,24 +41,26 @@ Acquisition paths
 * **text** — the raw CODEOWNERS body posted in the request (air-gapped /
   paste-upload). No egress.
 
-Transaction discipline: the import helper ``db.add`` / ``db.delete`` / ``flush``
-and returns; the **router owns the single commit**.
+Transaction discipline: the import helper stages (one bulk ``DELETE`` +
+``db.add`` + ``flush``) and returns; the **router owns the single commit**.
 """
 from __future__ import annotations
 
 import base64
-import fnmatch
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any, Optional
 
 import httpx
 import structlog
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
+    ProjectMember,
     ServiceOwnershipRule,
     TestCase,
     TestRun,
@@ -73,37 +82,95 @@ _PATTERN_CAP = 500
 _TEAM_NAME_CAP = 255
 _TEAM_CONTACT_CAP = 500
 
+# Hard cap on entries accepted per import — a pathological CODEOWNERS file
+# must not turn one request into tens of thousands of row inserts.
+MAX_IMPORT_ENTRIES = 5000
+
+# Hand-authored ``path`` rules that must always beat CODEOWNERS should use
+# priorities at or above this band; imported rules occupy ``0..N`` (file
+# order). The import logs a warning when hand-authored rules sit inside the
+# imported band (they'd interleave under the resolver's priority-DESC scan).
+HAND_AUTHORED_PRIORITY_BAND = 1_000_000
+
 
 # ── Parser ──────────────────────────────────────────────────────────────────
 
 
 @dataclass
 class CodeownersEntry:
-    """One effective CODEOWNERS line: the original pattern, the fnmatch-ready
-    glob, and its owner tokens (in file order; first is the primary owner)."""
+    """One effective CODEOWNERS line: the raw pattern and its owner tokens
+    (in file order; first is the primary owner)."""
 
     pattern: str
-    glob: str
     owners: list[str] = field(default_factory=list)
 
 
-def _pattern_to_glob(pattern: str) -> str:
-    """Normalise a gitignore-style CODEOWNERS pattern to an ``fnmatch`` glob
-    matched against a repo-relative path.
+def _translate_glob_body(p: str) -> str:
+    """Glob → regex body with CODEOWNERS/gitignore wildcard semantics:
+    ``**/`` → zero-or-more directories, ``**`` → anything (crosses ``/``),
+    ``*`` → anything within one segment, ``?`` → one non-``/`` char."""
+    i, n, out = 0, len(p), ""
+    while i < n:
+        c = p[i]
+        if c == "*":
+            if i + 1 < n and p[i + 1] == "*":
+                if i + 2 < n and p[i + 2] == "/":
+                    out += "(?:.*/)?"
+                    i += 3
+                    continue
+                out += ".*"
+                i += 2
+                continue
+            out += "[^/]*"
+            i += 1
+            continue
+        if c == "?":
+            out += "[^/]"
+            i += 1
+            continue
+        out += re.escape(c)
+        i += 1
+    return out
 
-    * A leading ``/`` anchors to the repo root — the paths we match are
-      already repo-relative, so we strip it.
-    * A trailing ``/`` means "everything under this directory" — append ``**``.
-    * Python ``fnmatch`` treats ``*`` as spanning ``/`` (it has no path-segment
-      semantics), so a bare ``*.py`` already matches ``src/a.py`` and
-      ``src/api/**`` matches nested files — no further rewriting needed.
+
+@lru_cache(maxsize=4096)
+def _codeowners_pattern_to_regex(pattern: str) -> "re.Pattern[str]":
+    """Compile a CODEOWNERS pattern into a regex over repo-relative file
+    paths, faithful to GitHub's documented semantics:
+
+    * ``*`` matches within a path segment only — ``docs/*`` matches
+      ``docs/a.md`` but NOT ``docs/sub/a.md`` (GitHub's own example).
+    * ``**`` spans segments — ``docs/**`` matches both; ``a/**/b`` also
+      matches ``a/b`` (zero directories).
+    * ``?`` matches exactly one non-``/`` character.
+    * A pattern with no ``/`` (other than a trailing one) matches at any
+      depth (``*.py`` matches ``src/a.py``); a leading ``/`` — or any
+      interior ``/`` (gitignore rule) — anchors to the repo root.
+    * A trailing ``/`` is a directory rule: everything under a matching
+      directory matches.
+    * A pattern naming a file/dir without a trailing wildcard also matches
+      everything under it (gitignore directory-content semantics).
+
+    NOT implemented (rare in real files, escaped literally): character
+    ranges ``[a-z]`` and ``!`` negation (GitHub itself rejects ``!``).
     """
     p = (pattern or "").strip()
-    if p.startswith("/"):
-        p = p[1:]
-    if p.endswith("/"):
-        p = p + "**"
-    return p
+    dir_rule = p.endswith("/")
+    p = p.rstrip("/")
+    anchored = p.startswith("/")
+    if anchored:
+        p = p.lstrip("/")
+    elif "/" in p:
+        anchored = True  # gitignore: any interior slash anchors to the root
+    body = _translate_glob_body(p)
+    prefix = "^" if anchored else r"^(?:.*/)?"
+    if dir_rule:
+        suffix = "/.*$"
+    elif p.endswith("*") or p.endswith("?"):
+        suffix = "$"
+    else:
+        suffix = "(?:/.*)?$"
+    return re.compile(prefix + body + suffix)
 
 
 def _looks_like_owner(token: str) -> bool:
@@ -135,13 +202,7 @@ def parse_codeowners(text: str) -> list[CodeownersEntry]:
         if not owners:
             # Pattern with no valid owner token → nothing to assign.
             continue
-        entries.append(
-            CodeownersEntry(
-                pattern=pattern,
-                glob=_pattern_to_glob(pattern),
-                owners=owners,
-            )
-        )
+        entries.append(CodeownersEntry(pattern=pattern, owners=owners))
     return entries
 
 
@@ -158,24 +219,35 @@ async def import_codeowners_rules(
     """Replace the project's CODEOWNERS-sourced ``path`` rules from ``text``.
 
     Deletes only rows tagged ``service_name == "CODEOWNERS"`` (hand-authored
-    rules survive), then inserts one rule per parsed entry. ``priority`` is the
-    file-order index so later lines win (GitHub last-match-wins).
+    rules survive) in ONE bulk statement, then inserts one rule per parsed
+    entry. ``priority`` is the file-order index so later lines win (GitHub
+    last-match-wins) — imported rules therefore occupy the ``0..N`` priority
+    band. Hand-authored ``path`` rules that must always beat CODEOWNERS
+    should use ``priority >= HAND_AUTHORED_PRIORITY_BAND`` (1,000,000); the
+    import warns when hand-authored rules sit inside the imported band.
+
+    Raises ``ValueError`` when the file parses to more than
+    ``MAX_IMPORT_ENTRIES`` entries (the router maps this to a 422).
 
     Stages the writes and returns a summary; the caller commits.
     """
     entries = parse_codeowners(text)
+    if len(entries) > MAX_IMPORT_ENTRIES:
+        raise ValueError(
+            f"CODEOWNERS parses to {len(entries)} entries; "
+            f"the import cap is {MAX_IMPORT_ENTRIES}"
+        )
 
-    # Scope the replace to CODEOWNERS-sourced rows for this project only.
-    existing = await db.execute(
-        select(ServiceOwnershipRule).where(
+    # Scope the replace to CODEOWNERS-sourced rows for this project only —
+    # one bulk DELETE, not a per-row ORM delete loop.
+    delete_result = await db.execute(
+        delete(ServiceOwnershipRule).where(
             ServiceOwnershipRule.project_id == project_id,
             ServiceOwnershipRule.service_name == CODEOWNERS_SERVICE,
         )
     )
-    replaced = 0
-    for old in existing.scalars().all():
-        await db.delete(old)
-        replaced += 1
+    _rc = getattr(delete_result, "rowcount", None)
+    replaced = _rc if isinstance(_rc, int) and _rc >= 0 else 0
 
     created = 0
     for idx, entry in enumerate(entries):
@@ -183,7 +255,7 @@ async def import_codeowners_rules(
         rule = ServiceOwnershipRule(
             project_id=project_id,
             match_type="path",
-            match_pattern=entry.glob[:_PATTERN_CAP],
+            match_pattern=entry.pattern[:_PATTERN_CAP],
             service_name=CODEOWNERS_SERVICE,
             team_name=primary[:_TEAM_NAME_CAP],
             team_contact=(" ".join(entry.owners))[:_TEAM_CONTACT_CAP],
@@ -196,6 +268,31 @@ async def import_codeowners_rules(
         created += 1
 
     await db.flush()
+
+    # Warn when hand-authored path rules sit inside the imported priority
+    # band (0..N) — they'd interleave with imported lines instead of
+    # cleanly winning or losing. Best-effort observability, never fatal.
+    if created:
+        overlap_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(ServiceOwnershipRule)
+                .where(
+                    ServiceOwnershipRule.project_id == project_id,
+                    ServiceOwnershipRule.match_type == "path",
+                    ServiceOwnershipRule.service_name != CODEOWNERS_SERVICE,
+                    ServiceOwnershipRule.priority < created,
+                )
+            )
+        ).scalar() or 0
+        if overlap_count:
+            logger.warning(
+                "codeowners_import_priority_band_overlap",
+                project_id=str(project_id),
+                hand_authored_rules_in_band=int(overlap_count),
+                imported_band_top=created - 1,
+                hint=f"hand-authored path rules should use priority >= {HAND_AUTHORED_PRIORITY_BAND}",
+            )
 
     logger.info(
         "codeowners_imported",
@@ -293,6 +390,11 @@ async def fetch_codeowners_text(
 
         body = resp.json() if resp.content else {}
         content_b64 = body.get("content") or ""
+        if not content_b64:
+            # A 200 with no content decodes to "" and would report a
+            # "successful" import of zero rules — call it what it is.
+            last_detail = "empty_content"
+            continue
         try:
             decoded = base64.b64decode(content_b64).decode("utf-8", errors="replace")
         except Exception:  # noqa: BLE001
@@ -339,16 +441,23 @@ async def load_path_rules(
 def match_path_rule(
     path: str, rules: list[ServiceOwnershipRule],
 ) -> Optional[ServiceOwnershipRule]:
-    """First rule whose glob matches ``path`` (rules pre-sorted priority DESC).
+    """First rule whose pattern matches ``path`` (rules pre-sorted priority
+    DESC).
 
-    Uses the same ``fnmatch`` matching as ``ownership_resolver_service`` so the
-    inbox reason and the assignment never disagree.
+    GitHub-CODEOWNERS-faithful matching via ``_codeowners_pattern_to_regex``
+    (segment-scoped ``*``, root anchoring — see that function's docstring).
+    This function is the single matcher for BOTH the assignment service and
+    the /my-failures inbox reason derivation, so those two surfaces never
+    disagree. Case-insensitive, matching the pre-audit behavior.
     """
     if not path:
         return None
-    target = path.lower()
+    target = path.replace("\\", "/").lstrip("/").lower()
     for rule in rules:
-        if fnmatch.fnmatch(target, (rule.match_pattern or "").lower()):
+        pattern = (rule.match_pattern or "").strip().lower()
+        if not pattern:
+            continue
+        if _codeowners_pattern_to_regex(pattern).match(target):
             return rule
     return None
 
@@ -369,21 +478,31 @@ def owner_handle_for_rule(rule: ServiceOwnershipRule) -> Optional[str]:
 
 
 async def resolve_handles_to_users(
-    db: AsyncSession, handles: set[str],
+    db: AsyncSession, handles: set[str], *, project_id: uuid.UUID,
 ) -> dict[str, uuid.UUID]:
     """Map ``@handle``/email → ``users.id`` by ``username`` or ``email``
-    (case-insensitive). Keyed by the lowercased handle. Unmatched handles are
-    simply absent — the caller treats absence as "unresolvable → skip"."""
+    (case-insensitive), **scoped to members of ``project_id``**. Keyed by the
+    lowercased handle. Unmatched handles are simply absent — the caller
+    treats absence as "unresolvable → skip".
+
+    The membership join is a security boundary: without it a CODEOWNERS
+    handle could route failures (including stack traces via the inbox) to a
+    user with no access to the project. Admins resolve only if they are
+    members too — strict is correct here.
+    """
     lowered = {h.lower() for h in handles if h}
     if not lowered:
         return {}
     rows = (
         await db.execute(
-            select(User.id, User.username, User.email).where(
+            select(User.id, User.username, User.email)
+            .join(ProjectMember, ProjectMember.user_id == User.id)
+            .where(
+                ProjectMember.project_id == project_id,
                 or_(
                     func.lower(User.username).in_(lowered),
                     func.lower(User.email).in_(lowered),
-                )
+                ),
             )
         )
     ).all()
@@ -448,7 +567,7 @@ async def codeowners_reasons_for_rows(
                 for h in (owner_handle_for_rule(r) for r in path_rules)
                 if h
             }
-            handle_map = await resolve_handles_to_users(db, handles)
+            handle_map = await resolve_handles_to_users(db, handles, project_id=pid)
             for row in prows:
                 path = locate_failure_path(
                     getattr(row, "stack_trace", None),
@@ -466,9 +585,10 @@ async def codeowners_reasons_for_rows(
                 if uid is not None and uid == row.assigned_to_user_id:
                     reasons[row.id] = assignment_reason(rule)
         except Exception as exc:  # noqa: BLE001 — inbox must not 500 on this
-            logger.debug(
+            logger.warning(
                 "codeowners_reason_derivation_failed",
                 project_id=str(pid),
+                affected_rows=len(prows),
                 error=str(exc),
             )
             continue
@@ -509,9 +629,14 @@ async def compute_coverage(
         return summary
 
     period_start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    # Only the trace locator consumes these — pull a bounded 4000-char prefix
+    # instead of whole multi-MB blobs (sample_cap=500 rows of full traces).
     rows = (
         await db.execute(
-            select(TestCase.stack_trace, TestCase.error_message)
+            select(
+                func.substr(TestCase.stack_trace, 1, 4000).label("stack_trace"),
+                func.substr(TestCase.error_message, 1, 4000).label("error_message"),
+            )
             .join(TestRun, TestRun.id == TestCase.test_run_id)
             .where(
                 TestRun.project_id == project_id,

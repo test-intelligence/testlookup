@@ -7,6 +7,7 @@ tested without pulling the DB layer.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -21,6 +22,22 @@ VALID_FIXER_MODES: tuple[str, ...] = ("shadow", "suggest")
 VALID_RUNNER_TYPES: tuple[str, ...] = ("docker", "workflow_dispatch", "none")
 
 VALID_SCHEDULES: tuple[str, ...] = ("daily", "weekly", "off")
+
+# Docker image reference the policy may configure (security-critical: the
+# image lands in ``docker run``'s argv, so a value like ``--privileged`` must
+# never be accepted as an "image"). Deliberately strict: lowercase repo path,
+# optional tag, optional sha256 digest. Enforced at the config write path
+# (router validator + fixer_service._coerce_runner) AND re-asserted in
+# runners.build_docker_run_argv (defense in depth).
+RUNNER_IMAGE_RE = re.compile(
+    r"^[a-z0-9][a-z0-9._/-]*(:[\w.-]+)?(@sha256:[a-f0-9]{64})?$"
+)
+
+
+def is_valid_runner_image(image: Optional[str]) -> bool:
+    """True when ``image`` is a well-formed docker image reference (and in
+    particular can never be parsed by the docker CLI as a flag)."""
+    return bool(image) and RUNNER_IMAGE_RE.match(str(image)) is not None
 
 # Defaults for a project that has never configured the Fixer (API contract).
 DEFAULT_TEST_GLOBS: tuple[str, ...] = ("tests/**", "**/*.spec.*", "**/*.test.*")

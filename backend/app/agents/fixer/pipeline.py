@@ -45,60 +45,61 @@ _ATTEMPT_CONSUMED_STATUSES = (
 
 
 async def select_candidates(
-    db: AsyncSession, project_id: uuid.UUID,
+    db: AsyncSession, project_id: uuid.UUID, max_tests: Optional[int] = None,
 ) -> list[FixCandidate]:
     """Top flaky tests among active quarantines, ordered by flip-rate desc.
 
-    Returns every eligible candidate (unbudgeted); the workflow applies
-    ``max_tests_per_run`` / ``max_attempts_per_test``. Prior consumed attempts
-    per fingerprint are counted here so the workflow can enforce the per-test
-    cap cheaply.
+    Ordering + the ``max_tests`` cap happen in SQL (flip_rate desc nulls
+    last, then most-recent failure), and prior consumed attempts for the
+    capped set come from ONE GROUP BY query — no per-row COUNT round-trips.
+    The workflow still enforces ``max_attempts_per_test`` from
+    ``prior_attempts``.
     """
-    rows = (
-        await db.execute(
-            select(FlakyQuarantineRequest)
-            .where(
-                FlakyQuarantineRequest.project_id == project_id,
-                FlakyQuarantineRequest.status.in_(_ACTIVE_QUARANTINE_STATES),
-            )
+    from sqlalchemy import func
+
+    stmt = (
+        select(FlakyQuarantineRequest)
+        .where(
+            FlakyQuarantineRequest.project_id == project_id,
+            FlakyQuarantineRequest.status.in_(_ACTIVE_QUARANTINE_STATES),
         )
-    ).scalars().all()
-    # Sort by flip_rate desc (None last), then most-recent failure.
-    rows = sorted(
-        rows,
-        key=lambda r: (
-            -(r.flip_rate if r.flip_rate is not None else -1.0),
-            -(r.last_failure_at.timestamp() if r.last_failure_at else 0.0),
-        ),
+        .order_by(
+            FlakyQuarantineRequest.flip_rate.desc().nulls_last(),
+            FlakyQuarantineRequest.last_failure_at.desc().nulls_last(),
+        )
     )
-    candidates: list[FixCandidate] = []
-    for r in rows:
-        prior = await _count_prior_attempts(db, project_id, r.test_fingerprint)
-        candidates.append(FixCandidate(
+    if max_tests is not None and max_tests >= 0:
+        stmt = stmt.limit(max_tests)
+    rows = (await db.execute(stmt)).scalars().all()
+    if not rows:
+        return []
+
+    fingerprints = [r.test_fingerprint for r in rows]
+    prior_by_fp: dict[str, int] = {
+        fp: int(count or 0)
+        for fp, count in (
+            await db.execute(
+                select(FixAttempt.test_fingerprint, func.count(FixAttempt.id))
+                .where(
+                    FixAttempt.project_id == project_id,
+                    FixAttempt.test_fingerprint.in_(fingerprints),
+                    FixAttempt.status.in_(_ATTEMPT_CONSUMED_STATUSES),
+                )
+                .group_by(FixAttempt.test_fingerprint)
+            )
+        ).all()
+    }
+    return [
+        FixCandidate(
             test_fingerprint=r.test_fingerprint,
             test_name=r.test_name,
             suite_name=r.suite_name,
             flip_rate=r.flip_rate,
             flip_window_size=r.flip_window_size,
-            prior_attempts=prior,
-        ))
-    return candidates
-
-
-async def _count_prior_attempts(
-    db: AsyncSession, project_id: uuid.UUID, fingerprint: str,
-) -> int:
-    from sqlalchemy import func
-
-    return int((
-        await db.execute(
-            select(func.count(FixAttempt.id)).where(
-                FixAttempt.project_id == project_id,
-                FixAttempt.test_fingerprint == fingerprint,
-                FixAttempt.status.in_(_ATTEMPT_CONSUMED_STATUSES),
-            )
+            prior_attempts=prior_by_fp.get(r.test_fingerprint, 0),
         )
-    ).scalar() or 0)
+        for r in rows
+    ]
 
 
 # ── Diagnosis (reuse existing signals — never rerun the investigator) ────────
@@ -217,8 +218,14 @@ async def generate_candidate_patch(
             "reasoning": str(parsed.get("reasoning") or ""),
         }
     except Exception as exc:  # noqa: BLE001 — generation failure is honest "no fix"
+        # Full exception text goes to the debug log only; the stored (API-
+        # readable) reasoning carries just the type name — raw LLM/provider
+        # errors can embed endpoint URLs and third-party strings.
         logger.debug("fixer_generation_failed", error=str(exc))
-        return {"can_fix": False, "patch": None, "tokens": 0, "reasoning": f"generation error: {exc}"}
+        return {
+            "can_fix": False, "patch": None, "tokens": 0,
+            "reasoning": f"generation error: {type(exc).__name__}",
+        }
 
 
 def _extract_json(text: str) -> Optional[dict[str, Any]]:
@@ -376,6 +383,38 @@ def split_per_file_diffs(patch: str) -> dict[str, str]:
 
 FIX_BRANCH_PREFIX = "testlookup/fix-flaky-"
 
+_GH_HEADERS_ACCEPT = "application/vnd.github+json"
+
+
+async def fetch_default_branch(
+    *, api_base_url: str, repo_owner: str, repo_name: str, pat: str,
+) -> Optional[str]:
+    """Resolve the repo's real default branch (hoisted from the PR opener so
+    the workflow can thread it into ValidationSpec.ref instead of hardcoding
+    "main"). Best-effort: None on any failure — callers fall back to "main"
+    only when unknown."""
+    import httpx
+
+    from app.services.github_checks_service import _ssrf_block_reason
+
+    repo_url = f"{api_base_url.rstrip('/')}/repos/{repo_owner}/{repo_name}"
+    if await _ssrf_block_reason(repo_url):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(repo_url, headers={
+                "Authorization": f"Bearer {pat}",
+                "Accept": _GH_HEADERS_ACCEPT,
+                "User-Agent": "TestLookup/1.0",
+                "X-GitHub-Api-Version": "2022-11-28",
+            })
+        if resp.status_code != 200:
+            return None
+        return (resp.json() or {}).get("default_branch") or None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("fixer_default_branch_lookup_failed", error=str(exc))
+        return None
+
 
 async def open_draft_pr(
     *,
@@ -473,7 +512,14 @@ async def open_draft_pr(
                 },
             )
             if pr.status_code not in (200, 201):
-                return {"error": f"pull create HTTP {pr.status_code}: {pr.text[:200]}"}
+                # Parse GitHub's structured error message rather than storing
+                # the raw response body (which can carry endpoint URLs and
+                # documentation links) into the API-readable reason.
+                try:
+                    gh_message = str((pr.json() or {}).get("message") or "")[:200]
+                except Exception:  # noqa: BLE001
+                    gh_message = ""
+                return {"error": f"pull create HTTP {pr.status_code}: {gh_message}"}
             pr_json = pr.json() or {}
             return {"pr_url": pr_json.get("html_url"), "pr_number": pr_json.get("number")}
     except Exception as exc:  # noqa: BLE001
@@ -509,17 +555,38 @@ def outcome_for_pr(merged: bool) -> str:
     return "fixed" if merged else "not_fixed"
 
 
-async def poll_open_fixer_prs(db: AsyncSession) -> dict[str, int]:
-    """Poll every ``pr_state='open'`` fixer PR; on a terminal GitHub state feed
-    the outcome back through ``feedback_service.record_fix_outcome`` (merged →
-    ``fixed``, closed-unmerged → ``not_fixed``) and update ``pr_state``.
-    Offline / no integration → no-op. Stage-only: caller commits."""
+# Sweep bounds: at most this many open-PR attempts per beat (oldest first so
+# nothing starves), persisted in batches so a crash loses at most one batch.
+_PR_SWEEP_LIMIT = 200
+_PR_SWEEP_BATCH = 20
+
+
+async def poll_open_fixer_prs() -> dict[str, int]:
+    """Poll ``pr_state='open'`` fixer PRs (bounded to the oldest
+    ``_PR_SWEEP_LIMIT``); on a terminal GitHub state feed the outcome back
+    through ``feedback_service.record_fix_outcome`` (merged → ``fixed``,
+    closed-unmerged → ``not_fixed``) and update ``pr_state``. Offline / no
+    integration → no-op.
+
+    Three phases so no DB session is ever held across an HTTP call:
+    snapshot (read + close) → poll (one shared client, no session) →
+    persist (batched commits; ``pr_state`` advances ONLY after
+    ``record_fix_outcome`` succeeds so the feedback row is never lost).
+
+    Transaction note: this is a Celery-beat-owned unit of work on its own
+    ``AsyncSessionLocal`` — the commits here are worker-owned by design
+    (the transaction-boundary ratchet in
+    ``tests/test_architectural_transaction_boundaries.py`` governs
+    ``app/services/``; this support module is the beat task's outermost
+    orchestration layer, the same standing as ``workflow.py``).
+    """
     summary = {"checked": 0, "merged": 0, "closed": 0}
     if settings.AI_OFFLINE_MODE:
         return summary
 
     import httpx
 
+    from app.db.postgres import AsyncSessionLocal
     from app.services import secret_service
     from app.services.feedback_service import record_fix_outcome
     from app.services.github_checks_service import (
@@ -529,61 +596,101 @@ async def poll_open_fixer_prs(db: AsyncSession) -> dict[str, int]:
         get_integration,
     )
 
-    open_rows = (
-        await db.execute(
-            select(FixAttempt).where(
-                FixAttempt.pr_state == "open",
-                FixAttempt.pr_number.isnot(None),
+    # Phase 1 — snapshot the open attempts + per-project credentials, then
+    # CLOSE the session before any HTTP leaves the building.
+    async with AsyncSessionLocal() as db:
+        open_rows = (
+            await db.execute(
+                select(
+                    FixAttempt.id,
+                    FixAttempt.project_id,
+                    FixAttempt.pr_number,
+                    FixAttempt.pr_url,
+                    FixAttempt.test_fingerprint,
+                )
+                .where(
+                    FixAttempt.pr_state == "open",
+                    FixAttempt.pr_number.isnot(None),
+                )
+                .order_by(FixAttempt.created_at.asc())
+                .limit(_PR_SWEEP_LIMIT)
             )
-        )
-    ).scalars().all()
+        ).all()
+        creds: dict[uuid.UUID, tuple[str, str, str, str]] = {}
+        for project_id in {row.project_id for row in open_rows}:
+            integration = await get_integration(db, project_id)
+            if integration is None or not integration.enabled:
+                continue
+            pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(project_id))
+            if not pat:
+                continue
+            creds[project_id] = (
+                integration.api_base_url, integration.repo_owner, integration.repo_name, pat,
+            )
 
-    class _Bot:
-        id = None
-
-    for attempt in open_rows:
-        summary["checked"] += 1
-        integration = await get_integration(db, attempt.project_id)
-        if integration is None or not integration.enabled:
-            continue
-        pat = await secret_service.read_secret(
-            db, SECRET_SCOPE, _secret_key(attempt.project_id),
-        )
-        if not pat:
-            continue
-        pr_url = (
-            f"{integration.api_base_url.rstrip('/')}"
-            f"/repos/{integration.repo_owner}/{integration.repo_name}/pulls/{attempt.pr_number}"
-        )
-        if await _ssrf_block_reason(pr_url):
-            continue
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(pr_url, headers={
+    # Phase 2 — poll GitHub with NO session open, reusing ONE client.
+    terminal: list[tuple[uuid.UUID, uuid.UUID, str, Optional[str], bool]] = []
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for row in open_rows:
+            cred = creds.get(row.project_id)
+            if cred is None:
+                continue
+            api_base, repo_owner, repo_name, pat = cred
+            summary["checked"] += 1
+            gh_pr_url = (
+                f"{api_base.rstrip('/')}/repos/{repo_owner}/{repo_name}/pulls/{row.pr_number}"
+            )
+            if await _ssrf_block_reason(gh_pr_url):
+                continue
+            try:
+                resp = await client.get(gh_pr_url, headers={
                     "Authorization": f"Bearer {pat}",
                     "Accept": "application/vnd.github+json",
                     "User-Agent": "TestLookup/1.0",
                 })
-            if resp.status_code != 200:
+                if resp.status_code != 200:
+                    continue
+                pr = resp.json() or {}
+            except Exception:  # noqa: BLE001
                 continue
-            pr = resp.json() or {}
-        except Exception:  # noqa: BLE001
-            continue
-        state = pr.get("state")
-        merged = bool(pr.get("merged_at"))
-        if state != "closed":
-            continue  # still open
-        outcome = outcome_for_pr(merged)
-        attempt.pr_state = "merged" if merged else "closed"
-        summary["merged" if merged else "closed"] += 1
-        try:
-            await record_fix_outcome(
-                db, attempt.project_id, attempt.test_fingerprint, outcome,
-                reference=attempt.pr_url, comment="fixer outcome poll",
-                current_user=_Bot(),
+            if pr.get("state") != "closed":
+                continue  # still open
+            terminal.append(
+                (row.id, row.project_id, row.test_fingerprint, row.pr_url, bool(pr.get("merged_at"))),
             )
-        except Exception as exc:  # noqa: BLE001 — a missing analysis must not stop the sweep
-            logger.debug("fixer_outcome_record_skipped", error=str(exc))
+
+    # Phase 3 — persist, committing per attempt inside per-batch sessions so
+    # one bad row (or a crash) can't lose the whole sweep's progress.
+    class _Bot:
+        id = None
+
+    for start in range(0, len(terminal), _PR_SWEEP_BATCH):
+        batch = terminal[start:start + _PR_SWEEP_BATCH]
+        async with AsyncSessionLocal() as db:
+            for attempt_id, project_id, fingerprint, pr_url, merged in batch:
+                attempt = (
+                    await db.execute(select(FixAttempt).where(FixAttempt.id == attempt_id))
+                ).scalar_one_or_none()
+                if attempt is None or attempt.pr_state != "open":
+                    continue  # raced with another writer — nothing to do
+                try:
+                    await record_fix_outcome(
+                        db, project_id, fingerprint, outcome_for_pr(merged),
+                        reference=pr_url, comment="fixer outcome poll",
+                        current_user=_Bot(),
+                    )
+                except Exception as exc:  # noqa: BLE001 — missing analysis etc.
+                    # Leave pr_state='open' so the NEXT sweep retries — never
+                    # advance past a lost feedback row. Roll back to keep the
+                    # session usable for the rest of the batch (worker-owned
+                    # session: rolling back our own transaction is fine).
+                    logger.debug("fixer_outcome_record_skipped", error=str(exc))
+                    await db.rollback()
+                    continue
+                attempt.pr_state = "merged" if merged else "closed"
+                summary["merged" if merged else "closed"] += 1
+                # Worker-owned commit (see docstring transaction note).
+                await db.commit()
     return summary
 
 

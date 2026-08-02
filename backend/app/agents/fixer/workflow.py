@@ -27,10 +27,10 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.agents.fixer import pipeline
-from app.agents.fixer.runners import ValidationRunner, build_runner
+from app.agents.fixer.runners import ValidationRunner, build_runner, redact_secrets
 from app.agents.fixer.state import (
     RESULT_ERROR,
     RESULT_FAILED,
@@ -111,20 +111,43 @@ def classify_validation_terminal(
     return TerminalDecision(STATUS_VALIDATED, True, "validated — opening draft PR")
 
 
-async def _kill_switch_tripped(project_id: uuid.UUID) -> bool:
-    """Re-read the fixer policy's enabled flag (cooperative cancel)."""
+async def _kill_switch_tripped(project_id: uuid.UUID, db=None) -> bool:
+    """Re-read the fixer policy's enabled flag (cooperative cancel). Reuses
+    the caller's session when given (the candidate loop passes its own —
+    no dedicated session per check). A read fault FAILS CLOSED (stops the
+    run): a kill switch we cannot read must be assumed thrown."""
     try:
-        async with AsyncSessionLocal() as db:
+        if db is not None:
             row = await fixer_service.get_fixer_policy_row(db, project_id)
-            return not fixer_service.serialize_fixer_config(row)["enabled"]
-    except Exception as exc:  # noqa: BLE001 — a read fault keeps the run going
+        else:
+            async with AsyncSessionLocal() as own_db:
+                row = await fixer_service.get_fixer_policy_row(own_db, project_id)
+        return not fixer_service.serialize_fixer_config(row)["enabled"]
+    except Exception as exc:  # noqa: BLE001 — fail closed
         logger.warning("fixer_kill_switch_read_failed", error=str(exc))
-        return False
+        return True
+
+
+def _clone_host(api_base_url: Optional[str]) -> str:
+    """HTML/clone host for the integration's API base (mirrors
+    commit_attribution_service._commit_html_url): github.com only when the
+    API base IS api.github.com; GitHub Enterprise strips the /api/v3 suffix."""
+    base = (api_base_url or "").rstrip("/")
+    if not base or "api.github.com" in base:
+        return "https://github.com"
+    host = base
+    for suffix in ("/api/v3", "/api"):
+        if host.endswith(suffix):
+            host = host[: -len(suffix)]
+            break
+    return host.rstrip("/")
 
 
 async def _github_ctx(project_id: uuid.UUID) -> Optional[dict[str, Any]]:
     """Load the project's GitHub integration + PAT for PR opening / dispatch.
-    None when offline / not configured."""
+    None when offline / not configured. Also resolves the repo's real default
+    branch (AFTER the DB session closes — it's an HTTP call) so validation
+    never hardcodes "main"."""
     from app.core.config import settings
 
     if settings.AI_OFFLINE_MODE:
@@ -144,13 +167,22 @@ async def _github_ctx(project_id: uuid.UUID) -> Optional[dict[str, Any]]:
             pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(project_id))
             if not pat:
                 return None
-            return {
-                "api_base_url": integration.api_base_url,
-                "repo_owner": integration.repo_owner,
-                "repo_name": integration.repo_name,
-                "pat": pat,
-                "repo_url": f"https://github.com/{integration.repo_owner}/{integration.repo_name}.git",
-            }
+            api_base_url = integration.api_base_url
+            repo_owner = integration.repo_owner
+            repo_name = integration.repo_name
+        # Session is closed — the default-branch lookup is an outbound HTTP
+        # call and must not ride inside a DB transaction.
+        default_branch = await pipeline.fetch_default_branch(
+            api_base_url=api_base_url, repo_owner=repo_owner, repo_name=repo_name, pat=pat,
+        )
+        return {
+            "api_base_url": api_base_url,
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "pat": pat,
+            "repo_url": f"{_clone_host(api_base_url)}/{repo_owner}/{repo_name}.git",
+            "default_branch": default_branch,
+        }
     except Exception as exc:  # noqa: BLE001
         logger.warning("fixer_github_ctx_failed", error=str(exc))
         return None
@@ -239,7 +271,7 @@ async def run_fixer_run(
     runner = runner_override or build_runner(runner_cfg, github_ctx=ghctx)
 
     async with AsyncSessionLocal() as db:
-        candidates = await pipeline.select_candidates(db, pid)
+        candidates = await pipeline.select_candidates(db, pid, max_tests=max_tests)
     candidates = candidates[:max_tests]
 
     logger.info(
@@ -247,122 +279,159 @@ async def run_fixer_run(
         mode=mode, runner=runner.type, candidates=len(candidates),
     )
 
-    for candidate in candidates:
-        # Kill switch — cooperative stop between candidates.
-        if await _kill_switch_tripped(pid):
+    # The whole candidate loop is guarded so _finalize ALWAYS runs — a crash
+    # mid-run must still write the ledger entry (status="error") and release
+    # the dispatch lock.
+    run_error: Optional[str] = None
+    try:
+        for candidate in candidates:
             async with AsyncSessionLocal() as db:
+                # Kill switch — cooperative stop between candidates (reuses
+                # this candidate's session; no dedicated session per check).
+                if await _kill_switch_tripped(pid, db):
+                    row = await _new_attempt(
+                        db, project_id=pid, fixer_run_id=frid, candidate=candidate, runner_type=runner.type,
+                    )
+                    await _advance(
+                        db, row, STATUS_SKIPPED_BUDGET, terminal=True,
+                        reason="run stopped mid-flight — fixer disabled (kill switch)",
+                    )
+                    counters["skipped_budget"] += 1
+                    logger.info("fixer_kill_switch_stop", fixer_run_id=fixer_run_id)
+                    break
+
+                # Per-test attempt budget.
+                if candidate.prior_attempts >= max_attempts:
+                    row = await _new_attempt(
+                        db, project_id=pid, fixer_run_id=frid, candidate=candidate, runner_type=runner.type,
+                    )
+                    await _advance(
+                        db, row, STATUS_SKIPPED_BUDGET, terminal=True,
+                        reason=f"max_attempts_per_test ({max_attempts}) reached for this test",
+                    )
+                    counters["skipped_budget"] += 1
+                    continue
+
                 row = await _new_attempt(
                     db, project_id=pid, fixer_run_id=frid, candidate=candidate, runner_type=runner.type,
                 )
-                await _advance(
-                    db, row, STATUS_SKIPPED_BUDGET, terminal=True,
-                    reason="run stopped mid-flight — fixer disabled (kill switch)",
-                )
-            counters["skipped_budget"] += 1
-            logger.info("fixer_kill_switch_stop", fixer_run_id=fixer_run_id)
-            break
+                counters["selected"] += 1
+                attempt_id = row.id
 
-        async with AsyncSessionLocal() as db:
-            # Per-test attempt budget.
-            if candidate.prior_attempts >= max_attempts:
-                row = await _new_attempt(
-                    db, project_id=pid, fixer_run_id=frid, candidate=candidate, runner_type=runner.type,
-                )
-                await _advance(
-                    db, row, STATUS_SKIPPED_BUDGET, terminal=True,
-                    reason=f"max_attempts_per_test ({max_attempts}) reached for this test",
-                )
-                counters["skipped_budget"] += 1
-                continue
+                # Diagnose (reuse existing signals — never rerun the investigator).
+                await _advance(db, row, STATUS_DIAGNOSING)
+                diagnosis = await pipeline.gather_diagnosis(db, pid, candidate)
+                await _advance(db, row, STATUS_GENERATING)
 
-            row = await _new_attempt(
-                db, project_id=pid, fixer_run_id=frid, candidate=candidate, runner_type=runner.type,
-            )
-            counters["selected"] += 1
-            attempt_id = row.id
-
-            # Diagnose (reuse existing signals — never rerun the investigator).
-            await _advance(db, row, STATUS_DIAGNOSING)
-            diagnosis = await pipeline.gather_diagnosis(db, pid, candidate)
-
-            # Generate (ONE registry prompt; test-code-only; offline-honest).
-            await _advance(db, row, STATUS_GENERATING)
+            # Generate with NO session open — the LLM call can take minutes
+            # and must never ride inside a DB transaction (mirrors the
+            # validation pattern below).
             gen = await generate(
                 candidate=candidate, diagnosis=diagnosis, test_source="", budget=budgets,
             )
             total_tokens += int(gen.get("tokens") or 0)
             patch = gen.get("patch")
-            if not gen.get("can_fix") or not patch:
-                await _advance(
-                    db, row, STATUS_ERROR, terminal=True,
-                    reason=str(gen.get("reasoning") or "no fix generated")[:2000],
+
+            async with AsyncSessionLocal() as db:
+                row = (
+                    await db.execute(select(FixAttempt).where(FixAttempt.id == attempt_id))
+                ).scalar_one_or_none()
+                if row is None:
+                    logger.warning("fixer_attempt_row_missing", attempt_id=str(attempt_id))
+                    continue
+                if not gen.get("can_fix") or not patch:
+                    await _advance(
+                        db, row, STATUS_ERROR, terminal=True,
+                        reason=str(gen.get("reasoning") or "no fix generated")[:2000],
+                    )
+                    counters["error"] += 1
+                    continue
+
+                # Glob rejection — structural, BEFORE any execution.
+                ok, offending = pipeline.patch_touches_only_test_globs(patch, test_globs)
+                if not ok:
+                    await _advance(
+                        db, row, STATUS_REJECTED_GLOBS, terminal=True,
+                        patch=patch,
+                        patch_summary=pipeline.summarize_patch(patch),
+                        reason=(
+                            "patch touches non-test files: " + ", ".join(offending[:5])
+                            if offending else "patch touched no files"
+                        ),
+                    )
+                    counters["rejected_globs"] += 1
+                    continue
+
+                patch_summary = pipeline.summarize_patch(patch)
+                reasoning = str(gen.get("reasoning") or "")
+                actions_proposed.append(f"fix {candidate.test_name or candidate.test_fingerprint}")
+                await _advance(db, row, STATUS_VALIDATING, patch=patch, patch_summary=patch_summary)
+
+            # Validate (runner call OUTSIDE the DB session — it can be slow).
+            spec = _build_spec(candidate, patch, runner_cfg, reruns, ghctx)
+            result = await runner.run_validation(spec)
+            egress = bool(spec.allow_network_egress)
+            log_digest = result.runs[-1].log_digest if result.runs else None
+
+            open_pr_payload: Optional[dict[str, Any]] = None
+            async with AsyncSessionLocal() as db:
+                row = (
+                    await db.execute(select(FixAttempt).where(FixAttempt.id == attempt_id))
+                ).scalar_one_or_none()
+                if row is None:
+                    logger.warning("fixer_attempt_row_missing", attempt_id=str(attempt_id))
+                    continue
+
+                # Record the validation tally (even for failed — it's honest data).
+                if result.runs:
+                    row.validation_reruns = result.reruns
+                    row.validation_passed = result.passed_count
+                row.runner_log_digest = log_digest
+                row.egress_opened = egress
+
+                open_prs = await _count_open_prs(db, pid)
+                decision = classify_validation_terminal(
+                    mode, result.status,
+                    passed=result.passed_count, reruns=result.reruns,
+                    open_pr_slots=max_open_prs - open_prs,
+                    github_available=ghctx is not None,
                 )
-                counters["error"] += 1
+
+                if decision.status == STATUS_ERROR:
+                    # Defensive redaction: the runner already scrubs its own
+                    # output, but nothing token-shaped may reach the stored
+                    # (API-readable) reason regardless of which runner ran.
+                    err = redact_secrets(str(result.error or ""), (ghctx or {}).get("pat"))
+                    await _advance(
+                        db, row, STATUS_ERROR, terminal=True,
+                        reason=(decision.reason + f": {err}" if err else decision.reason)[:2000],
+                    )
+                    counters["error"] += 1
+                    continue
+                if decision.status == STATUS_FAILED_VALIDATION:
+                    await _advance(db, row, STATUS_FAILED_VALIDATION, terminal=True, reason=decision.reason)
+                    counters["failed_validation"] += 1
+                    continue
+
+                # decision.status == STATUS_VALIDATED — a real, validated fix.
+                counters["validated"] += 1
+                if not decision.open_pr:
+                    await _advance(db, row, STATUS_VALIDATED, terminal=True, reason=decision.reason)
+                    continue
+
+                # Commit the validated state BEFORE the PR HTTP calls — the
+                # GitHub round-trips must not ride inside a DB transaction.
+                await _advance(db, row, STATUS_VALIDATED, reason=decision.reason)
+                open_pr_payload = {
+                    "validation": {"reruns": result.reruns, "passed": result.passed_count},
+                    "reasoning": reasoning,
+                }
+
+            if open_pr_payload is None:
                 continue
 
-            # Glob rejection — structural, BEFORE any execution.
-            ok, offending = pipeline.patch_touches_only_test_globs(patch, test_globs)
-            if not ok:
-                await _advance(
-                    db, row, STATUS_REJECTED_GLOBS, terminal=True,
-                    patch=patch,
-                    patch_summary=pipeline.summarize_patch(patch),
-                    reason=(
-                        "patch touches non-test files: " + ", ".join(offending[:5])
-                        if offending else "patch touched no files"
-                    ),
-                )
-                counters["rejected_globs"] += 1
-                continue
-
-            patch_summary = pipeline.summarize_patch(patch)
-            reasoning = str(gen.get("reasoning") or "")
-            actions_proposed.append(f"fix {candidate.test_name or candidate.test_fingerprint}")
-            await _advance(db, row, STATUS_VALIDATING, patch=patch, patch_summary=patch_summary)
-
-        # Validate (own the runner call OUTSIDE the DB session — it can be slow).
-        spec = _build_spec(candidate, patch, runner_cfg, reruns, ghctx)
-        result = await runner.run_validation(spec)
-        egress = bool(spec.allow_network_egress)
-        log_digest = result.runs[-1].log_digest if result.runs else None
-
-        async with AsyncSessionLocal() as db:
-            row = (await db.execute(select(FixAttempt).where(FixAttempt.id == attempt_id))).scalar_one()
-
-            # Record the validation tally (even for failed — it's honest data).
-            if result.runs:
-                row.validation_reruns = result.reruns
-                row.validation_passed = result.passed_count
-            row.runner_log_digest = log_digest
-            row.egress_opened = egress
-
-            open_prs = await _count_open_prs(db, pid)
-            decision = classify_validation_terminal(
-                mode, result.status,
-                passed=result.passed_count, reruns=result.reruns,
-                open_pr_slots=max_open_prs - open_prs,
-                github_available=ghctx is not None,
-            )
-
-            if decision.status == STATUS_ERROR:
-                await _advance(
-                    db, row, STATUS_ERROR, terminal=True,
-                    reason=(decision.reason + f": {result.error}" if result.error else decision.reason)[:2000],
-                )
-                counters["error"] += 1
-                continue
-            if decision.status == STATUS_FAILED_VALIDATION:
-                await _advance(db, row, STATUS_FAILED_VALIDATION, terminal=True, reason=decision.reason)
-                counters["failed_validation"] += 1
-                continue
-
-            # decision.status == STATUS_VALIDATED — a real, validated fix.
-            counters["validated"] += 1
-            if not decision.open_pr:
-                await _advance(db, row, STATUS_VALIDATED, terminal=True, reason=decision.reason)
-                continue
-
-            # Suggest mode + validated + slot + integration → open a DRAFT PR.
+            # Suggest mode + validated + slot + integration → open a DRAFT PR
+            # (HTTP, with NO session open).
             pr = await pipeline.open_draft_pr(
                 api_base_url=ghctx["api_base_url"],
                 repo_owner=ghctx["repo_owner"],
@@ -370,26 +439,43 @@ async def run_fixer_run(
                 pat=ghctx["pat"],
                 candidate=candidate,
                 patch=patch,
-                validation={"reruns": result.reruns, "passed": result.passed_count},
-                reasoning=reasoning,
+                validation=open_pr_payload["validation"],
+                reasoning=open_pr_payload["reasoning"],
                 ledger_deep_link=f"/fixer/runs/{fixer_run_id}",
             )
-            if pr.get("pr_url"):
-                await _advance(
-                    db, row, STATUS_PR_OPENED, terminal=True,
-                    pr_url=pr["pr_url"], pr_number=pr.get("pr_number"), pr_state="open",
-                    reason="validated — draft PR opened",
-                )
-                counters["pr_opened"] += 1
-                actions_taken.append(str(pr["pr_url"]))
-            else:
-                await _advance(
-                    db, row, STATUS_VALIDATED, terminal=True,
-                    reason=f"validated; PR open failed: {pr.get('error') or pr.get('skipped') or 'unknown'}",
-                )
 
-    status = "completed"
+            async with AsyncSessionLocal() as db:
+                row = (
+                    await db.execute(select(FixAttempt).where(FixAttempt.id == attempt_id))
+                ).scalar_one_or_none()
+                if row is None:
+                    logger.warning("fixer_attempt_row_missing", attempt_id=str(attempt_id))
+                    continue
+                if pr.get("pr_url"):
+                    await _advance(
+                        db, row, STATUS_PR_OPENED, terminal=True,
+                        pr_url=pr["pr_url"], pr_number=pr.get("pr_number"), pr_state="open",
+                        reason="validated — draft PR opened",
+                    )
+                    counters["pr_opened"] += 1
+                    actions_taken.append(str(pr["pr_url"]))
+                else:
+                    pr_err = redact_secrets(
+                        str(pr.get("error") or pr.get("skipped") or "unknown"),
+                        (ghctx or {}).get("pat"),
+                    )
+                    await _advance(
+                        db, row, STATUS_VALIDATED, terminal=True,
+                        reason=f"validated; PR open failed: {pr_err}",
+                    )
+    except Exception as exc:  # noqa: BLE001 — _finalize must still run
+        run_error = f"{type(exc).__name__}: {exc}"
+        logger.error("fixer_run_crashed", fixer_run_id=fixer_run_id, error=run_error)
+
+    status = "error" if run_error else "completed"
     summary = _run_summary(mode, runner.type, counters)
+    if run_error:
+        summary += f" Run aborted by an unexpected error: {run_error[:300]}"
     return await _finalize(
         db_pid=pid, fixer_run_id=frid, mode=mode, trigger=triggered_by,
         status=status, summary=summary, counters=counters,
@@ -410,7 +496,9 @@ def _build_spec(
     repo_url = (ghctx or {}).get("repo_url") or ""
     return ValidationSpec(
         repo_url=repo_url,
-        ref="main",
+        # The repo's REAL default branch (resolved in _github_ctx); "main"
+        # only when it could not be determined.
+        ref=(ghctx or {}).get("default_branch") or "main",
         patch=patch,
         test_identity=identity,
         reruns=reruns,
@@ -453,14 +541,20 @@ async def _finalize(
             prompt_registry_digest=digest,
         )
         ledger_id = ledger.id
-        # Stamp the ledger deep-link id onto this run's attempts.
-        rows = (
-            await db.execute(select(FixAttempt).where(FixAttempt.fixer_run_id == fixer_run_id))
-        ).scalars().all()
-        for r in rows:
-            if r.ledger_run_id is None:
-                r.ledger_run_id = ledger_id
+        # Stamp the ledger deep-link id onto this run's attempts — one UPDATE,
+        # not a per-row load/mutate loop.
+        await db.execute(
+            update(FixAttempt)
+            .where(
+                FixAttempt.fixer_run_id == fixer_run_id,
+                FixAttempt.ledger_run_id.is_(None),
+            )
+            .values(ledger_run_id=ledger_id)
+        )
         await db.commit()
+    # Release the cross-process dispatch lock (taken at gate time) so the
+    # next scheduled/manual run may start.
+    await fixer_service.release_fixer_run_lock(db_pid)
     logger.info(
         "fixer_run_finished", fixer_run_id=str(fixer_run_id), status=status, **counters,
     )

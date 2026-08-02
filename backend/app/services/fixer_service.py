@@ -35,6 +35,7 @@ from app.agents.fixer.state import (
     VALID_FIXER_MODES,
     VALID_RUNNER_TYPES,
     VALID_SCHEDULES,
+    is_valid_runner_image,
 )
 from app.models.postgres import AgentPolicy, FixAttempt
 from app.services import agent_investigation_service as inv_svc
@@ -74,9 +75,17 @@ def _coerce_runner(raw: Optional[dict]) -> dict[str, Any]:
     rtype = str(raw.get("type") or "none")
     if rtype not in VALID_RUNNER_TYPES:
         rtype = "none"
+    # Security: runner_image lands in ``docker run``'s argv — a value like
+    # ``--privileged`` must never survive the config layer (the router's
+    # field validator rejects it at write time; this coercion also cleans any
+    # pre-existing stored value). runners.build_docker_run_argv re-asserts.
+    runner_image = raw.get("runner_image")
+    if runner_image is not None and not is_valid_runner_image(runner_image):
+        logger.warning("fixer_runner_image_rejected", runner_image=str(runner_image)[:200])
+        runner_image = None
     return {
         "type": rtype,
-        "runner_image": raw.get("runner_image"),
+        "runner_image": runner_image,
         "command_template": raw.get("command_template"),
         "workflow_ref": raw.get("workflow_ref"),
     }
@@ -172,6 +181,47 @@ async def upsert_fixer_config(
 
 # ── Run gate ─────────────────────────────────────────────────────────────────
 
+# Cross-process dispatch lock: the DB active-run gate alone races when the
+# beat dispatcher and a manual POST gate simultaneously (both see "no active
+# attempt" before either run writes one). TTL comfortably outlives the task's
+# 1h Celery time_limit; released in workflow._finalize.
+_RUN_LOCK_TTL_S = 2 * 60 * 60
+
+
+def _run_lock_key(project_id: uuid.UUID) -> str:
+    return f"fixer:run:{project_id}"
+
+
+async def acquire_fixer_run_lock(project_id: uuid.UUID) -> bool:
+    """SETNX-style dispatch lock. Returns False when another dispatch already
+    holds it. FAILS OPEN (True + warning) when Redis is unavailable —
+    availability beats strictness here because the DB active-run gate still
+    applies; the lock only closes the small dispatch race window."""
+    try:
+        from app.db.redis_client import get_redis
+
+        redis = get_redis()
+        acquired = await redis.set(_run_lock_key(project_id), "1", ex=_RUN_LOCK_TTL_S, nx=True)
+        return bool(acquired)
+    except Exception as exc:  # noqa: BLE001 — fail open
+        logger.warning(
+            "fixer_run_lock_unavailable", project_id=str(project_id), error=str(exc),
+        )
+        return True
+
+
+async def release_fixer_run_lock(project_id: uuid.UUID) -> None:
+    """Best-effort lock release (the TTL is the backstop). Never raises."""
+    try:
+        from app.db.redis_client import get_redis
+
+        redis = get_redis()
+        await redis.delete(_run_lock_key(project_id))
+    except Exception as exc:  # noqa: BLE001 — TTL will reap it
+        logger.warning(
+            "fixer_run_lock_release_failed", project_id=str(project_id), error=str(exc),
+        )
+
 
 async def has_active_fixer_run(db: AsyncSession, project_id: uuid.UUID) -> bool:
     """True when a fixer run is in flight (a non-terminal attempt younger than
@@ -193,13 +243,20 @@ async def gate_fixer_run(
     db: AsyncSession, project_id: uuid.UUID,
 ) -> dict[str, Any]:
     """Validate that a run may start. Raises the typed gate errors the router
-    maps to 403/409/422. Returns the effective config on success."""
+    maps to 403/409/422. Returns the effective config on success.
+
+    Passing the gate also ACQUIRES the cross-process dispatch lock (the DB
+    check alone races between the beat and a concurrent manual POST) — a
+    caller whose enqueue subsequently fails must release it; the executed
+    run releases it in ``workflow._finalize``."""
     config = await get_effective_config(db, project_id)
     if not config["enabled"]:
         raise FixerDisabled()
     if config["mode"] == "suggest" and config["runner"]["type"] == "none":
         raise FixerRunnerRequiredForSuggest()
     if await has_active_fixer_run(db, project_id):
+        raise FixerAlreadyRunning()
+    if not await acquire_fixer_run_lock(project_id):
         raise FixerAlreadyRunning()
     return config
 

@@ -49,7 +49,11 @@ async def _lazy_resolve(run_id: uuid.UUID) -> None:
             await svc.resolve_commit_range(write_db, run_id)
             await write_db.commit()
     except Exception as exc:
-        logger.warning("commit_range lazy resolve failed", run_id=str(run_id), error=str(exc))
+        logger.warning(
+            "commit_range_lazy_resolve_failed",
+            run_id=str(run_id),
+            error=str(exc),
+        )
 
 
 @router.get("/{run_id}/commit-range")
@@ -60,15 +64,16 @@ async def get_run_commit_range(
 ):
     """Return the commit range associated with a run (US-8.1).
 
-    If no range has been resolved yet, attempts a one-shot resolution
-    (supplied wins → connector → unavailable) in a dedicated write session so
-    this GET stays read-only, then returns the freshly-resolved range.
+    If no range exists yet — or the last attempt is older than the service's
+    re-resolve cooldown — attempts a one-shot resolution (supplied wins →
+    connector → unavailable) in a dedicated write session so this GET stays
+    read-only, then returns the freshly-resolved range. The cooldown gate
+    means repeated GETs on a range-less run do NOT re-run the connector.
     """
     run = await _load_run(db, run_id)
     result = await svc.get_commit_range(db, run)
-    if not result.get("available") and result.get("source") in (None, svc.SOURCE_UNAVAILABLE):
+    if svc.needs_resolution(result):
         await _lazy_resolve(run_id)
-        run = await _load_run(db, run_id)
         result = await svc.get_commit_range(db, run)
     return result
 
@@ -92,9 +97,10 @@ async def get_run_suspects(
     """
     run = await _load_run(db, run_id)
     # Resolve the range on demand so suspects work even before finalize ran
-    # the connector path (mirrors the commit-range endpoint's lazy resolve).
+    # the connector path (mirrors the commit-range endpoint's lazy resolve,
+    # including its re-resolve cooldown gate).
     existing = await svc.get_commit_range(db, run)
-    if not existing.get("available") and existing.get("source") in (None, svc.SOURCE_UNAVAILABLE):
+    if svc.needs_resolution(existing):
         await _lazy_resolve(run_id)
     return await svc.rank_suspects(
         db, run, cluster_id=cluster_id, fingerprint=fingerprint,

@@ -1526,7 +1526,9 @@ def run_fixer_run_task(self, project_id: str, fixer_run_id: str, triggered_by: s
 def dispatch_scheduled_fixer_runs(self, schedule: str):
     """Beat: enqueue a Fixer run for every project whose fixer policy is
     enabled with ``schedule == <schedule>`` (daily|weekly). Each run re-checks
-    its own gate; already-running projects are skipped."""
+    its own gate; already-running projects are skipped. The gate also takes
+    the cross-process dispatch lock (released in workflow._finalize), closing
+    the race with a concurrent manual POST."""
     import uuid as _uuid
 
     from sqlalchemy import select
@@ -1535,30 +1537,48 @@ def dispatch_scheduled_fixer_runs(self, schedule: str):
     from app.models.postgres import AgentPolicy
     from app.services import fixer_service
 
+    _bind_task_context(self, schedule=schedule)
+
     async def _run() -> int:
         dispatched = 0
         async with AsyncSessionLocal() as db:
-            rows = (
+            # Schedule filter pushed into SQL (budgets JSONB ->> 'schedule')
+            # instead of deserializing every enabled fixer policy in Python.
+            project_ids = (
                 await db.execute(
-                    select(AgentPolicy).where(
+                    select(AgentPolicy.project_id).where(
                         AgentPolicy.agent_id == "fixer",
                         AgentPolicy.enabled.is_(True),
+                        AgentPolicy.budgets["schedule"].astext == schedule,
                     )
                 )
             ).scalars().all()
-            candidates = [
-                r for r in rows
-                if fixer_service.serialize_fixer_config(r)["schedule"] == schedule
-            ]
-        for policy in candidates:
+        for project_id in project_ids:
             try:
                 async with AsyncSessionLocal() as db:
-                    await fixer_service.gate_fixer_run(db, policy.project_id)
-            except Exception:  # noqa: BLE001 — disabled/running/runner-missing: skip
+                    await fixer_service.gate_fixer_run(db, project_id)
+            except (
+                fixer_service.FixerDisabled,
+                fixer_service.FixerAlreadyRunning,
+                fixer_service.FixerRunnerRequiredForSuggest,
+            ):
+                continue  # expected gate outcomes — skip quietly
+            except Exception as exc:  # noqa: BLE001 — a FAULT is not a gate decision
+                logger.error(
+                    "Fixer beat gate check failed for project %s: %s", project_id, exc,
+                )
                 continue
             fixer_run_id = _uuid.uuid4()
-            if fixer_service.enqueue_fixer_run(policy.project_id, fixer_run_id, f"scheduled:{schedule}"):
+            if fixer_service.enqueue_fixer_run(project_id, fixer_run_id, f"scheduled:{schedule}"):
                 dispatched += 1
+            else:
+                # The scheduled slot is lost until the next beat — say so,
+                # and free the dispatch lock the gate just took.
+                logger.warning(
+                    "Fixer enqueue failed for project %s — %s slot skipped this cycle",
+                    project_id, schedule,
+                )
+                await fixer_service.release_fixer_run_lock(project_id)
         return dispatched
 
     count = _run_async(_run())
@@ -1575,17 +1595,16 @@ def dispatch_scheduled_fixer_runs(self, schedule: str):
 )
 def poll_fixer_pr_outcomes(self):
     """Beat: poll open fixer-created PRs; merged → record_fix_outcome(fixed),
-    closed-unmerged → not_fixed (AI-5 feedback loop). No-op offline."""
+    closed-unmerged → not_fixed (AI-5 feedback loop). No-op offline.
+
+    The sweep owns its sessions/commits internally (bounded batches; no DB
+    session held across the GitHub GETs) — see pipeline.poll_open_fixer_prs.
+    """
     from app.agents.fixer.pipeline import poll_open_fixer_prs
-    from app.db.postgres import AsyncSessionLocal
 
-    async def _run() -> dict:
-        async with AsyncSessionLocal() as db:
-            summary = await poll_open_fixer_prs(db)
-            await db.commit()
-            return summary
+    _bind_task_context(self)
 
-    summary = _run_async(_run())
+    summary = _run_async(poll_open_fixer_prs())
     logger.info("[Task %s] fixer PR outcome poll: %s", self.request.id, summary)
     return summary
 
