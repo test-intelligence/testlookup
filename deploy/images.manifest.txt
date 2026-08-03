@@ -1,0 +1,94 @@
+# ============================================================================
+# TestLookup — container image manifest (SINGLE SOURCE OF TRUTH)
+# ============================================================================
+# Every surface that names a container image derives from this file:
+#
+#   scripts/release/offline-bundle.sh          which images get `docker save`d
+#   scripts/release/import-bundle.sh           (via the bundle's images.list)
+#   openshiftsetup/mirror-images.sh            INFRA_IMAGES to mirror
+#   openshiftsetup/deploy-openshift-artifactory.sh
+#   scripts/release/check_image_drift.py       asserts compose + k8s +
+#                                              openshift-artifactory agree
+#
+# FORMAT — plain text, not YAML. Four whitespace-separated columns, `#`
+# comments, blank lines ignored. Deliberately dependency-free so bash (awk /
+# read), Python (stdlib only) and the CI drift guard can all parse it without
+# PyYAML — the drift guard has to run in a job that installs nothing.
+#
+#   1. ref       full image reference incl. tag. App images use the literal
+#                tag `@APP_TAG`, resolved at build time (bundle version /
+#                build-YYYYMMDD-HHMMSS / BUILD_TAG_PLACEHOLDER depending on
+#                the deploy path) — only their NAMES are drift-checked.
+#   2. role      app   = built from this repo
+#                infra = third-party, pulled from a public registry
+#   3. surfaces  comma list of the deployment surfaces that reference it:
+#                compose = docker-compose{,.release,.dev-lite}.yml
+#                k8s     = k8s/base + k8s/overlays/**
+#   4. bundle    core     = always in the offline bundle
+#                llm      = only with `make offline-bundle ARGS=--with-llm`
+#                excluded = tracked for drift, never bundled (reason in the
+#                           comment above the row)
+#
+# AIR-GAP NAMING CONTRACT — after import, every image lives under ONE registry:
+#   infra:  <registry>/<ref>            e.g. myreg.corp/postgres:16-alpine
+#   app:    <registry>/testlookup/<n>   e.g. myreg.corp/testlookup/backend:0.1.0
+# This is exactly what k8s/overlays/openshift-artifactory/kustomization.yaml
+# and openshiftsetup/mirror-images.sh already expect — do not change it
+# without updating both.
+#
+# ref                                        role   surfaces      bundle
+# ----------------------------------------------------------------------------
+
+# ── Application images (built from this repo) ───────────────────────────────
+# `make build` and scripts/release/offline-bundle.sh build all three. The
+# worker / beat / seed-init services reuse the backend image — there is no
+# separate worker image.
+testlookup/backend:@APP_TAG                  app    compose,k8s   core
+testlookup/frontend:@APP_TAG                 app    compose,k8s   core
+testlookup/mcp:@APP_TAG                      app    compose,k8s   core
+
+# ── Datastores ──────────────────────────────────────────────────────────────
+postgres:16-alpine                           infra  compose,k8s   core
+redis:7-alpine                               infra  compose,k8s   core
+mongo:7                                      infra  compose,k8s   core
+
+# ── Object storage ──────────────────────────────────────────────────────────
+# DELIBERATE VERSION SKEW — two MinIO server tags, one per surface.
+#
+# Compose stays on RELEASE.2024-11-07T00-52-20Z because `make dev` documents
+# the MinIO Console at http://localhost:9001; MinIO stripped the object
+# browser out of the community console in the 2025-04 releases, so moving
+# compose forward would silently break a documented developer workflow.
+#
+# k8s stays on RELEASE.2025-09-07T16-13-09Z because that is what the deployed
+# homelab / OpenShift clusters already run; rolling a live MinIO server
+# *backwards* is riskier than leaving it pinned.
+#
+# The offline bundle therefore ships BOTH tags (they are both `core`) and the
+# drift guard pins both — if either moves, this comment must be revisited.
+minio/minio:RELEASE.2024-11-07T00-52-20Z     infra  compose       core
+minio/minio:RELEASE.2025-09-07T16-13-09Z     infra  k8s           core
+# mc is the MinIO client used by the one-shot `minio-setup` compose service
+# (bucket creation). k8s creates buckets via `mc` inside the minio server pod,
+# so it is compose-only.
+minio/mc:RELEASE.2024-11-05T11-29-45Z        infra  compose       core
+
+# ── Kubernetes-only helpers ─────────────────────────────────────────────────
+# busybox runs the `wait-for-backend` init container in every worker Deployment
+# (k8s/base/worker-deployments.yaml). Also used by the offline-bundle CI job as
+# the network-isolated checksum verifier.
+busybox:1.36                                 infra  k8s           core
+
+# ── Optional local-LLM stack (compose profile `local-llm`) ──────────────────
+# Bundled only with --with-llm: ollama + chroma add ~2 GB to the tarball and
+# an air-gapped Ollama is useless without separately transferred model blobs
+# (see user-guide/air-gapped-install.md).
+ollama/ollama:0.5.4                          infra  compose,k8s   llm
+chromadb/chroma:0.5.20                       infra  compose,k8s   llm
+
+# ── Tracked but never bundled ───────────────────────────────────────────────
+# Flower is the Celery monitoring UI in the source-build dev stack only
+# (docker-compose.yml). The air-gapped compose path is
+# docker-compose.release.yml + docker-compose.airgap.yml, which has no flower
+# service, so shipping it would be dead weight.
+mher/flower:2.0                              infra  compose       excluded

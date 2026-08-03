@@ -77,6 +77,50 @@ export interface AIConfigUpdate {
   knowledge_rag_enabled?: boolean
 }
 
+// ── AI Model Status (US-13.2 — offline model pack) ───────────
+
+export type ModelPurpose = 'llm' | 'embedding' | 'classifier'
+
+export interface RequiredModel {
+  name: string
+  /** Widened to string on purpose — the backend may add purposes. */
+  purpose: ModelPurpose | string
+  present: boolean
+  /**
+   * Runtime-aware fix for a missing model (the exact `ollama pull` for this
+   * deployment). Null when present, and null while Ollama is unreachable —
+   * pulling can't be the fix until the daemon answers.
+   */
+  remedy: string | null
+}
+
+export interface FallbackChainEntry {
+  mode: AnalysisMode | string
+  available: boolean
+  /** Why it can't run — or a caveat on an available tier. */
+  reason: string | null
+}
+
+/**
+ * Live state of the local model backend.
+ *
+ * `ollama_reachable === false` and "a required model is missing" are
+ * different problems (connectivity vs an incomplete model-pack import) —
+ * the UI must never render them as the same thing.
+ */
+export interface AIModelStatusRead {
+  ollama_reachable: boolean
+  ollama_error: string | null
+  ollama_base_url: string
+  installed_models: string[]
+  required: RequiredModel[]
+  fallback_chain: FallbackChainEntry[]
+  offline_mode: boolean
+  llm_provider: string
+  analysis_mode: AnalysisMode | string
+  checked_at: string
+}
+
 // ── Integrations Configuration ──────────────────────────────
 
 export interface IntegrationsConfigRead {
@@ -166,6 +210,9 @@ export const appSettingsService = {
   },
   updateAIConfig(payload: AIConfigUpdate): Promise<AIConfigRead> {
     return api.put<AIConfigRead>('/api/v1/settings/ai', payload).then(r => r.data)
+  },
+  getAIModelStatus(): Promise<AIModelStatusRead> {
+    return api.get<AIModelStatusRead>('/api/v1/settings/ai/model-status').then(r => r.data)
   },
 
   // Integrations

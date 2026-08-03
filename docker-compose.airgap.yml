@@ -1,0 +1,83 @@
+# ============================================================================
+# TestLookup — AIR-GAPPED Compose override
+# ============================================================================
+# docker-compose.release.yml hardcodes Docker Hub references for every
+# third-party image (postgres, mongo, redis, minio, …). On a host with no
+# internet those pulls fail, and there is no env var to re-point them. This
+# override file is that missing knob: it re-points EVERY image — app AND
+# third-party — at one local registry.
+#
+# Why a separate file instead of adding `${REGISTRY:-docker.io}/` prefixes to
+# the existing compose files: `make dev` and the published `install.sh`
+# one-liner must keep working byte-for-byte. An override file changes nothing
+# for anyone who doesn't pass `-f docker-compose.airgap.yml`, and it mirrors
+# the Kustomize base+overlay model the k8s side already uses.
+#
+# Usage (after scripts/release/import-bundle.sh has loaded + pushed the images):
+#
+#   export TESTLOOKUP_REGISTRY=registry.internal/testlookup
+#   export TESTLOOKUP_VERSION=0.1.0
+#   docker compose -f docker-compose.release.yml -f docker-compose.airgap.yml up -d
+#
+# Both variables are REQUIRED (`:?` — compose fails loudly rather than
+# silently falling back to docker.io, which is the failure mode this file
+# exists to prevent).
+#
+# NAMING CONTRACT — identical to the k8s/OpenShift path, so one mirrored
+# registry serves every target:
+#   infra:  ${TESTLOOKUP_REGISTRY}/<image>:<tag>
+#   app:    ${TESTLOOKUP_REGISTRY}/testlookup/<name>:${TESTLOOKUP_VERSION}
+#
+# Image tags below are checked against deploy/images.manifest.txt by
+# scripts/release/check_image_drift.py — edit the manifest, not this file.
+# ============================================================================
+
+x-airgap-backend-image: &airgap-backend-image
+  image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set (see user-guide/air-gapped-install.md)}/testlookup/backend:${TESTLOOKUP_VERSION:?TESTLOOKUP_VERSION must be set}
+
+services:
+
+  # ── Third-party infra ─────────────────────────────────────────────────────
+  postgres:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/postgres:16-alpine
+
+  mongo:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/mongo:7
+
+  redis:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/redis:7-alpine
+
+  minio:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/minio/minio:RELEASE.2024-11-07T00-52-20Z
+
+  minio-setup:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/minio/mc:RELEASE.2024-11-05T11-29-45Z
+
+  # Optional local-LLM profile. These images are only in the bundle when it was
+  # built with `--with-llm`; the services stay behind the `local-llm` profile
+  # inherited from docker-compose.release.yml, so they are not started unless
+  # you ask for them.
+  ollama:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/ollama/ollama:0.5.4
+
+  chromadb:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/chromadb/chroma:0.5.20
+
+  # ── Application (worker / beat / seed-init reuse the backend image) ───────
+  backend:
+    <<: *airgap-backend-image
+
+  worker:
+    <<: *airgap-backend-image
+
+  beat:
+    <<: *airgap-backend-image
+
+  seed-init:
+    <<: *airgap-backend-image
+
+  frontend:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/testlookup/frontend:${TESTLOOKUP_VERSION:?TESTLOOKUP_VERSION must be set}
+
+  mcp:
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/testlookup/mcp:${TESTLOOKUP_VERSION:?TESTLOOKUP_VERSION must be set}

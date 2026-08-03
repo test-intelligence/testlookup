@@ -44,6 +44,56 @@ jobs:
           fi
           echo "All k8s image tags pinned. ✓"
 
+      # Same rule, widened to Compose. `docker-compose.dev-lite.yml` shipped
+      # minio/minio:latest + minio/mc:latest for a long time because the grep
+      # above only ever looked at k8s/ — and an unpinned tag makes an offline
+      # bundle unreproducible (whatever was on Docker Hub the day it was built
+      # is what the customer runs forever, with no record of which version).
+      # Delegated to the Python checker so :latest has ONE implementation;
+      # interpolated tags (`:${TESTLOOKUP_VERSION:-latest}`) are a deploy-time
+      # choice and are not flagged.
+      - name: Fail on :latest / untagged images in compose files
+        run: python3 scripts/release/check_image_drift.py --only latest
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 0a2: Container images agree with deploy/images.manifest.txt
+  # The offline install bundle (US-13.1, `make offline-bundle`) is
+  # built FROM that manifest. If compose / k8s / the OpenShift
+  # overlay / the mirror scripts drift from it, the bundle ships
+  # without an image the deployment needs and the failure only
+  # appears on a customer's air-gapped cluster.
+  # Stdlib-only, like the quality-gate job — installs nothing.
+  # ─────────────────────────────────────────────────────────────
+  image-manifest-drift:
+    name: Images — Manifest drift (compose / k8s / air-gap)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Every surface matches deploy/images.manifest.txt
+        run: python scripts/release/check_image_drift.py
+
+      - name: Install pytest for the guard's own tests
+        run: pip install pytest
+
+      - name: Self-test the drift guard
+        # Pins that the guard actually FAILS on drift — a guard that can only
+        # pass is a guard that silently rots.
+        run: python -m pytest scripts/release/test_image_drift.py -v
+
+      - name: Shell syntax check — release scripts
+        run: |
+          set -euo pipefail
+          for f in scripts/release/*.sh openshiftsetup/*.sh; do
+            bash -n "$f"
+            echo "syntax OK: $f"
+          done
+
   # ─────────────────────────────────────────────────────────────
   # JOB 0b: Cross-cutting invariant guards
   # Runs scripts/quality_gate.py which codifies the rules from

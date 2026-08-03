@@ -99,7 +99,11 @@ ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin@2026!}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
-INFRA_IMAGES="${INFRA_IMAGES:-postgres:16-alpine redis:7-alpine mongo:7 minio/minio:RELEASE.2025-09-07T16-13-09Z chromadb/chroma:0.5.20 ollama/ollama:0.5.4 busybox:1.36}"
+# Derived from deploy/images.manifest.txt — see mirror-images.sh for the
+# rationale (a hardcoded copy here is how the list drifted from k8s before).
+# shellcheck source=../scripts/release/image-manifest.sh
+. "$REPO_ROOT/scripts/release/image-manifest.sh"
+INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm | tr '\n' ' ')}"
 PULL_OLLAMA_MODELS="${PULL_OLLAMA_MODELS:-false}"
 OLLAMA_MODELS="${OLLAMA_MODELS:-qwen2.5:7b nomic-embed-text}"
 PULL_SECRET_NAME="artifactory-pull"

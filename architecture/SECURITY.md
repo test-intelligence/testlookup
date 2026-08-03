@@ -114,7 +114,46 @@ recommended posture for hardened deployments.
   not at the source, so internal analysis keeps fidelity while exports stay
   clean.
 
-## 7. What enforces all this
+## 7. Where these properties stop
+
+Two boundaries are worth naming here, because every section above is
+easier to over-read than to under-read:
+
+- **Application-level encryption covers secrets, not bulk data.**
+  `services/secret_service.py` (Fernet/MultiFernet derived from
+  `APP_SECRET_KEY`, failing closed on a weak or empty key) protects
+  integration credentials and provider API keys. Everything else — test
+  data, failure text, analyses, reports, audit rows in
+  PostgreSQL/MongoDB/MinIO — is written in the clear as far as the app is
+  concerned. Encryption at rest is delegated to the storage/platform
+  layer and the operator must configure it.
+- **In-transit protection is inherited from the deployment target.** The
+  app serves plain HTTP behind whatever ingress fronts it; the OpenShift
+  overlay terminates TLS at the Route (see
+  [DEPLOYMENT.md](./DEPLOYMENT.md)). There is no in-cluster mTLS between
+  the backend, the workers, and the datastores.
+
+Similarly, the audit tables in §6 are append-only **by application
+convention** — no triggers, restricted grants, or WORM storage prevent
+direct modification — and an enabled retention policy deliberately
+deletes project-scoped audit rows past the audit clock. Access-token
+revocation (§1) **fails open** on a Redis outage rather than denying
+every request.
+
+## 8. Mapping these properties to control families
+
+For the auditor-facing view — which of these properties supports which
+SOC 2 / GDPR / HIPAA control family, with the concrete surface to point
+at and the limitation on each — see
+[user-guide/compliance.md → Control-family mapping](../user-guide/compliance.md#control-family-mapping).
+It is framed as **enablement, not certification**, and it carries an
+explicit
+["what TestLookup does NOT provide"](../user-guide/compliance.md#what-testlookup-does-not-provide)
+section plus an evidence-gathering quickstart. Content is not duplicated:
+this document explains how the properties work, that one says which
+control question each answers.
+
+## 9. What enforces all this
 
 These properties are guarded, not aspirational: the quality-gate suite
 (`scripts/quality_gate.py`) and architectural tests ratchet the conventions —

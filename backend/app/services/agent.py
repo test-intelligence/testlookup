@@ -413,17 +413,13 @@ def _model_missing_hint(model: str) -> str:
     The previous hardcoded ``docker compose exec ollama ollama pull ...``
     message was wrong for K8s deployments — users on K3s / OpenShift saw
     a Docker Compose command and (correctly) wondered why it didn't work.
-    Detect the runtime via the standard K8s service-account file and emit
-    the matching ``pull`` recipe. Falls back to a generic hint when the
-    runtime can't be detected.
+    The runtime-aware recipe now lives in ``model_status_service`` so the
+    AI settings page shows an operator the same command this analysis
+    tells them to run (US-13.2).
     """
-    import os
-    on_k8s = os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token")
-    if on_k8s:
-        namespace = os.environ.get("KUBERNETES_NAMESPACE", "testlookup")
-        pull_cmd = f"kubectl -n {namespace} exec deploy/testlookup-ollama -- ollama pull {model}"
-    else:
-        pull_cmd = f"docker compose exec ollama ollama pull {model}"
+    from app.services.model_status_service import ollama_pull_command
+
+    pull_cmd = ollama_pull_command(model)
     return (
         f"Model '{model}' not installed on the Ollama instance. "
         f"Ask your admin to pull it: {pull_cmd}. "

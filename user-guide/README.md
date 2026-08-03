@@ -21,7 +21,9 @@ TestLookup ingests your test results (from CI or local runs), groups the failure
 | [Dashboards & analytics](dashboards.md) | Overview, Trends, Coverage, the Summary Report's aggregation modes, Value Metrics, Search — and how their counts relate |
 | [Working with runs](working-with-runs.md) | The run list and detail pages, comparing runs, bisect-from-green, and a red-build routine |
 | [Defects & promotion](defects.md) | Promoting clusters to defects, auto-severity, issue-tracker auto-linking, duplicate detection |
-| [Compliance & governance](compliance.md) | Compliance packs — the exportable, reproducible evidence bundle behind a release decision |
+| [Compliance & governance](compliance.md) | Compliance packs — the exportable, reproducible evidence bundle behind a release decision — plus the SOC 2 / GDPR / HIPAA control-family mapping and its stated limits |
+| [Air-gapped install](air-gapped-install.md) | Building and importing the offline bundle (`make offline-bundle`) for Compose, Kubernetes, and OpenShift with zero internet |
+| [Offline model pack](offline-model-pack.md) | Side-loading the Ollama LLM and embedding models into an air-gapped deployment, and reading live model status |
 | [Knowledge base & test generation](knowledge-base.md) | Registering knowledge sources and generating grounded, cited test cases from your documents |
 | [Troubleshooting & FAQ](troubleshooting.md) | Symptom-first index: empty pages, mismatched counts, missing rows, integrations not firing, and more |
 

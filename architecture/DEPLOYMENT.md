@@ -13,6 +13,7 @@
 | Minimal-footprint dev | `docker-compose.dev-lite.yml` | compose directly |
 | A single cloud VM | `docker-compose.gcp-vm.yml` | compose on the VM |
 | Kubernetes anywhere | `k8s/base` + an overlay | `kubectl apply -k k8s/overlays/<name>` |
+| **No egress at all** (air-gapped site) | **offline install bundle** — one tarball with every image, manifests and an import script | `make offline-bundle` → [user-guide/air-gapped-install.md](../user-guide/air-gapped-install.md) |
 | Metrics stack alongside | `docker-compose.monitoring.yml` + `infra/monitoring` | compose profile |
 
 ## 2. Compose variants
@@ -27,6 +28,13 @@
   release summary). No `build:`, no host-source mounts. Optional profiles:
   `--profile demo` (seed data) and `--profile local-llm` (Ollama). Fetched and
   booted by the `install.sh` one-liner.
+- **`docker-compose.airgap.yml`** — an **override**, never used alone. Layered
+  on `docker-compose.release.yml` it re-points *every* image (app and
+  third-party) at `${TESTLOOKUP_REGISTRY}`; without it Compose has no way to
+  redirect the hardcoded Docker Hub references for postgres/mongo/redis/MinIO.
+  Both `TESTLOOKUP_REGISTRY` and `TESTLOOKUP_VERSION` are mandatory (`:?`) so a
+  missing value fails loudly instead of silently pulling from `docker.io`.
+  `make dev` and `install.sh` never load it and are unaffected.
 - **`docker-compose.dev-lite.yml`** — a slimmer dev stack for
   resource-constrained machines.
 - **`docker-compose.gcp-vm.yml`** — single-VM cloud deployment shape.
@@ -52,14 +60,20 @@ Overlays specialize it per target:
 | `dev`, `staging`, `prod` | environment tiers used by the deploy workflows |
 | `gcp-gke`, `aws-eks`, `azure-aks` | managed-cloud variants (wired to `deploy-gke/eks/aks.yml`) |
 | `homelab` | K3s with a local registry (NodePort **30500** — bootstrap, deploy script, and kustomization must agree on the port or locally-built images ImagePullBackOff) |
-| `openshift` / `openshift-artifactory` | OpenShift Routes with edge TLS; the `-artifactory` variant is fully **air-gapped**: app images built locally and *all* third-party images mirrored through one Artifactory (`openshiftsetup/*.sh`) |
+| `openshift` / `openshift-artifactory` | OpenShift Routes with edge TLS; the `-artifactory` variant is fully **air-gapped** — its `images:` block re-points *every* image (app + infra) at one registry. Two ways in: registry-to-registry mirroring when the build host can reach both sides (`openshiftsetup/*.sh`), or the **offline bundle** when it cannot — [user-guide/air-gapped-install.md](../user-guide/air-gapped-install.md). The bundle renders this same overlay. |
 | `self-hosted` | generic on-prem cluster |
 
 ## 4. CI/CD pipelines (`.github/workflows/`)
 
 - **`ci.yml`** — the merge gate (backend/frontend/MCP tests + lint, quality
-  gates, docs/mermaid check, k8s no-`:latest` check); on main push it also
+  gates, docs/mermaid check, no-`:latest` check across **both** `k8s/` and the
+  compose files, and an image-manifest drift job); on main push it also
   publishes `:latest` + `:sha-<sha>` images.
+- **`offline-bundle.yml`** — builds the air-gap bundle with the network on,
+  then verifies checksums, `docker load`, retag and an offline
+  application-module import inside `--network none --pull=never` containers.
+  Scope is deliberate: it proves **bundle integrity + offline import**, not a
+  full-stack end-to-end deployment.
 - **`release.yml`** — on a `v*.*.*` tag: semver-tagged GHCR images
   (`:vX.Y.Z :X.Y.Z :X.Y :X`), SBOM + `provenance: mode=max`, build-provenance
   args baked into the backend image (surfaced at `/health/details`), and a
@@ -67,6 +81,24 @@ Overlays specialize it per target:
 - **`deploy-staging.yml` / `deploy-production.yml` / `deploy-gke|eks|aks.yml`**
   — environment deploys over the matching overlays (cloud ones need their
   cloud credentials configured).
+
+## 4b. One image manifest behind every surface
+
+`deploy/images.manifest.txt` is the single source of truth for every container
+image TestLookup deploys: reference, pinned tag, role (`app` / `infra`), which
+surfaces use it, and whether it belongs in the offline bundle. Plain text with
+four columns, deliberately dependency-free so bash, Python and the CI guard can
+all read it without PyYAML.
+
+Everything derives from it — `scripts/release/offline-bundle.sh`,
+`openshiftsetup/mirror-images.sh`, `deploy-openshift-artifactory.sh` — and
+`scripts/release/check_image_drift.py` (CI: **Images — Manifest drift**, or
+`make images-check`) fails the build when Compose, `k8s/**`, the
+`openshift-artifactory` overlay or the mirror scripts disagree with it.
+
+One documented exception lives in that file: MinIO is pinned to **two**
+different tags, one for Compose and one for Kubernetes, each with its reason
+inline. The bundle ships both.
 
 ## 5. Environment realities
 

@@ -108,19 +108,25 @@ async def _check_minio() -> dict[str, Any]:
 
 
 async def _check_ollama() -> dict[str, Any]:
+    # The skip is keyed on AI_OFFLINE_MODE because offline mode means
+    # "local models only" — a cloud-LLM deployment has no Ollama worth
+    # reporting on. It is NOT inverted, but it is keyed on the setting
+    # next door to the decisive one: LLM_PROVIDER. A deployment running
+    # ollama with AI_OFFLINE_MODE=false is reported as "skipped" here even
+    # though Ollama is on the path. Left as-is deliberately — ops
+    # dashboards consume this shape — and covered instead by
+    # GET /api/v1/settings/ai/model-status (US-13.2), which keys off the
+    # effective provider. See services/model_status_service.py.
     if not settings.AI_OFFLINE_MODE:
         return {"status": "skipped", "detail": "AI_OFFLINE_MODE=false — using cloud LLM"}
-    try:
-        from app.core.http_client import get_http_client  # noqa: PLC0415
+    # Single shared probe with the model-status endpoint — one place knows
+    # how to ask Ollama what it has installed.
+    from app.services.model_status_service import probe_ollama  # noqa: PLC0415
 
-        client = get_http_client()
-        resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=_PROBE_TIMEOUT)
-        if resp.status_code == 200:
-            models = [m["name"] for m in resp.json().get("models", [])]
-            return {"status": "ok", "models": models}
-        return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
-    except Exception as exc:
-        return {"status": "degraded", "detail": str(exc)[:200]}
+    probe = await probe_ollama(settings.OLLAMA_BASE_URL, timeout=_PROBE_TIMEOUT)
+    if probe["reachable"]:
+        return {"status": "ok", "models": probe["models"]}
+    return {"status": "degraded", "detail": probe["error"]}
 
 
 async def _check_chromadb() -> dict[str, Any]:

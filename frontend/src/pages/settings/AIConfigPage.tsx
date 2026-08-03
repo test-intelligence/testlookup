@@ -1,23 +1,213 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Save } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, RefreshCw, Save, WifiOff, XCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { appSettingsService, type AIConfigRead, type AIConfigUpdate } from '@/services/appSettingsService'
+import {
+  appSettingsService,
+  type AIConfigRead,
+  type AIConfigUpdate,
+  type AIModelStatusRead,
+  type FallbackChainEntry,
+} from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
+import { activeTier, useAIModelStatus } from '@/hooks/useAIConfig'
 
 const LLM_PROVIDERS = ['ollama', 'openai', 'gemini', 'lmstudio', 'localai', 'vllm']
 
+// Descriptions state what each engine *is*. Availability is never asserted
+// here — it comes from the live fallback chain below (US-13.2). The old
+// hardcoded "LLM if available" strings claimed a runtime fact the page had
+// never actually checked.
 const ANALYSIS_MODES = [
-  { value: 'auto', label: 'Auto', desc: 'ML if trained, else LLM if available, else Rules' },
-  { value: 'llm', label: 'LLM (AI Agent)', desc: 'Full LangChain ReAct agent — requires running LLM' },
+  { value: 'auto', label: 'Auto', desc: 'Resolved per run: first available tier of ML → LLM → Rules' },
+  { value: 'llm', label: 'LLM (AI Agent)', desc: 'Full LangChain ReAct agent against the configured model' },
   { value: 'ml', label: 'Machine Learning', desc: 'Trained ML classifier — no LLM needed' },
   { value: 'rules', label: 'Rules-Based', desc: 'Pattern matching + statistics — zero dependencies' },
 ] as const
 
+const TIER_LABELS: Record<string, string> = {
+  ml: 'Machine Learning',
+  llm: 'LLM (AI Agent)',
+  rules: 'Rules-Based',
+}
+
+const OK_CLS = 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
+const BAD_CLS = 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border-[var(--status-failed-bd)]'
+const WARN_CLS = 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
+
+function StatusChip({ ok, children }: { ok: boolean; children: React.ReactNode }) {
+  return (
+    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${ok ? OK_CLS : BAD_CLS}`}>
+      {children}
+    </span>
+  )
+}
+
+/** One tier of the live fallback chain. */
+function ChainRow({ entry, isActive }: { entry: FallbackChainEntry; isActive: boolean }) {
+  const Icon = entry.available ? CheckCircle2 : XCircle
+  return (
+    <li className="flex items-start gap-2 py-1.5" data-testid={`chain-${entry.mode}`}>
+      <Icon
+        className={`mt-0.5 h-4 w-4 flex-shrink-0 ${entry.available ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}`}
+        aria-hidden="true"
+      />
+      <div className="min-w-0">
+        <span className="text-sm text-[var(--color-text)]">{TIER_LABELS[entry.mode] ?? entry.mode}</span>
+        <span className="ml-2 text-xs text-[var(--color-text-muted)]">
+          {entry.available ? 'available' : 'unavailable'}
+        </span>
+        {isActive && (
+          <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+            Active
+          </span>
+        )}
+        {entry.reason && (
+          <p className="text-xs text-[var(--color-text-muted)] mt-0.5 break-words">{entry.reason}</p>
+        )}
+      </div>
+    </li>
+  )
+}
+
+/**
+ * Live model presence + fallback chain (US-13.2).
+ *
+ * The three states this card exists to keep apart:
+ *   1. backend unreachable → we know nothing, and say so;
+ *   2. Ollama unreachable → connectivity problem, no pull recipe offered;
+ *   3. Ollama up but a model is missing → model-pack import problem, with
+ *      the exact remedy for this runtime.
+ */
+function ModelStatusCard({
+  status,
+  loading,
+  failed,
+  onRefresh,
+}: {
+  status: AIModelStatusRead | undefined
+  loading: boolean
+  failed: boolean
+  onRefresh: () => void
+}) {
+  const active = activeTier(status)
+
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Model Availability &amp; Fallback Chain</h3>
+          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            Live check of the configured backend — what is installed right now, and which
+            analysis tier will actually run.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="btn-secondary text-xs flex items-center gap-1.5 flex-shrink-0"
+        >
+          <RefreshCw className="h-3.5 w-3.5" /> Re-check
+        </button>
+      </div>
+
+      {loading && !status && <p className="text-xs text-[var(--color-text-muted)]">Checking model backend…</p>}
+
+      {failed && (
+        <div className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${WARN_CLS}`}>
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+          <span>
+            Could not read model status from the API. This says nothing about your models —
+            only that this page could not check them.
+          </span>
+        </div>
+      )}
+
+      {status && (
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <StatusChip ok={status.offline_mode}>
+              {status.offline_mode ? 'Offline mode: on (local models only)' : 'Offline mode: off (cloud allowed)'}
+            </StatusChip>
+            <span className="text-[var(--color-text-muted)]">
+              Provider <span className="text-[var(--color-text)]">{status.llm_provider || 'none'}</span>
+            </span>
+            <span className="text-[var(--color-text-muted)]">
+              Mode <span className="text-[var(--color-text)]">{status.analysis_mode}</span>
+            </span>
+          </div>
+
+          {/* Reachability — kept strictly separate from model presence. */}
+          {status.ollama_reachable ? (
+            <p className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)]" aria-hidden="true" />
+              Ollama reachable at <code className="text-[var(--color-text)]">{status.ollama_base_url}</code> —{' '}
+              {status.installed_models.length} model{status.installed_models.length === 1 ? '' : 's'} installed
+            </p>
+          ) : (
+            <div className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${BAD_CLS}`}>
+              <WifiOff className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              <div>
+                <span className="font-medium">Ollama unreachable at {status.ollama_base_url}.</span>{' '}
+                <span className="text-[var(--color-text-muted)]">
+                  {status.ollama_error ?? 'No detail reported.'} This is a connectivity problem —
+                  it does not tell you whether your models are installed.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Required models */}
+          {status.required.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-[var(--color-text-secondary)]">Required models</h4>
+              <ul className="space-y-1.5">
+                {status.required.map(m => (
+                  <li key={`${m.purpose}-${m.name}`} className="text-xs" data-testid={`required-${m.purpose}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="text-[var(--color-text)]">{m.name}</code>
+                      <span className="text-[var(--color-text-muted)]">{m.purpose}</span>
+                      <StatusChip ok={m.present}>{m.present ? 'Installed' : 'Missing'}</StatusChip>
+                    </div>
+                    {m.remedy && (
+                      <p className="text-[var(--color-text-muted)] mt-0.5 break-words">{m.remedy}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Fallback chain */}
+          <div className="space-y-1">
+            <h4 className="text-xs font-semibold text-[var(--color-text-secondary)]">Fallback chain</h4>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {status.fallback_chain.map(entry => (
+                <ChainRow key={entry.mode} entry={entry} isActive={active?.mode === entry.mode} />
+              ))}
+            </ul>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Rules is the terminal fallback — analysis never stops, it degrades. Air-gapped
+              installs side-load models with the offline model pack procedure
+              (<code>user-guide/offline-model-pack.md</code>).
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function AIConfigPage() {
   const { isAdmin } = usePermissions()
+  const {
+    data: modelStatus,
+    error: modelStatusError,
+    isLoading: modelStatusLoading,
+    mutate: refreshModelStatus,
+  } = useAIModelStatus()
   const [config, setConfig] = useState<AIConfigRead | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -70,6 +260,8 @@ export default function AIConfigPage() {
   if (error) return <div className="card text-red-400 text-sm">{error}</div>
   if (!config) return null
 
+  const llmTier = modelStatus?.fallback_chain.find(e => e.mode === 'llm')
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -110,6 +302,18 @@ export default function AIConfigPage() {
                 />
                 <div>
                   <span className="text-sm font-medium text-[var(--color-text)]">{mode.label}</span>
+                  {/* Live LLM-tier state, straight from the probe — the page
+                      used to assert "requires running LLM" and never look. */}
+                  {mode.value === 'llm' && llmTier && !llmTier.available && (
+                    <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${BAD_CLS}`}>
+                      {modelStatus?.ollama_reachable === false ? 'Unreachable' : 'Model Missing'}
+                    </span>
+                  )}
+                  {mode.value === 'llm' && llmTier?.available && (
+                    <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+                      Ready
+                    </span>
+                  )}
                   {mode.value === 'ml' && !config.ml_model_available && (
                     <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
                       Not Trained
@@ -158,6 +362,13 @@ export default function AIConfigPage() {
             </div>
           )}
         </div>
+
+        <ModelStatusCard
+          status={modelStatus}
+          loading={modelStatusLoading}
+          failed={Boolean(modelStatusError)}
+          onRefresh={() => { void refreshModelStatus() }}
+        />
 
         {/* LLM Provider */}
         <div className="card space-y-4">

@@ -43,10 +43,19 @@ done
 if [ -f "$CONFIG_FILE" ]; then set -a; . "$CONFIG_FILE"; set +a; fi
 [ -n "${ARTIFACTORY_REGISTRY:-}" ] || error "ARTIFACTORY_REGISTRY is required (config or env)."
 ARTIFACTORY_HOST="${ARTIFACTORY_REGISTRY%%/*}"
-INFRA_IMAGES="${INFRA_IMAGES:-postgres:16-alpine redis:7-alpine mongo:7 minio/minio:RELEASE.2025-09-07T16-13-09Z chromadb/chroma:0.5.20 ollama/ollama:0.5.4 busybox:1.36}"
 
-command -v docker >/dev/null 2>&1 || error "docker is required."
+# The infra image list is DERIVED from deploy/images.manifest.txt (the single
+# source of truth) rather than hardcoded here — a hardcoded copy is exactly how
+# this list drifted from the k8s manifests before. An explicit INFRA_IMAGES in
+# the environment still wins, for mirroring a subset.
+# shellcheck source=../scripts/release/image-manifest.sh
+. "$REPO_ROOT/scripts/release/image-manifest.sh"
+INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm | tr '\n' ' ')}"
+
+# --dry-run only prints the plan, so it must work on a host without docker
+# (that is the whole point of asking for the plan first).
 if [ "$DRY_RUN" = false ]; then
+  command -v docker >/dev/null 2>&1 || error "docker is required."
   docker info >/dev/null 2>&1 || error "Docker daemon not reachable."
 fi
 

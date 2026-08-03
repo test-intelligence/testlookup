@@ -306,6 +306,70 @@ async def get_ai_config(
     )
 
 
+class RequiredModel(BaseModel):
+    """One model the effective configuration depends on."""
+    name: str
+    # Plain str, not a Literal — a strict enum over a free-form value 422s
+    # the whole response the moment a new purpose is added upstream.
+    purpose: str          # "llm" | "embedding" | "classifier"
+    present: bool
+    # Runtime-aware fix for a missing model. Null when the model is present
+    # OR when Ollama is unreachable (fix connectivity before pulling).
+    remedy: Optional[str] = None
+
+
+class FallbackChainEntry(BaseModel):
+    """One analysis tier and whether it can actually run right now."""
+    mode: str             # "ml" | "llm" | "rules"
+    available: bool
+    # Why it is unavailable — or, on an available tier, a caveat (e.g. a
+    # self-hosted provider whose model presence TestLookup cannot verify).
+    reason: Optional[str] = None
+
+
+class AIModelStatusRead(BaseModel):
+    """Live model presence + fallback-chain state (US-13.2).
+
+    ``ollama_reachable=False`` and "model missing" are deliberately
+    separate signals: an unreachable daemon is a connectivity problem,
+    an empty/incomplete model list on a reachable daemon is a model-pack
+    import problem. The UI must not collapse them.
+    """
+    ollama_reachable: bool
+    ollama_error: Optional[str] = None
+    ollama_base_url: str
+    installed_models: list[str]
+    required: list[RequiredModel]
+    fallback_chain: list[FallbackChainEntry]
+    offline_mode: bool
+    llm_provider: str
+    analysis_mode: str
+    checked_at: str
+
+
+@router.get("/ai/model-status", response_model=AIModelStatusRead)
+async def get_ai_model_status(
+    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+) -> AIModelStatusRead:
+    """Probe the configured model backend and report what will really run.
+
+    Read-only and best-effort: an unreachable Ollama, an unreadable
+    settings row, or a broken ML model directory all degrade into honest
+    fields rather than a 500 — an operator debugging an air-gapped install
+    needs this page to render precisely when things are broken.
+    """
+    try:
+        cfg = await _load_ai_config(db)
+    except Exception:
+        logger.warning("model-status: AI config load failed — falling back to env defaults", exc_info=True)
+        cfg = {}
+
+    from app.services.model_status_service import build_model_status
+    status = await build_model_status(cfg)
+    return AIModelStatusRead.model_validate(status)
+
+
 @router.put("/ai", response_model=AIConfigRead)
 async def update_ai_config(
     payload: AIConfigUpdate,

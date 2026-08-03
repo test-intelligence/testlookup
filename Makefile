@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 # Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
 # breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
@@ -201,16 +201,39 @@ quality-gate-test: ## Run the unit tests for the quality-gate script itself
 
 # ── Build ─────────────────────────────────────────────────────
 
-build: ## Build production Docker images
+build: ## Build production Docker images (backend + frontend + mcp)
 	docker build -t testlookup/backend:latest --target production ./backend
 	docker build -t testlookup/frontend:latest --target production ./frontend
-	@echo "Production images built."
+	# The MCP server is a first-class deployed image (docker-compose.release.yml,
+	# k8s/base/mcp-deployment.yaml, release.yml all ship it). Omitting it here
+	# produced an incomplete image set — and an incomplete offline bundle.
+	docker build -t testlookup/mcp:latest ./mcp
+	@echo "Production images built: backend, frontend, mcp."
 
 build-push: ## Build and push images to registry (set REGISTRY env var)
 	docker build -t $(REGISTRY)/testlookup/backend:$(VERSION) --target production ./backend
 	docker build -t $(REGISTRY)/testlookup/frontend:$(VERSION) --target production ./frontend
+	docker build -t $(REGISTRY)/testlookup/mcp:$(VERSION) ./mcp
 	docker push $(REGISTRY)/testlookup/backend:$(VERSION)
 	docker push $(REGISTRY)/testlookup/frontend:$(VERSION)
+	docker push $(REGISTRY)/testlookup/mcp:$(VERSION)
+
+# ── Air-gapped packaging (US-13.1) ───────────────────────────────────────────
+# deploy/images.manifest.txt is the single source of truth for every image;
+# the bundle, the drift guard and the OpenShift mirror scripts all derive
+# from it. Full procedure: user-guide/air-gapped-install.md
+
+offline-bundle: ## Build the air-gapped install bundle -> dist/testlookup-offline-<version>.tar.gz (flags via ARGS)
+	$(BASH_CMD) scripts/release/offline-bundle.sh $(ARGS)
+
+offline-bundle-plan: ## Show what the offline bundle would contain (builds/pulls nothing)
+	$(BASH_CMD) scripts/release/offline-bundle.sh --dry-run $(ARGS)
+
+images-check: ## Assert compose + k8s + openshift overlay + mirror scripts match deploy/images.manifest.txt
+	python scripts/release/check_image_drift.py
+
+images-check-test: ## Run the regression tests for the image drift guard
+	python -m pytest scripts/release/test_image_drift.py -v
 
 # ── Kubernetes ────────────────────────────────────────────────
 
