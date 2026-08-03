@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+import structlog.testing
 
 from app.core import token_revocation
 
@@ -25,6 +26,21 @@ class _FakeRedis:
 
     async def get(self, key):
         return self.store.get(key)
+
+
+async def _no_redis():
+    """Stand-in for ``_redis()`` during a Redis outage."""
+    return None
+
+
+class _BrokenRedis:
+    """Redis client whose calls raise — connection lost mid-flight."""
+
+    async def set(self, *_a, **_kw):
+        raise ConnectionError("redis gone")
+
+    async def get(self, *_a, **_kw):
+        raise ConnectionError("redis gone")
 
 
 @pytest.fixture
@@ -67,12 +83,17 @@ async def test_revoke_jti_with_zero_ttl_clamped_to_one(fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_is_jti_revoked_fails_open_when_redis_missing(monkeypatch):
-    async def _no_redis():
-        return None
+async def test_is_jti_revoked_fails_CLOSED_when_redis_missing(monkeypatch):
+    """Security fix 2026-08-03: "cannot verify" must never mean "not revoked".
+
+    This used to return False (fail open), so a logged-out token kept working
+    for the remainder of JWT_ACCESS_TOKEN_EXPIRE_MINUTES during a Redis outage.
+    """
+    monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
     monkeypatch.setattr(token_revocation, "_redis", _no_redis)
-    # Fail-open — caller should NOT reject a request just because cache is down.
-    assert await token_revocation.is_jti_revoked("any") is False
+
+    with pytest.raises(token_revocation.RevocationUnavailable):
+        await token_revocation.is_jti_revoked("any")
 
 
 # ── user-level cutoff (password change / compromise response) ───────────────
@@ -131,8 +152,94 @@ async def test_legacy_token_without_iat_rejected_if_cutoff_exists(fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_user_cutoff_fails_open_when_redis_missing(monkeypatch):
-    async def _no_redis():
-        return None
+async def test_user_cutoff_fails_CLOSED_when_redis_missing(monkeypatch):
+    monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
     monkeypatch.setattr(token_revocation, "_redis", _no_redis)
-    assert await token_revocation.is_token_before_cutoff(uuid.uuid4(), 12345) is False
+
+    with pytest.raises(token_revocation.RevocationUnavailable):
+        await token_revocation.is_token_before_cutoff(uuid.uuid4(), 12345)
+
+
+# ── fail-closed: the outage paths, precisely ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_path_fails_closed_when_the_connection_breaks_mid_call(monkeypatch):
+    """A raising client is the same verdict as no client: unknown ⇒ reject."""
+    monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
+
+    async def _broken():
+        return _BrokenRedis()
+
+    monkeypatch.setattr(token_revocation, "_redis", _broken)
+
+    with pytest.raises(token_revocation.RevocationUnavailable):
+        await token_revocation.is_jti_revoked("abc")
+    with pytest.raises(token_revocation.RevocationUnavailable):
+        await token_revocation.is_token_before_cutoff(uuid.uuid4(), 12345)
+
+
+@pytest.mark.asyncio
+async def test_outage_logs_an_error_with_kwargs(monkeypatch):
+    """A silent security downgrade is what got us here — this must be loud."""
+    monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
+    monkeypatch.setattr(token_revocation, "_redis", _no_redis)
+
+    with structlog.testing.capture_logs() as logs:
+        with pytest.raises(token_revocation.RevocationUnavailable):
+            await token_revocation.is_jti_revoked("abc")
+
+    events = [e for e in logs if e["event"] == "token_revocation_unavailable"]
+    assert len(events) == 1
+    assert events[0]["log_level"] == "error"
+    # kwargs, never stdlib positional %s (backend.structlog-positional-args)
+    assert events[0]["operation"] == "is_jti_revoked"
+
+
+@pytest.mark.asyncio
+async def test_env_escape_hatch_restores_fail_open_and_says_so(monkeypatch):
+    """AUTH_REVOCATION_FAIL_OPEN is the operator's documented recovery lever.
+
+    Environment-only, default False, and it logs an ERROR on every use so it
+    can never quietly become the norm.
+    """
+    monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", True)
+    monkeypatch.setattr(token_revocation, "_redis", _no_redis)
+
+    with structlog.testing.capture_logs() as logs:
+        assert await token_revocation.is_jti_revoked("any") is False
+        assert await token_revocation.is_token_before_cutoff(uuid.uuid4(), 12345) is False
+
+    events = [e for e in logs if e["event"] == "token_revocation_failed_open"]
+    assert len(events) == 2
+    assert all(e["log_level"] == "error" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_empty_jti_never_hits_the_store(monkeypatch):
+    """No jti claim = nothing to look up; that is not an outage."""
+    monkeypatch.setattr(token_revocation.settings, "AUTH_REVOCATION_FAIL_OPEN", False)
+    monkeypatch.setattr(token_revocation, "_redis", _no_redis)
+
+    assert await token_revocation.is_jti_revoked("") is False
+
+
+# ── write path stays best-effort, but loud ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_write_path_does_not_raise_but_logs_error(monkeypatch):
+    """revoke_* must not 500 /auth/logout — the Postgres work still has to commit.
+
+    The residual gap (a logout issued DURING an outage is never recorded) is
+    documented in architecture/SECURITY.md §7.
+    """
+    monkeypatch.setattr(token_revocation, "_redis", _no_redis)
+
+    with structlog.testing.capture_logs() as logs:
+        await token_revocation.revoke_jti("abc", ttl_seconds=600)
+        await token_revocation.revoke_all_user_tokens(uuid.uuid4())
+
+    events = [e for e in logs if e["event"] == "token_revocation_write_failed"]
+    assert len(events) == 2
+    assert {e["operation"] for e in events} == {"revoke_jti", "revoke_all_user_tokens"}

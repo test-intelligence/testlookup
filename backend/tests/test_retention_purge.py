@@ -617,7 +617,13 @@ def _versions_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "migrations" / "versions"
 
 
-def test_migration_chain_single_head_is_0113():
+def test_migration_0113_is_chained_and_the_tree_has_one_head():
+    """0113 must chain onto 0112 and the tree must keep exactly ONE head.
+
+    Deliberately does not pin *which* revision is the head — later
+    migrations legitimately move it (0114 already did). Pinning the head
+    here made an unrelated, correctly-chained migration fail this test.
+    """
     revisions: dict[str, str | None] = {}
     for path in _versions_dir().glob("*.py"):
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -629,7 +635,9 @@ def test_migration_chain_single_head_is_0113():
     assert revisions["0113"] == "0112"
     referenced = {d for d in revisions.values() if d}
     heads = set(revisions) - referenced
-    assert heads == {"0113"}, f"expected single head 0113, got {heads}"
+    assert len(heads) == 1, f"expected exactly one Alembic head, got {sorted(heads)}"
+    # 0113 is either the head itself or has been built on by a later revision.
+    assert "0113" in referenced or heads == {"0113"}
 
 
 def test_migration_0113_downgrade_contract():

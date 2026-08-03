@@ -2349,7 +2349,30 @@ class LiveSession(Base):
 
 
 class TestCaseAuditLog(Base):
-    """Immutable compliance audit trail for all test management actions."""
+    """Append-only compliance audit trail for all test management actions.
+
+    **Append-only by application convention, not by database enforcement.**
+    There is no UPDATE trigger, no revoked grant and no WORM storage on this
+    table — the only trigger in the whole migration set is the search-vector
+    one in ``0001``. What actually holds the property is the
+    ``backend.audit-write-discipline`` quality gate
+    (``scripts/quality_gate.py``): it fails CI on any application code that
+    UPDATEs an audit table, or DELETEs from one outside
+    ``services/retention_service.py``.
+
+    Rows ARE removed — deliberately — by the US-11.4 retention purge on the
+    **audit clock** (``ProjectRetentionPolicy.audit_days``; floor 365 days,
+    default 2555 ≈ 7 years, and validated to be ≥ ``runs_days`` so audit rows
+    outlive the runs they describe). Purges only run for projects that
+    explicitly enable a policy, and every execute-mode purge writes its own
+    ``settings_audit_log`` record.
+
+    Beyond that boundary, durability is the **operator's** responsibility:
+    anyone holding direct Postgres credentials can still rewrite or drop rows.
+    Real immutability comes from outside the application — restricted
+    UPDATE/DELETE grants for the app role, WORM / object-lock storage for
+    shipped logs, and off-host backups.
+    """
     __tablename__ = "test_case_audit_logs"
     __table_args__ = (
         Index("ix_tcal_entity", "entity_type", "entity_id"),
@@ -2575,7 +2598,26 @@ class AppSetting(Base):
 
 
 class SettingsAuditLog(Base):
-    """Immutable audit trail for settings and secret changes."""
+    """Append-only audit trail for settings and secret changes.
+
+    **Append-only by application convention, not by database enforcement** —
+    no UPDATE trigger, no revoked grant, no WORM storage. The property is held
+    by the ``backend.audit-write-discipline`` quality gate
+    (``scripts/quality_gate.py``), which fails CI on application code that
+    UPDATEs an audit table or DELETEs from one outside
+    ``services/retention_service.py``.
+
+    Unlike the other audit tables this one is **never purged**: it has no
+    project scope and it holds the retention purge-audit records themselves
+    (``setting_key = "retention_purge:{project_id}"``), so the US-11.4 audit
+    clock deliberately skips it. It therefore grows without bound until an
+    operator prunes it out-of-band.
+
+    Beyond that, durability is the **operator's** responsibility: direct
+    Postgres credentials can still rewrite or drop rows. Real immutability
+    comes from restricted UPDATE/DELETE grants for the app role, WORM /
+    object-lock storage for shipped logs, and off-host backups.
+    """
     __tablename__ = "settings_audit_log"
     __table_args__ = (
         Index("ix_settings_audit_key", "setting_key"),
@@ -2841,7 +2883,25 @@ class ProductUsageEvent(Base):
 
 
 class AccessAuditLog(Base):
-    """Audit trail for user role and project membership changes."""
+    """Append-only audit trail for user role and project membership changes.
+
+    **Append-only by application convention, not by database enforcement** —
+    no UPDATE trigger, no revoked grant, no WORM storage. The property is held
+    by the ``backend.audit-write-discipline`` quality gate
+    (``scripts/quality_gate.py``), which fails CI on application code that
+    UPDATEs an audit table or DELETEs from one outside
+    ``services/retention_service.py``.
+
+    Rows ARE removed — deliberately — by the US-11.4 retention purge on the
+    **audit clock** (``ProjectRetentionPolicy.audit_days``; floor 365 days,
+    default 2555 ≈ 7 years, validated ≥ ``runs_days``), and only for projects
+    that explicitly enabled a policy.
+
+    Beyond that boundary, durability is the **operator's** responsibility:
+    direct Postgres credentials can still rewrite or drop rows. Real
+    immutability comes from restricted UPDATE/DELETE grants for the app role,
+    WORM / object-lock storage for shipped logs, and off-host backups.
+    """
     __tablename__ = "access_audit_logs"
     __table_args__ = (
         Index("ix_aal_actor", "actor_user_id"),
@@ -3041,7 +3101,24 @@ class SCIMToken(Base):
 
 
 class IdentityEvent(Base):
-    """Audit trail for SSO, SCIM, and identity lifecycle events."""
+    """Append-only audit trail for SSO, SCIM, and identity lifecycle events.
+
+    **Append-only by application convention, not by database enforcement** —
+    no UPDATE trigger, no revoked grant, no WORM storage. The property is held
+    by the ``backend.audit-write-discipline`` quality gate
+    (``scripts/quality_gate.py``), which fails CI on application code that
+    UPDATEs an audit table or DELETEs from one outside
+    ``services/retention_service.py``.
+
+    Not currently covered by any retention clock: the US-11.4 purge does not
+    touch this table (it has no project scope), so rows accumulate until an
+    operator prunes them out-of-band.
+
+    Beyond that, durability is the **operator's** responsibility: direct
+    Postgres credentials can still rewrite or drop rows. Real immutability
+    comes from restricted UPDATE/DELETE grants for the app role, WORM /
+    object-lock storage for shipped logs, and off-host backups.
+    """
     __tablename__ = "identity_events"
     __table_args__ = (
         Index("ix_identity_event_type", "event_type"),
@@ -3943,9 +4020,15 @@ class CompliancePack(Base):
 
     # SHA-256 of the generated manifest.json. ``manifest.json`` itself
     # contains SHA-256 digests of every other file in the ZIP, so this
-    # single hex digest bootstraps the entire tamper-detection chain:
+    # single hex digest is the root of a **tamper-EVIDENT checksum chain**:
     # if this hash matches the manifest, and the manifest matches each
-    # file, the pack is authentic.
+    # file, the pack is unmodified since generation.
+    #
+    # This is NOT a signature — there is no HMAC and no PKI anywhere in the
+    # pack path. Residual risk: an actor who can rewrite BOTH the MinIO
+    # object and this row forges a self-consistent pack. Mitigations are
+    # operator-side (WORM / object-lock on the compliance-packs bucket,
+    # own-key custody of an off-host copy of this digest).
     manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
     file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -17,11 +17,22 @@ GO/NO_GO, and by what policy?":
   * ``defects.json``         — defect rows + Jira ticket links
   * ``audit_events.json``    — release overrides, settings changes, access events
 
-The manifest's SHA-256 (recorded in the ``compliance_packs`` row) is the
-tamper-detection bootstrap: if the row's ``manifest_sha256`` matches the
-ZIP's manifest.json, and each file's hash matches the manifest, the pack
-is authentic. A future verifier command can re-derive every digest to
-confirm nothing was modified in MinIO.
+Integrity model — **tamper-evident, NOT signed.** The manifest's SHA-256
+(recorded in the ``compliance_packs`` row) is the root of a plain SHA-256
+checksum chain: if the row's ``manifest_sha256`` matches the ZIP's
+manifest.json, and each file's hash matches the manifest, the pack is
+unmodified since generation. A future verifier command can re-derive every
+digest to confirm nothing was modified in MinIO.
+
+There is **no HMAC and no PKI** anywhere in this path — nothing here is
+signed, and a pack cannot be attributed to TestLookup cryptographically.
+Residual risk: an actor able to rewrite BOTH the MinIO object and the
+``compliance_packs`` row can forge a self-consistent pack, and the chain
+will happily verify. Closing that is operator-side: WORM / object-lock on
+the ``compliance-packs`` bucket, and own-key custody of an off-host copy of
+the ``manifest_sha256`` values (or a signature over them). Adding real
+signing is a product decision, not a bug fix — do not describe this chain
+as "signed" until it is.
 
 This service is feature-flagged behind ``release_compliance_pack`` so
 deployments that haven't enabled it see zero behaviour change.
@@ -313,7 +324,11 @@ async def _gather_agent_activity(
         return {"agent_runs": [], "error": str(exc)[:500]}
 
 
-# ── ZIP assembly + signing ─────────────────────────────────────────────────
+# ── ZIP assembly + tamper-evident checksum chain ───────────────────────────
+#
+# Deliberately NOT "signing": every helper below is plain SHA-256. No HMAC,
+# no keys, no certificates. See the module docstring for the residual risk
+# (rewrite-both forges) and the operator-side mitigations.
 
 
 def _sha256(data: bytes) -> str:
@@ -353,7 +368,7 @@ def _build_readme(
     lines.append("")
     lines.append("| File | Purpose |")
     lines.append("|------|---------|")
-    lines.append("| `manifest.json` | SHA-256 digest of every other file + generation metadata. Use this to verify tamper-detection. |")
+    lines.append("| `manifest.json` | SHA-256 digest of every other file + generation metadata. Root of the pack's tamper-evidence chain. |")
     lines.append("| `release.json` | Frozen snapshot of the release row. |")
     lines.append("| `run.json` | Frozen snapshot of the test run row used for the decision. |")
     lines.append("| `decision.json` | `ReleaseDecision` row including the override audit chain. |")
@@ -363,7 +378,7 @@ def _build_readme(
     lines.append("| `defects.json` | Defects linked to the run's failed tests with Jira ticket references. |")
     lines.append("| `audit_events.json` | Settings + access audit events scoped to the release project. |")
     lines.append("")
-    lines.append("## Verification")
+    lines.append("## Verification (tamper-evident checksum chain — not a signature)")
     lines.append("")
     lines.append(
         "1. Compute SHA-256 of `manifest.json` and compare against the "
@@ -376,6 +391,17 @@ def _build_readme(
     lines.append(
         "3. Any mismatch indicates tampering — the pack is no longer authoritative."
     )
+    lines.append("")
+    lines.append(
+        "**What this does and does not prove.** The chain is plain SHA-256: it "
+        "proves the ZIP matches the digest recorded when the pack was "
+        "generated. It is **not signed** — there is no HMAC and no PKI — so it "
+        "does not prove *who* produced the pack, and an actor who can rewrite "
+        "both the stored ZIP and the `compliance_packs` row can produce a "
+        "consistent forgery. If you need that property, keep the "
+        "`manifest_sha256` under your own key custody (or on WORM / "
+        "object-locked storage) outside the TestLookup deployment."
+    )
     return "\n".join(lines).encode("utf-8")
 
 
@@ -386,12 +412,15 @@ def _build_manifest(
     run: Optional[TestRun],
     decision: Optional[ReleaseDecision],
 ) -> bytes:
-    """Build the tamper-detection manifest.
+    """Build the tamper-evidence manifest (checksum chain root — unsigned).
 
     ``files`` is a dict of filename → bytes for every file in the ZIP
     **except** the manifest itself. We compute SHA-256 of each, attach
     metadata, and return the encoded JSON. The caller hashes the result
     and stores the digest on the ``compliance_packs`` row.
+
+    No key material is involved — the manifest is not signed or MACed, so
+    its authority is only as strong as the custody of the stored digest.
     """
     entries = []
     for name, data in sorted(files.items()):

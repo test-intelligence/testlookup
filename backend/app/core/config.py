@@ -315,6 +315,13 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Escape hatch for the fail-CLOSED token-revocation check. Default False:
+    # when the revocation store (Redis) is unreachable, authenticated requests
+    # get 503 rather than being honoured unchecked. Setting this True restores
+    # the old fail-open behaviour — a revoked token may keep working during a
+    # Redis outage — and logs an ERROR on every use. Environment-only on
+    # purpose: there is no in-app toggle for it.
+    AUTH_REVOCATION_FAIL_OPEN: bool = False
 
     # ── SSO / SAML / SCIM ───────────────────────────────────
     SSO_ENABLED: bool = False

@@ -120,18 +120,37 @@ async def get_current_user(
     except ValueError:
         raise credentials_exception
 
-    # Revocation checks. Fail-open on Redis errors — see
-    # token_revocation.py for the rationale.
-    from app.core.token_revocation import is_jti_revoked, is_token_before_cutoff
+    # Revocation checks. Fail-CLOSED when the revocation store is unreachable:
+    # "we cannot verify whether this token was revoked" is not "it wasn't".
+    # The answer is 503, not 401 — the credentials may be perfectly good; it is
+    # the server that cannot check them, and a 401 would put the SPA in a
+    # re-login loop that cannot succeed. See token_revocation.py for the
+    # availability trade-off and the AUTH_REVOCATION_FAIL_OPEN escape hatch.
+    from app.core.token_revocation import (
+        RevocationUnavailable,
+        is_jti_revoked,
+        is_token_before_cutoff,
+    )
     jti = payload.get("jti")
     iat = payload.get("iat")
     iat_int: Optional[int] = None
     if isinstance(iat, (int, float)):
         iat_int = int(iat)
-    if jti and await is_jti_revoked(str(jti)):
-        raise credentials_exception
-    if await is_token_before_cutoff(uid, iat_int):
-        raise credentials_exception
+    try:
+        if jti and await is_jti_revoked(str(jti)):
+            raise credentials_exception
+        if await is_token_before_cutoff(uid, iat_int):
+            raise credentials_exception
+    except RevocationUnavailable:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Token revocation status cannot be verified right now "
+                "(revocation store unavailable). This is a server-side outage, "
+                "not a credential problem — retry shortly."
+            ),
+            headers={"Retry-After": "5"},
+        )
 
     result = await db.execute(select(User).where(User.id == uid))
     user = result.scalar_one_or_none()

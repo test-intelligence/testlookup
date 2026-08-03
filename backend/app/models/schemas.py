@@ -2283,7 +2283,16 @@ class AIConfigRead(BaseModel):
     llm_model: str
     llm_temperature: float
     llm_max_tokens: int
+    # EFFECTIVE offline state, after the AI_OFFLINE_MODE environment ceiling.
+    # The env var can only tighten this — a stored override never loosens it.
     ai_offline_mode: bool
+    # Why it is what it is: "env" (pinned by the environment) | "override"
+    # (stored setting turned it on) | "not_offline". Plain str, not a Literal —
+    # a strict enum over a widening vocabulary 422s the whole response.
+    ai_offline_mode_source: str = "not_offline"
+    # True ⇒ the toggle is read-only in this deployment; the UI must say so
+    # rather than accept a click it cannot honour.
+    ai_offline_mode_env_pinned: bool = False
     embedding_provider: str
     embedding_model: str
     ai_confidence_threshold: int

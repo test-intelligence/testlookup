@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<style data-omelette-injected>html,body{background:transparent}</style><script data-omelette-injected>(()=>{{const Y=new URLSearchParams(location.search).get("theme");if(Y==="light"||Y==="dark"){document.documentElement.dataset.theme=Y}}{const Y=()=>{try{if(document.querySelector('meta[name="color-scheme"]'))return;const k=getComputedStyle(document.documentElement).getPropertyValue("color-scheme").trim();if(k&&k!=="normal")return;const w=(X)=>{if(!X)return null;const F=getComputedStyle(X).backgroundColor.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+%?))?\s*\)$/);if(!F)return null;const K=F[4]==null?1:parseFloat(F[4])/(F[4].endsWith("%")?100:1);if(K<0.99)return null;return[+F[1],+F[2],+F[3]]};const U=w(document.body)||w(document.documentElement);if(!U)return;const x=(X)=>{const F=X/255;return F<=0.04045?F/12.92:((F+0.055)/1.055)**2.4};const D=0.2126*x(U[0])+0.7152*x(U[1])+0.0722*x(U[2]);document.documentElement.style.setProperty("color-scheme",D<0.4?"dark":"light")}catch{}};if(document.readyState==="complete")Y();else window.addEventListener("load",Y)}var _=["https://claude.ai","https://preview.claude.ai","https://019dfd9a-b67f-7ae7-a194-4ac77f0f08c5.claudeusercontent.com"];var v=true;var P=30000;var h=3000;document.addEventListener("DOMContentLoaded",()=>{const Y=window.Babel;const k="om-src-id";if(Y&&Y.registerPlugin&&!(Y.availablePlugins&&Y.availablePlugins[k])){Y.registerPlugin(k,({types:D})=>({visitor:{JSXOpeningElement(X,F){const K=X.node;if(K.name&&K.name.type==="JSXMemberExpression")return;for(let z=0;z<K.attributes.length;z++){const V=K.attributes[z];if(V.type==="JSXAttribute"&&V.name&&V.name.name==="data-om-id")return}const B=F.file&&F.file.opts&&F.file.opts.filename||"?";const A=K.loc&&K.loc.start;const J=`jsx:${B}:${K.start??0}:${A?A.line:0}:${A?A.column+1:0}`;K.attributes.push(D.jsxAttribute(D.jsxIdentifier("data-om-id"),D.stringLiteral(J)))}}}))}const w="om-text-extract";let U=false;if(v&&Y&&Y.registerPlugin&&!(Y.availablePlugins&&Y.availablePlugins[w])){const D=window.React;if(D&&D.useSyncExternalStore&&D.createElement){U=true;const X={};const F=new Set;let K=0;window.__omTextO=X;window.__omTextSet=(J)=>{for(const z in J){const V=J[z];if(V==null)delete X[z];else X[z]=V}K++;F.forEach((z)=>z())};const B=(J)=>{F.add(J);return()=>F.delete(J)};const A=()=>K;window.__OmT=function J(z){D.useSyncExternalStore(B,A,A);return D.createElement("span",{"data-om-text":z.i,className:"__om-t"},z.i in X?X[z.i]:z.children)};Y.registerPlugin(w,({types:J})=>{const z={style:1,script:1,noscript:1,textarea:1,title:1,option:1,text:1,tspan:1,textPath:1};const V={placeholder:1,alt:1,title:1,label:1,"aria-label":1,"aria-description":1,"aria-placeholder":1};const W=(Z,H)=>J.logicalExpression("??",J.memberExpression(J.logicalExpression("||",J.memberExpression(J.identifier("window"),J.identifier("__omTextO")),J.objectExpression([])),J.stringLiteral(Z),true),H);const Q=(Z)=>Z.file&&Z.file.opts&&Z.file.opts.filename||"?";const j=(Z)=>Z.file&&Z.file.code||"";const G=(Z,H)=>{const N=($)=>$&&$.start!=null&&$.end!=null&&($.type==="StringLiteral"||$.type==="TemplateLiteral"&&$.expressions.length===0)?[$.start,$.end]:null;const L=N(H);if(L)return L;if(H&&H.type==="Identifier"){const $=Z.scope.getBinding(H.name);if($&&$.constant&&$.path.node.type==="VariableDeclarator"){return N($.path.node.init)}}return null};const R=(Z,H,N)=>{const L=Z.node;let $=false;const M=(q,E)=>{$=true;return J.jsxElement(J.jsxOpeningElement(J.jsxIdentifier("__OmT"),[J.jsxAttribute(J.jsxIdentifier("i"),J.stringLiteral(q))],false),J.jsxClosingElement(J.jsxIdentifier("__OmT")),[E],false)};const C=L.children.map((q)=>{if(q.type==="JSXText"){if(q.start==null||q.end==null)return q;const E=N.slice(q.start,q.end);const f=E.length-E.trimStart().length;const I=E.length-E.trimEnd().length;if(f+I>=E.length)return q;return M(`txt:${H}:${q.start+f}:${q.end-I}`,q)}if(q.type==="JSXExpressionContainer"){const E=G(Z,q.expression);if(E)return M(`str:${H}:${E[0]}:${E[1]}`,q)}return q});if($)L.children=C};return{visitor:{JSXOpeningElement(Z,H){const N=Z.node;const L=Q(H);const $={};for(let M=0;M<N.attributes.length;M++){const C=N.attributes[M];if(C.type!=="JSXAttribute"||!C.name)continue;const q=C.name.name;if(!V[q])continue;if(!C.value||C.value.type!=="StringLiteral")continue;if(C.value.start==null||C.value.end==null)continue;const E=`txt:${L}:${C.value.start}:${C.value.end}`;$[q]=E;C.value=J.jsxExpressionContainer(W(E,J.stringLiteral(C.value.value)))}if(Object.keys($).length){N.attributes.push(J.jsxAttribute(J.jsxIdentifier("data-om-text-attrs"),J.stringLiteral(JSON.stringify($))))}},JSXElement(Z,H){const N=Z.node.openingElement;const L=N&&N.name&&N.name.name;if(L==="__OmT")return;if(typeof L==="string"&&z[L])return;R(Z,Q(H),j(H))},JSXFragment(Z,H){R(Z,Q(H),j(H))}}}})}}const x=U?["transform-react-jsx-source",k,w]:["transform-react-jsx-source",k];document.querySelectorAll('script[type="text/babel"],script[type="text/jsx"]').forEach((D,X)=>{const F=D.getAttribute("data-plugins")||"";const K=x.filter((B)=>F.indexOf(B)<0);if(K.length){D.setAttribute("data-plugins",F?`${F},${K.join(",")}`:K.join(","))}if(!D.hasAttribute("data-filename")){D.setAttribute("data-filename",D.getAttribute("src")||`inline-${X}`)}})});var S=window.parent;if(S&&S!==window){const Y=(J,z)=>{try{S.postMessage({__omelette_log:true,type:J,data:z},"*")}catch{}};["log","warn","error"].forEach((J)=>{const z=console[J];console[J]=(...V)=>{const W=V.map((Q)=>{try{return typeof Q==="object"?JSON.stringify(Q):String(Q)}catch{try{return String(Q)}catch{return"[unstringifiable]"}}}).join(" ");Y(J,W);z.apply(console,V)}});window.addEventListener("error",(J)=>{const z=J.target;if(z&&z!==window&&z.tagName){const V=z.src||z.href||"";Y("resource_error",`${z.tagName} failed to load: ${V}`)}else{Y("error",`${J.message||"Unknown error"} at ${J.filename||"?"}:${J.lineno||0}:${J.colno||0}`)}},true);window.addEventListener("unhandledrejection",(J)=>{const z=J.reason;const V=z instanceof Error?`${z.message} ${z.stack}`:String(z);Y("error",`Unhandled rejection: ${V}`)});const k=()=>{try{S.postMessage({type:"omelette:height",height:document.documentElement.scrollHeight},"*")}catch{}};if(window.ResizeObserver)new ResizeObserver(k).observe(document.documentElement);const w=()=>{k();if(!document.querySelector('script[type="text/babel"],script[type="text/jsx"]'))return;const J=()=>document.getElementById("root")||document.querySelector("body > div[id]");const z=J()?.firstElementChild??null;let V=0;const W=()=>{const Q=J();if(Q&&Q.firstElementChild!==z||++V>30){k();return}setTimeout(W,100)};setTimeout(W,100)};if(document.readyState==="complete")w();else window.addEventListener("load",w);const U={};let x=0;const D=(J)=>new Promise((z,V)=>{if(!_.length){V(new Error("claude.complete: no parent origin"));return}const W=`c${++x}`;const Q=()=>setTimeout(()=>{delete U[W];V(new Error(`claude.complete: no data for ${P/1000}s`))},P);const j=Q();U[W]={resolve:z,reject:V,text:"",t:j,arm:Q};try{for(const G of _){S.postMessage({__om_api:true,id:W,body:J},G)}}catch(G){clearTimeout(j);delete U[W];V(G)}});const X=8;const F=async(J,z)=>{if(!Array.isArray(J.messages)){throw new Error("claude.complete: tools require a messages array")}const V=J.messages.slice();const W={...J,tools:J.tools.map((G)=>{if(G===null||typeof G!=="object")return G;const R={};for(const Z of Object.keys(G)){if(typeof G[Z]!=="function")R[Z]=G[Z]}return R})};const Q=W.tool_choice;const j=Q!=null&&(Q.type==="any"||Q.type==="tool")?{...W,tool_choice:Q.disable_parallel_tool_use!==undefined?{type:"auto",disable_parallel_tool_use:Q.disable_parallel_tool_use}:{type:"auto"}}:W;for(let G=0;G<X;G++){const R=await D({...G===0?W:j,messages:V});const Z=R.message;const H=Z&&Array.isArray(Z.content)?Z.content:null;const N=H?H.filter(($)=>$?.type==="tool_use"):[];if(Z?.stop_reason!=="tool_use"||N.length===0){return R.text}const L=[];for(const $ of N){const M=z.get($.name);if(!M){L.push({type:"tool_result",tool_use_id:$.id,content:`no handler for tool "${$.name}"`,is_error:true});continue}try{const C=await M($.input);const q=typeof C==="string"?C:A(C)??"";L.push({type:"tool_result",tool_use_id:$.id,content:q})}catch(C){L.push({type:"tool_result",tool_use_id:$.id,content:String(C?.message??C??"tool handler failed"),is_error:true})}}V.push({role:"assistant",content:H},{role:"user",content:L})}throw new Error(`claude.complete: exceeded ${X} tool turns`)};window.claude={complete(J){const z=J;if(z!==null&&typeof z==="object"&&Array.isArray(z.tools)&&z.tools.some((V)=>V!==null&&typeof V==="object"&&typeof V.run==="function")){const V=new Map;for(const W of z.tools){if(W!==null&&typeof W==="object"&&typeof W.run==="function"){V.set(String(W.name),W.run)}}return F(z,V)}return D(J).then((V)=>V.text)}};const K={};let B=0;window.omelette={writeFile:(J,z)=>new Promise((V,W)=>{if(!_.length){V();return}const Q=`f${++B}`;const j=setTimeout(()=>{delete K[Q];V()},h);K[Q]={resolve:V,reject:W,t:j};try{for(const G of _){S.postMessage({__om_file:true,id:Q,op:"write",path:J,content:z},G)}}catch{clearTimeout(j);delete K[Q];V()}})};const A=(J)=>{try{return JSON.stringify(J)}catch{return JSON.stringify(String(J))}};window.addEventListener("message",(J)=>{if(_.indexOf(J.origin)<0)return;if(J.source!==S)return;const z=J.data;if(!z)return;if(z.type==="omelette-preview-refresh"){if(typeof z.token!=="string"||!/^[0-9a-f.-]+(\.(rc|pr-[0-9]+))?(\.[0-9]+\.[0-9a-f]{16})?$/.test(z.token))return;const Q=Math.max(1,Math.floor((z.expiresAt||0)-Date.now()/1000));document.cookie="__Host-omelette-preview="+z.token+"; Path=/; Secure; SameSite=None; Partitioned; Max-Age="+Q;return}if(z.__om_file_r){const Q=K[z.id];if(!Q)return;clearTimeout(Q.t);delete K[z.id];if(z.ok)Q.resolve();else Q.reject(new Error(z.error||"write failed"));return}if(z.__om_api_r){const Q=U[z.id];if(!Q)return;if(z.error!=null){clearTimeout(Q.t);delete U[z.id];Q.reject(new Error(z.error));return}if(z.chunk!=null){clearTimeout(Q.t);Q.t=Q.arm();Q.text+=z.chunk;return}if(z.done){clearTimeout(Q.t);delete U[z.id];Q.resolve({text:z.text!=null?z.text:Q.text,message:z.message});return}return}if(!z.__om_eval)return;const V=z;const W=(Q)=>{J.source.postMessage({...Q,__om_eval_r:1,id:V.id},J.origin)};try{const Q=(0,eval)(V.code);if(Q&&typeof Q.then==="function"){Q.then((j)=>W({ok:1,v:A(j)}),(j)=>W({ok:0,e:String(j)}))}else{W({ok:1,v:A(Q)})}}catch(Q){W({ok:0,e:String(Q)})}})}})();
+</script>
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TestLookup · UI Design Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0a1411; --bg2:#0c1815; --card:#0f1d19; --hover:#15241f; --input:#0a1512;
+    --bd:#1f322b; --bd2:#2a4339;
+    --tx:#f1ece0; --tx2:#c8c3b4; --tx3:#8e9389; --faint:#646b62;
+    --lime:#b8f24a; --lime2:#bdf25a; --lime-soft:rgba(184,242,74,.14);
+    --pass:#7ce0a0; --fail:#ff8a6b; --warn:#ffb347; --flaky:#e0b3ff; --cyan:#5ad1c4;
+    --s1:#ff8a6b; --s2:#ffb347; --s3:#5ad1c4;
+    --fd:'Sora'; --fb:'Plus Jakarta Sans'; --fm:'IBM Plex Mono';
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--fb),system-ui,sans-serif;font-size:14px;line-height:1.6;
+    background-image:radial-gradient(60% 45% at 100% 0%,rgba(184,242,74,.05),transparent 60%),radial-gradient(55% 45% at 0% 100%,rgba(124,224,160,.04),transparent 55%);
+    background-attachment:fixed;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3,h4{font-family:var(--fd);letter-spacing:-.025em;margin:0;}
+  .mono{font-family:var(--fm);}
+  a{color:var(--lime2);text-decoration:none;}
+  .page{max-width:980px;margin:0 auto;padding:52px 34px 100px;}
+
+  /* header */
+  .kicker{font-family:var(--fm);font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:var(--lime2);}
+  .h-title{font-size:40px;font-weight:800;margin:10px 0 10px;line-height:1.05;}
+  .h-sub{color:var(--tx2);font-size:15px;max-width:66ch;margin:0 0 22px;}
+  .meta-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;}
+  .meta-chip{font-family:var(--fm);font-size:11px;color:var(--tx3);background:var(--card);border:1px solid var(--bd);padding:5px 12px;border-radius:999px;}
+  .meta-chip b{color:var(--tx);font-weight:600;}
+
+  /* scorecard */
+  .score{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:30px 0 8px;}
+  .sc{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:15px 16px;}
+  .sc .k{font-family:var(--fm);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--tx3);}
+  .sc .v{font-family:var(--fd);font-size:26px;font-weight:700;margin-top:7px;line-height:1;}
+  .sc .d{font-size:11px;color:var(--faint);margin-top:6px;}
+  .sc.good .v{color:var(--pass);} .sc.mid .v{color:var(--warn);} .sc.bad .v{color:var(--fail);}
+
+  section{margin-top:52px;}
+  .sh{display:flex;align-items:baseline;gap:14px;padding-bottom:12px;margin-bottom:20px;border-bottom:1px solid var(--bd);}
+  .sh .n{font-family:var(--fm);font-size:12px;color:var(--lime2);}
+  .sh h2{font-size:21px;font-weight:700;}
+  .sh .cnt{margin-left:auto;font-family:var(--fm);font-size:11px;color:var(--tx3);}
+  .lede{color:var(--tx2);font-size:14px;max-width:72ch;margin:0 0 18px;}
+  .lede b{color:var(--tx);}
+
+  /* good list */
+  .goods{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  @media(max-width:720px){.goods{grid-template-columns:1fr;}}
+  .goods .good{display:flex;gap:11px;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:13px 15px;}
+  .goods .good .tick{color:var(--pass);font-weight:700;flex:0 0 auto;}
+  .goods .good .t{font-size:13px;color:var(--tx2);}
+  .goods .good .t b{color:var(--tx);display:block;margin-bottom:1px;}
+
+  /* findings */
+  .find{background:var(--card);border:1px solid var(--bd);border-radius:16px;margin-bottom:16px;overflow:hidden;}
+  .find .fh{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--bd);}
+  .sev{font-family:var(--fm);font-size:10px;font-weight:600;letter-spacing:.08em;padding:3px 10px;border-radius:999px;flex:0 0 auto;}
+  .sev.s1{color:var(--s1);background:rgba(255,138,107,.14);border:1px solid rgba(255,138,107,.35);}
+  .sev.s2{color:var(--s2);background:rgba(255,179,71,.13);border:1px solid rgba(255,179,71,.33);}
+  .sev.s3{color:var(--s3);background:rgba(90,209,196,.12);border:1px solid rgba(90,209,196,.32);}
+  .find .fh h3{font-size:15px;font-weight:700;flex:1;}
+  .find .fh .tag{font-family:var(--fm);font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;}
+  .find .fb2{padding:15px 18px 17px;}
+  .find p{margin:0 0 10px;font-size:13.5px;color:var(--tx2);}
+  .find p:last-child{margin-bottom:0;}
+  .find b{color:var(--tx);}
+  .find ul{margin:6px 0 10px;padding-left:20px;color:var(--tx2);font-size:13.5px;}
+  .find li{margin-bottom:5px;}
+  .ev{font-family:var(--fm);font-size:11px;color:var(--tx3);background:var(--input);border:1px solid var(--bd);border-radius:8px;padding:9px 12px;margin:10px 0;line-height:1.7;overflow-x:auto;white-space:pre;}
+  .ev .hl{color:var(--fail);}
+  .ev .ok{color:var(--pass);}
+  .ev .cm{color:var(--faint);}
+  .fix{display:flex;gap:10px;background:rgba(184,242,74,.05);border:1px solid rgba(184,242,74,.22);border-radius:10px;padding:11px 13px;margin-top:11px;}
+  .fix .fl{font-family:var(--fm);font-size:9.5px;font-weight:600;color:var(--lime2);text-transform:uppercase;letter-spacing:.1em;padding-top:2px;flex:0 0 auto;}
+  .fix .ft{font-size:13px;color:var(--tx2);}
+  .fix .ft b{color:var(--tx);}
+  .fix .ft code{font-family:var(--fm);font-size:11.5px;color:var(--lime2);}
+
+  /* swatch demo */
+  .swrow{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;}
+  .swp{display:inline-flex;align-items:center;gap:7px;font-family:var(--fm);font-size:10.5px;padding:3px 10px;border-radius:999px;}
+
+  /* roadmap */
+  .road{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+  @media(max-width:820px){.road{grid-template-columns:1fr;}}
+  .rcol{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:17px 18px;}
+  .rcol h3{font-size:14px;font-weight:700;display:flex;align-items:center;gap:9px;margin-bottom:4px;}
+  .rcol .dot{width:9px;height:9px;border-radius:50%;}
+  .rcol .est{font-family:var(--fm);font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;}
+  .rcol ol{margin:0;padding-left:18px;font-size:12.5px;color:var(--tx2);}
+  .rcol li{margin-bottom:7px;}
+  .rcol li b{color:var(--tx);}
+
+  /* evidence table */
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{font-family:var(--fm);font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--tx3);text-align:left;padding:9px 12px;border-bottom:1px solid var(--bd);}
+  td{padding:9px 12px;border-bottom:1px solid var(--bd);color:var(--tx2);vertical-align:top;}
+  tr:last-child td{border-bottom:0;}
+  td.mono{font-size:11px;color:var(--tx3);}
+  .panel{background:var(--card);border:1px solid var(--bd);border-radius:16px;overflow:hidden;}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="kicker">Design review · July 2026</div>
+    <h1 class="h-title">TestLookup UI — design &amp; UX audit</h1>
+    <p class="h-sub">A code-level review of the shipped frontend (Signal theme, multi-theme system, 40+ routes). Method: full read of the layout shell, UI primitives, theme layer, and sampled deep-reads of the largest pages, plus repo-wide pattern scans.</p>
+    <div class="meta-row">
+      <span class="meta-chip">Scope <b>frontend/src</b></span>
+      <span class="meta-chip"><b>40+</b> pages · <b>60+</b> components</span>
+      <span class="meta-chip">Findings <b>14</b></span>
+      <span class="meta-chip">Severity <b class="mono" style="color:var(--s1)">S1</b>·<b class="mono" style="color:var(--s2)">S2</b>·<b class="mono" style="color:var(--s3)">S3</b></span>
+    </div>
+
+    <div class="score">
+      <div class="sc good"><div class="k">Foundation</div><div class="v">A−</div><div class="d">Token architecture, theme system, layout shell</div></div>
+      <div class="sc bad"><div class="k">Consistency</div><div class="v">C</div><div class="d">201 hard-coded colors bypass the tokens</div></div>
+      <div class="sc mid"><div class="k">Accessibility</div><div class="v">B−</div><div class="d">Hover-only menus, micro-type, live-region spam</div></div>
+      <div class="sc mid"><div class="k">UX depth</div><div class="v">B</div><div class="d">Strong pages; weak cross-page connective tissue</div></div>
+    </div>
+  </header>
+
+  <!-- ══════════════ WHAT'S WORKING ══════════════ -->
+  <section>
+    <div class="sh"><span class="n">01</span><h2>What's genuinely good</h2></div>
+    <p class="lede">Credit first — the bones are strong, and several decisions are better than most production dashboards:</p>
+    <div class="goods">
+      <div class="good"><span class="tick">✓</span><span class="t"><b>Semantic token architecture.</b> Complete per-theme blocks (<span class="mono">--status-*, --gate-*, --cat-*</span>) with a registry-driven picker. Adding a theme is 2 edits.</span></div>
+      <div class="good"><span class="tick">✓</span><span class="t"><b>Centered 1600px content column</b> with responsive gutters, applied once in <span class="mono">AppLayout</span> — consistent across all routes.</span></div>
+      <div class="good"><span class="tick">✓</span><span class="t"><b>PageHeader adopted by ~37 pages.</b> Title/subtitle/actions are uniform nearly everywhere.</span></div>
+      <div class="good"><span class="tick">✓</span><span class="t"><b>Grouped sidebar IA</b> (Dashboard / Testing / AI Reports / Management) with permission gating, feature-flag gating, and a personal "My Failures" inbox with live count.</span></div>
+      <div class="good"><span class="tick">✓</span><span class="t"><b>Thoughtful micro-engineering:</b> stable callbacks, primitive Zustand selectors, scoped SWR polling — the discipline shows in comments like P4-1/P4-2.</span></div>
+      <div class="good"><span class="tick">✓</span><span class="t"><b>Verdict-first dashboards.</b> Overview and Runs lead with a release-readiness verdict band instead of a wall of numbers — the right hierarchy for the product.</span></div>
+    </div>
+  </section>
+
+  <!-- ══════════════ S1 FINDINGS ══════════════ -->
+  <section>
+    <div class="sh"><span class="n">02</span><h2>Critical — undermines the theme system</h2><span class="cnt">3 findings</span></div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s1">S1</span><h3>201 hard-coded palette colors bypass the tokens</h3><span class="tag">theming</span></div>
+      <div class="fb2">
+        <p>The token layer is excellent — but the pages don't use it. A repo scan finds <b>201 matches</b> of raw Tailwind palette classes (<span class="mono">text-emerald-400, bg-red-900/40, text-amber-300…</span>) plus dozens of literal hexes (<span class="mono">#86efac, #fca5a5, #facc15</span>) in verdict maps. Two consequences:</p>
+        <ul>
+          <li><b>Light theme breaks.</b> <span class="mono">text-emerald-300</span> on Lab's paper background is ~2:1 contrast — illegible. Every one of these 201 spots is a light-theme defect.</li>
+          <li><b>Theme identity dilutes.</b> Signal's warmed status palette (<span class="mono">#7ce0a0/#ff8a6b</span>) coexists with raw emerald/red — same screen, two greens, two reds.</li>
+        </ul>
+        <div class="ev"><span class="cm">// index.css defines the tokens…</span>
+--status-passed: #7ce0a0;  --status-failed: #ff8a6b;
+<span class="cm">// …then ignores them 60 lines later in the SAME FILE:</span>
+.badge-passed { @apply <span class="hl">bg-emerald-900/50 text-emerald-300 border-emerald-700/60</span>; }
+<span class="cm">// should be:</span>
+.badge-passed { color: <span class="ok">var(--status-passed)</span>; background: <span class="ok">var(--status-passed-bg)</span>; … }</div>
+        <div class="fix"><span class="fl">Fix</span><span class="ft"><b>Three moves:</b> (1) rewrite the five <code>.badge-*</code> classes onto <code>--status-*</code> tokens; (2) codemod <code>text-emerald-400 → text-[var(--status-passed)]</code> etc. across pages; (3) add an ESLint rule (<code>no-restricted-syntax</code> on palette classnames) so it can't regress. The 201 hits are ~15 recurring patterns — a day of mechanical work.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s1">S1</span><h3>StatusBadge exists but only 2 pages use it</h3><span class="tag">components</span></div>
+      <div class="fb2">
+        <p>Pass/fail/skip status is the single most repeated visual in the product, and it's re-implemented per page: <span class="mono">AgentStatusPage</span>, <span class="mono">CanonicalDetailPage</span>, <span class="mono">FlakyCoachPage</span>, <span class="mono">LiveExecutionPage</span>, <span class="mono">IntelligenceHubPage</span>… each defines its own <span class="mono">STATUS_COLORS</span> map with slightly different hues, casing, and paddings. Meanwhile the shared <span class="mono">StatusBadge</span> component has exactly <b>two</b> importers.</p>
+        <p>Users see the drift: "PASSED" is a pill on one page, colored text on another, a dot on a third; skipped is amber here and gold there; some pages use <span class="mono">green-400</span>, others <span class="mono">emerald-400</span>.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Make <code>StatusBadge</code> the only way to render a test status: variants <code>pill / text / dot</code>, sizes <code>sm / md</code>, driven entirely by <code>--status-*</code>. Delete the per-page maps as each page migrates. Same treatment for a <code>GateBadge</code> (it already exists under <code>components/releases</code> — promote it).</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s1">S1</span><h3>Profile menu is hover-only — keyboard &amp; touch users can't sign out</h3><span class="tag">accessibility</span></div>
+      <div class="fb2">
+        <p><span class="mono">UserProfileDropdown</span> opens via <span class="mono">opacity-0 group-hover:opacity-100</span> on a <span class="mono">cursor-pointer</span> div. There is no click handler, no <span class="mono">aria-expanded</span>, no focus trigger — on a tablet or by keyboard, <b>Sign out is unreachable</b>. The bell dropdown right next to it does this correctly (click + outside-close + aria).</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Mirror the bell's pattern: <code>&lt;button aria-haspopup="menu" aria-expanded&gt;</code>, click-to-toggle, Esc + outside-click to close, focus moves into the menu. ~30 lines; reuse the hook.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ S2 FINDINGS ══════════════ -->
+  <section>
+    <div class="sh"><span class="n">03</span><h2>High — visible quality &amp; UX gaps</h2><span class="cnt">7 findings</span></div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s2">S2</span><h3>Verdict bands are half-tokenized — WATCH invents a 6th color family</h3><span class="tag">theming · color</span></div>
+      <div class="fb2">
+        <p><span class="mono">OverviewPage</span> and <span class="mono">RunsPage</span> each carry a private <span class="mono">VERDICT_THEME</span> mixing tokens (<span class="mono">var(--gate-go)</span>) with raw hexes (<span class="mono">#86efac, #fcd34d, #facc15</span>). The WATCH state adds a <b>lemon-yellow</b> family distinct from CONDITIONAL's amber — a distinction that's nearly invisible in practice and gone entirely for deutan/protan users:</p>
+        <div class="swrow">
+          <span class="swp" style="color:#facc15;background:rgba(250,204,21,.13);border:1px solid rgba(250,204,21,.35)">WATCH #facc15</span>
+          <span class="swp" style="color:#ffb347;background:rgba(255,179,71,.13);border:1px solid rgba(255,179,71,.35)">CONDITIONAL #ffb347</span>
+          <span class="swp" style="color:var(--tx3)">← can you tell at a glance?</span>
+        </div>
+        <p>The two files also disagree — same verdict, different hex per page.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Add <code>--gate-watch</code> (+bg/bd) per theme; extract one shared <code>&lt;VerdictBand&gt;</code>; differentiate WATCH from CONDITIONAL by <b>shape/label</b>, not hue alone (e.g. outline pill + "eye" icon vs filled pill + "alert" icon).</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s2">S2</span><h3>Micro-typography below the legibility floor</h3><span class="tag">type</span></div>
+      <div class="fb2">
+        <p>Dozens of <span class="mono">text-[10px]</span> and <span class="mono">text-[9px]</span> labels (sidebar mode badge, notification meta, pill counts, table chips). At 9–10px, Plus Jakarta Sans loses its counters at typical zoom; on 1440p monitors these are ~7 physical px. The floor for functional UI text should be <b>11px</b>, with mono eyebrows at 10.5px minimum.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Sweep <code>text-[9px]|text-[10px]</code> → <code>text-[11px]</code>; where space is tight, drop the label and keep the icon with a tooltip instead of shrinking text.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s2">S2</span><h3>Every MetricCard is a polite live region</h3><span class="tag">accessibility</span></div>
+      <div class="fb2">
+        <p><span class="mono">MetricCard</span> renders <span class="mono">role="status" aria-live="polite"</span> unconditionally. A dashboard with 6–8 cards re-announces <b>every value on every refetch</b> — for screen-reader users, the Overview page narrates itself continuously while SWR polls.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Remove the live region from the card. Announce <b>one</b> summary ("Dashboard updated") from a single visually-hidden region per page, or only announce genuine state transitions (verdict change).</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s2">S2</span><h3>Trend color assumes up = good</h3><span class="tag">data-viz</span></div>
+      <div class="fb2">
+        <p><span class="mono">MetricCard</span> colors <span class="mono">trend_direction==='up'</span> green and <span class="mono">'down'</span> red — but for <b>Failed tests</b>, <b>Flaky count</b>, or <b>Duration</b>, up is bad. Unless every caller pre-inverts the direction (they don't), the card congratulates rising failure counts.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Add <code>positiveDirection: 'up' | 'down'</code> to the card (default 'up'); color by <code>trend_direction === positiveDirection</code>. Callers for failure/duration metrics pass <code>'down'</code>.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s2">S2</span><h3>Project switcher is a native &lt;select&gt; beside two custom dropdowns</h3><span class="tag">consistency</span></div>
+      <div class="fb2">
+        <p>The TopBar has three adjacent popovers: a custom notification panel, the custom ThemePicker, and a <b>bare native <span class="mono">&lt;select&gt;</span></b> for the most important context switch in the app (project). The native control ignores the theme (OS-rendered menu), truncates long names, can't show project metadata, and visually clashes with its neighbors.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Rebuild as a ThemePicker-style popover: search field for many projects, "All Projects" pinned for admins, active-project check, and the project's pass-rate dot as a glanceable health cue.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s2">S2</span><h3>Sidebar semantics: action-as-nav, icon mismatches, split hit-target</h3><span class="tag">navigation</span></div>
+      <div class="fb2">
+        <ul>
+          <li><b>"Upload Report" is an action, not a place</b> — it lives in nav as <span class="mono">/runs?upload=1</span>. Clicking it navigates <i>and</i> opens a modal; the nav item never shows as active. It belongs as a button on the Runs page (or a global "+" in the TopBar).</li>
+          <li><b>Icon semantics drift:</b> Defects = <span class="mono">Gauge</span> (a speedometer?), and four near-identical shields (Shield, ShieldAlert, ShieldCheck, ShieldEllipsis) across Coverage / Quarantine / Release Gate / Policies make scanning by icon useless.</li>
+          <li><b>Split hit-target:</b> the group row navigates while a separate 24px chevron toggles expansion — users learn this by mis-clicking. Standard pattern: row click toggles when the group is already active, navigates otherwise (or make the whole row toggle + a "view" affordance).</li>
+        </ul>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Move Upload to a page-level primary button; re-icon Defects (<code>Bug</code> is taken — use <code>ClipboardX</code>/<code>OctagonAlert</code>) and diversify the shield cluster; unify the group row interaction.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s2">S2</span><h3>Search is Enter-only — no ⌘K, no palette, no scoping</h3><span class="tag">ux · power users</span></div>
+      <div class="fb2">
+        <p>For a data-dense engineering tool, search is a single TopBar input whose placeholder literally teaches the crutch: <i>"Search tests, runs, defects… (Enter)"</i>. No keyboard shortcut, no typeahead, no recent items, no entity scoping — yet the backend already supports hybrid/semantic search modes on <span class="mono">/search</span>.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Promote to a <b>⌘K command palette</b>: recent runs, jump-to-page, entity-scoped queries (<code>run:</code>, <code>test:</code>, <code>defect:</code>), and actions ("Compare last two runs"). The existing SearchPage becomes the "see all results" surface. This is the single highest-leverage UX upgrade available.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ S3 FINDINGS ══════════════ -->
+  <section>
+    <div class="sh"><span class="n">04</span><h2>Medium — polish &amp; hygiene</h2><span class="cnt">4 findings</span></div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s3">S3</span><h3>Monolithic pages breed the drift</h3><span class="tag">architecture</span></div>
+      <div class="fb2">
+        <p><span class="mono">RunsPage 2,211</span> · <span class="mono">OverviewPage 1,207</span> · <span class="mono">IntelligenceHubPage 946</span> lines. Every finding above (private verdict maps, private status colors) lives inside these monoliths — inconsistency is the natural byproduct when shared visuals are page-local constants. The <span class="mono">components/releases/</span> folder shows the team already knows the cure.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Extract the repeated organisms: <code>VerdictBand</code>, <code>RunListRow</code>, <code>PassRateMeter</code>, <code>TrendDelta</code>. Rule of thumb: any visual that appears on 2+ pages moves to <code>components/</code>.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s3">S3</span><h3>Timestamps are raw locale dumps</h3><span class="tag">content</span></div>
+      <div class="fb2">
+        <p>Notifications render <span class="mono">new Date(log.created_at).toLocaleString()</span> → "7/2/2026, 4:08:13 PM" in a 320px panel. The codebase already has <span class="mono">dayTimeAgo</span> in <span class="mono">utils/formatters</span>.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Relative time ("4m ago") with absolute on hover/title, everywhere a human scans a list.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s3">S3</span><h3>Aurora uses background-attachment: fixed</h3><span class="tag">performance</span></div>
+      <div class="fb2">
+        <p><span class="mono">background-attachment: fixed</span> disables composited scrolling in Chromium — every scroll repaints the gradient. On the 2,000-row Live table this is measurable jank.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Paint the aurora on a <code>position: fixed; inset: 0; z-index: -1; pointer-events: none</code> div instead — same look, zero scroll cost.</span></div>
+      </div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><span class="sev s3">S3</span><h3>Clickable rows without keyboard equivalence</h3><span class="tag">accessibility</span></div>
+      <div class="fb2">
+        <p><span class="mono">.table-row</span> is <span class="mono">cursor-pointer</span> with an onClick — a div-click pattern. No <span class="mono">tabindex</span>, no Enter/Space activation, no row link semantics. Keyboard users can't open a run from the Runs table.</p>
+        <div class="fix"><span class="fl">Fix</span><span class="ft">Make the row's primary cell a real <code>&lt;Link&gt;</code> (stretched-link pattern), or add <code>tabindex=0</code> + key handlers. Real links also restore middle-click / cmd-click — power users will thank you.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ OPPORTUNITIES ══════════════ -->
+  <section>
+    <div class="sh"><span class="n">05</span><h2>Bigger UX bets</h2><span class="cnt">beyond fixes</span></div>
+    <p class="lede">The pages are individually strong; what's missing is <b>connective tissue</b> — the app behaves like 40 destinations rather than one investigation flow. Three bets, in value order:</p>
+    <div class="panel">
+      <table>
+        <thead><tr><th style="width:190px">Bet</th><th>What it is</th><th style="width:170px">Why it wins</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b style="color:var(--tx)">⌘K command palette</b></td>
+            <td>Global jump + search + actions (covered in S2). Recent entities first; scoped prefixes; "Compare", "Quarantine", "Open gate" as verbs.</td>
+            <td class="mono">daily-use speed for every persona</td>
+          </tr>
+          <tr>
+            <td><b style="color:var(--tx)">Investigation thread</b></td>
+            <td>A failure's journey spans Runs → Failure Analysis → Deep Investigate → Defects → Release Gate, but each hop loses context. Add a persistent "thread" ribbon (breadcrumb + carried filters + back-to-run) so drilling into a failure and returning doesn't reset state.</td>
+            <td class="mono">kills the #1 dead-end pattern</td>
+          </tr>
+          <tr>
+            <td><b style="color:var(--tx)">Density toggle</b></td>
+            <td>Tables are one-size (py-3). QA leads triaging 500 failures want compact (py-1.5, 12px); execs want comfortable. One control in the TopBar, one CSS var (<span class="mono">--row-pad</span>).</td>
+            <td class="mono">cheap; huge for heavy users</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ══════════════ ROADMAP ══════════════ -->
+  <section>
+    <div class="sh"><span class="n">06</span><h2>Prioritized roadmap</h2></div>
+    <div class="road">
+      <div class="rcol">
+        <h3><span class="dot" style="background:var(--fail)"></span>Now — stop the bleeding</h3>
+        <div class="est">~2–3 days · mechanical</div>
+        <ol>
+          <li><b>Tokenize the 201 hard-coded colors</b> + rewrite <span class="mono">.badge-*</span> onto <span class="mono">--status-*</span></li>
+          <li><b>ESLint guard</b> against palette classes</li>
+          <li><b>Fix profile menu</b> (click + aria)</li>
+          <li><b>MetricCard:</b> drop per-card live regions; add <span class="mono">positiveDirection</span></li>
+        </ol>
+      </div>
+      <div class="rcol">
+        <h3><span class="dot" style="background:var(--warn)"></span>Next — consolidate</h3>
+        <div class="est">~1–2 weeks</div>
+        <ol>
+          <li><b>StatusBadge everywhere;</b> delete per-page maps</li>
+          <li><b>Shared VerdictBand</b> + <span class="mono">--gate-watch</span> token + shape-coded verdicts</li>
+          <li><b>Custom project switcher</b> popover</li>
+          <li><b>Sidebar cleanup:</b> Upload→button, icon fixes, unified row interaction</li>
+          <li><b>Type floor sweep</b> (≥11px) + relative timestamps</li>
+        </ol>
+      </div>
+      <div class="rcol">
+        <h3><span class="dot" style="background:var(--pass)"></span>Later — differentiate</h3>
+        <div class="est">quarter bets</div>
+        <ol>
+          <li><b>⌘K command palette</b></li>
+          <li><b>Investigation thread</b> ribbon</li>
+          <li><b>Density toggle</b> + keyboard model (j/k rows, o to open)</li>
+          <li><b>Decompose monolith pages</b> into shared organisms</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════ EVIDENCE ══════════════ -->
+  <section>
+    <div class="sh"><span class="n">07</span><h2>Evidence index</h2><span class="cnt">key file:line refs</span></div>
+    <div class="panel">
+      <table>
+        <thead><tr><th style="width:44%">Location</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">index.css:373-377</td><td>.badge-* classes on raw emerald/red/amber/orange/purple instead of --status-* tokens</td></tr>
+          <tr><td class="mono">pages/** (201 matches)</td><td>text-emerald-*, bg-red-900/*, text-amber-* … across 30+ files incl. AgentStatusPage, LiveExecutionPage, FlakyCoachPage, settings/*</td></tr>
+          <tr><td class="mono">TopBar.tsx:44-71</td><td>UserProfileDropdown — hover-only reveal, no click/keyboard path, no aria</td></tr>
+          <tr><td class="mono">TopBar.tsx:141-160</td><td>native &lt;select&gt; project switcher beside custom popovers</td></tr>
+          <tr><td class="mono">MetricCard.tsx:33 / 20-22</td><td>role="status" aria-live on every card; up=green hardcoding</td></tr>
+          <tr><td class="mono">OverviewPage.tsx:34-90 · RunsPage.tsx:107-160</td><td>duplicate half-tokenized VERDICT_THEME maps; WATCH lemon vs CONDITIONAL amber</td></tr>
+          <tr><td class="mono">Sidebar.tsx:62 / 66-74 / 135-150</td><td>/runs?upload=1 as nav item; Gauge-for-Defects + 4 shields; split chevron target</td></tr>
+          <tr><td class="mono">StatusBadge imports: 2 · PageHeader imports: 37</td><td>orphaned status primitive vs well-adopted header primitive</td></tr>
+          <tr><td class="mono">TopBar.tsx:214</td><td>toLocaleString() timestamps in notification panel</td></tr>
+          <tr><td class="mono">index.css:296-299</td><td>background-attachment: fixed aurora (scroll repaint)</td></tr>
+          <tr><td class="mono">RunsPage 2,211 · OverviewPage 1,207 · IntelligenceHub 946 lines</td><td>monolith pages hosting page-local visual systems</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

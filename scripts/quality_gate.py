@@ -341,6 +341,288 @@ def _backend_structlog_positional_args() -> list[Violation]:
     return violations
 
 
+# ── Audit-table write discipline ─────────────────────────────────────────────
+#
+# The four models below document themselves as *append-only*. Nothing in the
+# database enforces that: the entire migration set contains exactly one
+# trigger (the search-vector trigger in ``0001``), no grants are restricted,
+# and no store is WORM. **This guard is the enforcement** — it is what makes
+# those docstrings true rather than aspirational, in the house style (a guard,
+# not a promise).
+#
+# Rule: application code under ``backend/app/`` may INSERT audit rows and read
+# them. It may never UPDATE one, and may never DELETE one outside the single
+# allowlisted deleter below.
+_AUDIT_MODELS = frozenset({
+    "AccessAuditLog",      # access_audit_logs
+    "IdentityEvent",       # identity_events
+    "SettingsAuditLog",    # settings_audit_log
+    "TestCaseAuditLog",    # test_case_audit_logs
+})
+_AUDIT_TABLES = (
+    "access_audit_logs",
+    "identity_events",
+    "settings_audit_log",
+    "test_case_audit_logs",
+)
+
+# ``services/retention_service.py`` is the ONE legitimate deleter. US-11.4
+# gives every project an ``audit_days`` clock (floor 365 d, default 2555 ≈ 7 y,
+# validated >= ``runs_days``) and the purge deletes ``access_audit_logs`` +
+# ``test_case_audit_logs`` past it. That is deliberate, opt-in (policy
+# ``enabled``), preview-able, and self-audited — every execute-mode purge
+# writes its own ``settings_audit_log`` row. It is precisely why the models say
+# "append-only", not "immutable". The allowlist covers DELETE only: even the
+# retention service may not UPDATE an audit row.
+_AUDIT_DELETE_ALLOWLIST = {
+    "backend/app/services/retention_service.py",
+}
+
+_AUDIT_TABLE_ALT = "|".join(_AUDIT_TABLES)
+_AUDIT_RAW_SQL_UPDATE_RE = re.compile(
+    rf"\bupdate\s+(?:only\s+)?(?:public\.)?[\"`]?(?:{_AUDIT_TABLE_ALT})\b",
+    re.IGNORECASE,
+)
+_AUDIT_RAW_SQL_DELETE_RE = re.compile(
+    rf"\b(?:delete\s+from|truncate(?:\s+table)?)\s+(?:only\s+)?(?:public\.)?"
+    rf"[\"`]?(?:{_AUDIT_TABLE_ALT})\b",
+    re.IGNORECASE,
+)
+
+
+def _audit_call_name(func: ast.AST) -> str:
+    """Terminal callable name — ``update`` for both ``update(X)`` and
+    ``sa.update(X)`` / ``db.query(X).update(...)``."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _audit_referenced_names(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _audit_scope_nodes(scope: ast.AST) -> list[ast.AST]:
+    """Every node belonging to one lexical scope.
+
+    Nested ``def`` / ``class`` / ``lambda`` bodies are excluded — they are
+    analysed as scopes of their own, so a local called ``row`` in one function
+    can never be confused with a ``row`` in another (the bug that made a
+    module-wide pass flag ``retention_service.upsert_policy``).
+    """
+    out: list[ast.AST] = []
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        out.append(node)
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return out
+
+
+def _audit_scopes(tree: ast.AST) -> list[list[ast.AST]]:
+    scopes = [_audit_scope_nodes(tree)]
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            scopes.append(_audit_scope_nodes(node))
+    return scopes
+
+
+def _audit_row_names(nodes: list[ast.AST]) -> set[str]:
+    """Names in one scope bound to a **fetched** audit row (or a container).
+
+    A freshly constructed row (``row = SettingsAuditLog(...)``) is excluded on
+    purpose: mutating its attributes before ``flush`` is still one INSERT, and
+    that is the normal write path. Anything else that mentions an audit model
+    (a ``select(...)`` result, a ``scalars().all()`` list, a loop variable over
+    either) is treated as an already-persisted row, so attribute stores on it
+    are UPDATEs.
+    """
+    names: set[str] = set()
+    # Re-run until stable so ``rows = select(...)`` → ``for row in rows:``
+    # propagates through intermediate bindings.
+    for _ in range(4):
+        before = len(names)
+        for node in nodes:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                value = node.value
+                if value is None:
+                    continue
+                referenced = _audit_referenced_names(value)
+                if not (referenced & _AUDIT_MODELS or referenced & names):
+                    continue
+                if (
+                    isinstance(value, ast.Call)
+                    and _audit_call_name(value.func) in _AUDIT_MODELS
+                ):
+                    continue  # construction — an INSERT being staged
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        names.add(target.id)
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                referenced = _audit_referenced_names(node.iter)
+                if (referenced & _AUDIT_MODELS or referenced & names) and isinstance(
+                    node.target, ast.Name
+                ):
+                    names.add(node.target.id)
+        if len(names) == before:
+            break
+    return names
+
+
+def _backend_audit_write_discipline(root: Optional[Path] = None) -> list[Violation]:
+    """Audit tables are append-only — enforce it, don't just document it.
+
+    ``settings_audit_log``, ``access_audit_logs``, ``test_case_audit_logs`` and
+    ``identity_events`` have no triggers, no restricted grants and no WORM
+    storage behind them. This guard fails CI when application code:
+
+    * builds an UPDATE against an audit model (``update(AccessAuditLog)``,
+      ``sa.update(...)``, ``db.query(...).update(...)``),
+    * assigns to an attribute of a **fetched** audit row (or calls
+      ``setattr`` / ``db.delete`` on one),
+    * builds a DELETE against an audit model outside
+      ``services/retention_service.py``,
+    * embeds raw SQL that UPDATEs / DELETEs FROM / TRUNCATEs an audit table.
+
+    Deliberate blind spots (written down so nobody trusts the guard past its
+    edge): raw SQL whose table name is assembled at runtime (f-strings,
+    concatenation); a mutation performed inside a generic helper that receives
+    an audit row as a *parameter*, or inside a nested closure over an outer
+    row — name binding within one scope is what we track; Alembic migrations,
+    which are reviewed schema evolution and out of scope; and anything done
+    outside the application (psql, a DBA, a restore, a backup rollback).
+    """
+    root = root or (REPO_ROOT / "backend" / "app")
+    violations: list[Violation] = []
+    for path in iter_files(root, (".py",)):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if not any(model in text for model in _AUDIT_MODELS) and not any(
+            table in text for table in _AUDIT_TABLES
+        ):
+            continue
+        try:
+            rel = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        delete_allowed = rel in _AUDIT_DELETE_ALLOWLIST
+
+        seen: set[tuple[int, str]] = set()
+
+        def _flag(line: int, kind: str, message: str) -> None:
+            if (line, kind) in seen:
+                return
+            seen.add((line, kind))
+            violations.append(Violation(path, line, message))
+
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
+            tree = None
+
+        for scope_nodes in _audit_scopes(tree) if tree is not None else []:
+            fetched = _audit_row_names(scope_nodes)
+            for node in scope_nodes:
+                # (a) Core / ORM bulk constructs against an audit model.
+                if isinstance(node, ast.Call):
+                    name = _audit_call_name(node.func)
+                    arg_hits = (
+                        _audit_referenced_names(node.args[0]) & _AUDIT_MODELS
+                        if node.args
+                        else set()
+                    )
+                    chain_hits: set[str] = set()
+                    if isinstance(node.func, ast.Attribute):
+                        chain_hits = (
+                            _audit_referenced_names(node.func.value) & _AUDIT_MODELS
+                        )
+                    if name == "update" and (arg_hits or chain_hits):
+                        _flag(
+                            node.lineno, "update",
+                            "UPDATE against an audit table "
+                            f"({', '.join(sorted(arg_hits or chain_hits))}) — audit "
+                            "rows are append-only; write a new row instead",
+                        )
+                    elif name == "delete" and (arg_hits or chain_hits):
+                        if not delete_allowed:
+                            _flag(
+                                node.lineno, "delete",
+                                "DELETE against an audit table "
+                                f"({', '.join(sorted(arg_hits or chain_hits))}) — the "
+                                "retention purge (services/retention_service.py) is "
+                                "the only allowed deleter",
+                            )
+                    elif (
+                        name == "setattr"
+                        and node.args
+                        and isinstance(node.args[0], ast.Name)
+                        and node.args[0].id in fetched
+                    ):
+                        _flag(
+                            node.lineno, "update",
+                            f"setattr on fetched audit row {node.args[0].id!r} — "
+                            "audit rows are append-only",
+                        )
+                    elif (
+                        name == "delete"
+                        and len(node.args) == 1
+                        and isinstance(node.args[0], ast.Name)
+                        and node.args[0].id in fetched
+                        and not delete_allowed
+                    ):
+                        _flag(
+                            node.lineno, "delete",
+                            f"session delete of fetched audit row "
+                            f"{node.args[0].id!r} — only the retention purge may "
+                            "delete audit rows",
+                        )
+                # (b) Attribute store on a fetched audit row.
+                targets: list[ast.AST] = []
+                if isinstance(node, ast.Assign):
+                    targets = list(node.targets)
+                elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                    targets = [node.target]
+                for target in targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id in fetched
+                    ):
+                        _flag(
+                            node.lineno, "update",
+                            f"attribute assignment on fetched audit row "
+                            f"{target.value.id}.{target.attr} — audit rows are "
+                            "append-only; write a new row instead",
+                        )
+
+        # (c) Raw SQL embedded as a literal.
+        for ln, line in grep_lines(path, _AUDIT_RAW_SQL_UPDATE_RE):
+            if line.strip().startswith("#"):
+                continue
+            _flag(ln, "update", "raw SQL UPDATE of an audit table — append-only")
+        for ln, line in grep_lines(path, _AUDIT_RAW_SQL_DELETE_RE):
+            if line.strip().startswith("#") or delete_allowed:
+                continue
+            _flag(
+                ln, "delete",
+                "raw SQL DELETE/TRUNCATE of an audit table — only the retention "
+                "purge (services/retention_service.py) may delete audit rows",
+            )
+    return violations
+
+
 # ── Frontend guards ──────────────────────────────────────────────────────────
 
 _CLIPBOARD_RE = re.compile(r"navigator\.clipboard\.writeText\b")
@@ -986,6 +1268,21 @@ GUARDS: list[Guard] = [
         fix_hint=(
             "Use kwargs: ``logger.warning(\"event_name\", error=str(exc))``. "
             "See memory/feedback_structlog_positional_args.md."
+        ),
+    ),
+    Guard(
+        name="backend.audit-write-discipline",
+        description=(
+            "Audit tables (settings_audit_log / access_audit_logs / "
+            "test_case_audit_logs / identity_events) are append-only: no "
+            "UPDATE anywhere, no DELETE outside the retention purge."
+        ),
+        check=_backend_audit_write_discipline,
+        fix_hint=(
+            "Append a NEW audit row instead of mutating one. If a purge is "
+            "genuinely needed, extend services/retention_service.py (the "
+            "audit-clock deleter) rather than deleting inline — the model "
+            "docstrings promise exactly that boundary."
         ),
     ),
     Guard(

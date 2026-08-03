@@ -37,7 +37,15 @@ export interface AIConfigRead {
   llm_model: string
   llm_temperature: number
   llm_max_tokens: number
+  /**
+   * EFFECTIVE offline state, after the AI_OFFLINE_MODE environment ceiling.
+   * The env var can only tighten it — a stored override never loosens it.
+   */
   ai_offline_mode: boolean
+  /** Why: 'env' (pinned by the environment) | 'override' | 'not_offline'. */
+  ai_offline_mode_source: string
+  /** True ⇒ the toggle is read-only here; say so instead of eating the click. */
+  ai_offline_mode_env_pinned: boolean
   embedding_provider: string
   embedding_model: string
   ai_confidence_threshold: number

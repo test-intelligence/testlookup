@@ -14,7 +14,10 @@
   project-scoped keys plus per-session tokens.
 - **Revocation** — `core/token_revocation.py`: token validation consults a
   revocation list in addition to signature/expiry, so logout and key
-  revocation take effect immediately rather than at token expiry.
+  revocation take effect immediately rather than at token expiry. The check
+  **fails closed** — if the revocation store cannot be reached, the request is
+  answered 503 rather than honoured unchecked (see §7 for the availability
+  trade-off).
 
 ## 2. Authorization — the guard family and the signed cache
 
@@ -97,6 +100,35 @@ external fetch — regardless of how feature flags are set. New integrations are
 required to join the existing offline gate list (with tests), not add their
 own ad-hoc checks.
 
+**Ceiling semantics (2026-08-03).** The environment variable is a *hard
+ceiling*, not a default. AI settings are also stored in the database
+(`app_settings.ai_config`), and the runtime resolver merges the two — but the
+merge for this one field is deliberately not "DB wins":
+
+```
+effective_offline = settings.AI_OFFLINE_MODE  OR  db_override.ai_offline_mode
+```
+
+The stored override may only ever make the system **more** restrictive. When
+the environment says offline, nothing reachable from the application — no API
+call, no admin, no settings row — can re-enable outbound LLM egress; the only
+lever is the environment itself, plus a restart. (Before this, LLM egress was
+the one outbound path that honoured the DB override, so an ADMIN could turn
+cloud API calls back on from `/settings/ai` while Jira, webhooks, GitHub,
+GitLab, the Fixer and the Investigator all stayed blocked by the same env var.
+The env var now means the same thing everywhere.)
+
+Resolution is centralised in `services/ai_config_resolver.resolve_offline_mode`
+so every consumer inherits it — `llm_factory.get_llm()`, the `/settings/ai`
+read + write endpoints, and the `/settings/ai/model-status` probe that renders
+the fallback chain. The resolver publishes **provenance** next to the flag
+(`offline_mode_source`: `env` | `override` | `not_offline`, plus
+`offline_mode_env_pinned`), and the AI settings page renders the toggle
+**disabled with the reason and the remedy** when the environment pins it —
+an ignored click is how an operator ends up believing egress is enabled when
+it is not. A `PUT` that tries to disable offline mode while the environment
+pins it is refused with **409**, not silently recorded.
+
 For customer-supplied URLs that *are* fetched when integrations are enabled
 (knowledge sources), fetching is restricted by a **domain allowlist**
 (`_validate_url_domain`). Note its scope honestly: it constrains *which hosts*
@@ -136,9 +168,30 @@ easier to over-read than to under-read:
 Similarly, the audit tables in §6 are append-only **by application
 convention** — no triggers, restricted grants, or WORM storage prevent
 direct modification — and an enabled retention policy deliberately
-deletes project-scoped audit rows past the audit clock. Access-token
-revocation (§1) **fails open** on a Redis outage rather than denying
-every request.
+deletes project-scoped audit rows past the audit clock.
+
+Access-token revocation (§1) **fails closed** as of 2026-08-03: when the
+revocation store (Redis) cannot be consulted, `get_current_user` answers
+**503**, not 401 — the honest signal is "revocation cannot be verified
+right now", and 401 would send the SPA into a re-login loop that cannot
+succeed. Two consequences worth stating plainly:
+
+- **A Redis outage is an authentication outage.** `/auth/login` and
+  `/auth/refresh` are Postgres-only and keep working — they will happily
+  mint tokens — but every request carrying one gets 503 until Redis
+  returns. Recovery is to restore Redis. An operator who consciously
+  accepts unenforced revocation can set `AUTH_REVOCATION_FAIL_OPEN=true`
+  and restart; it is environment-only (no in-app toggle), defaults to
+  false, and logs an ERROR on every use.
+- **The write path is still best-effort.** `revoke_jti` /
+  `revoke_all_user_tokens` cannot record anything while Redis is down, so
+  a logout or password change issued *during* an outage is not persisted
+  and that token becomes usable again once Redis recovers. They log at
+  ERROR with a metric rather than raising, because `/auth/logout` and
+  `/auth/change-password` must still commit their Postgres work
+  (refresh-family revocation, which is durable). Refresh-token
+  revocation therefore remains the durable half of the mechanism; the
+  access-token half is bounded by `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`.
 
 ## 8. Mapping these properties to control families
 

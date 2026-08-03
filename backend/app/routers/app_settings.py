@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 
 import aiosmtplib
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -211,18 +211,34 @@ async def test_smtp_config(
 
 _AI_CONFIG_KEY = "ai_config"
 
+# Derived, not stored: provenance for the offline-mode ceiling. Computed on
+# every read from the environment, stripped before anything is persisted.
+_DERIVED_AI_KEYS = ("ai_offline_mode_source", "ai_offline_mode_env_pinned")
+
 
 async def _load_ai_config(db: AsyncSession) -> dict:
     from sqlalchemy import select
+
+    from app.services.ai_config_resolver import env_offline_pinned, resolve_offline_mode
+
     result = await db.execute(select(AppSetting).where(AppSetting.key == _AI_CONFIG_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
+    # AI_OFFLINE_MODE in the environment is a hard ceiling on outbound LLM
+    # egress — the stored override may tighten it, never loosen it. Resolved
+    # through the same helper the runtime resolver uses so this page and
+    # get_llm() can never disagree about what is actually in force.
+    effective_offline, offline_source = resolve_offline_mode(
+        overrides.get("ai_offline_mode", settings.AI_OFFLINE_MODE)
+    )
     return {
+        "ai_offline_mode": effective_offline,
+        "ai_offline_mode_source": offline_source,
+        "ai_offline_mode_env_pinned": env_offline_pinned(),
         "llm_provider": overrides.get("llm_provider", settings.LLM_PROVIDER),
         "llm_model": overrides.get("llm_model", settings.LLM_MODEL),
         "llm_temperature": overrides.get("llm_temperature", settings.LLM_TEMPERATURE),
         "llm_max_tokens": overrides.get("llm_max_tokens", settings.LLM_MAX_TOKENS),
-        "ai_offline_mode": overrides.get("ai_offline_mode", settings.AI_OFFLINE_MODE),
         "embedding_provider": overrides.get("embedding_provider", settings.EMBEDDING_PROVIDER),
         "embedding_model": overrides.get("embedding_model", settings.EMBEDDING_MODEL),
         "ai_confidence_threshold": overrides.get("ai_confidence_threshold", settings.AI_CONFIDENCE_THRESHOLD),
@@ -292,6 +308,8 @@ async def get_ai_config(
         llm_temperature=cfg["llm_temperature"],
         llm_max_tokens=cfg["llm_max_tokens"],
         ai_offline_mode=cfg["ai_offline_mode"],
+        ai_offline_mode_source=cfg["ai_offline_mode_source"],
+        ai_offline_mode_env_pinned=cfg["ai_offline_mode_env_pinned"],
         embedding_provider=cfg["embedding_provider"],
         embedding_model=cfg["embedding_model"],
         ai_confidence_threshold=cfg["ai_confidence_threshold"],
@@ -377,8 +395,30 @@ async def update_ai_config(
     db: AsyncSession = Depends(get_db),
 ) -> AIConfigRead:
     from sqlalchemy import select
+
+    from app.services.ai_config_resolver import env_offline_pinned, resolve_offline_mode
+
     existing = await _load_ai_config(db)
     updates = payload.model_dump(exclude_none=True)
+
+    # AI_OFFLINE_MODE is a hard ceiling, and a rejected write is more honest
+    # than a silently-ignored one: an operator who unticks "Offline Mode" on a
+    # deployment that pins it in the environment must be told the click did
+    # nothing, not left believing cloud LLM is now enabled.
+    if updates.get("ai_offline_mode") is False and env_offline_pinned():
+        logger.warning(
+            "AI offline-mode disable rejected — pinned by AI_OFFLINE_MODE (user_id=%s)",
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Offline mode is pinned on by AI_OFFLINE_MODE in this deployment's "
+                "environment and cannot be disabled from the API. Set AI_OFFLINE_MODE=false "
+                "in the backend environment and restart to permit cloud LLM egress."
+            ),
+        )
+
     merged = {**existing, **updates}
 
     # Store secrets separately in secret_refs
@@ -386,8 +426,18 @@ async def update_ai_config(
     for key_name, raw_value in secrets.items():
         await store_secret(db, _AI_CONFIG_KEY, key_name, raw_value, actor_id=current_user.id)
 
-    # Store only non-secret metadata in app_settings
+    # Store only non-secret metadata in app_settings. The offline provenance
+    # fields are derived from the environment on every read — persisting them
+    # would freeze a snapshot of one process's env into the shared row.
+    #
+    # Note `merged["ai_offline_mode"]` is the EFFECTIVE value, so on an
+    # env-pinned deployment any PUT converges the stored row to True. That is
+    # deliberate: the row then agrees with reality, and the failure mode of
+    # un-pinning the environment later is "still offline until you toggle it",
+    # which is the safe direction.
     store_value = strip_secrets_from_config(_AI_CONFIG_KEY, merged)
+    for _derived in _DERIVED_AI_KEYS:
+        store_value.pop(_derived, None)
     result = await db.execute(select(AppSetting).where(AppSetting.key == _AI_CONFIG_KEY))
     row = result.scalar_one_or_none()
     if row:
@@ -416,12 +466,18 @@ async def update_ai_config(
     # ML model status for response
     ml = await _ml_status()
 
+    # Re-resolve rather than echo the request: the response must report what
+    # is actually in force after the ceiling, not what was asked for.
+    effective_offline, offline_source = resolve_offline_mode(merged["ai_offline_mode"])
+
     return AIConfigRead(
         llm_provider=merged["llm_provider"],
         llm_model=merged["llm_model"],
         llm_temperature=merged["llm_temperature"],
         llm_max_tokens=merged["llm_max_tokens"],
-        ai_offline_mode=merged["ai_offline_mode"],
+        ai_offline_mode=effective_offline,
+        ai_offline_mode_source=offline_source,
+        ai_offline_mode_env_pinned=env_offline_pinned(),
         embedding_provider=merged["embedding_provider"],
         embedding_model=merged["embedding_model"],
         ai_confidence_threshold=merged["ai_confidence_threshold"],

@@ -33,10 +33,11 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **15 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **17 guards**.
 Most are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. Know these before you write code.
+fail CI. A few ship at zero with **no baseline file at all** — those are
+absolute rules, not ratchets. Know these before you write code.
 
 ### Backend
 
@@ -47,6 +48,25 @@ fail CI. Know these before you write code.
 | `backend.finalize-run` | committing `test_case` rows without `finalize_run()` | Always `await ingestion_pipeline.finalize_run(...)` after the commit |
 | `backend.pii-log-redaction` | logging `email`/`password`/`api_key`/`raw_key` verbatim | Sanitize PII before logging |
 | `backend.structlog-positional-args` | `logger.warning("x: %s", e)` (stdlib style) | `logger.warning("event_name", error=str(e))` — positional args raise `TypeError` mid-request |
+| `backend.audit-write-discipline` | any UPDATE of an audit table, and any DELETE outside the retention purge | Append a **new** audit row instead of mutating one; if a purge is needed, extend `services/retention_service.py` |
+
+**`backend.audit-write-discipline` — why it exists.** `settings_audit_log`,
+`access_audit_logs`, `test_case_audit_logs` and `identity_events` are
+append-only **by convention only**: the entire migration set contains exactly
+one trigger (the search-vector trigger in `0001`), no grants are restricted,
+and no store is WORM. This guard *is* the enforcement, so the model docstrings
+describe something real. It ships at zero — no baseline — and catches Core
+`update()`/`delete()` constructs, `db.query(...).update(...)`, attribute
+assignment / `setattr` / `session.delete` on a **fetched** audit row, and raw
+SQL `UPDATE` / `DELETE FROM` / `TRUNCATE` of those tables. Building a row and
+setting its fields before `flush` is an INSERT and stays legal.
+
+`services/retention_service.py` is the single allowlisted deleter: US-11.4
+purges `access_audit_logs` + `test_case_audit_logs` past the per-project
+**audit clock** (`audit_days`, floor 365 d, default ≈7 y, validated
+`>= runs_days`), opt-in and self-audited. Pinned by
+`backend/tests/test_architectural_audit_write_discipline.py` — which also
+fails if a *second* deleter appears.
 
 ### Frontend
 
@@ -72,16 +92,23 @@ fail CI. Know these before you write code.
 | `agents.log-decision-present` | every agent calls `self.log_decision(...)` | Log every non-trivial route/fallback/skip |
 | `agents.routing-metadata` | `classify_test()` populates `_routing` | Set `result['_routing'] = {...}` before returning |
 
+### AI
+
+| Gate id | Requires | How to satisfy |
+|---|---|---|
+| `ai.prompt-manifest-sync` | every LLM prompt matches its pinned hash in `prompt_manifest.json`, and that manifest digest carries a green eval-gate attestation | Bump the prompt version, re-run the eval gate, re-attest (see `architecture/AI_EVALUATION.md`) |
+
 ### Homelab
 
 | Gate id | Requires |
 |---|---|
 | `homelab.build-tag-placeholder` | `k8s/overlays/homelab/kustomization.yaml` keeps `newTag: BUILD_TAG_PLACEHOLDER` at rest |
 
-Beyond the gate script, three **architectural tests** ratchet structure:
+Beyond the gate script, **architectural tests** ratchet structure:
 `test_architectural_transaction_boundaries.py`,
 `test_architectural_authorization.py`, `test_architectural_agent_contracts.py`
-(+ `..._agent_eval_harness.py`).
+(+ `..._agent_eval_harness.py`), and
+`test_architectural_audit_write_discipline.py`.
 
 ---
 

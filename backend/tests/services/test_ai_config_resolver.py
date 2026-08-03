@@ -151,8 +151,12 @@ async def test_db_overrides_win_over_env_for_all_documented_keys(monkeypatch, fa
     assert cfg["temperature"] == 0.7
     assert cfg["max_tokens"] == 1024
     assert cfg["base_url"] == "https://api.openai.com/v1"
-    assert cfg["offline_mode"] is False
     assert cfg["timeout_seconds"] == 90
+    # …with exactly ONE exception: offline_mode. AI_OFFLINE_MODE is pinned
+    # True in the env for this test, and a DB override may only tighten it.
+    # See the ceiling tests below.
+    assert cfg["offline_mode"] is True
+    assert cfg["offline_mode_source"] == "env"
 
 
 @pytest.mark.asyncio
@@ -254,6 +258,7 @@ async def test_empty_string_secret_does_not_override_env(monkeypatch, fake_redis
 @pytest.mark.asyncio
 async def test_cache_hit_short_circuits_db(monkeypatch, fake_redis):
     """If Redis already has a cached entry, the resolver must NOT open a DB session."""
+    _set_env_defaults(monkeypatch)
     cached = {"provider": "cached-provider", "model": "cached-model"}
     await fake_redis.set(_CACHE_KEY, json.dumps(cached))
     _patch_redis(monkeypatch, fake_redis)
@@ -264,7 +269,10 @@ async def test_cache_hit_short_circuits_db(monkeypatch, fake_redis):
 
     cfg = await get_effective_ai_config()
 
-    assert cfg == cached
+    # Cached content is served verbatim EXCEPT the offline ceiling, which is
+    # re-derived from the environment on every read (see the ceiling tests).
+    assert cfg["provider"] == "cached-provider"
+    assert cfg["model"] == "cached-model"
     bomb.assert_not_called()
 
 
@@ -378,3 +386,113 @@ async def test_invalidate_swallows_redis_failure(monkeypatch):
 
     # Must not raise.
     await invalidate_ai_config_cache()
+
+
+# ── AI_OFFLINE_MODE is a hard egress ceiling (security fix 2026-08-03) ───────
+#
+# The env var may only ever be tightened by the DB override, never loosened.
+# Before this, a QA_LEAD/ADMIN could re-enable cloud LLM egress from
+# /settings/ai on a box whose operator had set AI_OFFLINE_MODE=true, with no
+# environment change — while every OTHER outbound integration still honoured
+# the env var. All four (env, db) combinations are pinned below, along with
+# the provenance field that explains the verdict.
+
+
+async def _resolve_with(monkeypatch, fake_redis, *, env_offline: bool, db_offline):
+    """Resolve the effective config for one (env, db-override) combination."""
+    _set_env_defaults(monkeypatch)
+    monkeypatch.setattr(resolver.settings, "AI_OFFLINE_MODE", env_offline)
+    _patch_redis(monkeypatch, fake_redis)
+
+    if db_offline is None:
+        _patch_db(monkeypatch, _make_db(row=None))
+    else:
+        row = MagicMock()
+        row.value = {"ai_offline_mode": db_offline}
+        _patch_db(monkeypatch, _make_db(row=row))
+    _patch_secrets(monkeypatch)
+
+    return await get_effective_ai_config()
+
+
+@pytest.mark.asyncio
+async def test_env_offline_true_db_false_stays_offline(monkeypatch, fake_redis):
+    """THE regression: the DB override must NOT be able to re-enable egress."""
+    cfg = await _resolve_with(monkeypatch, fake_redis, env_offline=True, db_offline=False)
+
+    assert cfg["offline_mode"] is True
+    assert cfg["offline_mode_source"] == "env"
+    assert cfg["offline_mode_env_pinned"] is True
+
+
+@pytest.mark.asyncio
+async def test_env_offline_true_db_true_stays_offline(monkeypatch, fake_redis):
+    cfg = await _resolve_with(monkeypatch, fake_redis, env_offline=True, db_offline=True)
+
+    assert cfg["offline_mode"] is True
+    assert cfg["offline_mode_source"] == "env"
+    assert cfg["offline_mode_env_pinned"] is True
+
+
+@pytest.mark.asyncio
+async def test_env_online_db_true_is_offline_via_override(monkeypatch, fake_redis):
+    """More restrictive still wins — the override can always tighten."""
+    cfg = await _resolve_with(monkeypatch, fake_redis, env_offline=False, db_offline=True)
+
+    assert cfg["offline_mode"] is True
+    assert cfg["offline_mode_source"] == "override"
+    assert cfg["offline_mode_env_pinned"] is False
+
+
+@pytest.mark.asyncio
+async def test_env_online_db_false_permits_egress(monkeypatch, fake_redis):
+    """The only combination that permits cloud LLM egress."""
+    cfg = await _resolve_with(monkeypatch, fake_redis, env_offline=False, db_offline=False)
+
+    assert cfg["offline_mode"] is False
+    assert cfg["offline_mode_source"] == "not_offline"
+    assert cfg["offline_mode_env_pinned"] is False
+
+
+@pytest.mark.asyncio
+async def test_env_offline_with_no_db_row_reports_env_provenance(monkeypatch, fake_redis):
+    cfg = await _resolve_with(monkeypatch, fake_redis, env_offline=True, db_offline=None)
+
+    assert cfg["offline_mode"] is True
+    assert cfg["offline_mode_source"] == "env"
+
+
+@pytest.mark.asyncio
+async def test_cached_offline_false_is_reclamped_on_cache_hit(monkeypatch, fake_redis):
+    """A cache entry written by an older build must not re-open egress.
+
+    The ceiling is a property of THIS process's environment, so it is
+    re-applied to cached payloads too — otherwise a pre-fix entry would
+    keep egress enabled for up to _CACHE_TTL after the upgrade.
+    """
+    _set_env_defaults(monkeypatch)  # AI_OFFLINE_MODE=True
+    await fake_redis.set(
+        _CACHE_KEY,
+        json.dumps({"provider": "openai", "model": "gpt-4o", "offline_mode": False}),
+    )
+    _patch_redis(monkeypatch, fake_redis)
+
+    cfg = await get_effective_ai_config()
+
+    assert cfg["offline_mode"] is True
+    assert cfg["offline_mode_source"] == "env"
+
+
+@pytest.mark.asyncio
+async def test_resolve_offline_mode_helper_is_a_pure_or(monkeypatch):
+    """The helper every consumer shares: effective = env OR override."""
+    monkeypatch.setattr(resolver.settings, "AI_OFFLINE_MODE", True)
+    assert resolver.resolve_offline_mode(False) == (True, resolver.OFFLINE_SOURCE_ENV)
+    assert resolver.resolve_offline_mode(True) == (True, resolver.OFFLINE_SOURCE_ENV)
+    assert resolver.env_offline_pinned() is True
+
+    monkeypatch.setattr(resolver.settings, "AI_OFFLINE_MODE", False)
+    assert resolver.resolve_offline_mode(True) == (True, resolver.OFFLINE_SOURCE_OVERRIDE)
+    assert resolver.resolve_offline_mode(False) == (False, resolver.OFFLINE_SOURCE_NONE)
+    assert resolver.resolve_offline_mode(None) == (False, resolver.OFFLINE_SOURCE_NONE)
+    assert resolver.env_offline_pinned() is False

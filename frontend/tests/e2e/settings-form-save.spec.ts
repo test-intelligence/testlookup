@@ -25,6 +25,10 @@ const AI_CONFIG = {
   llm_temperature: 0.1,
   llm_max_tokens: 4096,
   ai_offline_mode: true,
+  // Offline is on because the stored setting says so, not because the env
+  // pins it — so the toggle stays editable in this fixture.
+  ai_offline_mode_source: 'override',
+  ai_offline_mode_env_pinned: false,
   embedding_provider: 'ollama',
   embedding_model: 'nomic-embed-text',
   ai_confidence_threshold: 80,

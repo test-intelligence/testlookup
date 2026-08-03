@@ -42,8 +42,12 @@ vi.mock('@/services/appSettingsService', () => ({
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin: true }) }))
 
 const mockToastSuccess = vi.fn()
+const mockToastError = vi.fn()
 vi.mock('react-hot-toast', () => ({
-  default: { success: (...a: unknown[]) => mockToastSuccess(...a), error: vi.fn() },
+  default: {
+    success: (...a: unknown[]) => mockToastSuccess(...a),
+    error: (...a: unknown[]) => mockToastError(...a),
+  },
 }))
 
 vi.mock('@/components/ui/PageHeader', () => ({
@@ -63,6 +67,8 @@ function baseConfig(overrides: Partial<AIConfigRead> = {}): AIConfigRead {
     llm_temperature: 0.1,
     llm_max_tokens: 4096,
     ai_offline_mode: true,
+    ai_offline_mode_source: 'override',
+    ai_offline_mode_env_pinned: false,
     embedding_provider: 'ollama',
     embedding_model: 'nomic-embed-text',
     ai_confidence_threshold: 80,
@@ -278,5 +284,74 @@ describe('AIConfigPage — live model status', () => {
       analysis_mode: 'auto',
     })
     expect(mockToastSuccess).toHaveBeenCalledWith('AI configuration saved')
+  })
+})
+
+/**
+ * AI_OFFLINE_MODE is a hard ceiling in the environment (security fix
+ * 2026-08-03): the stored setting may tighten it, never loosen it. The page's
+ * job is to never accept a click it knows the backend will refuse.
+ */
+describe('AIConfigPage — offline mode pinned by the environment', () => {
+  function offlineToggle(): HTMLInputElement {
+    return screen.getByLabelText(/Offline Mode/i) as HTMLInputElement
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUpdateAIConfig.mockResolvedValue(baseConfig())
+    mockGetModelStatus.mockResolvedValue(healthyStatus())
+  })
+
+  it('disables the toggle and names the env var + remedy when env-pinned', async () => {
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({ ai_offline_mode: true, ai_offline_mode_source: 'env', ai_offline_mode_env_pinned: true }),
+    )
+    await renderPage()
+
+    await waitFor(() => expect(offlineToggle()).toBeDisabled())
+    expect(offlineToggle()).toBeChecked()
+
+    const note = screen.getByTestId('offline-mode-pinned-note')
+    expect(note).toHaveTextContent('AI_OFFLINE_MODE')
+    expect(note).toHaveTextContent(/cannot be turned off from this page/i)
+    // The remedy is the environment variable, not a UI action.
+    expect(note).toHaveTextContent(/AI_OFFLINE_MODE=false/)
+    expect(screen.getByText('Pinned by environment')).toBeInTheDocument()
+  })
+
+  it('leaves the toggle editable when the environment permits egress', async () => {
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({ ai_offline_mode: true, ai_offline_mode_source: 'override', ai_offline_mode_env_pinned: false }),
+    )
+    await renderPage()
+
+    await waitFor(() => expect(offlineToggle()).toBeInTheDocument())
+    expect(offlineToggle()).not.toBeDisabled()
+    expect(screen.queryByTestId('offline-mode-pinned-note')).not.toBeInTheDocument()
+  })
+
+  it('surfaces the failure if a disable request reaches the backend anyway', async () => {
+    /*
+     * The disabled input is the first line of defence, but it is only a DOM
+     * attribute — a scripted client, or an older tab, can still PUT
+     * ai_offline_mode=false. The backend answers 409; what must NOT happen is
+     * the page swallowing it and looking saved. (The shared Axios interceptor
+     * additionally toasts the backend's own detail, which names the env var.)
+     */
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({ ai_offline_mode: true, ai_offline_mode_source: 'env', ai_offline_mode_env_pinned: true }),
+    )
+    mockUpdateAIConfig.mockRejectedValue({ response: { status: 409 } })
+    await renderPage()
+
+    await waitFor(() => expect(offlineToggle()).toBeDisabled())
+    fireEvent.click(screen.getByText('Save Configuration'))
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalled())
+    expect(mockToastSuccess).not.toHaveBeenCalled()
+    // The toggle still reports the truth: offline, pinned, read-only.
+    expect(offlineToggle()).toBeChecked()
+    expect(offlineToggle()).toBeDisabled()
   })
 })

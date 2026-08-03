@@ -27,6 +27,17 @@ const ANALYSIS_MODES = [
   { value: 'rules', label: 'Rules-Based', desc: 'Pattern matching + statistics — zero dependencies' },
 ] as const
 
+/**
+ * Shown whenever the backend reports `ai_offline_mode_env_pinned`. Names the
+ * exact lever (an environment variable, not a UI setting) and the exact remedy,
+ * because the operator who needs this string is usually the one wondering why
+ * their click did nothing.
+ */
+const OFFLINE_PINNED_REASON =
+  'Pinned by AI_OFFLINE_MODE in this deployment’s environment — offline mode cannot be ' +
+  'turned off from this page. Set AI_OFFLINE_MODE=false in the backend environment and ' +
+  'restart to permit cloud LLM egress.'
+
 const TIER_LABELS: Record<string, string> = {
   ml: 'Machine Learning',
   llm: 'LLM (AI Agent)',
@@ -261,6 +272,7 @@ export default function AIConfigPage() {
   if (!config) return null
 
   const llmTier = modelStatus?.fallback_chain.find(e => e.mode === 'llm')
+  const offlinePinned = config.ai_offline_mode_env_pinned === true
 
   return (
     <div className="space-y-6">
@@ -437,11 +449,26 @@ export default function AIConfigPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-6">
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-              <input type="checkbox" checked={form.ai_offline_mode ?? true} disabled={!isAdmin}
+            {/* AI_OFFLINE_MODE in the environment is a hard ceiling on outbound
+                LLM egress: this toggle can tighten it, never loosen it. When the
+                env pins it on, the control is disabled and says why — silently
+                accepting a click the backend will refuse (409) is how an operator
+                ends up believing cloud LLM is enabled when it is not. */}
+            <label
+              className={`flex items-center gap-2 text-sm text-[var(--color-text-secondary)] ${
+                offlinePinned ? 'cursor-not-allowed' : 'cursor-pointer'
+              }`}
+              title={offlinePinned ? OFFLINE_PINNED_REASON : undefined}
+            >
+              <input type="checkbox" checked={form.ai_offline_mode ?? true} disabled={!isAdmin || offlinePinned}
                 onChange={e => upd('ai_offline_mode', e.target.checked)}
                 className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
               Offline Mode (air-gapped, Ollama only)
+              {offlinePinned && (
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+                  Pinned by environment
+                </span>
+              )}
             </label>
             <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
               <input type="checkbox" checked={form.deep_investigation_enabled ?? true} disabled={!isAdmin}
@@ -456,6 +483,14 @@ export default function AIConfigPage() {
               Fine-Tuning Pipeline
             </label>
           </div>
+          {offlinePinned && (
+            <p
+              className="text-xs text-[var(--color-text-muted)]"
+              data-testid="offline-mode-pinned-note"
+            >
+              {OFFLINE_PINNED_REASON}
+            </p>
+          )}
         </div>
 
         {/* Knowledge RAG */}
