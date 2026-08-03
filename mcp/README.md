@@ -233,7 +233,7 @@ List open quarantine proposals and approve the one with the highest flip rate
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_compliance_packs` | `release_id` | Generated audit ZIPs with manifest SHA-256 |
-| `generate_compliance_pack` | `release_id`, `notes?`, `retention_days?` | Generate signed audit ZIP (QA_LEAD+ required) |
+| `generate_compliance_pack` | `release_id`, `notes?`, `retention_days?` | Generate tamper-evident audit ZIP — SHA-256 checksum chain, no HMAC/PKI (QA_LEAD+ required) |
 
 ### Flaky quarantine
 

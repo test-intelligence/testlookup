@@ -12,6 +12,17 @@ in MinIO; this table holds the manifest SHA-256 and metadata snapshot.
 Also seeds the ``release_compliance_pack`` feature flag (disabled by
 default) so the new endpoint and UI are observable-zero on existing
 deployments until an admin enables it.
+
+The seeded description originally read "Generate **signed** ZIP compliance
+packs…", which is false: there is no HMAC and no PKI in the pack path, only a
+SHA-256 chain (``manifest.json`` digests every file; ``manifest_sha256``
+digests the manifest). US-13.3 compliance-audit finding 4. The text below is
+the corrected wording, and it is **byte-identical** to the value migration
+0115 UPDATEs deployed rows to — editing an applied migration only reaches
+fresh installs, so 0114 (first pass) and 0115 (final wording) are what fix
+everything already out there. Keep this string and 0115's ``_FINAL`` in sync;
+``tests/regression/test_compliance_pack_tamper_evident_labelling.py`` fails if
+they drift.
 """
 from alembic import op
 import sqlalchemy as sa
@@ -88,7 +99,8 @@ def upgrade() -> None:
             "INSERT INTO feature_flags "
             "(id, key, description, enabled_global, rollout_percent, created_at, updated_at) "
             "VALUES (gen_random_uuid(), 'release_compliance_pack', "
-            "'Generate signed ZIP compliance packs for release decisions. "
+            "'Generate ZIP compliance packs for release decisions, sealed with a "
+            "tamper-evident SHA-256 checksum chain (no HMAC, no PKI). "
             "Tier 1 item 4.', false, 100, now(), now()) "
             "ON CONFLICT (key) DO NOTHING"
         )

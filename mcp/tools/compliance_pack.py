@@ -64,12 +64,13 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         Generate a new release compliance export pack for a release.
 
-        Produces a signed ZIP containing the release snapshot, AI decision
+        Produces a ZIP containing the release snapshot, AI decision
         trail, active ReleaseGatePolicy version, failure clusters,
         defects with Jira links, and all audit events relevant to the
         decision. The ZIP lives in MinIO with a 7-year retention window
         (configurable) and every file is SHA-256 hashed into the manifest
-        for tamper detection.
+        for tamper detection. The pack is tamper-EVIDENT, not tamper-proof:
+        integrity rests on that SHA-256 chain alone — no HMAC, no PKI.
 
         Requires QA_LEAD+ role on the release's project. Returns the
         pack metadata — download via the Release Gate page UI.

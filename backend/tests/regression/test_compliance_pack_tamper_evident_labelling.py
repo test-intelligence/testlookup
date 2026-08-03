@@ -81,16 +81,214 @@ def test_service_has_no_signing_implementation_to_match_the_label():
     assert not hasattr(svc, "hmac")
 
 
+_MIGRATION_0115 = "0115_compliance_pack_flag_drop_signed_wording.py"
+
+
+def _versions_dir():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parents[2] / "migrations" / "versions"
+
+
 def _migration_0114_text() -> str:
+    return (
+        _versions_dir() / "0114_compliance_pack_flag_description.py"
+    ).read_text(encoding="utf-8")
+
+
+def _folded_string_constants(path) -> list[str]:
+    """Every string literal in a migration, with adjacent literals folded.
+
+    Both migrations build their SQL out of implicitly-concatenated string
+    literals, which Python folds at parse time — so the AST hands back one
+    constant per statement and the tests can assert on the real value rather
+    than on how it happens to be line-wrapped.
+    """
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+
+
+def _seeded_description_0066() -> str:
+    """The description literal 0066 INSERTs, pulled out of its SQL."""
+    path = _versions_dir() / "0066_compliance_packs.py"
+    sql = next(
+        s
+        for s in _folded_string_constants(path)
+        if "INSERT INTO feature_flags" in s and "release_compliance_pack" in s
+    )
+    match = re.search(r"'release_compliance_pack',\s*'(.+?)',\s*false", sql)
+    assert match, f"could not locate the seeded description in 0066: {sql}"
+    return match.group(1)
+
+
+def _migration_constant(filename: str, name: str) -> str:
+    """A module-level ``NAME = "…"`` string constant from a migration."""
+    import ast
+
+    path = _versions_dir() / filename
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
+            and isinstance(node.value, ast.Constant)
+        ):
+            return node.value.value
+    raise AssertionError(f"{filename} no longer defines {name}")
+
+
+def _replacement_description_0114() -> str:
+    """0114's ``_NEW`` — the interim wording, superseded by 0115."""
+    return _migration_constant("0114_compliance_pack_flag_description.py", "_NEW")
+
+
+def _final_description_0115() -> str:
+    """0115's ``_FINAL`` — what every install ends up displaying."""
+    return _migration_constant(_MIGRATION_0115, "_FINAL")
+
+
+def _assert_no_unqualified_signing_claim(text: str, where: str) -> None:
+    for match in _CLAIMS_SIGNING.finditer(text):
+        window = text[max(0, match.start() - 30):match.start()].lower()
+        assert "not" in window or "no " in window, (
+            f"{where} claims a signature it does not have: "
+            f"...{text[max(0, match.start() - 60):match.end() + 40]}..."
+        )
+
+
+def _assert_says_nothing_about_signing(text: str, where: str) -> None:
+    """Stricter than the negation-window check: the words must not appear.
+
+    A negated claim ("not cryptographically signed") is honest but still puts
+    the word in front of a reader skimming Settings → Feature Flags, and it
+    leaves "does this claim signing?" answerable only by parsing the sentence.
+    Surfaces that name the mechanism instead ("SHA-256 checksum chain (no HMAC,
+    no PKI)") need no negation, so they can be held to the flat rule.
+    """
+    match = _CLAIMS_SIGNING.search(text)
+    if match is None:
+        return
+    raise AssertionError(
+        f"{where} mentions signing at all — say what the integrity mechanism IS "
+        f"(SHA-256 checksum chain, no HMAC, no PKI) rather than what it is not: "
+        f"...{text[max(0, match.start() - 60):match.end() + 40]}..."
+    )
+
+
+def test_migration_0066_seeds_an_honest_flag_description():
+    """Fresh installs must not be told the packs are signed.
+
+    0066 seeded "Generate **signed** ZIP compliance packs…", which is visible
+    verbatim in Settings → Feature Flags. 0114/0115 repair deployed rows; this
+    guards the value a brand-new database starts from.
+    """
+    description = _seeded_description_0066()
+    assert "tamper-evident" in description.lower()
+    assert "sha-256" in description.lower()
+    _assert_says_nothing_about_signing(description, "0066's seeded flag description")
+
+
+def test_final_flag_description_says_nothing_about_signing():
+    _assert_says_nothing_about_signing(
+        _final_description_0115(), "0115's final flag description"
+    )
+
+
+def test_seeded_and_final_flag_descriptions_are_identical():
+    """Fresh installs and upgraded installs must converge on one string.
+
+    0115's guard is an exact match on the two known prior values, so a fresh
+    database — seeded straight to the final wording by 0066 — is left alone by
+    both data migrations. That is only correct while 0066's literal and 0115's
+    ``_FINAL`` agree; if they drift, the same flag reads differently depending
+    on how old the deployment is, with nothing to reconcile them.
+    """
+    assert _seeded_description_0066() == _final_description_0115()
+
+
+def test_0115_recognises_every_earlier_wording_it_must_replace():
+    """The exact-match guard has to know both prior values, or rows are stranded.
+
+    Pre-0114 installs arrive at 0115 holding 0066's original text (0114 fixed
+    them first, but a database restored from an old dump can arrive either way);
+    at-0114 installs hold 0114's ``_NEW``. Miss one and that population keeps
+    the stale description forever, silently.
+    """
+    original = _migration_constant(_MIGRATION_0115, "_ORIGINAL_0066")
+    interim = _migration_constant(_MIGRATION_0115, "_INTERIM_0114")
+
+    assert original == _migration_constant(
+        "0114_compliance_pack_flag_description.py", "_OLD"
+    ), (
+        "0115's _ORIGINAL_0066 has drifted from 0066's pre-fix text (0114 kept a "
+        "copy as _OLD) — pre-0114 rows would no longer match the guard"
+    )
+    assert interim == _replacement_description_0114(), (
+        "0115's _INTERIM_0114 has drifted from 0114's actual _NEW — at-0114 "
+        "installs would no longer match the guard and would keep the old text"
+    )
+
+    text = (_versions_dir() / _MIGRATION_0115).read_text(encoding="utf-8")
+    upgrade_src = text.split("def upgrade()")[1].split("def downgrade()")[0]
+    assert "IN (:original, :interim)" in upgrade_src, (
+        "0115 must match the known prior values exactly, not LIKE '%signed%' — "
+        "an operator-reworded description must never be clobbered"
+    )
+
+
+def test_migration_0115_is_a_real_migration_on_top_of_0114():
+    text = (_versions_dir() / _MIGRATION_0115).read_text(encoding="utf-8")
+    assert 'revision = "0115"' in text
+    assert 'down_revision = "0114"' in text
+    downgrade_src = text.split("def downgrade()")[1]
+    assert "UPDATE feature_flags" in downgrade_src
+    assert "_INTERIM_0114" in downgrade_src or "interim=" in downgrade_src
+
+
+def test_interim_0114_wording_was_at_least_honest():
+    """0114 stays as shipped — it is applied in the wild and must not be edited.
+
+    It is held to the weaker rule (a negated claim is fine), which is exactly
+    why 0115 exists.
+    """
+    _assert_no_unqualified_signing_claim(
+        _replacement_description_0114(), "0114's interim flag description"
+    )
+
+
+def test_mcp_generate_compliance_pack_tool_makes_no_signing_claim():
+    """The MCP tool docstring is the description an agent reasons over.
+
+    ``generate_compliance_pack`` advertised "Produces a **signed** ZIP", so an
+    agent asked whether a pack is cryptographically signed would have answered
+    yes. Read from source rather than imported — the MCP package pulls in the
+    server runtime, which these unit tests do not stand up.
+    """
+    import ast
     from pathlib import Path
 
     path = (
-        Path(__file__).resolve().parents[2]
-        / "migrations"
-        / "versions"
-        / "0114_compliance_pack_flag_description.py"
+        Path(__file__).resolve().parents[3] / "mcp" / "tools" / "compliance_pack.py"
     )
-    return path.read_text(encoding="utf-8")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    doc = next(
+        (
+            ast.get_docstring(node) or ""
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+            and node.name == "generate_compliance_pack"
+        ),
+        None,
+    )
+    assert doc is not None, "generate_compliance_pack tool disappeared from the MCP surface"
+    _assert_says_nothing_about_signing(doc, "the generate_compliance_pack MCP tool doc")
+    assert "tamper-evident" in doc.lower()
 
 
 def test_migration_0114_corrects_the_user_visible_flag_description():
