@@ -1,9 +1,17 @@
 """Pydantic v2 request/response schemas for all API endpoints."""
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    computed_field,
+    field_validator,
+)
 
 from app.models.postgres import (
     FailureCategory,
@@ -2080,6 +2088,44 @@ class SuppliedCommit(BaseModel):
 _COMMIT_RANGE_MAX = 100
 
 
+class SuppliedCommitRange(BaseModel):
+    """A caller-supplied commit range WITH its boundary refs.
+
+    The original US-8.1 wire shape for ``commit_range`` was a bare list of
+    commits, which threw away the range's boundary: the backend stored
+    ``base_commit = NULL`` and nobody downstream could reconstruct what the
+    range was *relative to*. That makes the row useless as test-impact
+    (Epic 10) training data. This object form carries the boundary the
+    caller already knows (it ran ``git log base..head`` to build the list).
+
+    Both wire shapes stay accepted — ``commit_range`` is
+    ``list[SuppliedCommit] | SuppliedCommitRange`` on every ingest schema,
+    so existing SDK/CLI callers that push a bare list are unaffected.
+    Field aliases accept ``base``/``base_commit`` and ``head``/``head_commit``
+    so callers do not have to guess which spelling we wanted.
+    """
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    base: Optional[str] = Field(
+        None, max_length=64,
+        validation_alias=AliasChoices("base", "base_commit", "from_commit"),
+        description="Commit the range starts AFTER (exclusive) — the baseline ref.",
+    )
+    head: Optional[str] = Field(
+        None, max_length=64,
+        validation_alias=AliasChoices("head", "head_commit", "to_commit"),
+        description="Commit the range ends AT (inclusive) — usually this run's commit.",
+    )
+    commits: List[SuppliedCommit] = Field(
+        default_factory=list, max_length=_COMMIT_RANGE_MAX,
+    )
+
+
+# The accepted wire shapes for a supplied commit range: the legacy bare list
+# or the boundary-carrying object above.
+SuppliedCommitRangeInput = Union[List[SuppliedCommit], SuppliedCommitRange]
+
+
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
 class LiveSessionCreate(BaseModel):
@@ -2121,8 +2167,10 @@ class LiveSessionCreate(BaseModel):
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
     # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
-    # list so air-gapped callers get suspect ranking with no VCS call.
-    commit_range: Optional[List[SuppliedCommit]] = Field(None, max_length=_COMMIT_RANGE_MAX)
+    # list so air-gapped callers get suspect ranking with no VCS call. Accepts
+    # either the legacy bare list or the boundary-carrying
+    # ``{base, head, commits}`` object (see ``SuppliedCommitRange``).
+    commit_range: Optional[SuppliedCommitRangeInput] = None
 
 
 class LiveSessionResponse(BaseModel):
@@ -2247,7 +2295,10 @@ class IngestPayload(BaseModel):
     # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
     # list ([{sha, author, message, files}]) so callers can supply the range
     # since the last green run and get suspect ranking with no VCS call.
-    commit_range: Optional[List[SuppliedCommit]] = Field(None, max_length=_COMMIT_RANGE_MAX)
+    # Accepts either the legacy bare list or the boundary-carrying
+    # ``{base, head, commits}`` object (see ``SuppliedCommitRange``) — only
+    # the latter lets the backend persist the range's base ref.
+    commit_range: Optional[SuppliedCommitRangeInput] = None
 
 
 class IngestResponse(BaseModel):

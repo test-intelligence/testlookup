@@ -1598,11 +1598,24 @@ class RunCommitRange(Base):
     path yielded data — honest empty state). ``commits`` is a bounded
     list of ``{sha, author, message, files, committed_at}`` ordered
     oldest→newest. Suspect ranking (US-8.2) reads this table.
+
+    ``base_source`` (migration 0116) records HOW ``base_commit`` was
+    anchored — a strong anchor and a weak one must never look alike:
+
+      - ``supplied``           — the caller pushed the base ref itself.
+      - ``green_baseline``     — last fully-green prior run (strongest).
+      - ``last_completed_run`` — most recent completed prior run, regardless
+        of pass/fail. WEAKER: "landed since" is then only true relative to
+        that run, not relative to a known-good state.
+      - ``unavailable``        — no base could be determined.
     """
     __tablename__ = "run_commit_ranges"
     __table_args__ = (
         UniqueConstraint("run_id", name="uq_run_commit_ranges_run"),
-        Index("ix_run_commit_ranges_project", "project_id"),
+        # (project_id, resolved_at) covers both the project-only lookups the
+        # old single-column index served (leftmost prefix) and the
+        # TIA-readiness scan, which windows by resolved_at within a project.
+        Index("ix_run_commit_ranges_project_resolved", "project_id", "resolved_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1616,6 +1629,10 @@ class RunCommitRange(Base):
     head_commit: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     base_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     source: Mapped[str] = mapped_column(String(20), nullable=False, server_default="unavailable")
+    # supplied | green_baseline | last_completed_run | unavailable
+    base_source: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="unavailable", server_default="unavailable",
+    )
     commits: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

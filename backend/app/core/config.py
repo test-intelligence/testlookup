@@ -444,6 +444,16 @@ class Settings(BaseSettings):
     GITHUB_TOKEN: Optional[str] = None            # GitHub PAT for build change lookup
     GITHUB_REPO: Optional[str] = None             # e.g. "org/repo"
 
+    # ── Commit attribution (Epic 8) / TIA corpus (Epic 10) ────
+    # How many commits in a resolved range get their changed-file list
+    # fetched. Each one is a separate GitHub API call, so this is a direct
+    # rate-limit knob (see commit_attribution_service._file_fetch_limit for
+    # the arithmetic). Hard-capped at the range size (100) by the service.
+    # 25 is the safe default for suspect ranking; deployments building a
+    # test-impact-analysis corpus want it higher, because a commit stored
+    # with ``files: []`` contributes nothing to a path→test model.
+    COMMIT_RANGE_FILE_FETCH_LIMIT: int = 25
+
     # ── Outbound HTTP / TLS ───────────────────────────────────
     # Default to strict certificate verification. Operators with self-signed
     # internal CAs should set HTTP_CA_BUNDLE to the PEM path instead of

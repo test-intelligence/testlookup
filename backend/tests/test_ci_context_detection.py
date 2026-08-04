@@ -460,6 +460,10 @@ def test_livestream_outside_ci_leaves_meta_untouched(monkeypatch):
 
     stream = tr.LiveStream(
         api_key="tlk_x", run_id="run-1", base_url="http://localhost:8000",
+        # US-8.1 follow-up: LiveStream also collects a commit range from local
+        # git, which would populate meta.metadata regardless of CI. Disabled
+        # here so this test keeps asserting the CI-context invariant only.
+        collect_commit_range=False,
     )
     assert "metadata" not in stream._meta
 

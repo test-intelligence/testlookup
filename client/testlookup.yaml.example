@@ -44,6 +44,15 @@ ci:
   commit_hash: ""                      # TESTLOOKUP_COMMIT (e.g., git SHA)
   tags: []                             # extra tags attached to every run
 
+  # Commit range (US-8.1) — the CLI and Python SDK read base..HEAD out of the
+  # local git checkout (per-commit changed files included) so failures can be
+  # attributed to commits with no VCS token and no network. Enabled by default.
+  # Base selection: this key < TESTLOOKUP_COMMIT_RANGE_BASE < explicit arg;
+  # otherwise the CI provider's own diff base, else merge-base vs the default
+  # branch. Shallow (--depth 1) checkouts degrade to a head-only range.
+  # collect_commit_range: true         # TESTLOOKUP_COMMIT_RANGE (0/false to disable)
+  # commit_range_base: ""              # TESTLOOKUP_COMMIT_RANGE_BASE (ref or SHA)
+
 # Framework-specific overrides (optional)
 # frameworks:
 #   pytest:

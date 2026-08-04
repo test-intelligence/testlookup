@@ -49,6 +49,33 @@ The repo guard is strict: an MR IID is project-scoped, so a run's `ci_repo` must
 - **Performance** (`/settings/performance`) — instance performance diagnostics.
 - **Billing** (`/settings/billing`) — usage/spend views (AI spend also surfaces in the [Intelligence Hub](ai-features.md#run-intelligence-intelligence-runsidintelligence)).
 
+## Commit attribution & TIA readiness
+
+Every run can carry a **commit range** — the commits that landed between a baseline and the run's own commit. It powers suspect ranking on a failure, and it is the raw material for any future test-impact analysis (which tests a given file change is likely to break).
+
+**Where the range comes from** (`source`):
+
+| `source` | Meaning |
+|---|---|
+| `supplied` | Your CI/SDK pushed the commit list on ingest. No outbound VCS call — the air-gapped path. Always wins over the connector. |
+| `connector` | Fetched from the configured GitHub integration (subject to `AI_OFFLINE_MODE` and the `github_checks` flag). |
+| `unavailable` | Neither path yielded anything. Recorded explicitly, with no invented range. |
+
+**What the range is measured *from*** (`base_source`) — reported separately, because these anchors are not equally trustworthy:
+
+| `base_source` | Strength | Meaning |
+|---|---|---|
+| `supplied` | strong | You told us the base ref. |
+| `green_baseline` | strong | The last fully-green prior run on the branch. "Landed since a known-good state" is literally true. |
+| `last_completed_run` | **weak** | The last *completed* prior run, pass or fail. Used when the project has no all-green run to anchor on. The range may include changes that were already present when the baseline failed — treat it as "here's roughly the window", not a clean before/after. |
+| `unavailable` | — | No base could be determined. |
+
+The API exposes `base_anchor_is_strong` alongside the label so a weak anchor can be caveated rather than presented as a green baseline.
+
+**Changed-file detail.** Suspect ranking and any path-based model need each commit's changed files, and each one is a separate GitHub API call. `COMMIT_RANGE_FILE_FETCH_LIMIT` (default **25**) caps how many commits in a range get that detail; commits past the cap are stored with an empty file list. An authenticated PAT allows 5 000 GitHub REST calls/hour, and one resolve costs `1 + limit` calls — so 25 supports ~190 runs/hour, 50 supports ~98, 100 supports ~49. Raise it only if you are deliberately building a test-impact corpus, since a commit stored without files contributes nothing to a path model.
+
+**Is there enough data to model with yet?** `GET /api/v1/metrics/tia-readiness?project_id=…&days=90` answers that for **one project, from that project's own runs** — never a fleet average. It counts the runs whose range resolved *and* carries changed files, the calendar span they cover, and the distinct paths seen, then returns either `available: true` or `available: false` with an `insufficient_data_reason` naming the single thing to fix next (no ranges at all / ranges but no file detail / too few runs / too short a span / too narrow a path spread). The thresholds it applies are returned in the response so you can judge them yourself — they are a floor below which training is obviously premature, not a promise that training above them will work.
+
 ## Data retention & purge
 
 Per-project retention policies keep disk usage bounded without giving up your audit trail. Policies are **off by default** — nothing is ever purged until an ADMIN enables a project's policy. Everything is served by `GET/PUT /api/v1/projects/{id}/retention-policy` plus the `preview` and `purge` sub-endpoints.

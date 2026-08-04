@@ -738,7 +738,7 @@ def ingest_uploaded_file(
     pr_number: int = None,
     ci_actor: str = None,
     ci_run_url: str = None,
-    commit_range: list = None,
+    commit_range=None,  # bare list OR {base, head, commits}; both JSON-safe
 ):
     """
     Parse an uploaded test result file and ingest.

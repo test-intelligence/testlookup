@@ -59,6 +59,10 @@ import httpx
 # detects ci_provider / ci_repo / pr_number / ci_actor / ci_run_url from
 # standard CI env vars (US-4.3b); explicit values always win.
 from ci_context import resolve_ci_context
+# Collects base..HEAD (with per-commit changed files) from local git so
+# failures can be attributed to commits offline (US-8.1). Best-effort: any
+# git problem yields None and the field is simply omitted.
+from commit_range import resolve_commit_range
 
 __version__ = "1.0.0"
 __all__ = ["TestLookupReporter", "LiveSession", "LiveStream"]
@@ -221,6 +225,9 @@ class ConfigLoader:
         "testlookup.pr_number":    ("ci", "pr_number"),
         "testlookup.ci_actor":     ("ci", "actor"),
         "testlookup.ci_run_url":   ("ci", "run_url"),
+        # Commit range (US-8.1) — collected from local git; see commit_range.py.
+        "testlookup.commit_range":      ("ci", "collect_commit_range"),
+        "testlookup.commit_range_base": ("ci", "commit_range_base"),
         # TLS — homelab / dev convenience. Either point at a custom CA bundle
         # (preferred — preserves verification) or disable verification entirely.
         "testlookup.ca_cert_path": ("auth", "ca_cert_path"),
@@ -252,6 +259,9 @@ class ConfigLoader:
         "TESTLOOKUP_PR_NUMBER":   ("ci", "pr_number"),
         "TESTLOOKUP_CI_ACTOR":    ("ci", "actor"),
         "TESTLOOKUP_CI_RUN_URL":  ("ci", "run_url"),
+        # Commit-range collection (US-8.1) — opt-out + explicit base.
+        "TESTLOOKUP_COMMIT_RANGE":      ("ci", "collect_commit_range"),
+        "TESTLOOKUP_COMMIT_RANGE_BASE": ("ci", "commit_range_base"),
     }
 
     @classmethod
@@ -392,6 +402,15 @@ def _ci_overrides_from_config(cfg: dict) -> dict:
     }
 
 
+def _commit_range_overrides_from_config(cfg: dict) -> dict:
+    """Pull the user's explicit commit-range config (file + env overlay) into
+    the keys ``commit_range.collect_commit_range`` consumes."""
+    return {
+        "collect_commit_range": ConfigLoader.get(cfg, "ci.collect_commit_range"),
+        "commit_range_base":    ConfigLoader.get(cfg, "ci.commit_range_base"),
+    }
+
+
 # ── Reporter ──────────────────────────────────────────────────────────────────
 
 class TestLookupReporter:
@@ -407,6 +426,10 @@ class TestLookupReporter:
     framework   : Test framework name (default: "python")
     batch_size  : Events per flush (default: 50)
     batch_interval_ms : Max ms between flushes (default: 100)
+    commit_range_base : Base ref/SHA for local-git commit collection (US-8.1).
+                  Overrides CI detection and the merge-base fallback.
+    collect_commit_range : False disables commit collection entirely
+                  (same as TESTLOOKUP_COMMIT_RANGE=0 / testlookup.commit_range=false).
     """
 
     def __init__(
@@ -420,6 +443,8 @@ class TestLookupReporter:
         batch_size: int = BATCH_SIZE,
         batch_interval_ms: int = BATCH_INTERVAL_MS,
         verify_ssl: bool = True,
+        commit_range_base: Optional[str] = None,
+        collect_commit_range: Optional[bool] = None,
     ) -> None:
         # Resolve config from file + env vars, then overlay constructor args
         cfg = ConfigLoader.load()
@@ -456,6 +481,15 @@ class TestLookupReporter:
         # testlookup.ci_* config / TESTLOOKUP_CI_* env values winning. Merged
         # into every session-create payload; per-session args win over this.
         self._ci_context = resolve_ci_context(overrides=_ci_overrides_from_config(cfg))
+        # Commit range (US-8.1): walked from local git ONCE per reporter and
+        # reused by every session — the checkout doesn't change mid-run.
+        # Collection is best-effort; None means "send nothing", which is the
+        # honest answer when no base can be determined.
+        self._commit_range = resolve_commit_range(
+            explicit_base=commit_range_base,
+            overrides=_commit_range_overrides_from_config(cfg),
+            enabled=collect_commit_range,
+        )
         self._batch_size = min(
             batch_size if batch_size != BATCH_SIZE else int(ConfigLoader.get(cfg, "reporting.batch_size", BATCH_SIZE)),
             MAX_BATCH_SIZE,
@@ -494,12 +528,17 @@ class TestLookupReporter:
         pr_number: Optional[int] = None,
         ci_actor: Optional[str] = None,
         ci_run_url: Optional[str] = None,
+        commit_range: Optional[list] = None,
     ):
         """
         Async context manager that manages the full session lifecycle:
           __aenter__ → register session with server
           yield      → LiveSession object for recording events
           __aexit__  → flush remaining events + mark session complete
+
+        ``commit_range`` overrides the reporter-level local-git collection
+        (US-8.1) for this session only; leave it None to use what the
+        reporter walked at construction.
         """
         # Per-session suite overrides the reporter-level default; otherwise
         # inherit testlookup.suite > testlookup.launch resolved in __init__.
@@ -522,6 +561,7 @@ class TestLookupReporter:
             pr_number=pr_number,
             ci_actor=ci_actor,
             ci_run_url=ci_run_url,
+            commit_range=commit_range,
         )
         try:
             yield live
@@ -545,6 +585,10 @@ class TestLookupReporter:
         }
         ci_context = dict(self._ci_context)
         ci_context.update({k: v for k, v in explicit_ci.items() if v is not None})
+        # Commit range (US-8.1): reporter-level collection is the default, an
+        # explicit per-session list wins. Popped so the generic kwargs splat
+        # below can't also set it.
+        commit_range = kwargs.pop("commit_range", None) or self._commit_range
         payload: dict[str, Any] = {
             "project_id": self._project_id,
             "client_name": self._client_name,
@@ -553,6 +597,8 @@ class TestLookupReporter:
         }
         payload.update({k: v for k, v in kwargs.items() if v is not None})
         payload.update(ci_context)
+        if commit_range:
+            payload["commit_range"] = commit_range
         if suite_for_session is not None:
             payload["suite_name"] = suite_for_session
 
@@ -897,6 +943,8 @@ class LiveStream:
     base_url    : Server URL (env TESTLOOKUP_URL by default)
     build_number, branch, commit_hash, framework, total_tests, machine_id,
     release_name, metadata : Optional CI metadata sent with the first batch.
+    commit_range_base, collect_commit_range : Local-git commit collection
+        (US-8.1) — pin the base ref, or pass False to skip collection.
     batch_size, batch_interval_ms, verify_ssl : Batching/transport tuning.
     """
 
@@ -920,6 +968,8 @@ class LiveStream:
         pr_number: Optional[int] = None,
         ci_actor: Optional[str] = None,
         ci_run_url: Optional[str] = None,
+        commit_range_base: Optional[str] = None,
+        collect_commit_range: Optional[bool] = None,
         batch_size: int = BATCH_SIZE,
         batch_interval_ms: int = BATCH_INTERVAL_MS,
         verify_ssl: Any = None,
@@ -1017,6 +1067,21 @@ class LiveStream:
             meta_md = dict(self._meta.get("metadata") or {})
             meta_md["ci_context"] = {**ci_context, **(meta_md.get("ci_context") or {})}
             self._meta["metadata"] = meta_md
+        # Commit range (US-8.1): /stream/ingest has no typed field, but the
+        # server copies meta.metadata verbatim into LiveSession.extra_metadata
+        # and reads extra_metadata["commit_range"] back at persist time — the
+        # same channel ci_context rides. A caller-supplied
+        # metadata["commit_range"] always wins over collection.
+        commit_range = resolve_commit_range(
+            explicit_base=commit_range_base,
+            overrides=_commit_range_overrides_from_config(cfg),
+            enabled=collect_commit_range,
+        )
+        if commit_range:
+            meta_md = dict(self._meta.get("metadata") or {})
+            if not meta_md.get("commit_range"):
+                meta_md["commit_range"] = commit_range
+                self._meta["metadata"] = meta_md
         # Cached for record() default — see LiveStream.record below.
         self._default_suite_name = resolved_suite
 

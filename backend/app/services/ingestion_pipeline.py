@@ -8,7 +8,7 @@ Used by:
 """
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from sqlalchemy import select
@@ -67,7 +67,9 @@ async def create_run_from_payload(
     pr_number: Optional[int] = None,
     ci_actor: Optional[str] = None,
     ci_run_url: Optional[str] = None,
-    commit_range: Optional[list] = None,
+    # Either supplied wire shape: a bare commit list, or the boundary-carrying
+    # ``{base, head, commits}`` object (``SuppliedCommitRangeInput``).
+    commit_range: Optional[Any] = None,
 ) -> TestRun:
     """
     Create a TestRun record for API-ingested data.
@@ -164,12 +166,14 @@ async def create_run_from_payload(
 
 
 async def _store_supplied_commit_range(
-    db: AsyncSession, run: TestRun, commit_range: Optional[list],
+    db: AsyncSession, run: TestRun, commit_range: Optional[Any],
 ) -> None:
     """Best-effort persist of a caller-supplied commit range (US-8.1).
 
-    Never raises — a malformed commit list must not fail ingestion. Empty /
-    absent lists are a no-op (finalize's connector path may still resolve one).
+    Accepts either wire shape (bare list, or ``{base, head, commits}`` — only
+    the latter lets the base ref be persisted). Never raises — a malformed
+    commit range must not fail ingestion. Empty / absent ranges are a no-op
+    (finalize's connector path may still resolve one).
     """
     if not commit_range:
         return

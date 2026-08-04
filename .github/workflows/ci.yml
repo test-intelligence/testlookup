@@ -362,6 +362,49 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   # JOB 4: Build & push Docker images (only on main branch)
   # ─────────────────────────────────────────────────────────────
+  sdk-cli-test:
+    name: SDK & CLI — Test
+    runs-on: ubuntu-latest
+    # The Python SDK (client/) and CLI (cli/) have their own test suites that
+    # NOTHING ran until now: backend/pytest.ini sets `testpaths = tests` and the
+    # backend job runs pytest from ./backend, so client/tests and cli/tests were
+    # never collected. The commit-range collector added 165 tests that would
+    # have been decorative without this job.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Commit-range tests build real git repos, and some assert behaviour
+          # against a genuine shallow clone — a depth-1 checkout here would
+          # confuse "the repo under test" with "the repo being tested from".
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install SDK + CLI with their real dependencies
+        # Install both packages rather than hand-picking imports: the reporter
+        # needs httpx and the CLI needs typer/rich/pydantic. Pinning that list
+        # here would silently rot the moment either pyproject.toml changes.
+        # Non-editable on purpose: it exercises the same wheel build a user
+        # gets from `pip install ./cli`, and hatchling's editable (PEP 660)
+        # hook is not available on every pinned version.
+        run: |
+          pip install pytest
+          pip install ./client
+          pip install ./cli
+
+      - name: Configure git identity (tests create real repos)
+        run: |
+          git config --global user.email "ci@testlookup.invalid"
+          git config --global user.name "TestLookup CI"
+          git config --global init.defaultBranch main
+
+      - name: Run SDK + CLI tests
+        run: python -m pytest client/tests cli/tests -q
+
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest

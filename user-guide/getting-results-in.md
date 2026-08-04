@@ -97,6 +97,42 @@ Explicit values always win over detection:
 
 The fields land on the run (`ci_provider` / `ci_repo` / `pr_number` / `ci_actor` / `ci_run_url`) and anchor PR-level features: with the [GitHub integration](administration.md#github-settingsgithub) configured, runs carrying a matching repo + PR number get a **sticky PR summary comment** (newly-failed / known-flaky / fixed tests), and commit attribution builds on the same fields. GitLab CI runs work the same way — `CI_PROJECT_PATH` → `ci_repo`, `CI_MERGE_REQUEST_IID` → `pr_number` — and with the [GitLab integration](administration.md#gitlab-settingsgitlab) configured get the equivalent **sticky MR note** plus a **commit status** ([recipe](reference/testlookup-gitlab-ci.yml)).
 
+## Commit range (who changed what)
+
+Alongside CI context, the **CLI and the Python SDK collect the commit range for the run from your local git checkout** and send it with the results. This is what lets TestLookup say *which commits are suspect* for a failure — and it is the training input for future test-impact analysis (running only the tests a change can affect).
+
+It works **fully offline**: no personal access token, no VCS API call, no network. `git` is already there in any CI checkout. The alternative connector path needs a token, a matching repo, outbound network, and a fully-green baseline run — so it yields nothing on air-gapped installs.
+
+**What's collected** — for each commit between the base and `HEAD`, oldest first: the SHA, author name, the first line of the message, the ISO commit date, and the list of changed file paths. Nothing else — no diffs, no file contents, no author email. Bounded at 100 commits (the newest 100 if the range is longer), 500 files per commit, and 512 characters per path.
+
+**How the base commit is chosen** (first one that resolves wins):
+
+1. **You said so** — `--commit-range-base` on the CLI, `commit_range_base=` on the Python SDK.
+2. **`TESTLOOKUP_COMMIT_RANGE_BASE`** environment variable.
+3. **`testlookup.commit_range_base`** in `testlookup.yaml`.
+4. **Your CI system's diff base**, read from its own documented variables:
+   - *GitHub Actions* — the PR event payload's `base.sha`, else `GITHUB_BASE_REF`; for push events, the payload's `before`.
+   - *GitLab CI* — `CI_MERGE_REQUEST_DIFF_BASE_SHA`, else `CI_MERGE_REQUEST_TARGET_BRANCH_SHA`, `CI_COMMIT_BEFORE_SHA`, or the target branch name.
+   - *Jenkins* — `CHANGE_TARGET` (multibranch PR builds), else `GIT_PREVIOUS_SUCCESSFUL_COMMIT` / `GIT_PREVIOUS_COMMIT`.
+   - *Azure DevOps* — `SYSTEM_PULLREQUEST_TARGETBRANCH` / `…TARGETBRANCHNAME`.
+   - *CircleCI* — **not detected.** CircleCI has no built-in *environment variable* carrying a diff base (`pipeline.git.base_revision` is a pipeline value you must map into the job yourself). Rather than guess, CircleCI falls through to step 5. To use the pipeline value, map it yourself: `TESTLOOKUP_COMMIT_RANGE_BASE: << pipeline.git.base_revision >>`.
+5. **Local git** — `git merge-base` against the default branch; if you're already on it, the previous commit.
+
+If none of these resolve, **nothing is sent**. An absent range is honest; a wrong one poisons the analysis. A base *you* supplied (steps 1–3) that doesn't resolve is never silently replaced with a guess.
+
+> **Shallow clones.** CI checkouts are frequently `--depth 1`, where the base commit simply isn't in history. This is detected (`git rev-parse --is-shallow-repository`) and degrades to a **head-only** range — the one commit that provably is present — never a fabricated one. For a full range, deepen the checkout: `fetch-depth: 0` on `actions/checkout`, `GIT_DEPTH: 0` on GitLab.
+
+**Turning it off** — any of:
+
+- `testlookup upload file … --no-commit-range`
+- `TESTLOOKUP_COMMIT_RANGE=0` (also accepts `false` / `no` / `off`)
+- `testlookup.commit_range: false` in `testlookup.yaml`
+- `TestLookupReporter(…, collect_commit_range=False)` / `LiveStream(…, collect_commit_range=False)`
+
+Collection **can never fail your test run**. Any git problem — no git binary, not a repo, timeout, unreadable history — is logged at debug level and the range is simply omitted. It also never writes to stdout, so `testlookup upload … --output json | jq` stays clean.
+
+Collection currently ships in the **CLI** and the **Python SDK**. The JS, Java, and Go SDKs still send CI context but not the commit range; set `TESTLOOKUP_COMMIT_RANGE_BASE` there if you need it, or upload via the CLI.
+
 ## After ingest: what happens automatically
 
 1. Per-test rows are persisted and each test gets its cross-run **fingerprint**.

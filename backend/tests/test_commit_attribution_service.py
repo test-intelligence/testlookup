@@ -433,8 +433,9 @@ async def test_fetch_detail_host_rechecked_once_and_blocks_fan_out():
 
 @pytest.mark.asyncio
 async def test_fetch_detail_fan_out_is_capped():
-    """Only the first ``_MAX_COMMIT_FILE_FETCHES`` commits get a detail GET."""
-    n = svc._MAX_COMMIT_FILE_FETCHES + 10
+    """Only the first ``_file_fetch_limit()`` commits get a detail GET."""
+    limit = svc._file_fetch_limit()
+    n = limit + 10
     compare_body = {
         "commits": [
             {"sha": f"{i:040x}", "commit": {"author": {"name": "Al"}, "message": "m"}}
@@ -453,7 +454,7 @@ async def test_fetch_detail_fan_out_is_capped():
          patch.object(svc, "_gh_get", side_effect=fake_gh_get):
         commits = await svc._fetch_connector_range(_target(), "b" * 40, "h" * 40, run_id=RUN_ID)
     assert commits is not None and len(commits) == n
-    assert len(detail_urls) == svc._MAX_COMMIT_FILE_FETCHES
+    assert len(detail_urls) == limit
     assert commits[0]["files"] == ["x.py"]
     assert commits[-1]["files"] == []  # beyond the cap: no detail fetched
 

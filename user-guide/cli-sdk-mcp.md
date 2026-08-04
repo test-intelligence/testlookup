@@ -43,6 +43,17 @@ All SDKs share one config discovery, so you configure once per repo (see `client
 - **Precedence** (highest wins): constructor args > environment variables > config file > built-in defaults.
 - **Secrets stay in env vars** (`TESTLOOKUP_API_KEY`); the file is for non-secret config (`server.url` / `TESTLOOKUP_URL`, project ID) and is safe to commit.
 
+### Commit range from local git
+
+The CLI and the Python SDK read the run's commit range (base…`HEAD`, with per-commit changed files) straight out of your git checkout and attach it to the results — no token, no network, no green baseline needed. It powers commit attribution and is the input future test-impact analysis trains on. Base selection, the shallow-clone caveat, and how to opt out are documented in [Getting results in → Commit range](getting-results-in.md#commit-range-who-changed-what).
+
+Quick reference:
+
+| Setting | CLI | Python SDK | Env | `testlookup.yaml` |
+|---|---|---|---|---|
+| Pin the base | `--commit-range-base` | `commit_range_base=` | `TESTLOOKUP_COMMIT_RANGE_BASE` | `testlookup.commit_range_base` |
+| Turn it off | `--no-commit-range` | `collect_commit_range=False` | `TESTLOOKUP_COMMIT_RANGE=0` | `testlookup.commit_range: false` |
+
 ### Framework notes
 
 - **Java/TestNG**: register the listener in your suite XML; the suite name is inherited from `<suite name="…">`, so parallel classes group under one logical suite.

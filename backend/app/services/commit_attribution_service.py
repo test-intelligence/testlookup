@@ -21,6 +21,20 @@ When neither path yields data we persist an honest ``unavailable`` row so
 the UI can say so plainly. Persistence is idempotent per run
 (``run_commit_ranges.run_id`` UNIQUE).
 
+**Base anchoring (2026-08).** The connector originally required a fully
+all-green prior run to anchor the range. Projects with a persistent
+flaky/failing tail — exactly the ones that need attribution — never have
+one, so every run resolved to ``unavailable`` forever. There is now a
+fallback anchor (most recent completed prior run with a commit hash,
+pass/fail irrelevant), and every row records WHICH anchor it used in
+``base_source``: ``supplied`` | ``green_baseline`` |
+``last_completed_run`` | ``unavailable``. A weaker anchor is acceptable;
+presenting it as if it were a green baseline is not.
+
+**TIA readiness.** ``get_tia_readiness`` measures, per project, whether
+these rows have accumulated into a corpus a test-impact model could
+actually be trained on — see the section at the bottom of this module.
+
 **US-8.2 — suspect ranking.** ``rank_suspects`` scores each commit in the
 range for a newly-failing cluster/test with a DETERMINISTIC heuristic (no
 LLM this slice): path/package overlap between the commit's changed files
@@ -78,21 +92,55 @@ SOURCE_CONNECTOR = "connector"
 SOURCE_SUPPLIED = "supplied"
 SOURCE_UNAVAILABLE = "unavailable"
 
+# Base-anchor provenance persisted on ``run_commit_ranges.base_source``
+# (migration 0116). ``source`` says HOW the commit list was acquired;
+# ``base_source`` says WHAT the range is measured FROM — a distinction that
+# matters because the two anchors below are not equally trustworthy.
+BASE_SOURCE_SUPPLIED = "supplied"              # caller pushed the base ref
+BASE_SOURCE_GREEN = "green_baseline"           # last all-green prior run
+BASE_SOURCE_LAST_COMPLETED = "last_completed_run"  # weaker: any completed prior run
+BASE_SOURCE_UNAVAILABLE = "unavailable"        # no base could be determined
+BASE_SOURCES = (
+    BASE_SOURCE_SUPPLIED,
+    BASE_SOURCE_GREEN,
+    BASE_SOURCE_LAST_COMPLETED,
+    BASE_SOURCE_UNAVAILABLE,
+)
+# Anchors strong enough that "commits landed since a known state" is literally
+# true. ``last_completed_run`` is deliberately excluded — see its constant.
+STRONG_BASE_SOURCES = (BASE_SOURCE_SUPPLIED, BASE_SOURCE_GREEN)
+
 # Bound the connector fetch — a compare across a stale baseline could span
 # thousands of commits; ranking beyond ~100 adds noise, not signal.
 _MAX_COMMITS = 100
-# Per-commit changed-file detail is one API call each; cap the fan-out. 25 is
-# deliberate: per the module docstring the ranking is a path-overlap heuristic
-# whose signal decays fast across a long range — detail beyond the first 25
-# commits adds API-rate-limit burn, not ranking signal.
-_MAX_COMMIT_FILE_FETCHES = 25
+# Per-commit changed-file detail is one API call each, so this is a direct
+# rate-limit knob rather than a modelling one.
+#
+# Arithmetic (authenticated PAT = 5 000 GitHub REST calls/hour/token, shared
+# with the checks service): one resolve costs ``1 + N`` calls, so the ceiling
+# is ``5000 / (1 + N)`` resolves per hour per token — N=25 → ~192 runs/h,
+# N=50 → ~98, N=100 → ~49.
+#
+# Why it is now configurable rather than fixed at 25: the two consumers want
+# different values and neither is wrong.
+#   * Suspect ranking (US-8.2) is a path-overlap heuristic whose signal decays
+#     fast across a long range; detail past the first ~25 commits buys almost
+#     no ranking accuracy, so 25 stays the DEFAULT.
+#   * A test-impact (Epic 10) corpus is the opposite: a commit persisted with
+#     ``files: []`` contributes exactly zero path→test evidence, so capping at
+#     25 silently discards up to 75 % of every long range's training value.
+# Leaving one hard-coded number would have quietly picked ranking over TIA for
+# every deployment. ``settings.COMMIT_RANGE_FILE_FETCH_LIMIT`` lets an operator
+# building a corpus pay the rate-limit cost knowingly; the readiness metric
+# below reports ``file_detail_coverage`` so they can see whether it is needed.
+_DEFAULT_COMMIT_FILE_FETCHES = 25
 # Concurrent per-commit detail fetches per gather batch.
 _DETAIL_FETCH_CHUNK = 8
 _HTTP_TIMEOUT = 10.0
 
 # An ``unavailable`` row younger than this suppresses re-resolution — without
 # it every GET /commit-range on a range-less run re-ran the connector (up to
-# 1 + _MAX_COMMIT_FILE_FETCHES GitHub calls per request; rate-limit burn).
+# 1 + the file-fetch limit GitHub calls per request; rate-limit burn).
 _RERESOLVE_COOLDOWN = timedelta(hours=6)
 
 # First-line message cap for storage / display.
@@ -118,6 +166,22 @@ _NOISE_SEGMENTS = {
 
 
 # ── Pure helpers (unit-tested directly) ──────────────────────────────────────
+
+
+def _file_fetch_limit() -> int:
+    """Per-commit changed-file fan-out cap, clamped to ``1.._MAX_COMMITS``.
+
+    Read per call (not snapshotted at import) so a settings override applies
+    without a restart, and so tests can patch ``settings`` directly.
+    """
+    from app.core.config import settings
+
+    raw = getattr(settings, "COMMIT_RANGE_FILE_FETCH_LIMIT", _DEFAULT_COMMIT_FILE_FETCHES)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_COMMIT_FILE_FETCHES
+    return max(1, min(value, _MAX_COMMITS))
 
 
 def _first_line(message: Optional[str]) -> str:
@@ -285,6 +349,42 @@ def normalize_supplied_range(raw_commits: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _clean_ref(value: Any) -> Optional[str]:
+    """A commit ref stripped + bounded to the ``String(64)`` column, or None."""
+    ref = str(value or "").strip()
+    return ref[:64] or None
+
+
+def normalize_supplied_payload(raw: Any) -> tuple[Optional[str], Optional[str], list[dict[str, Any]]]:
+    """Normalize either supplied wire shape into ``(base, head, commits)``.
+
+    Two shapes are accepted (``SuppliedCommitRangeInput``):
+
+    * the legacy bare list ``[{sha, ...}, ...]`` — no boundary refs, so
+      ``base``/``head`` come back ``None``;
+    * the boundary-carrying object ``{base, head, commits: [...]}`` (also
+      spelled ``base_commit``/``head_commit`` or ``from_commit``/``to_commit``).
+
+    Pydantic models are accepted alongside plain dicts because this runs on
+    both the HTTP path (validated models) and the Celery path (JSON dicts).
+    """
+    if raw is None:
+        return None, None, []
+    if hasattr(raw, "model_dump") and not isinstance(raw, (list, dict)):
+        raw = raw.model_dump()
+    if isinstance(raw, list):
+        return None, None, normalize_supplied_range(raw)
+    if isinstance(raw, dict):
+        base = _clean_ref(
+            raw.get("base") or raw.get("base_commit") or raw.get("from_commit")
+        )
+        head = _clean_ref(
+            raw.get("head") or raw.get("head_commit") or raw.get("to_commit")
+        )
+        return base, head, normalize_supplied_range(raw.get("commits"))
+    return None, None, []
+
+
 def _commit_html_url(ci_repo: Optional[str], api_base: Optional[str], sha: str) -> Optional[str]:
     """Best-effort deep link to a commit. ``None`` when we can't honestly
     build one (no repo known) — the UI then shows the SHA as plain text."""
@@ -306,29 +406,36 @@ def _commit_html_url(ci_repo: Optional[str], api_base: Optional[str], sha: str) 
 # ── Baseline / connector fetch ───────────────────────────────────────────────
 
 
-async def _last_green_run(db: AsyncSession, run: TestRun) -> Optional[TestRun]:
-    """Most recent completed, all-green run for the same project on the same
-    branch (falling back to main/master) that predates this run and carries a
-    commit hash — the ``base`` of the range.
+def _anchor_predicates(run: TestRun) -> tuple:
+    """Shared predicates for any run that can anchor a range: same project,
+    not this run, finished, carries a commit hash, and PREDATES this run.
 
-    Green = zero failed and zero broken. We require a ``commit_hash`` because
-    it's the base of the compare; a green run without one can't anchor a range.
+    The "predates" clause matters — without it a *later* run could be picked
+    as the base and the compare would be inverted (or empty), which is a
+    fabricated range dressed up as a real one.
     """
-    recency = func.coalesce(TestRun.end_time, TestRun.created_at).desc()
-    green = (
+    preds = [
         TestRun.project_id == run.project_id,
         TestRun.id != run.id,
         TestRun.status != "IN_PROGRESS",
-        func.coalesce(TestRun.failed_tests, 0) == 0,
-        func.coalesce(TestRun.broken_tests, 0) == 0,
         TestRun.commit_hash.isnot(None),
         TestRun.commit_hash != "",
-    )
-    # Prefer the same branch as this run.
+    ]
+    pivot = getattr(run, "end_time", None) or getattr(run, "created_at", None)
+    if pivot is not None:
+        preds.append(func.coalesce(TestRun.end_time, TestRun.created_at) < pivot)
+    return tuple(preds)
+
+
+async def _pick_anchor(db: AsyncSession, run: TestRun, extra: tuple) -> Optional[TestRun]:
+    """Most recent qualifying run on this run's branch, falling back to
+    main/master. ``extra`` adds the anchor-class-specific predicates."""
+    recency = func.coalesce(TestRun.end_time, TestRun.created_at).desc()
+    base_preds = _anchor_predicates(run) + tuple(extra)
     if run.branch:
         result = await db.execute(
             select(TestRun)
-            .where(*green, func.lower(TestRun.branch) == run.branch.lower())
+            .where(*base_preds, func.lower(TestRun.branch) == run.branch.lower())
             .order_by(recency)
             .limit(1)
         )
@@ -337,11 +444,70 @@ async def _last_green_run(db: AsyncSession, run: TestRun) -> Optional[TestRun]:
             return row
     result = await db.execute(
         select(TestRun)
-        .where(*green, func.lower(TestRun.branch).in_(("main", "master")))
+        .where(*base_preds, func.lower(TestRun.branch).in_(("main", "master")))
         .order_by(recency)
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _last_green_run(db: AsyncSession, run: TestRun) -> Optional[TestRun]:
+    """Most recent completed, all-green run for the same project on the same
+    branch (falling back to main/master) that predates this run and carries a
+    commit hash — the STRONGEST ``base`` for the range.
+
+    Green = zero failed and zero broken. We require a ``commit_hash`` because
+    it's the base of the compare; a green run without one can't anchor a range.
+    """
+    return await _pick_anchor(db, run, (
+        func.coalesce(TestRun.failed_tests, 0) == 0,
+        func.coalesce(TestRun.broken_tests, 0) == 0,
+    ))
+
+
+async def _last_completed_run(db: AsyncSession, run: TestRun) -> Optional[TestRun]:
+    """Most recent completed prior run with a commit hash, REGARDLESS of
+    pass/fail — the fallback anchor.
+
+    Why this exists: requiring a fully-green baseline made the connector a
+    dead end for exactly the projects that need attribution most. A project
+    with a persistent flaky/failing tail never has an all-green run, so
+    ``resolve_commit_range`` short-circuited to ``unavailable`` forever and
+    the range corpus stayed empty.
+
+    This anchor is genuinely weaker — "landed since" is only true relative to
+    a run that was itself failing, so the range can contain changes that were
+    already in the baseline's tree when it failed. That is why it is recorded
+    as ``base_source=last_completed_run`` rather than being blended into the
+    green case: consumers get a real range AND the fact that its boundary is
+    a weak one.
+    """
+    return await _pick_anchor(db, run, ())
+
+
+async def resolve_base_anchor(
+    db: AsyncSession, run: TestRun,
+) -> tuple[Optional[TestRun], str]:
+    """Pick the range's base run + label WHICH anchor class it is.
+
+    Order: green baseline (strong) → last completed run (weak) → none. The
+    returned label is persisted verbatim as ``base_source``; it must never
+    over-state the anchor actually used.
+    """
+    green = await _last_green_run(db, run)
+    if green is not None:
+        return green, BASE_SOURCE_GREEN
+    fallback = await _last_completed_run(db, run)
+    if fallback is not None:
+        logger.info(
+            "commit_range using weak base anchor",
+            run_id=str(run.id),
+            base_run_id=str(fallback.id),
+            base_source=BASE_SOURCE_LAST_COMPLETED,
+            reason="no all-green prior run on this branch",
+        )
+        return fallback, BASE_SOURCE_LAST_COMPLETED
+    return None, BASE_SOURCE_UNAVAILABLE
 
 
 async def _gh_get(
@@ -470,7 +636,7 @@ async def _fetch_connector_range(
         # detail for the first N commits (bounded fan-out). Re-check the
         # resolved api_base host ONCE before the fan-out (DNS-rebinding
         # window since the compare check) rather than per commit.
-        to_fetch = [m["sha"] for m in metas[:_MAX_COMMIT_FILE_FETCHES]]
+        to_fetch = [m["sha"] for m in metas[:_file_fetch_limit()]]
         detail_block = await _ssrf_block_reason(target.api_base)
         if detail_block:
             logger.warning(
@@ -510,6 +676,7 @@ async def _upsert_range(
     base_run_id: Optional[uuid.UUID],
     source: str,
     commits: list[dict[str, Any]],
+    base_source: str = BASE_SOURCE_UNAVAILABLE,
 ) -> Optional[RunCommitRange]:
     """Stage (insert or update) the range row for a run. Does NOT commit —
     the caller owns the transaction (transaction-boundary ratchet).
@@ -519,11 +686,19 @@ async def _upsert_range(
     caller's session. Non-supplied writes carry a ``WHERE source != supplied``
     guard so a racing supplied insert is never clobbered (supplied wins).
     """
+    # The label must never claim an anchor we didn't get. A base_source of
+    # anything but ``unavailable`` requires an actual base ref, and an
+    # unknown label degrades to ``unavailable`` rather than being persisted.
+    if base_source not in BASE_SOURCES:
+        base_source = BASE_SOURCE_UNAVAILABLE
+    if not base_commit:
+        base_source = BASE_SOURCE_UNAVAILABLE
     values: dict[str, Any] = {
         "base_commit": base_commit,
         "head_commit": head_commit,
         "base_run_id": base_run_id,
         "source": source,
+        "base_source": base_source,
         "commits": commits,
         "resolved_at": datetime.now(timezone.utc),
     }
@@ -545,22 +720,35 @@ async def _upsert_range(
 async def store_supplied_range(
     db: AsyncSession, run: TestRun, raw_commits: Any,
 ) -> Optional[RunCommitRange]:
-    """Persist a caller-supplied commit list (US-8.1 air-gapped path).
+    """Persist a caller-supplied commit range (US-8.1 air-gapped path).
+
+    Accepts either supplied wire shape (bare list, or ``{base, head,
+    commits}``). When the caller sends a ``base`` we now PERSIST it: the
+    original implementation hard-coded ``base_commit=None``, which threw away
+    the one thing that makes a supplied row reconstructible — and therefore
+    usable as test-impact training data. A caller who only sends the bare
+    list still gets ``base_commit=None`` / ``base_source=unavailable``,
+    honestly recorded rather than guessed at.
 
     Staged under the caller's session (ingest owns the commit). Idempotent
     per run. Returns ``None`` (no row) when the supplied list is empty.
     """
-    commits = normalize_supplied_range(raw_commits)
+    base, head, commits = normalize_supplied_payload(raw_commits)
     if not commits:
         return None
-    head = run.commit_hash or (commits[-1]["sha"] if commits else None)
+    head = head or run.commit_hash or commits[-1]["sha"]
+    # A base equal to head bounds an empty range — it is not a usable anchor,
+    # so don't dress it up as one.
+    if base and base == head:
+        base = None
     return await _upsert_range(
         db, run,
-        base_commit=None,  # air-gapped callers push the list, not the base ref
+        base_commit=base,
         head_commit=head,
-        base_run_id=None,
+        base_run_id=None,  # a supplied base is a raw ref, not one of our runs
         source=SOURCE_SUPPLIED,
         commits=commits,
+        base_source=BASE_SOURCE_SUPPLIED if base else BASE_SOURCE_UNAVAILABLE,
     )
 
 
@@ -613,6 +801,7 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
         target: Optional[_ConnectorTarget] = None
         base_commit: Optional[str] = None
         base_run_id: Optional[uuid.UUID] = None
+        base_source: str = BASE_SOURCE_UNAVAILABLE
         async with AsyncSessionLocal() as read_db:
             result = await read_db.execute(select(TestRun).where(TestRun.id == run_id))
             run = result.scalar_one_or_none()
@@ -629,12 +818,16 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
 
             head = run.commit_hash
             if head and await _post_allowed(read_db):
-                base_run = await _last_green_run(read_db, run)
+                base_run, base_source = await resolve_base_anchor(read_db, run)
                 if base_run is not None:
                     base_commit = base_run.commit_hash
                     base_run_id = base_run.id
                 if base_commit and base_commit != head:
                     target = await _connector_target(read_db, run)
+                elif base_commit:
+                    # Base == head bounds an empty range; the anchor is real
+                    # but useless, so don't persist a strong-looking label.
+                    base_source = BASE_SOURCE_UNAVAILABLE
 
         # ── Phase 2: HTTP fan-out — no session open ─────────────────────────
         commits: Optional[list[dict[str, Any]]] = None
@@ -652,8 +845,13 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
                 base_run_id=base_run_id,
                 source=SOURCE_CONNECTOR,
                 commits=commits,
+                base_source=base_source,
             )
-            return {"source": SOURCE_CONNECTOR, "commit_count": len(commits)}
+            return {
+                "source": SOURCE_CONNECTOR,
+                "base_source": base_source,
+                "commit_count": len(commits),
+            }
 
         await _upsert_range(
             db, run,
@@ -662,8 +860,9 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
             base_run_id=base_run_id,
             source=SOURCE_UNAVAILABLE,
             commits=[],
+            base_source=base_source,
         )
-        return {"source": SOURCE_UNAVAILABLE}
+        return {"source": SOURCE_UNAVAILABLE, "base_source": base_source}
     except (httpx.HTTPError, SQLAlchemyError) as exc:
         # Best-effort for infra faults only — programming errors must surface.
         logger.warning("commit_range resolve failed", run_id=str(run_id), error=str(exc))
@@ -673,13 +872,25 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
 # ── Read model ───────────────────────────────────────────────────────────────
 
 
+def _base_source_of(row: Optional[RunCommitRange]) -> str:
+    """The row's anchor label, defaulting to ``unavailable`` for rows written
+    before migration 0116 (or when no row exists)."""
+    if row is None:
+        return BASE_SOURCE_UNAVAILABLE
+    value = getattr(row, "base_source", None)
+    return value if value in BASE_SOURCES else BASE_SOURCE_UNAVAILABLE
+
+
 def _serialize_range(row: Optional[RunCommitRange], run: TestRun) -> dict[str, Any]:
     """Shape the range for the API. Honest ``available`` flag."""
+    base_source = _base_source_of(row)
     if row is None or row.source == SOURCE_UNAVAILABLE or not row.commits:
         return {
             "run_id": str(run.id),
             "available": False,
             "source": row.source if row is not None else SOURCE_UNAVAILABLE,
+            "base_source": base_source,
+            "base_anchor_is_strong": base_source in STRONG_BASE_SOURCES,
             "base_commit": row.base_commit if row is not None else None,
             "head_commit": (row.head_commit if row is not None else None) or run.commit_hash,
             "base_run_id": str(row.base_run_id) if row is not None and row.base_run_id else None,
@@ -695,6 +906,10 @@ def _serialize_range(row: Optional[RunCommitRange], run: TestRun) -> dict[str, A
         "run_id": str(run.id),
         "available": True,
         "source": row.source,
+        "base_source": base_source,
+        # Surfaced so the UI can caveat a weak anchor instead of presenting
+        # "commits since last green" when that is not what happened.
+        "base_anchor_is_strong": base_source in STRONG_BASE_SOURCES,
         "base_commit": row.base_commit,
         "head_commit": row.head_commit or run.commit_hash,
         "base_run_id": str(row.base_run_id) if row.base_run_id else None,
@@ -873,6 +1088,8 @@ async def rank_suspects(
         "fingerprint": fingerprint,
         "available": True,
         "source": row.source,
+        "base_source": _base_source_of(row),
+        "base_anchor_is_strong": _base_source_of(row) in STRONG_BASE_SOURCES,
         "has_location_signal": loc.has_signal,
         "target_test_count": len(test_cases),
         "base_commit": row.base_commit,
@@ -880,3 +1097,247 @@ async def rank_suspects(
         "caveat": MONOREPO_CAVEAT,
         "suspects": suspects,
     }
+
+
+# ── TIA readiness (Epic 10 go/no-go signal) ──────────────────────────────────
+#
+# ``run_commit_ranges`` is the would-be training corpus for test-impact
+# analysis: a path→test correlation model learns from "these files changed,
+# these tests then failed". This block answers ONE question, per project, from
+# that project's OWN rows — never a fleet average:
+#
+#     is there enough usable commit-range data here to train a model yet?
+#
+# A row is only *usable* corpus when it (a) actually resolved (``source`` is
+# ``connector`` or ``supplied``, not ``unavailable``) and (b) carries at least
+# one commit with a non-empty ``files`` list — a commit with ``files: []``
+# names a SHA and contributes zero path evidence.
+#
+# The thresholds below are a judgement call, published in the response so the
+# caller can disagree with them: they are a FLOOR beneath which training is
+# obviously premature, not a guarantee that training above them will work.
+
+# Minimum runs carrying a usable range before a correlation model is worth
+# fitting at all — under a few dozen, per-path evidence is single-digit.
+TIA_MIN_USABLE_RUNS = 30
+# Minimum calendar span those runs must cover. 30 usable runs from one
+# afternoon describe one day's code, not a project's change patterns.
+TIA_MIN_HISTORY_DAYS = 14
+# Minimum distinct changed paths — the model's feature space. Fewer than this
+# and it can only ever say "the whole repo is one blob".
+TIA_MIN_DISTINCT_PATHS = 25
+# Default lookback for the readiness scan.
+TIA_READINESS_WINDOW_DAYS = 90
+# Rows read per scan. Bounded so a huge project can't turn a metrics GET into
+# an unbounded JSONB read; when it bites, ``scan_capped`` says so and every
+# count is a floor (real data >= reported).
+TIA_READINESS_SCAN_CAP = 1000
+# Distinct paths tracked before we stop growing the set (memory bound).
+TIA_MAX_TRACKED_PATHS = 20_000
+
+
+def _as_dt(value: Any) -> Optional[datetime]:
+    """Coerce a stored timestamp to tz-aware UTC, or ``None``."""
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _resolve_tia_availability(
+    *,
+    runs_scanned: int,
+    runs_with_range: int,
+    usable_runs: int,
+    history_days: float,
+    distinct_paths: int,
+) -> tuple[bool, Optional[str]]:
+    """``(available, insufficient_data_reason)`` for the readiness metric.
+
+    Reasons are ordered most-fundamental-first so the caller is told the one
+    thing to fix next rather than a list. Same contract as
+    ``value_metrics_service.resolve_availability``.
+    """
+    if runs_scanned == 0:
+        return False, "no commit ranges have been resolved for this project yet"
+    if runs_with_range == 0:
+        return False, (
+            f"none of the {runs_scanned} resolved ranges contain any commits "
+            "(no VCS connector configured, and no commit range supplied on ingest)"
+        )
+    if usable_runs == 0:
+        return False, (
+            f"{runs_with_range} runs have a commit range but none carry per-commit "
+            "changed files — a range without file paths cannot train a path model"
+        )
+    if usable_runs < TIA_MIN_USABLE_RUNS:
+        return False, (
+            f"only {usable_runs} of {runs_scanned} runs carry a usable commit range "
+            f"(need {TIA_MIN_USABLE_RUNS})"
+        )
+    if history_days < TIA_MIN_HISTORY_DAYS:
+        return False, (
+            f"usable commit ranges span {history_days} days "
+            f"(need {TIA_MIN_HISTORY_DAYS})"
+        )
+    if distinct_paths < TIA_MIN_DISTINCT_PATHS:
+        return False, (
+            f"only {distinct_paths} distinct changed paths observed "
+            f"(need {TIA_MIN_DISTINCT_PATHS})"
+        )
+    return True, None
+
+
+def compute_tia_readiness(
+    rows: Any,
+    *,
+    window_days: int = TIA_READINESS_WINDOW_DAYS,
+    scan_cap: int = TIA_READINESS_SCAN_CAP,
+) -> dict[str, Any]:
+    """Pure readiness math over ONE project's ``run_commit_ranges`` rows.
+
+    ``rows`` is any iterable of objects exposing ``resolved_at``, ``source``,
+    ``base_source`` and ``commits`` (SQLAlchemy ``Row`` objects satisfy this
+    directly, which is why the DB wrapper below passes them straight through).
+
+    Mirrors ``value_metrics_service.resolve_availability``: when the corpus
+    isn't there yet we return ``available: false`` plus a concrete
+    ``insufficient_data_reason`` naming what is missing, never a number that
+    implies more than the data supports.
+    """
+    source_breakdown: dict[str, int] = {}
+    base_source_breakdown: dict[str, int] = {}
+    runs_scanned = 0
+    runs_with_range = 0
+    usable_runs = 0
+    runs_with_strong_anchor = 0
+    commits_total = 0
+    commits_with_files = 0
+    distinct_paths: set[str] = set()
+    paths_capped = False
+    first_usable: Optional[datetime] = None
+    last_usable: Optional[datetime] = None
+
+    for row in rows:
+        runs_scanned += 1
+        source = getattr(row, "source", None) or SOURCE_UNAVAILABLE
+        base_source = getattr(row, "base_source", None)
+        if base_source not in BASE_SOURCES:
+            base_source = BASE_SOURCE_UNAVAILABLE
+        source_breakdown[source] = source_breakdown.get(source, 0) + 1
+        base_source_breakdown[base_source] = base_source_breakdown.get(base_source, 0) + 1
+
+        commits = getattr(row, "commits", None) or []
+        if source == SOURCE_UNAVAILABLE or not commits:
+            continue
+        runs_with_range += 1
+
+        row_has_files = False
+        for commit in commits:
+            if not isinstance(commit, dict):
+                continue
+            commits_total += 1
+            files = commit.get("files") or []
+            if not files:
+                continue
+            commits_with_files += 1
+            row_has_files = True
+            for path in files:
+                if len(distinct_paths) >= TIA_MAX_TRACKED_PATHS:
+                    paths_capped = True
+                    break
+                distinct_paths.add(str(path))
+
+        if not row_has_files:
+            continue
+        usable_runs += 1
+        if base_source in STRONG_BASE_SOURCES:
+            runs_with_strong_anchor += 1
+        resolved = _as_dt(getattr(row, "resolved_at", None))
+        if resolved is not None:
+            first_usable = resolved if first_usable is None else min(first_usable, resolved)
+            last_usable = resolved if last_usable is None else max(last_usable, resolved)
+
+    history_days = 0.0
+    if first_usable is not None and last_usable is not None:
+        history_days = round((last_usable - first_usable).total_seconds() / 86400.0, 2)
+
+    available, reason = _resolve_tia_availability(
+        runs_scanned=runs_scanned,
+        runs_with_range=runs_with_range,
+        usable_runs=usable_runs,
+        history_days=history_days,
+        distinct_paths=len(distinct_paths),
+    )
+
+    return {
+        "available": available,
+        "insufficient_data_reason": reason,
+        "window_days": window_days,
+        # Corpus size
+        "runs_scanned": runs_scanned,
+        "runs_with_range": runs_with_range,
+        "usable_runs": usable_runs,
+        "runs_with_strong_base_anchor": runs_with_strong_anchor,
+        # Corpus depth
+        "commits_total": commits_total,
+        "commits_with_files": commits_with_files,
+        "file_detail_coverage": (
+            round(commits_with_files / commits_total, 4) if commits_total else 0.0
+        ),
+        # Corpus breadth
+        "distinct_paths": len(distinct_paths),
+        "distinct_paths_capped": paths_capped,
+        # Corpus span
+        "history_days": history_days,
+        "first_usable_range_at": first_usable.isoformat() if first_usable else None,
+        "last_usable_range_at": last_usable.isoformat() if last_usable else None,
+        # Provenance mix — a corpus anchored mostly on weak bases is real data
+        # with a caveat, and the caller is entitled to see the split.
+        "source_breakdown": source_breakdown,
+        "base_source_breakdown": base_source_breakdown,
+        "thresholds": {
+            "min_usable_runs": TIA_MIN_USABLE_RUNS,
+            "min_history_days": TIA_MIN_HISTORY_DAYS,
+            "min_distinct_paths": TIA_MIN_DISTINCT_PATHS,
+        },
+        "scan_cap": scan_cap,
+        "scan_capped": runs_scanned >= scan_cap,
+        "usable_definition": (
+            "a run whose commit range resolved (source connector|supplied) and "
+            "whose range carries at least one commit with a non-empty "
+            "changed-file list"
+        ),
+    }
+
+
+async def get_tia_readiness(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    days: int = TIA_READINESS_WINDOW_DAYS,
+) -> dict[str, Any]:
+    """Per-project TIA-corpus readiness (read-only).
+
+    Always scoped to ONE project — readiness is a statement about this
+    project's own change/failure history, and a cross-project average would be
+    meaningless for the go/no-go it exists to inform.
+
+    Served by ``ix_run_commit_ranges_project_resolved`` (migration 0116).
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(
+            RunCommitRange.resolved_at,
+            RunCommitRange.source,
+            RunCommitRange.base_source,
+            RunCommitRange.commits,
+        )
+        .where(
+            RunCommitRange.project_id == project_id,
+            RunCommitRange.resolved_at >= since,
+        )
+        .order_by(RunCommitRange.resolved_at.desc())
+        .limit(TIA_READINESS_SCAN_CAP)
+    )
+    readiness = compute_tia_readiness(result.all(), window_days=days)
+    return {"project_id": str(project_id), **readiness}

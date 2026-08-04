@@ -29,10 +29,11 @@ yaml = ["pyyaml>=5.4"]
 testlookup = "testlookup_reporter"
 
 [tool.setuptools]
-# Flat modules — no nested package layout. ci_context ships alongside the
-# reporter (CI auto-detection, US-4.3b). If this list grows further,
-# convert to a `[tool.setuptools.packages.find]` block.
-py-modules = ["testlookup_reporter", "ci_context"]
+# Flat modules — no nested package layout. ci_context (CI auto-detection,
+# US-4.3b) and commit_range (local-git commit collection, US-8.1) ship
+# alongside the reporter. If this list grows further, convert to a
+# `[tool.setuptools.packages.find]` block.
+py-modules = ["testlookup_reporter", "ci_context", "commit_range"]
 
 [tool.setuptools.package-data]
 testlookup_reporter = ["testlookup.yaml.example"]

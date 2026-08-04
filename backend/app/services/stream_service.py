@@ -135,9 +135,18 @@ def _with_ci_context(metadata: dict, payload) -> dict:
     if ci:
         merged["ci_context"] = {**ci, **(merged.get("ci_context") or {})}
     if supplied_range and not merged.get("commit_range"):
-        merged["commit_range"] = [
-            c.model_dump() if hasattr(c, "model_dump") else c for c in supplied_range
-        ]
+        # Two accepted wire shapes: a bare commit list, or the
+        # boundary-carrying ``{base, head, commits}`` object. Stash whichever
+        # arrived as plain JSON — the object form is what lets ``base_commit``
+        # survive to the persisted row.
+        if isinstance(supplied_range, dict):
+            merged["commit_range"] = supplied_range
+        elif hasattr(supplied_range, "model_dump"):
+            merged["commit_range"] = supplied_range.model_dump()
+        else:
+            merged["commit_range"] = [
+                c.model_dump() if hasattr(c, "model_dump") else c for c in supplied_range
+            ]
     return merged
 
 

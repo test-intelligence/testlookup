@@ -1,5 +1,6 @@
 """Upload test result files to TestLookup for ingestion and AI analysis."""
 import asyncio
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -7,6 +8,7 @@ import typer
 
 from testlookup_cli import client, output
 from testlookup_cli.ci_context import resolve_ci_context
+from testlookup_cli.commit_range import resolve_commit_range
 from testlookup_cli.config import get_profile
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
@@ -25,6 +27,14 @@ def upload_file(
     pr_number: Optional[int] = typer.Option(None, "--pr-number", min=1, help="Pull/merge request number (overrides auto-detection)"),
     ci_actor: Optional[str] = typer.Option(None, "--ci-actor", help="CI actor / triggering user (overrides auto-detection)"),
     ci_run_url: Optional[str] = typer.Option(None, "--ci-run-url", help="CI run/job URL (overrides auto-detection)"),
+    commit_range_base: Optional[str] = typer.Option(
+        None, "--commit-range-base",
+        help="Base ref/SHA for commit collection (overrides CI + local-git detection)",
+    ),
+    no_commit_range: bool = typer.Option(
+        False, "--no-commit-range",
+        help="Skip collecting the commit range from local git",
+    ),
     format: str = typer.Option(
         "auto",
         "--format",
@@ -46,6 +56,12 @@ def upload_file(
     DevOps, CircleCI); the --ci-provider/--repo/--pr-number/--ci-actor/
     --ci-run-url options override detection.
 
+    The commit range (base..HEAD, with per-commit changed files) is collected
+    from local git so failures can be attributed to commits with no VCS token
+    and no network. --commit-range-base pins the base; --no-commit-range (or
+    TESTLOOKUP_COMMIT_RANGE=0) skips collection entirely. Any git problem is
+    non-fatal — the range is simply omitted.
+
     The file is parsed and ingested asynchronously on the server.
     AI analysis is triggered automatically after ingestion completes.
 
@@ -53,13 +69,19 @@ def upload_file(
         testlookup upload file results.xml -p <project-id> -b build-42
         testlookup upload file allure.json -p <project-id> -b v2.5.0 --format allure
         testlookup upload file results.xml -p <project-id> -b build-42 --pr-number 421
+        testlookup upload file results.xml -p <project-id> -b build-42 --commit-range-base origin/main
     """
     try:
+        commit_range = resolve_commit_range(
+            explicit_base=commit_range_base,
+            enabled=False if no_commit_range else None,
+        )
         data = asyncio.run(_upload_file(
             path=path, project=project, build=build,
             branch=branch, commit=commit, release=release,
             ci_provider=ci_provider, ci_repo=repo, pr_number=pr_number,
             ci_actor=ci_actor, ci_run_url=ci_run_url,
+            commit_range=commit_range,
             format=format, profile_name=profile_name,
         ))
         output.render(data, output_format)
@@ -87,6 +109,14 @@ def upload_dir(
     pr_number: Optional[int] = typer.Option(None, "--pr-number", min=1, help="Pull/merge request number (overrides auto-detection)"),
     ci_actor: Optional[str] = typer.Option(None, "--ci-actor", help="CI actor / triggering user (overrides auto-detection)"),
     ci_run_url: Optional[str] = typer.Option(None, "--ci-run-url", help="CI run/job URL (overrides auto-detection)"),
+    commit_range_base: Optional[str] = typer.Option(
+        None, "--commit-range-base",
+        help="Base ref/SHA for commit collection (overrides CI + local-git detection)",
+    ),
+    no_commit_range: bool = typer.Option(
+        False, "--no-commit-range",
+        help="Skip collecting the commit range from local git",
+    ),
     format: str = typer.Option(
         "auto", "--format", "-f",
         help="File format: auto|junit|testng|allure|cypress|playwright|pytest|robot|cucumber|nunit|trx|xunit",
@@ -100,6 +130,10 @@ def upload_dir(
     auto-detected from standard CI env vars (override with --ci-provider /
     --repo / --pr-number / --ci-actor / --ci-run-url).
 
+    The commit range is collected from local git ONCE and stamped on every
+    file in the directory (they are all one execution of one checkout). Pin it
+    with --commit-range-base, or skip it with --no-commit-range.
+
     Examples:
         testlookup upload dir ./target/surefire-reports -p <project-id> -b build-42
         testlookup upload dir ./allure-results -p <project-id> -b v2.5.0 --format allure
@@ -111,6 +145,13 @@ def upload_dir(
         output.print_error(f"No .xml or .json files found in {directory}")
         raise typer.Exit(1)
 
+    # Collected once: every file here came from the same checkout, and N git
+    # walks for one range would be pure waste.
+    commit_range = resolve_commit_range(
+        explicit_base=commit_range_base,
+        enabled=False if no_commit_range else None,
+    )
+
     results = []
     errors = 0
     for f in files:
@@ -120,6 +161,7 @@ def upload_dir(
                 branch=branch, commit=commit, release=release,
                 ci_provider=ci_provider, ci_repo=repo, pr_number=pr_number,
                 ci_actor=ci_actor, ci_run_url=ci_run_url,
+                commit_range=commit_range,
                 format=format, profile_name=profile_name,
             ))
             results.append(data)
@@ -143,12 +185,16 @@ def _build_form_data(
     pr_number: Optional[int] = None,
     ci_actor: Optional[str] = None,
     ci_run_url: Optional[str] = None,
+    commit_range: Optional[list] = None,
     format: str = "auto",
 ) -> dict:
     """Assemble the multipart form fields for POST /api/v1/ingest/file.
 
     CI context (US-4.3b) is auto-detected from standard CI env vars; the
     explicit ci_* arguments (CLI flags) always win over detection.
+
+    ``commit_range`` (US-8.1) is already-collected local-git output; the
+    server takes it as a JSON array string on the multipart form.
     """
     form_data = {
         "project_id": project,
@@ -172,6 +218,9 @@ def _build_form_data(
     for field, value in ci_context.items():
         form_data[field] = str(value)
 
+    if commit_range:
+        form_data["commit_range"] = json.dumps(commit_range)
+
     return form_data
 
 
@@ -187,6 +236,7 @@ async def _upload_file(
     pr_number: Optional[int] = None,
     ci_actor: Optional[str] = None,
     ci_run_url: Optional[str] = None,
+    commit_range: Optional[list] = None,
     format: str = "auto",
     profile_name: Optional[str] = None,
 ) -> dict:
@@ -201,7 +251,7 @@ async def _upload_file(
         project=project, build=build, branch=branch, commit=commit,
         release=release, ci_provider=ci_provider, ci_repo=ci_repo,
         pr_number=pr_number, ci_actor=ci_actor, ci_run_url=ci_run_url,
-        format=format,
+        commit_range=commit_range, format=format,
     )
 
     async with httpx.AsyncClient(timeout=60.0) as http:

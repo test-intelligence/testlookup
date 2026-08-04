@@ -262,6 +262,15 @@ async def ingest_file(
             parsed = json.loads(commit_range)
             if isinstance(parsed, list):
                 commit_range_arg = parsed[:100]
+            elif isinstance(parsed, dict):
+                # Boundary-carrying shape ``{base, head, commits}`` — keep the
+                # refs; without them the stored row can't say what the range
+                # was measured from (and is useless as TIA training data).
+                commits = parsed.get("commits")
+                commit_range_arg = {
+                    **parsed,
+                    "commits": commits[:100] if isinstance(commits, list) else [],
+                }
         except (ValueError, TypeError):
             logger.warning("file_ingest_commit_range_unparseable", run_id=run_id)
 
