@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 _MEMBERSHIP_CACHE_TTL = 300  # 5 minutes
 _API_KEY_BOUND_PROJECT_ATTR = "_testlookup_api_key_project_id"
 
+# Which credential authenticated *this* request. Stashed on the loaded ``User``
+# object exactly like ``_API_KEY_BOUND_PROJECT_ATTR`` above — the User row is
+# loaded fresh from the request-scoped session by every auth dependency, so the
+# attribute lives and dies with the request and needs no separate contextvar.
+#
+# It exists because the two facts are NOT the same: a *user-scoped* API key
+# binds ``project_id = None``, which is indistinguishable from a JWT if you only
+# look at the project binding. Downstream policy that must treat machine
+# credentials differently (e.g. an MFA gate, which must never challenge a
+# CI-embedded API key) needs the credential kind, not the project scope.
+_CREDENTIAL_KIND_ATTR = "_testlookup_credential_kind"
+
+CREDENTIAL_KIND_JWT = "jwt"
+CREDENTIAL_KIND_API_KEY = "api_key"
+
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/v1/auth/login",
     scheme_name="JWT",
@@ -71,6 +86,27 @@ def _bind_api_key_project(user: User, project_id: uuid.UUID | None) -> User:
 def _api_key_bound_project(user: User) -> uuid.UUID | None:
     value = getattr(user, _API_KEY_BOUND_PROJECT_ATTR, None)
     return value if isinstance(value, uuid.UUID) else None
+
+
+def _bind_credential_kind(user: User, kind: str) -> User:
+    """Record which credential authenticated this request on the user object."""
+    setattr(user, _CREDENTIAL_KIND_ATTR, kind)
+    return user
+
+
+def credential_kind(user: User) -> str | None:
+    """Return the credential that authenticated the current request.
+
+    ``"jwt"`` (:data:`CREDENTIAL_KIND_JWT`) or ``"api_key"``
+    (:data:`CREDENTIAL_KIND_API_KEY`); ``None`` when the ``User`` did not come
+    from one of the auth dependencies (e.g. a row loaded by a service, or a
+    test fixture that overrides the dependency wholesale). ``None`` means
+    "unknown", never "jwt" — callers gating on *machine credential* should test
+    ``== CREDENTIAL_KIND_API_KEY``, and callers gating on *interactive human*
+    should test ``== CREDENTIAL_KIND_JWT``, so an unknown falls out of both.
+    """
+    value = getattr(user, _CREDENTIAL_KIND_ATTR, None)
+    return value if value in (CREDENTIAL_KIND_JWT, CREDENTIAL_KIND_API_KEY) else None
 
 
 def _enforce_api_key_project_binding(
@@ -158,7 +194,7 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
 
-    return _bind_api_key_project(user, None)
+    return _bind_credential_kind(_bind_api_key_project(user, None), CREDENTIAL_KIND_JWT)
 
 
 # ── CLI-5: Dual auth (JWT OR API Key) ────────────────────────────────────────
@@ -198,7 +234,50 @@ async def _validate_api_key(db: AsyncSession, raw_key: str) -> ApiKeyContext:
     # handler's own work instead of prematurely ending its transaction.
     api_key.last_used_at = datetime.now(timezone.utc)
 
-    return ApiKeyContext(user=_bind_api_key_project(user, api_key.project_id), project_id=api_key.project_id)
+    bound = _bind_credential_kind(
+        _bind_api_key_project(user, api_key.project_id), CREDENTIAL_KIND_API_KEY
+    )
+    return ApiKeyContext(user=bound, project_id=api_key.project_id)
+
+
+async def _bearer_user_or_fall_through(
+    db: AsyncSession, bearer_token: str
+) -> Optional[User]:
+    """Resolve a bearer token, or return ``None`` to try the API-key path.
+
+    **Only a 401 falls through.** ``get_current_user`` raises exactly three
+    kinds of ``HTTPException`` (see its body):
+
+      * **401** — signature/exp invalid, missing or unparseable ``sub``,
+        non-``access`` token type, jti on the revocation denylist, ``iat``
+        before the user's cutoff, or the user row is gone. All of these mean
+        "this bearer token is not a usable credential", so trying the
+        ``X-API-Key`` header instead is the right move — that fall-through is
+        what lets a CLI send both headers and still authenticate.
+      * **503** — the revocation store is unreachable, so we *cannot tell*
+        whether the token was revoked. The credentials may be perfectly
+        good; it is the server that cannot check them.
+
+    Swallowing that 503 and re-raising the generic 401 below was a real
+    defect: every authenticated route resolves through this dependency
+    (``bootstrap.register_routers`` injects it router-wide), so a Redis
+    outage arrived at the SPA as 401-everywhere, which logs the user out and
+    burns a refresh — precisely the re-login loop that fail-closed revocation
+    was designed to avoid (``core/token_revocation.py``). It must propagate
+    unchanged, ``Retry-After`` header and all.
+
+    Anything that is not 401 propagates, not just 503: a future 429 or 5xx
+    from this path would carry the same "not a credential problem" meaning,
+    and a 403 (should one ever be raised here) means "authenticated but not
+    allowed" — never "try another credential". Non-``HTTPException`` errors
+    (e.g. a DB failure) were never caught here and still are not.
+    """
+    try:
+        return await get_current_user(db=db, token=bearer_token)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+            raise
+        return None
 
 
 async def get_current_user_or_api_key(
@@ -208,17 +287,18 @@ async def get_current_user_or_api_key(
 ) -> User:
     """Authenticate via JWT Bearer token OR X-API-Key header.
 
-    Tries JWT first (if Authorization header present), falls back to API key.
-    Raises 401 if neither is provided or valid.
+    Tries JWT first (if Authorization header present), falls back to API key
+    when — and only when — the bearer token fails with a 401. Raises 401 if
+    neither credential is provided or valid.
     Returns User only (backward-compatible). Use ``get_api_key_context`` when
-    you need the bound project_id.
+    you need the bound project_id, or ``credential_kind(user)`` when you need
+    to know which credential authenticated the request.
     """
     # Try JWT first
     if bearer_token:
-        try:
-            return await get_current_user(db=db, token=bearer_token)
-        except HTTPException:
-            pass  # Fall through to API key
+        user = await _bearer_user_or_fall_through(db, bearer_token)
+        if user is not None:
+            return user
 
     # Try API key
     if x_api_key:
@@ -317,6 +397,12 @@ async def get_streaming_api_key_context(
     # See _validate_api_key: touch the timestamp but let get_db own the commit.
     api_key.last_used_at = datetime.now(timezone.utc)
 
+    # Record the credential kind only. Deliberately NOT _bind_api_key_project:
+    # this path has never bound the project onto the user object (it returns
+    # project_id on the context instead), and binding it here would silently
+    # change how the project-scoped guards treat a streaming request.
+    _bind_credential_kind(user, CREDENTIAL_KIND_API_KEY)
+
     return StreamingApiKeyContext(
         user=user,
         project_id=api_key.project_id,
@@ -337,13 +423,15 @@ async def get_api_key_context(
         (user, project_uuid) for project-scoped API key.
 
     Callers must enforce the project_id constraint when non-None.
+
+    Fall-through to the API key happens only for a 401 from the bearer path —
+    see ``_bearer_user_or_fall_through`` for why 503 must not be laundered
+    into 401 here.
     """
     if bearer_token:
-        try:
-            user = await get_current_user(db=db, token=bearer_token)
+        user = await _bearer_user_or_fall_through(db, bearer_token)
+        if user is not None:
             return user, None
-        except HTTPException:
-            pass
 
     if x_api_key:
         ctx = await _validate_api_key(db, x_api_key)

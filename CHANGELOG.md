@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-05 — Auth: stop laundering 503/non-401 errors into 401; credential-kind plumbing; consistent password caps
+
+> **⚠ BEHAVIOR CHANGE — a Redis outage now returns 503 to API clients instead of 401.**
+> This is the behaviour `architecture/SECURITY.md` §7 has claimed since
+> 2026-08-03; it just wasn't what clients received. Anything that treats
+> "not 2xx" as "log out and re-authenticate" will now see a retryable 503
+> where it previously saw a 401 — which is the point. `Retry-After: 5` is
+> on the response.
+
+- **The shared dual-auth dependency no longer swallows non-401 errors (the bug).**
+  `get_current_user_or_api_key` and `get_api_key_context` both did
+  `except HTTPException: pass` around the bearer path so a request carrying both
+  an `Authorization` header and an `X-API-Key` could fall back to the key. That
+  catch was indiscriminate. When fail-closed token revocation started raising
+  **503** ("revocation status cannot be verified — Redis is down"), the 503 was
+  caught here and reissued as a generic 401 "Authentication required". Nothing
+  in `backend/app` depends on `get_current_user` directly and
+  `bootstrap.register_routers` injects the dual-auth dependency router-wide, so
+  the 503 was unreachable in practice: a Redis outage arrived at the SPA as
+  401-everywhere, `authStore.fetchUser` logged the user out, and the axios 401
+  interceptor burned a refresh — **precisely the re-login loop that fail-closed
+  revocation was designed to prevent**. Now **only 401 falls through**; every
+  other status propagates unchanged. Both call sites share one helper
+  (`_bearer_user_or_fall_through`) that enumerates what `get_current_user` can
+  actually raise, so the two cannot drift apart again.
+- **Which statuses do what, and why.** 401 falls through — signature/exp
+  invalid, missing/unparseable `sub`, non-`access` token type, jti on the
+  denylist, `iat` before the user's cutoff, user row gone. All of those mean
+  "this bearer token is not a usable credential", so trying the other one is
+  correct. 503 propagates — the credential may be fine; it is the *server* that
+  cannot check it. 403 (were it ever raised here) would propagate too:
+  "authenticated but not allowed" is never "try another credential". Non-
+  `HTTPException` failures (e.g. a DB error) were never caught and still aren't.
+- **`credential_kind(user)` — JWT auth is now distinguishable from API-key auth.**
+  Previously the only per-request marker was the API-key *project* binding, which
+  is `None` for a **user-scoped** API key and therefore indistinguishable from a
+  JWT. Every auth dependency — `get_current_user`, `_validate_api_key`, and the
+  separate `get_streaming_api_key_context` path — now also stamps `"jwt"` /
+  `"api_key"` on the request-local user object, using the same mechanism as the
+  existing project binding rather than a second one. `credential_kind()` returns
+  `None` for a user object that did not come from an auth dependency — "unknown"
+  never reads as "jwt". **Pure plumbing: no route reads it and no route behaves
+  differently.** A later MFA gate consults it to exempt API keys, since a key
+  embedded in CI can never answer a challenge. The streaming path deliberately
+  records only the kind, not the project binding, which it has never set.
+- **Password length caps are consistent.** `UserCreate.password` was capped at
+  128 (bcrypt DoS, audit item S4) but `ChangePasswordRequest` and
+  `FirstTimeResetRequest` were not — the same unbounded value registration
+  rejected went straight into `bcrypt.hashpw` via `/auth/change-password` and
+  `/auth/first-time-reset`. All password-accepting schemas now share
+  `MAX_PASSWORD_LENGTH = 128`. It is a resource guard, not a password policy —
+  **no complexity rules were added**. The cap cannot reject anything that works
+  today: bcrypt reads only the first 72 bytes, so a longer password could never
+  have been set. `ChangePasswordRequest.current_password` gains the cap but not
+  the minimum — rejecting a short one at the schema would leak that no short
+  password can be the current one.
+- **Found, not fixed (needs a policy decision, so not a drive-by).** The pinned
+  `bcrypt` (5.0.0) does **not** silently truncate past 72 bytes — it raises
+  `ValueError`. So a 73–128 character password still 500s inside
+  `get_password_hash`/`verify_password` on register, change-password,
+  first-time-reset, and login. The cap narrows the window; closing it means
+  choosing between rejecting at 72, truncating, or pre-hashing, which is a
+  password-policy call. Relatedly, `LoginRequest` is **unreferenced** —
+  `POST /auth/login` binds `OAuth2PasswordRequestForm`, whose `password` is
+  uncapped and is the live unauthenticated bcrypt surface. The schema was capped
+  anyway so it is correct the day it is wired up.
+
 ### 2026-08-04 — Commit ranges: persist supplied base, non-green baseline fallback, TIA-readiness metric
 
 > **⚠ BEHAVIOR CHANGE — commit ranges now resolve for projects that never go green.**

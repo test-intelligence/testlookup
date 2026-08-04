@@ -174,7 +174,24 @@ Access-token revocation (§1) **fails closed** as of 2026-08-03: when the
 revocation store (Redis) cannot be consulted, `get_current_user` answers
 **503**, not 401 — the honest signal is "revocation cannot be verified
 right now", and 401 would send the SPA into a re-login loop that cannot
-succeed. Two consequences worth stating plainly:
+succeed.
+
+> **Correction (2026-08-05): between 2026-08-03 and 2026-08-05 that 503
+> did not reach clients.** `get_current_user` raised it correctly, but the
+> shared dual-auth dependency it is called from
+> (`get_current_user_or_api_key` / `get_api_key_context`, injected
+> router-wide by `bootstrap.register_routers`) caught **every**
+> `HTTPException` from the bearer path in order to fall through to the
+> `X-API-Key` path, and ended at a generic 401 "Authentication required".
+> Since no route depends on `get_current_user` directly, the documented
+> behaviour was unobservable: a Redis outage arrived at the SPA as
+> 401-everywhere and produced exactly the re-login loop described above.
+> **As of 2026-08-05 only a 401 from the bearer path falls through to the
+> API key**; every other status — 503 today, any future 429/5xx —
+> propagates unchanged, `Retry-After` header included. The paragraph below
+> now describes what clients actually receive.
+
+Two consequences worth stating plainly:
 
 - **A Redis outage is an authentication outage.** `/auth/login` and
   `/auth/refresh` are Postgres-only and keep working — they will happily

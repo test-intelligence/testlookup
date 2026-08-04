@@ -11,12 +11,30 @@ from jose import jwt
 from app.core.config import settings
 
 
+# bcrypt hashes at most 72 bytes. Versions before 5.0 truncated silently;
+# 5.0 raises ValueError instead ("password cannot be longer than 72 bytes").
+# Left unhandled that is a 500 on *unauthenticated* /auth/login for any
+# password over 72 bytes — and on register / change-password / first-time
+# reset. We truncate explicitly, which:
+#   * closes the 500, and
+#   * preserves the pre-5.0 semantics, so a credential created when bcrypt
+#     truncated silently still verifies. Rejecting instead would lock those
+#     users out of their own accounts.
+# Bytes, not characters: a multi-byte character may be cut mid-sequence, which
+# is fine — the value only has to be deterministic, never decoded back.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _bcrypt_bytes(password: str) -> bytes:
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    return bcrypt.checkpw(_bcrypt_bytes(plain_password), hashed_password.encode("utf-8"))
 
 
 def get_password_hash(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    return bcrypt.hashpw(_bcrypt_bytes(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def hash_token(raw: str) -> str:

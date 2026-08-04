@@ -45,13 +45,29 @@ class TimestampMixin(BaseModel):
 
 # ── Auth Schemas ─────────────────────────────────────────────
 
+# Every password-accepting schema uses this cap. An unbounded value reaches
+# ``get_password_hash`` → bcrypt, so a multi-MB password is a cheap CPU/memory
+# DoS (audit item S4) — the cap is a resource guard, not a password policy.
+#
+# Why 128 and not something larger: **bcrypt only reads the first 72 bytes.**
+# Every byte past 72 is security theatre — two passwords sharing a 72-byte
+# prefix hash identically — so a generous cap buys the user nothing real. 128
+# is the historical value from ``UserCreate`` and is kept so this change adds
+# no new rejection to the one path that was already capped.
+#
+# Caveat worth knowing (NOT fixed here — see CHANGELOG): the pinned bcrypt
+# does not truncate silently, it raises ``ValueError`` past 72 bytes, so a
+# 73–128 char password still 500s inside ``get_password_hash``. The cap
+# narrows that window but does not close it; closing it is a password-policy
+# decision (reject at 72 vs. truncate vs. pre-hash), not a drive-by.
+MAX_PASSWORD_LENGTH = 128
+
+
 class UserCreate(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
     full_name: Optional[str] = Field(None, max_length=255)
-    # Cap the password length: an unbounded value is hashed on the bcrypt path,
-    # so a multi-MB password is a cheap CPU/memory DoS (audit item S4).
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UserResponse(TimestampMixin):
@@ -83,7 +99,15 @@ class TokenResponse(BaseModel):
 
 class LoginRequest(BaseModel):
     username: str
-    password: str
+    # Capped like every other password field. No working password can exceed
+    # the cap — bcrypt reads only 72 bytes, so a longer one could never have
+    # been set in the first place — so this rejects nothing that works today.
+    # NOTE: this schema is currently unreferenced; ``POST /auth/login`` binds
+    # ``OAuth2PasswordRequestForm``, whose ``password`` is uncapped. That is
+    # the live unauthenticated bcrypt surface and it is NOT closed here (see
+    # CHANGELOG); the cap is on the schema so it is right the day the schema
+    # is wired up.
+    password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
 
 
 class RefreshRequest(BaseModel):
@@ -91,14 +115,18 @@ class RefreshRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str = Field(..., min_length=8)
+    # Both fields reach bcrypt — ``current_password`` via verify, ``new_password``
+    # via hash — so both carry the cap. Only ``new_password`` carries the minimum;
+    # ``current_password`` is checked against the stored hash, and rejecting a
+    # short one at the schema would leak that no short password can be current.
+    current_password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
+    new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
 
 
 class FirstTimeResetRequest(BaseModel):
     """Used for forced password reset on first login — no current password required."""
-    new_password: str = Field(..., min_length=8)
-    confirm_password: str = Field(..., min_length=8)
+    new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
+    confirm_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
 
 
 # ── Project Schemas ───────────────────────────────────────────
