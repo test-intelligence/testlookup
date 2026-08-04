@@ -70,11 +70,33 @@ beforeEach(() => {
 })
 
 describe('AssistantMessageExtras', () => {
-  it('renders nothing when there is no trace and no actions', () => {
-    const { container } = render(
+  // US-15.1: the trust chrome renders on EVERY assistant answer, including
+  // the plainest one with no trace and no actions.
+  it('renders the AI-suggested badge even with no trace and no actions', () => {
+    render(<AssistantMessageExtras toolTrace={[]} suggestedActions={[]} />)
+    expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('AI-suggested')
+  })
+
+  it('renders NO confidence — the copilot has none to report', () => {
+    render(<AssistantMessageExtras toolTrace={TRACE} suggestedActions={[]} />)
+    expect(screen.queryByTestId('ai-confidence')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-basis-chip')).not.toBeInTheDocument()
+    expect(screen.queryByText(/% *$/)).not.toBeInTheDocument()
+  })
+
+  it('renders no provenance line until the backend supplies one', () => {
+    const { rerender } = render(
       <AssistantMessageExtras toolTrace={[]} suggestedActions={[]} />,
     )
-    expect(container.firstChild).toBeNull()
+    expect(screen.queryByTestId('ai-provenance')).not.toBeInTheDocument()
+    rerender(
+      <AssistantMessageExtras
+        toolTrace={[]}
+        suggestedActions={[]}
+        provenanceRaw={{ mode_used: 'llm', llm_model: 'qwen2.5:7b' }}
+      />,
+    )
+    expect(screen.getByTestId('ai-provenance')).toHaveTextContent('qwen2.5:7b')
   })
 
   it('renders the trace collapsed, then expands to per-tool summaries', () => {
@@ -155,7 +177,7 @@ describe('splitMessageSources', () => {
 
   it('handles legacy messages with null or plain sources', () => {
     expect(splitMessageSources(null)).toEqual({
-      plainSources: [], toolTrace: [], suggestedActions: [],
+      plainSources: [], toolTrace: [], suggestedActions: [], provenanceRaw: null,
     })
     expect(splitMessageSources([{ type: 'test_run', id: 'r1' }]).plainSources)
       .toEqual([{ type: 'test_run', id: 'r1' }])

@@ -76,6 +76,13 @@ describe('CoveragePage', () => {
     expect(await screen.findByText(/Coverage Workflow/i)).toBeInTheDocument()
     expect(screen.getByText(/Coverage Snapshot/i)).toBeInTheDocument()
     expect(screen.getByText(/Test Coverage/i)).toBeInTheDocument()
+
+    // US-15.1 honesty fix: the ribbon used to render a hardcoded
+    // "85% confidence". Coverage has no AI confidence - it now shows the
+    // deterministic composite score under its real name.
+    expect(screen.queryByText(/85% confidence/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/% confidence/i)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/% coverage score/i).length).toBeGreaterThan(0)
   })
 
   it('Export button triggers a CSV download with the in-window coverage data', async () => {

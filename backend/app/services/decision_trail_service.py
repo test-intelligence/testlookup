@@ -107,6 +107,14 @@ async def _load_per_test_routing(
             "confidence_adjustments": meta.get("confidence_adjustments") or [],
             "retry_count": meta.get("retry_count") or 0,
             "duration_seconds": meta.get("analysis_duration_seconds"),
+            # US-15.2: the confidence-gate evaluation recorded at analysis
+            # time — {threshold, observed_confidence, passed, source}. None on
+            # rows analysed before the gate existed (no backfill, no guess).
+            "threshold_check": (
+                meta.get("threshold_check")
+                if isinstance(meta.get("threshold_check"), dict)
+                else None
+            ),
         })
     return rows
 
@@ -214,11 +222,18 @@ async def build_trail(
     # Mode distribution and fallback count from per-test rollup.
     mode_distribution: dict[str, int] = {}
     fallback_count = 0
+    below_threshold_count = 0
     for row in per_test:
         mode = row.get("analysis_mode") or "unknown"
         mode_distribution[mode] = mode_distribution.get(mode, 0) + 1
         if row.get("fallback_from"):
             fallback_count += 1
+        # US-15.2 rollup: how many analyses failed the confidence gate. Only
+        # counts tests that actually recorded a check — an un-gated legacy row
+        # is neither "passed" nor "below".
+        check = row.get("threshold_check")
+        if isinstance(check, dict) and check.get("passed") is False:
+            below_threshold_count += 1
 
     return {
         "run_id": run_id,
@@ -234,4 +249,5 @@ async def build_trail(
         "per_test": per_test,
         "mode_distribution": mode_distribution,
         "fallback_count": fallback_count,
+        "below_threshold_count": below_threshold_count,
     }

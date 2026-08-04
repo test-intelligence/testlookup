@@ -34,6 +34,27 @@ Every analysis carries a 0–100 **confidence score**, but the number's *meaning
 
 Downstream thresholds read the score uniformly regardless of basis: results below the review threshold (default 70 in-engine, `AI_CONFIDENCE_THRESHOLD=80` in the pipeline) are flagged **requires human review**; auto-triage and defect auto-actions gate on the same knobs. The basis label exists so a human deciding whether to *trust* a 75 knows whether that 75 was measured or estimated.
 
+## Which engine actually answered (provenance)
+
+An analysis card tells you *what produced it*, not just what it concluded. Every analysis carries a **provenance** block: the engine that ran (`rules` / `ml` / `llm`), what was originally requested, and — the case that matters — whether a **fallback** happened and why. If Ollama was unreachable and the rules engine answered instead, the card says so; heuristics are never presented as model output. The block also carries the provider/model identity, the prompt version tags in force, and the confidence basis.
+
+Analyses recorded before this feature carry no routing metadata, so their provenance is simply **absent** rather than reconstructed — a blank is honest; a plausible guess is not.
+
+## The confidence gate (when automation is allowed to act)
+
+Automation acts on an AI conclusion only when its confidence clears a single configurable gate — **`ai_confidence_threshold`** on `/settings/ai` (default `AI_CONFIDENCE_THRESHOLD`, 80). Below the gate the automation does **not** act: it degrades to the deterministic path (hold for human review) and the output is marked **"low confidence — needs human review"** explicitly, as a field on the API contract, so no UI has to guess at a cutoff.
+
+The comparison is `confidence >= threshold` — a score exactly at the threshold passes. A missing confidence never passes, and is reported as *not evaluated* rather than as low: "we did not judge this" is a different statement from "we judged it poor".
+
+Every evaluation is recorded as a **threshold check** — `{threshold, observed_confidence, passed, source}`, where `source` is `ai_config` (an operator override is stored) or `env_default` — persisted alongside the routing decision and surfaced in the run's **decision trail**, which also rolls up how many analyses fell below the gate.
+
+> **This is a policy dial, not a calibration.** The numbers being compared are self-declared estimates (see the basis discussion above — every rules-engine band is currently `heuristic_estimate`, and a human correction pins a hard-coded 95). "Confidence ≥ 80" means *the engine claimed at least 80*, not *this is right 80% of the time*. Raising the gate buys caution, not accuracy.
+
+Two thresholds are deliberately **not** wired to this knob:
+
+- **The PR-comment kind-label display floor (60)** — a display floor and an action gate answer different questions. Nothing acts on a PR-comment label, and coupling them would mean tightening the action gate silently strips labels off PR comments.
+- **Fixer candidate selection** — its inputs (quarantine state, flip rate, prior attempt count) are entirely deterministic. There is no AI confidence there to gate on, and inventing one would be theatre. Fixer's safety story is its attempt budget, test-code-only restriction, ephemeral sandbox, and human-merged draft PR.
+
 ## Configuring the AI tier (`/settings/ai`, `/settings/ai-eval`)
 
 - **AI Settings** — analysis mode (rules/ML/LLM/auto), local-LLM (Ollama) model selection, and budget controls. Per-project daily budgets cap LLM spend; over budget, analysis downgrades mode instead of stopping.

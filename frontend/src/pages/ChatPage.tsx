@@ -72,7 +72,7 @@ const MessageBubble = memo(function MessageBubble({ role, content, sources }: {
   const isUser = role === 'user'
   // AI-6: the copilot's trace + action handoffs travel inside the sources
   // JSON; strip the carrier entries so chips render only real sources.
-  const { plainSources, toolTrace, suggestedActions } = splitMessageSources(sources ?? null)
+  const { plainSources, toolTrace, suggestedActions, provenanceRaw } = splitMessageSources(sources ?? null)
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
@@ -108,7 +108,11 @@ const MessageBubble = memo(function MessageBubble({ role, content, sources }: {
           </div>
         )}
         {!isUser && (
-          <AssistantMessageExtras toolTrace={toolTrace} suggestedActions={suggestedActions} />
+          <AssistantMessageExtras
+            toolTrace={toolTrace}
+            suggestedActions={suggestedActions}
+            provenanceRaw={provenanceRaw}
+          />
         )}
       </div>
     </div>

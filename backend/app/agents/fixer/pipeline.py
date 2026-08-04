@@ -5,6 +5,25 @@ selection, diagnosis recall, fix generation (registry prompt / offline),
 test-code-only glob rejection, draft-PR opening, and the outcome poller.
 No agent implementations here (support module — see the quality-gate note in
 ``runners.py``); everything is a plain async/sync function.
+
+US-15.2 scope note — candidate selection is NOT confidence-gated
+----------------------------------------------------------------
+``select_candidates`` is deliberately outside the confidence gate
+(``services/confidence_gate.py``). Its inputs are entirely deterministic:
+active quarantine state, observed flip rate, last-failure recency, and a count
+of prior consumed fix attempts. There is no AI conclusion in that decision, so
+there is no confidence to gate on — attaching one would mean inventing a
+number, which is precisely the dishonesty US-15.1/15.2 exist to remove.
+
+The safety story for Fixer is a different mechanism and already in place: an
+attempt budget, a test-code-only glob restriction, an ephemeral sandbox, and a
+draft PR that a human must merge. Nothing here acts unsupervised.
+
+To bring Fixer under the gate later you would need an AI-produced confidence
+attached to the FIX, not to candidate selection — e.g. the generation stage
+emitting a calibrated "this patch resolves the failure" score validated
+against merged-vs-abandoned draft PRs. Until such a signal exists and has been
+measured, gating here would be theatre.
 """
 from __future__ import annotations
 

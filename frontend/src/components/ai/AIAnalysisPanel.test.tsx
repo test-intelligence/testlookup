@@ -12,6 +12,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import AIAnalysisPanel from './AIAnalysisPanel'
+import type { AnalysisResult } from '@/types/ai'
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,15 @@ vi.mock('@/services/aiService', () => ({
     analyze: vi.fn(),
     createJiraTicket: vi.fn(),
     getAnalysis: vi.fn().mockResolvedValue(null),
+  },
+}))
+
+vi.mock('@/services/aiFeedbackService', () => ({
+  aiFeedbackService: {
+    submitFeedback: vi.fn().mockResolvedValue({ feedback_id: 'fb-1', message: 'ok' }),
+    lookupAnalysis: vi.fn().mockResolvedValue({
+      analysis_id: null, failure_category: null, analyzed_at: null,
+    }),
   },
 }))
 
@@ -73,7 +83,7 @@ describe('AIAnalysisPanel', () => {
     vi.clearAllMocks()
   })
 
-  async function renderResolvedResult(analysis: Partial<typeof MOCK_ANALYSIS> = {}) {
+  async function renderResolvedResult(analysis: Partial<AnalysisResult> = {}) {
     const { aiService } = await import('@/services/aiService')
     ;(aiService.analyze as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...MOCK_ANALYSIS,
@@ -274,7 +284,10 @@ describe('AIAnalysisPanel', () => {
 
     it('shows high-confidence explanation for score >= 80', async () => {
       await renderResolvedResult()
-      expect(screen.getByText(/High confidence.*root cause is well-supported/i)).toBeInTheDocument()
+      // US-15.1 copy audit: this used to read "the root cause is
+      // well-supported", asserting the cause was known.
+      expect(screen.getByText(/High confidence.*suggestion is well-supported/i)).toBeInTheDocument()
+      expect(screen.queryByText(/root cause is well-supported/i)).not.toBeInTheDocument()
     })
 
     it('shows medium-confidence explanation for score between 60 and 79', async () => {
@@ -310,6 +323,84 @@ describe('AIAnalysisPanel', () => {
       await waitFor(() => expect(screen.getByText('92%')).toBeInTheDocument())
       // Should still render — no crash, confidence score visible
       expect(screen.getByText('Confidence + Why')).toBeInTheDocument()
+    })
+  })
+
+  // ── US-15.1 shared trust chrome ────────────────────────────────────────
+  describe('AI trust chrome', () => {
+    it('renders the AI-suggested badge and hedged root-cause heading', async () => {
+      await renderResolvedResult()
+      expect(screen.getByTestId('ai-suggested-badge')).toBeInTheDocument()
+      expect(screen.getByText('Suggested root cause')).toBeInTheDocument()
+      expect(screen.queryByText('Root Cause Summary')).not.toBeInTheDocument()
+    })
+
+    it('renders exactly one confidence figure, with its basis chip', async () => {
+      await renderResolvedResult()
+      expect(screen.getAllByText('92%')).toHaveLength(1)
+      expect(screen.getByTestId('ai-basis-chip')).toHaveTextContent('estimated')
+    })
+
+    it('renders the routing provenance from llm_provider / llm_model', async () => {
+      await renderResolvedResult()
+      expect(screen.getByTestId('ai-provenance')).toHaveTextContent('ollama · qwen2.5:7b')
+    })
+
+    it('shows the fallback notice when the backend reports one', async () => {
+      await renderResolvedResult({
+        provenance: {
+          mode_used: 'rules',
+          mode_requested: 'llm',
+          fallback_from: 'llm',
+          fallback_reason: 'Ollama was unreachable.',
+        },
+      })
+      expect(screen.getByTestId('ai-fallback-notice')).toHaveTextContent(
+        /The LLM was unavailable.*rules engine/i,
+      )
+    })
+
+    it('degrades silently when no provenance block is present', async () => {
+      const { llm_provider: _p, llm_model: _m, ...withoutProvenance } = MOCK_ANALYSIS
+      const { aiService } = await import('@/services/aiService')
+      ;(aiService.analyze as ReturnType<typeof vi.fn>).mockResolvedValue(withoutProvenance)
+      render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
+      await waitFor(() => expect(screen.getByText('92%')).toBeInTheDocument())
+      expect(screen.queryByTestId('ai-provenance')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('ai-fallback-notice')).not.toBeInTheDocument()
+    })
+
+    it('renders the low-confidence state when the backend flags it', async () => {
+      await renderResolvedResult({ low_confidence: true })
+      expect(screen.getByTestId('ai-low-confidence')).toBeInTheDocument()
+    })
+
+    it('omits confirm/correct when the response carries no analysis_id', async () => {
+      await renderResolvedResult()
+      expect(screen.queryByTestId('ai-feedback-actions')).not.toBeInTheDocument()
+    })
+
+    it('submits confirm feedback through aiFeedbackService when an id exists', async () => {
+      const { aiFeedbackService } = await import('@/services/aiFeedbackService')
+      await renderResolvedResult({ analysis_id: 'an-42' })
+      fireEvent.click(screen.getByRole('button', { name: /Confirm/i }))
+      await waitFor(() =>
+        expect(aiFeedbackService.submitFeedback).toHaveBeenCalledWith('an-42', {
+          rating: 'correct',
+        }),
+      )
+    })
+
+    it('opens the shared correction modal from the Correct button', async () => {
+      await renderResolvedResult({ analysis_id: 'an-42' })
+      fireEvent.click(screen.getByRole('button', { name: /Correct/i }))
+      expect(await screen.findByRole('dialog', { name: /Correct classification/i })).toBeInTheDocument()
+    })
+
+    it('renders evidence through the chrome', async () => {
+      await renderResolvedResult()
+      expect(screen.getByTestId('ai-evidence')).toHaveTextContent('ConnectionTimeoutException')
     })
   })
 

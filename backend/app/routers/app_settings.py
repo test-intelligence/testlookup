@@ -211,19 +211,31 @@ async def test_smtp_config(
 
 _AI_CONFIG_KEY = "ai_config"
 
-# Derived, not stored: provenance for the offline-mode ceiling. Computed on
-# every read from the environment, stripped before anything is persisted.
-_DERIVED_AI_KEYS = ("ai_offline_mode_source", "ai_offline_mode_env_pinned")
+# Derived, not stored: provenance for the offline-mode ceiling and the
+# US-15.2 confidence gate. Computed on every read, stripped before persisting
+# — writing a source back would make it look like a stored override.
+_DERIVED_AI_KEYS = (
+    "ai_offline_mode_source",
+    "ai_offline_mode_env_pinned",
+    "ai_confidence_threshold_source",
+)
 
 
 async def _load_ai_config(db: AsyncSession) -> dict:
     from sqlalchemy import select
 
-    from app.services.ai_config_resolver import env_offline_pinned, resolve_offline_mode
+    from app.services.ai_config_resolver import (
+        CONFIDENCE_SOURCE_AI_CONFIG,
+        CONFIDENCE_SOURCE_ENV_DEFAULT,
+        env_offline_pinned,
+        resolve_offline_mode,
+    )
+    from app.services.confidence_gate import normalize_threshold
 
     result = await db.execute(select(AppSetting).where(AppSetting.key == _AI_CONFIG_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
+    _stored_threshold = normalize_threshold(overrides.get("ai_confidence_threshold"))
     # AI_OFFLINE_MODE in the environment is a hard ceiling on outbound LLM
     # egress — the stored override may tighten it, never loosen it. Resolved
     # through the same helper the runtime resolver uses so this page and
@@ -241,7 +253,20 @@ async def _load_ai_config(db: AsyncSession) -> dict:
         "llm_max_tokens": overrides.get("llm_max_tokens", settings.LLM_MAX_TOKENS),
         "embedding_provider": overrides.get("embedding_provider", settings.EMBEDDING_PROVIDER),
         "embedding_model": overrides.get("embedding_model", settings.EMBEDDING_MODEL),
-        "ai_confidence_threshold": overrides.get("ai_confidence_threshold", settings.AI_CONFIDENCE_THRESHOLD),
+        # US-15.2: the automation confidence gate. A stored value that fails
+        # validation is dropped (not surfaced as if it were in force) — the
+        # runtime resolver drops it the same way, so this page and the gate
+        # can never disagree about which number automations obey.
+        "ai_confidence_threshold": (
+            _stored_threshold
+            if _stored_threshold is not None
+            else settings.AI_CONFIDENCE_THRESHOLD
+        ),
+        "ai_confidence_threshold_source": (
+            CONFIDENCE_SOURCE_AI_CONFIG
+            if _stored_threshold is not None
+            else CONFIDENCE_SOURCE_ENV_DEFAULT
+        ),
         "ai_timeout_seconds": overrides.get("ai_timeout_seconds", settings.AI_TIMEOUT_SECONDS),
         "deep_investigation_enabled": overrides.get("deep_investigation_enabled", settings.DEEP_INVESTIGATION_ENABLED),
         "finetune_enabled": overrides.get("finetune_enabled", settings.FINETUNE_ENABLED),
@@ -313,6 +338,7 @@ async def get_ai_config(
         embedding_provider=cfg["embedding_provider"],
         embedding_model=cfg["embedding_model"],
         ai_confidence_threshold=cfg["ai_confidence_threshold"],
+        ai_confidence_threshold_source=cfg["ai_confidence_threshold_source"],
         ai_timeout_seconds=cfg["ai_timeout_seconds"],
         deep_investigation_enabled=cfg["deep_investigation_enabled"],
         finetune_enabled=cfg["finetune_enabled"],

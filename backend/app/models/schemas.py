@@ -699,6 +699,61 @@ class ConfidenceWhy(BaseModel):
     confidence_basis: Optional[str] = None
 
 
+class ThresholdCheck(BaseModel):
+    """US-15.2 — the recorded confidence-gate evaluation for one AI output.
+
+    Persisted verbatim in ``AIAnalysis.routing_metadata["threshold_check"]``
+    and ``Defect.policy_evaluation["threshold_check"]``. Built by
+    ``services.confidence_gate.build_threshold_check`` — keep the shapes in
+    sync (four keys, no more).
+    """
+    threshold: int
+    # None when the gate ran without a confidence to judge (see gate_status).
+    observed_confidence: Optional[int] = None
+    passed: bool
+    # "ai_config" (stored operator override) | "env_default". Plain str, not a
+    # Literal — a strict enum over a widening vocabulary 422s the response.
+    source: str
+
+
+class AnalysisProvenance(BaseModel):
+    """US-15.1 — which engine actually produced this conclusion, and why.
+
+    Populated verbatim from ``AIAnalysis.routing_metadata`` (written by the
+    analysis router). It is NEVER recomputed or inferred: rows analysed before
+    this feature carry no routing metadata, so ``AnalysisResponse.provenance``
+    is ``None`` for them rather than a plausible-looking guess.
+
+    The point of this block is a specific honesty case: when the LLM was
+    unavailable and the rules engine ran instead, the card must be able to say
+    so (``fallback_occurred`` / ``fallback_from`` / ``fallback_reason``)
+    instead of silently presenting heuristics as model output.
+    """
+    # "llm" | "ml" | "rules" — the engine that actually ran.
+    mode_used: Optional[str] = None
+    # What the caller asked for (None = no explicit override) and what the
+    # router resolved before dispatch (matters for "auto").
+    mode_requested: Optional[str] = None
+    mode_resolved: Optional[str] = None
+    # Set only when the requested/resolved engine could not run.
+    fallback_from: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    # Convenience marker so the UI does not have to null-check two fields.
+    fallback_occurred: bool = False
+    # Engine/model identity, carried through from the analysis row.
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
+    # AI-F2 registry version tags of the prompts in force ({} for the
+    # prompt-free rules/ML engines).
+    prompt_versions: Dict[str, str] = Field(default_factory=dict)
+    # AI-F4: "empirical" | "heuristic_estimate" | "human_corrected".
+    # heuristic_estimate = self-declared, NOT empirically calibrated.
+    confidence_basis: Optional[str] = None
+    # US-15.2: the gate evaluation recorded at analysis time (historical).
+    # None on rows written before the gate existed.
+    threshold_check: Optional[ThresholdCheck] = None
+
+
 class AnalysisResponse(BaseModel):
     test_case_id: uuid.UUID
     root_cause_summary: str
@@ -724,6 +779,28 @@ class AnalysisResponse(BaseModel):
     llm_provider: str
     llm_model: str
     requires_human_review: bool
+    # US-15.1: identity of the persisted ``ai_analysis`` row behind this
+    # conclusion. The UI gates its confirm/correct buttons on this, because the
+    # correction loop is POST /api/v1/feedback/{analysis_id} — without it the
+    # AI card cannot reach the human-correction loop at all. None for a freshly
+    # computed result that was never persisted; the UI then omits the buttons
+    # rather than rendering ones that would 404.
+    analysis_id: Optional[uuid.UUID] = None
+    # US-15.1: engine provenance for this conclusion. None (not a stub) when
+    # the row predates routing metadata — absent, never fabricated.
+    provenance: Optional[AnalysisProvenance] = None
+    # US-15.2: explicit low-confidence marker. True ⇒ render
+    # "low confidence — needs human review". The UI must NOT re-derive this by
+    # comparing confidence_score to a threshold it guessed at.
+    low_confidence: bool = False
+    # "above_threshold" | "below_threshold" | "not_evaluated". The third value
+    # is a real answer: the gate did not run (or had no confidence to judge),
+    # which is different from "we judged it low".
+    confidence_gate_status: str = "not_evaluated"
+    # The gate as evaluated for THIS response against the CURRENTLY effective
+    # threshold (provenance.threshold_check is the historical record from
+    # analysis time — the two differ after an operator moves the knob).
+    confidence_gate: Optional[ThresholdCheck] = None
 
 
 # ── Jira Integration Schemas ──────────────────────────────────
@@ -2296,6 +2373,10 @@ class AIConfigRead(BaseModel):
     embedding_provider: str
     embedding_model: str
     ai_confidence_threshold: int
+    # US-15.2 provenance: "ai_config" (an operator override is stored) |
+    # "env_default" (the deployment default is in force). Plain str for the
+    # same reason as ai_offline_mode_source.
+    ai_confidence_threshold_source: str = "env_default"
     ai_timeout_seconds: int
     deep_investigation_enabled: bool
     finetune_enabled: bool
@@ -3866,6 +3947,9 @@ class PerTestRouting(BaseModel):
     confidence_adjustments: Optional[List[Dict[str, Any]]] = None
     retry_count: Optional[int] = None
     duration_seconds: Optional[float] = None
+    # US-15.2: the confidence-gate evaluation recorded for this analysis.
+    # None for rows analysed before the gate existed.
+    threshold_check: Optional[ThresholdCheck] = None
 
 
 class WorkflowDecisionEvent(BaseModel):
@@ -3896,6 +3980,9 @@ class DecisionTrailResponse(BaseModel):
     # Aggregate: how many tests used each engine and how many fell back.
     mode_distribution: Dict[str, int] = Field(default_factory=dict)
     fallback_count: int = 0
+    # US-15.2: how many analyses in this run failed the confidence gate.
+    # Counts only tests that recorded a check — legacy rows count as neither.
+    below_threshold_count: int = 0
 
 
 # ── LLM Cost Budget (Tier 1 item 2) ──────────────────────────────────────────

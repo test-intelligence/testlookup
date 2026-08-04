@@ -7,6 +7,16 @@ release overrides) go through explicit approval before execution.
 
 Action lifecycle:  suggested -> pending_review -> approved -> executed
                                                |-> rejected
+
+US-15.2 — confidence gating
+---------------------------
+The AI-confidence half of the promotion policy is no longer a magic number in
+this file. It reads ``services.confidence_gate``, whose threshold comes from
+``ai_config.ai_confidence_threshold`` (falling back to
+``settings.AI_CONFIDENCE_THRESHOLD``). Below the gate, the automation does not
+act — it degrades to the deterministic path (hold for human review) — and the
+evaluation is recorded as ``threshold_check`` on the returned policy dict,
+which the promotion service persists to ``Defect.policy_evaluation``.
 """
 from __future__ import annotations
 
@@ -20,6 +30,19 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("services.action_policy")
+
+
+def _passes_gate(confidence_score: int, confidence_threshold: Optional[int]) -> bool:
+    """US-15.2 confidence gate, with the config/env default when unresolved."""
+    from app.core.config import settings
+    from app.services.confidence_gate import passes
+
+    threshold = (
+        confidence_threshold
+        if confidence_threshold is not None
+        else settings.AI_CONFIDENCE_THRESHOLD
+    )
+    return passes(confidence_score, threshold)
 
 
 # ── Action states ────────────────────────────────────────────────────────────
@@ -55,11 +78,17 @@ def requires_approval(
     override_from: Optional[str] = None,
     override_to: Optional[str] = None,
     confidence_score: Optional[int] = None,
+    confidence_threshold: Optional[int] = None,
 ) -> bool:
     """
     Determine whether an action requires human approval before execution.
 
     Returns True when the action should be held in pending_review state.
+
+    US-15.2: ``confidence_threshold`` is the configurable confidence gate
+    (``ai_confidence_threshold``). When omitted, the config/env default
+    ``settings.AI_CONFIDENCE_THRESHOLD`` applies — this function stays sync,
+    so async callers resolve the effective value and pass it in.
     """
     if action_type == ActionType.DEFECT_PROMOTION:
         # All Jira-bound promotions require approval
@@ -68,8 +97,12 @@ def requires_approval(
         # High/critical severity always needs review
         if severity and severity.upper() in _SEVERITY_REQUIRES_REVIEW:
             return True
-        # Low AI confidence means human should verify
-        if confidence_score is not None and confidence_score < 60:
+        # US-15.2: below the configured confidence gate, fall back to the
+        # deterministic path — a human reviews it. Boundary is ``>=``:
+        # confidence exactly at the threshold PASSES (see confidence_gate).
+        if confidence_score is not None and not _passes_gate(
+            confidence_score, confidence_threshold
+        ):
             return True
         return False
 
@@ -104,9 +137,20 @@ async def check_defect_promotion_policy(
             "requires_approval": bool,
             "initial_status": ActionStatus,
             "policy_reasons": list[str],
+            "threshold_check": {threshold, observed_confidence, passed, source},
         }
+
+    US-15.2 BEHAVIOUR CHANGE: the confidence gate was a hard-coded ``< 60``.
+    It is now ``ai_confidence_threshold`` from the effective AI config
+    (default 80), so promotions scoring 60-79 that used to auto-approve now
+    land in ``pending_review``. The evaluation is recorded under
+    ``threshold_check`` and persisted on ``Defect.policy_evaluation``.
     """
+    from app.services.confidence_gate import build_threshold_check, resolve_confidence_threshold
+
     reasons: list[str] = []
+    threshold, source = await resolve_confidence_threshold()
+    threshold_check = build_threshold_check(confidence_score, threshold, source)
 
     if is_duplicate:
         reasons.append("Duplicate defect detected — promotion blocked")
@@ -114,6 +158,7 @@ async def check_defect_promotion_policy(
             "requires_approval": True,
             "initial_status": ActionStatus.REJECTED,
             "policy_reasons": reasons,
+            "threshold_check": threshold_check,
         }
 
     needs_approval = requires_approval(
@@ -121,6 +166,7 @@ async def check_defect_promotion_policy(
         severity=severity,
         has_jira_key=has_jira_key,
         confidence_score=confidence_score,
+        confidence_threshold=threshold,
     )
 
     if needs_approval:
@@ -128,13 +174,17 @@ async def check_defect_promotion_policy(
             reasons.append("Jira ticket creation requires human approval")
         if severity and severity.upper() in _SEVERITY_REQUIRES_REVIEW:
             reasons.append(f"Severity {severity} requires human review")
-        if confidence_score is not None and confidence_score < 60:
-            reasons.append(f"Low AI confidence ({confidence_score}%) requires review")
+        if confidence_score is not None and not threshold_check["passed"]:
+            reasons.append(
+                f"Low AI confidence ({confidence_score}%) is below the "
+                f"configured threshold ({threshold}%) — requires review"
+            )
 
     return {
         "requires_approval": needs_approval,
         "initial_status": ActionStatus.PENDING_REVIEW if needs_approval else ActionStatus.APPROVED,
         "policy_reasons": reasons,
+        "threshold_check": threshold_check,
     }
 
 

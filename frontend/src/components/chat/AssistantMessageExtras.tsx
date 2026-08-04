@@ -1,6 +1,10 @@
 /**
  * AI-6 copilot extras rendered under an assistant chat message:
  *
+ *  - the shared US-15.1 trust chrome — an "AI-suggested" badge on EVERY
+ *    assistant answer, plus routing provenance when the backend supplies it.
+ *    Deliberately no confidence: the copilot has none, and the chrome must
+ *    not imply one exists (`confidence` is simply not passed).
  *  - "How I looked this up" — a subtle, collapsed-by-default trace of the
  *    read tools the bounded loop consulted ({tool, summary} entries).
  *  - Suggested action buttons — one-click handoffs that OPEN the existing
@@ -9,20 +13,21 @@
  */
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink, Search, ShieldAlert } from 'lucide-react'
+import AISuggestion, { normalizeProvenance } from '@/components/ai/AISuggestion'
 import CreateJiraIssueModal from '@/components/defects/CreateJiraIssueModal'
 import ProposeQuarantineModal from '@/components/quarantine/ProposeQuarantineModal'
 import type { SuggestedAction, ToolTraceEntry } from '@/types/chat'
 
 export default function AssistantMessageExtras({
-  toolTrace, suggestedActions,
+  toolTrace, suggestedActions, provenanceRaw,
 }: {
   toolTrace: ToolTraceEntry[]
   suggestedActions: SuggestedAction[]
+  /** Optional routing provenance carrier — null on every message today. */
+  provenanceRaw?: Record<string, unknown> | null
 }) {
   const [traceOpen, setTraceOpen] = useState(false)
   const [openAction, setOpenAction] = useState<SuggestedAction | null>(null)
-
-  if (toolTrace.length === 0 && suggestedActions.length === 0) return null
 
   const quarantineOpen =
     openAction?.type === 'propose_quarantine' &&
@@ -35,6 +40,14 @@ export default function AssistantMessageExtras({
 
   return (
     <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2">
+      {/* Trust chrome — badge always, provenance when known, NO confidence. */}
+      <AISuggestion
+        bare
+        data-testid="chat-ai-suggestion"
+        badgeTitle="Written by the AI copilot from the data it could read — a suggestion to verify, not a verdict."
+        provenance={normalizeProvenance(provenanceRaw)}
+      />
+
       {toolTrace.length > 0 && (
         <div>
           <button

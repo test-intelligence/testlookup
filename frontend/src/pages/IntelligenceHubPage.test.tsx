@@ -55,4 +55,33 @@ describe('IntelligenceHubPage', () => {
     // mode it asks the user to narrow scope instead of faking numbers.
     expect(screen.getByText(/Select a project to see its LLM spend/i)).toBeInTheDocument()
   })
+
+  // ── US-15.1 honesty fix ────────────────────────────────────────────────
+  it('no longer labels the pass-rate column an "AI confidence"', async () => {
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [
+          { id: 'run-1', build_number: '42', status: 'PASSED', failed_tests: 0, passed_tests: 120, broken_tests: 0, skipped_tests: 0, total_tests: 120, pass_rate: 100, branch: 'main', project_name: 'Project One', created_at: '2026-04-03T15:00:00Z', duration_ms: 492000 },
+          // No pass_rate at all: the old code invented 55 for a failed run.
+          { id: 'run-2', build_number: '41', status: 'FAILED', failed_tests: 3, passed_tests: 117, broken_tests: 0, skipped_tests: 0, total_tests: 120, pass_rate: null, branch: 'main', project_name: 'Project One', created_at: '2026-04-02T15:00:00Z', duration_ms: 664000 },
+        ],
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/intelligence']}>
+        <Routes>
+          <Route path="/intelligence" element={<IntelligenceHubPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText(/Recent runs analyzed/i)
+    expect(screen.queryByText(/AI confidence/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /Pass rate/i })).toBeInTheDocument()
+    // The run with no pass_rate shows an em dash, not a fabricated figure.
+    expect(screen.queryByText('55%')).not.toBeInTheDocument()
+  })
 })

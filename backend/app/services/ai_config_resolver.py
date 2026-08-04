@@ -57,6 +57,13 @@ OFFLINE_SOURCE_ENV = "env"              # forced by AI_OFFLINE_MODE in the envir
 OFFLINE_SOURCE_OVERRIDE = "override"    # env permits egress; the DB setting turned it off
 OFFLINE_SOURCE_NONE = "not_offline"     # egress permitted
 
+# Provenance values for ``confidence_threshold_source`` (US-15.2). Duplicated
+# as literals rather than imported from ``confidence_gate`` — that module
+# imports this one, and a module-level import back would be circular. The
+# values are asserted equal in tests/test_ai_trust_provenance.py.
+CONFIDENCE_SOURCE_AI_CONFIG = "ai_config"
+CONFIDENCE_SOURCE_ENV_DEFAULT = "env_default"
+
 
 def env_offline_pinned() -> bool:
     """True when the environment pins offline mode on (the ceiling is active)."""
@@ -160,6 +167,12 @@ async def _load_from_db_and_env() -> dict[str, Any]:
         "base_url": None,
         "offline_mode": settings.AI_OFFLINE_MODE,
         "timeout_seconds": settings.AI_TIMEOUT_SECONDS,
+        # US-15.2: the confidence gate every automation reads. Published here
+        # (rather than resolved separately) so it shares this resolver's cache
+        # and DB-failure fallback. ``_source`` is provenance for the recorded
+        # threshold check — see services/confidence_gate.py.
+        "confidence_threshold": settings.AI_CONFIDENCE_THRESHOLD,
+        "confidence_threshold_source": CONFIDENCE_SOURCE_ENV_DEFAULT,
         "openai_api_key": settings.OPENAI_API_KEY,
         "google_api_key": settings.GOOGLE_API_KEY,
         "anthropic_api_key": getattr(settings, "ANTHROPIC_API_KEY", None),
@@ -183,6 +196,15 @@ async def _load_from_db_and_env() -> dict[str, Any]:
                 # the effective one. A DB override can tighten, never loosen.
                 config["offline_mode"] = overrides.get("ai_offline_mode", config["offline_mode"])
                 config["timeout_seconds"] = overrides.get("ai_timeout_seconds", config["timeout_seconds"])
+                # US-15.2: a stored override wins over the env default; a junk
+                # value is dropped (normalize_threshold returns None) so one
+                # bad settings write cannot brick every confidence gate.
+                from app.services.confidence_gate import normalize_threshold
+
+                stored_threshold = normalize_threshold(overrides.get("ai_confidence_threshold"))
+                if stored_threshold is not None:
+                    config["confidence_threshold"] = stored_threshold
+                    config["confidence_threshold_source"] = CONFIDENCE_SOURCE_AI_CONFIG
 
             # Load secrets from secret_refs (override env-only keys)
             for key_name in ("openai_api_key", "google_api_key", "anthropic_api_key"):

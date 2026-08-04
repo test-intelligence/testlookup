@@ -102,6 +102,18 @@ ADJUSTED_CAP = 90
 # annotations): below this, no kind label at all — a low-confidence guess is
 # noise, not signal. Internal surfaces (the /failures popover) always show
 # the full checklist instead.
+#
+# US-15.2 — DELIBERATELY NOT the configurable ``ai_confidence_threshold``.
+# A display floor and an action gate answer different questions:
+#   * the action gate (services/confidence_gate.py) decides whether an
+#     automation may TAKE AN IRREVERSIBLE STEP on the AI's say-so, so an
+#     operator must be able to tighten it per deployment;
+#   * this floor only decides whether a label is worth the pixels in a PR
+#     comment. Nothing acts on it, and nothing is lost when it is wrong.
+# Coupling them would mean raising the action gate silently strips labels off
+# PR comments — a surprising, unrelated consequence. Kept independent on
+# purpose; revisit only if operators ask to tune external-comment verbosity,
+# which deserves its own knob rather than a borrowed one.
 KIND_DISPLAY_CONFIDENCE_FLOOR = 60
 
 SCHEMA_VERSION = 1

@@ -817,16 +817,20 @@ interface RibbonStage {
   num: number
   name: string
   evidence: number
-  confidencePct?: number
+  /** US-15.1 honesty fix: this used to be a hardcoded ``confidencePct: 85``
+   *  rendered as "85% confidence" — an invented number, and not a
+   *  confidence in anything. It now carries the deterministic composite
+   *  coverage score, under its real name. */
+  coverageScorePct?: number
 }
 const COVERAGE_STAGES: RibbonStage[] = [
   { num: 1, name: 'Coverage Snapshot', evidence: 0 },
   { num: 2, name: 'Suite Breadth',     evidence: 0 },
-  { num: 3, name: 'Coverage Risk',     evidence: 0, confidencePct: 85 },
+  { num: 3, name: 'Coverage Risk',     evidence: 0 },
   { num: 4, name: 'Coverage Actions',  evidence: 0 },
 ]
 
-function CoverageRibbon({ totalEvidence, confidencePct }: { totalEvidence: number; confidencePct: number }) {
+function CoverageRibbon({ totalEvidence, coverageScorePct }: { totalEvidence: number; coverageScorePct: number }) {
   // Distribute the evidence across the 4 stages so the slim ribbon shows a
   // believable per-stage count even though the backend doesn't yet emit
   // per-stage data. Stage 1 (Snapshot) carries the bulk; the rest get 1
@@ -834,7 +838,7 @@ function CoverageRibbon({ totalEvidence, confidencePct }: { totalEvidence: numbe
   const distributed = COVERAGE_STAGES.map((s, i) => ({
     ...s,
     evidence: i === 0 ? Math.max(0, totalEvidence - 3) : 1,
-    confidencePct: i === 2 ? confidencePct : s.confidencePct,
+    coverageScorePct: i === 2 ? coverageScorePct : s.coverageScorePct,
   }))
 
   return (
@@ -847,7 +851,7 @@ function CoverageRibbon({ totalEvidence, confidencePct }: { totalEvidence: numbe
         <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Coverage workflow · last analysis</h3>
         <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
           <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ background: 'var(--status-passed)' }} />
-          Completed · 4 stages · {totalEvidence} evidence items · {confidencePct}% confidence
+          Completed · 4 stages · {totalEvidence} evidence items · {coverageScorePct}% coverage score
         </div>
       </div>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
@@ -877,10 +881,10 @@ function SlimStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean 
         <span className="text-[12.5px] font-semibold text-[var(--color-text)] leading-[1.2]">{stage.name}</span>
         <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">
           {stage.evidence} evidence
-          {stage.confidencePct != null && (
+          {stage.coverageScorePct != null && (
             <>
               <span className="mx-1 text-[var(--color-text-faint)]">·</span>
-              <span className="font-semibold" style={{ color: '#34d399' }}>{stage.confidencePct}% confidence</span>
+              <span className="font-semibold" style={{ color: '#34d399' }}>{stage.coverageScorePct}% coverage score</span>
             </>
           )}
         </span>
@@ -1578,7 +1582,8 @@ export default function CoveragePage() {
   const refreshedAt = trend.length > 0 ? '4h ago' : 'just now'   // backend doesn't expose snapshot age yet
   const latestRun = latestRuns?.items?.[0]
   const totalEvidence = (summary.suite_count ?? 0) + suites.length + (model.untaggedRuns > 0 ? 1 : 0)
-  const confidencePct = clamp(model.composite, 0, 100)
+  // Deterministic composite coverage score — NOT an AI confidence (US-15.1).
+  const coverageScorePct = clamp(model.composite, 0, 100)
 
   // KPI deltas — best-effort derived from the trend tail (last vs prior half).
   const totalExecDelta = (() => {
@@ -1724,7 +1729,7 @@ export default function CoveragePage() {
             )
           )}
 
-          <CoverageRibbon totalEvidence={totalEvidence} confidencePct={confidencePct} />
+          <CoverageRibbon totalEvidence={totalEvidence} coverageScorePct={coverageScorePct} />
 
           {/* KPI strip — 5 cells. The "Customize" widget picker still gates
               individual cells via the existing `coverage_kpis` widget id so

@@ -172,8 +172,14 @@ async def classify_test(
         Dict matching AIAnalysis shape with failure_category, confidence_score, etc.
         Always includes a ``_routing`` dict describing which engine ran and why
         (mode_requested, mode_resolved, mode_used, fallback_from, fallback_reason,
-        auto_probe). This is the authoritative decision record for the call —
-        downstream code should read it instead of re-deriving the decision.
+        auto_probe, prompt_versions, threshold_check). This is the authoritative
+        decision record for the call — downstream code should read it instead of
+        re-deriving the decision.
+
+        US-15.2: ``_routing["threshold_check"]`` records the confidence-gate
+        evaluation ({threshold, observed_confidence, passed, source}) and the
+        result carries the explicit ``low_confidence`` / ``confidence_gate_status``
+        markers so no consumer has to compare numbers itself.
     """
     requested = mode
     resolved = mode or get_analysis_mode()
@@ -224,6 +230,29 @@ async def classify_test(
         )
     except Exception:  # pragma: no cover — stamping must never break routing
         routing["prompt_versions"] = {}
+
+    # US-15.2: record the confidence-gate evaluation into the same decision
+    # record, so the threshold check lands in AIAnalysis.routing_metadata and
+    # surfaces in the decision trail without a second write path. Four keys:
+    # threshold / observed_confidence / passed / source.
+    #
+    # NOTE: this observes the confidence AS RETURNED BY THE ENGINE. Downstream
+    # post-processing (AnalysisAgent._validate_confidence caps/adjusts scores)
+    # re-evaluates the gate against the FINAL number and rewrites this entry —
+    # it deliberately reuses the threshold + source recorded here so the two
+    # can never disagree about which policy was in force.
+    try:
+        from app.services.confidence_gate import check_confidence, gate_status, is_low_confidence
+
+        check = await check_confidence(result.get("confidence_score"))
+        routing["threshold_check"] = check
+        # Explicit markers on the result so consumers never re-derive the
+        # verdict by comparing numbers themselves.
+        result["low_confidence"] = is_low_confidence(check)
+        result["confidence_gate_status"] = gate_status(check)
+    except Exception:  # pragma: no cover — gating must never break routing
+        routing["threshold_check"] = None
+
     result["_routing"] = routing
     return result
 

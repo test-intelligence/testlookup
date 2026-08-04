@@ -147,6 +147,16 @@ async def run_triage_agent(
             )
             if quick is not None:
                 quick["tools_used"] = []  # Fast classifier uses no tools — honest empty list
+                # US-15.1: the fast classifier IS an LLM call, just a single-shot
+                # one — say so rather than leaving provenance blank.
+                quick["_routing"] = {
+                    "mode_used": "llm",
+                    "mode_requested": None,
+                    "mode_resolved": "llm",
+                    "fallback_from": None,
+                    "fallback_reason": None,
+                    "execution_path": "fast_classifier",
+                }
                 await _store_audit_trail(test_case_id, f"fast_classifier:{test_name}", quick, [])
                 await _store_analysis_cache(test_name, error_message or "", stack_trace or "", quick, project_id)
                 return quick
@@ -193,6 +203,20 @@ async def run_triage_agent(
 
     logger.info("Starting AI triage for test: %s (provider: %s)", test_name, settings.LLM_PROVIDER)
 
+    # US-15.1: the decision record for this call. Mirrors the shape
+    # ``analysis_router.classify_test`` produces so both AI paths surface
+    # provenance through the same ``AnalysisResponse.provenance`` block. The
+    # LLM is what we are about to attempt; the except-branches below rewrite
+    # ``mode_used`` when something else ends up producing the answer.
+    routing: dict[str, Any] = {
+        "mode_used": "llm",
+        "mode_requested": None,
+        "mode_resolved": "llm",
+        "fallback_from": None,
+        "fallback_reason": None,
+        "execution_path": "react_agent",
+    }
+
     # Bind the investigation identity for the recall_similar_failures tool
     # (AI-F3). Server-side ContextVar — the LLM never supplies identifiers, so
     # recall stays project-scoped even if the model passes garbage input.
@@ -233,7 +257,9 @@ async def run_triage_agent(
                     )
                 analysis["llm_provider"] = settings.LLM_PROVIDER
                 analysis["llm_model"] = settings.LLM_MODEL
-                analysis["requires_human_review"] = analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD
+                # requires_human_review is set once, at the single exit below,
+                # from the US-15.2 confidence gate — not here. Setting it inline
+                # meant only the happy path ever consulted a threshold.
                 # Record which tools were actually invoked so the frontend can show honest stage progress.
                 tools_used = _extract_tools_used(intermediate_steps)
                 analysis["tools_used"] = tools_used
@@ -296,9 +322,20 @@ async def run_triage_agent(
                         analysis["llm_model"] = settings.LLM_MODEL
                         analysis["analysis_engine"] = "rules"
                         analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
+                        # US-15.1: THE case this story exists for — the card
+                        # must say "the LLM was unavailable, this is the rules
+                        # engine" instead of presenting heuristics as model output.
+                        routing["mode_used"] = "rules"
+                        routing["fallback_from"] = "llm"
+                        routing["fallback_reason"] = "llm_model_not_available"
                     except Exception as rules_exc:
                         logger.error("Rules engine fallback also failed: %s", rules_exc)
                         analysis = _fallback_analysis(_model_missing_hint(settings.LLM_MODEL))
+                        # No engine produced this — a canned stub did. mode_used
+                        # stays None so nothing claims authorship.
+                        routing["mode_used"] = None
+                        routing["fallback_from"] = "llm"
+                        routing["fallback_reason"] = "llm_model_not_available_and_rules_failed"
 
                 # ── Token limit ───────────────────────────────────────────────────
                 elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
@@ -307,11 +344,39 @@ async def run_triage_agent(
                         f"Input exceeded LLM context window. Error: {str(e)[:200]}. "
                         "Consider reducing stack trace length or enabling a model with larger context."
                     )
+                    routing["mode_used"] = None
+                    routing["fallback_from"] = "llm"
+                    routing["fallback_reason"] = "context_window_exceeded"
                 else:
                     analysis = _fallback_analysis(str(e))
+                    routing["mode_used"] = None
+                    routing["fallback_from"] = "llm"
+                    routing["fallback_reason"] = "llm_error"
                 intermediate_steps = []
     finally:
         reset_recall_context(_recall_token)
+
+    # ── US-15.2: one confidence gate for every exit path ──────────────────────
+    # Previously only the happy path compared confidence to a threshold, and it
+    # read settings directly. Now every path (agent success, rules fallback,
+    # canned stub) runs the same configurable gate and carries the explicit
+    # markers, so no consumer re-derives the verdict from raw numbers.
+    try:
+        from app.services.confidence_gate import (
+            check_confidence,
+            gate_status,
+            is_low_confidence,
+        )
+
+        gate_check = await check_confidence(analysis.get("confidence_score"))
+        routing["threshold_check"] = gate_check
+        analysis["requires_human_review"] = not gate_check["passed"]
+        analysis["low_confidence"] = is_low_confidence(gate_check)
+        analysis["confidence_gate_status"] = gate_status(gate_check)
+    except Exception as gate_exc:  # pragma: no cover — never fail the analysis
+        logger.warning("Confidence gate evaluation failed: %s", gate_exc)
+        analysis.setdefault("requires_human_review", True)
+    analysis["_routing"] = routing
 
     # Store full audit trail to MongoDB
     await _store_audit_trail(test_case_id, user_question, analysis, intermediate_steps)

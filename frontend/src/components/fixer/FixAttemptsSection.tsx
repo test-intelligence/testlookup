@@ -13,6 +13,7 @@ import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ExternalLink, Wrench } from 'lucide-react'
 import { clsx } from 'clsx'
+import AISuggestion from '@/components/ai/AISuggestion'
 import { useFixAttempt, useFixAttempts, useFixerConfig } from '@/hooks/useFixer'
 import { isFixAttemptActive, type FixAttempt, type FixAttemptStatus } from '@/types/fixer'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -72,10 +73,12 @@ function AttemptDetail({ attemptId }: { attemptId: string }) {
   return (
     <div className="space-y-3">
       {data.reason && (
-        <div>
-          <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] tracking-wider mb-1">Reason</div>
+        // US-15.1: the Fixer's reasoning is AI output and used to render bare.
+        // No confidence is passed — the Fixer emits none, and the chrome must
+        // not imply one exists.
+        <AISuggestion bare data-testid="fix-attempt-reason" label="reasoning">
           <p className="text-xs text-[var(--color-text-secondary)] m-0">{data.reason}</p>
-        </div>
+        </AISuggestion>
       )}
       <div>
         <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] tracking-wider mb-1">Patch</div>

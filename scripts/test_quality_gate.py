@@ -266,6 +266,86 @@ def _write_homelab_overlay(tmp_path: Path, tags: dict[str, str | None]) -> Path:
     return path
 
 
+# -- frontend.ai-output-hedging (US-15.1) ------------------------------------
+
+
+def _write_tsx(tmp_path: Path, rel: str, body: str) -> Path:
+    path = tmp_path / "frontend" / "src" / rel
+    _write(path, body)
+    return path
+
+
+def test_ai_output_hedging_flags_bare_root_cause_label(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_tsx(tmp_path, "components/Bad.tsx", """
+        export function Bad() {
+          return <p>Root cause: the payment service returned 500.</p>
+        }
+    """)
+    violations = qg._frontend_ai_output_hedging()
+    assert [v.line for v in violations] == [2]
+    assert "verdict" in violations[0].message
+
+
+def test_ai_output_hedging_flags_assertive_causation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_tsx(tmp_path, "components/Bad2.tsx", """
+        const copy = 'This failure is caused by a stale fixture.'
+        const heading = 'Root Cause Summary'
+        const line = 'We are confident the cause is a bad deploy.'
+    """)
+    lines = sorted(v.line for v in qg._frontend_ai_output_hedging())
+    assert lines == [1, 2, 3]
+
+
+def test_ai_output_hedging_allows_hedged_copy_and_stage_names(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_tsx(tmp_path, "components/Good.tsx", """
+        const STAGES = [{ label: 'Root Cause Analysis' }]
+        const heading = 'Suggested root cause'
+        const hedge = 'Likely caused by a stale fixture - confirm before acting.'
+        const caveat = 'Suspects, not culprits.'
+    """)
+    assert qg._frontend_ai_output_hedging() == []
+
+
+def test_ai_output_hedging_ignores_comments_and_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    # A comment may quote the banned phrasing - that is how the guard and the
+    # copy audit document themselves.
+    _write_tsx(tmp_path, "components/Commented.tsx", """
+        /* The old copy said the root cause is well-supported. */
+        // Root cause: this line is a comment, not rendered copy.
+        export const ok = 1
+    """)
+    _write_tsx(tmp_path, "components/Bad.test.tsx", """
+        expect(screen.queryByText('Root cause:')).toBeNull()
+    """)
+    assert qg._frontend_ai_output_hedging() == []
+
+
+def test_ai_output_hedging_preserves_line_numbers_after_block_comment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write_tsx(tmp_path, "components/Mixed.tsx", """
+        /**
+         * Multi-line header.
+         */
+        const copy = 'Root cause: everything.'
+    """)
+    violations = qg._frontend_ai_output_hedging()
+    assert [v.line for v in violations] == [4]
+
+
 def test_homelab_build_tag_placeholder_passes_when_all_placeholders(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

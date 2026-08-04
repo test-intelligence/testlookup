@@ -10,6 +10,9 @@ import type { AnalysisResult, ConfidenceWhy, RoleActions } from '@/types/ai'
 import { confidenceColor } from '@/utils/formatters'
 import RoleActionCard from '@/components/ai/RoleActionCard'
 import ReviewStateControl from '@/components/ai/ReviewStateControl'
+import AISuggestion, { BasisChip, normalizeProvenance } from '@/components/ai/AISuggestion'
+import CorrectClassificationModal from '@/components/ai/CorrectClassificationModal'
+import { aiFeedbackService } from '@/services/aiFeedbackService'
 
 interface Props {
   testCaseId: string
@@ -60,27 +63,13 @@ function ConfidencePanel({ score, why }: { score: number; why: ConfidenceWhy }) 
 
   return (
     <div className="theme-bg-secondary border theme-border rounded-xl p-4 space-y-3">
+      {/* US-15.1: the figure and its calibration basis moved up into the
+          shared AISuggestion header — one confidence per conclusion, always
+          with its basis. This panel is now purely the "why". */}
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Confidence + Why</p>
-        <span className="flex items-center gap-2">
-          {/* AI-F4: calibration basis — subtle chip with an explanatory tooltip */}
-          {why.confidence_basis && (
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"
-              title={why.confidence_basis === 'empirical'
-                ? 'Calibrated confidence — equals measured precision on labeled eval samples'
-                : why.confidence_basis === 'human_corrected'
-                  ? 'Confidence pinned by an authoritative human correction of this classification'
-                  : 'Estimated heuristic confidence — not empirically calibrated'}
-            >
-              {why.confidence_basis === 'empirical'
-                ? 'calibrated'
-                : why.confidence_basis === 'human_corrected'
-                  ? 'human-corrected'
-                  : 'estimated'}
-            </span>
-          )}
-          <span className={clsx('text-2xl font-bold tabular-nums', confColor)}>{score}%</span>
+        <span className={clsx('text-xs font-medium tabular-nums', confColor)}>
+          {score >= 80 ? 'high' : score >= 60 ? 'medium' : 'low'}
         </span>
       </div>
 
@@ -110,10 +99,12 @@ function ConfidencePanel({ score, why }: { score: number; why: ConfidenceWhy }) 
         )}
       </div>
 
-      {/* Explanation sentence */}
+      {/* Explanation sentence. US-15.1 copy audit: the old high-confidence
+          line asserted "the root cause is well-supported", i.e. that the
+          cause is known. It says what the evidence supports instead. */}
       <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
         {score >= 80
-          ? 'High confidence — the root cause is well-supported by tool evidence.'
+          ? 'High confidence — the suggestion is well-supported by tool evidence. Confirm it before acting.'
           : score >= 60
           ? 'Medium confidence — some evidence gathered; manual verification recommended.'
           : 'Low confidence — insufficient telemetry. Manual investigation required.'}
@@ -195,6 +186,11 @@ export default function AIAnalysisPanel({
   const [creatingJira, setCreatingJira] = useState(false)
   const [expanded, setExpanded]       = useState(true)
   const [hasError, setHasError]       = useState(false)
+  // US-15.1 confirm/correct loop — reuses the existing feedback path
+  // (POST /api/v1/feedback/{analysis_id}) and the extracted correction modal.
+  const [correctOpen, setCorrectOpen] = useState(false)
+  const [confirming, setConfirming]   = useState(false)
+  const [confirmed, setConfirmed]     = useState(false)
 
   // Auto-load any previously stored analysis so the user sees results immediately
   // without having to click "Analyse Root Cause" again.
@@ -325,6 +321,31 @@ export default function AIAnalysisPanel({
     investigation_depth: toolsUsed.length === 0 ? 'fast_path' : toolsUsed.length >= 4 ? 'deep' : 'standard',
   }
 
+  // ── US-15.1 trust chrome inputs ──────────────────────────────────────
+  // Everything here is defensive: analysis_id / provenance / low_confidence
+  // are all optional on the wire and legitimately absent on older rows.
+  const analysisId = result.analysis_id ?? null
+  const provenance = normalizeProvenance(result)
+  const lowConfidence = result.low_confidence ?? result.requires_human_review
+  const evidenceLinks = (result.evidence_references ?? []).map(ev => ({
+    label: ev.source,
+    detail: ev.excerpt,
+  }))
+
+  const handleConfirm = async () => {
+    if (!analysisId || confirming) return
+    setConfirming(true)
+    try {
+      await aiFeedbackService.submitFeedback(analysisId, { rating: 'correct' })
+      setConfirmed(true)
+      toast.success('Confirmed — recorded for the training loop.')
+    } catch {
+      toast.error('Could not record the confirmation.')
+    } finally {
+      setConfirming(false)
+    }
+  }
+
   return (
     <div className="card space-y-5">
       {/* Header */}
@@ -373,7 +394,34 @@ export default function AIAnalysisPanel({
       </div>
 
       {expanded && (
-        <>
+        // US-15.1: the ENTIRE conclusion sits inside the shared trust chrome
+        // — one AI-suggested badge, one confidence with its calibration
+        // basis, routing provenance (with a fallback notice when the LLM did
+        // not answer), evidence, and confirm/correct when there is an
+        // analysis id to attach the feedback to.
+        <AISuggestion
+          bare
+          label="root cause + actions"
+          confidence={result.confidence_score}
+          confidenceBasis={confidenceWhy.confidence_basis}
+          lowConfidence={lowConfidence}
+          provenance={provenance}
+          evidence={evidenceLinks}
+          analysisId={analysisId}
+          onConfirm={handleConfirm}
+          onCorrect={() => setCorrectOpen(true)}
+          busy={confirming}
+          confirmed={confirmed}
+          className="space-y-5"
+        >
+          {/* Suggested root cause */}
+          <div className="theme-bg-secondary border theme-border rounded-xl p-4">
+            <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
+              Suggested root cause
+            </p>
+            <p className="text-sm text-[var(--color-text)] leading-relaxed">{result.root_cause_summary}</p>
+          </div>
+
           {/* Confidence + Why panel */}
           <ConfidencePanel score={result.confidence_score} why={confidenceWhy} />
 
@@ -382,12 +430,6 @@ export default function AIAnalysisPanel({
             confidenceWhy={confidenceWhy}
             evidenceCount={confidenceWhy.evidence_count}
           />
-
-          {/* Root cause summary */}
-          <div className="theme-bg-secondary border theme-border rounded-xl p-4">
-            <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Root Cause Summary</p>
-            <p className="text-sm text-[var(--color-text)] leading-relaxed">{result.root_cause_summary}</p>
-          </div>
 
           {/* Role-aware actions */}
           {Object.values(roleActions).some(v => v.trim()) && (
@@ -413,22 +455,7 @@ export default function AIAnalysisPanel({
               </ul>
             </div>
           )}
-
-          {/* Evidence references */}
-          {result.evidence_references.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Evidence</p>
-              <div className="space-y-2">
-                {result.evidence_references.map((ev, i) => (
-                  <div key={i} className="bg-[var(--color-bg-secondary)] rounded-lg px-3 py-2 text-xs">
-                    <span className="text-[var(--color-text)] font-medium uppercase mr-2">{ev.source}</span>
-                    <span className="text-[var(--color-text-secondary)]">{ev.excerpt}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+        </AISuggestion>
       )}
 
       {/* Actions */}
@@ -465,6 +492,15 @@ export default function AIAnalysisPanel({
           </button>
         )}
       </div>
+
+      {correctOpen && analysisId && (
+        <CorrectClassificationModal
+          analysisId={analysisId}
+          currentCategory={result.failure_category}
+          testName={testName}
+          onClose={() => setCorrectOpen(false)}
+        />
+      )}
     </div>
   )
 }

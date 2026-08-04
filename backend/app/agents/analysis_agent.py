@@ -677,8 +677,15 @@ class AnalysisAgent(BaseAgent):
                 "mode_requested": state.get("analysis_mode_requested") or routing.get("mode_requested") or mode,
                 "mode_resolved_at_pipeline_start": state.get("analysis_mode_resolved"),
                 "mode_resolution": state.get("analysis_mode_resolution"),
+                "mode_resolved": routing.get("mode_resolved"),
                 "fallback_from": routing.get("fallback_from"),
                 "fallback_reason": routing.get("fallback_reason"),
+                # US-15.2: the confidence-gate evaluation for THIS analysis
+                # ({threshold, observed_confidence, passed, source}), recorded
+                # by the router and refreshed against the post-adjustment
+                # confidence by _validate_confidence. Persisted via
+                # AIAnalysis.routing_metadata (JSONB) — no schema migration.
+                "threshold_check": routing.get("threshold_check"),
                 "input_fingerprints": {
                     "test_name_sha256": _hash_text(meta.get("test_name", tc_id)),
                     "suite_name_sha256": _hash_text(meta.get("suite_name")),
@@ -1063,7 +1070,32 @@ class AnalysisAgent(BaseAgent):
             )
 
         analysis["confidence_score"] = confidence
-        analysis["requires_human_review"] = confidence < settings.AI_CONFIDENCE_THRESHOLD
+        # US-15.2: the gate is re-evaluated here against the FINAL (possibly
+        # capped) confidence, reusing the threshold + source the router already
+        # resolved, so routing_metadata never records a check against a number
+        # that was subsequently adjusted. No stored check (legacy path, direct
+        # ReAct calls) → fall back to the env default, preserving the previous
+        # behaviour exactly.
+        routing = analysis.get("_routing")
+        prior_check = (routing or {}).get("threshold_check") or {}
+        from app.services.confidence_gate import (
+            SOURCE_ENV_DEFAULT,
+            build_threshold_check,
+            gate_status,
+            is_low_confidence,
+        )
+
+        threshold = prior_check.get("threshold")
+        source = prior_check.get("source")
+        if not isinstance(threshold, int) or source not in ("ai_config", "env_default"):
+            threshold = settings.AI_CONFIDENCE_THRESHOLD
+            source = SOURCE_ENV_DEFAULT
+        check = build_threshold_check(confidence, threshold, source)
+        if isinstance(routing, dict):
+            routing["threshold_check"] = check
+        analysis["requires_human_review"] = not check["passed"]
+        analysis["low_confidence"] = is_low_confidence(check)
+        analysis["confidence_gate_status"] = gate_status(check)
         analysis["confidence_validated"] = True
         return analysis
 

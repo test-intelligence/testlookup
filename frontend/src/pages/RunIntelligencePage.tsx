@@ -50,6 +50,7 @@ import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import AISuggestion from '@/components/ai/AISuggestion'
 import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
@@ -1118,6 +1119,7 @@ function AIConfidenceCard({
   hasBaseline,
   llmUsed,
   fallbackUsed,
+  generatedBy,
 }: {
   confidencePct: number
   evidenceCount: number
@@ -1125,10 +1127,11 @@ function AIConfidenceCard({
   hasBaseline: boolean
   llmUsed: boolean
   fallbackUsed: boolean
+  /** provenance.generated_by — which engine produced the recommendation. */
+  generatedBy?: string | null
 }) {
   const tone: 'good' | 'warn' | 'bad' =
     confidencePct >= 70 ? 'good' : confidencePct >= 40 ? 'warn' : 'bad'
-  const pctColor = tone === 'good' ? '#34d399' : tone === 'warn' ? '#fcd34d' : '#fca5a5'
   const barFill = tone === 'good'
     ? 'linear-gradient(90deg, #22c55e, #34d399)'
     : tone === 'warn'
@@ -1161,14 +1164,27 @@ function AIConfidenceCard({
       rightSlot={<code className="text-[11px] text-[var(--color-text-secondary)]">v2 · pipeline</code>}
     >
       <div className="p-3.5">
+        {/* US-15.1: the confidence figure, its calibration basis, the routing
+            provenance and the fallback notice all come from the shared trust
+            chrome — this card used to render a bare percentage with no basis. */}
+        <AISuggestion
+          bare
+          label="release recommendation"
+          confidence={confidencePct}
+          lowConfidence={tone === 'bad'}
+          provenance={{
+            modeUsed: generatedBy ?? (llmUsed ? 'llm' : 'rules'),
+            fallbackFrom: fallbackUsed || !llmUsed ? 'llm' : null,
+            fallbackReason: fallbackUsed
+              ? 'At least one pipeline stage answered deterministically instead.'
+              : undefined,
+          }}
+        >
         <div className="flex items-center gap-2.5">
-          <span className="text-[22px] font-bold tabular-nums" style={{ color: pctColor }}>
-            {confidencePct}%
-          </span>
           <span className="text-[12px] text-[var(--color-text-muted)]">
-            {tone === 'good' ? 'High — recommendation supported by collected evidence'
+            {tone === 'good' ? 'High — the suggestion is supported by collected evidence'
               : tone === 'warn' ? 'Moderate — review evidence before acting'
-              : 'Low — recommendation derived deterministically, not by LLM reasoning'}
+              : 'Low — the suggestion was derived deterministically, not by LLM reasoning'}
           </span>
         </div>
         <div className="rounded-full overflow-hidden mt-2" style={{ height: 4, background: 'var(--color-bg-secondary)' }}>
@@ -1207,6 +1223,7 @@ function AIConfidenceCard({
             ))}
           </div>
         )}
+        </AISuggestion>
       </div>
     </CardShell>
   )
@@ -1516,6 +1533,7 @@ export default function RunIntelligencePage() {
             hasBaseline={hasBaseline}
             llmUsed={llmUsed}
             fallbackUsed={fallbackUsed}
+            generatedBy={provenance?.generated_by}
           />
           <FailureCategoryCard breakdown={category_breakdown} />
           <RunStepFlipCard runId={run.id} />

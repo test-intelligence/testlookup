@@ -48,6 +48,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
+import AISuggestion from '@/components/ai/AISuggestion'
 import EmptyState from '@/components/ui/EmptyState'
 import InvestigatorCockpit from '@/components/investigator/InvestigatorCockpit'
 import PageShell from '@/components/layout/PageShell'
@@ -379,6 +380,15 @@ interface ProposedCluster {
   severity: 'P0' | 'P1' | 'P2' | 'P3'
   isFlaky: boolean
   rationale: string
+  /** US-15.1: true when `rationale` is a real AI finding's root cause rather
+   *  than the generated "errors clustered around …" fallback sentence. Only
+   *  the former gets AI trust chrome — the fallback is not an AI conclusion. */
+  fromFinding: boolean
+  /** DeepFinding.origin — "pipeline" (real output), "seed" (demo data),
+   *  "unknown" (legacy rows). Already on the wire; US-15.1 renders it. */
+  origin?: DeepFinding['origin']
+  /** DeepFinding.confidence_basis — likewise already on the wire. */
+  confidenceBasis?: DeepFinding['confidence_basis']
   startedHoursAgo: number | null
 }
 
@@ -405,6 +415,15 @@ interface PastRun {
 interface EstimateRow {
   label: string
   detail: string
+}
+
+/** DeepFinding.origin → the provenance phrasing shown in the trust chrome.
+ *  "seed" is called out explicitly: demo rows must never read as real
+ *  pipeline output (US-15.1). */
+const ORIGIN_LABELS: Record<NonNullable<DeepFinding['origin']>, string> = {
+  pipeline: 'the deep-analysis pipeline',
+  seed: 'seeded demo data',
+  unknown: 'an unrecorded source (legacy row)',
 }
 
 function severityFromConfidence(c: number): ProposedCluster['severity'] {
@@ -439,7 +458,12 @@ function buildModel({
   // for a real call and drop the synthesis.
   const proposedClusters: ProposedCluster[] = clusters.slice(0, 3).map((c, i) => {
     const finding = findings.find(f => f.cluster_id === c.cluster_id)
-    const conf = finding?.confidence_score ?? c.cohesion_score ?? 0.7
+    // confidence_score arrives as either a 0-1 fraction or a 0-100 percent
+    // depending on the producer. Normalise to 0-1 — everything downstream
+    // (severity bands, the trust chrome) assumes a fraction, and a raw 91
+    // used to render as "9100%".
+    const rawConf = finding?.confidence_score ?? c.cohesion_score ?? 0.7
+    const conf = rawConf > 1 ? rawConf / 100 : rawConf
     const sev = severityFromConfidence(conf)
     const owner = (finding?.affected_services?.[0] ?? c.label.split(/\s/)[0] ?? 'unowned').toLowerCase()
     return {
@@ -456,6 +480,9 @@ function buildModel({
       severity: sev,
       isFlaky: /flak/i.test(finding?.failure_category ?? ''),
       rationale: finding?.root_cause ?? `Errors clustered around ${c.label.toLowerCase()}.`,
+      fromFinding: Boolean(finding?.root_cause),
+      origin: finding?.origin,
+      confidenceBasis: finding?.confidence_basis ?? null,
       startedHoursAgo: focusedRun ? Math.max(0, Math.round((Date.now() - new Date(focusedRun.created_at).getTime()) / 3600000)) : null,
     }
   })
@@ -1136,13 +1163,32 @@ function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () 
             {cluster.failures} failure{cluster.failures === 1 ? '' : 's'} · {cluster.testCount} test{cluster.testCount === 1 ? '' : 's'}
           </span>
         </div>
-        <p className="text-[12px] m-0 mt-1" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-          {cluster.rationale}
-          {' '}Confidence{' '}
-          <strong className="font-semibold" style={{ color: cluster.confidence >= 0.85 ? '#34d399' : cluster.confidence >= 0.65 ? '#fcd34d' : '#fca5a5' }}>
-            {cluster.confidence.toFixed(2)}
-          </strong>.
-        </p>
+        {cluster.fromFinding ? (
+          // US-15.1: a real deep-pipeline root cause is an AI conclusion —
+          // it renders in the shared trust chrome, with the row's `origin`
+          // and `confidence_basis` (both already on the wire, previously
+          // never rendered) surfaced as provenance.
+          <AISuggestion
+            bare
+            className="mt-1"
+            label="root cause"
+            confidence={Math.round(cluster.confidence * 100)}
+            confidenceBasis={cluster.confidenceBasis}
+            provenance={cluster.origin ? { modeUsed: ORIGIN_LABELS[cluster.origin] } : null}
+          >
+            <p className="text-[12px] m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+              {cluster.rationale}
+            </p>
+          </AISuggestion>
+        ) : (
+          <p className="text-[12px] m-0 mt-1" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+            {cluster.rationale}
+            {' '}Cluster cohesion{' '}
+            <strong className="font-semibold" style={{ color: cluster.confidence >= 0.85 ? '#34d399' : cluster.confidence >= 0.65 ? '#fcd34d' : '#fca5a5' }}>
+              {cluster.confidence.toFixed(2)}
+            </strong>. No AI finding recorded for this cluster yet.
+          </p>
+        )}
         <div className="flex items-center gap-2 mt-1.5 text-[10.5px] text-[var(--color-text-muted)]">
           <span aria-hidden className="inline-flex items-center gap-0.5">
             {Array.from({ length: cluster.members }).map((_, i) => (

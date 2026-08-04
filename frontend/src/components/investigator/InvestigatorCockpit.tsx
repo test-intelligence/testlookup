@@ -29,13 +29,15 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
+// US-15.1: the basis chip is shared trust chrome — this file used to carry a
+// third verbatim copy of the label/tooltip mapping.
+import { BasisChip } from '@/components/ai/AISuggestion'
 import { useAgentPolicies } from '@/hooks/useAgentGovernance'
 import { useInvestigation, useInvestigations } from '@/hooks/useInvestigation'
 import { usePermissions } from '@/hooks/usePermissions'
 import { investigatorService } from '@/services/investigatorService'
 import {
   isInvestigationActive,
-  type ConfidenceBasis,
   type HypothesisId,
   type InvestigationDetail,
   type InvestigationHypothesis,
@@ -62,33 +64,6 @@ const TRIGGER_LABEL: Record<string, string> = {
 }
 
 // ── Small atoms ──────────────────────────────────────────────────────────
-
-/** Calibration-basis chip — same pattern as AIAnalysisPanel (AI-F4). */
-function BasisChip({ basis }: { basis: ConfidenceBasis }) {
-  const label = basis === 'empirical'
-    ? 'calibrated'
-    : basis === 'llm_weighted'
-      ? 'llm-weighted'
-      : basis === 'human_corrected'
-        ? 'human-corrected'
-        : 'estimated'
-  const title =
-    basis === 'empirical'
-      ? 'Calibrated confidence — equals measured precision on labeled eval samples'
-      : basis === 'llm_weighted'
-        ? 'LLM-weighted confidence — model self-assessment, not empirically calibrated'
-        : basis === 'human_corrected'
-          ? 'Confidence pinned by an authoritative human correction of this classification'
-          : 'Estimated heuristic confidence — not empirically calibrated'
-  return (
-    <span
-      className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"
-      title={title}
-    >
-      {label}
-    </span>
-  )
-}
 
 function ModeChip({ mode }: { mode: string }) {
   return (

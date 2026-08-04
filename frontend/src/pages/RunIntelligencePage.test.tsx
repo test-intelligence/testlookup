@@ -12,7 +12,7 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
+import type { Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -149,7 +149,9 @@ const MOCK_INTELLIGENCE = {
   what_changed_since_last_good_run: null,
   defect_candidates: [],
   summary_modes: null,
-  provenance: null,
+  // US-15.1: widened so a test can supply a real provenance block (the
+  // literal `null` narrowed the inferred type to `null`).
+  provenance: null as Provenance | null,
 }
 
 const MOCK_MODE_SUMMARY: RunModeSummary = {
@@ -512,5 +514,53 @@ describe('RunIntelligencePage', () => {
 
     expect(await screen.findByText(/Override applied by you/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Undo decision/i })).toBeInTheDocument()
+  })
+
+  // -- US-15.1 AI trust chrome --------------------------------------------
+  it('renders the shared trust chrome on the AI confidence card', async () => {
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByText('AI confidence')
+    expect(screen.getAllByTestId('ai-suggested-badge').length).toBeGreaterThan(0)
+    // A confidence never renders without its calibration basis.
+    expect(screen.getByTestId('ai-basis-chip')).toHaveTextContent('estimated')
+    expect(screen.getByTestId('ai-confidence')).toHaveTextContent('88%')
+  })
+
+  it('shows a fallback notice when the pipeline fell back off the LLM', async () => {
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        provenance: {
+          schema_version: 2,
+          fallback_used: true,
+          generated_by: 'rules',
+          tools_used_count: 0,
+          generated_at: null,
+          confidence: null,
+          confidence_reason: null,
+          evidence_count: 0,
+          sources_used: [],
+          deterministic_checks_used: [],
+        },
+      },
+    })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes>
+          <Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByText('AI confidence')
+    expect(screen.getByTestId('ai-fallback-notice')).toHaveTextContent(
+      /The LLM was unavailable.*rules engine/i,
+    )
   })
 })

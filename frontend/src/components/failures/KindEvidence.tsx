@@ -14,6 +14,7 @@
  * project + fingerprint (/failures aggregates).
  */
 import { useEffect, useRef, useState } from 'react'
+import AISuggestion from '@/components/ai/AISuggestion'
 import { kindDef } from '@/utils/failureKind'
 import { useKindEvidence } from '@/hooks/useMetrics'
 import type { KindEvidence, KindEvidenceCheck } from '@/types/analytics'
@@ -57,25 +58,6 @@ const VERDICT_STYLES: Record<string, { symbol: string; color: string; label: str
   unavailable: { symbol: '—', color: 'var(--color-text-faint)', label: 'unavailable' },
 }
 
-function basisLabel(basis: string | null | undefined): { label: string; title: string } {
-  if (basis === 'human_corrected') {
-    return {
-      label: 'human-corrected',
-      title: 'Confidence pinned by an authoritative human correction of this classification',
-    }
-  }
-  if (basis === 'empirical') {
-    return {
-      label: 'calibrated',
-      title: 'Calibrated confidence — equals measured precision on labeled eval samples',
-    }
-  }
-  return {
-    label: 'estimated',
-    title: 'Estimated heuristic confidence — deterministic re-weighing of existing signals, not empirically calibrated',
-  }
-}
-
 function EvidenceCheckRow({ row }: { row: KindEvidenceCheck }) {
   const style = VERDICT_STYLES[row.verdict] ?? VERDICT_STYLES.neutral
   return (
@@ -101,36 +83,25 @@ function EvidenceCheckRow({ row }: { row: KindEvidenceCheck }) {
 }
 
 export function KindEvidencePanel({ evidence }: { evidence: KindEvidence }) {
-  const basis = basisLabel(evidence.confidence_basis)
   return (
     <div data-testid="kind-evidence-panel">
-      <div className="flex items-center justify-between gap-3 pb-2 border-b border-[var(--color-border)]">
-        <span className="flex items-center gap-2">
-          <FailureKindBadge kind={evidence.kind} compact />
-          <span
-            className="text-[10px] text-[var(--color-text-faint)]"
-            title="Kinds are derived by the failure analyzer from its category verdict and the failure shape — corrections feed the training loop."
-          >
-            AI-classified
-          </span>
-        </span>
-        <span className="flex items-center gap-2">
-          <span
-            className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"
-            title={basis.title}
-          >
-            {basis.label}
-          </span>
-          <span className="text-sm font-bold tabular-nums text-[var(--color-text)]">
-            {evidence.confidence}%
-          </span>
-        </span>
-      </div>
-      <ul className="list-none m-0 p-0 pt-1.5">
-        {evidence.checks.map(row => (
-          <EvidenceCheckRow key={row.check} row={row} />
-        ))}
-      </ul>
+      {/* US-15.1: the header row this panel pioneered now lives in the
+          shared AISuggestion chrome — same badge / basis chip / confidence
+          contract as every other AI surface. */}
+      <AISuggestion
+        bare
+        badgeText="AI-classified"
+        badgeTitle="Kinds are derived by the failure analyzer from its category verdict and the failure shape — corrections feed the training loop."
+        label={<FailureKindBadge kind={evidence.kind} compact />}
+        confidence={evidence.confidence}
+        confidenceBasis={evidence.confidence_basis}
+      >
+        <ul className="list-none m-0 p-0">
+          {evidence.checks.map(row => (
+            <EvidenceCheckRow key={row.check} row={row} />
+          ))}
+        </ul>
+      </AISuggestion>
     </div>
   )
 }

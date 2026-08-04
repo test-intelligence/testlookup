@@ -49,21 +49,33 @@ export function splitMessageSources(sources: ChatSource[] | null): {
   plainSources: ChatSource[]
   toolTrace: ToolTraceEntry[]
   suggestedActions: SuggestedAction[]
+  /** US-15.1: raw routing-provenance carrier, when the backend emits one.
+   *  Null today for every message — the chat trust chrome renders the badge
+   *  with no provenance line rather than inventing one. Feed it to
+   *  `normalizeProvenance`. */
+  provenanceRaw: Record<string, unknown> | null
 } {
   const plainSources: ChatSource[] = []
   let toolTrace: ToolTraceEntry[] = []
   let suggestedActions: SuggestedAction[] = []
+  let provenanceRaw: Record<string, unknown> | null = null
   for (const s of sources ?? []) {
-    const entry = s as ChatSource & { trace?: ToolTraceEntry[]; actions?: SuggestedAction[] }
+    const entry = s as ChatSource & {
+      trace?: ToolTraceEntry[]
+      actions?: SuggestedAction[]
+      provenance?: Record<string, unknown>
+    }
     if (entry.type === 'tool_trace' && Array.isArray(entry.trace)) {
       toolTrace = entry.trace
     } else if (entry.type === 'suggested_actions' && Array.isArray(entry.actions)) {
       suggestedActions = entry.actions
+    } else if (entry.type === 'provenance' && entry.provenance && typeof entry.provenance === 'object') {
+      provenanceRaw = entry.provenance
     } else {
       plainSources.push(s)
     }
   }
-  return { plainSources, toolTrace, suggestedActions }
+  return { plainSources, toolTrace, suggestedActions, provenanceRaw }
 }
 
 export interface RunSummary {

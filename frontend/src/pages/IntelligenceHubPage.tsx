@@ -667,7 +667,10 @@ function RunsTable({
                   <Th>Test Suite</Th>
                   <Th>Status</Th>
                   <Th>Duration</Th>
-                  <Th>AI confidence</Th>
+                  {/* US-15.1 honesty fix: this column has always rendered the
+                      run's pass rate. It was labelled "AI confidence", which
+                      it never was — no AI confidence is wired here. */}
+                  <Th>Pass rate</Th>
                   <Th
                     align="right"
                     className="hidden md:table-cell"
@@ -721,12 +724,12 @@ function RunRow({
 }: { run: TestRun; isAll: boolean; onOpen: (id: string) => void }) {
   const author = run.jenkins_job || (run as TestRun & { author?: string }).author || run.trigger_source || 'CI'
   const av = avatarFor(author)
-  // Confidence proxy: pass_rate maps to a 0-100 confidence figure with a slight
-  // floor for failed runs (we still made a verdict). Real value will come from
-  // the AI pipeline once the selector endpoint lands.
-  const confidence = Math.round(
-    Math.max(20, Math.min(100, run.pass_rate ?? (isPassed(run) ? 88 : 55))),
-  )
+  // US-15.1 honesty fix: this used to clamp//floor the pass rate and present
+  // it as an "AI confidence". It is the run's pass rate, nothing more —
+  // rendered verbatim, and blank when the run doesn't carry one. No proxy, no
+  // fabricated floor. If an AI confidence is ever wired here it must arrive
+  // from the pipeline with its calibration basis, via AISuggestion.
+  const passRatePct = run.pass_rate != null ? Math.round(run.pass_rate) : null
   return (
     <tr
       onClick={() => onOpen(run.id)}
@@ -776,7 +779,11 @@ function RunRow({
       <td className="px-3.5 py-2.5 tabular-nums text-[var(--color-text-secondary)] whitespace-nowrap">
         {formatDuration(run.duration_ms)}
       </td>
-      <td className="px-3.5 py-2.5"><ConfidenceMeter pct={confidence} /></td>
+      <td className="px-3.5 py-2.5">
+        {passRatePct != null
+          ? <PassRateMeter pct={passRatePct} />
+          : <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>}
+      </td>
       <td
         className="px-3.5 py-2.5 text-right text-[var(--color-text-muted)] whitespace-nowrap hidden md:table-cell tabular-nums"
         title={fromNow(run.start_time ?? run.created_at)}
@@ -817,7 +824,9 @@ function RunStatusPill({ run }: { run: TestRun }) {
   )
 }
 
-function ConfidenceMeter({ pct }: { pct: number }) {
+/** Pass-rate meter. Renamed from ConfidenceMeter in US-15.1 — it never
+ *  showed a confidence; naming it one was the whole bug. */
+function PassRateMeter({ pct }: { pct: number }) {
   const grad =
     pct >= 80 ? 'linear-gradient(90deg,#22c55e,#34d399)'
     : pct >= 60 ? 'linear-gradient(90deg,#eab308,#fcd34d)'

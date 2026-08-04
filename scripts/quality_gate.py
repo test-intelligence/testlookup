@@ -650,6 +650,110 @@ def _frontend_clipboard_util() -> list[Violation]:
     return violations
 
 
+_HEDGING_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_HEDGING_LINE_COMMENT_RE = re.compile(r"//.*$", re.MULTILINE)
+_HEDGING_JSX_COMMENT_RE = re.compile(r"\{\s*/\*.*?\*/\s*\}", re.DOTALL)
+
+# Verdict phrasings. Each entry is (pattern, why). They are deliberately
+# narrow: they fire on copy that asserts the cause is KNOWN, and stay silent
+# on hedged forms ("likely caused by", "suggested root cause", "suspects, not
+# culprits") and on pipeline STAGE names ("Root Cause Analysis"), which name a
+# stage rather than a conclusion.
+_AI_HEDGING_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\broot cause\s*:", re.IGNORECASE),
+        "a bare \"Root cause:\" label presents an AI suggestion as a verdict "
+        "— use \"Suggested root cause\"",
+    ),
+    (
+        re.compile(r"\broot cause summary\b", re.IGNORECASE),
+        "\"Root Cause Summary\" asserts the cause is known — say "
+        "\"Suggested root cause\"",
+    ),
+    (
+        re.compile(r"\bthe (?:root )?cause (?:is|was)\b", re.IGNORECASE),
+        "\"the cause is …\" states an AI inference as fact — hedge it "
+        "(\"the suggested cause\", \"likely\")",
+    ),
+    (
+        re.compile(r"\b(?:is|was|are|were)\s+caused by\b", re.IGNORECASE),
+        "\"is caused by\" asserts causation the pipeline cannot establish — "
+        "use \"likely caused by\" or \"consistent with\"",
+    ),
+)
+
+
+def _strip_ts_comments(text: str) -> str:
+    """Blank out comments while preserving line numbering.
+
+    Copy lives in JSX text and string literals; comments legitimately quote
+    the very phrasings this guard bans (this file's own docstring does).
+    Newlines are preserved so reported line numbers stay accurate.
+    """
+    def _blank(match: re.Match[str]) -> str:
+        return "\n" * match.group(0).count("\n")
+
+    text = _HEDGING_JSX_COMMENT_RE.sub(_blank, text)
+    text = _HEDGING_BLOCK_COMMENT_RE.sub(_blank, text)
+    return _HEDGING_LINE_COMMENT_RE.sub("", text)
+
+
+def _frontend_ai_output_hedging() -> list[Violation]:
+    """AI output is a suggestion for a human to confirm — never a verdict.
+
+    US-15.1 put every AI-produced conclusion behind the shared
+    ``components/ai/AISuggestion`` trust chrome ("AI-suggested" badge,
+    confidence + calibration basis, routing provenance, evidence,
+    confirm/correct). Chrome is worthless if the copy inside it still reads
+    as fact, so this guard fails CI on the verdict phrasings that keep
+    creeping back into rendered strings: a bare ``Root cause:`` label,
+    ``Root Cause Summary``, ``the cause is …``, and ``is caused by``.
+
+    Hedged phrasings pass on purpose — "Suggested root cause", "likely caused
+    by", "Suspects, not culprits" — as do pipeline STAGE names such as "Root
+    Cause Analysis", which name a stage of the pipeline rather than a
+    conclusion about a failure.
+
+    Deliberate blind spots (written down so nobody trusts the guard past its
+    edge):
+
+    * **Runtime-assembled copy.** Template literals interpolating variables,
+      strings built by concatenation, and anything looked up from a map at
+      render time are matched only if the banned words survive verbatim on
+      one source line.
+    * **Backend- and model-authored text.** The single largest source of
+      un-hedged assertions is the LLM's own ``root_cause_summary`` prose,
+      which is data, not source. API field names (``root_cause``,
+      ``root_cause_summary``) are out of scope by design — renaming the wire
+      contract is not a copy fix.
+    * **Naive comment stripping.** ``//`` inside a string literal (a URL, a
+      regex) truncates the rest of that line, so a banned phrase after it on
+      the same line goes unseen.
+    * **Semantics, not spelling.** A sentence that asserts causation without
+      these exact words — "the culprit is", "blame:", "this broke because" —
+      sails straight through. The guard catches the four phrasings we have
+      actually shipped, not the concept.
+    * **Tests and e2e specs** are exempt: they assert on copy, including copy
+      they are proving is absent.
+    """
+    violations: list[Violation] = []
+    root = REPO_ROOT / "frontend" / "src"
+    for path in iter_files(root, (".ts", ".tsx")):
+        name = path.name
+        if ".test." in name or ".spec." in name:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        stripped = _strip_ts_comments(text)
+        for lineno, line in enumerate(stripped.splitlines(), start=1):
+            for pattern, why in _AI_HEDGING_PATTERNS:
+                if pattern.search(line):
+                    violations.append(Violation(path, lineno, why))
+    return violations
+
+
 _ALL_PROJECTS_LITERAL_RE = re.compile(
     # Look for "'all'" / '"all"' being assigned to a project_id-shaped
     # variable / param. Coarse but matches the failure mode from
@@ -1290,6 +1394,21 @@ GUARDS: list[Guard] = [
         description="navigator.clipboard.writeText outside utils/clipboard.ts — breaks on HTTP origins.",
         check=_frontend_clipboard_util,
         fix_hint="`import { copyTextToClipboard } from '@/utils/clipboard'` and call that instead.",
+    ),
+    Guard(
+        name="frontend.ai-output-hedging",
+        description=(
+            "AI output rendered as a verdict — a bare \"Root cause:\", "
+            "\"Root Cause Summary\", \"the cause is …\" or \"is caused by\" "
+            "in UI copy. AI conclusions are suggestions to confirm."
+        ),
+        check=_frontend_ai_output_hedging,
+        fix_hint=(
+            "Hedge the copy (\"Suggested root cause\", \"likely caused by\") "
+            "and render the conclusion inside components/ai/AISuggestion so "
+            "it carries the badge, basis and provenance (US-15.1). Pipeline "
+            "STAGE names like \"Root Cause Analysis\" are already allowed."
+        ),
     ),
     Guard(
         name="frontend.all-projects-literal",

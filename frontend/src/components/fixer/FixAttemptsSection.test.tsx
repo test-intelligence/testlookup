@@ -150,6 +150,12 @@ describe('FixAttemptsSection', () => {
     expect(detail).toHaveTextContent('sha256:1f2e3d4c')
     expect(detail).toHaveTextContent('ar-99887') // ledger run id (truncated)
 
+    // US-15.1: the Fixer's reasoning is AI output, so it wears the shared
+    // trust chrome - badge, no fabricated confidence.
+    expect(screen.getByTestId('fix-attempt-reason')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('AI-suggested')
+    expect(screen.queryByTestId('ai-confidence')).not.toBeInTheDocument()
+
     // Collapses again on a second click.
     fireEvent.click(screen.getByTestId('attempt-row-a1'))
     expect(screen.queryByTestId('attempt-detail-a1')).not.toBeInTheDocument()
