@@ -323,6 +323,24 @@ class Settings(BaseSettings):
     # purpose: there is no in-app toggle for it.
     AUTH_REVOCATION_FAIL_OPEN: bool = False
 
+    # ── Multi-factor authentication (TOTP) ────────────────────
+    # Label shown in the authenticator app next to the account name.
+    MFA_ISSUER_NAME: str = "TestLookup"
+    # Lifetime of the short-lived challenge / enrollment tokens minted between
+    # "password accepted" and "second factor accepted". These are NOT access
+    # tokens — they carry their own ``type`` claim and are rejected by
+    # ``get_current_user`` at the decode layer. Keep this small: it is the
+    # window in which a stolen challenge is useful to someone who also has the
+    # user's TOTP code.
+    MFA_CHALLENGE_TTL_SECONDS: int = 300
+    # Number of single-use recovery codes minted when MFA is enabled.
+    MFA_RECOVERY_CODE_COUNT: int = 10
+    # Breakglass: ``scripts/mfa_breakglass.py`` refuses to run unless this is
+    # true in the backend environment. Mirrors SSO_ADMIN_FALLBACK_ENABLED —
+    # environment-only, no in-app toggle, and every use writes a loud
+    # ``MFA_BREAKGLASS_RESET`` identity event.
+    MFA_BREAKGLASS_ENABLED: bool = False
+
     # ── SSO / SAML / SCIM ───────────────────────────────────
     SSO_ENABLED: bool = False
     SCIM_ENABLED: bool = False

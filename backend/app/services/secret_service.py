@@ -244,6 +244,39 @@ async def read_secret(
     return None
 
 
+async def expire_secret(
+    db: AsyncSession,
+    scope: str,
+    key_name: str,
+) -> bool:
+    """Destroy a stored secret. Returns True if a row was affected.
+
+    There is no hard DELETE here on purpose: ``secret_refs`` rows are
+    referenced by ``app_settings.secret_ref_id``, so removing one could orphan
+    a settings row. Instead the ciphertext is cleared and ``rotation_status``
+    is set to ``"expired"`` — the predicate that ``read_secret`` /
+    ``has_secret`` / ``get_masked`` already filter on, so every reader agrees
+    the secret is gone. Clearing ``encrypted_value`` matters as much as the
+    status flag: a status-only tombstone would leave the recoverable plaintext
+    of (for example) a revoked TOTP seed sitting in the database.
+
+    Stage-only — the caller owns the commit.
+    """
+    result = await db.execute(
+        select(SecretRef).where(
+            SecretRef.scope == scope,
+            SecretRef.key_name == key_name,
+        )
+    )
+    ref = result.scalar_one_or_none()
+    if ref is None:
+        return False
+    ref.encrypted_value = None
+    ref.masked_value = None
+    ref.rotation_status = "expired"
+    return True
+
+
 async def get_masked(
     db: AsyncSession,
     scope: str,

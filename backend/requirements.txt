@@ -30,6 +30,12 @@ python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 python-dotenv==1.2.2
 slowapi==0.1.9
+# TOTP (RFC 6238) for multi-factor auth. Pure Python, zero transitive
+# dependencies — vendorable into the air-gapped offline bundle as-is.
+# Deliberately NOT paired with qrcode/Pillow: the API returns the
+# ``otpauth://`` URI and the SPA renders the QR client-side, which keeps a
+# native image toolchain out of the backend image.
+pyotp==2.9.0
 
 # ── Notifications ─────────────────────────────────────────────
 aiosmtplib==3.0.2
@@ -97,6 +103,9 @@ beautifulsoup4==4.15.0    # HTML content extraction (knowledge RAG)
 # ── Development & Testing ────────────────────────────────────
 pytest==9.1.0
 pytest-asyncio==1.4.0
+# In-memory async SQLite for tests that need a real session against the real
+# ORM models (auth/MFA flows) without a live Postgres. Test-only.
+aiosqlite==0.20.0
 pytest-cov==6.0.0
 pytest-mock==3.14.0
 anyio==4.13.0

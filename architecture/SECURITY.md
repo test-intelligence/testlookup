@@ -18,6 +18,90 @@
   **fails closed** — if the revocation store cannot be reached, the request is
   answered 503 rather than honoured unchecked (see §7 for the availability
   trade-off).
+- **MFA (TOTP)** — *shipped 2026-08-05, migration 0117.* Previously this
+  section said MFA had to come from an IdP; it no longer does. RFC 6238 TOTP
+  with ±1 step of drift tolerance, ten single-use recovery codes (SHA-256
+  digests only), and a workspace policy that can require a second factor for
+  a role and everything above it. See §1a for the mechanism, which is the part
+  most likely to be got wrong on a re-implementation.
+- **Account lockout** — *shipped 2026-08-05.* N consecutive failed password
+  **or** second-factor attempts lock the account for a cooldown. State lives on
+  `users` (`failed_login_attempts`, `locked_until`), not in the rate limiter:
+  `main.rate_limit_auth` keeps counters in worker memory and is a per-worker,
+  per-IP ceiling, which cannot express "this account has failed N times across
+  the fleet". Postgres can, is already read on the login path, survives a
+  restart, and — unlike a Redis-backed counter — has no fail-open/fail-closed
+  dilemma to resolve. It cannot throttle attempts against usernames that do
+  not exist; that stays the IP limiter's job, and counting failures for
+  non-existent accounts would be an enumeration oracle in its own right.
+
+### 1a. Why the second factor is not a claim on an access token
+
+`core/deps.get_current_user` trusts any JWT whose `type` claim is `"access"`,
+and `bootstrap.register_routers` mounts that dependency router-wide. A
+"half-authenticated" access token carrying an `mfa_pending` marker would
+therefore be fully authenticated on every one of the ~300 existing handlers,
+none of which know to look for the marker. There is no marker that would have
+been safe.
+
+Instead `core/security.create_mfa_token` mints tokens with their own `type`
+claims — `mfa_challenge` (password accepted, second factor owed) and
+`mfa_enroll` (password accepted, policy requires enrollment). `decode_token`
+rejects a type mismatch **at the decode layer**, the same defence that already
+separates access from refresh tokens, so presenting one as a bearer token
+fails before any user is loaded. They are short-lived
+(`MFA_CHALLENGE_TTL_SECONDS`, default 300 s) and single-use — consumption
+reuses the existing `revoke_jti` denylist rather than introducing a second
+store with its own availability semantics. `create_mfa_token` raises on any
+attempt to mint one with type `access`.
+
+Two more properties that are easy to lose:
+
+- **Replay of a TOTP code inside its own validity window is rejected.**
+  `users.mfa_last_used_step` records the highest accepted time-step and a code
+  is honoured only when its step is strictly greater. Postgres again, for the
+  same reason as lockout.
+- **"Enrolled but the seed will not decrypt" denies, it does not pass.**
+  The TOTP seed lives in `secret_refs` (scope `user_totp`) and
+  `secret_service.read_secret` returns `None` both for "never stored" and for
+  "stored but undecryptable" — so after an `APP_SECRET_KEY` rotation without
+  `APP_SECRET_KEY_PREVIOUS`, every enrolled seed reads back as absent. Rounding
+  that to "MFA is off" would silently disable the control workspace-wide at the
+  worst possible moment. `mfa_service.load_totp_secret` distinguishes the two
+  states and the login path answers **503** for the broken one.
+
+**API keys are exempt by construction.** MFA is enforced where interactive
+credentials are *minted* (`POST /auth/login`), not on every request, so a
+CI-embedded key — which cannot type a code — keeps working when an admin turns
+the policy on. `mfa_service.mfa_gate_applies` is written as
+`credential_kind(user) == CREDENTIAL_KIND_JWT` so an unknown credential kind
+falls out of the "interactive" bucket rather than being assumed to be one.
+The corollary is stated in §7.
+
+**SSO-managed accounts are exempt from the requirement.** `/api/v1/sso/acs`
+does not consult the MFA policy at all: the IdP has already asserted the
+identity and, per the customer's own policy, performed its own MFA. A local
+second factor on top would mean every federated user holding a seed we control
+and the IdP knows nothing about — a lockout risk for no added assurance. The
+exemption is from the *requirement* only; an SSO-managed user who enrolls
+voluntarily is still challenged on the local password path.
+`mfa_service.is_sso_managed` checks two signals, because
+`scim_service.scim_create_user` only creates the `federated_identities` link
+`if sso_config_id and external_id` — a SCIM user provisioned without either
+looks purely local. The unconditional `SCIM_USER_CREATED` identity event on
+that same code path is the second signal.
+
+**Breakglass is a script, not an endpoint.** `backend/scripts/mfa_breakglass.py`
+clears MFA and lockout for one user. It is gated on `MFA_BREAKGLASS_ENABLED`
+in the backend environment (mirroring `SSO_ADMIN_FALLBACK_ENABLED` — no in-app
+toggle, so enabling it takes deployment-level access), requires a `--reason`,
+and writes an `MFA_BREAKGLASS_RESET` identity event in the same transaction as
+the reset. It is deliberately not an admin API: a user who can reset their own
+second factor does not have one, and an endpoint that resets *another* user's
+factor is an account-takeover primitive behind whatever the weakest admin
+session is. Note that `IdentityEventType.ADMIN_FALLBACK_LOGIN` is **not** this
+— that is the SSO fallback in `routers/auth.py` and says nothing about a second
+factor.
 
 ## 2. Authorization — the guard family and the signed cache
 
@@ -169,6 +253,45 @@ Similarly, the audit tables in §6 are append-only **by application
 convention** — no triggers, restricted grants, or WORM storage prevent
 direct modification — and an enabled retention policy deliberately
 deletes project-scoped audit rows past the audit clock.
+
+MFA and lockout (§1, §1a) have their own boundaries, and they are the ones
+an auditor will ask about:
+
+- **An API key is a single-factor credential that bypasses MFA, permanently.**
+  This is not an oversight — a CI pipeline cannot present a TOTP code — but it
+  does mean a user subject to the policy can create a key and use it as a
+  second way in. Treat key issuance as the sensitive operation it is: keys are
+  per-user, listed under Settings → API Keys, revocable, and can be pinned to
+  one project. There is currently no policy switch to forbid key creation for
+  MFA-required roles.
+- **Sessions minted before the policy changed are not retroactively
+  challenged.** Turning the requirement on is enforced at `/auth/login` and,
+  since 0117, re-evaluated on every `/auth/refresh` — so a live session is
+  bounced to enrollment within one access-token lifetime rather than one
+  refresh-token lifetime (7 days). It is not enforced per request.
+- **Lockout is per account, not per source.** An attacker who knows a username
+  can lock its owner out for the cooldown by failing enough times. The window
+  is bounded (default 15 minutes), failures while already locked do not extend
+  it, and `scripts/mfa_breakglass.py` clears it — but the denial-of-service is
+  real and inherent to lockout. Set `lockout_enabled: false` if that trade is
+  wrong for your deployment.
+- **The lockout response leaks account existence.** A locked account answers
+  429 rather than the generic 401. The lock is checked *after* password
+  verification, so only someone who already typed the correct password sees
+  it, and the pre-existing `403 Account disabled` branch leaks the same class
+  of fact. The alternative — a generic 401 — leaves a locked-out user retrying
+  forever with no idea why.
+- **`identity_events` still has no retention clock.** MFA verification
+  failures and lockouts write rows there, so a sustained credential-stuffing
+  campaign grows that table without bound (the US-11.4 purge does not touch
+  it — the table has no project scope). This is why there is deliberately *no*
+  per-attempt `LOGIN_FAILED` event: the MFA events that exist are either
+  operator-initiated or bounded by the lockout threshold. Prune out-of-band if
+  volume becomes a problem.
+- **Recovery codes are 80-bit values protected by a plain SHA-256 digest**,
+  not a password KDF. That is adequate because there is nothing to
+  brute-force at that entropy — the same reasoning as `ApiKey.key_hash` — but
+  it is a deliberate choice, not an omission.
 
 Access-token revocation (§1) **fails closed** as of 2026-08-03: when the
 revocation store (Redis) cannot be consulted, `get_current_user` answers

@@ -643,6 +643,16 @@ class TestSSOEnforcement:
 
 class TestIdentityEventTypes:
     def test_all_event_types_defined(self):
+        """Every SSO/SCIM event this module relies on still exists.
+
+        Asserted as a **subset**, not equality: ``IdentityEventType`` is the
+        shared identity-lifecycle vocabulary and other features add to it
+        (migration 0117 added the MFA and account-lockout events). Requiring
+        exact equality here made an unrelated addition look like an SSO
+        regression. The invariant that actually matters for this column — every
+        value fits ``String(40)`` — is covered by the next test and by
+        ``tests/test_mfa.py::TestWiringInvariants``.
+        """
         from app.models.postgres import IdentityEventType
 
         expected = {
@@ -653,7 +663,7 @@ class TestIdentityEventTypes:
             "JIT_PROVISIONED", "ROLE_MAPPED",
         }
         actual = {e.value for e in IdentityEventType}
-        assert expected == actual
+        assert expected <= actual, expected - actual
 
     def test_event_type_string_fits_column(self):
         """All event type values must fit in String(40)."""

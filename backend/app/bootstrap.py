@@ -43,6 +43,7 @@ from app.routers import (
     live,
     llm_cost_budget as llm_cost_budget_router,
     metrics,
+    mfa,
     my_failures,
     notifications,
     onboarding,
@@ -84,6 +85,11 @@ from app.routers.observability import router as observability_router
 
 PUBLIC_ROUTERS: Sequence[APIRouter] = (
     auth.router,
+    # MFA is public for the same reason auth is: /mfa/verify and the forced
+    # enrollment path carry an interstitial MFA token, not an access token, so
+    # the router-wide protected dependency would 401 them before the handler
+    # ran. Each endpoint declares its own auth requirement.
+    mfa.router,
     webhooks.router,
     stream.router,
     observability_router,

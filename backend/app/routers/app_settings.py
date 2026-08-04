@@ -23,6 +23,8 @@ from app.models.schemas import (
     AIConfigUpdate,
     IntegrationsConfigRead,
     IntegrationsConfigUpdate,
+    MfaPolicyRead,
+    MfaPolicyUpdate,
     SmtpConfigRead,
     SmtpConfigUpdate,
     SmtpTestResult,
@@ -754,6 +756,84 @@ async def remove_feature_flag(
     from app.services.feature_flag_service import delete_flag
     await delete_flag(db, flag_key)
     await db.commit()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MFA + Account Lockout Policy (0117)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Stored as an ``app_settings`` row keyed ``mfa_policy``, following the
+# ``_AI_CONFIG_KEY`` pattern above rather than the ``SSOConfiguration``
+# single-active-row table. The SSO table exists because a SAML config is a
+# large object (certificates, endpoints, role maps) whose enforcement mode is
+# one field on it; this policy is four scalars with no accompanying object, so
+# a table would buy a single-active-row lifecycle we would never use. Routing
+# it through ``app_settings`` also inherits ``log_settings_change`` for free.
+
+@router.get("/mfa-policy", response_model=MfaPolicyRead)
+async def get_mfa_policy(
+    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+) -> MfaPolicyRead:
+    """Read the workspace MFA + lockout policy. QA_LEAD or higher."""
+    from app.services.mfa_service import load_policy
+
+    policy = await load_policy(db)
+    return MfaPolicyRead.model_validate(policy.as_dict())
+
+
+@router.put("/mfa-policy", response_model=MfaPolicyRead)
+async def update_mfa_policy(
+    payload: MfaPolicyUpdate,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> MfaPolicyRead:
+    """Update the workspace MFA + lockout policy. ADMIN only, audit-logged."""
+    from app.models.postgres import IdentityEventType
+    from app.services.mfa_service import MfaPolicy, load_policy, save_policy
+    from app.services.sso_service import log_identity_event
+
+    current = await load_policy(db)
+    updates = payload.model_dump(exclude_none=True)
+    updates.pop("clear_required_for_role", None)
+
+    role_value = updates.pop("required_for_role", None)
+    if payload.clear_required_for_role:
+        # Explicit null: MFA required for *everyone*, which is stricter than
+        # any role floor and therefore cannot be expressed by omitting a field.
+        resolved_role = None
+    elif role_value is not None:
+        resolved_role = role_value.value if hasattr(role_value, "value") else str(role_value)
+    else:
+        resolved_role = current.required_for_role
+
+    merged = MfaPolicy(
+        require_mfa=updates.get("require_mfa", current.require_mfa),
+        required_for_role=resolved_role,
+        lockout_enabled=updates.get("lockout_enabled", current.lockout_enabled),
+        lockout_threshold=updates.get("lockout_threshold", current.lockout_threshold),
+        lockout_duration_minutes=updates.get(
+            "lockout_duration_minutes", current.lockout_duration_minutes
+        ),
+    )
+    await save_policy(db, merged, actor_id=current_user.id)
+
+    changed = sorted(
+        k for k, v in merged.as_dict().items() if current.as_dict().get(k) != v
+    )
+    await log_settings_change(db, "mfa_policy", "updated", current_user, changed)
+    # Also on the identity trail — an auditor asking "when was MFA made
+    # mandatory, and by whom" looks at identity_events, not the settings log.
+    await log_identity_event(
+        db,
+        IdentityEventType.MFA_POLICY_UPDATED,
+        actor_id=current_user.id,
+        actor_name=current_user.username,
+        detail={"before": current.as_dict(), "after": merged.as_dict()},
+    )
+    await db.commit()
+    logger.info("MFA policy updated by user_id=%s fields=%s", current_user.id, changed)
+    return MfaPolicyRead.model_validate(merged.as_dict())
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

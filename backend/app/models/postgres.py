@@ -154,8 +154,55 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     # Avatar colour slug chosen by the user (e.g. "blue", "emerald"); null = default slate
     avatar_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # ── MFA + account lockout (migration 0117) ───────────────────────────────
+    # ``mfa_enabled`` is the ONLY authority on whether a second factor is
+    # required for this account. The TOTP seed lives in ``secret_refs``
+    # (scope ``user_totp``), and the two can disagree — a seed that will not
+    # decrypt after a botched APP_SECRET_KEY rotation reads back as "absent".
+    # An absent seed with this flag set means **MFA is broken**, never "MFA is
+    # off": see ``services/mfa_service.load_totp_secret``.
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    mfa_enrolled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Highest TOTP time-step already accepted for this user. A code is only
+    # honoured when its step is strictly greater, which makes replay of a code
+    # inside its own ±1-step validity window impossible. Stored in Postgres
+    # rather than Redis on purpose: durable, global across workers, and it
+    # cannot be "unavailable" while the login it guards is still serviceable.
+    mfa_last_used_step: Mapped[Optional[int]] = mapped_column(BigInteger)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Consecutive failed password *or* second-factor attempts. Reset only by a
+    # fully successful login (password AND second factor).
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class MfaRecoveryCode(Base):
+    """Single-use recovery code for a user with TOTP enabled.
+
+    Only the SHA-256 digest is stored, so a database compromise cannot recover
+    a usable code. Recovery codes are minted with ~130 bits of entropy from
+    ``secrets.token_hex``, which is why a plain digest is adequate here and a
+    password KDF is not — there is nothing to brute-force. (Same reasoning as
+    ``ApiKey.key_hash`` and ``ReportShareLink.token_hash``.)
+
+    A used code is retained with ``used_at`` set rather than deleted, so
+    "which codes are still live" and "a recovery code was burned on
+    <date>" both remain answerable. Rows are deleted only when the whole set
+    is regenerated or MFA is disabled.
+    """
+    __tablename__ = "mfa_recovery_codes"
+    __table_args__ = (
+        Index("ix_mfa_recovery_user", "user_id"),
+        Index("ix_mfa_recovery_code_hash", "code_hash", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Project(Base):
@@ -3038,6 +3085,27 @@ class IdentityEventType(str, PyEnum):
     ADMIN_FALLBACK_LOGIN = "ADMIN_FALLBACK_LOGIN"
     JIT_PROVISIONED = "JIT_PROVISIONED"
     ROLE_MAPPED = "ROLE_MAPPED"
+    # ── MFA + account lockout (0117) ─────────────────────────────────────
+    # ``IdentityEvent.event_type`` is a ``String(40)`` fronted by this enum —
+    # the documented enum/column drift trap. Every value below is <= 40 chars
+    # and ``tests/test_mfa.py::test_identity_event_types_fit_column`` fails CI
+    # if a future addition is not.
+    #
+    # Deliberately absent: a per-attempt LOGIN_FAILED event. ``identity_events``
+    # has no retention clock (see the model docstring), so anything an
+    # unauthenticated attacker can emit at will accumulates forever. The events
+    # here are either operator-initiated or bounded by the lockout threshold.
+    MFA_ENROLL_STARTED = "MFA_ENROLL_STARTED"
+    MFA_ENABLED = "MFA_ENABLED"
+    MFA_DISABLED = "MFA_DISABLED"
+    MFA_VERIFY_SUCCESS = "MFA_VERIFY_SUCCESS"
+    MFA_VERIFY_FAILED = "MFA_VERIFY_FAILED"
+    MFA_RECOVERY_CODE_USED = "MFA_RECOVERY_CODE_USED"
+    MFA_RECOVERY_CODES_REISSUED = "MFA_RECOVERY_CODES_REISSUED"
+    MFA_BREAKGLASS_RESET = "MFA_BREAKGLASS_RESET"
+    MFA_POLICY_UPDATED = "MFA_POLICY_UPDATED"
+    ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
+    ACCOUNT_UNLOCKED = "ACCOUNT_UNLOCKED"
 
 
 class SSOConfiguration(Base):

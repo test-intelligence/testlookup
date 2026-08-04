@@ -7,6 +7,158 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-05 — TOTP MFA, recovery codes, account lockout (closes the compliance gap)
+
+> **⚠ BEHAVIOR CHANGE 1 — account lockout is ON by default.** Ten consecutive
+> failed sign-in attempts (failed passwords *and* failed second factors both
+> count) lock an account for 15 minutes; the correct password then gets `429`
+> with `Retry-After` instead of a session. Nothing had to be enabled for this
+> to start applying. Failures while already locked do not extend the lock, a
+> fully successful sign-in resets the counter, and attempts against usernames
+> that do not exist are never counted. Turn it off with
+> `PUT /api/v1/settings/mfa-policy {"lockout_enabled": false}`.
+>
+> **⚠ BEHAVIOR CHANGE 2 — `POST /api/v1/auth/login` can return two new 200
+> bodies.** It still returns `TokenResponse` for a normal sign-in, but now also
+> returns `{mfa_required: true, challenge_token, expires_in, methods}` when the
+> account has a second factor, and `{mfa_enrollment_required: true,
+> enrollment_token, expires_in, required_for_role}` when policy requires one
+> and the account has none. **A client that assumes `access_token` is present
+> on any 200 will break** the moment anyone enrolls. All three are 200 because
+> all three follow a correct password; a 4xx for "now do your second factor"
+> would be a lie the SPA's global error handling would act on.
+>
+> **⚠ BEHAVIOR CHANGE 3 — `POST /api/v1/auth/refresh` re-checks MFA policy.**
+> Enabling the requirement now invalidates live sessions for in-scope users
+> within one access-token lifetime (401, "sign in again to enroll") instead of
+> grandfathering them for up to `JWT_REFRESH_TOKEN_EXPIRE_DAYS` (7 days).
+>
+> **⚠ BEHAVIOR CHANGE 4 — `POST /api/v1/auth/dev-login` refuses an account with
+> MFA enabled** (403). It was already development-only, but "the dev backdoor
+> is an MFA bypass" is not a sentence worth leaving true.
+
+Until now `user-guide/compliance.md` had to say, in three separate places, that
+the product has no MFA and no account lockout. It now has both.
+
+- **TOTP (RFC 6238), migration 0117.** Six digits, 30-second period, ±1 step of
+  drift. New `pyotp==2.9.0` (pure Python, no transitive deps — vendorable into
+  the air-gapped bundle as-is). Deliberately **no** `qrcode`/`Pillow`: the API
+  returns the `otpauth://` URI and the SPA renders the QR, keeping a native
+  imaging toolchain out of the backend image. New endpoints under
+  `/api/v1/auth/mfa`: `enroll/start`, `enroll/confirm`, `verify`, `disable`,
+  `recovery-codes`, `status`.
+
+- **The second factor is never a claim on an access token.** `get_current_user`
+  trusts any JWT with `type: "access"`, and `bootstrap.register_routers` mounts
+  it router-wide, so a "half-authenticated" access token carrying an
+  `mfa_pending` marker would have been fully authenticated on ~300 handlers
+  that have never heard of the marker — a complete bypass. Instead
+  `core/security.create_mfa_token` mints tokens with their own `type` claims
+  (`mfa_challenge`, `mfa_enroll`); `decode_token(expected_type=...)` rejects a
+  mismatch **at the decode layer**, before any user is loaded. They live 5
+  minutes, are single-use (consumption reuses the existing `revoke_jti`
+  denylist rather than adding a second store with its own availability
+  semantics), and `create_mfa_token` raises if asked to mint type `access`.
+  Tested against a real mounted protected route, not a stub.
+
+- **Replay of a code inside its own window is rejected.**
+  `users.mfa_last_used_step` holds the highest accepted time-step; a code is
+  honoured only when its step is strictly greater.
+
+- **"Enrolled but the seed will not decrypt" denies (503) — it does not pass.**
+  `secret_service.read_secret` returns `None` for both "never stored" and
+  "stored but undecryptable", so an `APP_SECRET_KEY` rotation without
+  `APP_SECRET_KEY_PREVIOUS` makes every enrolled seed read as absent. Treating
+  that as "MFA is off" would silently disable the control workspace-wide at
+  the worst possible moment. `mfa_service.load_totp_secret` distinguishes the
+  states; login, refresh, and verify all refuse the broken one. New
+  `secret_service.expire_secret` clears the ciphertext as well as flagging the
+  row, so a revoked seed is not left recoverable in the database.
+
+- **Recovery codes** — ten single-use codes (80 bits, `XXXX-XXXX-XXXX-XXXX`),
+  shown exactly once, SHA-256 digests only. Reissuing invalidates the previous
+  set. New `mfa_recovery_codes` table; a used code keeps its row with `used_at`
+  set so "a code was burned on <date>" stays answerable.
+
+- **Lockout state is Postgres, not Redis** (`users.failed_login_attempts`,
+  `locked_until`, `last_login_at`). The in-process limiter in
+  `main.rate_limit_auth` is per-worker and cannot express "this account has
+  failed N times across the fleet". Postgres can, is already read on the login
+  path, survives a restart, and — unlike a Redis counter — has no
+  fail-open/fail-closed dilemma to resolve, which matters given that a Redis
+  outage is already an auth outage.
+
+- **Workspace policy** — `GET`/`PUT /api/v1/settings/mfa-policy` (read QA_LEAD+,
+  write ADMIN). Stored as an `app_settings` row keyed `mfa_policy` rather than
+  a `SSOConfiguration`-style single-active-row table: it is four scalars with
+  no accompanying object, and the `app_settings` route inherits
+  `log_settings_change` for free. Writes also emit `MFA_POLICY_UPDATED` to the
+  identity trail. "Require MFA for role X **and above**".
+
+- **SSO/SCIM accounts are exempt from the requirement, deliberately.**
+  `/api/v1/sso/acs` does not consult the policy at all — the IdP has already
+  asserted the identity, and a local factor it knows nothing about is a
+  lock-out risk for no added assurance. `mfa_service.is_sso_managed` checks
+  **two** signals, because `scim_service.scim_create_user` only creates the
+  `federated_identities` link `if sso_config_id and external_id`: a SCIM user
+  provisioned without either looks purely local, so the unconditional
+  `SCIM_USER_CREATED` identity event on the same path is the fallback. The
+  exemption is from the *requirement* only — an SSO user who enrolls
+  voluntarily is still challenged on the local password path.
+
+- **API keys are never MFA-gated**, by construction: enforcement happens where
+  interactive credentials are minted (`/auth/login`), not per request, so
+  CI-embedded keys keep working. `mfa_service.mfa_gate_applies` is written as
+  `credential_kind(user) == CREDENTIAL_KIND_JWT` so an unknown credential kind
+  falls out of "interactive" rather than being assumed to be one. Keys may read
+  `/auth/mfa/status` but cannot enroll, disable, or reissue recovery codes.
+
+- **Breakglass is `backend/scripts/mfa_breakglass.py`, not an endpoint** — a
+  user who can reset their own factor does not have one, and an endpoint that
+  resets someone else's is an account-takeover primitive. Gated on
+  `MFA_BREAKGLASS_ENABLED` in the backend environment (mirroring
+  `SSO_ADMIN_FALLBACK_ENABLED`: env-only, no in-app toggle, default off),
+  requires `--reason`, supports `--dry-run` and `--keep-lockout`, and writes
+  `MFA_BREAKGLASS_RESET` in the same transaction as the reset. Note
+  `ADMIN_FALLBACK_LOGIN` is the *SSO* fallback and does not rescue a lost TOTP
+  device.
+
+- **Fixed a live rate-limiter bug found while testing this.**
+  `main.rate_limit_auth` rebuilt its `@limiter.limit` decorator on every
+  request. `Limiter.limit` registers under `f"{module}.{func.__name__}"`, which
+  was always `app.main._limited`, so each request *appended* another limit to
+  the same list: request N evaluated N limits and recorded N hits against one
+  counter. The nominal 10/minute on `/auth/login` therefore locked an IP out
+  after roughly four or five attempts, got stricter the longer the process
+  ran, and leaked the registration list unboundedly. The decorators are now
+  built once, one per path, with distinct names — and the bucket key is now
+  `client-ip + path`, so two paths sharing a limit string no longer share a
+  counter (they only stayed separate by accident of 10/5/30 being distinct).
+
+- **Audit** — `IdentityEventType` gains `MFA_ENROLL_STARTED`, `MFA_ENABLED`,
+  `MFA_DISABLED`, `MFA_VERIFY_SUCCESS`, `MFA_VERIFY_FAILED`,
+  `MFA_RECOVERY_CODE_USED`, `MFA_RECOVERY_CODES_REISSUED`,
+  `MFA_BREAKGLASS_RESET`, `MFA_POLICY_UPDATED`, `ACCOUNT_LOCKED`,
+  `ACCOUNT_UNLOCKED`. All ≤ 40 chars, with a test that fails CI if a future
+  value outgrows the `String(40)` column (the documented enum/column drift
+  trap). There is deliberately **no** per-attempt `LOGIN_FAILED` event:
+  `identity_events` has no retention clock, so anything an unauthenticated
+  attacker can emit at will would accumulate forever.
+
+- **Tests** — `backend/tests/test_mfa.py`, 88 tests against the real models,
+  the real router wiring, and the real service code over in-memory SQLite
+  (new test-only `aiosqlite==0.20.0`). Nothing overrides an auth dependency —
+  `tests/integration/conftest.py`'s `auth_as` replaces
+  `get_current_active_user` wholesale and would have exercised none of this.
+
+- **Docs** — `user-guide/administration.md` gains a full MFA/lockout/breakglass
+  section (including the "503 for everyone after a key rotation" failure mode);
+  `architecture/SECURITY.md` §1/§1a/§7 replace "MFA must come from your IdP"
+  with how this works and where it stops. **`user-guide/compliance.md` still
+  says "no MFA, no account lockout" in the CC6.1 row, the §164.312(d) row, and
+  the "what TestLookup does NOT provide" list — those three are now stale and
+  need a follow-up edit.**
+
 ### 2026-08-05 — Auth: stop laundering 503/non-401 errors into 401; credential-kind plumbing; consistent password caps
 
 > **⚠ BEHAVIOR CHANGE — a Redis outage now returns 503 to API clients instead of 401.**

@@ -3,6 +3,7 @@ import logging
 import uuid as _uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+from typing import Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -13,7 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import get_current_active_user, oauth2_scheme
 from app.core.security import (
+    MFA_CHALLENGE_TOKEN_TYPE,
+    MFA_ENROLLMENT_TOKEN_TYPE,
     create_access_token,
+    create_mfa_token,
     decode_token,
     get_password_hash,
     verify_password,
@@ -21,6 +25,7 @@ from app.core.security import (
 from app.core.token_revocation import revoke_all_user_tokens, revoke_jti
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User, UserRole
+from app.services import mfa_service
 from app.services.refresh_token_service import (
     RefreshTokenError,
     _revoke_family as _revoke_refresh_family,
@@ -30,6 +35,8 @@ from app.services.refresh_token_service import (
 from app.models.schemas import (
     ChangePasswordRequest,
     FirstTimeResetRequest,
+    MfaChallengeResponse,
+    MfaEnrollmentRequiredResponse,
     RefreshRequest,
     SelfUpdateProfileRequest,
     TokenResponse,
@@ -86,13 +93,52 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     return user
 
 
-@router.post("/login", response_model=TokenResponse)
+def _locked_response(until: datetime) -> HTTPException:
+    """429 + Retry-After for a locked account.
+
+    Enumeration note, stated rather than hidden: this response tells the caller
+    the account exists. It is only ever reached by someone who has just typed
+    the *correct* password (the lock is checked after verification, so a wrong
+    password on a locked account is indistinguishable from a wrong password on
+    any other account), and the pre-existing ``403 Account disabled`` branch
+    already leaks the same class of fact. The alternative — a generic 401 —
+    would leave a locked-out user retrying forever with no idea why, which is
+    how lockout turns into a support ticket instead of a control.
+    """
+    retry = max(1, int((until - datetime.now(timezone.utc)).total_seconds()))
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=(
+            "Account temporarily locked after repeated failed sign-in attempts. "
+            f"Try again in about {max(1, retry // 60)} minute(s)."
+        ),
+        headers={"Retry-After": str(retry)},
+    )
+
+
+@router.post(
+    "/login",
+    response_model=Union[TokenResponse, MfaChallengeResponse, MfaEnrollmentRequiredResponse],
+)
 async def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    """Authenticate and return JWT access + refresh tokens."""
+    """Authenticate and return JWT access + refresh tokens.
+
+    Three success shapes, all HTTP 200 (see ``models/schemas.py``):
+
+    * :class:`TokenResponse` — fully authenticated.
+    * :class:`MfaChallengeResponse` — password accepted, second factor owed.
+    * :class:`MfaEnrollmentRequiredResponse` — password accepted, workspace
+      policy requires MFA and this account has none yet.
+
+    The last two carry interstitial tokens with their own ``type`` claim. They
+    are **not** access tokens and are rejected by ``get_current_user``: see
+    ``core/security.create_mfa_token`` for why a claim on a real access token
+    would have been a complete bypass.
+    """
     result = await db.execute(
         select(User).where(
             (User.username == form_data.username) | (User.email == form_data.username)
@@ -108,8 +154,26 @@ async def login(
         if user is not None
         else verify_password(form_data.password, _dummy_password_hash())
     )
+
+    policy = await mfa_service.load_policy(db)
+    lock_expires = mfa_service.locked_until(user) if user is not None else None
+
     if not user or not password_ok:
         logger.warning("Failed login attempt for: %s", form_data.username)
+        # Only count against a real account, and never while it is already
+        # locked — otherwise an attacker hammering a locked account would keep
+        # extending the lock and the legitimate owner could never wait it out.
+        # Failures against usernames that do not exist are the IP rate
+        # limiter's problem; counting them would need a per-username store
+        # keyed on unverified input, which is a memory-exhaustion and
+        # enumeration vector on its own.
+        if user is not None and lock_expires is None:
+            await mfa_service.register_failed_attempt(
+                db, user, policy,
+                reason="password",
+                ip_address=request.client.host if request.client else None,
+            )
+            await db.commit()  # get_db rolls back on the raise below
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -121,6 +185,10 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account disabled",
         )
+
+    # Checked *after* password verification on purpose — see _locked_response.
+    if lock_expires is not None:
+        raise _locked_response(lock_expires)
 
     # ── SSO enforcement check ────────────────────────────────────
     # When SSO is enforced (SSO_REQUIRED mode), only ADMIN users with the
@@ -149,8 +217,41 @@ async def login(
                     detail="SSO is required for this account. Please use the SSO login option.",
                 )
 
+    # ── Second factor ────────────────────────────────────────────
+    requirement = await mfa_service.evaluate_login_requirement(db, user, policy)
+
+    if requirement is mfa_service.LoginRequirement.BROKEN:
+        # Enrolled, but the stored seed will not decrypt. ``read_secret``
+        # cannot tell that apart from "never enrolled" — this is the case where
+        # rounding it down to "MFA is off" would silently disable the control
+        # for every enrolled user after a bad key rotation.
+        logger.error("Login denied — unreadable TOTP seed for user_id=%s", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=mfa_service.SEED_UNREADABLE_DETAIL,
+        )
+
+    if requirement is mfa_service.LoginRequirement.CHALLENGE:
+        challenge, _jti, ttl = create_mfa_token(str(user.id), MFA_CHALLENGE_TOKEN_TYPE)
+        # No commit needed for the challenge itself (nothing was staged), but
+        # the SSO admin-fallback event above may be pending.
+        await db.commit()
+        logger.info("MFA challenge issued: user_id=%s", user.id)
+        return MfaChallengeResponse(challenge_token=challenge, expires_in=ttl)
+
+    if requirement is mfa_service.LoginRequirement.ENROLL:
+        enroll_token, _jti, ttl = create_mfa_token(str(user.id), MFA_ENROLLMENT_TOKEN_TYPE)
+        await db.commit()
+        logger.info("MFA enrollment required at login: user_id=%s", user.id)
+        return MfaEnrollmentRequiredResponse(
+            enrollment_token=enroll_token,
+            expires_in=ttl,
+            required_for_role=policy.required_for_role,
+        )
+
     access_token = create_access_token(str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
+    await mfa_service.register_successful_login(db, user)
     await db.commit()
     logger.info("User logged in: user_id=%s (must_change_password=%s)", user.id, user.must_change_password)
 
@@ -278,6 +379,19 @@ async def dev_login(
         username=username,
     )
 
+    # dev-login skips the password, so it would also skip the second factor.
+    # It is already unreachable outside APP_ENV=development, but "the dev
+    # backdoor is an MFA bypass" is not a sentence worth leaving true — refuse
+    # outright for an account that has deliberately enrolled a factor.
+    if user.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "dev-login cannot be used for an account with MFA enabled. "
+                "Sign in with the password + authenticator flow."
+            ),
+        )
+
     access_token = create_access_token(str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)
     await db.commit()
@@ -363,6 +477,29 @@ async def refresh_tokens(
 
     if user is None or not user.is_active:
         raise credentials_exception
+
+    # Re-evaluate the MFA policy on every rotation. Without this, turning the
+    # requirement on would only take effect as sessions expired — up to
+    # JWT_REFRESH_TOKEN_EXPIRE_DAYS (7 days) of grandfathered sessions that
+    # never present a second factor. Rejecting here sends the SPA back to
+    # /login, which then returns the enrollment challenge.
+    policy = await mfa_service.load_policy(db)
+    requirement = await mfa_service.evaluate_login_requirement(db, user, policy)
+    if requirement is mfa_service.LoginRequirement.BROKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=mfa_service.SEED_UNREADABLE_DETAIL,
+        )
+    if requirement is mfa_service.LoginRequirement.ENROLL:
+        logger.info("Refresh rejected — MFA enrollment now required: user_id=%s", user.id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Multi-factor authentication is now required for your role. "
+                "Sign in again to enroll an authenticator."
+            ),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
         new_refresh = await rotate_refresh_token(db, uid, jti)

@@ -129,6 +129,130 @@ class FirstTimeResetRequest(BaseModel):
     confirm_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
 
 
+# ── MFA (TOTP) Schemas ────────────────────────────────────────
+#
+# ``POST /auth/login`` returns one of three shapes. They are discriminated by
+# the literal flags below rather than by HTTP status because all three are
+# successful outcomes of a correct password — the caller has to branch anyway,
+# and a 4xx for "now do your second factor" would be a lie the SPA's global
+# error handling would act on.
+
+
+class MfaChallengeResponse(BaseModel):
+    """Password accepted; a second factor is required to finish.
+
+    ``challenge_token`` is NOT an access token — it carries ``type:
+    "mfa_challenge"`` and is rejected by ``get_current_user`` at the decode
+    layer. It is only accepted by ``POST /auth/mfa/verify``.
+    """
+    mfa_required: Literal[True] = True
+    challenge_token: str
+    expires_in: int
+    methods: List[str] = Field(default_factory=lambda: ["totp", "recovery_code"])
+
+
+class MfaEnrollmentRequiredResponse(BaseModel):
+    """Password accepted; workspace policy requires MFA and the user has none.
+
+    ``enrollment_token`` carries ``type: "mfa_enroll"`` and is accepted only by
+    the two enrollment endpoints.
+    """
+    mfa_enrollment_required: Literal[True] = True
+    enrollment_token: str
+    expires_in: int
+    required_for_role: Optional[str] = None
+
+
+class MfaEnrollStartRequest(BaseModel):
+    # Supplied only on the forced-enrollment path (no session yet). Omitted
+    # when an already-authenticated user enrolls voluntarily.
+    enrollment_token: Optional[str] = None
+
+
+class MfaEnrollStartResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+    issuer: str
+    account_name: str
+    digits: int
+    period_seconds: int
+
+
+class MfaEnrollConfirmRequest(BaseModel):
+    code: str = Field(..., max_length=12)
+    enrollment_token: Optional[str] = None
+
+
+class MfaEnrollConfirmResponse(BaseModel):
+    enabled: Literal[True] = True
+    # Shown exactly once. Only digests are stored server-side.
+    recovery_codes: List[str]
+    # Present only on the forced-enrollment path, where confirming enrollment
+    # is also what completes the login.
+    tokens: Optional[TokenResponse] = None
+
+
+class MfaVerifyRequest(BaseModel):
+    challenge_token: str
+    code: Optional[str] = Field(None, max_length=12)
+    recovery_code: Optional[str] = Field(None, max_length=64)
+
+
+class MfaDisableRequest(BaseModel):
+    """Disabling requires the password *and* a live second factor.
+
+    Password alone would let anyone holding a stolen session strip the factor
+    that session was supposed to be protected by.
+    """
+    password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
+    code: Optional[str] = Field(None, max_length=12)
+    recovery_code: Optional[str] = Field(None, max_length=64)
+
+
+class MfaRecoveryCodesRequest(BaseModel):
+    password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
+    code: Optional[str] = Field(None, max_length=12)
+    recovery_code: Optional[str] = Field(None, max_length=64)
+
+
+class MfaRecoveryCodesResponse(BaseModel):
+    recovery_codes: List[str]
+
+
+class MfaStatusResponse(BaseModel):
+    enabled: bool
+    enrolled_at: Optional[datetime] = None
+    recovery_codes_remaining: int = 0
+    # Does workspace policy require this user to hold a second factor?
+    required_by_policy: bool = False
+    # True when an external IdP owns this account, so the local requirement
+    # does not apply to it.
+    sso_managed: bool = False
+    # True when the account is flagged as enrolled but the stored seed cannot
+    # be read — MFA is broken, not off, and login is denied until it is fixed.
+    secret_unreadable: bool = False
+
+
+class MfaPolicyRead(BaseModel):
+    require_mfa: bool
+    required_for_role: Optional[UserRole] = None
+    lockout_enabled: bool
+    lockout_threshold: int
+    lockout_duration_minutes: int
+
+
+class MfaPolicyUpdate(BaseModel):
+    require_mfa: Optional[bool] = None
+    required_for_role: Optional[UserRole] = None
+    lockout_enabled: Optional[bool] = None
+    lockout_threshold: Optional[int] = Field(None, ge=3, le=100)
+    lockout_duration_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    # ``required_for_role`` is the one field where "not supplied" and
+    # "explicitly cleared" differ — null means *everyone*, which is stricter
+    # than any role floor. Setting this true applies the null.
+    clear_required_for_role: bool = False
+
+
 # ── Project Schemas ───────────────────────────────────────────
 
 class ProjectCreate(BaseModel):

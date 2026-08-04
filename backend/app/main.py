@@ -140,27 +140,92 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
         "30/minute",
         "Too many token refresh attempts. Try again in a minute.",
     ),
+    # ── MFA (0117) ─────────────────────────────────────────────────────────
+    # The second leg of login is a 6-digit-code oracle, so it needs its own
+    # ceiling. Per-account lockout (users.failed_login_attempts) is the real
+    # control — global, durable, and unaffected by which worker serves the
+    # request — but an IP limit still blunts distributed guessing against many
+    # accounts at once.
+    "/api/v1/auth/mfa/verify": (
+        "12/minute",
+        "Too many verification attempts. Try again in a minute.",
+    ),
+    "/api/v1/auth/mfa/enroll/start": (
+        "6/minute",
+        "Too many enrollment attempts. Try again in a minute.",
+    ),
+    "/api/v1/auth/mfa/enroll/confirm": (
+        "8/minute",
+        "Too many enrollment attempts. Try again in a minute.",
+    ),
 }
+
+
+def _auth_rate_limit_key(request: Request) -> str:
+    """Bucket key: client address **plus the path**.
+
+    Without the path, every entry in ``_AUTH_RATE_LIMITS`` shares one counter
+    per client: slowapi derives its storage key from ``key_func`` plus the
+    limit string, so two paths only landed in different buckets when their
+    limit strings happened to differ. That held by accident for 10/5/30 and
+    would have broken silently the moment two entries were given the same
+    limit. Making the path part of the key removes the coupling.
+
+    Storage is per-process (``Limiter`` is constructed without a
+    ``storage_uri``), so these are per-worker ceilings — a coarse
+    anti-automation measure, not the account-protection control. Per-account
+    lockout (``users.failed_login_attempts`` / ``locked_until``, migration
+    0117) is the control that is actually global.
+    """
+    return f"{get_remote_address(request)}|{request.url.path}"
+
+
+def _build_auth_limiters() -> dict[str, tuple]:
+    """Build one decorated callable per rate-limited path, **once**.
+
+    This used to be done inside the middleware, per request. That was a real
+    defect, not a style issue: ``Limiter.limit`` registers its limits under
+    ``f"{func.__module__}.{func.__name__}"``, and re-decorating a fresh local
+    function on every request kept *appending* to the same
+    ``_route_limits["app.main._limited"]`` list. Request N therefore evaluated
+    N limits and recorded N hits against the same counter, so the effective
+    ceiling collapsed quadratically — an IP was permanently 429'd off
+    ``/auth/login`` after roughly four or five attempts against a nominal
+    10/minute, and the registration list grew without bound for the life of
+    the process. Building once fixes both.
+
+    Each path gets a distinct ``__name__`` so the per-path registrations do
+    not share a bucket at slowapi's level either (the key function already
+    separates them at the storage level; this keeps the two consistent).
+    """
+    built: dict[str, tuple] = {}
+    for path, (prod_limit, error_msg) in _AUTH_RATE_LIMITS.items():
+        limit = "200/minute" if settings.APP_ENV == "development" else prod_limit
+
+        async def _limited(request: Request):
+            pass
+
+        _limited.__name__ = "auth_rate_limit_" + path.strip("/").replace("/", "_")
+        decorated = limiter.limit(limit, key_func=_auth_rate_limit_key)(_limited)
+        built[path] = (decorated, error_msg)
+    return built
+
+
+_AUTH_LIMITERS: dict[str, tuple] = _build_auth_limiters()
 
 
 @app.middleware("http")
 async def rate_limit_auth(request: Request, call_next):
     """Apply rate limits to authentication endpoints.
 
-    Production: login 10/min, register 5/min.
-    Development: 200/min for both (no friction during dev).
+    Production: login 10/min, register 5/min, MFA verify 12/min.
+    Development: 200/min for all (no friction during dev).
     """
-    config = _AUTH_RATE_LIMITS.get(request.url.path)
-    if request.method == "POST" and config:
-        prod_limit, error_msg = config
-        limit = "200/minute" if settings.APP_ENV == "development" else prod_limit
-
-        @limiter.limit(limit)
-        async def _limited(request: Request):
-            pass
-
+    entry = _AUTH_LIMITERS.get(request.url.path)
+    if request.method == "POST" and entry:
+        limited, error_msg = entry
         try:
-            await _limited(request)
+            await limited(request)
         except RateLimitExceeded:
             return JSONResponse(
                 status_code=429,

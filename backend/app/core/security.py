@@ -75,6 +75,52 @@ def create_refresh_token(subject: Any, jti: Optional[str] = None) -> tuple[str, 
     return token, jti, expire
 
 
+# ── MFA interstitial tokens ──────────────────────────────────────────────────
+#
+# Between "password verified" and "second factor verified" the caller needs a
+# credential, but it MUST NOT be an access token. ``get_current_user`` trusts
+# any token whose ``type`` claim is ``"access"`` — and the router-wide
+# dependency in ``bootstrap.register_routers`` puts that check on essentially
+# every route — so an access token carrying an ``mfa_pending`` marker would be
+# a complete bypass of the second factor for anyone who simply ignored the
+# marker. There is no marker we could add that the 300-odd existing handlers
+# would honour.
+#
+# Instead these tokens carry their own ``type``. ``decode_token`` rejects a
+# type mismatch *at the decode layer*, so presenting one of these as a bearer
+# token fails inside ``get_current_user`` before any user is loaded — the same
+# defence that already separates access from refresh tokens.
+MFA_CHALLENGE_TOKEN_TYPE = "mfa_challenge"      # password OK, awaiting TOTP
+MFA_ENROLLMENT_TOKEN_TYPE = "mfa_enroll"        # password OK, policy requires enrollment
+
+
+def create_mfa_token(subject: Any, token_type: str) -> tuple[str, str, int]:
+    """Mint a short-lived MFA interstitial token.
+
+    Returns ``(encoded_token, jti, expires_in_seconds)``. ``token_type`` must be
+    :data:`MFA_CHALLENGE_TOKEN_TYPE` or :data:`MFA_ENROLLMENT_TOKEN_TYPE`; any
+    other value is a programming error and raises, because the whole security
+    property here rests on the type claim never being ``"access"``.
+    """
+    if token_type not in (MFA_CHALLENGE_TOKEN_TYPE, MFA_ENROLLMENT_TOKEN_TYPE):
+        raise ValueError(f"Not an MFA interstitial token type: {token_type!r}")
+    now = datetime.now(timezone.utc)
+    ttl = max(30, int(settings.MFA_CHALLENGE_TTL_SECONDS))
+    expire = now + timedelta(seconds=ttl)
+    jti = uuid.uuid4().hex
+    payload = {
+        "sub": str(subject),
+        "iat": now,
+        "exp": expire,
+        "type": token_type,
+        "jti": jti,
+    }
+    token = cast(
+        str, jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    )
+    return token, jti, ttl
+
+
 def decode_token(token: str, expected_type: Optional[str] = None) -> dict[Any, Any]:
     """Decode and validate a JWT token. Raises JWTError on failure.
 

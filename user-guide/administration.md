@@ -49,6 +49,184 @@ The repo guard is strict: an MR IID is project-scoped, so a run's `ci_repo` must
 - **Performance** (`/settings/performance`) — instance performance diagnostics.
 - **Billing** (`/settings/billing`) — usage/spend views (AI spend also surfaces in the [Intelligence Hub](ai-features.md#run-intelligence-intelligence-runsidintelligence)).
 
+## Multi-factor authentication & account lockout
+
+Shipped 2026-08-05 (migration 0117). Before this, MFA had to come from your IdP
+over SAML and there was no lockout at all — if you have a copy of the compliance
+mapping from before that date, those two rows are out of date.
+
+### Enrolling
+
+Anyone can turn on MFA for their own account, whether or not policy requires it.
+
+1. Start enrollment. The server returns a base32 secret and an `otpauth://`
+   provisioning URI; the UI renders it as a QR code and also shows the secret so
+   you can type it into an authenticator that cannot scan.
+2. Enter a six-digit code from the authenticator to confirm. **Nothing changes
+   until you do** — an abandoned enrollment leaves the account exactly as it
+   was.
+3. Confirming enables MFA and shows **ten recovery codes, once**. Only their
+   digests are stored, so nobody — including an admin with database access —
+   can recover them later. Save them somewhere that is not the phone holding
+   the authenticator.
+
+Codes are standard RFC 6238 TOTP: six digits, 30-second period, and one step
+of clock drift tolerated in either direction. A code that has already been
+accepted cannot be used again, even within its own 30-second window, so
+"press the button twice" fails the second time by design.
+
+### Signing in with MFA
+
+Password first, then a second factor. The intermediate token the server hands
+back between the two steps is **not** a session — it is only accepted by the
+verification endpoint, and it expires in five minutes and works exactly once.
+If you abandon a half-finished sign-in, start over from the login screen.
+
+At the second step you can enter either an authenticator code or one of your
+recovery codes.
+
+### Recovery codes
+
+- Ten codes, single-use, formatted `XXXX-XXXX-XXXX-XXXX`. Spacing and case do
+  not matter when you type one back.
+- Using one consumes it permanently. The response tells you how many are left.
+- You can reissue the whole set at any time (password + a live second factor
+  required). **Reissuing invalidates every previous code**, including unused
+  ones.
+- Running out is not a lock-out on its own — you can reissue while you still
+  have your authenticator. It becomes a lock-out only if you lose the
+  authenticator *and* have no codes left, which is what breakglass is for.
+
+### Turning MFA off
+
+Requires your password **and** a live second factor. A password alone would let
+anyone holding a stolen session strip the factor that session was supposed to
+be protected by.
+
+If workspace policy requires MFA for your role, you cannot turn it off — an
+admin has to change the policy or use breakglass.
+
+### Workspace policy (admin)
+
+Settings → MFA policy. Four settings, workspace-wide:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Require MFA | off | Master switch for the requirement. Enrollment is always *available* regardless. |
+| Required for role | — | MFA is required for this role **and every role above it** (VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN). Leaving it empty with the switch on means *everyone*. |
+| Lockout enabled | **on** | See below. |
+| Lockout threshold | 10 | Consecutive failures before the account locks. Minimum 3. |
+| Lockout duration | 15 min | How long the lock lasts. |
+
+Turning the requirement on takes effect immediately for new sign-ins, and
+within one access-token lifetime for sessions that are already live — the
+token-refresh path re-checks the policy and sends affected users back to the
+login screen, where they are handed an enrollment challenge instead of a
+session. They cannot get back in without enrolling.
+
+**SSO-managed accounts are exempt from the requirement.** Any account with a
+federated identity link, or one that was provisioned over SCIM, is skipped:
+your IdP already owns that account's authentication, and stacking a second
+factor we control on top of one the IdP does not know about creates a
+lock-out risk with no extra assurance. SAML sign-in (`/api/v1/sso/acs`) does
+not consult this policy at all. The exemption is from the *requirement* only —
+an SSO-managed user who enrolls voluntarily is still challenged when they use
+the local password path.
+
+**API keys are never challenged.** A key embedded in a CI pipeline cannot type
+a TOTP code, so keys keep working when you turn the policy on. The flip side is
+that a key is a single-factor way into the account, so treat key issuance as a
+sensitive grant — they are per-user, listed under Settings → API Keys, and
+revocable. Keys *can* read MFA status but cannot enroll, disable, or reissue
+recovery codes; those need an interactive sign-in.
+
+### Account lockout
+
+**This is on by default.** After 10 consecutive failed attempts — failed
+passwords and failed second factors both count — the account locks for 15
+minutes and answers `429` with a `Retry-After` header even for the correct
+password.
+
+Details worth knowing:
+
+- A **completely** successful sign-in resets the counter. A correct password
+  followed by a failed second factor does not.
+- Failures while the account is already locked do **not** extend the lock, so
+  someone hammering an account cannot keep its owner out indefinitely.
+- The lock expires on its own. There is nothing to clear manually in the normal
+  case.
+- Counters live on the user row in PostgreSQL, so the limit is genuinely
+  global — it is not per-worker and it survives a restart. (The separate
+  per-IP rate limits on the auth endpoints are in-process and per-worker; they
+  are anti-automation, not account protection.)
+- Attempts against a username that does not exist are never counted. Only the
+  per-IP rate limit applies there.
+- Every lock writes an `ACCOUNT_LOCKED` row to the identity event trail
+  (`/settings/audit`).
+
+Note that `identity_events` has **no retention clock** — the per-project purge
+does not touch it, because the table has no project scope. MFA failures and
+lockouts accumulate there indefinitely. That is why there is no per-attempt
+"login failed" event; the events that do exist are either operator-initiated or
+capped by the lockout threshold. If a sustained attack inflates the table,
+prune it out-of-band.
+
+### Breakglass — lost authenticator, no recovery codes left
+
+There is deliberately no admin button for this. A user who can reset their own
+second factor does not have one, and an endpoint that resets *someone else's*
+factor is an account-takeover primitive sitting behind whatever your weakest
+admin session is. It is a script, run with deployment-level access:
+
+```bash
+# Inside the backend container:
+MFA_BREAKGLASS_ENABLED=true python /app/scripts/mfa_breakglass.py \
+    --user alice@example.com \
+    --operator "on-call: sam" \
+    --reason "lost phone, recovery codes exhausted, identity verified by video"
+
+# Kubernetes:
+kubectl -n testlookup exec -it deployment/testlookup-backend -- \
+    env MFA_BREAKGLASS_ENABLED=true python /app/scripts/mfa_breakglass.py \
+    --user alice --operator "sam" --reason "..."
+
+# Inspect without changing anything (no env gate needed):
+python /app/scripts/mfa_breakglass.py --user alice --dry-run
+```
+
+- **`MFA_BREAKGLASS_ENABLED` must be set in the backend environment.** It is
+  environment-only, defaults to false, and there is no in-app toggle — turning
+  it on requires access to the deployment, not to a session. This mirrors
+  `SSO_ADMIN_FALLBACK_ENABLED`.
+- `--reason` is mandatory. It is written to the audit trail.
+- The reset clears MFA (flag, seed, and every recovery code) and any active
+  lockout, in one transaction with an `MFA_BREAKGLASS_RESET` identity event.
+  There is no path where the factor is cleared without the trail recording it.
+- `--keep-lockout` clears MFA but leaves an active lock in place.
+- The user then signs in with their password alone. **If policy requires MFA
+  for their role, their very next login hands them an enrollment challenge**,
+  so the account does not sit unprotected.
+
+Do not confuse this with the SSO admin fallback
+(`SSO_ADMIN_FALLBACK_ENABLED`): that lets an ADMIN use password login while SSO
+is enforced, and says nothing about a second factor.
+
+### If MFA stops working for everyone at once
+
+One failure mode is worth recognising on sight: **`503` at sign-in with "MFA is
+enabled but its stored secret cannot be read"**.
+
+TOTP seeds are encrypted with a key derived from `APP_SECRET_KEY`. If that key
+is rotated without carrying the old one in `APP_SECRET_KEY_PREVIOUS`, every
+enrolled seed becomes undecryptable. TestLookup refuses those logins rather
+than treating an unreadable seed as "this user has no MFA" — silently
+downgrading to single-factor at exactly that moment would be the worst possible
+behaviour.
+
+Fix it by restoring the previous key in `APP_SECRET_KEY_PREVIOUS` and
+restarting. If the old key is genuinely gone, use breakglass per affected user
+and have them re-enroll.
+
 ## Commit attribution & TIA readiness
 
 Every run can carry a **commit range** — the commits that landed between a baseline and the run's own commit. It powers suspect ranking on a failure, and it is the raw material for any future test-impact analysis (which tests a given file change is likely to break).
