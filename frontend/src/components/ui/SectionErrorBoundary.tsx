@@ -50,7 +50,7 @@ export class SectionErrorBoundary extends Component<Props, State> {
 
     return (
       <div className="flex flex-col items-center justify-center h-48 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-center p-6">
-        <AlertTriangle className="h-8 w-8 text-amber-400 mb-3" />
+        <AlertTriangle className="h-8 w-8 text-[var(--status-broken)] mb-3" />
         <p className="text-sm font-medium text-[var(--color-text)]">
           {this.props.message || 'This section failed to load'}
         </p>

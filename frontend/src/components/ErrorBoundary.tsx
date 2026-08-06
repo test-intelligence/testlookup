@@ -60,7 +60,7 @@ export class ErrorBoundary extends Component<Props, State> {
             An unexpected error occurred in the application. The error has been reported
             automatically.
           </p>
-          <p className="text-xs text-red-400 font-mono bg-[var(--color-bg-card)] rounded p-2 text-left break-all">
+          <p className="text-xs text-[var(--status-failed)] font-mono bg-[var(--color-bg-card)] rounded p-2 text-left break-all">
             {error.message}
           </p>
           <div className="flex gap-3 justify-center pt-2">

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-06 — App error-boundary fallbacks migrated to per-theme status tokens
+
+- **Frontend** — the two last-resort error screens no longer hard-code Tailwind palette classes that bypass the per-theme CSS-token system and read poorly on light themes. `ErrorBoundary`'s error-detail text now uses `--status-failed` (was `text-red-400`) and `SectionErrorBoundary`'s warning icon uses `--status-broken` (was `text-amber-400`), mapped by semantic role. Removes 2 `no-restricted-syntax` palette warnings; extended each component's existing test with a regression guard against reintroducing raw palette classes.
+
 ### 2026-08-05 — TOTP MFA, recovery codes, account lockout (closes the compliance gap)
 
 > **⚠ BEHAVIOR CHANGE 1 — account lockout is ON by default.** Ten consecutive
