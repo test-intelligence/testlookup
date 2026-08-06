@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Check, Eye, EyeOff, KeyRound, Loader2, UserCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import MfaSecuritySection from '@/components/mfa/MfaSecuritySection'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/services/api'
 
@@ -153,7 +154,10 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <PageHeader title="My Profile" subtitle="Update your display name, avatar, and password" />
+      <PageHeader
+        title="My Profile"
+        subtitle="Update your display name, avatar, password, and two-factor authentication"
+      />
 
       {/* ── Profile Information ───────────────────────────────────────────── */}
       <section className="card space-y-6">
@@ -376,6 +380,9 @@ export default function ProfilePage() {
           </button>
         </div>
       </section>
+
+      {/* ── Two-Factor Authentication ─────────────────────────────────────── */}
+      <MfaSecuritySection />
     </div>
   )
 }

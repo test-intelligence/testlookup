@@ -46,6 +46,53 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// ── 401-refresh exclusions ───────────────────────────────────────────────────
+// A 401 normally means "the access token expired" — refresh once and retry.
+// On the authentication endpoints a 401 means something completely different:
+// bad credentials, a wrong TOTP code, or an expired/already-spent MFA
+// challenge. Those must be handed straight back to the caller.
+//
+// The MFA endpoints are the sharp edge. `/auth/mfa/verify` answers a wrong or
+// stale code with 401, and it is called from the LOGIN screen where there is
+// no valid session at all — so the refresh would fail, `refreshAccessToken`
+// would call `logout()`, and a simple typo would look like a broken feature.
+// The whole `/auth/mfa/` prefix is excluded rather than just `verify`:
+// `enroll/start` and `enroll/confirm` are equally reachable pre-session (they
+// authenticate with an `enrollment_token`, not a Bearer).
+//
+// Trade-off worth stating: `/auth/mfa/status` is a plain authenticated read,
+// so excluding it means a genuinely expired session there surfaces as an SWR
+// error instead of silently refreshing. Every other read on the page still
+// drives the refresh, so the session recovers anyway — and keeping the rule a
+// single unambiguous prefix is worth more than that edge.
+const NO_REFRESH_PATHS = new Set([
+  '/api/v1/auth/login',
+  '/api/v1/auth/refresh',
+  '/api/v1/auth/register',
+  '/api/v1/auth/dev-login',
+])
+
+const NO_REFRESH_PREFIXES = ['/api/v1/auth/mfa/']
+
+/**
+ * Whether a 401 from `url` should trigger the silent refresh-and-retry.
+ * Exported so the policy is unit-testable without driving axios.
+ */
+export function shouldAttemptTokenRefresh(url: string | undefined): boolean {
+  const raw = url ?? ''
+  let path = raw
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      path = new URL(raw).pathname
+    } catch {
+      path = raw
+    }
+  }
+  path = path.split('?')[0].split('#')[0]
+  if (NO_REFRESH_PATHS.has(path)) return false
+  return !NO_REFRESH_PREFIXES.some((prefix) => path.startsWith(prefix))
+}
+
 // Track whether a refresh is already in flight to prevent parallel refresh calls
 let isRefreshing = false
 let failedQueue: Array<{
@@ -67,8 +114,7 @@ api.interceptors.response.use(
     if (
       error.response?.status === 401 &&
       !originalRequest._retry &&
-      originalRequest.url !== '/api/v1/auth/login' &&
-      originalRequest.url !== '/api/v1/auth/refresh'
+      shouldAttemptTokenRefresh(originalRequest.url)
     ) {
       if (isRefreshing) {
         // Queue additional requests until the in-flight refresh resolves

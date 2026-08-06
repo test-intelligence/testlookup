@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Activity, Archive, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, GitMerge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ScrollText, Sparkles, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
+import { Activity, Archive, Bot, BrainCircuit, Database, DollarSign, Flag, Gauge, GitBranch, GitMerge, Key, Bell, ChevronRight, FileSearch, Fingerprint, Mail, ScrollText, ShieldCheck, Sparkles, Sprout, ShieldAlert, Trash2, UserCircle2, Webhook } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -132,6 +132,12 @@ const sections = [
     title: 'Retention & Purge',
     desc: 'Per-project data-retention windows for raw events, runs, artifacts, and the audit trail — with purge preview and manual purge. ADMIN only.',
     href: '/settings/retention',
+  },
+  {
+    icon: ShieldCheck,
+    title: 'MFA & Lockout Policy',
+    desc: 'Require two-factor authentication for a role and above, and tune the failed-sign-in lockout threshold and duration. ADMIN only.',
+    href: '/settings/mfa-policy',
   },
   ...(isDev
     ? [

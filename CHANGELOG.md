@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-05 — MFA enrollment, login challenge, and admin policy UI
+
+The frontend half of the TOTP MFA work: everything a user or an admin needs to
+enrol, sign in with a second factor, and set workspace policy. Backend contract
+unchanged — `backend/**` was not touched.
+
+**Login (`pages/LoginPage.tsx`)** — the existing `mode` state machine grew two
+steps to match the three possible 200 bodies from `POST /auth/login`:
+
+- `mfa_required` → a numeric code field (`autocomplete="one-time-code"`,
+  autofocus, paste-tolerant) with a "use a recovery code instead" toggle. A
+  **wrong code keeps the challenge** — the user retries in place rather than
+  being thrown back to the password field with a still-valid challenge
+  discarded. The challenge is short-lived, so the remaining time is shown as a
+  live countdown; when it lapses (locally or per the backend) the panel says so
+  and offers the way back to the password step instead of failing silently.
+- `mfa_enrollment_required` → enrollment is walked inline using the
+  `enrollment_token`, explaining *which role* the requirement comes from, and
+  sign-in is completed with the `tokens` that `enroll/confirm` returns on that
+  path.
+
+**Profile → Security (`components/mfa/MfaSecuritySection.tsx`)** — enrol,
+regenerate recovery codes, disable. Two states are handled explicitly rather
+than collapsed into "off": `sso_managed` renders an explanation and **no
+controls** (the IdP owns that user's second factor), and `secret_unreadable`
+renders a loud broken state — enrolled but the seed cannot be read, so TOTP
+logins will fail and only an administrator can fix it. Rendering that as "not
+enrolled" would push the user into a 409 they cannot escape.
+
+**Recovery codes** are shown exactly once, all ten, with Copy and Download, and
+cannot be dismissed until the user ticks an explicit acknowledgement.
+Regeneration gets the same screen plus a warning that the previous set is now
+dead.
+
+**Admin policy (`pages/settings/MfaPolicyPage.tsx`, route
+`/settings/mfa-policy`)** — `require_mfa`, `required_for_role`, and the lockout
+trio, ADMIN-gated in-component (the backend remains the real boundary).
+Switching `require_mfa` on requires a confirmation that states the consequence:
+everyone in scope is forced to enrol at next login, SSO users are exempt, and a
+lost device with no recovery codes left needs an admin-run breakglass script.
+
+**⚠ Interceptor change — `services/api.ts` no longer refreshes the token on a
+401 from `/api/v1/auth/mfa/*`.** Every wrong TOTP code and expired challenge is
+a 401, and `/auth/mfa/verify` is called from the login screen where there is no
+session at all; without this a typo triggered a refresh, the refresh failed,
+`refreshAccessToken` called `logout()`, and MFA looked broken. The exclusion
+list also now covers `/auth/register` and `/auth/dev-login` alongside the
+existing `/auth/login` and `/auth/refresh`. Side effect worth knowing: a
+genuinely expired session on `/auth/mfa/status` now surfaces as a read error
+rather than silently refreshing — every other read on the page still drives the
+refresh.
+
+New dependency: **`qrcode.react` ^4.2.0** — the backend returns `otpauth_uri`
+and no image by design. Pure TS/React, zero runtime dependencies, no native
+build step, renders inline SVG. The manual-entry secret is shown next to the QR
+in every case, because QR-only setup locks out anyone configuring this on a
+desktop.
+
 ### 2026-08-05 — TOTP MFA, recovery codes, account lockout (closes the compliance gap)
 
 > **⚠ BEHAVIOR CHANGE 1 — account lockout is ON by default.** Ten consecutive

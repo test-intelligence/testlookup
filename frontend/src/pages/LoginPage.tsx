@@ -1,13 +1,26 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Zap, UserPlus, LogIn, Fingerprint } from 'lucide-react';
+import { Zap, UserPlus, LogIn, Fingerprint, ShieldAlert } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import AppLogo from '@/components/ui/AppLogo';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { type SSOStatus, getSSOStatus } from '../services/ssoService';
 import { isSafeExternalUrl } from '@/utils/safeUrl';
+import { fetchCurrentUser, loginWithPassword } from '@/services/authService';
+import { startMfaEnrollment } from '@/hooks/useMfaStatus';
+import MfaChallengePanel from '@/components/mfa/MfaChallengePanel';
+import MfaEnrollPanel from '@/components/mfa/MfaEnrollPanel';
+import {
+  isMfaChallenge,
+  isMfaEnrollmentRequired,
+  type MfaChallengeResponse,
+  type MfaEnrollStartResponse,
+  type MfaEnrollmentRequiredResponse,
+  type TokenResponse,
+} from '@/types/mfa';
+import { describeMfaError, formatRetryAfter } from '@/utils/mfaErrors';
 
 const DEV_ROLES = [
   { label: 'Admin',       value: 'admin',       colour: 'text-red-400' },
@@ -17,14 +30,28 @@ const DEV_ROLES = [
   { label: 'Viewer',      value: 'viewer',      colour: 'text-[var(--color-text-muted)]' },
 ];
 
+/**
+ * `POST /auth/login` now has three possible 200 bodies, so the page's mode
+ * machine grew two steps to match them: `mfa-challenge` (the user has MFA on)
+ * and `mfa-enroll` (workspace policy requires MFA and they have not set it up
+ * yet — they cannot get in until they do).
+ */
+type LoginMode = 'login' | 'register' | 'mfa-challenge' | 'mfa-enroll';
+
 export default function LoginPage() {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<LoginMode>('login');
 
   // Login state
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [devLoggingInAs, setDevLoggingInAs] = useState<string | null>(null);
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
+
+  // MFA interstitial state
+  const [challenge, setChallenge] = useState<MfaChallengeResponse | null>(null);
+  const [enrollHandoff, setEnrollHandoff] = useState<MfaEnrollmentRequiredResponse | null>(null);
+  const [enrollment, setEnrollment] = useState<MfaEnrollStartResponse | null>(null);
 
   // Register state
   const [regEmail, setRegEmail] = useState('');
@@ -48,31 +75,78 @@ export default function LoginPage() {
     getSSOStatus().then(setSsoStatus).catch(() => { /* SSO not available */ });
   }, []);
 
+  /** Shared tail of every successful sign-in — normal, post-challenge, or post-enrollment. */
+  const completeSignIn = async (tokens: TokenResponse) => {
+    const user = await fetchCurrentUser(tokens.access_token);
+    setAuth(tokens.access_token, tokens.refresh_token, user);
+    setChallenge(null);
+    setEnrollHandoff(null);
+    setEnrollment(null);
+    setPassword('');
+    setMode('login');
+    toast.success('Logged in successfully');
+    // ProtectedRoute will redirect to /reset-password if must_change_password=true
+    navigate(from, { replace: true });
+  };
+
+  /** Return to the password step and say why. */
+  const backToPassword = (reason: string | null) => {
+    setChallenge(null);
+    setEnrollHandoff(null);
+    setEnrollment(null);
+    setPassword('');
+    setLoginNotice(reason);
+    setMode('login');
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username || !password) return;
 
     setIsSubmitting(true);
+    setLoginNotice(null);
     try {
-      const params = new URLSearchParams();
-      params.append('username', username);
-      params.append('password', password);
+      const res = await loginWithPassword(username, password);
 
-      const res = await api.post('/api/v1/auth/login', params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      });
+      if (isMfaChallenge(res)) {
+        setChallenge(res);
+        setMode('mfa-challenge');
+        return;
+      }
 
-      const { access_token, refresh_token } = res.data;
-      const userRes = await api.get('/api/v1/auth/me', {
-        headers: { Authorization: `Bearer ${access_token}` },
-      });
+      if (isMfaEnrollmentRequired(res)) {
+        // Fetch the secret up front so the enrollment panel is a pure render —
+        // it never has to kick off a request from an effect.
+        const started = await startMfaEnrollment(res.enrollment_token);
+        setEnrollHandoff(res);
+        setEnrollment(started);
+        setMode('mfa-enroll');
+        return;
+      }
 
-      setAuth(access_token, refresh_token, userRes.data);
-      toast.success('Logged in successfully');
-      // ProtectedRoute will redirect to /reset-password if must_change_password=true
-      navigate(from, { replace: true });
-    } catch {
-      toast.error('Invalid username or password');
+      await completeSignIn(res);
+    } catch (err) {
+      // Distinguish the failures that are NOT "wrong password": a locked
+      // account (429 with Retry-After) and a backend that cannot verify at all
+      // (503). Telling those users their password is wrong sends them off to
+      // reset a credential that was fine.
+      const info = describeMfaError(err);
+      if (info.kind === 'locked_out') {
+        const wait =
+          info.retryAfterSeconds !== undefined
+            ? ` Try again in about ${formatRetryAfter(info.retryAfterSeconds)}.`
+            : '';
+        setLoginNotice(`${info.message}${wait}`);
+        toast.error('Account temporarily locked');
+      } else if (info.kind === 'rate_limited' || info.kind === 'unavailable') {
+        setLoginNotice(info.message);
+        toast.error('Sign-in unavailable right now');
+      } else if (info.status === 403) {
+        setLoginNotice(info.message);
+        toast.error(info.message);
+      } else {
+        toast.error('Invalid username or password');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -134,7 +208,13 @@ export default function LoginPage() {
           <AppLogo className="text-[42px]" />
         </div>
         <h2 className="mt-2 text-center text-3xl font-extrabold text-[var(--color-text)]">
-          {mode === 'login' ? 'Sign in to TestLookup' : 'Create an account'}
+          {mode === 'register'
+            ? 'Create an account'
+            : mode === 'mfa-challenge'
+              ? 'One more step'
+              : mode === 'mfa-enroll'
+                ? 'Set up two-factor authentication'
+                : 'Sign in to TestLookup'}
         </h2>
         <p className="mt-2 text-center text-sm text-[var(--color-text-muted)]">
           Instant Answers from Your Test Results
@@ -173,6 +253,74 @@ export default function LoginPage() {
         )}
 
         <div className="theme-bg-card py-8 px-4 shadow sm:rounded-lg sm:px-10 border theme-border">
+
+          {/* ── Carry-over notice (lockout, expired challenge, SSO-required …) ── */}
+          {mode === 'login' && loginNotice && (
+            <div
+              role="alert"
+              className="mb-5 flex items-start gap-2 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg-soft)] px-3 py-2 text-xs text-[var(--color-text)]"
+            >
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[var(--status-broken)]" />
+              <span>{loginNotice}</span>
+            </div>
+          )}
+
+          {/* ── MFA challenge step ── */}
+          {mode === 'mfa-challenge' && challenge && (
+            <MfaChallengePanel
+              challenge={challenge}
+              accountLabel={username}
+              onVerified={completeSignIn}
+              onExpired={backToPassword}
+              onCancel={() => backToPassword(null)}
+            />
+          )}
+
+          {/* ── Forced enrollment step ── */}
+          {mode === 'mfa-enroll' && enrollment && enrollHandoff && (
+            <div className="space-y-5">
+              <div className="rounded-md border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/80 px-3 py-2 text-xs text-[var(--color-text-secondary)]">
+                {enrollHandoff.required_for_role ? (
+                  <>
+                    This workspace requires two-factor authentication for{' '}
+                    <strong>{enrollHandoff.required_for_role.replace(/_/g, ' ').toLowerCase()}</strong>{' '}
+                    accounts and above. Finish setting it up to sign in — you only do this
+                    once.
+                  </>
+                ) : (
+                  <>
+                    This workspace requires two-factor authentication for every account.
+                    Finish setting it up to sign in — you only do this once.
+                  </>
+                )}
+              </div>
+
+              <MfaEnrollPanel
+                enrollment={enrollment}
+                enrollmentToken={enrollHandoff.enrollment_token}
+                cancelLabel="Back to sign in"
+                onCancel={() => backToPassword(null)}
+                onTokenExpired={(info) => backToPassword(info.message)}
+                onAlreadyEnrolled={() =>
+                  backToPassword(
+                    'This account already has two-factor authentication enabled. Sign in again and enter a code from your authenticator.',
+                  )
+                }
+                onComplete={(result) => {
+                  // The forced path is the only one where `tokens` is non-null —
+                  // it is how the user finishes signing in without re-entering
+                  // their password.
+                  if (result.tokens) {
+                    void completeSignIn(result.tokens);
+                  } else {
+                    backToPassword(
+                      'Two-factor authentication is enabled. Sign in again to continue.',
+                    );
+                  }
+                }}
+              />
+            </div>
+          )}
 
           {/* ── Login form ── */}
           {mode === 'login' && (
@@ -355,9 +503,13 @@ export default function LoginPage() {
             </form>
           )}
 
-          {/* ── Mode toggle ── */}
-          <div className="mt-5 pt-4 border-t border-[var(--color-border)] text-center text-sm text-[var(--color-text-muted)]">
-            {mode === 'login' ? (
+          {/* ── Mode toggle (hidden mid-MFA — there is nothing to switch to) ── */}
+          <div
+            className={`mt-5 pt-4 border-t border-[var(--color-border)] text-center text-sm text-[var(--color-text-muted)] ${
+              mode === 'login' || mode === 'register' ? '' : 'hidden'
+            }`}
+          >
+            {mode !== 'register' ? (
               <>
                 Don't have an account?{' '}
                 <button

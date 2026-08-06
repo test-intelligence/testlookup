@@ -114,6 +114,7 @@ const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhook
 const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
 const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
 const RetentionPage = lazy(() => import('@/pages/settings/RetentionPage'))
+const MfaPolicyPage = lazy(() => import('@/pages/settings/MfaPolicyPage'))
 const AIAgentsPage = lazy(() => import('@/pages/settings/AIAgentsPage'))
 const AgentActivityPage = lazy(() => import('@/pages/settings/AgentActivityPage'))
 const RunComparePage = lazy(() => import('@/pages/RunComparePage'))
@@ -190,6 +191,7 @@ const managementRoutes: AppRoute[] = [
   { path: 'settings/api-keys', component: ApiKeysPage },
   { path: 'settings/project-data', component: ProjectDataPage },
   { path: 'settings/retention', component: RetentionPage },
+  { path: 'settings/mfa-policy', component: MfaPolicyPage },
   { path: 'settings/ai-agents', component: AIAgentsPage },
   { path: 'settings/agent-activity', component: AgentActivityPage },
   { path: 'policies', component: PolicyEditorPage },
