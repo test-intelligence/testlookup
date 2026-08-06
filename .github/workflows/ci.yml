@@ -5,6 +5,16 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  # Manual escape hatch. On 2026-08-06 GitHub silently dispatched NO workflow
+  # runs for PR #456 — Actions enabled, no queue, other branches running
+  # normally, correct triggers, and neither reopening the PR nor pushing a new
+  # commit fired anything. Without a manual trigger there is no way to get a
+  # branch verified when event delivery fails, and the only alternatives are
+  # merging unverified or waiting indefinitely.
+  # Dispatch against any ref: gh workflow run ci.yml --ref <branch>
+  # (GitHub requires this trigger on the default branch for the workflow to be
+  # dispatchable, and the chosen ref must carry it too.)
+  workflow_dispatch:
 
 # Default to least-privilege — every job must opt in to any write scope it needs.
 permissions:
