@@ -95,13 +95,43 @@ def test_locations_that_set_their_own_headers_repeat_the_security_headers(name):
             )
 
 
-def test_index_html_meta_tag_is_not_the_only_defence():
-    """The meta tag may stay (other directives DO work there) — but it must not
-    be the sole carrier of frame-ancestors."""
+def _meta_csp_directives() -> str:
+    """The CSP <meta> tag's *content* attribute only.
+
+    Deliberately not a substring search over the whole file: index.html's
+    comments discuss ``frame-ancestors`` at length (explaining why it is absent),
+    and a naive ``"frame-ancestors" in index_html`` is satisfied by that prose.
+    A test that a comment can fool is not a test.
+    """
     index_html = (REPO / "frontend" / "index.html").read_text(encoding="utf-8")
-    if "frame-ancestors" not in index_html:
-        pytest.skip("meta CSP no longer declares frame-ancestors")
-    assert "frame-ancestors" in _template_conf(), (
-        "index.html still declares frame-ancestors in a <meta> tag, which browsers "
-        "ignore; the served config must carry it as a header"
+    m = re.search(
+        r'<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"',
+        index_html,
     )
+    assert m, "index.html no longer has a CSP meta tag — update this test"
+    return m.group(1)
+
+
+def test_meta_csp_does_not_declare_frame_ancestors():
+    """Browsers IGNORE frame-ancestors in a meta tag and log an error for it on
+    every page load. Keeping it there protects nothing and generates constant
+    console noise that camouflages real CSP violations."""
+    assert "frame-ancestors" not in _meta_csp_directives(), (
+        "frame-ancestors is back in the meta CSP; it is inert there and logs a "
+        "console error on every page load. The header in nginx is what enforces it."
+    )
+
+
+def test_the_header_still_carries_frame_ancestors():
+    """Removing it from the meta tag is only safe because the header has it."""
+    assert "frame-ancestors" in _template_conf(), (
+        "the meta tag no longer declares frame-ancestors and neither does the "
+        "served config — clickjacking protection would be gone entirely"
+    )
+
+
+def test_meta_csp_keeps_the_directives_that_do_work_there():
+    """Removing one dead directive must not strip the effective ones."""
+    directives = _meta_csp_directives()
+    for kept in ("default-src", "script-src", "object-src", "base-uri", "form-action"):
+        assert kept in directives, f"meta CSP lost {kept!r}"

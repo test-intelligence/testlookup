@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: drop the inert `frame-ancestors` directive from the CSP meta tag
+
+- Follow-up to the clickjacking fix. Now that the header is real, `index.html` still declared
+  `frame-ancestors 'none'` in its `<meta>` CSP, where browsers **ignore** it — and log
+  *"The Content Security Policy directive 'frame-ancestors' is ignored when delivered via a
+  `<meta>` element"* on **every page load**. Observed again on `/failures` after the header
+  fix shipped.
+- The directive protected nothing from that position; the response header
+  (`frame-ancestors 'none'` + `X-Frame-Options: DENY`, all three nginx configs) is what
+  enforces it. Removing it clears constant console noise that would otherwise camouflage a
+  genuine CSP violation. Every directive that *does* work in a meta tag is untouched.
+- Tightened the guard tests: the previous check was `"frame-ancestors" not in index_html`,
+  which a comment discussing the directive would satisfy. It now parses the meta tag's
+  `content` attribute, asserts the directive is absent there, asserts the **header** still
+  carries it, and asserts the effective meta directives survive.
+- 15 tests, verified 1 failed → all pass; `tsc --noEmit` clean.
+
 ### 2026-08-07 — Fix: release-gate snapshot now explains its own verdict
 
 - The quick-look (`synthesized`) release-readiness response returned

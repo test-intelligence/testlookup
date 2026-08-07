@@ -17,10 +17,20 @@
         so they do not need a connect-src entry.
       img-src: 'self' + data: + blob: + https: — https: covers arbitrary
         gravatars / project logos embedded in user data.
-      frame-ancestors 'none': prevent clickjacking (X-Frame-Options equiv).
       form-action 'self': block form exfiltration to 3rd-party origins.
       base-uri 'self': prevent <base> tag relative-url hijacking.
       object-src 'none': block Flash / legacy plugin XSS vectors.
+
+      NOTE: ``frame-ancestors`` is deliberately ABSENT here. Browsers ignore it
+      in a meta tag and log an error for it on every single page load
+      ("The Content Security Policy directive 'frame-ancestors' is ignored
+      when delivered via a <meta> element"). It never protected anything from
+      this position. Clickjacking protection is now a real response header --
+      ``Content-Security-Policy: frame-ancestors 'none'`` plus
+      ``X-Frame-Options: DENY`` -- emitted by every nginx config and pinned by
+      ``backend/tests/regression/test_frontend_security_headers.py``. Removing
+      the dead directive clears constant console noise that would otherwise
+      camouflage a genuine CSP violation.
 
       NOTE: ``upgrade-insecure-requests`` was intentionally removed from the
       meta CSP. When the page is served over plain HTTP (homelab without
@@ -30,7 +40,7 @@
       upgrade behavior, set CSP as a real response header in nginx,
       conditional on ``$scheme = https``, so HTTP origins are unaffected.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; form-action 'self'; base-uri 'self'; object-src 'none'" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), payment=(), usb=()" />
