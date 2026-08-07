@@ -21,6 +21,29 @@ def _project_in_scope(project_id: str, accessible: set) -> bool:
         return False
 
 
+def _require_valid_project_id(project_id: str | None) -> str | None:
+    """Reject a malformed ``project_id`` before it reaches a UUID column.
+
+    ``ALL_PROJECTS_ID`` ("all") is a **frontend-only** sentinel; if it ever
+    reaches the API it must not be treated as an id. Non-admins were already
+    covered by accident — ``_project_in_scope`` returns False for a non-UUID,
+    so they got an empty payload. But ``get_accessible_project_ids`` returns
+    ``None`` for an ADMIN, which SKIPS that scope check entirely, so the raw
+    string reached the query layer as a UUID comparison and produced a **500**.
+    The bug was therefore role-dependent and invisible to non-admin testing.
+
+    ``None`` stays valid — it means "all projects" for a caller allowed to see
+    them. Mirrors ``/api/v1/runs``, which answers 400 "Invalid project_id".
+    """
+    if project_id is None:
+        return None
+    try:
+        uuid.UUID(str(project_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid project_id — expected a UUID")
+    return project_id
+
+
 @router.get("/summary")
 async def dashboard_summary(
     project_id: str | None = None,
@@ -30,6 +53,7 @@ async def dashboard_summary(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return aggregated KPI metrics for the Executive Dashboard."""
+    project_id = _require_valid_project_id(project_id)
     accessible = await get_accessible_project_ids(db, current_user)
     if accessible is not None:
         # Non-admin: must request a project they're a member of. Without
@@ -49,6 +73,7 @@ async def trend_data(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return daily pass/fail/skip breakdown for trend charts."""
+    project_id = _require_valid_project_id(project_id)
     accessible = await get_accessible_project_ids(db, current_user)
     if accessible is not None:
         # Non-admin: only own-project trends (see dashboard_summary).

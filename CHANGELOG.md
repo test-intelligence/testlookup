@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: `project_id=all` crashed the metrics endpoints for admins
+
+- **`GET /api/v1/metrics/summary` and `/metrics/trends` returned 500** when handed the
+  frontend's `ALL_PROJECTS_ID` sentinel (`"all"`) — or any non-UUID — while signed in as an
+  **ADMIN**. Found by exploratory testing against a live deployment.
+- **Role-dependent, which is why it survived:** `_project_in_scope()` already rejected a
+  non-UUID, but it only runs when `get_accessible_project_ids()` returns a set. For an ADMIN
+  it returns `None`, skipping the scope check entirely, so the raw string reached a UUID
+  column comparison. Non-admins got an empty payload; admins got a crash.
+- Both handlers now validate up front and answer **400 "Invalid project_id — expected a
+  UUID"**, matching `/api/v1/runs`. `project_id=None` remains valid (it means "all
+  projects"). `/metrics/tia-readiness` was already correct (422) and is unchanged.
+- Regression test pins both handlers, so a new metrics endpoint that forgets the guard fails CI.
+
 ### 2026-08-05 — MFA enrollment, login challenge, and admin policy UI
 
 The frontend half of the TOTP MFA work: everything a user or an admin needs to
