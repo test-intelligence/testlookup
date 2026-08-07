@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: Flaky Coach recommended quarantining stable regressions (BEHAVIOR CHANGE)
+
+- `GET /projects/{id}/flaky-coach` recommended **QUARANTINE** for `test_discount_stacking`
+  — a test that fails in four consecutive builds and passed only once, at the start — with
+  the top action *"Quarantine this test immediately to stabilize the CI pipeline"*.
+  Quarantine suppresses a test from blocking CI, so the product's advice was to hide a
+  reproducible product bug behind a "flaky" label.
+- Root cause: `_compute_quarantine_recommendation()` took `failure_rate` and nothing else.
+  A rate-only rule recommends quarantine **most strongly exactly when it is most harmful**,
+  because a permanently-failing regression has the highest failure rate there is.
+- The service already computed the signals that tell a flake from a break
+  (`status_volatility`, `intermittency_label`) and rendered them on the *same card* — it
+  just never fed them into the decision. The card contradicted itself, saying both
+  "Quarantine this test immediately" and "gather more runs to confirm the flake versus an
+  emerging regression".
+- A test that flips fewer than `_MIN_FLIPS_FOR_QUARANTINE` (2) times in its window is now
+  routed to **INVESTIGATE**, with advice that names it a regression: *"Treat as a
+  regression, not a flake"*, *"Do NOT quarantine: suppressing it would hide a reproducible
+  failure from CI"*, *"Bisect to the change that first broke it"*.
+- **Behavior change:** consistently-broken tests move QUARANTINE → INVESTIGATE and get
+  different advice. Genuine flakes (≥2 flips) are still quarantined. The verdict vocabulary
+  is deliberately unchanged — adding a value would risk the documented strict-enum-over-
+  `String(N)` silent-422 class. Callers with only aggregate counts and no ordered window
+  (`test_case_history_service`) pass no flip count and keep their previous behaviour.
+- Found by exploratory testing against a live deployment; 23 regression tests, verified
+  13 failed → all pass.
+
 ### 2026-08-07 — Fix: stable regressions were counted as "flaky" (BEHAVIOR CHANGE)
 
 - `flaky_test_count` (dashboard KPI, and `known_flaky` on the summary report) came from a

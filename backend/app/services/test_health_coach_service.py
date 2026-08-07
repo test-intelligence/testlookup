@@ -98,8 +98,43 @@ _MONITOR_THRESHOLD = 0.10          # 10-25% → MONITOR
 # Below 10% → HEALTHY
 
 
-def _compute_quarantine_recommendation(failure_rate: float) -> str:
+# Quarantine SUPPRESSES a test from blocking CI. That is the right move for an
+# intermittent flake and the WRONG move for a test that is simply broken: it
+# hides a real product bug behind a "flaky" label. Failure rate alone cannot
+# tell the two apart -- a permanently-failing regression has the *highest*
+# failure rate of all, so a rate-only rule recommends quarantine most strongly
+# exactly when it is most harmful.
+#
+# A flip is an adjacent pass<->fail change in the run window. One flip is a
+# state change (the test broke, or it got fixed); only from the second does the
+# test return to a state it had already left, which is what intermittency is.
+# Same threshold and rationale as metrics_service._FLAKY_MIN_FLIPS.
+_MIN_FLIPS_FOR_QUARANTINE = 2
+
+
+def _count_flips(statuses: "list[str]") -> int:
+    """Adjacent pass<->fail transitions. Direction-agnostic, so it does not
+    matter whether the window is newest-first or oldest-first."""
+    failed = [s in ("FAILED", "BROKEN", str(TestStatus.FAILED), str(TestStatus.BROKEN)) for s in statuses]
+    return sum(1 for a, b in zip(failed, failed[1:]) if a != b)
+
+
+def _compute_quarantine_recommendation(
+    failure_rate: float,
+    flip_count: int | None = None,
+) -> str:
+    """Recommend an action for a failing test.
+
+    ``flip_count`` is optional so callers that only have aggregate counts (no
+    ordered window) keep the previous behaviour. When it IS supplied, a test
+    that does not flip enough is never recommended for quarantine -- it is a
+    regression to fix, not noise to suppress, so it is routed to INVESTIGATE.
+    """
     if failure_rate >= _QUARANTINE_THRESHOLD:
+        if flip_count is not None and flip_count < _MIN_FLIPS_FOR_QUARANTINE:
+            # Persistently broken, not intermittent: quarantining it would bury
+            # a real failure. Keep it visible.
+            return "INVESTIGATE"
         return "QUARANTINE"
     if failure_rate >= _INVESTIGATE_THRESHOLD:
         return "INVESTIGATE"
@@ -721,7 +756,11 @@ async def refresh_flaky_coach(
             continue
 
         failure_rate = failed / total
-        quarantine_rec = _compute_quarantine_recommendation(failure_rate)
+        # Pass the flip count so a persistently-broken test is not recommended
+        # for quarantine on the strength of its failure rate alone.
+        quarantine_rec = _compute_quarantine_recommendation(
+            failure_rate, _count_flips(statuses)
+        )
         impact = _compute_impact_score(failure_rate, total)
 
         # FLK-P2: Wilson 95% confidence band on the failure ratio. Distinguishes
@@ -775,7 +814,20 @@ async def refresh_flaky_coach(
 
         # Generate stabilization actions based on quarantine level
         actions = []
-        if quarantine_rec == "QUARANTINE":
+        if (
+            quarantine_rec == "INVESTIGATE"
+            and failure_rate >= _QUARANTINE_THRESHOLD
+            and _count_flips(statuses) < _MIN_FLIPS_FOR_QUARANTINE
+        ):
+            # Downgraded from QUARANTINE: fails constantly but barely flips, so
+            # it reads as a break rather than a flake. Say so plainly instead of
+            # calling it "flakiness" and sending it to next sprint.
+            actions = [
+                "Treat as a regression, not a flake — it fails consistently rather than intermittently",
+                "Do NOT quarantine: suppressing it would hide a reproducible failure from CI",
+                "Bisect to the change that first broke it, then fix or revert",
+            ]
+        elif quarantine_rec == "QUARANTINE":
             actions = [
                 "Quarantine this test immediately to stabilize the CI pipeline",
                 "Create a dedicated investigation ticket with full history",
