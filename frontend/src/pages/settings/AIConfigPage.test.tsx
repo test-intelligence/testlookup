@@ -263,9 +263,26 @@ describe('AIConfigPage — live model status', () => {
 
   it('re-checks on demand', async () => {
     await renderPage()
-    await waitFor(() => expect(mockGetModelStatus).toHaveBeenCalledTimes(1))
 
-    fireEvent.click(screen.getByText('Re-check'))
+    // Wait on the BUTTON, not on a mock call count.
+    //
+    // The page renders a loading placeholder until the CONFIG fetch resolves.
+    // The old assertion waited for `mockGetModelStatus` to have been *called* --
+    // which happens immediately, before any promise resolves -- so it proved
+    // nothing about the DOM. Under CI load the tree was still the placeholder
+    // and the very next line threw:
+    //
+    //   TestingLibraryElementError: Unable to find an element with the text:
+    //   Re-check
+    //
+    // Reproduced deterministically by delaying `mockGetAIConfig` by 80ms.
+    // Waiting for the element the next line clicks is both the correct
+    // synchronisation point and a stronger assertion: it proves the button
+    // actually rendered.
+    const recheck = await screen.findByText('Re-check')
+    expect(mockGetModelStatus).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(recheck)
 
     await waitFor(() => expect(mockGetModelStatus).toHaveBeenCalledTimes(2))
   })

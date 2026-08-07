@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: flaky frontend test (`AIConfigPage` "re-checks on demand")
+
+- CI failed intermittently with
+  `TestingLibraryElementError: Unable to find an element with the text: Re-check`,
+  the DOM still showing the loading placeholder. Confirmed **pre-existing on main** (run
+  31153043675 had the identical failure), not introduced by any branch.
+- Root cause: the test waited on a **mock call count**
+  (`waitFor(() => expect(mockGetModelStatus).toHaveBeenCalledTimes(1))`) and then immediately
+  queried the **DOM**. The mock is invoked before its promise resolves, and the page's
+  loading placeholder is gated on the *config* fetch — so the wait proved nothing about
+  whether the button had rendered.
+- **Reproduced deterministically** by delaying `mockGetAIConfig` 80ms: the old pattern fails
+  with the exact CI error, the new one passes under the identical delay.
+- Fix: `await screen.findByText('Re-check')` — the correct synchronisation point, and a
+  stronger assertion, since it proves the button actually rendered.
+- A scan found this was the **only** instance of `waitFor(mock…)` immediately followed by a
+  DOM query across all 118 frontend test files.
 ### 2026-08-07 — Fix: `/stream/active` skipped project_id validation for admins
 
 - As an ADMIN, `GET /api/v1/stream/active?project_id=all` (and `?project_id=not-a-uuid`)
