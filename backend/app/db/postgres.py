@@ -125,6 +125,46 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     )
 
 
+class _SessionFactoryProxy:
+    """Callable that resolves the CURRENT session factory on every call.
+
+    Why this exists (F-027). ``__getattr__`` below runs **once** per importing
+    module, so ``from app.db.postgres import AsyncSessionLocal`` at MODULE level
+    binds whatever object it returned at first import — permanently, into that
+    module's namespace.
+
+    That is fine in the API process, whose engine is long-lived. It is a bug in
+    the Celery worker: ``worker/tasks.py::_run_async`` disposes the engine and
+    clears both ``@lru_cache``es at the end of every task, so from the second
+    task onward a module-level binding still pointed at the factory of the
+    **disposed** engine. Modules importing inside a function (``tasks.py``)
+    re-resolved and got a fresh factory; modules importing at module level
+    (``ingestion_pipeline.py``, ``ingestion.py``, and ~38 others) did not.
+
+    The observable result was a 100%-reproducible failure at ``finalize_run``'s
+    first query -- ``asyncpg InterfaceError: cannot perform operation: another
+    operation is in progress`` -- 162 times across 32 bulk-ingest tasks, while
+    the same tasks logged 32 clean engine builds and 32 successful disposes.
+    Teardown was never the problem; a stale *reference* surviving it was.
+
+    Returning a proxy instead of the factory makes the module-level binding
+    stable and the resolution late, fixing every call site without editing any
+    of them. Every usage in the codebase is a plain ``AsyncSessionLocal(...)``
+    call, which is all this needs to support.
+    """
+
+    __slots__ = ()
+
+    def __call__(self, *args: Any, **kwargs: Any) -> AsyncSession:
+        return get_session_factory()(*args, **kwargs)
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return "<AsyncSessionLocal proxy -> app.db.postgres.get_session_factory()>"
+
+
+_session_factory_proxy = _SessionFactoryProxy()
+
+
 def __getattr__(name: str) -> Any:
     """Module-level lazy attribute access (PEP 562).
 
@@ -133,11 +173,15 @@ def __getattr__(name: str) -> Any:
     callers — the engine is only constructed on first reference, not at
     import time. Importing this module without ``DATABASE_URL`` set is
     safe as long as no caller actually touches the engine.
+
+    ``AsyncSessionLocal`` returns a *proxy* rather than the factory itself so
+    that module-level importers cannot pin a stale factory across a worker's
+    per-task engine disposal — see ``_SessionFactoryProxy``.
     """
     if name == "engine":
         return get_engine()
     if name == "AsyncSessionLocal":
-        return get_session_factory()
+        return _session_factory_proxy
     raise AttributeError(f"module 'app.db.postgres' has no attribute {name!r}")
 
 

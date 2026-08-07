@@ -42,6 +42,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Fix: module-level `AsyncSessionLocal` pinned a disposed engine (F-027 root cause)
+
+- Bulk ingest failed on most first attempts with
+  `asyncpg InterfaceError: cannot perform operation: another operation is in progress`,
+  always at `finalize_run`'s first query. **Found by instrumenting the live worker** after two
+  earlier hypotheses were disproved by measurement.
+- Instrumentation for one 60-run ingest: **32 tasks, 32 engine builds, 32 successful disposes,
+  0 dispose failures — and 162 errors.** Every task built and tore down its own engine
+  cleanly, which eliminated fork inheritance (`engine_cached=0` in all 4 children), stale-loop
+  teardown, and cross-task pool reuse simultaneously.
+- **Root cause:** PEP 562 `__getattr__` runs *once per importing module*, so
+  `from app.db.postgres import AsyncSessionLocal` at **module level** permanently binds that
+  factory. `worker/tasks.py::_run_async` disposes the engine and clears both `@lru_cache`es
+  after every task — so modules importing **inside a function** (`tasks.py`) re-resolved and
+  got a fresh factory, while **module-level** importers (`ingestion_pipeline`, `ingestion`,
+  ~38 others) kept the factory of the **disposed** engine. Deterministic failure from task #2.
+- Teardown was never broken; a stale *reference* surviving it was. That is why the dispose
+  code reads correctly and the bug persisted.
+- **Fix:** `AsyncSessionLocal` resolves to a callable proxy — module-level binding stays
+  stable, resolution happens late. **No call site changed.**
+- Also: `_run_async`'s teardown `except Exception: pass` now logs. Silent failure is what let
+  this hide.
+- **Verified live** on `build-20260807-221334` with the same 60-run ingest that exposed it:
+
+  | | before | after |
+  |---|---|---|
+  | finalized at t+0 | 8 / 60 | **60 / 60** |
+  | still IN_PROGRESS after 5 min | 48–50 | **0** |
+  | "another operation is in progress" | 162 | **0** |
+  | `InterfaceError` | 358 | **0** |
+  | task retries | many | **0** |
+  | aggregates | 40 executions, 92.5% | **600 executions, 90.0%** (ground truth) |
+
+- 9 regression tests, verified 4 failed → all pass; 253 passed across the DB/worker/ingest
+  suites. `backend.analysis-router` baseline refreshed (line-keyed guard; the two entries are
+  pre-existing allowlisted calls that shifted when instrumentation was removed).
+
 ### 2026-08-07 — Fix: failure-category items contradicted by_kind (F-015) (WIRE-SHAPE CHANGE)
 
 - `GET /analytics/failure-categories` returned, in ONE payload:

@@ -52,8 +52,12 @@ def _run_async(coro):
             # them (BUG-003). Must run before shutdown_asyncgens / loop.close().
             from app.db.postgres import dispose_engine_for_loop
             loop.run_until_complete(dispose_engine_for_loop())
-        except Exception:
-            pass
+        except Exception as _exc:
+            # Previously a bare ``pass``. A failing teardown leaves the pool
+            # alive with connections bound to a loop that is about to close,
+            # and said nothing at all — which is exactly the kind of silence
+            # that hid F-027. Log it; still never raise from a finally block.
+            logger.warning("engine_dispose_failed_in_task_teardown error=%r", _exc)
         try:
             # Close all async generators and pending tasks cleanly
             loop.run_until_complete(loop.shutdown_asyncgens())

@@ -111,12 +111,26 @@ def test_module_level_engine_attribute_resolves_via_lazy_hook():
 
 def test_module_level_async_session_local_attribute_resolves_via_lazy_hook():
     """``from app.db.postgres import AsyncSessionLocal`` continues to
-    work post-P2-7 — many service + agent files rely on it."""
+    work post-P2-7 — many service + agent files rely on it.
+
+    The intent of this test is that the backward-compatible import KEEPS
+    WORKING. It used to assert ``pg.AsyncSessionLocal is get_session_factory()``,
+    which was an implementation detail of *how* it worked — and that detail was
+    the F-027 bug: a module-level importer pinned the factory object, so after a
+    worker disposed its engine between tasks the binding still pointed at the
+    dead one.
+
+    ``AsyncSessionLocal`` is now a callable proxy that resolves the factory
+    late, so the assertion checks what the docstring actually promises — the
+    name is usable and produces a session on the CURRENT engine — which is a
+    stronger guarantee than object identity ever gave.
+    """
     import app.db.postgres as pg
-    from app.db.postgres import get_session_factory
+    from app.db.postgres import get_engine
 
     _drop_leaked_lazy_attrs(pg)
-    assert pg.AsyncSessionLocal is get_session_factory()
+    assert callable(pg.AsyncSessionLocal)
+    assert pg.AsyncSessionLocal().bind is get_engine()
 
 
 def test_unknown_attribute_raises_AttributeError():

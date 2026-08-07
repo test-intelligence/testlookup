@@ -3,5 +3,5 @@
 # Reviewed in PR; remove entries as the code is cleaned up.
 backend/app/agents/analysis_agent.py:613
 backend/app/routers/analyze.py:262
-backend/app/worker/tasks.py:1166
-backend/app/worker/tasks.py:1214
+backend/app/worker/tasks.py:1170
+backend/app/worker/tasks.py:1218
