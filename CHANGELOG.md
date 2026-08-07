@@ -42,6 +42,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Fix: Flaky Coach `total_flaky` counted non-oscillating tests (F-010)
+
+- For one project at one moment the app reported three different numbers: dashboard
+  `flaky_test_count` **2**, `/failures` verdict **2**, flaky coach `total_flaky` **5**.
+- Not cosmetic: `value_metrics_service` counts `FlakyCoachResult` rows into
+  `flaky_tests_identified`, so the looser definition was being reported as a
+  **stakeholder-facing ROI figure**.
+- `total_flaky` now counts only entries that actually oscillate (≥2 pass↔fail transitions),
+  derived from the stored `status_history` — **no migration**. Manual-triage rows carry a
+  sentinel history and are always counted: a human's call outranks the heuristic.
+- **The list is deliberately unchanged.** A first attempt filtered persistent regressions out
+  of the coach entirely; an existing test caught it
+  (`test_flaky_signals::test_refresh_downgrades_persistent_regression_off_quarantine_track`),
+  which pins FLK-P1 behaviour where a regression IS surfaced with a downgraded recommendation
+  and "treat as a regression, not a flake" advice. Removing those rows would have deleted
+  useful triage information and made that copy unreachable. Only the count was wrong, so only
+  the count changed — and a test now pins that the list is not filtered.
+- All four surfaces now share `flaky_signals.MIN_FLIPS_FOR_INTERMITTENCY` by construction.
+- 12 regression tests, verified 2 failed → all pass; 400 passed across the
+  coach/flaky/quarantine/value-metrics suites.
+
 ### 2026-08-07 — Fix: prefork workers inherited the parent's DB connection pool
 
 - Bulk ingest failed on most FIRST attempts with

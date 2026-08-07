@@ -586,9 +586,32 @@ async def get_flaky_coach(
 
     quarantine_count = sum(1 for e in entries if e.quarantine_recommendation == "QUARANTINE")
 
+    # ``total_flaky`` counts entries that actually OSCILLATE — not every row in
+    # the list (F-010).
+    #
+    # The list itself is a triage worklist and deliberately keeps persistent
+    # regressions: FLK-P1 surfaces them with a downgraded recommendation and
+    # explicit "treat as a regression, not a flake" advice, which is useful and
+    # is pinned by test_flaky_signals. Counting those rows as "flaky", however,
+    # made this KPI disagree with every other surface — dashboard
+    # ``flaky_test_count`` and the /failures verdict both read 2 where this read
+    # 5 for the same project at the same moment — and the disagreement escaped
+    # the UI: ``value_metrics_service`` counts ``FlakyCoachResult`` rows into
+    # ``flaky_tests_identified``, so the looser number was reported as ROI.
+    #
+    # Counted from the stored ``status_history`` rather than a new column, so no
+    # migration is needed and the headline agrees with the other surfaces by
+    # construction. Manual-triage rows carry a sentinel history and are counted
+    # as flaky regardless: a human's call outranks the heuristic.
+    def _entry_is_intermittent(e) -> bool:
+        history = list(e.status_history or [])
+        if history == ["FLAKY (manual triage)"]:
+            return True
+        return _count_flips(history) >= _MIN_FLIPS_FOR_QUARANTINE
+
     return FlakyCoachResponse(
         project_id=str(project_id),
-        total_flaky=len(entries),
+        total_flaky=sum(1 for e in entries if _entry_is_intermittent(e)),
         quarantine_candidates=quarantine_count,
         entries=entries,
     )
