@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: frontend telemetry silently discarded the batch it failed to send
+
+- `flush()` in `utils/errorReporting.ts` emptied the buffer **before** calling
+  `navigator.sendBeacon`, and ignored the boolean it returns. `false` does not mean "sent" —
+  it means the user agent refused to queue the request. The events were already gone.
+- **Measured live** (Chromium, error-boundary reports carrying a 4 KB stack + 2 KB component
+  stack, the shape the reporter actually captures):
+
+  | batch | bytes | `sendBeacon` |
+  |---|---|---|
+  | 1 error | 6,303 | `true` |
+  | 5 errors | 31,419 | `true` |
+  | 10 errors | 62,814 | **`false`** |
+  | 20 errors | 125,614 | **`false`** |
+
+  The same 125,614-byte body over `fetch` was accepted with **202**, so the payload was never
+  the problem — only the transport has the limit (Chromium's per-origin beacon quota is 64 KB).
+- Ten boundary errors inside one 5 s batch window is not exotic: a component throwing on
+  every render produces them in a fraction of a second — which is exactly the incident the
+  report exists for. The failure was silent in both directions, since the `catch` blocks are
+  deliberately empty ("never throw from error reporting"), so a page could melt down and the
+  backend would see nothing at all.
+- The pre-existing `fetch` fallback was **unreachable**: it sat in the `else` of
+  `if (navigator.sendBeacon)`, so it only ran in a browser with no `sendBeacon` — i.e. never.
+- Fix: batches are split into pieces that fit under the quota; a refused piece is put **back**
+  into the buffer and retried instead of dropped; stacks are truncated at capture (4000 /
+  2000 chars — the backend already truncates at 5000, so nothing extra is lost) so one
+  enormous stack cannot produce an unsendable chunk; and the buffer is bounded (50 errors /
+  50 vitals) with the overflow **reported as a synthetic event** rather than dropped quietly,
+  so the backend can tell a truncated report from silence.
+- Found while settling a parked question from the exploratory walk (`requestfailed` on
+  `POST /api/v1/observability/frontend` across 17 of 18 pages). That turned out to be a
+  **measurement artifact** — the probe navigated away with no dwell, so the only flush that
+  could run was the `pagehide` one, aborted during teardown. With a 12 s dwell the telemetry
+  posts 202 normally. `tests/probe-telemetry.spec.ts` records both results, and keeps the
+  quota measurement live so a future UA moving the limit reports the new number.
+
 ### 2026-08-07 — Fix: flaky frontend test (`AIConfigPage` "re-checks on demand")
 
 - CI failed intermittently with
