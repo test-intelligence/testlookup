@@ -42,6 +42,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Release gate now honours the configured pass-rate threshold (BEHAVIOR CHANGE)
+
+- **Measured on the live homelab** across nine pass-rate levels (throwaway project, default
+  `synthesized` path, no ReleaseGatePolicy):
+
+  | pass rate | 100 | 95 | 89 | 83 | 70 | 64 | 62 | 50 | 0 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | **before** | GO | GO | GO | GO | GO | GO | NO_GO | NO_GO | NO_GO |
+  | **after** | GO | GO | CG | CG | CG | CG | NO_GO | NO_GO | NO_GO |
+
+- **Two defects in that one table.** (1) The configured `RELEASE_PASS_RATE_THRESHOLD` (90)
+  gated nothing — only `0.7 x 90 = 63` acted as a NO_GO floor, so a build with a **third of
+  its suite failing** was reported ship-ready. (2) `CONDITIONAL_GO` was **unreachable**: the
+  conditional band is composite ∈ [20,55), but the synthesized path scores every
+  analysis-driven dimension 0, so composites ran 5–13 then jumped to 60 via the hard-floor
+  bump. One of the product's three documented states could never occur there.
+- **Fix:** a pass rate above the hard floor but **below the configured threshold** now yields
+  `CONDITIONAL_GO`. This reuses the operator's own configured number rather than introducing
+  another constant, and it is policy-driven — `policy_evaluator_service` passes
+  `thresholds["pass_rate_minimum"]`, so a project's ReleaseGatePolicy controls the band.
+- **Rule ordering is load-bearing:** both NO_GO rules are evaluated first, so the new band can
+  never *soften* a NO_GO. Pinned by tests.
+- `verdict_driver` gains `pass_rate_below_threshold`, distinguishing "your configured
+  threshold held this back" from "the risk model held this back".
+- **BEHAVIOR CHANGE:** runs between the floor and the threshold move GO → CONDITIONAL_GO.
+  Deployments relying on a clean GO below their own bar will see verdicts change — that is
+  the intent.
+- Two existing tests updated, both after checking what they protect: a policy test pinning
+  that a custom `hard_floor_factor` is respected (intent intact — it still escapes NO_GO,
+  just to CONDITIONAL_GO), and `TestVerdictsAreUnchanged` from the earlier transparency PR,
+  **renamed** rather than silently re-valued since the mapping has now changed on purpose.
+- 26 regression tests, verified 9 failed → all pass; **227 passed** across the release-gate suite.
+
 ### 2026-08-07 — Security fix: pending-defect review leaked across projects
 
 - `GET /api/v1/deep-investigate/defects/pending-review` selected **every** defect with

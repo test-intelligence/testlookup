@@ -351,7 +351,13 @@ async def _synthesize_release_council(
             "no_go_floor_pct": round(threshold * _HARD_FLOOR_FACTOR, 2),
             "hard_floor_factor": _HARD_FLOOR_FACTOR,
             "verdict_driver": (
-                "pass_rate_floor" if pass_rate < threshold * _HARD_FLOOR_FACTOR
+                "pass_rate_floor"
+                if pass_rate < threshold * _HARD_FLOOR_FACTOR
+                # Above the floor but under the configured bar -> CONDITIONAL_GO.
+                # Named distinctly so the reader can tell "your own threshold
+                # held this back" from "the risk model held this back".
+                else "pass_rate_below_threshold"
+                if pass_rate < threshold
                 else "composite_risk"
             ),
         },

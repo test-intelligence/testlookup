@@ -176,14 +176,46 @@ def score_to_recommendation(
 ) -> str:
     """Map composite score + pass-rate to GO / CONDITIONAL_GO / NO_GO.
 
-    All threshold parameters accept policy-driven overrides for ENT-02.
-    Existing callers that pass only positional args see identical behavior.
+    Order matters — the two NO_GO rules are evaluated first so that nothing
+    below can *soften* a NO_GO.
+
+    1. Below ``hard_floor_factor × threshold`` -> NO_GO. Catastrophic, whatever
+       the composite says.
+    2. Composite at/above ``no_go_threshold`` -> NO_GO.
+    3. Composite at/above ``go_threshold`` -> CONDITIONAL_GO.
+    4. **Pass rate below the configured ``threshold`` -> CONDITIONAL_GO.**
+    5. Otherwise -> GO.
+
+    Rule 4 is the fix for a measured gap: ``threshold`` (the *configured* release
+    bar, e.g. 90%) previously gated nothing at all — only 70% of it acted as a
+    NO_GO floor. Every run between 63% and 100% returned a clean **GO**, so a
+    build with a third of its suite failing was reported as ship-ready. Measured
+    across nine levels on a throwaway project:
+
+        pass_rate  100  95  89  83  70  64 | 62     50     0
+        before     GO   GO  GO  GO  GO  GO | NO_GO  NO_GO  NO_GO
+        after      GO   GO  CG  CG  CG  CG | NO_GO  NO_GO  NO_GO
+
+    It also makes CONDITIONAL_GO reachable. On the cheap "synthesized" path the
+    analysis-driven dimensions all score 0, so the composite only ever ran 5-13
+    before jumping to 60 via the hard-floor bump — clearing the entire
+    [go_threshold, no_go_threshold) band. One of the product's three documented
+    states could never occur there. Rule 4 restores it using the operator's own
+    configured number rather than a new magic constant.
+
+    All threshold parameters accept policy-driven overrides for ENT-02, so a
+    project's ReleaseGatePolicy controls where this band sits via
+    ``pass_rate_minimum``.
     """
     if pass_rate < threshold * hard_floor_factor:
         return "NO_GO"
     if composite >= no_go_threshold:
         return "NO_GO"
     if composite >= go_threshold:
+        return "CONDITIONAL_GO"
+    if pass_rate < threshold:
+        # Above the floor but under the configured bar: not a catastrophe, and
+        # not a clean go either. Never a plain GO below your own threshold.
         return "CONDITIONAL_GO"
     return "GO"
 

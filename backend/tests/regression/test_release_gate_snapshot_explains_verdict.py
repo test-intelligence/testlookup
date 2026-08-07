@@ -104,30 +104,44 @@ class TestSnapshotExplainsTheVerdict:
             assert score_to_recommendation(0.0, pass_rate, threshold) == "NO_GO"
 
 
-class TestVerdictsAreUnchanged:
-    """This PR is transparency only — the mapping must behave exactly as before."""
+class TestMapping:
+    """The verdict mapping.
+
+    This class was originally ``TestVerdictsAreUnchanged`` — PR #466 was
+    transparency-only and correctly asserted the mapping was untouched. A later
+    PR **deliberately changed** it (F-020): a pass rate below the configured
+    threshold no longer yields a clean GO. Renamed rather than silently
+    re-valued, so the file does not keep claiming "unchanged" about a mapping
+    that has since changed on purpose. The live-measured rows are kept, with the
+    corrected expectations.
+    """
 
     @pytest.mark.parametrize(
         "composite,pass_rate,expected",
         [
             (5.0, 100.0, "GO"),
-            (13.0, 64.0, "GO"),      # measured on the live probe
+            # Measured live. WAS "GO" — 64% is above the 63 floor but far below
+            # the configured 90 bar, so it is now CONDITIONAL_GO.
+            (13.0, 64.0, "CONDITIONAL_GO"),
             (60.0, 62.0, "NO_GO"),   # measured: hard-floor bump
             (0.0, 50.0, "NO_GO"),    # floor wins regardless of composite
             (_GO_THRESHOLD, 100.0, "CONDITIONAL_GO"),
             (_NO_GO_THRESHOLD, 100.0, "NO_GO"),
         ],
     )
-    def test_mapping_is_untouched(self, composite, pass_rate, expected):
+    def test_mapping(self, composite, pass_rate, expected):
         assert score_to_recommendation(composite, pass_rate, 90.0) == expected
 
-    def test_conditional_go_is_reachable_in_principle(self):
-        """It IS reachable from the mapping — just not from the synthesized
-        composites (5-13, then a bump to 60). Documents that the gap is in the
-        score, not in this function, so a future fix targets the right place."""
-        assert score_to_recommendation(30.0, 100.0, 90.0) == "CONDITIONAL_GO"
-        assert _GO_THRESHOLD < 60.0, "the hard-floor bump lands above the band"
+    def test_conditional_go_is_reachable_from_synthesized_composites(self):
+        """Was the crux of F-020.
+
+        The synthesized path only ever produces composites of ~5-13 before the
+        hard-floor bump jumps to 60, so the [go_threshold, no_go_threshold) band
+        was unreachable and CONDITIONAL_GO never occurred there. It is now
+        reachable via the pass-rate band instead of the composite.
+        """
+        assert score_to_recommendation(13.0, 80.0, 90.0) == "CONDITIONAL_GO"
         assert 60.0 >= _NO_GO_THRESHOLD, (
-            "the bump must still reach NO_GO; if this fails the floor stopped "
-            "working and failing runs would be reported CONDITIONAL_GO"
+            "the hard-floor bump must still reach NO_GO; if this fails, failing "
+            "runs would be reported CONDITIONAL_GO"
         )

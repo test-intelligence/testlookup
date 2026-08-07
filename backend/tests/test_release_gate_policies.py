@@ -136,8 +136,16 @@ class TestCriticalityServiceBackwardCompat:
 
         # Default: hard_floor = 0.7 → pass_rate < 90 * 0.7 = 63 → NO_GO
         assert score_to_recommendation(10.0, 60.0, 90.0) == "NO_GO"
-        # Custom: hard_floor = 0.5 → pass_rate < 90 * 0.5 = 45 → pass_rate 60 is above floor
-        assert score_to_recommendation(10.0, 60.0, 90.0, hard_floor_factor=0.5) == "GO"
+        # Custom: hard_floor = 0.5 → pass_rate < 90 * 0.5 = 45 → pass_rate 60 is
+        # above the floor, so it escapes NO_GO. THAT is what this test pins, and
+        # it still holds.
+        #
+        # The verdict it escapes TO changed from GO to CONDITIONAL_GO: 60 is
+        # still below the configured threshold of 90, and a run under the
+        # operator's own bar is no longer reported as a clean go (F-020). The
+        # override being respected — the point of the test — is unaffected.
+        assert score_to_recommendation(10.0, 60.0, 90.0, hard_floor_factor=0.5) != "NO_GO"
+        assert score_to_recommendation(10.0, 60.0, 90.0, hard_floor_factor=0.5) == "CONDITIONAL_GO"
 
     def test_score_to_recommendation_pass_rate_hard_floor(self):
         from app.services.criticality_service import score_to_recommendation
