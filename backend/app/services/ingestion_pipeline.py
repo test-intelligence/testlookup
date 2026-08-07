@@ -94,6 +94,43 @@ async def create_run_from_payload(
     if not project:
         raise ValueError(f"Project {project_id} not found")
 
+    # ── Retry resumption ─────────────────────────────────────────────────────
+    # An explicit ``run_id`` that ALREADY exists in this project means a prior
+    # attempt of this same unit of work got as far as inserting the row. Resume
+    # it instead of inserting again.
+    #
+    # Without this, a Celery retry re-ran the insert with the pre-generated id
+    # (``routers/ingest.py`` mints ``run_id`` and passes it to
+    # ``ingest_uploaded_file.delay(run_id=…)``) and died on
+    # ``test_runs_pkey``, so it could NEVER succeed. Any transient failure
+    # became a permanently IN_PROGRESS run whose aggregates never populated,
+    # while the task retried every ~2 minutes forever. Measured on a 60-run
+    # bulk ingest: 56 runs stuck, 38 tasks looping, 145 duplicate-key events.
+    #
+    # This is NOT the ``reuse_existing`` merge the branch below guards against.
+    # That one matches fuzzily on (project_id, build_number) and could blend two
+    # unrelated datasets; this matches the caller's OWN explicit primary key, so
+    # it can only ever resume the run this very task created. The project scope
+    # keeps a cross-tenant id from resolving here.
+    if run_id:
+        prior = (
+            await db.execute(
+                select(TestRun).where(
+                    TestRun.id == uuid.UUID(run_id),
+                    TestRun.project_id == pid,
+                )
+            )
+        ).scalar_one_or_none()
+        if prior is not None:
+            logger.info(
+                "resuming_run_from_prior_attempt",
+                run_id=str(prior.id),
+                build=prior.build_number,
+                project=project_id,
+            )
+            await _store_supplied_commit_range(db, prior, commit_range)
+            return prior
+
     effective_build = build_number
     if reuse_existing:
         # Check for existing run with same build_number

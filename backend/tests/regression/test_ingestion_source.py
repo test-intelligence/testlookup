@@ -107,9 +107,20 @@ async def test_upload_never_merges_and_suffixes_on_collision():
     project = SimpleNamespace(id=uuid.uuid4())
     new_id = str(uuid.uuid4())
     db = AsyncMock()
-    # project lookup → _unique_build_number: 'b1' taken, then 'b1-2' free.
+    # project lookup → run_id resumption probe → _unique_build_number:
+    # 'b1' taken, then 'b1-2' free.
+    #
+    # The resumption probe (added with the idempotent-retry fix) returns None
+    # here, which is what the real DB returns: ``new_id`` is freshly minted by
+    # the endpoint and has never been inserted. On a genuine Celery RETRY it
+    # would return the row from the prior attempt and the run would resume —
+    # that path is covered in test_ingest_retry_is_idempotent.py.
+    #
+    # The three assertions below are unchanged, and they are the point of this
+    # test: no merge, suffixed label, endpoint-supplied id authoritative.
     db.execute = AsyncMock(side_effect=[
         _Result(scalar=project),
+        _Result(scalar=None),      # no run already exists with this id
         _Result(first=('row',)),   # 'b1' is taken
         _Result(first=None),       # 'b1-2' is free
     ])

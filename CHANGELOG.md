@@ -42,6 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Fix: a retried ingest could never succeed (runs stuck IN_PROGRESS forever)
+
+- Bulk-ingesting 60 runs via `POST /api/v1/ingest/file` left **56 of 60 permanently
+  `IN_PROGRESS`** with zero progress across repeated polls. The ingestion worker showed
+  **38 distinct task ids** in retry loops and **145 duplicate-key events**:
+  `UniqueViolationError: duplicate key value violates unique constraint "test_runs_pkey"`,
+  retrying every ~2 minutes. Redis queue depths all read **0** — the tasks were in retry-ETA,
+  not queued, so "the queue is empty" was actively misleading.
+- Root cause: `routers/ingest.py` mints `run_id` up front and passes it to
+  `ingest_uploaded_file.delay(run_id=…)`. The task inserts a `TestRun` with that id; if it
+  fails *after* the insert, Celery retries with the **same** id and dies on the primary key —
+  so the task can never succeed. **Any transient failure became a permanently stuck run**,
+  and dashboards silently under-reported because those runs' aggregates stay zero.
+- Violated a convention the repo states in `backend/CLAUDE.md`:
+  *"Per-(entity, run) writes must be idempotent."*
+- Fix: an explicit `run_id` that already exists **in the same project** resumes that row.
+- **This does not reopen the bug `reuse_existing=False` prevents.** That branch refuses to
+  merge on a *fuzzy* `(project_id, build_number)` match, where a typed or timestamp-defaulted
+  build label could blend two unrelated datasets. Resumption matches the caller's **own
+  explicit primary key**, so it can only resume the run this same task created; project
+  scoping stops a cross-tenant id resolving. Tests pin both properties.
+- 8 regression tests, verified 5 failed → all pass; 174 passed across the ingestion/pipeline/
+  run suites.
+
 ### 2026-08-07 — Release gate now honours the configured pass-rate threshold (BEHAVIOR CHANGE)
 
 - **Measured on the live homelab** across nine pass-rate levels (throwaway project, default
