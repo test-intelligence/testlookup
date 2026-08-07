@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: stable regressions were counted as "flaky" (BEHAVIOR CHANGE)
+
+- `flaky_test_count` (dashboard KPI, and `known_flaky` on the summary report) came from a
+  failure **ratio** alone — 10%–90% over a test's last 10 executions — with no regard for
+  the **order** of those results. A test that passed once and has failed on every run
+  since sits at 0.8 and was reported as flaky; so was a test that failed for the first
+  time in the very latest run (0.2). Both are regressions — the highest-value items on a
+  QA lead's plate — and both were labelled noise.
+- The app's own flake engine already disagreed: `flaky_signals._label()` classifies the
+  low-volatility case as `persistent_regression` and states outright that it must not go
+  on the flake track. The headline KPI contradicted it.
+- The window now also requires **at least 2 pass↔fail transitions** in run order
+  (`_FLAKY_MIN_FLIPS`), computed in SQL with `LAG()` over the bounded window. One flip is
+  a state change (a test broke, or got fixed); only from the second does a test return to
+  a state it had already left, which is what intermittency means.
+- **Behavior change:** `flaky_test_count` will drop for most projects, and
+  `flaky_rate_pct` on the summary report drops with it. This is a correction, not a
+  regression — on the exploratory dataset the count goes 5 → 2, and the two that remain
+  are precisely the tests that alternate. Tests that recover after failing (including
+  `BROKEN` infra blips) are still counted; always-passing and always-failing are still
+  excluded, and a test that has been solidly green for a full window still ages out.
+- Found by exploratory testing against a live deployment. Regression test executes the
+  real production SQL against in-memory SQLite; verified 4 failed → all pass.
+
 ### 2026-08-07 — Fix: clickjacking protection was inert (CSP delivered only via `<meta>`)
 
 - `frontend/index.html` declared `frame-ancestors 'none'` in a

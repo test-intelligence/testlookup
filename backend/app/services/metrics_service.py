@@ -388,6 +388,17 @@ async def _period_stats(
 # the Wilson-CI / ML flaky verdict lives in flaky_statistics / flaky_sentinel.
 _FLAKY_WINDOW_RUNS = 10
 _FLAKY_MIN_RUNS = 5
+# Minimum pass<->fail transitions ("flips") required inside the window.
+#
+# A failure RATIO alone is order-blind: a test that passed twice and has failed
+# on every run since sits at 0.8 and used to be counted as flaky, even though it
+# is a *persistent regression* — exactly the case flaky_signals._label() calls
+# ``persistent_regression`` and explicitly refuses to put on the flake track.
+#
+# One flip is a state CHANGE (a test broke, or a test got fixed). Only from the
+# second flip does the test return to a state it had already left, which is the
+# actual signature of intermittency.
+_FLAKY_MIN_FLIPS = 2
 
 
 async def _count_flaky_tests(
@@ -395,8 +406,18 @@ async def _count_flaky_tests(
     project_id: str | None,
     suite_name: str | None = None,
 ) -> int:
-    """Count tests whose failure rate is between 10% and 90% over their last
-    ``_FLAKY_WINDOW_RUNS`` executions (the flaky pattern)."""
+    """Count tests that show the flaky pattern over their last
+    ``_FLAKY_WINDOW_RUNS`` executions.
+
+    Two conditions, both required:
+
+    * failure ratio inside 10%-90% (it neither always passes nor always fails), and
+    * at least ``_FLAKY_MIN_FLIPS`` pass<->fail transitions *in run order*.
+
+    The second condition is what separates a flake from a regression. Without it
+    the count was order-blind and a permanently-broken test was reported as
+    flaky, which points a QA lead away from a real bug (and inflates the
+    "known flaky" figure on the summary report)."""
     project_filter = "WHERE tr.project_id = :project_id" if project_id else ""
     suite_join = "JOIN test_cases tc ON tc.id = tch.test_case_id" if suite_name else ""
     suite_match_sql = "(LOWER(TRIM(tc.suite_name)) = :suite_name OR LOWER(TRIM(tr.primary_suite_name)) = :suite_name)"
@@ -411,27 +432,41 @@ async def _count_flaky_tests(
     # apply the flaky ratio over that bounded window. Without the window the
     # HAVING scanned all history, so a fingerprint's flaky flag could only ever
     # accumulate — a test never "recovered" once flaky.
+    # `seq` re-reads the bounded window in ASCENDING run order (rn DESC undoes
+    # the newest-first ranking) so LAG() compares each execution with the one
+    # that actually preceded it, and a flip is a genuine adjacent change.
     query = text(f"""
         SELECT COUNT(DISTINCT fingerprint) FROM (
             SELECT fingerprint
             FROM (
                 SELECT
-                    tch.test_fingerprint AS fingerprint,
-                    tch.status AS status,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY tch.test_fingerprint
-                        ORDER BY tch.created_at DESC, tch.id DESC
-                    ) AS rn
-                FROM test_case_history tch
-                JOIN test_runs tr ON tr.id = tch.test_run_id
-                {suite_join}
-                {project_filter}
-                {suite_filter}
-            ) ranked
-            WHERE rn <= {_FLAKY_WINDOW_RUNS}
+                    fingerprint,
+                    is_failed,
+                    LAG(is_failed) OVER (
+                        PARTITION BY fingerprint ORDER BY rn DESC
+                    ) AS prev_failed
+                FROM (
+                    SELECT
+                        tch.test_fingerprint AS fingerprint,
+                        CASE WHEN tch.status IN ('FAILED', 'BROKEN') THEN 1 ELSE 0 END AS is_failed,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY tch.test_fingerprint
+                            ORDER BY tch.created_at DESC, tch.id DESC
+                        ) AS rn
+                    FROM test_case_history tch
+                    JOIN test_runs tr ON tr.id = tch.test_run_id
+                    {suite_join}
+                    {project_filter}
+                    {suite_filter}
+                ) ranked
+                WHERE rn <= {_FLAKY_WINDOW_RUNS}
+            ) seq
             GROUP BY fingerprint
             HAVING COUNT(*) >= {_FLAKY_MIN_RUNS}
-               AND COUNT(*) FILTER (WHERE status IN ('FAILED', 'BROKEN')) * 1.0 / COUNT(*) BETWEEN 0.1 AND 0.9
+               AND COUNT(*) FILTER (WHERE is_failed = 1) * 1.0 / COUNT(*) BETWEEN 0.1 AND 0.9
+               AND COUNT(*) FILTER (
+                       WHERE prev_failed IS NOT NULL AND prev_failed <> is_failed
+                   ) >= {_FLAKY_MIN_FLIPS}
         ) flaky
     """)
     params: dict = {}
