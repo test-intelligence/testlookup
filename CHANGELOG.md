@@ -42,6 +42,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Fix: prefork workers inherited the parent's DB connection pool
+
+- Bulk ingest failed on most FIRST attempts with
+  `asyncpg InterfaceError: cannot perform operation: another operation is in progress`
+  during `_update_run_aggregates`. That message means one connection was driven by two
+  coroutines at once.
+- Mechanism: Celery's default pool is **prefork** — the ingestion worker runs
+  `--concurrency=4`, i.e. four children forked from one parent. `get_engine()` /
+  `get_session_factory()` are `@lru_cache`'d, so anything touching the DB in the parent
+  before the fork leaves every child sharing one SQLAlchemy pool — and the same open asyncpg
+  **sockets**. There was **no Celery signal handler of any kind** in `celery_app.py`.
+- `worker/tasks.py::_run_async` already handles the *event-loop* half of this (BUG-003: a
+  pool bound to a since-closed loop). It cannot help here — that is per-process bookkeeping,
+  this is one pool shared *across* processes by `fork()`.
+- Added a `worker_process_init` handler that gives each child its own engine. It **clears**
+  the caches and deliberately does **not** `dispose()` — disposing inside a child would close
+  sockets the parent and sibling children still hold. A test asserts that distinction.
+- 8 regression tests, verified 5 failed → all pass; 146 passed across the worker/celery/task
+  suites.
+- **Verification status:** the mechanism is confirmed from the traceback and the worker
+  configuration, but the end-to-end proof is a fresh 60-run bulk ingest showing the
+  InterfaceError gone. Result recorded in the exploratory ledger (F-027).
+
 ### 2026-08-07 — Fix: a retried ingest could never succeed (runs stuck IN_PROGRESS forever)
 
 - Bulk-ingesting 60 runs via `POST /api/v1/ingest/file` left **56 of 60 permanently

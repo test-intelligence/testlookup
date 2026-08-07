@@ -2,6 +2,7 @@
 from datetime import timedelta
 
 from celery import Celery
+from celery.signals import worker_process_init
 from celery.schedules import crontab
 from kombu import Exchange, Queue
 
@@ -321,3 +322,37 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     broker_connection_max_retries=10,
 )
+
+
+# ── Post-fork DB pool isolation ──────────────────────────────────────────────
+#
+# Celery's default pool is prefork: ``--concurrency=N`` forks N children from
+# this parent process. ``get_engine()`` / ``get_session_factory()`` are
+# ``@lru_cache``'d, so if ANYTHING touches the database in the parent before the
+# fork, every child inherits the same SQLAlchemy pool — and therefore the same
+# open asyncpg sockets (same file descriptors). Two children driving one socket
+# produces exactly:
+#
+#     asyncpg.exceptions._base.InterfaceError:
+#     cannot perform operation: another operation is in progress
+#
+# observed on the ingestion worker during a 60-run bulk upload, where it made
+# most first attempts fail and retry.
+#
+# ``_run_async`` in worker/tasks.py already handles the *event loop* half of this
+# problem (BUG-003) — a pool bound to a loop that was since closed. It cannot
+# help here: that is per-process bookkeeping, and this is one pool shared ACROSS
+# processes by fork.
+#
+# The fix is to make each child build its own engine. Note it must CLEAR the
+# caches, not dispose them: ``dispose()`` in a child would close sockets the
+# parent and sibling children are still using. Clearing means the next
+# ``get_engine()`` inside this child constructs a fresh engine, and the inherited
+# one is simply never used again here.
+@worker_process_init.connect
+def _reset_db_pool_after_fork(**_kwargs: object) -> None:
+    """Give every prefork child its own DB engine and connection pool."""
+    from app.db.postgres import get_engine, get_session_factory
+
+    get_engine.cache_clear()
+    get_session_factory.cache_clear()
