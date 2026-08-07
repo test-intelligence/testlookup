@@ -42,6 +42,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Fix: ROI `flaky_tests_identified` disagreed with the coach headline (F-010, completing)
+
+- The earlier F-010 fix corrected the coach's `total_flaky` response field but left
+  `value_metrics_service` doing `select(count(FlakyCoachResult.id))`. On 30 days of history
+  the same project reported **coach `total_flaky` = 1** and **ROI
+  `flaky_tests_identified` = 5**.
+- **Found by seeding multi-day data.** The previous 5-run, single-timestamp fixture could not
+  produce a coach table mixing oscillating and persistently-broken entries, so the divergence
+  had nowhere to show. This is the coverage gap the exploratory ledger had recorded.
+- The two numbers legitimately differ in *source*: the coach table deliberately KEEPS
+  persistent regressions (downgraded recommendation + "treat as a regression" advice, FLK-P1).
+  Their presence as rows is correct; counting them as **flaky** is not — and this one is an
+  ROI figure that gets quoted.
+- Extracted the coach's predicate into `test_health_coach_service.history_is_intermittent`;
+  both surfaces now call it, so a third definition cannot appear. `quarantine_recommended`
+  deliberately still counts QUARANTINE rows — a different question.
+- 14 regression tests, verified 3 failed → all pass; 414 passed across the
+  coach/flaky/value-metrics/quarantine suites.
+
 ### 2026-08-07 — Fix: module-level `AsyncSessionLocal` pinned a disposed engine (F-027 root cause)
 
 - Bulk ingest failed on most first attempts with

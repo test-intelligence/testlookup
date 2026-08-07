@@ -121,6 +121,27 @@ def _count_flips(statuses: "list[str]") -> int:
     return sum(1 for a, b in zip(failed, failed[1:]) if a != b)
 
 
+MANUAL_TRIAGE_HISTORY_SENTINEL = "FLAKY (manual triage)"
+
+
+def history_is_intermittent(status_history) -> bool:
+    """Does this stored ``status_history`` show real oscillation?
+
+    The single definition of "counts as flaky" for anything reading
+    ``FlakyCoachResult`` rows. Extracted from ``get_flaky_coach`` so the ROI
+    metric (``value_metrics_service.flaky_tests_identified``) applies the same
+    rule — it previously counted every row and reported 5 where the coach
+    headline said 1 on the same project.
+
+    Manual triage is always intermittent: a human calling a test flaky outranks
+    the heuristic.
+    """
+    history = list(status_history or [])
+    if history == [MANUAL_TRIAGE_HISTORY_SENTINEL]:
+        return True
+    return _count_flips(history) >= _MIN_FLIPS_FOR_QUARANTINE
+
+
 def _compute_quarantine_recommendation(
     failure_rate: float,
     flip_count: int | None = None,
@@ -581,7 +602,7 @@ async def get_flaky_coach(
             quarantine_recommendation="INVESTIGATE",
             stabilization_actions=["Manually triaged as flaky on /my-failures"],
             impact_score=0.0,
-            status_history=["FLAKY (manual triage)"],
+            status_history=[MANUAL_TRIAGE_HISTORY_SENTINEL],
         ))
 
     quarantine_count = sum(1 for e in entries if e.quarantine_recommendation == "QUARANTINE")
@@ -603,15 +624,11 @@ async def get_flaky_coach(
     # migration is needed and the headline agrees with the other surfaces by
     # construction. Manual-triage rows carry a sentinel history and are counted
     # as flaky regardless: a human's call outranks the heuristic.
-    def _entry_is_intermittent(e) -> bool:
-        history = list(e.status_history or [])
-        if history == ["FLAKY (manual triage)"]:
-            return True
-        return _count_flips(history) >= _MIN_FLIPS_FOR_QUARANTINE
-
     return FlakyCoachResponse(
         project_id=str(project_id),
-        total_flaky=sum(1 for e in entries if _entry_is_intermittent(e)),
+        total_flaky=sum(
+            1 for e in entries if history_is_intermittent(e.status_history)
+        ),
         quarantine_candidates=quarantine_count,
         entries=entries,
     )

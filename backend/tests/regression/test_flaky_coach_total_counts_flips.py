@@ -53,15 +53,30 @@ class TestTheHeadlineCountIsGatedOnFlips:
         )
 
     def test_it_counts_via_a_flip_predicate(self):
-        src = _reader_src()
-        assert "_entry_is_intermittent" in src
-        assert re.search(
-            r"_count_flips\(history\)\s*>=\s*_MIN_FLIPS_FOR_QUARANTINE", src
-        ), "the count predicate does not require flips"
+        """The predicate moved to a shared module-level helper.
+
+        It was originally an inline ``_entry_is_intermittent`` closure here.
+        When the ROI metric needed the same rule, keeping it inline would have
+        meant a second copy — the exact drift that produced this bug — so it was
+        extracted to ``history_is_intermittent``. Assert on behaviour rather
+        than on where the code happens to live.
+        """
+        from app.services.test_health_coach_service import history_is_intermittent
+
+        assert "history_is_intermittent" in _reader_src(), (
+            "the headline count no longer uses the shared intermittency predicate"
+        )
+        assert history_is_intermittent(["PASSED", "FAILED", "PASSED", "FAILED"]) is True
+        assert history_is_intermittent(["PASSED", "FAILED", "FAILED", "FAILED"]) is False
 
     def test_manual_triage_rows_are_always_counted(self):
         """A human's FLAKY_TEST call outranks the heuristic."""
-        assert "FLAKY (manual triage)" in _reader_src(), (
+        from app.services.test_health_coach_service import (
+            MANUAL_TRIAGE_HISTORY_SENTINEL,
+            history_is_intermittent,
+        )
+
+        assert history_is_intermittent([MANUAL_TRIAGE_HISTORY_SENTINEL]) is True, (
             "manual-triage rows must be counted regardless of flips"
         )
 

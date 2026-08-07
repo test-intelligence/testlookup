@@ -697,10 +697,31 @@ async def get_value_metrics(
     defects_promoted = (await db.execute(promoted_stmt)).scalar() or 0
 
     # ── Flaky tests identified ───────────────────────────────────────────────
-    flaky_stmt = select(sa_func.count(FlakyCoachResult.id))
+    # Counts rows that actually OSCILLATE, not every row in the coach table.
+    #
+    # This used to be a bare COUNT(*), so it reported 5 where the coach headline
+    # reported 1 for the same project at the same moment — and unlike a UI
+    # disagreement, this number is an ROI figure that gets quoted. The coach
+    # table deliberately KEEPS persistent regressions (they carry a downgraded
+    # recommendation and "treat as a regression" advice), so the row count and
+    # the flaky count are legitimately different things.
+    #
+    # ``status_history`` is a stored column, so this needs the rows rather than
+    # a COUNT — bounded by the number of flagged tests in one project, and the
+    # coach page already loads the same set. Shares the coach's predicate so a
+    # third definition cannot appear.
+    from app.services.test_health_coach_service import history_is_intermittent
+
+    flaky_rows_stmt = select(FlakyCoachResult.status_history)
     if project_id:
-        flaky_stmt = flaky_stmt.where(FlakyCoachResult.project_id == project_id)
-    flaky_identified = (await db.execute(flaky_stmt)).scalar() or 0
+        flaky_rows_stmt = flaky_rows_stmt.where(
+            FlakyCoachResult.project_id == project_id
+        )
+    flaky_identified = sum(
+        1
+        for (history,) in (await db.execute(flaky_rows_stmt)).all()
+        if history_is_intermittent(history)
+    )
 
     quarantine_stmt = select(sa_func.count(FlakyCoachResult.id)).where(
         FlakyCoachResult.quarantine_recommendation == "QUARANTINE",
