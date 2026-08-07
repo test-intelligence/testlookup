@@ -167,18 +167,30 @@ async def list_active_sessions(
     #   sessions from the live dashboard).
     accessible = await get_accessible_project_ids(db, current_user)
     if project_id:
-        if accessible is not None:
-            try:
-                if uuid.UUID(project_id) not in accessible:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="You do not have access to this project",
-                    )
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid project_id",
-                )
+        # Shape check FIRST, for every role. This used to live inside the
+        # ``accessible is not None`` branch below, so it ran for non-admins only:
+        # ``get_accessible_project_ids`` returns None for an ADMIN, which skipped
+        # the check entirely and let a raw string (a stale link, or the
+        # frontend-only ALL_PROJECTS_ID sentinel "all") through to the query. The
+        # admin then got a silently EMPTY live dashboard with no error, while a
+        # non-admin sending the identical value got a clean 400.
+        #
+        # Same role-dependent shape as the /metrics 500 fixed earlier; only the
+        # symptom differs, because this query degrades to "no match" instead of
+        # blowing up. An empty page with no explanation is the harder one to
+        # diagnose, not the easier one.
+        try:
+            parsed_project_id = uuid.UUID(project_id)
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid project_id — expected a UUID",
+            )
+        if accessible is not None and parsed_project_id not in accessible:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this project",
+            )
         return await stream_service.list_active_sessions(
             db, project_id, suite_name=suite_name, days=days,
         )

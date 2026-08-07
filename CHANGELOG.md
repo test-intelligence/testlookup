@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: `/stream/active` skipped project_id validation for admins
+
+- As an ADMIN, `GET /api/v1/stream/active?project_id=all` (and `?project_id=not-a-uuid`)
+  returned **200 with an empty session list**; a non-admin sending the identical value got a
+  clean **400**. The live dashboard silently showed nothing, with no error to explain it.
+- Root cause: the UUID parse and its 400 were nested inside `if accessible is not None:`.
+  `get_accessible_project_ids()` returns `None` for an ADMIN, so the whole block was skipped
+  and a raw string reached the query.
+- **Same role-dependent shape as the `/metrics` 500 fixed earlier this session** — the check
+  that guards the value nested inside the check only non-admins trigger. Only the symptom
+  differs: this query degrades to "no match" instead of raising, and an empty page with no
+  explanation is the harder failure to diagnose, not the easier one.
+- `ALL_PROJECTS_ID` ("all") is a frontend-only sentinel, so one stale link or missed SPA
+  guard produces it.
+- Validation now runs first, for every role; the 403 for a real-but-inaccessible project is
+  preserved, as is the unscoped admin view when no `project_id` is passed.
+- 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
+
 ### 2026-08-07 — Fix: trend line used a different pass-rate denominator than the headline
 
 - **Completes the previous pass-rate fix, which was incomplete.** That change fixed
