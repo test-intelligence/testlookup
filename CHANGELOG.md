@@ -42,6 +42,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Security fix: pending-defect review leaked across projects
+
+- `GET /api/v1/deep-investigate/defects/pending-review` selected **every** defect with
+  `approval_status == PENDING_REVIEW`, with no project filter of any kind. The only gate was
+  `require_role(QA_LEAD)`, which checks the caller's ROLE, not their project membership —
+  and QA_LEAD is not a global role here (`get_accessible_project_ids()` resolves non-admins
+  to the projects they belong to).
+- Net effect: a QA lead of one project received the `title`, `severity`, `component` and
+  `owner_team` of pending defects belonging to **every other project on the deployment**.
+- Now scoped via `Defect.project_id.in_(accessible)` for non-admins. `accessible is None`
+  means ADMIN and stays legitimately unscoped — unlike the `/metrics` and `/stream/active`
+  bugs earlier this session, where the `None` branch skipped a check that should have run
+  for everyone. Here `None` is correct; the defect was the total absence of a filter.
+- `defects.project_id` is already indexed (`ix_defects_project_id`) — the schema anticipated
+  this filter.
+- **Why the architecture ratchet missed it:** `test_architectural_authorization` requires a
+  `require_*_access` guard for routers with a `{project_id}`-style **path param**. This
+  endpoint has no path param, so it was never in scope.
+- 7 regression tests, verified 5 failed → all pass; 74 passed across the deep-investigation /
+  defect / authorization suites. Includes a breadth check that no other `select(Defect)` in
+  the router is unscoped, and a guard that the filter precedes pagination.
+
 ### 2026-08-07 — Fix: trend line used a different pass-rate denominator than the headline
 
 - **Completes the previous pass-rate fix, which was incomplete.** That change fixed

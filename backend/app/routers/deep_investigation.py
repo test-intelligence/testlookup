@@ -11,7 +11,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_role, require_run_access
+from app.core.deps import (
+    get_accessible_project_ids,
+    get_current_active_user,
+    require_role,
+    require_run_access,
+)
 from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import (
     Defect,
@@ -404,11 +409,28 @@ async def list_pending_defects(
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all defects awaiting approval (QA Lead+ only, paginated)."""
+    """List defects awaiting approval in the caller's projects (QA Lead+, paginated).
+
+    ``require_role(QA_LEAD)`` gates by ROLE, not by project membership, and this
+    query previously had no project filter at all — so a QA lead of one project
+    received the titles, components and owner teams of pending defects belonging
+    to every OTHER project on the deployment.
+
+    ``get_accessible_project_ids()`` returning ``None`` means ADMIN, who is
+    legitimately unscoped; the defect was that non-admins were unscoped too.
+    ``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema
+    already anticipated this filter.
+    """
+    accessible = await get_accessible_project_ids(db, current_user)
+
+    stmt = select(Defect).where(Defect.approval_status == ActionStatus.PENDING_REVIEW)
+    if accessible is not None:
+        # Non-admin: restrict to projects the caller actually belongs to. An
+        # empty set must yield NO rows, not every row.
+        stmt = stmt.where(Defect.project_id.in_(accessible))
+
     result = await db.execute(
-        select(Defect)
-        .where(Defect.approval_status == ActionStatus.PENDING_REVIEW)
-        .order_by(Defect.created_at.desc())
+        stmt.order_by(Defect.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
