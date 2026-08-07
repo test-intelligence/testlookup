@@ -168,13 +168,29 @@ async def test_failure_categories_serves_items_and_by_kind():
     ])
     result = await failure_categories(db, "proj-1", 30)
 
-    # Historical per-category items preserved (re-aggregated over status),
-    # each carrying its category-only derived kind.
+    # Items are grouped by (category, KIND) — F-015.
+    #
+    # This assertion previously pinned per-category items carrying a
+    # "category-only derived kind", which meant UNKNOWN's 2 BROKEN + 1 FAILED
+    # collapsed into a single {count: 3, kind: "unknown"} row while `by_kind`
+    # (below, unchanged) correctly reported 2 of them as infrastructure. One
+    # response contradicting itself.
+    #
+    # It was not cosmetic: FailureAnalysisPage FILTERS the category distribution
+    # card on item.kind, so "infrastructure" silently missed genuine infra
+    # failures — the one kind that must never be triaged as a product bug.
+    #
+    # A category may now appear once per kind. That is faithful: a category
+    # legitimately contains failures of more than one kind, and every count
+    # below still sums to the same total (5 + 2 + 1 = 8).
     assert result["period_days"] == 30
     assert result["items"] == [
         {"category": "PRODUCT_BUG", "count": 5, "kind": "product"},
-        {"category": "UNKNOWN", "count": 3, "kind": "unknown"},
+        {"category": "UNKNOWN", "count": 2, "kind": "infrastructure"},
+        {"category": "UNKNOWN", "count": 1, "kind": "unknown"},
     ]
+    # items and by_kind must now agree, which was the whole point.
+    assert sum(i["count"] for i in result["items"]) == 8
 
     # Parallel by-kind aggregation applies the BROKEN nudge per (cat, status).
     by_kind = {i["kind"]: i["count"] for i in result["by_kind"]}

@@ -42,6 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Fix: failure-category items contradicted by_kind (F-015) (WIRE-SHAPE CHANGE)
+
+- `GET /analytics/failure-categories` returned, in ONE payload:
+  `items: [{category: "UNKNOWN", count: 11, kind: "unknown"}]` while `by_kind` correctly
+  reported 2 of those 11 as `infrastructure`. Items were aggregated per *category* then
+  labelled with `failure_kind(category, None)` — a category-only derivation that cannot
+  apply the BROKEN nudge, because the nudge needs the per-row status the aggregate discarded.
+- **Not cosmetic:** `FailureAnalysisPage` FILTERS the category distribution card on
+  `item.kind`, so selecting "infrastructure" silently missed genuine infrastructure
+  failures — the one kind that must never be triaged as a product bug. The page's
+  client-side `by_kind` fallback also sums `item.count` per `item.kind`, inheriting the
+  same error.
+- **Wire-shape change:** `items` is now grouped by **(category, kind)**, so a category may
+  appear once per kind. That is faithful — a category legitimately contains failures of more
+  than one kind — and every count is preserved exactly.
+- **Consumer check:** the MCP `get_failure_categories` tool sums `item.count` for its total,
+  which splitting preserves; only listing granularity changes, and it becomes more accurate.
+  `OverviewPage` reads `by_kind`, which is untouched.
+- An existing test pinned the old shape *and its contradiction* ("Historical per-category
+  items preserved… category-only derived kind"). It was updated with the reasoning recorded
+  inline, not silently re-valued.
+- 8 regression tests, verified 3 failed → all pass; 164 passed across the
+  analytics/failure-kind/coverage/overview suites.
+
 ### 2026-08-07 — Fix: Coverage counted skipped tests in its pass rate (F-014)
 
 - Coverage read **78.3%** where the dashboard read **81.0%** for the same project and window

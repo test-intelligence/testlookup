@@ -379,19 +379,34 @@ async def failure_categories(
 
     from app.services.failure_kind import failure_kind, kind_counts
 
-    # Historical per-category items, with the derived kind attached per
-    # item. Item-level kind is category-only — the BROKEN nudge needs a
-    # per-row status, which a category aggregate no longer has.
-    by_category: dict[str, int] = {}
+    # Items are grouped by (category, KIND), not by category alone.
+    #
+    # They used to be per-category with ``failure_kind(category, None)`` — a
+    # category-only derivation that cannot apply the BROKEN nudge, because the
+    # nudge needs a per-row status the aggregate had thrown away. The result
+    # contradicted ``by_kind`` inside the SAME response: one payload reported
+    # ``items: [{category: "UNKNOWN", count: 11, kind: "unknown"}]`` while
+    # ``by_kind`` correctly showed 2 of those 11 as ``infrastructure``.
+    #
+    # That was not cosmetic. ``FailureAnalysisPage`` FILTERS the category
+    # distribution card on ``item.kind``, so selecting "infrastructure" silently
+    # missed rows that genuinely were infrastructure failures — and infra
+    # failures are exactly what must not be triaged as product bugs.
+    #
+    # Splitting keeps every count exact and makes the filter correct. A category
+    # may now appear once per kind, which is faithful: a category legitimately
+    # contains failures of more than one kind. ``by_kind`` is unchanged, and the
+    # SPA's client-side fallback (summing ``item.count`` per ``item.kind``) now
+    # produces the right totals too, where before it inherited the same error.
+    by_cat_kind: dict[tuple[str, str], int] = {}
     for row in raw_rows:
-        by_category[row["category"]] = by_category.get(row["category"], 0) + row["count"]
+        key = (row["category"], failure_kind(row["category"], row["status"]))
+        by_cat_kind[key] = by_cat_kind.get(key, 0) + row["count"]
     items = [
-        {
-            "category": category,
-            "count": count,
-            "kind": failure_kind(category, None),
-        }
-        for category, count in sorted(by_category.items(), key=lambda kv: -kv[1])
+        {"category": category, "count": count, "kind": kind}
+        for (category, kind), count in sorted(
+            by_cat_kind.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1])
+        )
     ]
 
     # Parallel by-kind aggregation (product / test_code / infrastructure /
