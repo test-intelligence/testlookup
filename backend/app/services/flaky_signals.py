@@ -29,6 +29,20 @@ _FAILED_STATUSES = {"FAILED", "BROKEN"}
 _HIGH_VOLATILITY = 0.40
 _LOW_VOLATILITY = 0.20
 
+# Canonical minimum pass<->fail transitions ("flips") for a test to be called
+# INTERMITTENT rather than simply broken (or simply fixed).
+#
+# One flip is a state CHANGE -- the test broke, or it got fixed. Only from the
+# second does it return to a state it had already left, which is what
+# intermittency means.
+#
+# This lives here, in the pure signals module, because three separate read-path
+# detectors each re-derived flakiness from a failure RATIO alone and each
+# admitted stable regressions as "flaky" (metrics_service #461, the flaky-coach
+# quarantine recommendation #462, and the /failures headline verdict). Import
+# this constant rather than defining a fourth copy.
+MIN_FLIPS_FOR_INTERMITTENCY = 2
+
 # Run-specific noise (hex addresses, long ids, timestamps, bare numbers) that
 # would inflate error-signature diversity, normalised away before fingerprinting.
 _NOISE = re.compile(

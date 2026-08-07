@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Defect, Project, TestCase, TestRun, TriageStatus
 from app.services.flaky_investigator import determine_likely_cause
-from app.services.flaky_signals import compute_intermittency_signals
+from app.services.flaky_signals import (
+    MIN_FLIPS_FOR_INTERMITTENCY as _FLAKY_MIN_FLIPS,
+    compute_intermittency_signals,
+)
 
 
 def _period_start(days: int) -> datetime:
@@ -133,31 +136,58 @@ async def flaky_tests(
         params, project_id=project_id, allowed_project_ids=allowed_project_ids,
     )
     suite_filter = _add_suite_param(params, suite_name)
+    # The /failures headline states this list as fact -- "N tests show pass/fail
+    # oscillation on the same SHA. Re-runs may pass without fixing the underlying
+    # race" -- so membership must actually BE oscillation. A failure-ratio band
+    # alone is order-blind and admitted stable regressions: a test broken in four
+    # consecutive builds sits at 0.8 and became the headline example of flakiness,
+    # telling the reader to re-run a test that will never pass.
+    #
+    # Same rule and threshold as metrics_service._FLAKY_MIN_FLIPS (#461) and
+    # test_health_coach_service._MIN_FLIPS_FOR_QUARANTINE (#462), and the same one
+    # the agents already enforce ("Flaky classification requires status
+    # transitions (oscillation, not regression)" -- anomaly_agent).
     query = text(
         f"""
         SELECT
-            tch.test_fingerprint,
-            MAX(tc.test_name)   AS test_name,
-            MAX(tc.suite_name)  AS suite_name,
-            MAX(tc.class_name)  AS class_name,
-            MAX(p.name)         AS project_name,
-            COUNT(*)            AS total_runs,
-            COUNT(*) FILTER (WHERE tch.status IN ('FAILED', 'BROKEN')) AS fail_count,
-            COUNT(*) FILTER (WHERE tch.status = 'PASSED')              AS pass_count,
-            ROUND(
-                COUNT(*) FILTER (WHERE tch.status IN ('FAILED', 'BROKEN')) * 100.0 / COUNT(*), 1
-            ) AS failure_rate_pct,
-            MAX(tch.created_at) AS last_seen
-        FROM test_case_history tch
-        JOIN test_cases tc ON tc.id = tch.test_case_id
-        JOIN test_runs tr   ON tr.id = tch.test_run_id
-        LEFT JOIN projects p ON p.id = tr.project_id
-        WHERE tch.created_at >= :period_start
-          {project_filter}
-          {suite_filter}
-        GROUP BY tch.test_fingerprint
+            test_fingerprint,
+            MAX(test_name)   AS test_name,
+            MAX(suite_name)  AS suite_name,
+            MAX(class_name)  AS class_name,
+            MAX(project_name) AS project_name,
+            COUNT(*)         AS total_runs,
+            COUNT(*) FILTER (WHERE is_failed = 1) AS fail_count,
+            COUNT(*) FILTER (WHERE is_passed = 1) AS pass_count,
+            ROUND(COUNT(*) FILTER (WHERE is_failed = 1) * 100.0 / COUNT(*), 1) AS failure_rate_pct,
+            MAX(created_at)  AS last_seen
+        FROM (
+            SELECT
+                tch.test_fingerprint AS test_fingerprint,
+                tc.test_name         AS test_name,
+                tc.suite_name        AS suite_name,
+                tc.class_name        AS class_name,
+                p.name               AS project_name,
+                tch.created_at       AS created_at,
+                CASE WHEN tch.status IN ('FAILED', 'BROKEN') THEN 1 ELSE 0 END AS is_failed,
+                CASE WHEN tch.status = 'PASSED' THEN 1 ELSE 0 END AS is_passed,
+                LAG(CASE WHEN tch.status IN ('FAILED', 'BROKEN') THEN 1 ELSE 0 END) OVER (
+                    PARTITION BY tch.test_fingerprint
+                    ORDER BY tch.created_at, tch.id
+                ) AS prev_failed
+            FROM test_case_history tch
+            JOIN test_cases tc ON tc.id = tch.test_case_id
+            JOIN test_runs tr   ON tr.id = tch.test_run_id
+            LEFT JOIN projects p ON p.id = tr.project_id
+            WHERE tch.created_at >= :period_start
+              {project_filter}
+              {suite_filter}
+        ) seq
+        GROUP BY test_fingerprint
         HAVING COUNT(*) >= 3
-           AND COUNT(*) FILTER (WHERE tch.status IN ('FAILED', 'BROKEN')) * 1.0 / COUNT(*) BETWEEN 0.05 AND 0.95
+           AND COUNT(*) FILTER (WHERE is_failed = 1) * 1.0 / COUNT(*) BETWEEN 0.05 AND 0.95
+           AND COUNT(*) FILTER (
+                   WHERE prev_failed IS NOT NULL AND prev_failed <> is_failed
+               ) >= {_FLAKY_MIN_FLIPS}
         ORDER BY failure_rate_pct DESC
         LIMIT :limit
         """

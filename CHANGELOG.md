@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: /failures headline claimed stable regressions "oscillate" (BEHAVIOR CHANGE)
+
+- The FAILURE VERDICT card on `/failures` rendered **"Flaky · 5 tests intermittent"** and,
+  as a statement of fact, *"5 tests show pass/fail oscillation on the same SHA. Re-runs may
+  pass without fixing the underlying race or fixture issue."* It then used
+  `test_discount_stacking` — broken in four consecutive builds — as its headline example.
+  That test does not oscillate, and re-running it will never make it pass.
+- This was the **third** independent flaky detector to derive flakiness from a failure
+  ratio alone (`analytics_service.flaky_tests`, band 0.05–0.95, ≥3 runs, no order term),
+  after `metrics_service` and the flaky-coach quarantine recommendation. The agents already
+  had it right — `anomaly_agent`: *"Flaky classification requires status transitions
+  (oscillation, not regression)"* — only the read paths did not.
+- The auto-detector now also requires ≥2 pass↔fail transitions in run order, via `LAG()`.
+- **Drift guard:** the threshold now lives once, in `flaky_signals.MIN_FLIPS_FOR_INTERMITTENCY`,
+  and all three surfaces import it instead of each defining a copy. A regression test
+  asserts they are the same object.
+- Manually-triaged `FLAKY_TEST` rows merged in below the auto query are deliberately **not**
+  gated — a human calling a test flaky should not be overridden by the detector.
+- **Behavior change:** `/failures` reports fewer flaky tests (5 → 2 on the exploratory
+  dataset) and no longer advises re-running a permanently-broken test.
+- Found by exploratory testing driving the live SPA; 14 regression tests running the real
+  production SQL, verified 7 failed → all pass.
+
 ### 2026-08-07 — Fix: Flaky Coach recommended quarantining stable regressions (BEHAVIOR CHANGE)
 
 - `GET /projects/{id}/flaky-coach` recommended **QUARANTINE** for `test_discount_stacking`

@@ -398,7 +398,13 @@ _FLAKY_MIN_RUNS = 5
 # One flip is a state CHANGE (a test broke, or a test got fixed). Only from the
 # second flip does the test return to a state it had already left, which is the
 # actual signature of intermittency.
-_FLAKY_MIN_FLIPS = 2
+#
+# Imported, not redefined: three read-path detectors independently re-derived
+# flakiness from a ratio and each admitted stable regressions. flaky_signals owns
+# the canonical value so they cannot drift apart again.
+from app.services.flaky_signals import (  # noqa: E402
+    MIN_FLIPS_FOR_INTERMITTENCY as _FLAKY_MIN_FLIPS,
+)
 
 
 async def _count_flaky_tests(

@@ -35,6 +35,7 @@ from app.models.schemas import (
     TestHealthViolation,
 )
 from app.services.flaky_signals import (
+    MIN_FLIPS_FOR_INTERMITTENCY,
     IntermittencySignals,
     compute_intermittency_signals,
 )
@@ -108,8 +109,9 @@ _MONITOR_THRESHOLD = 0.10          # 10-25% → MONITOR
 # A flip is an adjacent pass<->fail change in the run window. One flip is a
 # state change (the test broke, or it got fixed); only from the second does the
 # test return to a state it had already left, which is what intermittency is.
-# Same threshold and rationale as metrics_service._FLAKY_MIN_FLIPS.
-_MIN_FLIPS_FOR_QUARANTINE = 2
+# Imported, not redefined, so the quarantine gate and the flaky counts cannot
+# drift apart -- flaky_signals owns the canonical value.
+_MIN_FLIPS_FOR_QUARANTINE = MIN_FLIPS_FOR_INTERMITTENCY
 
 
 def _count_flips(statuses: "list[str]") -> int:
