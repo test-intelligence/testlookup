@@ -10,11 +10,28 @@ data:
         root /usr/share/nginx/html;
         index index.html;
 
+        # ── Security headers ────────────────────────────────────────────────
+        # index.html carries a CSP <meta> tag, but browsers IGNORE
+        # frame-ancestors delivered that way, so the anti-clickjacking intent
+        # stated in index.html was never enforced. It only works as a header.
+        #
+        # NGINX GOTCHA: add_header is inherited only when the child level
+        # declares NO add_header of its own — so every location that sets its
+        # own headers must REPEAT these or silently lose them.
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
         # index.html must NEVER be cached — Vite hashes asset filenames, so a new
         # build emits new index-<hash>.js URLs and a fresh index.html referencing
         # them. If a browser or intermediate caches the old index.html it will keep
         # loading the old (and possibly 404'ing) asset hashes after a redeploy.
         location = /index.html {
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
             add_header Cache-Control "no-cache, no-store, must-revalidate" always;
             add_header Pragma "no-cache" always;
             expires -1;
@@ -47,6 +64,10 @@ data:
         gzip_min_length 1000;
 
         location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2)$ {
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
             expires 1y;
             add_header Cache-Control "public, immutable";
         }

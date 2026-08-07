@@ -3,6 +3,22 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # ── Security headers ────────────────────────────────────────────────────
+    # index.html carries a CSP <meta> tag, but browsers IGNORE frame-ancestors
+    # when it arrives that way ("The Content Security Policy directive
+    # 'frame-ancestors' is ignored when delivered via a <meta> element") — so
+    # the anti-clickjacking intent stated in index.html was never enforced.
+    # It only works as a response header, which is what this is.
+    #
+    # NGINX GOTCHA: add_header is inherited only when the child level declares
+    # NO add_header of its own. Any location below that sets its own headers
+    # must therefore REPEAT these, or it silently loses them — including
+    # `location = /index.html`, the one document that actually matters here.
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
     # SPA routing - send all requests to index.html
     location / {
         try_files $uri $uri/ /index.html;
@@ -42,5 +58,11 @@ server {
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        # Repeated: this block declares its own add_header, so it would
+        # otherwise inherit none of the server-level security headers.
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     }
 }

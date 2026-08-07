@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: clickjacking protection was inert (CSP delivered only via `<meta>`)
+
+- `frontend/index.html` declared `frame-ancestors 'none'` in a
+  `<meta http-equiv="Content-Security-Policy">` tag, with a comment stating the intent
+  ("prevent clickjacking (X-Frame-Options equiv)"). **Browsers ignore `frame-ancestors`
+  in a meta tag** — Chromium logs it on every page load — and the deployment sent no CSP
+  or `X-Frame-Options` response header. Every page was framable. Found by exploratory
+  testing against a live deployment.
+- All three frontend nginx configs (image template, homelab overlay, openshift overlay)
+  now send `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff` and `Referrer-Policy` as **response headers**.
+- **nginx inheritance trap handled:** `add_header` is inherited only by blocks that
+  declare none of their own, so `location = /index.html` (which sets Cache-Control) would
+  have silently dropped every security header — the one document clickjacking targets.
+  The headers are repeated in each such block, and a regression test walks every
+  `location` to keep it that way.
+- Configs verified with `nginx -t`; the meta tag stays for the directives that *are*
+  honoured there.
+
 ### 2026-08-07 — Fix: `project_id=all` crashed the metrics endpoints for admins
 
 - **`GET /api/v1/metrics/summary` and `/metrics/trends` returned 500** when handed the
