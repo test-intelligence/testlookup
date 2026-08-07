@@ -519,9 +519,25 @@ async def coverage_stats(
             COUNT(DISTINCT tc.test_fingerprint)  AS unique_tests,
             COUNT(DISTINCT {effective_suite})    AS suite_count,
             COUNT(*)                             AS total_executions,
+            -- Denominator is EVALUATED = passed + failed + broken. SKIPPED is
+            -- excluded: a skipped test was never executed, so it is neither a
+            -- pass nor a fail and must not dilute the rate.
+            --
+            -- This was the last surface still dividing by COUNT(*). It made
+            -- Coverage read 78.3% where the dashboard read 81.0% for the same
+            -- project and window (F-014) -- 47/60 vs 47/58.
+            --
+            -- The rest of the codebase already states this rule outright:
+            -- analysis_report_service ("evaluated = passed + failed + broken;
+            -- skips don't count"), ingestion._update_run_aggregates ("EXCLUDES
+            -- skipped from the denominator") and metrics_service._evaluated.
+            -- ``total_executions`` above deliberately stays COUNT(*): that is a
+            -- count of executions, where a skip genuinely happened.
             ROUND(
                 COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
-                / NULLIF(COUNT(*), 0), 1
+                / NULLIF(
+                    COUNT(*) FILTER (WHERE tc.status IN ('PASSED', 'FAILED', 'BROKEN')), 0
+                  ), 1
             ) AS avg_pass_rate,
             COUNT(DISTINCT DATE_TRUNC('day', tr.created_at)) AS days_with_runs
         FROM test_cases tc

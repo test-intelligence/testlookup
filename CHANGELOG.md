@@ -42,6 +42,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserved, as is the unscoped admin view when no `project_id` is passed.
 - 6 regression tests, verified 3 failed → all pass; 28 passed across the live/stream suite.
 
+### 2026-08-07 — Fix: Coverage counted skipped tests in its pass rate (F-014)
+
+- Coverage read **78.3%** where the dashboard read **81.0%** for the same project and window
+  (47/60 vs 47/58). Coverage divided by `COUNT(*)`, which includes SKIPPED.
+- The codebase already states the rule in **four** places — `analysis_report_service`
+  ("skips don't count"), `ingestion._update_run_aggregates`, `metrics_service._evaluated`,
+  and `metrics_service.get_trend_data`. Coverage was the sole outlier, so it moved.
+- Denominator is now `passed + failed + broken`. **`total_executions` deliberately keeps
+  `COUNT(*)`** — a skip genuinely is an execution — and a test pins that distinction, since
+  collapsing the two would silently change a different, correct number.
+- 10 regression tests, verified 1 failed → all pass; 205 passed across the
+  coverage/analytics/metrics suites.
+
 ### 2026-08-07 — Fix: Flaky Coach `total_flaky` counted non-oscillating tests (F-010)
 
 - For one project at one moment the app reported three different numbers: dashboard
