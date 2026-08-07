@@ -20,6 +20,12 @@ SCORE_MODEL_VERSION = 1
 _GO_THRESHOLD = 20    # composite_risk < 20  → GO
 _NO_GO_THRESHOLD = 55  # composite_risk ≥ 55 → NO_GO
 
+# A pass rate below ``HARD_FLOOR_FACTOR × threshold`` forces NO_GO regardless of
+# the composite score. Exported (and imported by release_council_service rather
+# than re-typed as a literal 0.7) so the value that decides the verdict and the
+# value published in the response snapshot cannot drift apart.
+HARD_FLOOR_FACTOR = 0.7
+
 
 def _weights() -> dict[str, float]:
     """Return 7-dimension weights driven by settings (runtime-configurable)."""
@@ -166,7 +172,7 @@ def score_to_recommendation(
     threshold: float,
     go_threshold: float = _GO_THRESHOLD,
     no_go_threshold: float = _NO_GO_THRESHOLD,
-    hard_floor_factor: float = 0.7,
+    hard_floor_factor: float = HARD_FLOOR_FACTOR,
 ) -> str:
     """Map composite score + pass-rate to GO / CONDITIONAL_GO / NO_GO.
 

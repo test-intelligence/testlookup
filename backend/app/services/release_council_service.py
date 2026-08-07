@@ -33,6 +33,7 @@ from app.models.schemas import (
     RuleEvaluationResponse,
 )
 from app.services.criticality_service import (
+    HARD_FLOOR_FACTOR as _HARD_FLOOR_FACTOR,
     SCORE_MODEL_VERSION,
     compute_composite,
     compute_dimension_scores,
@@ -300,7 +301,7 @@ async def _synthesize_release_council(
         open_defects=open_defects,
     )
     composite = compute_composite(dim_scores)
-    if pass_rate < threshold * 0.7:
+    if pass_rate < threshold * _HARD_FLOOR_FACTOR:
         # Mirror the agent's hard floor: a run that drops below 70% of
         # the configured pass-rate threshold is NO_GO regardless of
         # the composite score. Bump composite so the recommendation
@@ -338,7 +339,21 @@ async def _synthesize_release_council(
             "synthesized": True,
             "pass_rate": pass_rate,
             "open_defects": open_defects,
+            # The CONFIGURED target (RELEASE_PASS_RATE_THRESHOLD). Reporting it
+            # alone was actively misleading: a run at 83% sat next to
+            # "threshold: 90.0" and a GO verdict, which reads as a contradiction.
             "threshold": threshold,
+            # ...because `threshold` is NOT the GO cutoff. Pass rate only forces
+            # a verdict when it falls under `hard_floor_factor` (0.7) of the
+            # threshold; above that the composite risk score decides. Publish the
+            # number actually applied so the verdict is explicable from its own
+            # snapshot instead of appearing to contradict it.
+            "no_go_floor_pct": round(threshold * _HARD_FLOOR_FACTOR, 2),
+            "hard_floor_factor": _HARD_FLOOR_FACTOR,
+            "verdict_driver": (
+                "pass_rate_floor" if pass_rate < threshold * _HARD_FLOOR_FACTOR
+                else "composite_risk"
+            ),
         },
         cluster_insights=[],
         baseline_diff=None,

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: release-gate snapshot now explains its own verdict
+
+- The quick-look (`synthesized`) release-readiness response returned
+  `recommendation: GO` with `pass_rate: 83.33` and `input_snapshot.threshold: 90.0` —
+  a pass rate 7 points **under** the only threshold in the payload, reported as a clean GO.
+  Read literally, the response contradicted itself.
+- The verdict is not wrong: `threshold` is **not** the GO cutoff. Pass rate only forces a
+  verdict below `HARD_FLOOR_FACTOR` (0.7) of it; above that the composite risk score
+  decides. Nothing in the payload said so.
+- The snapshot now also publishes `no_go_floor_pct` (the cutoff actually applied),
+  `hard_floor_factor`, and `verdict_driver` (`pass_rate_floor` | `composite_risk`).
+  **No verdict changes** — a test pins the mapping as unchanged.
+- `0.7` was duplicated as a literal in `release_council_service` and as a default in
+  `criticality_service`. It is now one exported `HARD_FLOOR_FACTOR`, imported by both, so
+  the value that decides the verdict and the value published alongside it cannot drift.
+- Measured behaviour recorded in the ledger (throwaway project, cleaned up): the gate is
+  **binary at 63%** — 100/95/89/83/70/64% all GO, 62/50/0% all NO_GO — and
+  **CONDITIONAL_GO never occurs** on this path, because composites run 5→13 then jump to 60,
+  clearing the entire [20,55) band. Whether a 64%-pass run should be a clean GO, and whether
+  CONDITIONAL_GO should be reachable, are **product calls left open** — they change
+  ship/no-ship recommendations.
+- 16 regression tests, verified 2 failed → all pass; 151 passed across the release-gate suite.
+
 ### 2026-08-07 — Fix: deleted projects' failures stayed in the assignment inbox
 
 - `GET /me/assigned-failures?scope=team` returned failures belonging to a **deleted**
