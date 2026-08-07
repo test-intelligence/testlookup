@@ -106,6 +106,51 @@ describe('SearchPage', () => {
     } as unknown as GlobalSearchResponse)
   })
 
+  /**
+   * "Queries today" must not invent a number.
+   *
+   * The tile was fed ``recents.length * 24`` — the count of searches in *this
+   * browser's* localStorage (``tl.search.recent``), multiplied by an arbitrary
+   * 24 — and rendered through a compact number formatter as a platform metric.
+   *
+   * Measured on the live deployment with three seeded recent searches:
+   *
+   *     INDEX FRESHNESS    —static
+   *     LATENCY P95        —ms
+   *     QUERIES TODAY      72   no data      <-- 3 x 24
+   *     ZERO-RESULT RATE   —target ≤ 5%
+   *
+   * The tile displayed a number while its own sub-label said "no data", and it
+   * was the only one of the four that did not degrade honestly — the other
+   * three already render an em dash when their metric is unavailable.
+   *
+   * There is no query-volume metric in the backend (the source called it "a P2
+   * backend ask"), so the honest rendering is the em dash its neighbours use.
+   * When that endpoint lands, this test should be updated to assert the real
+   * value flows through — not deleted.
+   */
+  it('renders no query-volume number, because no query-volume metric exists', async () => {
+    localStorage.setItem(
+      'tl.search.recent',
+      JSON.stringify(
+        [1, 2, 3].map((i) => ({
+          id: `r${i}`, query: `q${i}`, mode: 'hybrid', scope: 'all', resultCount: i, ts: Date.now(),
+        })),
+      ),
+    )
+    renderAt('/search')
+
+    const label = await screen.findByText(/Queries today/i)
+    const tile = label.closest('div')?.parentElement ?? label.parentElement
+    const text = tile?.textContent ?? ''
+    expect(text, 'the Queries today tile did not render at all').not.toBe('')
+    expect(
+      text,
+      "the tile shows a fabricated count derived from this browser's recent-search list",
+    ).not.toMatch(/\d/)
+    expect(text).toContain('—')
+  })
+
   it('renders the search workflow strip and search controls', async () => {
     renderAt('/search')
 

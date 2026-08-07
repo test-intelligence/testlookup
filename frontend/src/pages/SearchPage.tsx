@@ -350,7 +350,8 @@ function VerdictRibbon({
   totalItems: number
   typeCount: number
   indexStatus: IndexStatus | null
-  queriesToday: number
+  /** ``null`` until a real query-volume metric exists — see the call site. */
+  queriesToday: number | null
   queriesDelta: number | null
   zeroResultPct: number | null
   latencyP95Ms: number | null
@@ -419,7 +420,11 @@ function VerdictRibbon({
         <VerdictStat label="Latency p95" value={latencyP95Ms != null ? `${latencyP95Ms}` : '—'} sub="ms" />
         <VerdictStat
           label="Queries today"
-          value={Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(queriesToday)}
+          value={
+            queriesToday != null
+              ? Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(queriesToday)
+              : '—'
+          }
           sub={queriesDelta != null ? `${queriesDelta > 0 ? '+' : ''}${queriesDelta}%` : 'no data'}
         />
         <VerdictStat
@@ -1334,7 +1339,12 @@ export default function SearchPage() {
         totalItems={totalIndexed}
         typeCount={6}
         indexStatus={indexStatus}
-        queriesToday={recents.length * 24}    // synthesised; real metric is a P2 backend ask
+        // No query-volume metric exists yet (a P2 backend ask). This used to
+        // pass ``recents.length * 24`` — the count of searches in *this
+        // browser's* localStorage times an arbitrary 24 — which rendered as a
+        // platform KPI beside a sub-label that already read "no data". The
+        // other three tiles degrade to an em dash; this one now does too.
+        queriesToday={null}
         queriesDelta={null}
         zeroResultPct={null}
         latencyP95Ms={null}

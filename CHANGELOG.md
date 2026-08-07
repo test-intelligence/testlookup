@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: `/search` "Queries today" invented a number
+
+- The KPI was fed `recents.length * 24` — the count of searches in **this browser's**
+  `localStorage` (`tl.search.recent`), times an arbitrary 24 — and rendered through a compact
+  number formatter as a platform metric.
+- **Measured live** with three seeded recent searches:
+
+  ```
+  INDEX FRESHNESS    —static
+  LATENCY P95        —ms
+  QUERIES TODAY      72   no data      ← 3 × 24
+  ZERO-RESULT RATE   —target ≤ 5%
+  ```
+
+  The tile displayed a number **while its own sub-label said "no data"**, and it was the only
+  one of the four that didn't degrade honestly — the other three already render an em dash when
+  their metric is unavailable.
+- No query-volume metric exists in the backend (the source called it "a P2 backend ask"), so the
+  honest rendering is the em dash its neighbours use. `queriesToday` is now `number | null`, so
+  when that endpoint lands the real value flows straight through.
+- Found by a targeted sweep for this class after the compliance-pack checksum
+  (the compliance-pack rail) — both were disclosed in plain English in their own source comments.
+
 ### 2026-08-07 — Fix: the compliance-pack rail displayed a fabricated SHA-256
 
 - The "Compliance packs" panel on `/releases` rendered, for a release with **no pack at all**:
