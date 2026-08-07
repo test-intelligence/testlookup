@@ -272,9 +272,16 @@ async def get_trend_data(
         COALESCE(SUM(tr.skipped_tests), 0) AS skipped,
         COALESCE(SUM(tr.broken_tests), 0)  AS broken,
         COALESCE(SUM(tr.total_tests), 0)   AS total,
+        -- Denominator is EVALUATED = passed + failed + broken, matching
+        -- _evaluated() used by the dashboard headline. BROKEN was previously
+        -- omitted here, so the trend line read 83.9% for the same window the
+        -- headline reported 81.0% -- and a day whose only failures were BROKEN
+        -- charted as a flat 100%. Skips stay out: never evaluated.
         COALESCE(
           SUM(tr.passed_tests) * 100.0
-            / NULLIF(SUM(tr.passed_tests) + SUM(tr.failed_tests), 0),
+            / NULLIF(
+                SUM(tr.passed_tests) + SUM(tr.failed_tests) + SUM(tr.broken_tests), 0
+              ),
           0
         ) AS pass_rate
     """

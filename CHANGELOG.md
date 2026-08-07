@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: trend line used a different pass-rate denominator than the headline
+
+- **Completes the previous pass-rate fix, which was incomplete.** That change fixed
+  `_period_stats` (the dashboard headline) to count BROKEN, but `get_trend_data` in the
+  **same module** computes its own daily pass rate in SQL and still excluded it. Live, for
+  one window: `/metrics/summary` -> **81.0%** (47/58) while `/metrics/trends` -> **83.9%**
+  (47/56). Same project, same 7 days, two numbers - a disagreement the partial fix *created*
+  between a headline and the chart directly beneath it.
+- The trends query already SELECTed `broken` for display while omitting it from its own
+  denominator. A day whose only failures were BROKEN charted as a flat 100%.
+- Denominator is now `passed + failed + broken`, matching `_evaluated()`. Skips stay out.
+- **Guard widened:** the previous PR asserted both branches of `_period_stats` used the
+  shared helper - scoped to one function, so this sibling bug passed straight through it.
+  The new guard scans the **whole module** for any two-term pass-rate denominator.
+- Two of the new assertions initially passed against the buggy source (one matched the
+  `broken` display column, one used a whitespace pattern the SQL doesn't contain). Both were
+  rewritten to operate on the extracted denominator; verified 3 failed -> 9 passed.
 ### 2026-08-07 — Fix: drop the inert `frame-ancestors` directive from the CSP meta tag
 
 - Follow-up to the clickjacking fix. Now that the header is real, `index.html` still declared
