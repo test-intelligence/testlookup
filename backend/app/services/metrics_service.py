@@ -36,6 +36,26 @@ async def count_open_critical_defects(db: AsyncSession, project_id) -> int:
     return int(result.scalar() or 0)
 
 
+def _evaluated(passed: int, failed: int, broken: int) -> int:
+    """Tests that actually produced a verdict — the pass-rate denominator.
+
+    ``BROKEN`` (an infra/error result) MUST be in here. It was previously
+    omitted, so a run of 10 passed / 0 failed / 2 broken reported a **100% pass
+    rate** while a sixth of the suite never passed — a false headline, and one
+    that feeds ``_compute_readiness()`` and the release-gate bands.
+
+    Skips are excluded on purpose: a skipped test was never evaluated, so it
+    belongs in neither numerator nor denominator.
+
+    This matches the definition the rest of the codebase already uses --
+    ``analysis_report_service`` ("evaluated = passed + failed + broken; skips
+    don't count"), ``ingestion._executed`` and ``run_status`` -- and the same
+    module's own flaky heuristic, which documents FAILED *or* BROKEN as "the
+    canonical failed set used everywhere else".
+    """
+    return passed + failed + broken
+
+
 def _normalize_suite_name(suite_name: str | None) -> str | None:
     normalized = (suite_name or "").strip().lower()
     return normalized or None
@@ -338,6 +358,7 @@ async def _period_stats(
                 func.count(TestRun.id).label("total_runs"),
                 func.coalesce(func.sum(TestRun.passed_tests), 0).label("sum_passed"),
                 func.coalesce(func.sum(TestRun.failed_tests), 0).label("sum_failed"),
+                func.coalesce(func.sum(TestRun.broken_tests), 0).label("sum_broken"),
                 func.coalesce(func.sum(TestRun.total_tests), 0).label("sum_total"),
                 func.avg(TestRun.duration_ms).label("avg_duration_ms"),
             ).where(*conditions)
@@ -345,32 +366,32 @@ async def _period_stats(
         row = result.one()
         sum_passed = int(row.sum_passed or 0)
         sum_failed = int(row.sum_failed or 0)
-        denom = sum_passed + sum_failed
+        sum_broken = int(row.sum_broken or 0)
+        denom = _evaluated(sum_passed, sum_failed, sum_broken)
         pass_rate = (sum_passed / denom * 100.0) if denom else 0.0
         return {
             "total_runs": row.total_runs or 0,
             "pass_rate": pass_rate,
             "avg_duration_ms": int(row.avg_duration_ms or 0),
         }
-    # Weighted pass-rate across the period: sum of passed tests / sum of
-    # (passed + failed) tests across every TestRun in the window. The previous
-    # ``AVG(TestRun.pass_rate)`` treated each run equally regardless of size,
-    # so a single 0%-pass smoke run could drag the dashboard headline number
-    # well below what /live reports for the same data. /live computes
-    # ``passed / (passed + failed)`` on visible sessions, so this aligns the
-    # methodology — different time windows, identical math.
+    # Weighted pass-rate across the period: sum of passed tests over the sum of
+    # EVALUATED tests across every TestRun in the window. Weighted (not
+    # ``AVG(TestRun.pass_rate)``) so a single tiny 0%-pass smoke run cannot drag
+    # the headline down as if it were a full suite.
     result = await db.execute(
         select(
             func.count(TestRun.id).label("total_runs"),
             func.coalesce(func.sum(TestRun.passed_tests), 0).label("sum_passed"),
             func.coalesce(func.sum(TestRun.failed_tests), 0).label("sum_failed"),
+            func.coalesce(func.sum(TestRun.broken_tests), 0).label("sum_broken"),
             func.avg(TestRun.duration_ms).label("avg_duration_ms"),
         ).where(*conditions)
     )
     row = result.one()
     sum_passed = int(row.sum_passed or 0)
     sum_failed = int(row.sum_failed or 0)
-    denom = sum_passed + sum_failed
+    sum_broken = int(row.sum_broken or 0)
+    denom = _evaluated(sum_passed, sum_failed, sum_broken)
     pass_rate = (sum_passed / denom * 100.0) if denom else 0.0
     return {
         "total_runs": row.total_runs or 0,

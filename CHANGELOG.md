@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: pass rate could report 100% while tests were BROKEN (BEHAVIOR CHANGE)
+
+- Demonstrated on a throwaway project ingested for the purpose — one run of
+  **10 PASSED / 0 FAILED / 2 BROKEN**:
+  - dashboard `/metrics/summary` → **`avg_pass_rate_7d = 100.0%`**
+  - coverage `/analytics/coverage` → `avg_pass_rate = 83.3%`
+- Two of twelve tests did not pass and the headline said 100%. That is a false
+  statement, not a denominator preference — and it propagates: `_compute_readiness()`
+  and the release-gate pass-rate bands consume this number, so a policy of
+  "pass_rate ≥ 95 → GREEN" would return GREEN while a sixth of the suite was broken
+  by infrastructure.
+- Root cause: `_period_stats` computed `passed / (passed + failed)` at **both** call
+  sites, silently dropping BROKEN.
+- This contradicted the codebase's own definition in three other places —
+  `analysis_report_service` (*"evaluated = passed + failed + broken; skips don't count"*),
+  `ingestion` (`executed = passed + failed + broken`) and `run_status` — and contradicted
+  `metrics_service` itself fifteen lines below the bug, where the flaky heuristic documents
+  FAILED *or* BROKEN as *"the canonical failed set used everywhere else"*.
+- Both sites now derive the denominator from a shared `_evaluated()` helper. **Skips stay
+  excluded** — a skipped test was never evaluated.
+- **Behavior change:** pass rate drops wherever BROKEN tests exist (83.9% → 81.0% on the
+  exploratory dataset) and can no longer read 100% when tests are broken. Release-gate
+  verdicts derived from it may change accordingly — that is the point.
+- Existing `test_metrics_weighted_pass_rate.py` mocks gained `sum_broken`; every expected
+  value there is unchanged, since those scenarios have no broken tests. Found by
+  exploratory testing; 12 new regression tests, verified 6 failed → all pass.
+
 ### 2026-08-07 — Fix: /failures headline claimed stable regressions "oscillate" (BEHAVIOR CHANGE)
 
 - The FAILURE VERDICT card on `/failures` rendered **"Flaky · 5 tests intermittent"** and,

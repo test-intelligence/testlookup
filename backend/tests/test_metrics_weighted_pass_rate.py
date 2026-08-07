@@ -7,8 +7,16 @@ which averages run-level percentages equally regardless of run size, while
 count). One tiny failing run could drag the dashboard headline far below
 the user's lived experience.
 
-The fix switches the no-suite branch to ``Σpassed / Σ(passed + failed)``,
-matching /live's methodology. These tests pin the contract.
+The fix switches the no-suite branch to a WEIGHTED ratio rather than an
+unweighted average of run-level percentages. These tests pin that contract.
+
+UPDATED 2026-08-07: the denominator is now ``Σ(passed + failed + broken)`` via
+``_evaluated()``. Omitting BROKEN let a run of 10 passed / 0 failed / 2 broken
+report a **100% pass rate** (see
+``tests/regression/test_pass_rate_counts_broken.py``). The *weighting* contract
+these tests exist to protect is unchanged -- every scenario below has zero
+broken tests, so every expected value is identical; the mocks simply had to
+grow the new ``sum_broken`` column.
 
 The suite-filtered branch already uses test-level COUNT and was unaffected
 by the bug, but we test it here too so a future change can't regress.
@@ -42,7 +50,7 @@ async def test_period_stats_weighted_avg_no_skips_inflate():
     row = SimpleNamespace(
         total_runs=2,
         sum_passed=91,    # 1 + 90
-        sum_failed=19,    # 9 + 10
+        sum_broken=0, sum_failed=19,    # 9 + 10
         avg_duration_ms=1000,
     )
     db = AsyncMock()
@@ -66,7 +74,7 @@ async def test_period_stats_skipped_not_counted_in_denominator():
 
     # 90 passed, 10 failed → 90% even if there were 1000 skipped on top.
     row = SimpleNamespace(
-        total_runs=1, sum_passed=90, sum_failed=10, avg_duration_ms=500,
+        total_runs=1, sum_passed=90, sum_broken=0, sum_failed=10, avg_duration_ms=500,
     )
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_one_result(row))
@@ -85,7 +93,7 @@ async def test_period_stats_zero_runs_returns_zero_rate():
     from app.services.metrics_service import _period_stats
 
     row = SimpleNamespace(
-        total_runs=0, sum_passed=0, sum_failed=0, avg_duration_ms=0,
+        total_runs=0, sum_passed=0, sum_broken=0, sum_failed=0, avg_duration_ms=0,
     )
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_one_result(row))
@@ -105,7 +113,7 @@ async def test_period_stats_all_passed_returns_100():
     from app.services.metrics_service import _period_stats
 
     row = SimpleNamespace(
-        total_runs=5, sum_passed=500, sum_failed=0, avg_duration_ms=200,
+        total_runs=5, sum_passed=500, sum_broken=0, sum_failed=0, avg_duration_ms=200,
     )
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_one_result(row))
@@ -126,7 +134,7 @@ async def test_period_stats_handles_null_sum_columns():
     from app.services.metrics_service import _period_stats
 
     row = SimpleNamespace(
-        total_runs=None, sum_passed=None, sum_failed=None, avg_duration_ms=None,
+        total_runs=None, sum_passed=None, sum_broken=0, sum_failed=None, avg_duration_ms=None,
     )
     db = AsyncMock()
     db.execute = AsyncMock(return_value=_one_result(row))
@@ -156,7 +164,7 @@ async def test_period_stats_suite_filtered_reads_aggregates_from_test_runs():
     row = SimpleNamespace(
         total_runs=3,
         sum_passed=120,
-        sum_failed=30,
+        sum_broken=0, sum_failed=30,
         sum_total=150,
         avg_duration_ms=750,
     )
