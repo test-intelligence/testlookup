@@ -2,7 +2,7 @@
  * Right-rail panels for /releases:
  *   - ShippingThisWeek — releases due in the next 7 days, with a date tile
  *   - AgingSignals — stale releases (blocked, planning idle, UAT pending)
- *   - CompliancePacks — signed audit ZIPs (placeholder rows w/ deterministic SHA prefix)
+ *   - CompliancePacks — releases eligible for a pack, linking to the real panel
  *   - RecentActivity — synthesised from release update timestamps
  *
  * Every panel is client-derived from the same ``DerivedRelease[]`` the
@@ -13,7 +13,6 @@ import { useNow } from '@/hooks/useNow'
 import {
   ArrowRight,
   Clock,
-  Download,
   FileText,
   ShieldCheck,
 } from 'lucide-react'
@@ -195,16 +194,30 @@ export function AgingSignals({ releases, onOpen }: { releases: DerivedRelease[];
 
 // ── Compliance packs ───────────────────────────────────────────────────────
 
-/** Deterministic 8-char sha256 prefix from a release id — keeps the rendering stable. */
-function fakeSha(id: string): string {
-  let hash = 0
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
-  return hash.toString(16).padStart(8, '0').slice(0, 8)
-}
-
-export function CompliancePacks({ releases }: { releases: DerivedRelease[] }) {
-  // Released → "Download" (signed pack); In-progress conditional → "Generate"
-  // (disabled until gate is at least Conditional); other states → omitted.
+/**
+ * Releases eligible for a compliance pack, linking to where packs actually live.
+ *
+ * This panel is client-derived from the portfolio's ``DerivedRelease[]`` and
+ * never fetches packs, so it cannot state anything about one. It previously did
+ * anyway — rendering ``4.2 MB · sha256:<8 hex>…`` where the size was a literal
+ * and the checksum was a 32-bit string hash of the release id, for releases
+ * that had no pack at all. On an audit surface whose premise is a tamper-
+ * evident SHA-256 chain, an invented checksum is the one thing that must never
+ * appear.
+ *
+ * ``CompliancePackPanel`` (inside the expanded release) is the real thing: it
+ * lists generated packs and downloads real bytes carrying the real
+ * ``manifest_sha256``. This rail's job is to point there.
+ */
+export function CompliancePacks({
+  releases,
+  onOpen,
+}: {
+  releases: DerivedRelease[]
+  onOpen: (id: string) => void
+}) {
+  // Released, or in-progress with a gate that isn't a hard no — the states from
+  // which a pack can legitimately be produced.
   const rows = releases
     .filter(r => r.stage === 'released' || (r.stage === 'in_progress' && r.gate.decision !== 'no_go'))
     .slice(0, 5)
@@ -217,7 +230,6 @@ export function CompliancePacks({ releases }: { releases: DerivedRelease[] }) {
         <ul className="m-0 p-0 list-none divide-y" style={{ borderColor: 'var(--color-border)' }}>
           {rows.map(r => {
             const isReleased = r.stage === 'released'
-            const sha = fakeSha(r.id)
             return (
               <li key={r.id} className="flex items-center gap-3 px-3.5 py-2.5">
                 <div
@@ -233,17 +245,17 @@ export function CompliancePacks({ releases }: { releases: DerivedRelease[] }) {
                   <div className="text-[12.5px] font-medium text-[var(--color-text)] truncate">
                     {r.name}{r.version && ` ${r.version}`}
                   </div>
-                  <div className="text-[11px] font-mono text-[var(--color-text-muted)] truncate">
-                    {isReleased ? `4.2 MB · sha256:${sha}…` : 'pack pending — gate at conditional+'}
+                  <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+                    {isReleased ? 'Released — eligible for a pack' : 'In progress — eligible once decided'}
                   </div>
                 </div>
                 <button
                   type="button"
-                  className="shrink-0 inline-flex items-center gap-1 text-[11.5px] text-[var(--color-accent)] hover:underline disabled:opacity-50 disabled:no-underline"
-                  disabled={!isReleased && r.gate.decision === 'no_go'}
+                  onClick={() => onOpen(r.id)}
+                  className="shrink-0 inline-flex items-center gap-1 text-[11.5px] text-[var(--color-accent)] hover:underline"
                 >
-                  {isReleased ? <Download className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
-                  {isReleased ? 'Download' : 'Generate'}
+                  <FileText className="h-3 w-3" />
+                  View packs
                 </button>
               </li>
             )

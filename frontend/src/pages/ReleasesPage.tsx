@@ -853,7 +853,7 @@ export default function ReleasesPage() {
             <div className="flex flex-col gap-3.5 min-w-0">
               <ShippingThisWeek releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
               <AgingSignals releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
-              <CompliancePacks releases={derived} />
+              <CompliancePacks releases={derived} onOpen={(id) => setExpandedId(expandedId === id ? null : id)} />
               <RecentActivity releases={derived} />
             </div>
           </div>

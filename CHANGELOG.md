@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: the compliance-pack rail displayed a fabricated SHA-256
+
+- The "Compliance packs" panel on `/releases` rendered, for a release with **no pack at all**:
+
+  ```
+  ZZ Probe Release 9.9.9
+  4.2 MB · sha256:d6b975f7…            [Download]
+  ```
+
+  Confirmed live. Neither value came from a compliance pack:
+  - `sha256:` was `fakeSha(id)` — a 32-bit `hash * 31 + charCode` over the release **UUID**,
+    zero-padded to 8 hex chars. Not SHA-256, not computed over any archive, and identical on
+    every render because it depended only on the id.
+  - `4.2 MB` was a string literal, shown for every released row.
+  - `GET /api/v1/releases/{id}/compliance-packs` returned `[]` for the very release showing
+    that checksum.
+  - Both buttons were `<button type="button">` with no `onClick` — clicking did nothing.
+- The rows were derived from release **stage** alone; the panel never fetched a pack, so it
+  had no basis for any of it.
+- This is the worst possible place for a placeholder: the feature's premise is *"sealed with a
+  tamper-evident SHA-256 checksum chain"*, and a fabricated `sha256:` beside a release name in
+  a panel titled "Compliance packs" is exactly the pixel an auditor would screenshot. The app
+  already ships the honest implementation — `CompliancePackPanel` lists real packs and
+  downloads real bytes carrying the real `manifest_sha256` — so this was a decorative mock
+  sitting next to working code.
+- Fix: the rail cannot list real packs (it is client-derived from the portfolio's
+  `DerivedRelease[]`; packs are a per-release fetch), so it becomes what it can honestly be —
+  a pointer to the releases *eligible* for a pack, whose action opens the release and its real
+  pack panel. The invented checksum, the invented size, and the "pack pending" claim are gone,
+  and the previously inert buttons now work.
+- Same class as the two fabricated "AI confidence" values removed earlier.
+
 ### 2026-08-07 — Fix: frontend telemetry silently discarded the batch it failed to send
 
 - `flush()` in `utils/errorReporting.ts` emptied the buffer **before** calling
