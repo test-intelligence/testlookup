@@ -64,6 +64,25 @@ router = APIRouter(prefix="/api/v1/me", tags=["My Failures"])
 _ACTIONABLE_STATUSES = (TestStatus.FAILED, TestStatus.BROKEN)
 
 
+def _live_projects_only():
+    """Restrict the inbox to projects that still exist.
+
+    ``DELETE /projects/{id}`` is a SOFT delete -- it flips ``is_active`` to
+    False. Only the project LIST honours that flag, so a deleted project's
+    failures kept appearing in the assignment inbox: actionable work items for a
+    project the user cannot open, filter by, or navigate to, and which is gone
+    from every project picker.
+
+    Expressed as a subquery rather than an extra JOIN so it drops into both the
+    list and the count statements unchanged -- they join different tables, and
+    the two MUST stay in agreement or the sidebar badge disagrees with the page
+    it links to.
+    """
+    return TestRun.project_id.in_(
+        select(Project.id).where(Project.is_active.is_(True))
+    )
+
+
 def _parse_project_id(raw: Optional[str]) -> Optional[uuid.UUID]:
     """Honour the All-Projects sentinel — ``"all"`` and empty both mean unscoped."""
     if not raw or raw == "all":
@@ -128,6 +147,7 @@ async def list_my_assigned_failures(
         TestCase.status.in_(_ACTIONABLE_STATUSES),
         TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
         TestCase.created_at >= period_start,
+        _live_projects_only(),
     ]
     if effective_scope == "mine":
         base_filters.append(TestCase.assigned_to_user_id == current_user.id)
@@ -306,6 +326,9 @@ async def my_assigned_failures_count(
         # Match the inbox list endpoint — badge counts only PENDING_REVIEW.
         TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
         TestCase.created_at >= period_start,
+        # ...and, like the list, skips soft-deleted projects. If these two ever
+        # disagree the badge advertises work the page cannot show.
+        _live_projects_only(),
     ]
     if effective_scope == "mine":
         filters.append(TestCase.assigned_to_user_id == current_user.id)

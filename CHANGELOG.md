@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: deleted projects' failures stayed in the assignment inbox
+
+- `GET /me/assigned-failures?scope=team` returned failures belonging to a **deleted**
+  project. Found by accident: an earlier exploratory iteration created a throwaway project,
+  probed it and deleted it — two iterations later its two failures were still sitting in the
+  team inbox alongside the live project's eleven.
+- `DELETE /projects/{id}` is a **soft** delete (`projects.py:165` sets `is_active = False`),
+  and only the project *list* honoured that flag (`projects.py:32`). The inbox therefore
+  listed actionable work for a project absent from every project picker, which the user
+  cannot open, filter by, or navigate to.
+- Both the inbox list **and** the `/count` badge now apply the same restriction via a shared
+  `_live_projects_only()` helper — fixing only one would have left the sidebar badge
+  advertising work the page cannot display, the same list/badge disagreement this module's
+  own comments warn about. A test asserts neither endpoint hand-rolls the predicate.
+- Related and deliberately **not** changed: `GET /projects/{id}` still returns **200** for a
+  soft-deleted project. Whether it should 404 is a product call with real blast radius —
+  audit trails and historical run pages legitimately resolve deleted projects by id.
+- 6 regression tests, verified 4 failed → all pass; 322 passed across the
+  my-failures/assignment/project surface.
+
 ### 2026-08-07 — Fix: pass rate could report 100% while tests were BROKEN (BEHAVIOR CHANGE)
 
 - Demonstrated on a throwaway project ingested for the purpose — one run of
