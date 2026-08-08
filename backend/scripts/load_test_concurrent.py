@@ -250,13 +250,21 @@ async def _issue_one(
 ) -> tuple[float, bool]:
     """Fire one request. Returns (latency_ms, ok_flag)."""
     path = scenario.path_fn(fixtures)
-    start = time.monotonic()
+    # perf_counter, NOT monotonic: on Windows time.monotonic() has a 15.625 ms
+    # resolution, so every per-request latency snapped to a multiple of ~15.6 ms
+    # and anything faster than one tick recorded as 0.0 ms. Endpoints here run
+    # in single-digit to low-tens of milliseconds, i.e. entirely inside one
+    # tick, so p50/p95 were quantisation buckets rather than measurements --
+    # and a 30x increase in row count appeared to make the API *faster*.
+    # perf_counter is 0.0001 ms here and is documented as the clock for short
+    # durations.
+    start = time.perf_counter()
     try:
         resp = await client.request(scenario.method, path)
         ok = resp.status_code < 500
     except Exception:
         ok = False
-    elapsed_ms = (time.monotonic() - start) * 1000
+    elapsed_ms = (time.perf_counter() - start) * 1000
     return elapsed_ms, ok
 
 
@@ -299,9 +307,9 @@ async def run_scenario(
                 if not ok:
                     result.errors += 1
 
-    wall_start = time.monotonic()
+    wall_start = time.perf_counter()
     await asyncio.gather(*(worker() for _ in range(concurrency)))
-    wall_elapsed = time.monotonic() - wall_start
+    wall_elapsed = time.perf_counter() - wall_start
     result._rps = round(result.iterations / wall_elapsed, 1) if wall_elapsed > 0 else 0.0
     return result
 
@@ -352,26 +360,6 @@ async def cmd_bench(args: argparse.Namespace) -> int:
             f"errors={result.errors:>3}{status}"
         )
 
-    # Budget check
-    if args.check_budgets:
-        print("\n── Budget compliance ──────────────────────────────────────────")
-        budget_violations = 0
-        for sc, result in zip(active_scenarios, results):
-            if not sc.budget_p95_ms:
-                continue
-            ok = result.p95 <= sc.budget_p95_ms and result.errors == 0
-            label = "PASS" if ok else "FAIL"
-            if not ok:
-                budget_violations += 1
-            print(
-                f"  {sc.operation:25s} p95={result.p95:>6.1f}ms "
-                f"(budget {sc.budget_p95_ms}ms) errors={result.errors}  → {label}"
-            )
-        if budget_violations:
-            print(f"\n{budget_violations} budget violation(s).")
-            return 1
-        print("\nAll budgets met.")
-
     if args.output:
         report = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -399,10 +387,49 @@ async def cmd_bench(args: argparse.Namespace) -> int:
             json.dump(report, f, indent=2)
         print(f"\nResults saved to {args.output}")
 
+    # Budget check
+    if args.check_budgets:
+        print("\n── Budget compliance ──────────────────────────────────────────")
+        budget_violations = 0
+        for sc, result in zip(active_scenarios, results):
+            if not sc.budget_p95_ms:
+                continue
+            ok = result.p95 <= sc.budget_p95_ms and result.errors == 0
+            label = "PASS" if ok else "FAIL"
+            if not ok:
+                budget_violations += 1
+            print(
+                f"  {sc.operation:25s} p95={result.p95:>6.1f}ms "
+                f"(budget {sc.budget_p95_ms}ms) errors={result.errors}  → {label}"
+            )
+        if budget_violations:
+            print(f"\n{budget_violations} budget violation(s).")
+            return 1
+        print("\nAll budgets met.")
+
+
     return 0
 
 
+def _use_utf8_stdio() -> None:
+    """Windows consoles default to cp1252, which cannot encode this script's
+    output (box-drawing ``─`` in headers, ``→`` in budget lines).
+
+    Without this the harness crashed *after* completing every measurement but
+    *before* reporting budget compliance or writing --output, and exited 1 --
+    indistinguishable from a real budget breach. The expensive part had already
+    succeeded; only the reporting failed.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001 - never let logging setup kill a run
+                pass
+
+
 def main() -> None:
+    _use_utf8_stdio()
     parser = argparse.ArgumentParser(description="TestLookup concurrent load test harness")
     sub = parser.add_subparsers(dest="command")
 
