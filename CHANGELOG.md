@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: `requires_human_review` ignored the configured confidence threshold
+
+- The gate threshold is admin-configurable (`ai_confidence_threshold`, default 80).
+  `analysis_router` evaluated it, recorded `threshold_check` into `routing_metadata`, and
+  set `low_confidence` / `confidence_gate_status` — but left `requires_human_review` at
+  whatever the engine chose. `rules_engine` chooses it from a **hardcoded** `confidence < 70`.
+
+- That is the field that survives: `ai_analysis` has **no** `low_confidence` column, so the
+  persisted row carries only `requires_human_review`. `run_intelligence_service` serves it,
+  `analytics_service` counts it as `needs_review`, and the UI falls back to it
+  (`result.low_confidence ?? result.requires_human_review`). `services/agent.py` already
+  derived it from the gate; the router did not, so the verdict depended on which path ran.
+
+- **This does not misbehave at default settings, and the ledger says so.** Rules analyses
+  carry no `evidence_references`, so `_validate_confidence` caps them at 50 — below both
+  the hardcoded 70 and the default threshold of 80. Verified live: `pattern.oom` and
+  `pattern.connection_refused` both landed at confidence 50, `requires_human_review=t`,
+  `gate_passed=false` — in agreement. The disagreement needs a threshold at or below the
+  capped confidence, which an admin lowering the bar to surface more AI suggestions creates.
+
+- The router now derives `requires_human_review` from the gate, mirroring `agent.py`, so the
+  configured threshold is authoritative on every path.
+
+- Regression: `backend/tests/regression/test_requires_human_review_follows_gate.py`
+  (1 of 6 fails before the fix — the other 5 pin the arithmetic and hold either way).
+  502 tests pass across the confidence / gate / rules-engine slice.
+
 ### 2026-08-08 — Fix: the decision trail could not say why the LLM didn't run
 
 - Every `ai_analysis` row on the live deployment recorded:

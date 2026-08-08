@@ -270,6 +270,15 @@ async def classify_test(
         # verdict by comparing numbers themselves.
         result["low_confidence"] = is_low_confidence(check)
         result["confidence_gate_status"] = gate_status(check)
+        # ``requires_human_review`` is the field that is actually PERSISTED
+        # (ai_analysis has no low_confidence column), served by the run
+        # intelligence read path, and counted as "needs_review" in analytics.
+        # It used to keep whatever the engine set — and rules_engine sets it
+        # from a hardcoded ``confidence < 70``, independent of the
+        # admin-configured threshold this gate just evaluated. Deriving it here
+        # mirrors what services/agent.py already does, so the configured
+        # threshold is authoritative on every path rather than only one.
+        result["requires_human_review"] = not check["passed"]
     except Exception:  # pragma: no cover — gating must never break routing
         routing["threshold_check"] = None
 
