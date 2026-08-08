@@ -396,8 +396,12 @@ class Settings(BaseSettings):
     # ── Deep Investigation ────────────────────────────────────────────────────────
     DEEP_INVESTIGATION_ENABLED: bool = True
     RELEASE_PASS_RATE_THRESHOLD: float = 90.0     # minimum pass rate to consider GO
-    DEEP_CLUSTER_THRESHOLD: float = 0.75          # Jaccard similarity threshold for clustering
-    DEEP_MAX_CLUSTERS_PER_RUN: int = 20           # cap clusters to avoid overload
+    # NOTE: DEEP_CLUSTER_THRESHOLD (Jaccard similarity) and
+    # DEEP_MAX_CLUSTERS_PER_RUN were removed 2026-08-08. They described a
+    # similarity-clustering design that was never built: flaky_investigator's
+    # ``cluster_failures`` groups by *exact* error signature and stack
+    # fingerprint, so there was no similarity threshold to tune and no cluster
+    # list to cap. Both read as live tuning knobs and did nothing.
 
     # ── Knowledge-Grounded Test Generation (RAG) ───────────────────────────────
     KNOWLEDGE_RAG_ENABLED: bool = False

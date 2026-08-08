@@ -167,9 +167,58 @@ async def semantic_cache_store(
             }],
         )
         logger.debug("Stored analysis in semantic cache: id=%s test=%s", doc_id, test_name[:40])
+        await _enforce_size_cap(collection, project_id)
 
     except Exception as exc:
         logger.debug("Semantic cache store failed (non-critical): %s", exc)
+
+
+# Prune to this fraction of the cap when it is exceeded, so eviction runs
+# occasionally in batches instead of on every single store once at the ceiling.
+_PRUNE_TO_FRACTION = 0.9
+
+
+async def _enforce_size_cap(collection, project_id: Optional[str] = None) -> None:
+    """Evict the oldest entries when the collection exceeds its configured cap.
+
+    ``SEMANTIC_CACHE_MAX_DOCUMENTS`` documented itself as "cap ChromaDB
+    collection size" and was never read by anything, so the per-tenant cache
+    grew without bound for the life of the deployment. Eviction is by
+    ``cached_at`` — the metadata the store path already writes.
+
+    Best-effort: the caller treats cache failures as non-critical, and an
+    eviction problem must never fail the analysis that triggered it.
+    """
+    cap = int(getattr(settings, "SEMANTIC_CACHE_MAX_DOCUMENTS", 0) or 0)
+    if cap <= 0:
+        return  # 0/absent = uncapped, an explicit operator choice
+    try:
+        count = await asyncio.to_thread(collection.count)
+        if count <= cap:
+            return
+
+        target = max(1, int(cap * _PRUNE_TO_FRACTION))
+        overflow = count - target
+        existing = await asyncio.to_thread(collection.get, include=["metadatas"])
+        ids = existing.get("ids") or []
+        metas = existing.get("metadatas") or []
+        if not ids:
+            return
+        # Missing/unparseable cached_at sorts oldest, so malformed rows are
+        # evicted first rather than becoming immortal.
+        paired = [(m.get("cached_at") or "" if isinstance(m, dict) else "", i)
+                  for i, m in zip(ids, metas)]
+        paired.sort(key=lambda pair: pair[0])
+        doomed = [i for _, i in paired[:overflow]]
+        if doomed:
+            await asyncio.to_thread(collection.delete, ids=doomed)
+            logger.info(
+                "semantic_cache_evicted",
+                extra={"evicted": len(doomed), "count_before": count,
+                       "cap": cap, "project_id": project_id},
+            )
+    except Exception as exc:  # noqa: BLE001 — never fail the caller
+        logger.debug("Semantic cache size-cap enforcement failed (non-critical): %s", exc)
 
 
 async def semantic_cache_invalidate(

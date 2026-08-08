@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: four config knobs that did nothing, incl. an uncapped semantic cache
+
+- Swept all 205 `Settings` fields for ones nothing reads. A config field nobody reads is the
+  worst kind of configuration bug: the operator sets it, restarts, and behaviour is
+  unchanged — it *looks* like it worked. Four were dead.
+
+- **`SEMANTIC_CACHE_MAX_DOCUMENTS` (`= 10000  # cap ChromaDB collection size`)** — never
+  read. `semantic_cache_store` upserted unconditionally, so the per-tenant ChromaDB
+  collection **grew without bound for the life of the deployment**. A test elsewhere asserted
+  its default value while no code consumed it. Now enforced: oldest-first eviction by the
+  `cached_at` metadata the store path already wrote, pruning to 90% of the cap so it runs in
+  occasional batches rather than on every store once at the ceiling. `0` means uncapped.
+  Best-effort throughout — cache upkeep must never fail the analysis that triggered it.
+
+- **`KNOWLEDGE_SYNC_TIMEOUT_SECONDS` (`= 60`)** — never read; the connectors hardcoded
+  10s/15s/20s. No hang risk (timeouts existed), but an operator raising it for a slow
+  air-gapped Confluence got nothing. Content fetches in the Confluence/Jira/URL connectors now
+  use it. Health-check probes keep their short fixed timeouts — a liveness probe should not
+  inherit a bulk-fetch budget.
+
+- **`DEEP_CLUSTER_THRESHOLD` / `DEEP_MAX_CLUSTERS_PER_RUN`** — removed. They described a
+  Jaccard similarity-clustering design that was never built: `flaky_investigator.cluster_failures`
+  groups by *exact* error signature and stack fingerprint, so there was no threshold to tune
+  and no cluster list to cap.
+
+- New guard `backend.settings-are-consumed`. It found `SEMANTIC_CACHE_MAX_DOCUMENTS`, which my
+  manual sweep had missed, and was verified to fail on an injected dead knob.
+  `CORS_ORIGINS_RAW` is allowlisted — it is consumed by a property inside `config.py` itself.
+
+- Regressions: `test_semantic_cache_size_cap.py` (9 of 9 fail before the fix), covering the
+  boundary at exactly the cap, `0` = uncapped, oldest-first order, rows with missing
+  `cached_at` evicted first rather than becoming immortal, and that a failing collection never
+  raises into the caller.
+
 ### 2026-08-08 — Fix: SWR poll cadences drifted off the tier config, unenforced
 
 - `config/refreshIntervals.ts` states *"All hooks should import from here — never hardcode

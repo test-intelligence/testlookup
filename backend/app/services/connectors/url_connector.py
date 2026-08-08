@@ -16,6 +16,7 @@ from app.services.connectors.base import (
     KnowledgeConnectorBase,
 )
 from app.services.url_safety import is_safe_public_url
+from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -81,7 +82,8 @@ class URLConnector(KnowledgeConnectorBase):
             # hop must pass the SSRF guard *before* we request it — automatic
             # following would issue those requests for us, defeating the guard.
             async with httpx.AsyncClient(
-                timeout=20.0,
+                # Per-hop budget for the hand-walked redirect chain.
+                timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
                 follow_redirects=False,
                 verify=_http_verify(),
             ) as client:

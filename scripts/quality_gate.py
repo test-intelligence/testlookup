@@ -824,6 +824,68 @@ def _frontend_refresh_intervals_from_config() -> list[Violation]:
     return violations
 
 
+# Settings consumed by a property/validator *inside* config.py itself, so they
+# legitimately have no reference elsewhere.
+_SETTINGS_INTERNAL_ONLY = {"CORS_ORIGINS_RAW"}
+_SETTINGS_FIELD_RE = re.compile(r"(?m)^\s{4}([A-Z][A-Z0-9_]{2,}):\s")
+
+
+def _backend_settings_are_consumed() -> list[Violation]:
+    """Every Settings field must be read somewhere.
+
+    A config field nobody reads is a knob that silently does nothing. An
+    operator sets it, restarts, and the behaviour is unchanged — the worst kind
+    of configuration bug, because it looks like it worked.
+
+    Found three: DEEP_CLUSTER_THRESHOLD and DEEP_MAX_CLUSTERS_PER_RUN described a
+    similarity-clustering design that was never built, and
+    KNOWLEDGE_SYNC_TIMEOUT_SECONDS sat unread while the connectors hardcoded
+    10s/15s/20s.
+
+    Searches Python plus the deployment surfaces (compose/k8s/env/shell), since
+    a setting may legitimately be consumed only as an env var.
+    """
+    violations: list[Violation] = []
+    cfg_path = REPO_ROOT / "backend" / "app" / "core" / "config.py"
+    if not cfg_path.exists():
+        return violations
+    raw = cfg_path.read_text(encoding="utf-8", errors="ignore")
+    body = re.sub(r'""".*?"""', "", raw, flags=re.S)
+    body = re.sub(r"(?m)^\s*#.*$", "", body)
+    names = sorted(set(_SETTINGS_FIELD_RE.findall(body)))
+
+    blobs: list[str] = []
+    for path in iter_files(REPO_ROOT / "backend", (".py",)):
+        sp = path.as_posix()
+        if "/tests/" in sp or sp.endswith("app/core/config.py") or "migrations/versions" in sp:
+            continue
+        blobs.append(path.read_text(encoding="utf-8", errors="ignore"))
+    for sub in ("k8s", "docker", "scripts", "cli", "mcp"):
+        d = REPO_ROOT / sub
+        if d.exists():
+            for path in iter_files(d, (".yaml", ".yml", ".py", ".sh", ".env")):
+                blobs.append(path.read_text(encoding="utf-8", errors="ignore"))
+    for name in ("docker-compose.yml", "docker-compose.airgap.yml", ".env.example", "Makefile"):
+        f = REPO_ROOT / name
+        if f.exists():
+            blobs.append(f.read_text(encoding="utf-8", errors="ignore"))
+    hay = chr(10).join(blobs)
+
+    for ln, line in grep_lines(cfg_path, _SETTINGS_FIELD_RE):
+        m = _SETTINGS_FIELD_RE.search(line)
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in names or name in _SETTINGS_INTERNAL_ONLY or name in hay:
+            continue
+        violations.append(Violation(
+            cfg_path, ln,
+            f"{name} is never read — a knob that does nothing. Wire it up, or "
+            f"delete it so operators are not misled into tuning it.",
+        ))
+    return violations
+
+
 def _frontend_single_axios() -> list[Violation]:
     """One Axios instance owns auth refresh + 401 queue. A second
     instance silently bypasses the refresh interceptor, so 401s
@@ -1457,6 +1519,12 @@ GUARDS: list[Guard] = [
         description="Literal 'all' assigned to project_id — never send to backend.",
         check=_frontend_all_projects_literal,
         fix_hint="Use `activeProjectId === ALL_PROJECTS_ID` guard and pass `null` to the API.",
+    ),
+    Guard(
+        name="backend.settings-are-consumed",
+        description="Every Settings field is read somewhere — no dead config knobs.",
+        check=_backend_settings_are_consumed,
+        fix_hint="Reference it in code (or a compose/k8s/env surface), or remove the field.",
     ),
     Guard(
         name="frontend.refresh-intervals-from-config",

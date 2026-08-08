@@ -113,7 +113,10 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
 
         try:
             client = get_http_client()
-            resp = await client.get(url, headers=self._headers(), params=params, timeout=15.0)
+            resp = await client.get(
+                url, headers=self._headers(), params=params,
+                timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
+            )
             if resp.status_code == 401:
                 raise ConnectorFetchError("Jira authentication failed — check credentials")
             if resp.status_code == 403:
@@ -244,7 +247,10 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
                 "maxResults": 50,
             }
             client = get_http_client()
-            resp = await client.get(url, headers=self._headers(), params=params, timeout=15.0)
+            resp = await client.get(
+                url, headers=self._headers(), params=params,
+                timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
+            )
             if resp.status_code != 200:
                 logger.warning(
                     "jira_epic_children_fetch_failed",
