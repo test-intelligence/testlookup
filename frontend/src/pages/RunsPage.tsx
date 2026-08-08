@@ -911,7 +911,12 @@ function SparklineRedStreak({ count }: { count: number }) {
 }
 
 // ── Signature cluster card ────────────────────────────────────────────────
-function SignatureClusterCard({
+// Rows shown per page in the failure-signature table. The card sits beside the
+// scorecard in a fixed-height row, so an unpaginated cluster stretched the page
+// once a window contained more than a handful of matching builds.
+export const SIGNATURE_ROWS_PER_PAGE = 8
+
+export function SignatureClusterCard({
   primaryCluster, outlierClusters, totalRuns, onJumpToRow,
 }: {
   primaryCluster: SignatureCluster | null
@@ -919,6 +924,24 @@ function SignatureClusterCard({
   totalRuns: number
   onJumpToRow: (run: TestRun) => void
 }) {
+  const [sigPage, setSigPage] = useState(1)
+
+  // Cluster membership changes when the project or time window changes; without
+  // a reset a viewer parked on page 3 would land on an empty table.
+  //
+  // Adjusted during render rather than in an effect: an effect would paint the
+  // stale page first and then re-render, and this repo forbids synchronous
+  // setState inside useEffect (react-hooks set-state-in-effect, an error here)
+  // precisely because of those cascading renders.
+  const clusterKey = primaryCluster
+    ? `${primaryCluster.signature}:${primaryCluster.members.length}:${outlierClusters.length}`
+    : ''
+  const [prevClusterKey, setPrevClusterKey] = useState(clusterKey)
+  if (prevClusterKey !== clusterKey) {
+    setPrevClusterKey(clusterKey)
+    setSigPage(1)
+  }
+
   if (!primaryCluster) {
     return (
       <CardShell title="Failure signature" rightSlot={<span>0 clusters</span>}>
@@ -935,6 +958,15 @@ function SignatureClusterCard({
     ...primaryCluster.members.map(m => ({ run: m, isOutlier: false })),
     ...outlierClusters.flatMap(c => c.members.map(m => ({ run: m, isOutlier: true }))),
   ]
+  const sigPages = Math.max(1, Math.ceil(allRows.length / SIGNATURE_ROWS_PER_PAGE))
+  // Clamp rather than trust state: a shrinking cluster can leave sigPage past
+  // the end for the render that happens before the reset effect runs.
+  const safePage = Math.min(sigPage, sigPages)
+  const pageRows = allRows.slice(
+    (safePage - 1) * SIGNATURE_ROWS_PER_PAGE,
+    safePage * SIGNATURE_ROWS_PER_PAGE,
+  )
+
   return (
     <CardShell
       title={
@@ -951,7 +983,7 @@ function SignatureClusterCard({
           {' '}Treat them as one regression, not {matchCount + outlierCount} incidents.
         </p>
         <div className="flex flex-col gap-1.5">
-          {allRows.map(({ run, isOutlier }) => (
+          {pageRows.map(({ run, isOutlier }) => (
             <ClusterRow
               key={run.id}
               run={run}
@@ -967,6 +999,13 @@ function SignatureClusterCard({
           </p>
         )}
       </div>
+      {/* Renders nothing at one page, so small clusters look exactly as before. */}
+      <Pagination
+        page={safePage}
+        pages={sigPages}
+        total={allRows.length}
+        onChange={setSigPage}
+      />
     </CardShell>
   )
 }

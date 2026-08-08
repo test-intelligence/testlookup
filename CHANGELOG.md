@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Failure-signature table on /runs is paginated
+
+- `SignatureClusterCard` rendered every member of the primary cluster **plus** every outlier
+  in one flat list. The card sits beside the scorecard in a fixed-height row, so a window with
+  more than a handful of matching builds stretched the page. The cluster is *expected* to be
+  large — its whole premise is "many builds share one signature".
+
+- 8 rows per page, using the app's existing `Pagination` component, which renders nothing at
+  a single page — so small clusters look exactly as they did.
+
+- The page resets when the cluster changes (project switch, time-window change), otherwise a
+  viewer parked on page 3 lands on an empty table. Done as a **render-time state adjustment**
+  rather than an effect: an effect would paint the stale page first and re-render, and this
+  repo makes synchronous setState inside `useEffect` a lint *error* for exactly that reason.
+
+- The page index is also clamped during render, so a cluster that shrinks cannot show a blank
+  table for the frame before the reset applies.
+
+- Regression: `RunsPage.signaturePagination.test.tsx` — 7 tests covering the slice, the pager
+  appearing only past one page, the total reporting all rows rather than the page size, the
+  reset on cluster change, the shrink clamp, and the untouched empty state.
+
 ### 2026-08-08 — Fix: TopBar controls bunched mid-header; theme panel overlapped content
 
 - The header is `flex items-center gap-4` with the search box at `flex-1 max-w-md`. Once
