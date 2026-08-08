@@ -10,6 +10,7 @@
  *   useSWR(key, fetcher, { refreshInterval })
  */
 import { useEffect, useState } from 'react'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 /**
  * Returns `true` when the current tab is visible, `false` when hidden.

@@ -4,12 +4,13 @@ import type { UserSummary } from '@/services/testManagementService'
 import type { DuplicateBand, DuplicateCandidateStatus } from '@/types/test-management'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useTestCases(params?: Record<string, unknown>) {
   return useProjectScopedSWR(
     'tm-cases',
     (projectId) => testManagementService.listCases(projectId, params),
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
     [params],
   )
 }
@@ -34,7 +35,7 @@ export function useTestCaseReviews(id?: string) {
   return useSWR(
     id ? ['tm-case-reviews', id] : null,
     () => testManagementService.getCaseReviews(id as string),
-    { refreshInterval: 30_000 }
+    { refreshInterval: REFRESH_INTERVALS.POLLING }
   )
 }
 
@@ -42,7 +43,7 @@ export function useTestCaseComments(id?: string) {
   return useSWR(
     id ? ['tm-case-comments', id] : null,
     () => testManagementService.getCaseComments(id as string),
-    { refreshInterval: 30_000 }
+    { refreshInterval: REFRESH_INTERVALS.POLLING }
   )
 }
 
@@ -50,7 +51,7 @@ export function useTestPlans(params?: Record<string, unknown>) {
   return useProjectScopedSWR(
     'tm-plans',
     (projectId) => testManagementService.listPlans(projectId, params),
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
     [params],
   )
 }
@@ -67,7 +68,7 @@ export function usePlanItems(planId?: string) {
   return useSWR(
     planId ? ['tm-plan-items', planId] : null,
     () => testManagementService.getPlanItems(planId as string),
-    { refreshInterval: 30_000 }
+    { refreshInterval: REFRESH_INTERVALS.POLLING }
   )
 }
 
@@ -75,7 +76,7 @@ export function useStrategies() {
   return useProjectScopedSWR(
     'tm-strategies',
     (projectId) => testManagementService.listStrategies(projectId),
-    { refreshInterval: 30_000 }
+    { refreshInterval: REFRESH_INTERVALS.POLLING }
   )
 }
 
@@ -109,7 +110,7 @@ export function useDuplicateCandidates(
   return useSWR(
     projectId ? ['tm-duplicates', projectId, params] : null,
     () => testManagementService.getDuplicateCandidates(projectId as string, params),
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
 }
 
@@ -119,6 +120,6 @@ export function useAuditLog(params?: { entity_type?: string; action?: string; pa
   return useSWR(
     projectId !== null ? ['tm-audit', projectId, params] : null,
     () => testManagementService.getAuditLog(fetchProjectId, params),
-    { refreshInterval: 60_000 }
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND }
   )
 }

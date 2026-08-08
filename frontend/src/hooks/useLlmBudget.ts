@@ -5,12 +5,13 @@ import {
   type LlmQuotaRead,
   type LlmUsageRead,
 } from '@/services/llmBudgetService'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useBillingOverview() {
   const { data, error, isLoading, mutate } = useSWR<BillingOverviewResponse>(
     'billing-overview',
     () => llmBudgetService.overview(),
-    { revalidateOnFocus: false, refreshInterval: 60_000 },
+    { revalidateOnFocus: false, refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
   return { overview: data, isLoading, isError: !!error, refresh: mutate }
 }
@@ -44,7 +45,7 @@ export function useProjectUsage(projectId: string | null) {
       }
       return llmBudgetService.getUsage(projectId)
     },
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
   return { usage: data, isLoading, isError: !!error, refresh: mutate }
 }

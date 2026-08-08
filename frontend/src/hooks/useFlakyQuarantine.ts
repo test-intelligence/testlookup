@@ -5,6 +5,7 @@ import {
   type QuarantineStatsResponse,
   type QuarantineStatus,
 } from '@/services/flakyQuarantineService'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 interface ListOptions {
   projectId?: string | null
@@ -35,7 +36,7 @@ export function useQuarantineList({
         live_only: liveOnly,
         limit,
       }),
-    { refreshInterval: 30_000 },
+    { refreshInterval: REFRESH_INTERVALS.POLLING },
   )
   return {
     requests: data ?? [],
@@ -49,7 +50,7 @@ export function useQuarantineStats(projectId?: string | null) {
   const { data, error, isLoading, mutate } = useSWR<QuarantineStatsResponse>(
     ['quarantine-stats', projectId ?? 'all'],
     () => flakyQuarantineService.stats(projectId ?? undefined),
-    { refreshInterval: 30_000 },
+    { refreshInterval: REFRESH_INTERVALS.POLLING },
   )
   return { stats: data, isLoading, isError: !!error, refresh: mutate }
 }

@@ -1,12 +1,13 @@
 import useSWR, { mutate } from 'swr'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
 import { suitesService } from '@/services/suitesService'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useSuites() {
   return useProjectScopedSWR(
     'suites',
     (projectId) => suitesService.list(projectId),
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
 }
 
@@ -21,7 +22,7 @@ export function useSuiteTestCases(suiteId?: string) {
   return useSWR(
     suiteId ? ['suite', suiteId, 'cases'] : null,
     ([, id]: readonly [string, string, string]) => suitesService.listSuiteCases(id),
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
 }
 

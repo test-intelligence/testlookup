@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: SWR poll cadences drifted off the tier config, unenforced
+
+- `config/refreshIntervals.ts` states *"All hooks should import from here — never hardcode
+  intervals"* and defines four tiers. Nothing enforced it, and the drift ran **2:1 against
+  the rule**: 10 hooks hardcoded 30 literals while 5 imported the tiers.
+
+- Two hooks polled at **2s and 3s** — faster than `REALTIME` (5s), which the config assigns
+  to *"live execution dashboards, agent pipelines"*, i.e. exactly those hooks. `useAgentRuns`
+  ran 4 SWR subscriptions at 2s/3s/5s/5s simultaneously.
+
+- Poll cadence is server load, and nobody can see the app's total request rate when it is
+  spread across ten files. All literals now resolve to a tier; `refreshInterval: 0` (SWR's
+  "polling disabled") and the SWR 2 function form (`useFixer`, genuinely dynamic) are left
+  alone.
+
+- **Behaviour change:** `useAgentRuns` 2s/3s → `REALTIME` (5s), following the tier the config
+  already assigns to agent pipelines.
+
+- New guard `frontend.refresh-intervals-from-config` in `scripts/quality_gate.py`, alongside
+  the existing frontend conventions. Verified it fails on a reintroduced literal — and it
+  caught a file this change itself had reverted mid-work.
+
+- 726 frontend tests pass (matching the pre-change baseline exactly), typecheck clean,
+  0 lint errors.
+
 ### 2026-08-08 — Perf: recharts was preloaded on every page, including login
 
 - `manualChunks` forced recharts/d3 into a named `charts` chunk. **Naming it made it a

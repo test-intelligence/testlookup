@@ -14,6 +14,7 @@ import useSWR from 'swr'
 import liveStreamService from '@/services/liveStreamService'
 import { useAuthStore } from '@/store/authStore'
 import type { LiveSessionState } from '@/types/live-stream'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ export function useActiveSessions(projectId?: string, suiteName?: string | null,
   return useSWR(
     ['live-active', projectId, suiteName, days],
     () => liveStreamService.getActiveSessions(projectId, suiteName, days),
-    { refreshInterval: 5_000, revalidateOnFocus: false },
+    { refreshInterval: REFRESH_INTERVALS.REALTIME, revalidateOnFocus: false },
   )
 }
 

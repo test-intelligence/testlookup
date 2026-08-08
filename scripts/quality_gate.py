@@ -782,6 +782,48 @@ _AXIOS_CREATE_RE = re.compile(r"\baxios\.create\s*\(")
 _AXIOS_OWNER = "frontend/src/services/api.ts"
 
 
+_REFRESH_LITERAL_RE = re.compile(r"refreshInterval:\s*([0-9_]+)")
+
+
+def _frontend_refresh_intervals_from_config() -> list[Violation]:
+    """SWR poll cadences must come from config/refreshIntervals.ts.
+
+    That file states "All hooks should import from here — never hardcode
+    intervals" and defines four tiers. Nothing enforced it, and the drift ran
+    2:1 against the rule: 10 hooks hardcoded 30 literals while 5 imported the
+    tiers. Two hooks polled at 2s and 3s — faster than REALTIME (5s), which the
+    config assigns to "live execution dashboards, agent pipelines", i.e. exactly
+    those hooks.
+
+    A scattered literal is not just style: poll cadence is server load, and
+    nobody can see the total request rate when it is spread across ten files.
+
+    ``refreshInterval: 0`` is allowed — that is SWR's "polling disabled", not a
+    cadence. The SWR 2 function form is allowed too (see useFixer), since a
+    dynamic interval cannot be a constant.
+    """
+    violations: list[Violation] = []
+    root = REPO_ROOT / "frontend" / "src" / "hooks"
+    if not root.exists():
+        return violations
+    for path in iter_files(root, (".ts", ".tsx")):
+        if path.name.endswith((".test.ts", ".test.tsx")):
+            continue
+        for ln, line in grep_lines(path, _REFRESH_LITERAL_RE):
+            m = _REFRESH_LITERAL_RE.search(line)
+            if not m:
+                continue
+            if int(m.group(1).replace("_", "")) == 0:
+                continue
+            violations.append(Violation(
+                path, ln,
+                f"hardcoded refreshInterval {m.group(1)} — import a tier from "
+                f"@/config/refreshIntervals so the app's total poll rate is "
+                f"visible in one place",
+            ))
+    return violations
+
+
 def _frontend_single_axios() -> list[Violation]:
     """One Axios instance owns auth refresh + 401 queue. A second
     instance silently bypasses the refresh interceptor, so 401s
@@ -1415,6 +1457,12 @@ GUARDS: list[Guard] = [
         description="Literal 'all' assigned to project_id — never send to backend.",
         check=_frontend_all_projects_literal,
         fix_hint="Use `activeProjectId === ALL_PROJECTS_ID` guard and pass `null` to the API.",
+    ),
+    Guard(
+        name="frontend.refresh-intervals-from-config",
+        description="SWR poll cadences come from config/refreshIntervals.ts tiers.",
+        check=_frontend_refresh_intervals_from_config,
+        fix_hint="`import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and use REALTIME / ACTIVE / POLLING / BACKGROUND (0 = disabled is fine).",
     ),
     Guard(
         name="frontend.single-axios",

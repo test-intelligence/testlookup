@@ -1,5 +1,6 @@
 import useSWR, { mutate } from 'swr'
 import { notificationService } from '../services/notificationService'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useNotificationPreferences() {
   return useSWR('notifications/preferences', notificationService.listPreferences, {
@@ -11,13 +12,13 @@ export function useNotificationHistory(unreadOnly = false) {
   return useSWR(
     ['notifications/history', unreadOnly],
     () => notificationService.listHistory(unreadOnly),
-    { refreshInterval: 30_000 },  // poll every 30s for new notifications
+    { refreshInterval: REFRESH_INTERVALS.POLLING },  // poll every 30s for new notifications
   )
 }
 
 export function useUnreadCount() {
   return useSWR('notifications/unread', notificationService.unreadCount, {
-    refreshInterval: 30_000,
+    refreshInterval: REFRESH_INTERVALS.POLLING,
   })
 }
 

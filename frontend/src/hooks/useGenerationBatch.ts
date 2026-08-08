@@ -1,6 +1,7 @@
 /** SWR hook for polling a generation batch until complete. */
 import useSWR from 'swr'
 import { ragService } from '@/services/ragGenerationService'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useGenerationBatch(batchId: string | null) {
   return useSWR(
@@ -30,7 +31,7 @@ export function useKnowledgeSources(projectId: string | null, params?: Record<st
       }
       return ragService.listSources(projectId, params)
     },
-    { refreshInterval: 30_000 },
+    { refreshInterval: REFRESH_INTERVALS.POLLING },
   )
 }
 
@@ -38,6 +39,6 @@ export function useRagStatus() {
   return useSWR(
     'rag-status',
     () => ragService.getStatus(),
-    { refreshInterval: 60_000 },
+    { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
 }

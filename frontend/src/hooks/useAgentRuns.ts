@@ -3,6 +3,7 @@ import agentService from '@/services/agentService'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline, RunSummary } from '@/types/agent'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId } from './useProjectScopedSWR'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function usePipelines(runId?: string, limit = 100) {
   const projectId = useActiveProjectId()
@@ -16,7 +17,7 @@ export function usePipelines(runId?: string, limit = 100) {
   return useSWR<AgentPipelineRun[]>(
     key,
     () => agentService.listPipelines(runId, fetchProjectId, undefined, limit),
-    { refreshInterval: 5000, revalidateOnFocus: false },
+    { refreshInterval: REFRESH_INTERVALS.REALTIME, revalidateOnFocus: false },
   )
 }
 
@@ -24,7 +25,7 @@ export function usePipelineStages(pipelineId: string | null) {
   return useSWR<AgentStageResult[]>(
     pipelineId ? `/pipelines/${pipelineId}/stages` : null,
     () => agentService.getStages(pipelineId ?? ''),
-    { refreshInterval: 3000, revalidateOnFocus: false },
+    { refreshInterval: REFRESH_INTERVALS.REALTIME, revalidateOnFocus: false },
   )
 }
 
@@ -32,7 +33,7 @@ export function usePipelineTimeline(pipelineId: string | null) {
   return useSWR<PipelineTimeline>(
     pipelineId ? `/pipelines/${pipelineId}/timeline` : null,
     () => agentService.getTimeline(pipelineId ?? ''),
-    { refreshInterval: 5000, revalidateOnFocus: false },
+    { refreshInterval: REFRESH_INTERVALS.REALTIME, revalidateOnFocus: false },
   )
 }
 
@@ -48,6 +49,6 @@ export function useActiveLiveRuns() {
   return useSWR<ActiveLiveRun[]>(
     '/active-live-runs',
     () => agentService.getActiveLiveRuns().then((response) => response.active_runs),
-    { refreshInterval: 2000, revalidateOnFocus: false },
+    { refreshInterval: REFRESH_INTERVALS.REALTIME, revalidateOnFocus: false },
   )
 }

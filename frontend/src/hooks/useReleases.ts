@@ -1,12 +1,13 @@
 import useSWR from 'swr'
 import { releasesService } from '@/services/releasesService'
 import { useProjectScopedSWR } from './useProjectScopedSWR'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useReleases(status?: string) {
   return useProjectScopedSWR(
     'releases-list',
     (projectId) => releasesService.list(projectId, status),
-    { refreshInterval: 30_000 },
+    { refreshInterval: REFRESH_INTERVALS.POLLING },
     [status ?? ''],
   )
 }

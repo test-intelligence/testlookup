@@ -2,12 +2,13 @@ import { useCallback, useRef, useState } from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
 import chatService from '@/services/chatService'
 import type { ChatMessage, ChatSession, RunSummary } from '@/types/chat'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
 export function useRunSummaries(projectId?: string | null, days = 5) {
   return useSWR<RunSummary[]>(
     ['run-summaries', projectId, days],
     () => chatService.getRunSummaries(projectId, days),
-    { revalidateOnFocus: false, refreshInterval: 60_000 },
+    { revalidateOnFocus: false, refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
 }
 
