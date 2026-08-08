@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: `/analytics/defects` counted defects it refused to list
+
+- `analytics_service.list_defects` ran two queries that disagreed by construction:
+
+  ```sql
+  -- rows
+  FROM defects d
+  JOIN test_cases tc ON tc.id = d.test_case_id     -- INNER JOIN
+
+  -- total
+  SELECT COUNT(*) FROM defects d                   -- no join at all
+  ```
+
+  Any defect with a NULL `test_case_id` was dropped from `items` and still counted in `total`.
+- **Confirmed live** on a project with five defects:
+
+  ```
+  GET /api/v1/analytics/defects?project_id=<pid>&days=90
+  {"items": [], "total": 5, "page": 1, "size": 20, "pages": 1}
+  ```
+
+  An empty list, a total of five, and a page count derived from the total.
+- **A NULL `test_case_id` is normal, not exotic** — two independent parts of the system produce it:
+  - `_find_recent_test_case_id`, whose own docstring says *"Returns None when no match is found —
+    the caller stores the defect with a NULL test_case_id rather than failing the intake."* The
+    ordinary intake path creates these rows whenever a failure signature matches no current test
+    case.
+  - `ForeignKey("test_cases.id", ondelete="SET NULL")` — the schema deliberately lets defects
+    outlive their test cases, which is exactly what the retention purge (US-11.4) does. A defect
+    whose test case was purged goes invisible while still inflating the count.
+
+  The table's partial unique index (`resolution_status = 'OPEN' AND test_case_id IS NOT NULL`) is
+  further evidence the NULL case was designed for.
+- Fix: `LEFT JOIN test_cases`. The joined columns come back NULL, which the `dict(row._mapping)`
+  response already handles. Making the *count* match the inner join was the other option and is
+  worse — it would hide legitimate defects consistently instead of showing them.
+- The regression test pins the general invariant, not just this table: **no row-eliminating join
+  may appear in the row query without also appearing in the count query.**
+
 ### 2026-08-08 — Fix: the Overview blockers panel described its own number three ways, two of them false
 
 - `new_failures_24h` is a **fixed 24-hour** count computed in `metrics_service` as

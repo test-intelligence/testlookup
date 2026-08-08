@@ -817,7 +817,14 @@ async def list_defects(
             tc.suite_name,
             r.name AS release_name
         FROM defects d
-        JOIN test_cases tc ON tc.id = d.test_case_id
+        -- LEFT, not INNER: ``test_case_id`` is nullable by design. The intake
+        -- path stores NULL when a failure signature matches no current test
+        -- case (see _find_recent_test_case_id), and the FK is
+        -- ``ondelete="SET NULL"`` so a retention purge orphans defects too.
+        -- An inner join dropped those rows from ``items`` while the COUNT
+        -- below — which joins nothing — still counted them, so the endpoint
+        -- reported a total it refused to list (measured: items=[], total=5).
+        LEFT JOIN test_cases tc ON tc.id = d.test_case_id
         LEFT JOIN test_runs tr ON tr.id = tc.test_run_id
         LEFT JOIN release_test_run_links rtrl ON rtrl.test_run_id = tr.id
         LEFT JOIN releases r ON r.id = rtrl.release_id
