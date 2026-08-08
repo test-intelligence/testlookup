@@ -34,7 +34,18 @@ export default defineConfig({
           const nid = id.split('\\').join('/')
           if (!nid.includes('/node_modules/')) return undefined
           if (/\/node_modules\/(react|react-dom|react-router-dom)\//.test(nid)) return 'vendor'
-          if (/\/node_modules\/(recharts|d3)\//.test(nid)) return 'charts'
+          // recharts/d3 are deliberately NOT forced into a named chunk.
+          // Doing so made them a *shared* chunk, which rolldown then hoisted
+          // into the entry's static imports — index.html modulepreloaded
+          // charts-*.js on every route, including the login page, where no
+          // chart renders. Measured: 891,879 raw / 251,676 gzip eager before,
+          // 502,199 / 142,305 after (-44% / -43%).
+          //
+          // Left to natural chunking, recharts follows the three lazy pages
+          // that import it (Overview / SuiteDetail / ValueMetrics) and splits
+          // into AreaChart / BarChart / CartesianChart chunks that load only
+          // on those routes — and total *less* than the forced chunk did
+          // (391,686 vs 529,975 raw), because only what is used gets included.
           if (/\/node_modules\/(lucide-react|@radix-ui\/react-dialog)\//.test(nid)) return 'ui'
           return undefined
         },

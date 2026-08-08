@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Perf: recharts was preloaded on every page, including login
+
+- `manualChunks` forced recharts/d3 into a named `charts` chunk. **Naming it made it a
+  shared chunk**, which rolldown then hoisted into the entry's static imports — so
+  `index.html` carried `<link rel="modulepreload" href="/assets/charts-*.js">` and every
+  page load fetched and parsed 529,975 raw / 183,037 gzip of charting code. Including the
+  login page, where no chart renders.
+
+- The three pages that use recharts (Overview / SuiteDetail / ValueMetrics) were already
+  lazy-loaded. **A chunk being split out is not the same as a chunk being deferred** — the
+  split was working exactly as configured and defeating the lazy routes anyway.
+
+- Measured on the real build, eager assets referenced by `index.html`:
+
+  ```
+  before   891,879 raw / 251,676 gzip
+  after    502,199 raw / 143,255 gzip     (-44% raw, -43% gzip)
+  ```
+
+- Chart routes get **smaller** too: left to natural chunking recharts splits into
+  AreaChart / BarChart / CartesianChart totalling 391,686 raw versus the forced chunk's
+  529,975, because only what is used is included.
+
+- Guard: `frontend/scripts/check-bundle-budget.mjs`, wired into the existing CI build step
+  (no extra build cost). It asserts recharts is absent from every modulepreloaded chunk and
+  caps eager gzip at 180,000. **Verified it fails on the previous config** — both checks
+  fire (+73,228 over budget). It also refuses to pass if it parses zero eager assets or if
+  lazy chunks vanish entirely, so it cannot report success while measuring nothing.
+
+- 726 frontend tests pass.
+
 ### 2026-08-08 — Docs: the benchmark claimed pg_trgm indexes it does not use
 
 - The `keyword_search` scenario described itself as *"uses pg_trgm indexes from wave #5

@@ -302,6 +302,12 @@ jobs:
         env:
           VITE_API_BASE_URL: http://localhost:8000
 
+      # Guards what index.html makes the browser fetch before first render on
+      # every route. A chunk being split out is not the same as a chunk being
+      # deferred, and that difference is invisible in a chunk listing.
+      - name: Bundle budget (eager critical path)
+        run: npm run check:bundle
+
   # ─────────────────────────────────────────────────────────────
   # JOB 3: MCP server lint and syntax validation
   # ─────────────────────────────────────────────────────────────
