@@ -514,8 +514,19 @@ async def coverage_stats(
             COUNT(*) FILTER (WHERE tc.status = 'PASSED') AS passed,
             COUNT(*) FILTER (WHERE tc.status IN ('FAILED', 'BROKEN')) AS failed,
             COUNT(*) FILTER (WHERE tc.status = 'SKIPPED') AS skipped,
+            -- Denominator is EVALUATED = passed + failed + broken. A SKIPPED
+            -- test never ran, so it is neither a pass nor a failure and must
+            -- not dilute the rate (product decision 2026-08-08).
+            --
+            -- The summary block below already did this; these per-suite rows
+            -- were missed, so one response carried a correct summary rate and
+            -- an inconsistent per-suite one — measured as suites[api]
+            -- 20/(20+3+2)=80.0 where evaluated-only gives 20/23=87.0.
+            -- The ``skipped`` column above still reports them; only the RATE
+            -- excludes them.
             ROUND(
-                COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0 / NULLIF(COUNT(*), 0), 1
+                COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
+                / NULLIF(COUNT(*) FILTER (WHERE tc.status IN ('PASSED', 'FAILED', 'BROKEN')), 0), 1
             ) AS pass_rate
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id

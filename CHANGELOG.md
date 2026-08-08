@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: per-suite pass rate counted skipped tests in the denominator
+
+- **Product decision:** a skipped test is *not evaluated* — it never ran, so it is neither a pass
+  nor a failure and belongs in no pass-rate denominator.
+- Most of the codebase already worked that way (`analysis_report_service`, `metrics_service._evaluated`,
+  and the `coverage_stats` **summary** block). The **per-suite rows** were missed. Measured live:
+
+  ```
+  summary.avg_pass_rate = 81.0                        ← matches the dashboard
+  suites[api]: passed=20 failed=3 skipped=2  pass_rate=80.0
+  ```
+
+  `20 / (20+3+2) = 80.0`. Excluding skips gives `20 / 23 = 87.0`. One response carried a correct
+  summary rate and an inconsistent per-suite rate, so a user comparing a suite against the headline
+  saw a gap with no remaining cause.
+- `skipped` is still reported per suite, and `total_executions` deliberately stays `COUNT(*)` — a
+  volume figure, not a rate. Only the **rate** excludes skips.
+- Worth recording: the summary block's own comment claimed it was *"the last surface still dividing
+  by COUNT(*)"*. It wasn't — the suite rows in the same function still were. **A comment asserting
+  completeness is not evidence of it.**
+
 ### 2026-08-08 — Fix: `/analytics/defects` counted defects it refused to list
 
 - `analytics_service.list_defects` ran two queries that disagreed by construction:
