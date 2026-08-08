@@ -553,12 +553,32 @@ fi
 # ── Step 3: Create Namespace ───────────────────────────────
 header "Step 3 — Create Namespace"
 
-if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
-  log "Namespace $NAMESPACE already exists."
-else
-  kubectl create namespace "$NAMESPACE"
-  log "Namespace $NAMESPACE created."
-fi
+_ensure_namespace() {
+  # Idempotent namespace creation.
+  #
+  # The previous form was:
+  #
+  #     if kubectl get namespace "$NS" >/dev/null 2>&1; then
+  #       log "already exists"
+  #     else
+  #       kubectl create namespace "$NS"
+  #     fi
+  #
+  # which conflates "the namespace does not exist" with "I could not reach
+  # the API server" — both make `get` exit non-zero. A transient control-plane
+  # blip therefore sent us down the else branch, `create` failed with
+  # AlreadyExists, and `set -e` aborted the entire deploy after the images had
+  # already been built and pushed. Observed twice on this cluster.
+  #
+  # `apply` is idempotent, so a transient `get` failure is harmless. A genuine
+  # API outage still fails loudly, because `apply` itself errors — the fix
+  # removes the false negative without introducing a false positive.
+  local ns="$1"
+  kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+}
+
+_ensure_namespace "$NAMESPACE"
+log "Namespace $NAMESPACE ready."
 
 # ── Step 4: Generate and Apply Secrets ─────────────────────
 header "Step 4 — Generate and Apply Secrets"

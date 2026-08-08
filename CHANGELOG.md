@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: a transient `kubectl` blip aborted the whole deploy at Step 3
+
+- The namespace guard conflated two very different failures:
+
+  ```bash
+  if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then ... else kubectl create namespace ...
+  ```
+
+  `get` exits non-zero both when the namespace is absent **and** when the API server cannot be
+  reached. This cluster's control plane is intermittently interrupted (Norton intercepts `:6443`
+  → `wsarecv: An existing connection was forcibly closed`), so `get` failed spuriously, the
+  `else` branch ran `create`, and `AlreadyExists` aborted the run under `set -euo pipefail` —
+  **after** the images had been built and pushed, which is the expensive part.
+- **Observed twice**: `deploy11.log` and `deploy14.log`, both ending at Step 3 with
+  `DEPLOY_EXIT=1`. Not bad luck — a reliability defect.
+- Fix: `kubectl create namespace --dry-run=client -o yaml | kubectl apply -f -`. Idempotent, so
+  a spurious read failure is harmless, while a genuine API outage **still fails loudly** because
+  `apply` itself errors. Both properties are pinned by tests, because the tempting "fix" here is
+  `|| true`, which converts a noisy abort into a silent half-deploy.
+- **Test-validity note.** The first version of these tests stubbed `kubectl` via a script on
+  `PATH` and appeared to pass. It was not being used: under Git-for-Windows bash an extensionless
+  stub is not treated as executable, so `command -v kubectl` resolved past it to the real binary
+  and the tests were quietly talking to the live cluster (`Error from server (NotFound)` gave it
+  away). `os.access(path, os.X_OK)` returns True for any existing file on Windows, so it does not
+  catch this. The stub is now a **shell function**, which shadows the external command
+  unconditionally and needs no PATH, no chmod, and no production change.
+
 ### 2026-08-08 — Security: `/audit-dashboard/events` leaked other tenants' audit trails
 
 - The router's docstring promised *"Tenant isolation: non-admin users only see events for their
