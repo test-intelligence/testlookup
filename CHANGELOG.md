@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: the Celery queue-backlog alert could never fire
+
+- `testlookup-alerts.yml` defines `TestLookupCeleryQueueBacklog` on
+  `sum by (queue_name) (celery_queue_length) > 100` — *"Workers may need scaling."*
+  **Nothing emitted `celery_queue_length`.** Verified against the live deployment's
+  `/metrics`: 0 samples. The alert read as healthy forever.
+
+- That is precisely the condition the worker CPU-throttling fix earlier today was about:
+  throttled workers draining slowly would back the queue up, and the alert built to catch it
+  was inert.
+
+- The gauge is now emitted by the **backend** — the process Prometheus scrapes; a gauge set
+  inside a worker never reaches the scrape — and refreshed **at scrape time** rather than by
+  a beat task. A timer-refreshed gauge keeps reporting its last value when the scheduler is
+  itself the unhealthy component, i.e. reports "queue is fine" during the incident it exists
+  to flag. Covers all 12 queues including the 8 ingestion shards.
+
+- Best-effort: a broken Redis never breaks the scrape, and one failing queue does not hide
+  the others. Losing the whole scrape during an incident is worse than losing one gauge.
+
+- **Static analysis got two of four wrong.** `http_requests_total` and
+  `http_request_duration_seconds_bucket` looked like ghosts too — they never appear as
+  `Counter(...)` in this repo — but they are emitted at runtime by
+  prometheus-fastapi-instrumentator. Scraping the live endpoint is what settled it.
+
+- Regression: `test_celery_queue_depth_metric.py` (7 of 8 fail before the fix), including a
+  generalised check that no alert rule references a Celery metric nothing emits.
+
+- **Known gap, deliberately not fixed here (F-P15):** `celery_task_runtime_seconds_bucket`
+  (`TestLookupTaskLatencyHigh`) is still inert. Backing it needs the Celery workers to expose
+  their own scrape target — separate processes from the backend — which is infra work beyond
+  this change. It is listed explicitly in the regression test's `KNOWN_INERT` set, so a *new*
+  ghost still fails while this one stays visible instead of silently tolerated.
+
 ### 2026-08-08 — Fix: four config knobs that did nothing, incl. an uncapped semantic cache
 
 - Swept all 205 `Settings` fields for ones nothing reads. A config field nobody reads is the

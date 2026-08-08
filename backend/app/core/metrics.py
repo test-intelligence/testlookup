@@ -321,3 +321,26 @@ app_info = Info(
     "testlookup_app",
     "TestLookup static application metadata",
 )
+
+
+# ── Celery queue depth ────────────────────────────────────────────────────────
+#
+# ``celery_queue_length`` is what the TestLookupCeleryQueueBacklog alert rule
+# fires on. It was never emitted by anything — verified against the live
+# deployment's /metrics endpoint, 0 samples — so the alert that exists to catch
+# "queue backing up, workers may need scaling" could never fire. That is exactly
+# the condition the 2026-08-08 worker CPU-throttling fix was about.
+#
+# The value must be exposed by the *backend*, because that is the process
+# Prometheus scrapes; a gauge set inside a worker never reaches it. Celery
+# queues are plain Redis lists, so the backend can read their depth directly.
+#
+# Collected at scrape time rather than on a timer: a gauge refreshed by a beat
+# task goes stale (and keeps reporting its last value) whenever the beat pod is
+# the thing that is unhealthy.
+
+celery_queue_length = Gauge(
+    "celery_queue_length",
+    "Pending tasks per Celery queue, read from the Redis broker at scrape time",
+    ["queue_name"],
+)

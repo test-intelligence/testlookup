@@ -1,4 +1,5 @@
 from __future__ import annotations
+import inspect
 
 from collections.abc import Sequence
 
@@ -81,6 +82,7 @@ from app.routers import (
 )
 from app.routers.health import router as health_router
 from app.routers.observability import router as observability_router
+from starlette.routing import request_response
 
 
 PUBLIC_ROUTERS: Sequence[APIRouter] = (
@@ -203,6 +205,11 @@ def configure_metrics(app: FastAPI) -> None:
         excluded_handlers=["/metrics", "/health/live", "/health/ready"],
     ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
+    # Refresh Celery queue depths on each scrape. Registered as a route
+    # dependency on /metrics so the numbers are read when Prometheus asks,
+    # never from a timer that can go stale while the scheduler is the sick one.
+    _install_celery_queue_depth_collector(app)
+
 
 def register_routers(app: FastAPI) -> None:
     for router in PUBLIC_ROUTERS:
@@ -219,3 +226,52 @@ def register_routers(app: FastAPI) -> None:
         tags=["Debug"],
         dependencies=protected_deps,
     )
+
+
+async def _refresh_celery_queue_depths() -> None:
+    """Read pending task counts straight off the Redis broker.
+
+    Celery queues are Redis lists keyed by queue name, so LLEN is the depth.
+    Best-effort: metrics collection must never break the scrape or the app —
+    a failed read leaves the previous sample rather than raising.
+    """
+    try:
+        from app.core.metrics import celery_queue_length
+        from app.db.redis_client import get_redis
+        from app.worker.ingestion_routing import LEGACY_INGESTION_QUEUE, all_shard_queues
+
+        queues = ["critical", "ai_analysis", "default", LEGACY_INGESTION_QUEUE]
+        queues += list(all_shard_queues())
+
+        redis = get_redis()
+        for name in queues:
+            try:
+                depth = await redis.llen(name)
+            except Exception:  # noqa: BLE001 — one bad queue must not hide the rest
+                continue
+            celery_queue_length.labels(queue_name=name).set(float(depth or 0))
+    except Exception as exc:  # noqa: BLE001
+        import structlog
+
+        structlog.get_logger(__name__).debug(
+            "celery_queue_depth_collection_failed", error=str(exc)
+        )
+
+
+def _install_celery_queue_depth_collector(app) -> None:
+    """Wrap the instrumentator's /metrics route so depths refresh per scrape."""
+    for route in app.routes:
+        if getattr(route, "path", None) != "/metrics":
+            continue
+        original = route.endpoint
+
+        async def _endpoint(*args, __orig=original, **kwargs):
+            await _refresh_celery_queue_depths()
+            result = __orig(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+
+        route.endpoint = _endpoint
+        route.app = request_response(_endpoint)
+        return
