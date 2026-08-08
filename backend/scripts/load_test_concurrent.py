@@ -84,11 +84,32 @@ def _first_run_id(fixtures: dict) -> str:
 # The harness pulls budgets from the single source of truth in
 # ``app.services.performance_budgets`` so harness, pytest smoke test, and
 # Prometheus alerts always agree on what "fast enough" means.
+# Running ``python scripts/load_test_concurrent.py`` — the invocation in this
+# file's own usage string — puts *scripts/* on sys.path, NOT the backend root.
+# So ``import app.…`` below raised ModuleNotFoundError, every budget resolved
+# to 0, and --check-budgets silently skipped every scenario while printing
+# "All budgets met". Put the backend root on the path explicitly.
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, _BACKEND_ROOT)
+
+# Set when the budget module cannot be imported, so --check-budgets can say so
+# instead of reporting a pass it never evaluated.
+_BUDGET_IMPORT_ERROR: str | None = None
+
+
 def _budget(operation: str) -> int:
-    """Lookup p95 budget in milliseconds. Falls back to 0 (no budget)."""
+    """Lookup p95 budget in milliseconds. Returns 0 when the operation has no
+    codified budget.
+
+    An *import* failure is recorded rather than quietly returning 0 — that is
+    what made the budget gate inert.
+    """
+    global _BUDGET_IMPORT_ERROR
     try:
         from app.services.performance_budgets import get_budget
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - reported below, not swallowed
+        _BUDGET_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
         return 0
     b = get_budget(operation)
     return b.p95_ms if b else 0
@@ -391,9 +412,11 @@ async def cmd_bench(args: argparse.Namespace) -> int:
     if args.check_budgets:
         print("\n── Budget compliance ──────────────────────────────────────────")
         budget_violations = 0
+        evaluated = 0
         for sc, result in zip(active_scenarios, results):
             if not sc.budget_p95_ms:
                 continue
+            evaluated += 1
             ok = result.p95 <= sc.budget_p95_ms and result.errors == 0
             label = "PASS" if ok else "FAIL"
             if not ok:
@@ -402,10 +425,21 @@ async def cmd_bench(args: argparse.Namespace) -> int:
                 f"  {sc.operation:25s} p95={result.p95:>6.1f}ms "
                 f"(budget {sc.budget_p95_ms}ms) errors={result.errors}  → {label}"
             )
-        if budget_violations:
-            print(f"\n{budget_violations} budget violation(s).")
+        if evaluated == 0:
+            # A gate that could not evaluate anything must NOT report success.
+            # This is what made the previous version useless: it printed
+            # "All budgets met" while checking nothing at all.
+            print(
+                "\nERROR: --check-budgets evaluated 0 scenarios — no budgets "
+                "resolved, so nothing was checked."
+            )
+            if _BUDGET_IMPORT_ERROR:
+                print(f"       budget import failed: {_BUDGET_IMPORT_ERROR}")
             return 1
-        print("\nAll budgets met.")
+        if budget_violations:
+            print(f"\n{budget_violations} budget violation(s) of {evaluated} checked.")
+            return 1
+        print(f"\nAll budgets met ({evaluated} scenarios checked).")
 
 
     return 0

@@ -56,12 +56,25 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+          # CPU limit raised 1000m -> 4000m (2026-08-08) on measurement, not a
+          # hunch. Under 8 concurrent /api/v1/search requests this pod ran at
+          # 0.99 of its 1-core limit (cgroup usage_usec: cpu=50013ms over
+          # wall=50601ms) while the backend sat at 0.12 cores and
+          # pg_stat_activity showed 8 queries ACTIVE with no wait_event —
+          # i.e. running concurrently but sharing a single core. Search p95
+          # hit 397ms against its 300ms budget; run_list was unaffected
+          # because it is a cheap indexed page.
+          #
+          # Nodes have 20 cores and this cluster runs TestLookup alone, so the
+          # 1-core cap was the binding constraint, not capacity. Requests stay
+          # at 250m: this is bursty query load, not steady draw, and a low
+          # request keeps scheduling flexible.
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
-              cpu: 1000m
+              cpu: 4000m
               memory: 2Gi
           readinessProbe:
             exec:
