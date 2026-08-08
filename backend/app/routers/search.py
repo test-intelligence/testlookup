@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from app.models.postgres import (
     TestRun,
     TestSuite,
     User,
+    UserRole,
 )
 from app.services.resilience import with_fallback
 from app.services.search_service import search_test_cases_query
@@ -34,9 +35,44 @@ async def get_index_status():
 
 
 @router.post("/reindex")
-async def trigger_reindex(project_id: str | None = None, full: bool = False):
+async def trigger_reindex(
+    project_id: str | None = None,
+    full: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     """Manually trigger a search reindex via Celery task.
-    Pass full=true for a complete rebuild; default is incremental."""
+
+    Pass ``full=true`` for a complete rebuild; default is incremental.
+
+    Authorization mirrors the blast radius rather than one flat role. This
+    endpoint previously took no user at all — every other endpoint in this
+    module depends on ``get_current_active_user`` — so a VIEWER holding zero
+    project memberships could queue an instance-wide rebuild.
+
+    * A named project needs QA_LEAD **and** membership: reindexing burns
+      worker capacity, which VIEWER (read-only) has no business spending.
+    * No project named means *every* tenant's index, so that variant is
+      ADMIN-only — otherwise a lead in one project rebuilds everyone else's.
+    """
+    role = getattr(current_user.role, "value", current_user.role)
+    is_admin = role == UserRole.ADMIN.value
+
+    if project_id is None:
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="An instance-wide reindex requires ADMIN. Pass project_id to reindex one project.",
+            )
+    else:
+        if not is_admin and role != UserRole.QA_LEAD.value:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Triggering a reindex requires QA_LEAD or higher",
+            )
+        # Verifies the *provided* project, raising 403 for a non-member.
+        await resolve_project_scope(db, current_user, project_id)
+
     from app.worker.tasks import reindex_search
     task = reindex_search.apply_async(kwargs={"project_id": project_id, "full": full})
     return {"task_id": task.id, "status": "queued", "mode": "full" if full else "incremental"}

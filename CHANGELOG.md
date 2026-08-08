@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Security: `POST /search/reindex` had no authorization at all
+
+- The endpoint took neither a user nor a role, and never validated `project_id`:
+
+  ```python
+  @router.post("/reindex")
+  async def trigger_reindex(project_id: str | None = None, full: bool = False):
+      task = reindex_search.apply_async(kwargs={"project_id": project_id, "full": full})
+  ```
+
+  Every other endpoint in `routers/search.py` depends on `get_current_active_user`.
+- **Confirmed live.** Unauthenticated access *is* stopped by the global auth middleware, so this
+  was never an anonymous vector: `POST /api/v1/search/reindex` with no header → **401**. But
+  authentication was the only barrier. As a **VIEWER** — the lowest role, holding **zero project
+  memberships**:
+
+  ```
+  POST /api/v1/search/reindex?full=true
+  200 {"task_id":"d96026cb-…","status":"queued","mode":"full"}
+  ```
+
+  A full rebuild of the entire instance's search index, queued by a user who cannot see a single
+  project.
+- Fix: authorization now mirrors the blast radius rather than one flat role. A **named project**
+  requires QA_LEAD **and** membership (`resolve_project_scope`); the **unscoped instance-wide**
+  rebuild requires ADMIN, since it is the only variant that crosses tenants.
+- No UI impact: `searchService.reindex` exists but no component calls it.
+- **Latent mismatch noted, not changed:** that service sends `project_id` in the request *body*
+  while the endpoint reads it from the *query string*, so a future caller would silently hit the
+  global (now ADMIN-only) path. Flagged rather than fixed here to keep this change to the
+  security defect.
+- Found by sweeping the class behind the digests IDOR: endpoints taking `project_id` outside a
+  path param, which the authorization ratchet cannot see. Most sweep hits were false positives
+  (`ingest`, `api_keys`, `knowledge_sources`, `summary_report`, `set_suite_owner` are all
+  properly guarded, several via inline logic or a service-layer check a grep misses).
+
 ### 2026-08-08 — Security: the digests router took `project_id` from the caller unchecked
 
 - Two endpoints in `routers/digests.py` accepted a client-supplied `project_id` and never
