@@ -703,6 +703,17 @@ function FootStat({ k, v, small, smallTone }: { k: string; v: string; small: str
 }
 
 // ── Blockers panel ───────────────────────────────────────────────────────
+/**
+ * ``newFailures`` is ``new_failures_24h`` — a FIXED 24-hour count computed in
+ * ``metrics_service`` as ``status == FAILED AND created_at >= now - 24h``. It
+ * deliberately ignores the page's time-window selector (verified live: the
+ * value is identical at days=1/7/30/90).
+ *
+ * The copy here must therefore say 24 h and nothing else. It previously
+ * described the same number as "in the window" and "since the last green
+ * run" — the second naming a regression-since-green baseline that is not part
+ * of the computation at all.
+ */
 function BlockersPanel({ newFailures, hasData }: { newFailures: number; hasData: boolean }) {
   return (
     <div className="card overflow-hidden">
@@ -728,12 +739,12 @@ function BlockersPanel({ newFailures, hasData }: { newFailures: number; hasData:
             {hasData ? 'Nothing is blocking release.' : 'No data yet — blockers will appear once failures land.'}
           </p>
           <p className="text-[12px] text-[var(--color-text-muted)] mt-1 m-0">
-            {hasData ? 'No failing tests since the last green run.' : 'Run a workflow to populate this panel.'}
+            {hasData ? 'No failing tests in the last 24 h.' : 'Run a workflow to populate this panel.'}
           </p>
         </div>
       ) : (
         <div className="px-4 py-6 text-[12px] text-[var(--color-text-muted)]">
-          {newFailures} new failure{newFailures === 1 ? '' : 's'} in the window.{' '}
+          {newFailures} new failure{newFailures === 1 ? '' : 's'} in the last 24 h.{' '}
           Per-failure detail is sourced from the failures view —{' '}
           <Link to="/failures" className="text-[var(--color-accent)] hover:underline">open all failures →</Link>
         </div>
@@ -744,7 +755,7 @@ function BlockersPanel({ newFailures, hasData }: { newFailures: number; hasData:
           className="flex items-center justify-between px-4 py-2.5 text-[12px] text-[var(--color-text-muted)]"
           style={{ borderTop: '1px solid var(--color-border)' }}
         >
-          <span>Showing the {newFailures} failure{newFailures === 1 ? '' : 's'} since the last green run</span>
+          <span>Showing the {newFailures} failure{newFailures === 1 ? '' : 's'} from the last 24 h</span>
           <Link to="/failures" className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1">
             Open all failures <ArrowRight className="h-3 w-3" />
           </Link>

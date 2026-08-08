@@ -279,3 +279,74 @@ describe('OverviewPage', () => {
     expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
   })
 })
+
+/**
+ * The blockers panel must describe the number it is actually showing.
+ *
+ * ``new_failures_24h`` is computed in ``metrics_service`` as a fixed
+ * 24-hour count::
+ *
+ *     TestCase.status == FAILED AND TestCase.created_at >= now - 24h
+ *
+ * It ignores the dashboard's time-window selector entirely. Measured live
+ * against a freshly-ingested run, the value is identical at every window::
+ *
+ *     days=1   new_failures_24h=3
+ *     days=7   new_failures_24h=3
+ *     days=30  new_failures_24h=3
+ *     days=90  new_failures_24h=3
+ *
+ * Yet the panel described that one number three different ways in the same
+ * box, two of them false (captured from the live page with a 7-day window)::
+ *
+ *     badge:  "3 new · 24h"                                     <- correct
+ *     body:   "3 new failures in the window."                   <- 7 days, not 24 h
+ *     footer: "Showing the 3 failures since the last green run" <- no green run involved
+ *
+ * "Since the last green run" is the most misleading: it names a
+ * regression-since-green computation that does not exist anywhere in the
+ * metric, and it would drive different triage than "failed in the last day".
+ * The empty state carried the same claim.
+ *
+ * Fixed by making the copy match the metric — the badge and the KPI label
+ * both already said 24 h, so the metric's intent was never in doubt.
+ */
+describe('OverviewPage — blockers panel describes its own metric', () => {
+  async function renderWithFailures() {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('does not claim the 24h count covers "the window"', async () => {
+    await renderWithFailures()
+    await screen.findByText(/What's blocking release/i)
+    expect(
+      screen.queryByText(/new failures? in the window/i),
+      'the panel says "in the window" for a value that ignores the window selector',
+    ).toBeNull()
+  })
+
+  it('does not attribute the count to "the last green run"', async () => {
+    await renderWithFailures()
+    await screen.findByText(/What's blocking release/i)
+    expect(
+      screen.queryByText(/since the last green run/i),
+      'the panel attributes a fixed 24h count to a green-run baseline that is ' +
+        'not part of the computation',
+    ).toBeNull()
+  })
+
+  it('still states the 24h window it actually measures', async () => {
+    await renderWithFailures()
+    await screen.findByText(/What's blocking release/i)
+    const body = document.body.textContent ?? ''
+    expect(body).toMatch(/24\s*h/i)
+  })
+})

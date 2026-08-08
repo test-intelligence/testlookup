@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: the Overview blockers panel described its own number three ways, two of them false
+
+- `new_failures_24h` is a **fixed 24-hour** count computed in `metrics_service` as
+  `status == FAILED AND created_at >= now - 24h`. It ignores the dashboard's time-window
+  selector entirely — verified live against a freshly-ingested run:
+
+  ```
+  days=1   new_failures_24h=3
+  days=7   new_failures_24h=3
+  days=30  new_failures_24h=3
+  days=90  new_failures_24h=3
+  ```
+
+- Yet the panel described that one number three different ways in the same box. Captured from
+  the live page with a 7-day window selected:
+
+  ```
+  badge:  "3 new · 24h"                                      ← correct
+  body:   "3 new failures in the window."                    ← 7 days, not 24 h
+  footer: "Showing the 3 failures since the last green run"  ← no green run involved
+  ```
+
+  The empty state carried the same claim (*"No failing tests since the last green run."*).
+- *"Since the last green run"* is the most misleading of the three: it names a
+  regression-since-green baseline that appears nowhere in the computation, and it would drive
+  different triage than "failed in the last day".
+- Fix: the copy now says 24 h consistently. The badge and the KPI label both already said 24 h,
+  so the metric's intent was never in doubt — only the prose disagreed with it. A comment on
+  `BlockersPanel` records why the panel is window-independent, so the next person doesn't
+  "helpfully" reintroduce the window wording.
+
 ### 2026-08-08 — Fix: a transient `kubectl` blip aborted the whole deploy at Step 3
 
 - The namespace guard conflated two very different failures:
