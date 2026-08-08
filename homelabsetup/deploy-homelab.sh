@@ -490,26 +490,41 @@ else
     error "Registry not reachable at registry.local:30500 or ${CONTROL_NODE}:30500. Cannot resolve a tag for --skip-build. Re-run without --skip-build to push fresh images."
   fi
 
-  _existing_common_tag() {
-    local backend frontend mcp
-    backend=$(curl -sf --max-time 10 "http://${LOOKUP_REGISTRY}/v2/testlookup/backend/tags/list"  2>/dev/null \
-      | sed -e 's/.*"tags":\[//' -e 's/\].*//' -e 's/"//g' -e 's/,/\n/g' \
-      | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true)
-    frontend=$(curl -sf --max-time 10 "http://${LOOKUP_REGISTRY}/v2/testlookup/frontend/tags/list" 2>/dev/null \
-      | sed -e 's/.*"tags":\[//' -e 's/\].*//' -e 's/"//g' -e 's/,/\n/g' \
-      | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true)
-    mcp=$(curl -sf --max-time 10 "http://${LOOKUP_REGISTRY}/v2/testlookup/mcp/tags/list"      2>/dev/null \
-      | sed -e 's/.*"tags":\[//' -e 's/\].*//' -e 's/"//g' -e 's/,/\n/g' \
-      | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true)
-    # Tags sort lexicographically === chronologically because the format
-    # is fixed-width ``build-YYYYMMDD-HHMMSS``. Sort each list desc, then
-    # take the first tag that appears in all three.
-    comm -12 \
-      <(printf '%s\n' "$backend"  | sort -ru) \
+  # Pure selection step, kept separate from the fetching so it can be
+  # exercised without a registry (see
+  # backend/tests/regression/test_deploy_tag_resolution.py).
+  #
+  # ``comm`` requires ASCENDING input. Feeding it ``sort -ru`` made it print
+  # "input is not in sorted order" on stderr and **exit 1** — while still
+  # emitting the correct answer on stdout. Under this script's
+  # ``set -euo pipefail`` that non-zero status killed the command
+  # substitution below, so --skip-build aborted every time and the caller's
+  # "no common tag" diagnostic was unreachable. Sort ascending for comm,
+  # then reverse to pick the newest.
+  #
+  # ``sed -n '1p'`` rather than ``head -n 1``: head exits after one line and
+  # SIGPIPEs sort, which pipefail would also treat as a failure.
+  _newest_common_tag() {
+    local backend="$1" frontend="$2" mcp="$3" common
+    common=$(comm -12 \
+      <(printf '%s\n' "$backend"  | sort -u) \
       <(comm -12 \
-        <(printf '%s\n' "$frontend" | sort -ru) \
-        <(printf '%s\n' "$mcp"      | sort -ru)) \
-      | head -n 1
+        <(printf '%s\n' "$frontend" | sort -u) \
+        <(printf '%s\n' "$mcp"      | sort -u)))
+    [ -n "$common" ] || return 0
+    # Tags sort lexicographically === chronologically because the format is
+    # fixed-width ``build-YYYYMMDD-HHMMSS``.
+    printf '%s\n' "$common" | sort -r | sed -n '1p'
+  }
+
+  _fetch_tags() {
+    curl -sf --max-time 10 "http://${LOOKUP_REGISTRY}/v2/testlookup/$1/tags/list" 2>/dev/null \
+      | sed -e 's/.*"tags":\[//' -e 's/\].*//' -e 's/"//g' -e 's/,/\n/g' \
+      | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true
+  }
+
+  _existing_common_tag() {
+    _newest_common_tag "$(_fetch_tags backend)" "$(_fetch_tags frontend)" "$(_fetch_tags mcp)"
   }
 
   BUILD_TAG=$(_existing_common_tag)

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-07 — Fix: `deploy-homelab.sh --skip-build` aborted on a correct answer
+
+- The flag exists for one situation: a deploy whose images built and pushed fine but whose apply
+  phase died partway, so you resume without paying for a ~15-minute rebuild. It never worked.
+- `_existing_common_tag` intersected the three registry tag lists with
+  `comm -12 <(... | sort -ru) ...`. **`comm` requires ascending input.** Given descending input
+  it warns `input is not in sorted order` on stderr and **exits 1** — while still writing the
+  correct answer to stdout. Measured against the live registry (97 backend / 128 frontend /
+  98 mcp tags):
+
+  ```
+  comm OWN exit = 1
+  stdout lines  = 21, first = build-20260807-231731     ← the right answer
+  ```
+
+- Under the script's `set -euo pipefail` that status propagated out of
+  `BUILD_TAG=$(_existing_common_tag)` and killed the run. Two consequences, both confirmed by
+  emulating the script:
+  1. `--skip-build` aborted every time, **on a correct answer**.
+  2. The author's own "no build-YYYYMMDD-HHMMSS tag exists for ALL THREE images" diagnostic was
+     **unreachable** — the script died before evaluating `[ -z "$BUILD_TAG" ]`, so an operator
+     saw only `comm: file 1 is not in sorted order`.
+- Fix: sort **ascending** for `comm` (what it requires), then reverse to take the newest. Uses
+  `sed -n '1p'` rather than `head -n 1`, because `head` exits after one line and SIGPIPEs `sort`,
+  which `pipefail` would also treat as a failure. The selection step is split into
+  `_newest_common_tag`, taking the three lists as arguments so it is testable with no registry.
+- **Found by hitting it.** The first deploy of the UI fixes died at Step 3 when the
+  `if kubectl get namespace` guard caught an intermittent connection reset and the `else` branch
+  ran `kubectl create namespace` into an `AlreadyExists`. The documented recovery — re-run with
+  `--skip-build` — then failed for this separate reason.
+- Regression test: `backend/tests/regression/test_deploy_tag_resolution.py` runs the function
+  under the same `set -euo pipefail`, asserting the **exit status** as well as the value, since
+  "correct result, non-zero status" is the failure mode that made this look like a registry
+  problem.
+- **The fixture choice is load-bearing.** `comm` reports disorder only when the merge has to
+  advance one side past the other, so three *identical* lists walk in lockstep and the broken
+  implementation exits 0 on them. A first draft of this test used identical lists and passed
+  against the unfixed script — it could not have caught the bug. Measured against the pre-fix
+  code: identical x3 → `rc=0`; one list shorter → `rc=1`; 97/128/98 (the real registry) →
+  `rc=1`. Every case now uses lists that differ, and the suite is verified to fail pre-fix and
+  pass post-fix.
+
 ### 2026-08-07 — Fix: `/search` "Queries today" invented a number
 
 - The KPI was fed `recents.length * 24` — the count of searches in **this browser's**
