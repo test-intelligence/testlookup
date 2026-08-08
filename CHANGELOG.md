@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: throughput budgets were defined but nothing could read them
+
+- `performance_budgets.py` calls itself the single source of truth and carries four
+  `THROUGHPUT_BUDGETS`. They were only ever serialized into `get_all_budgets()` — a
+  reporting dict. **There was no lookup accessor**, so no caller could check one, and
+  the load harness compared p95 latency only.
+
+- Not theoretical. Measured on the live deployment, `keyword_search` throughput:
+
+  ```
+  postgres capped at 1 core .....  17.4 rps   vs the 20.0 budget   BREACH
+  postgres raised to 4 cores ....  28.7 rps   vs the 20.0 budget   pass
+  ```
+
+  The same regression that blew the search latency budget also blew a *second*
+  written-down budget, and the harness printed "All budgets met" both times.
+
+- Added `get_throughput_budget()`; `Scenario` gained `throughput_op`, bound on the two
+  search scenarios; `--check-budgets` now evaluates measured rps alongside p95 and
+  counts each as a check.
+
+- Budgets this harness does not drive (`run_ingestion`, `live_events_batch`) are now
+  **named as unchecked** rather than silently omitted — a budget nothing exercises is
+  not a passing budget, and omitting it is what let the summary line imply coverage
+  the run never had.
+
+- `throughput_op` is set only where the mapping is real. A throughput budget describes
+  a workload; binding one to an unrelated scenario would manufacture pass/fail signal
+  out of an unrelated measurement, which is the exact failure being fixed.
+
+- Regression: `backend/tests/regression/test_throughput_budgets_are_checked.py`
+  (6 of 7 fail before the fix), including a guard that every declared `throughput_op`
+  resolves to a real budget — an unresolvable name returns 0 and is skipped, which is
+  how the latency gate went inert in the first place.
+
 ### 2026-08-08 — Fix: the "Total executions" KPI counted runs, not executions
 
 - `metrics_service` built the dashboard KPI from the run count:

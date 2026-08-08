@@ -150,6 +150,21 @@ THROUGHPUT_BUDGETS: list[ThroughputBudget] = [
     ThroughputBudget("live_events_batch", 50.0, "Live streaming batch event ingestion (per session)"),
 ]
 
+
+def get_throughput_budget(operation: str) -> Optional[ThroughputBudget]:
+    """Return the throughput budget for an operation by name, or None.
+
+    These budgets existed for a long time with no accessor at all — they were
+    only ever serialized into :func:`get_all_budgets`, so nothing could look one
+    up and nothing ever checked one. That was not harmless: the load harness
+    measured ``search_concurrent`` at 17.4 rps against this file's 20.0 and
+    reported "All budgets met", because it only compared p95 latency.
+    """
+    for b in THROUGHPUT_BUDGETS:
+        if b.operation == operation:
+            return b
+    return None
+
 # ── Scale Scenarios ──────────────────────────────────────────────────────────
 
 SCALE_SCENARIOS: list[dict] = [

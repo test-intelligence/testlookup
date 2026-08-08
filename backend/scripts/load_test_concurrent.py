@@ -67,6 +67,14 @@ class Scenario:
     description: str
     # Budget hint used to set yellow/red thresholds in the CLI output.
     budget_p95_ms: int = 0
+    # Name of the THROUGHPUT_BUDGETS entry this scenario exercises, if any.
+    # Set only where the mapping is real: throughput budgets describe a
+    # *workload*, and several are workloads this harness does not drive at all
+    # (run_ingestion, live_events_batch). Guessing a mapping would manufacture
+    # pass/fail signal out of an unrelated measurement, which is the failure
+    # this whole check exists to prevent — so unmapped budgets are reported as
+    # uncovered instead.
+    throughput_op: str = ""
     # If True, skip this scenario when running under pytest — used for
     # environment-dependent endpoints (e.g. health checks that probe
     # external services that may be degraded in dev/CI).
@@ -115,6 +123,28 @@ def _budget(operation: str) -> int:
     return b.p95_ms if b else 0
 
 
+def _throughput_budget(operation: str) -> float:
+    """Minimum acceptable requests/sec for a workload, or 0.0 if uncodified."""
+    global _BUDGET_IMPORT_ERROR
+    try:
+        from app.services.performance_budgets import get_throughput_budget
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        _BUDGET_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+        return 0.0
+    b = get_throughput_budget(operation)
+    return b.min_rps if b else 0.0
+
+
+def _all_throughput_budgets() -> list:
+    """Every codified throughput budget, so the check can name the ones no
+    scenario covers rather than silently ignoring them."""
+    try:
+        from app.services.performance_budgets import THROUGHPUT_BUDGETS
+    except Exception:  # noqa: BLE001
+        return []
+    return list(THROUGHPUT_BUDGETS)
+
+
 SCENARIOS: list[Scenario] = [
     Scenario(
         "project_list",
@@ -150,6 +180,7 @@ SCENARIOS: list[Scenario] = [
         lambda _f: "/api/v1/search?q=timeout&size=20",
         "ILIKE search — uses pg_trgm indexes from wave #5 fix",
         budget_p95_ms=_budget("keyword_search"),
+        throughput_op="search_concurrent",
     ),
     Scenario(
         "keyword_search_long",
@@ -157,6 +188,7 @@ SCENARIOS: list[Scenario] = [
         lambda _f: "/api/v1/search?q=connection%20reset%20by%20peer&size=20",
         "Longer query across test_name/suite_name/error_message",
         budget_p95_ms=_budget("keyword_search"),
+        throughput_op="search_concurrent",
     ),
     Scenario(
         "flaky_coach",
@@ -413,18 +445,48 @@ async def cmd_bench(args: argparse.Namespace) -> int:
         print("\n── Budget compliance ──────────────────────────────────────────")
         budget_violations = 0
         evaluated = 0
+        covered_throughput_ops: set[str] = set()
         for sc, result in zip(active_scenarios, results):
-            if not sc.budget_p95_ms:
-                continue
-            evaluated += 1
-            ok = result.p95 <= sc.budget_p95_ms and result.errors == 0
-            label = "PASS" if ok else "FAIL"
-            if not ok:
-                budget_violations += 1
-            print(
-                f"  {sc.operation:25s} p95={result.p95:>6.1f}ms "
-                f"(budget {sc.budget_p95_ms}ms) errors={result.errors}  → {label}"
-            )
+            if sc.budget_p95_ms:
+                evaluated += 1
+                ok = result.p95 <= sc.budget_p95_ms and result.errors == 0
+                label = "PASS" if ok else "FAIL"
+                if not ok:
+                    budget_violations += 1
+                print(
+                    f"  {sc.operation:25s} p95={result.p95:>6.1f}ms "
+                    f"(budget {sc.budget_p95_ms}ms) errors={result.errors}  → {label}"
+                )
+            # Throughput is checked separately: a scenario can be comfortably
+            # inside its latency budget and still fail to sustain the required
+            # rate, which is exactly what the pg-CPU regression looked like.
+            min_rps = _throughput_budget(sc.throughput_op) if sc.throughput_op else 0.0
+            if min_rps:
+                covered_throughput_ops.add(sc.throughput_op)
+                evaluated += 1
+                ok = result.rps >= min_rps and result.errors == 0
+                label = "PASS" if ok else "FAIL"
+                if not ok:
+                    budget_violations += 1
+                print(
+                    f"  {sc.operation:25s} rps={result.rps:>6.1f}   "
+                    f"(budget {min_rps}/s as '{sc.throughput_op}' "
+                    f"@ concurrency {args.concurrency}) → {label}"
+                )
+
+        # Name the throughput budgets nothing exercised. A budget no scenario
+        # drives is not a pass — it is an unchecked expectation, and silence
+        # about it is what let the latency gate report success while inert.
+        uncovered = [
+            b for b in _all_throughput_budgets()
+            if b.operation not in covered_throughput_ops
+        ]
+        if uncovered:
+            print("")
+            print("  Not exercised by this harness (unchecked, not passing):")
+            for b in uncovered:
+                print(f"    {b.operation:25s} budget {b.min_rps}/s — {b.description}")
+
         if evaluated == 0:
             # A gate that could not evaluate anything must NOT report success.
             # This is what made the previous version useless: it printed
