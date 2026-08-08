@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Security: `/audit-dashboard/events` leaked other tenants' audit trails
+
+- The router's docstring promised *"Tenant isolation: non-admin users only see events for their
+  projects."* Nothing implemented it. Three separate defects:
+  1. **Unscoped fall-through.** The short-circuit fired only for a caller with **zero**
+     memberships. A member of even one project fell through with `project_id=None` into a
+     completely unscoped query.
+  2. **A named project was never checked.** `project_id` was treated as a filter, never as a
+     permission — supplying a project you cannot access returned 200.
+  3. **Instance-wide sources always included.** `SettingsAuditLog` and `IdentityEvent` have no
+     `project_id` column, so their sub-queries were never filtered by anything; every QA_LEAD
+     received the whole instance's settings-change and SSO/SCIM history.
+- **Confirmed live.** A QA_LEAD made a member of exactly one throwaway project (control:
+  `GET /projects/<seeded>` → 403, one project visible):
+
+  ```
+  GET /audit-dashboard/events?days=365&page_size=50        (no project_id)
+  total=78  rows=50  by_source={access: 12, settings: 10, test_management: 28}
+  rows carrying ANOTHER project's id: 28
+    test_management sync_deleted 3dfc96cf-37e6-4ea0-884d-9a82480479a7
+
+  GET /audit-dashboard/events?project_id=<inaccessible>    200 (not 403)
+  ```
+
+- **An earlier pass filed this as "needs confirmation" and understated it.** The probe account
+  had **zero** memberships, so it hit the early-return — the one path that behaved. Adding a
+  single membership exposed the cross-project leak. A negative result from an account with no
+  memberships proves nothing about tenant isolation.
+- Fix: `resolve_project_scope` in the router (403 for a named project the caller cannot access)
+  and a real `allowed_project_ids` scope inside `query_unified_audit`. An empty membership set
+  produces a false predicate, not an unfiltered query. The two sources with no project column
+  are **omitted** for a restricted caller rather than leaked — they cannot be attributed to a
+  project, and the alternative is handing every QA_LEAD the instance's settings history.
+- `/audit-dashboard/export` is unchanged: it already requires ADMIN, who is unrestricted by
+  design.
+
 ### 2026-08-08 — Security: `POST /search/reindex` had no authorization at all
 
 - The endpoint took neither a user nor a role, and never validated `project_id`:

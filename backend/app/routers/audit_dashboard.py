@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, require_project_access, require_role
+from app.core.deps import (
+    require_project_access,
+    require_role,
+    resolve_project_scope,
+)
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 
@@ -42,17 +46,27 @@ async def list_audit_events(
             detail=f"Invalid category. Valid: {', '.join(AUDIT_CATEGORIES.keys())}",
         )
 
-    # Tenant isolation: non-admin users restricted to their projects
-    if project_id is None:
-        accessible = await get_accessible_project_ids(db, current_user)
-        # If user is not admin and no project_id specified, they get no cross-project events
-        # Admin (accessible=None) gets everything
-        if accessible is not None and len(accessible) == 0:
-            return {"total": 0, "items": []}
+    # Tenant isolation.
+    #
+    # Previously this only short-circuited when the caller named NO project and
+    # had ZERO memberships. A member of even one project fell through with
+    # project_id=None into a completely unscoped query — measured: a QA_LEAD in
+    # one throwaway project received 28 test-management rows belonging to a
+    # different project. And a caller who NAMED a project they cannot access
+    # was never checked at all.
+    #
+    # ``project_id`` is a user-supplied filter, not a permission. Membership is
+    # resolved here and enforced inside the query.
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if allowed is not None and not allowed:
+        return {"total": 0, "items": []}
 
     return await query_unified_audit(
-        db, project_id=project_id, category=category, actor_id=actor_id,
+        db, project_id=scoped_project_id, category=category, actor_id=actor_id,
         days=days, page=page, page_size=page_size, redact=True,
+        allowed_project_ids=allowed,
     )
 
 

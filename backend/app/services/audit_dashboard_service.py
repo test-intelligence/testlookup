@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import cast
 
-from sqlalchemy import Float, cast as sa_cast, func, select
+from sqlalchemy import Float, cast as sa_cast, false as sa_false, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -53,18 +53,47 @@ async def query_unified_audit(
     page: int = 1,
     page_size: int = 50,
     redact: bool = True,
+    allowed_project_ids: set[uuid.UUID] | None = None,
 ) -> dict:
     """
     Query audit events across all tables with tenant isolation.
+
+    ``allowed_project_ids`` is the caller's membership set, or ``None`` for
+    ADMIN (unrestricted). It is the ONLY thing enforcing tenant isolation here
+    — ``project_id`` is a user-supplied *filter*, not a permission.
+
+    Two of the five sources have no ``project_id`` column at all
+    (``SettingsAuditLog``, ``IdentityEvent``): they record instance-wide
+    changes such as settings edits and SSO/SCIM events. They cannot be scoped
+    to a project, so for a restricted caller they are omitted entirely rather
+    than leaked — the alternative would be handing every QA_LEAD the whole
+    instance's settings history.
 
     Returns {total, items: [{source, action, actor_name, project_id, detail, created_at}]}
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     items: list[dict] = []
+    restricted = allowed_project_ids is not None
+
+    def _scope(query, column):
+        """Restrict a project-scoped table to the caller's memberships.
+
+        Rows with a NULL project_id are dropped for a restricted caller: a
+        project-scoped table with no project cannot be proven to belong to
+        them.
+        """
+        if not restricted:
+            return query
+        if not allowed_project_ids:
+            return query.where(sa_false())
+        return query.where(column.in_(allowed_project_ids))
 
     # ── Access audit ────────────────────────────────────────────────────
     if not category or category == "access":
-        access_query = select(AccessAuditLog).where(AccessAuditLog.created_at >= cutoff)
+        access_query = _scope(
+            select(AccessAuditLog).where(AccessAuditLog.created_at >= cutoff),
+            AccessAuditLog.project_id,
+        )
         if project_id:
             access_query = access_query.where(AccessAuditLog.project_id == project_id)
         if actor_id:
@@ -83,7 +112,8 @@ async def query_unified_audit(
             })
 
     # ── Settings audit ──────────────────────────────────────────────────
-    if not category or category == "settings":
+    # Instance-wide source with no project column — ADMIN only (see docstring).
+    if (not category or category == "settings") and not restricted:
         settings_query = select(SettingsAuditLog).where(SettingsAuditLog.created_at >= cutoff)
         if actor_id:
             settings_query = settings_query.where(SettingsAuditLog.actor_id == actor_id)
@@ -102,7 +132,10 @@ async def query_unified_audit(
 
     # ── Test management audit ───────────────────────────────────────────
     if not category or category == "test_management":
-        test_mgmt_query = select(TestCaseAuditLog).where(TestCaseAuditLog.created_at >= cutoff)
+        test_mgmt_query = _scope(
+            select(TestCaseAuditLog).where(TestCaseAuditLog.created_at >= cutoff),
+            TestCaseAuditLog.project_id,
+        )
         if project_id:
             test_mgmt_query = test_mgmt_query.where(TestCaseAuditLog.project_id == project_id)
         if actor_id:
@@ -121,7 +154,8 @@ async def query_unified_audit(
             })
 
     # ── Identity events ─────────────────────────────────────────────────
-    if not category or category == "identity":
+    # Instance-wide source with no project column — ADMIN only (see docstring).
+    if (not category or category == "identity") and not restricted:
         identity_query = select(IdentityEvent).where(IdentityEvent.created_at >= cutoff)
         if actor_id:
             identity_query = identity_query.where(IdentityEvent.actor_id == actor_id)
@@ -142,10 +176,11 @@ async def query_unified_audit(
 
     # ── Report export/share events (from AccessAuditLog with report_ prefix) ─
     if not category or category == "report":
-        report_query = (
+        report_query = _scope(
             select(AccessAuditLog)
             .where(AccessAuditLog.created_at >= cutoff)
-            .where(AccessAuditLog.action.like("report_%"))
+            .where(AccessAuditLog.action.like("report_%")),
+            AccessAuditLog.project_id,
         )
         if project_id:
             report_query = report_query.where(AccessAuditLog.project_id == project_id)
