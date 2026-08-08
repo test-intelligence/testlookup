@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: TopBar controls bunched mid-header; theme panel overlapped content
+
+- The header is `flex items-center gap-4` with the search box at `flex-1 max-w-md`. Once
+  search hit its max width it stopped growing, so the notification bell, colour-theme picker
+  and profile menu sat immediately after it — clustered in the middle on a wide screen, with
+  the right side of the header empty.
+
+- That is what made the theme picker look like it overlapped page content: its dropdown is
+  `absolute right-0 w-64`, so anchored mid-header it dropped a 16rem card over the middle of
+  the page instead of hugging the edge the way the other menus do.
+
+- `ml-auto` on the first trailing sibling absorbs the free space and pushes it — and every
+  sibling after it — to the right edge. One class, no DOM restructuring, so the existing
+  TopBar tests are untouched.
+
+- Regression: `TopBar.alignment.test.tsx` (2 of 3 fail before the fix) pins that something in
+  the header absorbs the free space **and** that the theme picker comes after it in DOM
+  order — `ml-auto` only pushes later siblings, so order is load-bearing, not incidental.
+
 ### 2026-08-08 — Fix: the Celery queue-backlog alert could never fire
 
 - `testlookup-alerts.yml` defines `TestLookupCeleryQueueBacklog` on

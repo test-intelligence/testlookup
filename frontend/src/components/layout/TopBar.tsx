@@ -195,8 +195,14 @@ export default function TopBar() {
         ))}
       </select>
 
-      {/* Notification bell */}
-      <div ref={bellRef} className="relative">
+      {/* Notification bell — starts the right-aligned trailing group.
+          ``ml-auto`` on the first of these siblings pushes it and everything
+          after it to the right edge. Without it the search box (``flex-1
+          max-w-md``) stops growing at its max width and the bell / theme picker
+          / profile menu bunch up mid-header on a wide screen — which put the
+          theme picker's 16rem ``right-0`` panel over page content instead of
+          against the edge, where the other menus sit. */}
+      <div ref={bellRef} className="relative ml-auto">
         <button
           onClick={() => setBellOpen(v => !v)}
           className="relative p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors"
