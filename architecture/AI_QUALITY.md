@@ -1,14 +1,20 @@
 # AI Quality — caching, corrections, and evidence integrity
 
 > Companion to [README.md](./README.md) §5 (the LangGraph pipeline and the
-> rules/ML/LLM router). This doc covers the AIQ mechanisms that keep the AI
-> layer *honest over time*: the semantic cache, the human-correction learning
-> loop, real-signal evidence grading, and cluster integrity. Verified against
-> the implementation 2026-07-02.
+> rules/ML/LLM router) and §6 (the agentic layer). This doc covers the
+> mechanisms that keep the AI layer *honest over time*: the semantic cache, the
+> human-correction learning loop, real-signal evidence grading, cluster
+> integrity, the pinned prompt registry with its eval attestation, and the
+> confidence gate. Verified against the implementation 2026-08-08.
 
 The theme: **the pipeline's outputs must improve with feedback and never
 overstate their evidence.** Each mechanism below closes a specific way an AI
 verdict could silently be wrong, stale, or fake-precise.
+
+Sections 1–4 keep a single *answer* honest. Sections 5–7 keep the system that
+produces answers honest: which prompts produced it (§5), whether it was
+confident enough to act on (§6), and what an acting agent was permitted to do
+(§7).
 
 ## 1. Semantic cache (`services/semantic_cache.py`)
 
@@ -99,7 +105,61 @@ its own limits must not fragment real clusters:
 - Beyond the cap, truncation is **logged, never silent** — a bounded sweep must
   say it was bounded.
 
-## 5. How this composes
+## 5. Prompt registry + eval attestation (`services/prompt_manifest.json`)
+
+Cache, corrections, evidence and clustering all keep a *single answer* honest.
+The registry keeps the **prompts that produce answers** honest across changes.
+
+- **Every LLM prompt is content-hashed and pinned.** `prompt_manifest.json`
+  carries `schema_version`, `hash_algorithm`, and one pinned hash per prompt —
+  **35 prompts** at the time of writing, covering the registry and the MCP
+  templates.
+- **A prompt cannot change silently.** The `ai.prompt-manifest-sync` quality
+  gate recomputes every hash and fails CI on any mismatch. Editing a prompt is
+  therefore a deliberate act that shows up in review as a manifest change.
+- **The manifest digest carries an eval attestation.**
+  `prompt_manifest_eval.json` records `manifest_digest`, `eval_gate_run_id`,
+  `gate_results`, `prompt_versions`, `mode`, `attested_at` and `change_id`. The
+  same gate checks the digest is attested *green* — so a prompt set can only
+  ship if the eval gate has actually been run against **that exact set**, not
+  against some earlier one.
+
+This is what makes AI changes reviewable rather than vibes-based: the diff shows
+which prompt moved, and the attestation shows the evals were re-run for it.
+
+## 6. Confidence gating (`services/confidence_gate.py`)
+
+The question "is this output trustworthy enough for an automation to act on it?"
+used to be answered by a magic number at each call site. It is now one module.
+
+- **One configurable threshold**, resolved with explicit precedence:
+  `app_settings.ai_config.ai_confidence_threshold` (source `ai_config`), else
+  `settings.AI_CONFIDENCE_THRESHOLD` (source `env_default`). An operator moves
+  the line once in `/settings/ai` and every gated automation follows.
+- **Each decision records a `threshold_check`** on the returned policy dict —
+  the observed score, the threshold, the source, and the verdict. The gate's
+  reasoning is auditable after the fact rather than implied.
+- **`>=` is deliberate**, not arbitrary: every pre-existing gate was written as
+  `confidence < THRESHOLD -> needs review`, so centralising on `>=` left those
+  call sites byte-identical at the boundary.
+- **An absent confidence never passes.** `None` is not "good enough by
+  default" — treating unknown as acceptable is the exact failure this mechanism
+  exists to prevent.
+
+> Two fabricated "AI confidence" values were removed from the UI before this
+> existed. The gate is the structural answer to that class: a confidence that
+> isn't real can't satisfy a recorded threshold check.
+
+## 7. Agent governance
+
+The [Investigator and Fixer](./README.md#6-agentic-layer-investigator--fixer)
+are governed separately, because they *act* rather than merely classify:
+per-project `agent_policies` (`enabled`, `mode`, `budgets`), `shadow` mode that
+records what an agent would have done without doing it, and an `agent_runs`
+ledger that stores `prompt_registry_digest` — tying every agent decision back to
+the pinned prompt set in §5. See the architecture README for the full picture.
+
+## 8. How this composes
 
 ```mermaid
 flowchart LR
@@ -115,6 +175,12 @@ flowchart LR
 
 A correction beats the cache (the invalidation guarantees it), the cache beats
 recomputation, and every computed confidence is traceable to graded evidence.
+
+**Before an automation acts on that verdict**, two further gates apply: the
+confidence must clear the recorded threshold (§6), and — if an agent is doing
+the acting — its policy must permit it and its budget must allow it (§7). The
+prompt set that produced the verdict is pinned and attested (§5), so the whole
+chain from prompt to action is reconstructable after the fact.
 
 ## Related docs
 

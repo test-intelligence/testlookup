@@ -5,7 +5,7 @@
 > reference with the extractor in `architecture/` after model changes — see
 > [Keeping these docs current](#keeping-these-docs-current).
 
-PostgreSQL is the **system of record** (96 tables). MongoDB, Redis, MinIO and
+PostgreSQL is the **system of record** (109 tables, Alembic head `0117`). MongoDB, Redis, MinIO and
 ChromaDB hold derived, ephemeral, or large-blob data that does not belong in the
 relational store. This document covers all of them, but the relational schema is
 the focus.
@@ -48,19 +48,19 @@ Five tables anchor the whole schema. Reading the ER diagrams, trace everything b
 
 ## Domains
 
-The 96 tables group into nine functional domains:
+The 109 tables group into nine functional domains:
 
 | Domain | Tables | What it covers |
 |--------|-------:|----------------|
-| Identity, Tenancy & Access | 11 | Users, projects, membership, API keys, SSO/SCIM, refresh tokens, access audit |
-| Test Execution & Ingestion | 14 | Runs, per-run cases, suites, steps, attachments, canonical inventory, live sessions, reviews |
-| AI Analysis Pipeline | 11 | Agent pipeline runs + per-stage results, classifications, clusters, deep findings, provenance, agent memory |
+| Identity, Tenancy & Access | 12 | Users, projects, membership, API keys, SSO/SCIM, refresh tokens, access audit |
+| Test Execution & Ingestion | 15 | Runs, per-run cases, suites, steps, attachments, canonical inventory, live sessions, reviews |
+| AI Analysis Pipeline | 15 | Agent pipeline runs + per-stage results, classifications, clusters, deep findings, provenance, agent memory |
 | AI Evaluation & Models | 5 | Model versions, eval datasets/runs/baselines, pre-release eval gate |
 | Defects, Releases & Gates | 10 | Defects + candidates, release decisions, releases/phases, gate policies, compliance packs, coverage |
 | Test Management (Authored Cases) | 10 | Managed cases, versions, reviews, comments, duplicate review, plans, strategies, case audit |
 | Knowledge, RAG & Generation | 6 | Knowledge sources, sync events, chunks, generation batches + sources, requirement coverage |
-| Analytics, Comparison & Health | 10 | Run baselines/diffs/compare reports, perf baselines, tenant metrics, onboarding, usage, flaky coach/quarantine, health recs |
-| Platform, Ops & Integrations | 19 | Settings + secrets, feature flags, notifications, integration health, webhooks, GitHub, saved views, digests, share links, ownership, LLM quota/usage, chat |
+| Analytics, Comparison & Health | 12 | Run baselines/diffs/compare reports, perf baselines, tenant metrics, onboarding, usage, flaky coach/quarantine, health recs |
+| Platform, Ops & Integrations | 24 | Settings + secrets, feature flags, notifications, integration health, webhooks, GitHub, saved views, digests, share links, ownership, LLM quota/usage, chat |
 
 ## Cross-domain hub map
 
@@ -930,20 +930,33 @@ the optional vector backend is not configured.
 
 ## Keeping these docs current
 
-The ER diagrams and the [full schema reference](#full-schema-reference) are
-generated, not hand-maintained. After changing `models/postgres.py`:
+The [full schema reference](#full-schema-reference) is generated, not
+hand-maintained. The extractor is **`scripts/gen_schema_docs.py`** — it walks
+`backend/app/models/postgres.py` with Python's `ast` module, so it needs no
+database connection and no app import, and is safe to run anywhere including an
+air-gapped box.
 
-1. Re-run the AST extractor over `backend/app/models/postgres.py` to rebuild the
-   table/column/FK inventory (the script lives in the PR that introduced these
-   docs; it walks the model file with Python's `ast` module — no DB connection
-   needed, so it is safe to run anywhere).
-2. Regenerate the per-domain ER diagrams and the schema-reference tables, and
-   paste them back into the corresponding sections here.
+```bash
+python scripts/gen_schema_docs.py --check          # drift vs this file (exit 1 on drift)
+python scripts/gen_schema_docs.py --emit <table>   # regenerate one entry
+python scripts/gen_schema_docs.py --list           # table -> model
+```
+
+After changing `models/postgres.py`:
+
+1. `--check` to see what drifted.
+2. `--emit` the affected tables and paste the entries back into the matching
+   domain section, updating the per-domain counts in [Domains](#domains).
 3. Add the matching Alembic migration (`backend/migrations/versions/NNNN_*.py`)
    and confirm `database.single-alembic-head` stays green.
 
-A drift check belongs in CI eventually (compare the generated inventory against
-this file); until then, treat regeneration as part of any schema-changing PR.
+> **Why the script is now committed.** The previous version of this section said
+> the extractor "lives in the PR that introduced these docs" — so it was not in
+> the repo and this file could not actually be regenerated. It drifted **13
+> tables** (96 documented against 109 declared) plus **31 columns across 8
+> already-documented tables** before that was noticed. A generated document
+> whose generator is missing is a hand-maintained document that nobody knows
+> they are hand-maintaining.
 
 ---
 ## Full schema reference
@@ -965,6 +978,12 @@ Generated from `backend/app/models/postgres.py` — **96 tables, 1,235 columns**
 | `is_active` | `Boolean` |  | NN def |  |
 | `must_change_password` | `Boolean` |  | NN def |  |
 | `avatar_color` | `String(20)` |  |  |  |
+| `mfa_enabled` | `Boolean` |  | NN def |  |
+| `mfa_enrolled_at` | `DateTime` |  |  |  |
+| `mfa_last_used_step` | `BigInteger` |  |  |  |
+| `last_login_at` | `DateTime` |  |  |  |
+| `failed_login_attempts` | `Integer` |  | NN def |  |
+| `locked_until` | `DateTime` |  |  |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 
@@ -1141,6 +1160,16 @@ _Constraints:_ Index(`ix_identity_event_type`, `event_type`); Index(`ix_identity
 
 _Constraints:_ Index(`ix_aal_actor`, `actor_user_id`); Index(`ix_aal_target`, `target_user_id`); Index(`ix_aal_created`, `created_at`)
 
+#### `mfa_recovery_codes`  <sub>(model `MfaRecoveryCode`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `user_id` | `ForeignKey` | FK | NN | `users.id` |
+| `code_hash` | `String(64)` |  | NN U |  |
+| `used_at` | `DateTime` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+
 ### Test Execution & Ingestion
 
 #### `test_runs`  <sub>(model `TestRun`)</sub>
@@ -1148,7 +1177,7 @@ _Constraints:_ Index(`ix_aal_actor`, `actor_user_id`); Index(`ix_aal_target`, `t
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
-| `project_id` | `UUID` | FK | NN | → `projects.id` |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
 | `build_number` | `String(100)` |  | NN |  |
 | `jenkins_job` | `String(500)` |  |  |  |
 | `trigger_source` | `String(50)` |  |  |  |
@@ -1156,6 +1185,11 @@ _Constraints:_ Index(`ix_aal_actor`, `actor_user_id`); Index(`ix_aal_target`, `t
 | `commit_hash` | `String(64)` |  |  |  |
 | `status` | `String(20)` |  | NN def |  |
 | `ingestion_source` | `String(20)` |  | NN def |  |
+| `ci_provider` | `String(30)` |  |  |  |
+| `ci_repo` | `String(300)` |  |  |  |
+| `pr_number` | `Integer` |  |  |  |
+| `ci_actor` | `String(120)` |  |  |  |
+| `ci_run_url` | `String(1000)` |  |  |  |
 | `total_tests` | `Integer` |  | NN def |  |
 | `passed_tests` | `Integer` |  | NN def |  |
 | `failed_tests` | `Integer` |  | NN def |  |
@@ -1445,6 +1479,22 @@ _Constraints:_ UniqueConstraint(`project_id`, `suite_name`, `test_fingerprint`);
 
 _Constraints:_ Index(`ix_sme_project_suite`, `project_id`, `suite_name`, `created_at`); Index(`ix_sme_run`, `run_id`)
 
+#### `run_commit_ranges`  <sub>(model `RunCommitRange`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `run_id` | `ForeignKey` | FK | NN | `test_runs.id` |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `base_commit` | `String(64)` |  |  |  |
+| `head_commit` | `String(64)` |  |  |  |
+| `base_run_id` | `UUID` |  |  |  |
+| `source` | `String(20)` |  | NN def |  |
+| `base_source` | `String(30)` |  | NN def |  |
+| `commits` | `JSONB` |  | NN def |  |
+| `resolved_at` | `DateTime` |  | NN def |  |
+| `created_at` | `DateTime` |  | NN def |  |
+
 ### AI Analysis Pipeline
 
 #### `agent_pipeline_runs`  <sub>(model `AgentPipelineRun`)</sub>
@@ -1617,7 +1667,8 @@ _Constraints:_ Index(`ix_ame_project_id`, `project_id`); Index(`ix_ame_run_id`, 
 | `id` | `UUID` | PK | NN def |  |
 | `entity_type` | `String(50)` |  | NN |  |
 | `entity_id` | `UUID` |  | NN |  |
-| `run_id` | `UUID` | FK |  | → `test_runs.id` |
+| `run_id` | `ForeignKey` | FK |  | `test_runs.id` |
+| `project_id` | `ForeignKey` | FK |  | `projects.id` |
 | `model_name` | `String(200)` |  |  |  |
 | `fallback_used` | `Boolean` |  | NN def |  |
 | `confidence` | `Integer` |  |  |  |
@@ -1661,6 +1712,92 @@ _Constraints:_ Index(`ix_ris_run_id`, `run_id`); Index(`ix_ris_generated`, `gene
 | `created_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_evidence_run_id`, `run_id`); Index(`ix_evidence_cluster`, `cluster_id`)
+
+#### `agent_investigations`  <sub>(model `AgentInvestigation`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `run_id` | `ForeignKey` | FK | NN | `test_runs.id` |
+| `status` | `String(20)` |  | NN def |  |
+| `mode` | `String(10)` |  | NN def |  |
+| `triggered_by` | `String(40)` |  | NN def |  |
+| `budget` | `JSONB` |  | NN def |  |
+| `spend` | `JSONB` |  | NN def |  |
+| `hypotheses` | `JSONB` |  | NN def |  |
+| `verdict` | `JSONB` |  |  |  |
+| `prompt_versions` | `JSONB` |  |  |  |
+| `model_info` | `JSONB` |  |  |  |
+| `cancel_requested` | `Boolean` |  | NN def |  |
+| `cancelled_by` | `String(255)` |  |  |  |
+| `error` | `Text` |  |  |  |
+| `started_at` | `DateTime` |  |  |  |
+| `completed_at` | `DateTime` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+
+#### `agent_policies`  <sub>(model `AgentPolicy`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `agent_id` | `String(50)` |  | NN |  |
+| `enabled` | `Boolean` |  | NN def |  |
+| `mode` | `String(10)` |  | NN def |  |
+| `budgets` | `JSONB` |  | NN def |  |
+| `shadow_runs_completed` | `Integer` |  | NN def |  |
+| `promotion_note` | `Text` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+
+#### `agent_runs`  <sub>(model `AgentRun`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `agent_id` | `String(50)` |  | NN |  |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `run_id` | `ForeignKey` | FK |  | `test_runs.id` |
+| `mode` | `String(10)` |  | NN def |  |
+| `trigger` | `String(40)` |  | NN def |  |
+| `status` | `String(20)` |  | NN |  |
+| `summary` | `Text` |  | NN def |  |
+| `actions_proposed` | `JSONB` |  | NN def |  |
+| `actions_taken` | `JSONB` |  | NN def |  |
+| `tokens` | `Integer` |  | NN def |  |
+| `cost_usd` | `Float` |  | NN def |  |
+| `duration_ms` | `Integer` |  | NN def |  |
+| `prompt_registry_digest` | `String(64)` |  |  |  |
+| `details_path` | `String(500)` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+
+#### `fix_attempts`  <sub>(model `FixAttempt`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `fixer_run_id` | `UUID` |  | NN |  |
+| `test_fingerprint` | `String(64)` |  | NN |  |
+| `test_name` | `String(500)` |  |  |  |
+| `status` | `String(30)` |  | NN def |  |
+| `attempt_no` | `Integer` |  | NN def |  |
+| `patch_summary` | `Text` |  |  |  |
+| `patch` | `Text` |  |  |  |
+| `validation_reruns` | `Integer` |  |  |  |
+| `validation_passed` | `Integer` |  |  |  |
+| `runner_type` | `String(30)` |  |  |  |
+| `runner_log_digest` | `String(128)` |  |  |  |
+| `egress_opened` | `Boolean` |  | NN def |  |
+| `pr_url` | `String(1000)` |  |  |  |
+| `pr_number` | `Integer` |  |  |  |
+| `pr_state` | `String(20)` |  |  |  |
+| `ledger_run_id` | `UUID` |  |  |  |
+| `reason` | `Text` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `completed_at` | `DateTime` |  |  |  |
 
 ### AI Evaluation & Models
 
@@ -1776,8 +1913,8 @@ _Constraints:_ Index(`ix_aeg_change_id`, `change_id`); Index(`ix_aeg_status`, `s
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
-| `test_case_id` | `UUID` | FK |  | → `test_cases.id` |
-| `project_id` | `UUID` | FK | NN | → `projects.id` |
+| `test_case_id` | `ForeignKey` | FK |  | `test_cases.id` |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
 | `jira_ticket_id` | `String(50)` |  |  |  |
 | `jira_ticket_url` | `String(1000)` |  |  |  |
 | `jira_status` | `String(50)` |  |  |  |
@@ -1799,9 +1936,14 @@ _Constraints:_ Index(`ix_aeg_change_id`, `change_id`); Index(`ix_aeg_status`, `s
 | `is_duplicate` | `Boolean` |  | NN def |  |
 | `promotion_source` | `String(50)` |  |  |  |
 | `approval_status` | `String(20)` |  | NN def |  |
-| `approved_by` | `UUID` | FK |  | → `users.id` |
+| `approved_by` | `ForeignKey` | FK |  | `users.id` |
 | `approved_at` | `DateTime` |  |  |  |
 | `policy_evaluation` | `JSON` |  |  |  |
+| `signature_fingerprint` | `String(64)` |  |  |  |
+| `recurrence_count` | `Integer` |  | NN def |  |
+| `last_recurrence_at` | `DateTime` |  |  |  |
+| `external_status_at` | `DateTime` |  |  |  |
+| `external_status_conflict` | `Boolean` |  | NN def |  |
 
 _Constraints:_ Index(`ix_defects_test_case_open_unique`, `test_case_id`); Index(`ix_defects_project_id`, `project_id`)
 
@@ -2499,7 +2641,7 @@ _Constraints:_ Index(`ix_thr_run`, `test_run_id`); Index(`ix_thr_test_case`, `te
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
-| `project_id` | `UUID` | FK | NN | → `projects.id` |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
 | `test_fingerprint` | `String(64)` |  | NN |  |
 | `test_name` | `String(500)` |  |  |  |
 | `suite_name` | `String(500)` |  |  |  |
@@ -2513,19 +2655,56 @@ _Constraints:_ Index(`ix_thr_run`, `test_run_id`); Index(`ix_thr_test_case`, `te
 | `last_failure_at` | `DateTime` |  |  |  |
 | `proposed_at` | `DateTime` |  |  |  |
 | `approved_at` | `DateTime` |  |  |  |
-| `approved_by_user_id` | `UUID` | FK |  | → `users.id` |
+| `approved_by_user_id` | `ForeignKey` | FK |  | `users.id` |
 | `rejected_at` | `DateTime` |  |  |  |
-| `rejected_by_user_id` | `UUID` | FK |  | → `users.id` |
+| `rejected_by_user_id` | `ForeignKey` | FK |  | `users.id` |
 | `quarantine_start` | `DateTime` |  |  |  |
 | `quarantine_expires_at` | `DateTime` |  |  |  |
 | `quarantine_duration_days` | `Integer` |  | NN def |  |
 | `recheck_at` | `DateTime` |  |  |  |
 | `rationale` | `JSONB` |  |  |  |
 | `reviewer_notes` | `Text` |  |  |  |
+| `owner_user_id` | `ForeignKey` | FK |  | `users.id` |
+| `defect_id` | `ForeignKey` | FK |  | `defects.id` |
+| `sla_days` | `Integer` |  |  |  |
+| `stale_at` | `DateTime` |  |  |  |
+| `stale_notified_at` | `DateTime` |  |  |  |
+| `consecutive_passes` | `Integer` |  | NN def |  |
+| `last_stability_run_id` | `ForeignKey` | FK |  | `test_runs.id` |
+| `ready_to_promote` | `Boolean` |  | NN def |  |
+| `ready_notified_at` | `DateTime` |  |  |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_fqr_project_status`, `project_id`, `status`); Index(`ix_fqr_fingerprint`, `project_id`, `test_fingerprint`)
+
+#### `quarantine_lifecycle_policies`  <sub>(model `QuarantineLifecyclePolicy`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN U | `projects.id` |
+| `sla_days` | `Integer` |  | NN def |  |
+| `auto_create_defect` | `Boolean` |  | NN def |  |
+| `auto_promote` | `Boolean` |  | NN def |  |
+| `promote_after_passes` | `Integer` |  | NN def |  |
+| `detection_flip_rate_threshold` | `Float` |  | NN def |  |
+| `detection_min_runs` | `Integer` |  | NN def |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+
+#### `value_metric_assumptions`  <sub>(model `ValueMetricAssumptions`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN U | `projects.id` |
+| `triage_minutes_per_failure` | `Float` |  | NN def |  |
+| `blocked_run_wait_minutes` | `Float` |  | NN def |  |
+| `defect_filing_minutes` | `Float` |  | NN def |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+| `updated_by_user_id` | `ForeignKey` | FK |  | `users.id` |
 
 ### Platform, Ops & Integrations
 
@@ -2610,15 +2789,17 @@ _Constraints:_ UniqueConstraint(`user_id`, `project_id`, `channel`)
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
-| `user_id` | `UUID` | FK |  | → `users.id` |
-| `project_id` | `UUID` | FK |  | → `projects.id` |
-| `run_id` | `UUID` | FK |  | → `test_runs.id` |
+| `user_id` | `ForeignKey` | FK |  | `users.id` |
+| `project_id` | `ForeignKey` | FK |  | `projects.id` |
+| `run_id` | `ForeignKey` | FK |  | `test_runs.id` |
 | `channel` | `String(20)` |  | NN |  |
 | `event_type` | `String(50)` |  | NN |  |
 | `title` | `String(500)` |  | NN |  |
 | `body` | `Text` |  | NN |  |
 | `status` | `String(20)` |  | NN def |  |
 | `error_detail` | `Text` |  |  |  |
+| `routed_team` | `String(255)` |  |  |  |
+| `routing_fallback` | `String(50)` |  |  |  |
 | `is_read` | `Boolean` |  | NN def |  |
 | `sent_at` | `DateTime` |  |  |  |
 | `created_at` | `DateTime` |  | NN def |  |
@@ -2698,18 +2879,19 @@ _Constraints:_ Index(`ix_webhook_delivery_sub_created`, `subscription_id`, `crea
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
-| `project_id` | `UUID` | FK | NN U | → `projects.id` |
+| `project_id` | `ForeignKey` | FK | NN U | `projects.id` |
 | `enabled` | `Boolean` |  | NN def |  |
 | `repo_owner` | `String(255)` |  | NN |  |
 | `repo_name` | `String(255)` |  | NN |  |
 | `api_base_url` | `String(500)` |  | NN def |  |
 | `has_pat` | `Boolean` |  | NN def |  |
+| `pr_comment_mode` | `String(20)` |  | NN def |  |
 | `last_posted_at` | `DateTime` |  |  |  |
 | `last_error` | `Text` |  |  |  |
 | `last_error_at` | `DateTime` |  |  |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
-| `updated_by_user_id` | `UUID` | FK |  | → `users.id` |
+| `updated_by_user_id` | `ForeignKey` | FK |  | `users.id` |
 
 _Constraints:_ Index(`ix_github_integrations_project`, `project_id`)
 
@@ -2736,9 +2918,9 @@ _Constraints:_ Index(`ix_sv_user`, `user_id`); Index(`ix_sv_project`, `project_i
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
-| `user_id` | `UUID` | FK | NN | → `users.id` |
-| `project_id` | `UUID` | FK |  | → `projects.id` |
-| `saved_view_id` | `UUID` | FK |  | → `saved_views.id` |
+| `user_id` | `ForeignKey` | FK | NN | `users.id` |
+| `project_id` | `ForeignKey` | FK |  | `projects.id` |
+| `saved_view_id` | `ForeignKey` | FK |  | `saved_views.id` |
 | `name` | `String(255)` |  | NN |  |
 | `schedule` | `String(20)` |  | NN def |  |
 | `channel` | `String(20)` |  | NN def |  |
@@ -2747,6 +2929,8 @@ _Constraints:_ Index(`ix_sv_user`, `user_id`); Index(`ix_sv_project`, `project_i
 | `scope_type` | `String(20)` |  | def |  |
 | `scope_value` | `String(255)` |  |  |  |
 | `trigger_filter` | `String(20)` |  | def |  |
+| `send_when_unchanged` | `Boolean` |  | NN def |  |
+| `report_attachment` | `Boolean` |  | NN def |  |
 | `last_delivered_at` | `DateTime` |  |  |  |
 | `next_delivery_at` | `DateTime` |  |  |  |
 | `delivery_count` | `Integer` |  | NN def |  |
@@ -2854,3 +3038,78 @@ _Constraints:_ Index(`ix_chat_sessions_user`, `user_id`)
 | `created_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_chat_messages_session`, `session_id`, `created_at`)
+
+#### `gitlab_integrations`  <sub>(model `GitLabIntegration`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN U | `projects.id` |
+| `enabled` | `Boolean` |  | NN def |  |
+| `base_url` | `String(500)` |  | NN def |  |
+| `project_path` | `String(500)` |  | NN def |  |
+| `mr_comment_mode` | `String(20)` |  | NN def |  |
+| `commit_status_enabled` | `Boolean` |  | NN def |  |
+| `has_pat` | `Boolean` |  | NN def |  |
+| `last_posted_at` | `DateTime` |  |  |  |
+| `last_error` | `Text` |  |  |  |
+| `last_error_at` | `DateTime` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+| `updated_by_user_id` | `ForeignKey` | FK |  | `users.id` |
+
+#### `notification_test_states`  <sub>(model `NotificationTestState`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `test_fingerprint` | `String(64)` |  | NN |  |
+| `state` | `String(20)` |  | NN def |  |
+| `consecutive_failures` | `Integer` |  | NN def |  |
+| `last_notified_state` | `String(20)` |  |  |  |
+| `is_known_flaky` | `Boolean` |  | NN def |  |
+| `last_run_id` | `ForeignKey` | FK |  | `test_runs.id` |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+
+#### `notification_transition_policies`  <sub>(model `NotificationTransitionPolicy`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN U | `projects.id` |
+| `transitions_enabled` | `Boolean` |  | NN def |  |
+| `per_run_events_enabled` | `Boolean` |  | NN def |  |
+| `enabled_events` | `JSONB` |  | NN def |  |
+| `consecutive_failure_threshold` | `Integer` |  | NN def |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+
+#### `project_retention_policies`  <sub>(model `ProjectRetentionPolicy`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN U | `projects.id` |
+| `enabled` | `Boolean` |  | NN def |  |
+| `raw_events_days` | `Integer` |  | NN def |  |
+| `runs_days` | `Integer` |  | NN def |  |
+| `artifacts_days` | `Integer` |  | NN def |  |
+| `audit_days` | `Integer` |  | NN def |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |
+| `updated_by_user_id` | `ForeignKey` | FK |  | `users.id` |
+
+#### `team_notification_channels`  <sub>(model `TeamNotificationChannel`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `ForeignKey` | FK | NN | `projects.id` |
+| `team_name` | `String(255)` |  | NN |  |
+| `channel_type` | `String(20)` |  | NN |  |
+| `target` | `String(2000)` |  | NN |  |
+| `is_active` | `Boolean` |  | NN def |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `updated_at` | `DateTime` |  | NN def |  |

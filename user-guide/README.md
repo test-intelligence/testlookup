@@ -71,6 +71,19 @@ The sidebar groups the app into these areas (paths are relative to the dashboard
 
 > Time windows are shared: the window you pick on one page (7 days, 30 days, …) follows you across pages.
 
+## First run (`/getting-started`)
+
+A new instance opens on a setup checklist rather than an empty dashboard. It
+tracks the steps that make the rest of the product useful — create a project,
+get results in, connect an issue tracker, connect telemetry, add an API key,
+try live streaming — and marks each done as you actually complete it, not when
+you click through.
+
+Steps you don't want are **skippable**, and the page stops appearing once the
+essentials are done. If you land on an empty-looking dashboard on a fresh
+install, this is where to start: [Getting results in](getting-results-in.md)
+is the step that makes every other page show something.
+
 ## Conventions in these guides
 
 - The dashboard runs at `http://localhost:3000` and the API at `http://localhost:8000` in a default self-host install — substitute your deployment's URLs.

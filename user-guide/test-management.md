@@ -46,6 +46,26 @@ Every project gets a **default QA-lead** user automatically (created with the pr
 2. Add `/ownership` rules for families of suites.
 3. Verify with the next run: failures should appear in the right inboxes (Team scope shows anything that fell through to the default QA lead).
 
+
+## Canonical test detail (`/canonical-test-cases/:id`)
+
+A **canonical test case** is the deduped, cross-run identity of a test — what
+"the same test" means when it has run five hundred times under slightly
+different names. It is the *observed* counterpart to an authored
+[managed test case](#managed-test-cases): one is what your suites actually ran,
+the other is what someone wrote down.
+
+The detail page shows a single canonical test's history across runs — its
+status over time, class name and suite membership, and how long it has been
+taking — reached from a suite's test list.
+
+**Nothing here is hard-deleted.** Canonical rows and suite memberships carry a
+status plus the run in which they disappeared, so a test that vanishes from a
+suite leaves a trace rather than silently ceasing to exist. That lineage is what
+lets the product tell "this test was removed" apart from "this test stopped
+being reported", which are very different problems.
+
+
 ## Related
 
 - Where assignments surface: [Triaging failures](triaging-failures.md)

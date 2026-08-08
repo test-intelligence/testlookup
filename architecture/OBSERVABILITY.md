@@ -64,6 +64,38 @@ Pipeline page's Workflow Progress — a verdict can always answer "which stage
 decided this, and why" (see [AI_QUALITY.md](./AI_QUALITY.md) for the
 provenance rules this feeds).
 
+### 5a. Agentic-layer observability
+
+The §5 decision logs cover the **per-ingest** pipeline. Agents that *act*
+(Investigator, Fixer — see [README §6](./README.md#6-agentic-layer-investigator--fixer))
+are observable through a different, coarser record, because the question about
+them is "what did it do and was it allowed to" rather than "which stage decided
+this":
+
+- **`agent_runs`** is the ledger: `trigger`, `status`, `mode`,
+  `actions_proposed` vs `actions_taken` (the gap between the two is what
+  `shadow` mode exists to show), `tokens`, `cost_usd`, `duration_ms`, and
+  **`prompt_registry_digest`** — which ties the run to the exact pinned prompt
+  set that produced it (see
+  [AI_QUALITY.md §5](./AI_QUALITY.md#5-prompt-registry--eval-attestation-servicesprompt_manifestjson)).
+  A past agent decision is therefore reproducible, not just auditable.
+- **`fix_attempts`** records every Fixer attempt — `status`, `attempt_no`,
+  `patch_summary`, `patch` — whether or not it succeeded. Failed attempts are
+  kept deliberately: "the Fixer tried and could not" is the useful signal.
+- **`GET /api/v1/agents/event-log/health`** exposes the pipeline event log's own
+  health: `write_failure_count`, `dead_letter_count` against `dead_letter_limit`,
+  and `recent_dead_letters`. This is the "is the observability itself working"
+  surface — a silent event-log write failure would otherwise make every other
+  agent signal quietly incomplete.
+- Surfaces: `/agents` (activity), `/settings/agent-activity`,
+  `/settings/ai-agents` (policy + budgets).
+
+> **Reading a failed pipeline.** A `failed` run keeps its non-started stages at
+> `pending` rather than rewriting them — terminal parent, non-terminal children.
+> The UI derives its display from the *pipeline* status, so this is a data
+> detail rather than a rendering bug, but a query counting `pending` stages
+> across pipelines will over-count work that will never run.
+
 ## 6. Health surfaces
 
 - `GET /health/live` / `/health/ready` — K8s probes.

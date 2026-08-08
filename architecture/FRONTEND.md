@@ -2,7 +2,7 @@
 
 > Companion to [README.md](./README.md). The React 18 + Vite + TypeScript SPA:
 > its layering, state model, theme system, and the CI ratchets that hold the
-> conventions in place. Verified against the implementation 2026-07-02.
+> conventions in place. Verified against the implementation 2026-08-08.
 
 ## 1. Layering
 
@@ -10,11 +10,11 @@ One direction of data flow, enforced by quality gates (§5):
 
 ```mermaid
 flowchart LR
-    P["pages/ (~65 route components)<br/>App.tsx owns the route table"] --> H["hooks/ (~70)<br/>useSWR wrappers, one per data need"]
-    H --> S["services/ (~50)<br/>typed API modules"]
+    P["pages/ (38 components, 62 routes)<br/>App.tsx owns the route table"] --> H["hooks/ (58)<br/>useSWR wrappers, one per data need"]
+    H --> S["services/ (59)<br/>typed API modules"]
     S --> A["services/api.ts<br/>the ONE shared Axios instance"]
     A --> BE["backend REST API"]
-    P --> Z["store/ (Zustand)<br/>client state only"]
+    P --> Z["store/ (4 Zustand stores)<br/>client state only"]
 ```
 
 - **Pages** are route-level components (`App.tsx` is the single route table —

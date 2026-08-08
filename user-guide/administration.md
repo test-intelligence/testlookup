@@ -16,7 +16,7 @@ The admin surface splits into three concerns: **people & projects**, **connectin
 - **Integrations** (`/settings/integrations`, `/settings/github`) — outbound integrations (GitHub, Jira, notification channels). Everything here is **subordinate to `AI_OFFLINE_MODE`**: in the default offline install these are inert regardless of flags — enable outbound mode deliberately before expecting webhooks or ticket creation to fire.
 - **Webhooks** (`/settings/webhooks`) — outbound event webhooks with delivery history.
 - **Notifications** (`/settings/notifications`) — channel + per-event preferences; what lands in the bell menu vs email.
-- **Digests** (`/settings/digests`) — scheduled summary digests (daily/weekly roll-ups to a channel). Email digests can optionally carry an **attached analysis report** (see below).
+- **Digests** (`/settings/digests`) — scheduled summary digests (daily/weekly roll-ups to a channel). Email digests can optionally carry an **attached analysis report** (see below). A third schedule, **weekly retro**, is available behind a flag (see below).
 - **Attached analysis report** — check *Attach analysis report* on a daily/weekly **email** digest subscription and each delivery carries `testlookup-report-<project>-<date>[-weekly].html`: a single self-contained HTML file (inline styles + SVG charts, no external assets, works offline) with the full window analysis — executive summary (unique tests across the window, same semantics as the Summary Report/Coverage pages, plus a day-by-day sparkline on weekly), runs table, new-vs-recurring failures with top failing tests and clusters, the failure-kind triad, flaky & quarantine debt, slowest tests, the latest release-gate verdict, open linked defects (including the "closed in Jira but still failing" badge), and failures grouped by owning team. Daily digests cover 1 day; weekly cover 7. The subscription must be project-scoped; a failed report build never blocks the digest itself (it arrives with an apology note instead). Slack/Teams digests are unchanged apart from a one-line pointer at the email attachment. The same document is downloadable on demand from the [Summary Report](dashboards.md#summary-report-reportssummary) page or `GET /api/v1/projects/{id}/reports/analysis?window=1d|7d` (QA Engineer+).
 - **Integration Health** (`/settings/integration-health`) — the status board for everything above: which integrations are configured, reachable, and delivering. Check here first when "the webhook didn't fire".
 
@@ -226,6 +226,82 @@ behaviour.
 Fix it by restoring the previous key in `APP_SECRET_KEY_PREVIOUS` and
 restarting. If the old key is genuinely gone, use breakglass per affected user
 and have them re-enroll.
+
+## AI agents — autonomy, budgets, and the activity ledger
+
+Two pages govern the agents that can *act* on your project (the Investigator,
+which reasons about failures, and the Fixer, which can propose a code change).
+They are separate from the AI analysis that classifies every run — see
+[AI features](ai-features.md).
+
+**Both agents ship disabled.** Turning one on is a deliberate admin decision.
+
+### `/settings/ai-agents` — policy and budgets
+
+Per project, per agent:
+
+| control | what it does |
+|---|---|
+| **enabled** | whether the agent runs at all |
+| **Agent autonomy mode** | `shadow` — run and record what it *would* have done, changing nothing. `active` — allowed to act |
+| **Budgets** | `max_runs_per_day`, `max_llm_calls_per_run`, `max_tokens_per_run` |
+
+**Start in `shadow`.** The agent does its full reasoning and records the actions
+it *would* have taken, so you can compare proposed-vs-taken over real failures
+before granting it autonomy. The system records how many shadow runs have
+completed and keeps a promotion note, so moving an agent to `active` is a
+decision with a paper trail rather than a toggle someone flipped.
+
+Budgets are the second safety net: an agent that misbehaves costs a bounded
+amount before it stops.
+
+### `/settings/agent-activity` — what actually happened
+
+Every agent run is ledgered: which agent, what triggered it, status, **actions
+proposed vs actions taken**, tokens, cost, and duration. Filter by agent, or
+read "All agents" for the whole project.
+
+The gap between *proposed* and *taken* is the number to watch — in `shadow` mode
+taken is always zero, and that difference is exactly the evidence you need to
+decide whether the agent is worth promoting.
+
+Each run also records the digest of the prompt set that produced it, so a
+decision made months ago can be reproduced against the prompts as they were at
+the time — not as they are now.
+
+### The Fixer never merges
+
+When enabled and active, the Fixer proposes a patch, validates it by **re-running
+the failing test in an ephemeral sandbox**, and only then opens a **draft** pull
+request. It cannot merge, and a patch that fails validation is recorded as a
+failed attempt rather than offered to you. Review the draft PR like any other.
+
+> **Needs a local LLM.** With no model installed the Investigator's hypothesis
+> stages stay `pending` and the run reports `failed` — an honest unavailable
+> state rather than a silent no-op.
+
+
+### Weekly retro digest (`weekly_retro_digest` flag)
+
+A per-team "week in review" rather than another roll-up of numbers. Off by
+default; enable the `weekly_retro_digest` flag, then pick the **weekly retro**
+schedule on a digest subscription.
+
+Each edition composes:
+
+- the week's **top 5 failures**, ranked by count × severity;
+- **recovered flaky tests** — quarantines released since last week, so progress
+  is visible and not just debt;
+- **new regressions** against the previous week's baseline;
+- a short **written summary** of the week's quality story.
+
+**It degrades honestly offline.** The narrative paragraph goes through the same
+LLM factory as everything else, so it respects `AI_OFFLINE_MODE`: an air-gapped
+deployment gets a template-based summary carrying the same raw numbers instead
+of a generated narrative. You lose the prose, not the content.
+
+With the flag off, retro subscriptions are simply skipped by the digest
+dispatcher — no error, no half-sent mail.
 
 ## Commit attribution & TIA readiness
 

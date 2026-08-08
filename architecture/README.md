@@ -1,10 +1,11 @@
 # TestLookup — Architecture
 
-> Generated 2026-06-25 from the live implementation. This folder is the
-> developer-facing architecture set:
+> Last verified 2026-08-08 against `main` @ 596cf09 and the live homelab deployment.
+> Counts in this folder are checked against the code, not carried forward.
+> This folder is the developer-facing architecture set:
 >
 > - **README.md** (this file) — system & runtime architecture, with diagrams.
-> - **[DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)** — ER diagrams + full schema reference for all 96 PostgreSQL tables, plus the Mongo/Redis/MinIO/Chroma layout.
+> - **[DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)** — ER diagrams + full schema reference for all 109 PostgreSQL tables, plus the Mongo/Redis/MinIO/Chroma layout.
 > - **[DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)** — conventions, quality-gate ratchets, how to add/fix code, and the recurring bug classes.
 > - **[FLAKY_INTELLIGENCE.md](./FLAKY_INTELLIGENCE.md)** — the flaky-detection subsystem (FLK P1–P6): evidence layers, verdict assembly, quarantine lifecycle, step-flip surfaces.
 > - **[RELEASE_GATE.md](./RELEASE_GATE.md)** — how GO / CONDITIONAL_GO / NO_GO is decided: input signals, policy layer, band floor, council synthesis, overrides.
@@ -21,10 +22,16 @@
 > overview; this folder is the detailed engineering reference.
 
 TestLookup is **local-first test-failure intelligence for CI/QA**. It ingests
-test results (JUnit, pytest, TestNG, Allure, Cypress, Playwright, Robot,
-Cucumber), clusters failures, explains root causes (rules / ML / local-LLM), and
-emits release-risk signals (GO / CONDITIONAL_GO / NO_GO) — surfaced via a web
-UI, REST API, CLI, and an MCP server, and able to run fully offline.
+test results from **twelve report formats** — JUnit, pytest, TestNG, Allure,
+Cypress, Playwright, Robot Framework, Cucumber, NUnit3, TRX, xUnit.net, and an
+LLM-JSON fallback — clusters failures, explains root causes (rules / ML /
+local-LLM), and emits release-risk signals (GO / CONDITIONAL_GO / NO_GO).
+
+On top of that base it runs an **agentic layer** (Investigator, Fixer) under
+explicit budgets and policies, attributes failures to commits and owners, gates
+releases, and reports engineer-hours saved. Everything is surfaced via a web UI
+(38 pages), REST API (81 routers), CLI, and an MCP server — and the whole system
+is able to run **fully offline**, including a fully air-gapped install.
 
 ---
 
@@ -80,7 +87,7 @@ flowchart TB
 | **MCP server** | Model Context Protocol (stdio + SSE) | 8002 | Tools/resources for AI clients; talks to the backend over HTTP |
 | **CLI** | Typer + Rich | — | Terminal QA workflows over the REST API |
 | **Workers** | Celery (+ beat) | — | Ingestion, AI pipeline, notifications, maintenance |
-| **PostgreSQL** | 16 | 5433→5432 | Relational system of record (96 tables) |
+| **PostgreSQL** | 16 | 5433→5432 | Relational system of record (109 tables, Alembic head `0117`) |
 | **MongoDB** | 7 | 27017 | Immutable logs, raw ingest blobs, run summaries |
 | **Redis** | 7 | 6379 | Celery broker/result, live-session state, event Streams, cache |
 | **MinIO** | S3-compatible | 9000 (API) / 9001 (console) | Report files, PDFs, compliance packs, RAG docs |
@@ -246,7 +253,58 @@ flowchart LR
 - **Fallback chain**: in `auto` mode, if the local LLM (Ollama) model isn't installed/reachable, the router falls back to ML, then to the rules engine — so analysis degrades gracefully and never hard-fails on a missing model.
 - **All-green fast path**: runs with no failures skip anomaly/analysis and go straight to a summary.
 
-## 6. Data stores — who writes what
+## 6. Agentic layer (Investigator · Fixer)
+
+Distinct from the §5 analysis pipeline: those agents run **per ingest** to classify and
+summarise. The agentic layer runs **per investigation**, is governed by explicit per-project
+policy and budgets, and can propose changes to your repository.
+
+```mermaid
+flowchart TB
+    TRIG["Trigger<br/>manual · auto on gate NO_GO"]
+    POL{"agent_policies<br/>enabled? mode? budget left?"}
+    HYP["Investigator — parallel hypotheses<br/>infra · commit · environment<br/>known_flaky · regression"]
+    SYN["investigator_synthesis<br/>rank + evidence"]
+    PLAN["investigator_plan"]
+    FIX["Fixer — generate patch"]
+    VAL["Validate by re-run<br/>ephemeral Docker sandbox"]
+    PR["Draft PR (never auto-merge)"]
+
+    TRIG --> POL
+    POL -- denied/over budget --> STOP["record + stop"]
+    POL -- allowed --> HYP --> SYN --> PLAN
+    PLAN -. Fixer enabled .-> FIX --> VAL
+    VAL -- pass --> PR
+    VAL -- fail --> STOP
+```
+
+**Governance is the point.** Every agent is gated by an `agent_policies` row per
+`(project_id, agent_id)` carrying `enabled`, `mode`, and a `budgets` JSON
+(`max_runs_per_day`, `max_llm_calls_per_run`, `max_tokens_per_run`).
+
+- **`mode` is the safety dial** — `shadow` runs the agent and records what it *would* have
+  done without acting; `active` lets it act. `shadow_runs_completed` + `promotion_note` exist
+  so promotion from shadow to active is a deliberate, recorded decision.
+- **Every run is ledgered** in `agent_runs`: `trigger`, `status`, `actions_proposed` vs
+  `actions_taken`, `tokens`, `cost_usd`, `duration_ms`, and `prompt_registry_digest` — so a
+  past decision can be reproduced against the exact prompt set that produced it.
+- **The Fixer never merges.** It validates a candidate patch by re-running the failing test in
+  an ephemeral Docker sandbox and, only on a genuine pass, opens a **draft** PR. Attempts are
+  recorded in `fix_attempts` (`status`, `attempt_no`, `patch_summary`, `patch`) whether or not
+  they succeed.
+- **Ships disabled.** Both agents default off; `flaky_auto_quarantine`, `gitlab`,
+  `github_checks` and the other action-taking surfaces are feature-flagged off by default too.
+
+Surfaces: `/agents` (activity), `/settings/ai-agents` (policy + budgets),
+`/settings/agent-activity`, `/deep-investigate/:runId` (cockpit). API under
+`/api/v1/agents/*`, `/api/v1/projects/{id}/agent-policies`, `.../agent-runs`, and
+`/api/v1/investigations/*`.
+
+> **Environment note.** The agentic layer needs a local LLM. With no Ollama model installed the
+> Investigator's hypothesis stages stay `pending` and the pipeline reports `failed` — an honest
+> unavailable state, not a crash.
+
+## 7. Data stores — who writes what
 
 | Store | Primary writers | Notes |
 |-------|-----------------|-------|
@@ -257,13 +315,13 @@ flowchart LR
 | **ChromaDB** | semantic-search service, `reindex_search` beat | Per-project collections. |
 | **Ollama** | `llm_factory` via `analysis_router` | Optional; provider selectable. |
 
-## 7. External surfaces
+## 8. External surfaces
 
 - **MCP server** (`mcp/`) — ~30 tools/resources/prompts over stdio (desktop AI clients) or SSE (:8002). Authenticates once with `TESTLOOKUP_USERNAME`/`PASSWORD`/`API_URL`, caches the JWT, and refreshes on 401. Exposes projects, runs, run-intelligence, deep investigation, search, reports, metrics, and enterprise surfaces (decision trail, flaky quarantine, LLM budget, governance).
 - **CLI** (`cli/`) — Typer app: `auth`, `projects`, `runs`, `tests`, `search`, `intelligence`, `deep`, `reports`, `keys`, `upload`. Talks to the REST API with auto-JWT refresh.
 - **Client SDKs** (`client/`) — Python (pytest plugin + async live SDK), Java (TestNG listener + JUnit5 extension), JS/TS (Jest reporter), Go. Shared wire contract: create session → stream events → close (triggers `persist_live_session`), or batch `POST /ingest`. The Python/Java SDKs emit a heartbeat to keep idle runs off the 5-minute reaper.
 
-## 8. Offline-first design (`AI_OFFLINE_MODE`)
+## 9. Offline-first design (`AI_OFFLINE_MODE`)
 
 `AI_OFFLINE_MODE` **defaults to `True`** (`backend/app/core/config.py`). With it on,
 all outbound/LLM-dependent work is skipped: ingestion completes without AI

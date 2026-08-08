@@ -87,6 +87,42 @@ already persisted rows.
   producer died are closed by the reaper instead of hanging "in progress"
   forever.
 
+## 5a. Worker DB-engine lifecycle (a bulk-ingest hazard)
+
+Two failure modes that only appear under **bulk** ingest, both fixed, both worth
+knowing before touching worker DB code:
+
+**1. A disposed engine behind a live-looking name.** `_run_async` disposes the
+SQLAlchemy engine and clears its caches after every Celery task. PEP 562
+`__getattr__` runs **once per importing module**, so a module-level
+`from app.db.postgres import AsyncSessionLocal` permanently binds whichever
+factory existed at import time — pointing at the *disposed* engine from task #2
+onward, while in-function importers re-resolved and got a fresh one.
+
+Symptom under a 60-run ingest: `cannot perform operation: another operation is
+in progress`, runs stuck `IN_PROGRESS`, aggregates never populating.
+Instrumentation showed 32 engine builds, 32 clean disposes, **0** dispose
+failures — eliminating fork inheritance, teardown failure and pool reuse at
+once. Teardown was never broken; a stale *reference* surviving it was.
+
+`AsyncSessionLocal` is now a **callable proxy** that resolves the factory late,
+so the name is stable and the binding is not. No call site changed.
+
+**2. Retries that could never succeed.** `routers/ingest.py` mints `run_id` up
+front and passes it to the task, which inserts a `TestRun` with that id. A task
+failing *after* the insert retried with the **same** id and died on
+`test_runs_pkey` — forever. Any transient failure became a permanently stuck
+run: measured flat at 56/60 `IN_PROGRESS` across ten minutes, with 38 tasks in
+retry loops and 145 duplicate-key events.
+
+`create_run_from_payload` now **resumes** an existing run when the explicit id
+already exists in that project, so the write is idempotent per
+`(entity, run)` — the convention `backend/CLAUDE.md` already required.
+
+> **Diagnostic note.** Redis queue depths read **0** throughout, because the
+> tasks were in retry-ETA rather than queued. "The queue is empty" is actively
+> misleading here — check task state, not depth.
+
 ## 6. Keeping the AI layer affordable under volume
 
 Ingestion volume must not translate 1:1 into LLM spend:

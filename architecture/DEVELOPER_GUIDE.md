@@ -33,7 +33,7 @@ them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **17 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **18 guards**.
 Most are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
 fail CI. A few ship at zero with **no baseline file at all** — those are

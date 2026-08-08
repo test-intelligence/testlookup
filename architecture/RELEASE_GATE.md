@@ -80,6 +80,64 @@ Pass-rate **bands** (`PolicyPassRateBands`, configured per project) classify the
 - **Vocabulary mapping**: the band classifier emits `CONDITIONAL`, the gate vocabulary is `CONDITIONAL_GO` — `_normalize_verdict` maps between them. (Producer/consumer enum mismatches are a recurring bug class in this codebase; this is one of the guarded seams.)
 - **Floor, not average**: `_apply_band_floor` lets the band only *worsen* the composite. A red band drags a green composite down; a green band never lifts a red composite (that would be fail-open).
 
+## 4a. Verdict rules — order matters
+
+`criticality_service.score_to_recommendation()` maps composite + pass rate onto
+the three verdicts. The rules are **ordered so nothing below can soften a
+NO_GO**:
+
+| # | rule | verdict |
+|---|------|---------|
+| 1 | pass rate below `HARD_FLOOR_FACTOR × threshold` (**0.7 × threshold**) | `NO_GO` — catastrophic, whatever the composite says |
+| 2 | composite ≥ `no_go_threshold` | `NO_GO` |
+| 3 | composite ≥ `go_threshold` | `CONDITIONAL_GO` |
+| 4 | **pass rate below the configured `threshold`** | `CONDITIONAL_GO` |
+| 5 | otherwise | `GO` |
+
+**Rule 4 closes a measured gap.** The configured release bar (e.g. 90%)
+previously gated *nothing* — only 70% of it acted as a NO_GO floor, so the gate
+was effectively binary at ~63%. Measured across nine pass-rate levels on a
+throwaway project:
+
+```
+pass_rate  100  95  89  83  70  64 | 62     50     0
+before     GO   GO  GO  GO  GO  GO | NO_GO  NO_GO  NO_GO
+after      GO   GO  CG  CG  CG  CG | NO_GO  NO_GO  NO_GO
+```
+
+A build with a third of its suite failing was reported ship-ready. Rule 4 also
+makes `CONDITIONAL_GO` **reachable at all** on the cheap "synthesized" path:
+there the analysis-driven dimensions all score 0, so the composite only ran
+5–13 before jumping to 60 via the hard-floor bump — skipping the entire
+CONDITIONAL_GO band.
+
+> This changes ship/no-ship advice, so it was made as an explicit product
+> decision rather than folded in as a bug fix.
+
+## 4b. Failure-kind weighting (opt-in, US-9.3 + AI-4)
+
+`policy_evaluator_service` can excuse failures the team has decided shouldn't
+block a release — typically infrastructure. It is **off unless a policy
+configures it**, and every rule leans conservative:
+
+| rule | behaviour |
+|---|---|
+| bucketing | failures grouped by the derived kind triad; **`unknown` folds into `product`** — an unclassified failure never softens the gate |
+| budgets | a kind whose count ≤ `max_failures` is excluded from the NO_GO trigger; **exceeding the budget restores full counting** for that kind. Kinds with no budget always count |
+| confidence floor | when `min_confidence_to_excuse` is set, only failures whose per-failure kind confidence clears it are eligible. **Below-floor or unknown-confidence failures count as `product`** |
+| downgrade ceiling | if zero blocking failures remain *and* at least one was excused, a base `NO_GO` drops **at most to `CONDITIONAL_GO` — never to `GO`** (enforced by both the schema `Literal` and the evaluator) |
+| base verdicts | `GO` and `CONDITIONAL_GO` are never touched — weighting can only *soften a NO_GO*, never harden or upgrade |
+| missing data | absent kind counts (older snapshots, simulator against pre-feature decisions) → no downgrade, recorded in the trail |
+
+**Excluded failures are always reported, never hidden.** The rule evaluation
+carries the full kind breakdown plus a counterfactual, so a reader can see what
+the verdict *would* have been without the weighting.
+
+The failure kinds themselves come from the derived triad — see
+[AI_QUALITY.md §3](./AI_QUALITY.md#3-evidence-grading-agentslog_intelligence_agentpy)
+for how the evidence checklist produces the per-failure confidence this floor
+consumes.
+
 ## 5. The council synthesis and overrides
 
 `services/release_council_service.py` is where it all converges:

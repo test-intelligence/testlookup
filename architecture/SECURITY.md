@@ -141,6 +141,41 @@ A Redis compromise (or a bug writing to the wrong key) therefore cannot mint
 authorization: an unsigned or mis-signed entry simply fails HMAC and falls
 through to the database.
 
+
+### The ratchet's blind spot — ids that don't arrive in the path
+
+`tests/test_architectural_authorization.py` matches routers whose **path**
+declares a resource id and requires the matching guard. An id that arrives as a
+**query parameter** or a **request-body field** is therefore invisible to it —
+the check simply never applies.
+
+This is not hypothetical. Three separate endpoints shipped unguarded through
+that gap and were fixed:
+
+| endpoint | id source | what leaked |
+|---|---|---|
+| `GET /digests/preview` | query | another tenant's digest content — the access check ran **only when `project_id` was absent**, i.e. only when there was nothing to guard |
+| `POST /digests/subscriptions` | body | a persistent daily email subscription bound to a project the caller can't see; the delivery task re-reads `project_id` off the row and never re-checks membership |
+| `GET /audit-dashboard/events` | query | another project's audit trail; a member of one project fell through to a completely unscoped query |
+
+**Grepping for the guard name does not close this.** In the digests case
+`get_accessible_project_ids` *was* imported and called — inside the one branch
+that could not leak. The call site looked correct in review and in a grep.
+
+**What to do instead.** For any id that does not arrive in the path, call
+`resolve_project_scope(db, user, requested_project_id)` explicitly: it raises
+403 for a non-admin naming a project they are not a member of, returns the
+membership set when none is named, and leaves ADMIN unrestricted. When writing
+the id to a row that a background job will later act on, verify at **write**
+time — the job will not.
+
+> Verify with a **non-admin** account. ADMIN bypasses membership everywhere, so
+> an admin-only probe cannot detect a tenancy bug. An account with *zero*
+> memberships is also a poor probe: several endpoints short-circuit on the empty
+> set, so "no access" and "broken scoping" look identical. Use an account that
+> is a member of **exactly one** project.
+
+
 ## 3. Tenancy — project scoping as defence-in-depth
 
 The project is the tenancy boundary, enforced at more than one layer:
