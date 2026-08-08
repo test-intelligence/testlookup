@@ -114,8 +114,18 @@ async def get_dashboard_summary(
     prev_pass_rate = prev["pass_rate"]
     pass_trend = trend(pass_rate, prev_pass_rate)
 
+    # ``total_exec`` stays a RUN count: it is the "is there any evidence"
+    # gate below (``if total_exec <= 0``) and the first argument of
+    # ``_compute_readiness``, whose contract is runs. Changing it would alter
+    # release-readiness semantics, which this fix deliberately does not touch.
     total_exec = cur["total_runs"]
-    total_exec_trend = trend(total_exec, prev["total_runs"])
+
+    # The KPI is executions. It was previously fed ``total_runs``, so
+    # "Total executions" showed 5 for 5 runs x 12 tests = 60 executions —
+    # a 12x understatement against Coverage's ``total_executions`` on the
+    # same data.
+    total_executions = cur["total_executions"]
+    total_exec_trend = trend(total_executions, prev["total_executions"])
 
     # Active defects (all open, not time-bounded)
     defect_conditions = [Defect.resolution_status == "OPEN"]
@@ -188,7 +198,7 @@ async def get_dashboard_summary(
 
     result_dict = {
         "total_executions_7d": {
-            "value": total_exec,
+            "value": total_executions,
             "trend": total_exec_trend,
             "trend_direction": direction(total_exec_trend),
         },
@@ -391,6 +401,7 @@ async def _period_stats(
             func.coalesce(func.sum(TestRun.passed_tests), 0).label("sum_passed"),
             func.coalesce(func.sum(TestRun.failed_tests), 0).label("sum_failed"),
             func.coalesce(func.sum(TestRun.broken_tests), 0).label("sum_broken"),
+            func.coalesce(func.sum(TestRun.total_tests), 0).label("sum_total"),
             func.avg(TestRun.duration_ms).label("avg_duration_ms"),
         ).where(*conditions)
     )
@@ -402,6 +413,11 @@ async def _period_stats(
     pass_rate = (sum_passed / denom * 100.0) if denom else 0.0
     return {
         "total_runs": row.total_runs or 0,
+        # Test executions, NOT runs. These are different by a factor of the
+        # suite size and were previously conflated: the dashboard KPI labelled
+        # "Total executions" was fed ``total_runs`` and read 5 where Coverage
+        # reported 60 for the same data.
+        "total_executions": int(getattr(row, "sum_total", 0) or 0),
         "pass_rate": pass_rate,
         "avg_duration_ms": int(row.avg_duration_ms or 0),
     }

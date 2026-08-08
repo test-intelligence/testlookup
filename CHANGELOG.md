@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: the "Total executions" KPI counted runs, not executions
+
+- `metrics_service` built the dashboard KPI from the run count:
+
+  ```python
+  total_exec = cur["total_runs"]          # func.count(TestRun.id)
+  "total_executions_7d": {"value": total_exec, ...}
+  ```
+
+- **Measured live** on the seeded project (5 runs x 12 tests):
+
+  ```
+  coverage.summary.total_executions   60     ← executions
+  summary.total_executions_7d          5     ← runs, labelled "Total executions"
+  recomputed from run rows            60     ← ground truth
+  ```
+
+  A **12x understatement** on a headline KPI. Both the field name
+  (`total_executions_7d`) and the UI label (`label="Total executions"`) say executions — the
+  *value* was the outlier, so the value is what changed.
+- Root of the substitution: the unfiltered branch of `_period_stats` never selected `sum_total`,
+  while the **suite-filtered branch already did**. With no executions figure available on that
+  path, the run count was the nearest thing to hand.
+- **Release readiness is deliberately untouched.** `total_exec` stays a run count where it feeds
+  `if total_exec <= 0` (the "no evidence in the window" gate) and `_compute_readiness(total_runs, …)`.
+  Neither has a threshold that scales, so swapping in a 12x larger value would not have changed
+  today's verdicts — but it would have made the readiness contract silently wrong. Runs and
+  executions are now separate values, and a test asserts `_compute_readiness` still uses its
+  argument only as `<= 0`, so acquiring a scaling threshold later fails loudly.
+- Found by a cross-surface consistency audit: comparing one quantity across every endpoint that
+  reports it. Pass rate and unique-test counts came back consistent in the same sweep.
+
 ### 2026-08-08 — Fix: per-suite pass rate counted skipped tests in the denominator
 
 - **Product decision:** a skipped test is *not evaluated* — it never ran, so it is neither a pass
