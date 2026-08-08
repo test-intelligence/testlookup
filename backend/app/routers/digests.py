@@ -42,7 +42,20 @@ async def create_subscription(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Create a new digest subscription."""
+    """Create a new digest subscription.
+
+    ``project_id`` arrives in the request body, so the architectural
+    authorization ratchet — which matches ``{project_id}`` **path** params —
+    cannot see it. It is verified explicitly: the delivery task reads
+    ``project_id`` straight off this row and never re-checks membership, so an
+    unvalidated row is a standing instruction to mail another tenant's digest
+    on a schedule.
+    """
+    from app.core.deps import resolve_project_scope
+
+    if payload.project_id is not None:
+        await resolve_project_scope(db, current_user, str(payload.project_id))
+
     now = datetime.now(timezone.utc)
     delta = timedelta(days=1) if payload.schedule == "DAILY" else timedelta(weeks=1)
 
@@ -191,14 +204,28 @@ async def preview_digest(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Preview digest content without sending."""
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            from datetime import datetime, timezone
-            return DigestContentResponse(period=period, generated_at=datetime.now(timezone.utc).isoformat())
+    """Preview digest content without sending.
+
+    Scope is resolved for the **provided** ``project_id``. The previous check
+    ran only when ``project_id`` was absent — i.e. only when there was nothing
+    to guard — so naming any project id returned that project's digest to any
+    authenticated caller (name, run count, pass rate, regressions).
+    """
+    from app.core.deps import resolve_project_scope
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+
+    if scoped_project_id is None and allowed is not None:
+        # Non-admin who named no project. ``generate_digest`` has no
+        # multi-project mode, so keep returning an empty preview rather than
+        # quietly widening scope to everything.
+        return DigestContentResponse(
+            period=period, generated_at=datetime.now(timezone.utc).isoformat()
+        )
+
     from app.services.digest_content_service import generate_digest
 
-    digest = await generate_digest(db, project_id, period)
+    digest = await generate_digest(db, scoped_project_id, period)
     return DigestContentResponse(**digest)

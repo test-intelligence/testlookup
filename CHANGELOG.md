@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Security: the digests router took `project_id` from the caller unchecked
+
+- Two endpoints in `routers/digests.py` accepted a client-supplied `project_id` and never
+  verified membership.
+- **`GET /api/v1/digests/preview`** — the access check ran **only when `project_id` was
+  absent**, i.e. only when there was nothing to guard:
+
+  ```python
+  if not project_id:
+      accessible = await get_accessible_project_ids(db, current_user)
+      if accessible is not None:
+          return DigestContentResponse(...)      # empty
+  digest = await generate_digest(db, project_id, period)   # unguarded
+  ```
+
+- **`POST /api/v1/digests/subscriptions`** — no check at all; `payload.project_id` went
+  straight onto the row.
+- **Confirmed live** with a QA_ENGINEER holding no membership in the target project. Control
+  first: `GET /projects/<pid>` → **403**, `GET /projects` → **0 visible**. Then:
+
+  ```
+  GET  /api/v1/digests/preview?project_id=<pid>
+       {"project_name":"Checkout Service","total_runs":5,"avg_pass_rate":81.1,
+        "new_regressions":5,"latest_run_total_tests":12,...}
+
+  POST /api/v1/digests/subscriptions {"project_id":"<pid>",...}
+       201 → is_active:true, schedule:DAILY, report_attachment:true, next_delivery_at:<tomorrow>
+  ```
+
+- The subscription is the more serious of the two: the delivery task in `worker/tasks.py` reads
+  `project_id` off the claimed row and calls `generate_digest` with it, looking the user up only
+  to obtain an email address. **Nothing re-checks membership at send time**, so the row is a
+  standing instruction to mail another tenant's digest — with the full HTML analysis report
+  attached — on a schedule.
+- **Why the architectural ratchet missed it:** `test_architectural_authorization.py` matches
+  routers whose *path* declares `{project_id}`. Here the id arrives as a query parameter and a
+  body field, so the class is outside what that ratchet inspects. Grepping for the guard also
+  looked fine — `get_accessible_project_ids` *is* imported and called in `preview`, just in the
+  branch that cannot leak.
+- Fix: both endpoints resolve scope via `resolve_project_scope`, which raises 403 for a
+  non-admin naming a project they are not a member of and leaves ADMIN unrestricted. ADMIN
+  behaviour and the "no project named" empty-preview behaviour are unchanged.
+- `saved_view_id` is accepted by the same payload but is never read by
+  `digest_content_service` or the delivery task, so it carries no data and is deliberately not
+  covered.
+
 ### 2026-08-07 — Fix: `deploy-homelab.sh --skip-build` aborted on a correct answer
 
 - The flag exists for one situation: a deploy whose images built and pushed fine but whose apply
