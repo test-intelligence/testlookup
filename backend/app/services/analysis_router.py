@@ -71,11 +71,23 @@ async def _probe_ollama_model_async() -> bool | None:
 
 
 def get_analysis_mode() -> str:
-    """Resolve the effective analysis mode.
+    """Resolve the effective analysis mode. See
+    :func:`resolve_analysis_mode_with_reason` — this discards the reason."""
+    return resolve_analysis_mode_with_reason()[0]
+
+
+def resolve_analysis_mode_with_reason() -> tuple[str, str]:
+    """Resolve the effective analysis mode **and why**.
 
     Priority: Redis cache (set by Settings UI) → env var → "auto".
     For "auto": checks ML model availability, then LLM availability,
     then falls back to rules.
+
+    The reason used to exist only as a log line, so ``routing_metadata`` recorded
+    ``mode_resolved: "rules"`` with ``fallback_reason: null`` and the decision
+    trail — which calls itself authoritative — could not answer the first
+    question an operator asks when AI analysis looks thin: *why didn't the LLM
+    run?* Returning it alongside the mode lets the caller persist it.
     """
     global _cached_mode, _cached_mode_ts
     import time
@@ -90,14 +102,14 @@ def get_analysis_mode() -> str:
         _cached_mode_ts = now
 
     if configured != AnalysisMode.AUTO:
-        return configured
+        return configured, f"mode explicitly set to '{configured}' — no auto resolution"
 
     # Auto resolution: ML → LLM → Rules
     try:
         from app.services.ml.classifier import MLClassifier
         if MLClassifier.is_available():
             logger.debug("Auto mode: ML model available — using ML")
-            return AnalysisMode.ML
+            return AnalysisMode.ML, "auto: trained ML model available — preferred over LLM"
     except Exception:
         pass
 
@@ -114,13 +126,21 @@ def get_analysis_mode() -> str:
                 model=settings.LLM_MODEL,
                 detail="cached probe definitively False — falling back to rules",
             )
-            return AnalysisMode.RULES
+            return AnalysisMode.RULES, (
+                f"auto: no trained ML model, and the cached probe reports "
+                f"ollama model '{settings.LLM_MODEL}' unavailable — fell back to rules"
+            )
 
         logger.debug("Auto mode: LLM provider configured — using LLM")
-        return AnalysisMode.LLM
+        return AnalysisMode.LLM, (
+            f"auto: no trained ML model; LLM provider "
+            f"'{settings.LLM_PROVIDER}' configured and not known-unavailable"
+        )
 
     logger.debug("Auto mode: no ML model or LLM — using rules")
-    return AnalysisMode.RULES
+    return AnalysisMode.RULES, (
+        "auto: no trained ML model and no LLM provider configured — fell back to rules"
+    )
 
 
 async def refresh_analysis_mode_from_cache() -> str:

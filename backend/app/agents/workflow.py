@@ -104,7 +104,10 @@ def _prompt_registry_versions() -> dict[str, str]:
 
 async def _resolve_analysis_mode_snapshot() -> dict[str, Any]:
     """Resolve analysis mode once so a pipeline is reproducible end-to-end."""
-    from app.services.analysis_router import get_analysis_mode, refresh_analysis_mode_from_cache
+    from app.services.analysis_router import (
+        refresh_analysis_mode_from_cache,
+        resolve_analysis_mode_with_reason,
+    )
 
     requested = settings.ANALYSIS_MODE.lower()
     try:
@@ -120,10 +123,15 @@ async def _resolve_analysis_mode_snapshot() -> dict[str, Any]:
         pass
 
     await refresh_analysis_mode_from_cache()
-    resolved = get_analysis_mode()
+    resolved, resolution_reason = resolve_analysis_mode_with_reason()
     return {
         "requested": requested,
         "resolved": resolved,
+        # Why this mode and not another. Previously this only ever reached a log
+        # line, so a trail showing requested=auto / resolved=rules could not say
+        # whether the LLM was unreachable, unconfigured, or simply out-ranked by
+        # a trained ML model.
+        "resolution_reason": resolution_reason,
         "provider": settings.LLM_PROVIDER,
         "model": settings.LLM_MODEL,
         "analysis_mode_env": settings.ANALYSIS_MODE,

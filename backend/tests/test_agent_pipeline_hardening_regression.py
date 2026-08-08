@@ -110,9 +110,21 @@ def test_pipeline_analysis_mode_is_frozen_and_persisted():
     snapshot_fn = _function_source("app/agents/workflow.py", "_resolve_analysis_mode_snapshot")
 
     assert "refresh_analysis_mode_from_cache" in snapshot_fn
-    assert "get_analysis_mode" in snapshot_fn
+    # The snapshot must resolve the mode through the router rather than
+    # hardcoding it. It now uses resolve_analysis_mode_with_reason(), which
+    # returns the same mode plus *why* it was chosen — get_analysis_mode() is a
+    # thin wrapper over it that discards the reason. Accept either, so this
+    # test pins the behaviour (mode comes from the router) and not the spelling.
+    assert (
+        "resolve_analysis_mode_with_reason" in snapshot_fn
+        or "get_analysis_mode" in snapshot_fn
+    )
     assert '"requested"' in snapshot_fn
     assert '"resolved"' in snapshot_fn
+    # Why the mode was chosen must be persisted alongside it: three different
+    # causes (ollama unreachable / no provider / ML out-ranked it) previously
+    # produced byte-identical trails.
+    assert '"resolution_reason"' in snapshot_fn
     assert workflow.count('"analysis_mode_requested": mode_snapshot["requested"]') == 2
     assert workflow.count('"analysis_mode_resolved": mode_snapshot["resolved"]') == 2
     assert '"analysis_mode_resolution": mode_snapshot' in workflow

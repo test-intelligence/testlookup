@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: the decision trail could not say why the LLM didn't run
+
+- Every `ai_analysis` row on the live deployment recorded:
+
+  ```
+  mode_requested  = "auto"
+  mode_resolved   = "rules"
+  fallback_from   = null
+  fallback_reason = null
+  ```
+
+- `auto` prefers ML, then LLM, then rules — so resolving to rules means *something* ruled
+  the LLM out. `analysis_router` logged `auto_mode_ollama_model_unavailable` and then
+  discarded the reason, so three different causes (Ollama unreachable / no provider
+  configured / a trained ML model out-ranking it) produced **byte-identical trails**. The
+  record that documents itself as authoritative could not answer the first question an
+  operator asks when AI analysis looks thin.
+
+- Added `resolve_analysis_mode_with_reason()` returning `(mode, reason)`;
+  `get_analysis_mode()` is now a thin wrapper that discards the reason, so no caller
+  changes. The pipeline's mode snapshot carries `resolution_reason` into
+  `AIAnalysis.routing_metadata`.
+
+- The existing structural guard asserted `get_analysis_mode` by *name* in the snapshot
+  function; it now accepts either spelling and additionally requires `resolution_reason`,
+  so it pins the behaviour rather than the identifier.
+
+- Regression: `backend/tests/regression/test_mode_resolution_reason_is_recorded.py`
+  (8 of 8 fail before the fix), including a test that the two rules-resolving paths give
+  *different* reasons — identical strings would restore the useless state.
+
 ### 2026-08-08 — Fix: rules-mode analyses recorded provenance claiming an LLM ran
 
 - `_validate_confidence` post-processes the output of **every** analysis engine, but its
