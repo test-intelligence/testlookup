@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: rules-mode analyses recorded provenance claiming an LLM ran
+
+- `_validate_confidence` post-processes the output of **every** analysis engine, but its
+  adjustment reasons were written as though an LLM had always produced the result.
+
+- Observed on the live deployment — a real `ai_analysis` row with no model call in it:
+
+  ```
+  llm_provider  = none
+  llm_model     = rules_engine
+  analysis_mode = rules
+  confidence_adjustments = [
+    {"rule": "no_evidence_references",
+     "reason": "LLM returned no evidence_references"},        <-- no LLM ran
+  ]
+  ```
+
+- `confidence_adjustments` is served by `decision_trail_service` and typed in
+  `frontend/src/types/decisionTrail.ts`, so this is provenance on the AI-trust contract
+  asserting a model call that never happened — the same family as the fabricated
+  confidence scores removed earlier.
+
+- **Not an edge case.** `auto` resolves to rules whenever no ML model is trained and
+  Ollama is unreachable, which is the normal path on air-gapped and CPU-only installs.
+  The homelab resolves to rules on every analysis.
+
+- Reasons now name the engine that actually ran (`rules engine` / `ML model` / `LLM`),
+  degrading to a neutral `analysis` for an unrecognised mode rather than defaulting back
+  to "LLM" — that default was the bug.
+
+- Regression: `backend/tests/regression/test_confidence_adjustment_provenance.py`
+  (6 of 7 fail before the fix), including a test that the LLM path still says "LLM" so
+  the fix cannot scrub accurate provenance.
 ### 2026-08-08 — Fix: Celery workers ran more processes than their CPU limit allowed
 
 - `--concurrency=N` forks N worker processes. Three of the four workers had a cgroup

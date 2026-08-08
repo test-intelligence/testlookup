@@ -898,6 +898,27 @@ class AnalysisAgent(BaseAgent):
         except Exception as exc:
             logger.debug("stack_trace_enrichment_failed", error=str(exc))
 
+    @staticmethod
+    def _engine_label(analysis: dict) -> str:
+        """Name the engine that actually produced this analysis.
+
+        ``_validate_confidence`` post-processes the output of *every* engine,
+        but its adjustment reasons were written as though an LLM had always
+        run. On the rules path that put "LLM returned no evidence_references"
+        into ``routing_metadata.confidence_adjustments`` of a record whose own
+        ``llm_provider`` is ``none`` and ``analysis_mode`` is ``rules`` — a
+        provenance record asserting a model call that never happened.
+
+        Falls back to the neutral "analysis" rather than guessing, so an
+        unrecognised mode never re-introduces a false claim.
+        """
+        mode = ((analysis.get("_routing") or {}).get("mode_resolved") or "").lower()
+        return {
+            "llm": "LLM",
+            "ml": "ML model",
+            "rules": "rules engine",
+        }.get(mode, "analysis")
+
     def _validate_confidence(self, analysis: dict) -> dict:
         """
         Validate and adjust confidence score based on evidence quality.
@@ -932,6 +953,8 @@ class AnalysisAgent(BaseAgent):
         # explain the final number — ops can see "LLM said 85, we capped to 50
         # because no evidence" without reading debug logs.
         adjustments: list[dict] = []
+        # Whoever actually ran — these reasons are provenance, not prose.
+        engine = self._engine_label(analysis)
 
         # Penalty: no evidence references at all
         if not evidence and confidence > 50:
@@ -939,7 +962,7 @@ class AnalysisAgent(BaseAgent):
                 "rule": "no_evidence_references",
                 "from": confidence,
                 "to": 50,
-                "reason": "LLM returned no evidence_references",
+                "reason": f"{engine} returned no evidence_references",
             })
             confidence = min(confidence, 50)
 
@@ -979,7 +1002,7 @@ class AnalysisAgent(BaseAgent):
                 "rule": "no_tools_no_cache",
                 "from": confidence,
                 "to": 60,
-                "reason": "LLM reached conclusion without invoking any tools",
+                "reason": f"{engine} reached conclusion without invoking any tools",
             })
             confidence = min(confidence, 60)
 
