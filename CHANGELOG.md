@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Docs: the benchmark claimed pg_trgm indexes it does not use
+
+- The `keyword_search` scenario described itself as *"uses pg_trgm indexes from wave #5
+  fix"*. Measured against the live deployment (46,990 `test_cases`), all four trigram
+  indexes report **`idx_scan = 0`** — never used — while other indexes on the same table
+  accumulated 414k scans over the same window. `EXPLAIN ANALYZE` confirms a Seq Scan.
+
+- The planner is not obviously wrong: the whole predicate costs 3.8ms and `LIMIT 20` lets
+  a seq scan stop early at this corpus size.
+
+- **The predicate is not what makes search an outlier.** It measures 122.8ms p50 — 5.8x the
+  median endpoint across an 18-endpoint sweep — while the filter is 3.8ms and the pagination
+  count is 30.5ms. The remainder is unaccounted and is left as an open question rather than
+  guessed at.
+
+- Whether the ~20MB of unused GIN indexes (plus write amplification on the hottest insert
+  path) should be dropped is a **scale** question that 47k rows cannot settle; they may well
+  be chosen on a corpus an order of magnitude larger. Deliberately not answered.
+
+- Description corrected; no behaviour change.
+
 ### 2026-08-08 — Fix: `requires_human_review` ignored the configured confidence threshold
 
 - The gate threshold is admin-configurable (`ai_confidence_threshold`, default 80).

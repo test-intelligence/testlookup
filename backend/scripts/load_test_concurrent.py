@@ -145,6 +145,26 @@ def _all_throughput_budgets() -> list:
     return list(THROUGHPUT_BUDGETS)
 
 
+# Measured 2026-08-08 against the live deployment (46,990 test_cases):
+# the four pg_trgm indexes on test_cases (ix_test_cases_search,
+# ix_test_cases_{name,suite,error}_trgm) have **idx_scan = 0** — never used,
+# while other indexes on the same table accumulated 414k scans over the same
+# window. EXPLAIN ANALYZE on the search predicate confirms a Seq Scan.
+#
+# This scenario previously described itself as "uses pg_trgm indexes from wave
+# #5 fix". It does not, so the description is corrected rather than left
+# asserting something the query plan contradicts.
+#
+# The planner is not obviously wrong: at this corpus the whole predicate costs
+# 3.8ms and LIMIT 20 lets a seq scan stop early. Note also that the predicate is
+# NOT what makes this endpoint an outlier — it measures 122.8ms p50 (5.8x the
+# median endpoint) while the filter is 3.8ms and the pagination count is 30.5ms.
+#
+# Whether the ~20MB of unused GIN indexes (plus their write amplification on the
+# hottest insert path) should be dropped is a SCALE question that 47k rows cannot
+# settle — they may well be chosen on a corpus an order of magnitude larger.
+# Deliberately not answered here.
+
 SCENARIOS: list[Scenario] = [
     Scenario(
         "project_list",
@@ -178,7 +198,7 @@ SCENARIOS: list[Scenario] = [
         "keyword_search",
         "GET",
         lambda _f: "/api/v1/search?q=timeout&size=20",
-        "ILIKE search — uses pg_trgm indexes from wave #5 fix",
+        "ILIKE search — seq scan in practice; see the trgm note below",
         budget_p95_ms=_budget("keyword_search"),
         throughput_op="search_concurrent",
     ),
