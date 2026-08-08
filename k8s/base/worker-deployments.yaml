@@ -75,12 +75,14 @@ spec:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          # cpu limit 1000m -> 2000m to match --concurrency=2. Not separately
+          # measured; same arithmetic as the ingestion worker below, which was.
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
-              cpu: 1000m
+              cpu: 2000m
               memory: 2Gi
           livenessProbe:
             # Liveness only proves the process is alive — a lightweight pgrep avoids
@@ -198,12 +200,21 @@ spec:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          # cpu limit raised 1000m -> 4000m (2026-08-08) on measurement.
+          # --concurrency=4 under a 1-core limit is four processes that cannot
+          # exceed one core between them. Under an 80-run ingest burst the
+          # cgroup was throttled 36-74 times per pod every single run, while
+          # the CPU *average* read only 0.64 cores -- the average looks like
+          # headroom because it includes the idle tail, so throttled_usec is
+          # the field that actually settles it. Back to back at the same
+          # corpus size: 5.0 runs/s throttled at 1 core, 23.5 and 22.7 runs/s
+          # unthrottled at 4. Observed demand peaked at 1.46 cores per pod.
           resources:
             requests:
               cpu: 250m
               memory: 512Mi
             limits:
-              cpu: 1000m
+              cpu: 4000m
               memory: 2Gi
           livenessProbe:
             # Liveness only proves the process is alive — a lightweight pgrep avoids
@@ -416,12 +427,16 @@ spec:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          # cpu limit 500m -> 4000m: --concurrency=4 under half a core was the
+          # worst ratio of any worker (8 processes' worth of demand per core).
+          # Not separately measured -- driving the default queue in isolation
+          # is awkward -- but the arithmetic is the ingestion worker's.
           resources:
             requests:
               cpu: 100m
               memory: 256Mi
             limits:
-              cpu: 500m
+              cpu: 4000m
               memory: 1Gi
           livenessProbe:
             # Liveness only proves the process is alive — a lightweight pgrep avoids

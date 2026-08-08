@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: Celery workers ran more processes than their CPU limit allowed
+
+- `--concurrency=N` forks N worker processes. Three of the four workers had a cgroup
+  `limits.cpu` **below** N cores, so those processes could not exceed the cap between
+  them and the concurrency flag promised parallelism the cgroup would not allow:
+
+  ```
+  worker        --concurrency   limits.cpu   ratio
+  critical            2           1000m       2:1
+  ingestion           4           1000m       4:1
+  default             4            500m       8:1
+  ai                  2           2000m       1:1   <- the only correct one
+  ```
+
+- **Measured** on the ingestion worker, 80-run burst, reading `/sys/fs/cgroup/cpu.stat`
+  directly (metrics-server's ~60s scrape is far too coarse for a burst):
+
+  ```
+  limit 1 core ..... throttled 36-74x per pod, every run .....  5.0 runs/s
+  limit 4 cores .... throttled 0x ............................. 23.5 runs/s
+  ```
+
+  Back to back at the same corpus size. Peak demand was 1.46 cores in one pod.
+
+- **The CPU average hides this.** It read 0.64 of 1.00 cores during a throttled run —
+  apparent headroom — because averaging over the window includes the idle tail that
+  throttling itself creates. `nr_throttled` is the field that settles it.
+
+- Limits raised to match concurrency; `requests` deliberately unchanged. A limit is a
+  ceiling, not a reservation, so this costs nothing while idle.
+
+- Only the ingestion worker was measured. `critical` and `default` are corrected on the
+  same arithmetic and are labelled as such in the manifest.
+
+- Regression: `backend/tests/regression/test_worker_cpu_limits_match_concurrency.py`
+  asserts `limits.cpu >= --concurrency` for every worker — 3 of 6 fail before the fix,
+  exactly the three misconfigured workers.
+
 ### 2026-08-08 — Fix: throughput budgets were defined but nothing could read them
 
 - `performance_budgets.py` calls itself the single source of truth and carries four
