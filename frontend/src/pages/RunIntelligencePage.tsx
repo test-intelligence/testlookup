@@ -111,43 +111,43 @@ const GATE_THEME: Record<Gate, {
   Icon: typeof ShieldAlert
 }> = {
   GO: {
-    border: 'rgba(34,197,94,0.35)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-passed) 35%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-go)',
-    eyebrow:'#86efac',
-    gate:   '#86efac',
-    pillBg: 'rgba(34,197,94,0.15)',
-    pillBd: 'rgba(34,197,94,0.30)',
-    pillFg: '#86efac',
-    meter:  '#86efac',
+    eyebrow:'var(--status-passed)',
+    gate:   'var(--status-passed)',
+    pillBg: 'color-mix(in srgb, var(--status-passed) 15%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
+    pillFg: 'var(--status-passed)',
+    meter:  'var(--status-passed)',
     label:  'Go',
     action: 'ship cleared',
     Icon:   ShieldCheck,
   },
   CONDITIONAL_GO: {
-    border: 'rgba(245,158,11,0.40)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-glow), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrow:'#fcd34d',
-    gate:   '#fcd34d',
-    pillBg: 'rgba(245,158,11,0.15)',
-    pillBd: 'rgba(245,158,11,0.30)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    eyebrow:'var(--status-broken)',
+    gate:   'var(--status-broken)',
+    pillBg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'Conditional Go',
     action: 'proceed with mitigation',
     Icon:   TriangleAlert,
   },
   NO_GO: {
-    border: 'rgba(239,68,68,0.40)',
+    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--alert-bg-soft), transparent 55%)',
     bar:    'var(--gate-no-go)',
-    eyebrow:'#fca5a5',
-    gate:   '#fca5a5',
-    pillBg: 'rgba(239,68,68,0.15)',
+    eyebrow:'var(--status-failed)',
+    gate:   'var(--status-failed)',
+    pillBg: 'color-mix(in srgb, var(--status-failed) 15%, transparent)',
     pillBd: 'var(--alert-border-soft)',
-    pillFg: '#fca5a5',
-    meter:  '#fca5a5',
+    pillFg: 'var(--status-failed)',
+    meter:  'var(--status-failed)',
     label:  'No-Go',
     action: 'ship blocked',
     Icon:   ShieldAlert,
@@ -471,13 +471,13 @@ function DimensionTile({ score }: { score: DimensionScore | null }) {
   const tone: 'good' | 'warn' | 'bad' | 'neutral' =
     pct >= 70 ? 'bad' : pct >= 40 ? 'warn' : pct > 0 ? 'good' : 'neutral'
   const valueColor =
-    tone === 'bad' ? '#fca5a5' :
-    tone === 'warn' ? '#fcd34d' :
-    tone === 'good' ? '#34d399' : 'var(--color-text-secondary)'
+    tone === 'bad' ? 'var(--status-failed)' :
+    tone === 'warn' ? 'var(--status-broken)' :
+    tone === 'good' ? 'var(--status-passed)' : 'var(--color-text-secondary)'
   const barColor =
-    tone === 'bad' ? '#ef4444' :
-    tone === 'warn' ? '#f59e0b' :
-    tone === 'good' ? '#22c55e' : 'var(--color-text-faint)'
+    tone === 'bad' ? 'var(--status-failed)' :
+    tone === 'warn' ? 'var(--status-broken)' :
+    tone === 'good' ? 'var(--status-passed)' : 'var(--color-text-faint)'
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
@@ -528,18 +528,18 @@ function PipelineRibbon({
   const confTone: 'good' | 'warn' | 'bad' | 'neutral' =
     confidencePct >= 70 ? 'good' : confidencePct >= 40 ? 'warn' : confidencePct > 0 ? 'bad' : 'neutral'
   const confBg =
-    confTone === 'good' ? 'rgba(34,197,94,0.12)' :
-    confTone === 'warn' ? 'rgba(245,158,11,0.12)' :
-    confTone === 'bad'  ? 'rgba(239,68,68,0.12)' :
+    confTone === 'good' ? 'color-mix(in srgb, var(--status-passed) 12%, transparent)' :
+    confTone === 'warn' ? 'color-mix(in srgb, var(--status-broken) 12%, transparent)' :
+    confTone === 'bad'  ? 'color-mix(in srgb, var(--status-failed) 12%, transparent)' :
     'var(--color-bg-secondary)'
   const confFg =
-    confTone === 'good' ? '#34d399' :
-    confTone === 'warn' ? '#fcd34d' :
-    confTone === 'bad'  ? '#fca5a5' : 'var(--color-text-muted)'
+    confTone === 'good' ? 'var(--status-passed)' :
+    confTone === 'warn' ? 'var(--status-broken)' :
+    confTone === 'bad'  ? 'var(--status-failed)' : 'var(--color-text-muted)'
   const confBd =
-    confTone === 'good' ? 'rgba(34,197,94,0.25)' :
-    confTone === 'warn' ? 'rgba(245,158,11,0.25)' :
-    confTone === 'bad'  ? 'rgba(239,68,68,0.25)' :
+    confTone === 'good' ? 'color-mix(in srgb, var(--status-passed) 25%, transparent)' :
+    confTone === 'warn' ? 'color-mix(in srgb, var(--status-broken) 25%, transparent)' :
+    confTone === 'bad'  ? 'color-mix(in srgb, var(--status-failed) 25%, transparent)' :
     'var(--color-border)'
 
   return (
@@ -575,8 +575,8 @@ function PipelineRibbon({
         <div
           className="rounded-md mb-3 px-3 py-2 text-[12px] leading-relaxed"
           style={{
-            background: 'rgba(245,158,11,0.06)',
-            borderLeft: '3px solid rgba(245,158,11,0.40)',
+            background: 'color-mix(in srgb, var(--status-broken) 6%, transparent)',
+            borderLeft: '3px solid color-mix(in srgb, var(--status-broken) 40%, transparent)',
             color: 'var(--color-text-secondary)',
           }}
         >
@@ -605,10 +605,10 @@ function StageCell({ num, slot, stage, isLast }: { num: number; slot: string; st
   const name = stage?.stage_name ? (STAGE_DISPLAY_NAME[stage.stage_name.toLowerCase()] ?? stage.stage_name) : (STAGE_DISPLAY_NAME[slot] ?? slot)
 
   const ic = (() => {
-    if (status === 'done')    return { bg: 'var(--status-passed-soft)', fg: '#34d399', glyph: <Check className="h-[9px] w-[9px]" strokeWidth={3} /> }
-    if (status === 'warn')    return { bg: 'rgba(245,158,11,0.18)', fg: '#fcd34d', glyph: <AlertTriangle className="h-[9px] w-[9px]" strokeWidth={2.5} /> }
-    if (status === 'failed')  return { bg: 'rgba(239,68,68,0.18)', fg: '#fca5a5', glyph: <XCircle className="h-[9px] w-[9px]" strokeWidth={2.5} /> }
-    if (status === 'running') return { bg: 'rgba(68,147,248,0.18)', fg: 'var(--color-accent)', glyph: <RefreshCw className="h-[9px] w-[9px] animate-spin" /> }
+    if (status === 'done')    return { bg: 'var(--status-passed-soft)', fg: 'var(--status-passed)', glyph: <Check className="h-[9px] w-[9px]" strokeWidth={3} /> }
+    if (status === 'warn')    return { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'var(--status-broken)', glyph: <AlertTriangle className="h-[9px] w-[9px]" strokeWidth={2.5} /> }
+    if (status === 'failed')  return { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'var(--status-failed)', glyph: <XCircle className="h-[9px] w-[9px]" strokeWidth={2.5} /> }
+    if (status === 'running') return { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', fg: 'var(--color-accent)', glyph: <RefreshCw className="h-[9px] w-[9px] animate-spin" /> }
     if (status === 'skipped') return { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-faint)', glyph: <span className="text-[10px] leading-none">—</span> }
     return { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-faint)', glyph: <span className="text-[10px] leading-none">·</span> }
   })()
@@ -740,14 +740,14 @@ function TestOutcomeCard({
           <span className="text-[var(--color-text-secondary)] font-medium">{run.passed_tests ?? 0} passed · {failed} failed{skipped > 0 ? ` · ${skipped} skipped` : ''}</span>
         </div>
         <div className="h-2 rounded-full overflow-hidden flex" style={{ background: 'var(--color-bg-secondary)' }}>
-          {(run.passed_tests ?? 0) > 0 && <div style={{ flex: run.passed_tests ?? 0, background: '#22c55e' }} />}
-          {failed > 0 && <div style={{ flex: failed, background: '#ef4444' }} />}
-          {skipped > 0 && <div style={{ flex: skipped, background: '#fcd34d' }} />}
+          {(run.passed_tests ?? 0) > 0 && <div style={{ flex: run.passed_tests ?? 0, background: 'var(--status-passed)' }} />}
+          {failed > 0 && <div style={{ flex: failed, background: 'var(--status-failed)' }} />}
+          {skipped > 0 && <div style={{ flex: skipped, background: 'var(--status-broken)' }} />}
         </div>
         <div className="flex gap-3.5 mt-1.5 text-[11px] text-[var(--color-text-muted)]">
-          <Legend color="#22c55e" label="Passed" />
-          {failed > 0 && <Legend color="#ef4444" label={`Failed · ${dominantCategory}`} />}
-          {skipped > 0 && <Legend color="#fcd34d" label="Skipped" />}
+          <Legend color="var(--status-passed)" label="Passed" />
+          {failed > 0 && <Legend color="var(--status-failed)" label={`Failed · ${dominantCategory}`} />}
+          {skipped > 0 && <Legend color="var(--status-broken)" label="Skipped" />}
         </div>
       </div>
     </CardShell>
@@ -757,7 +757,7 @@ function TestOutcomeCard({
 function Stat({
   label, value, unit, tiny, tone, borderRight,
 }: { label: string; value: string; unit?: string; tiny?: string; tone?: 'warn' | 'bad' | 'good'; borderRight?: boolean }) {
-  const numColor = tone === 'bad' ? '#fca5a5' : tone === 'warn' ? '#fcd34d' : tone === 'good' ? '#34d399' : 'var(--color-text)'
+  const numColor = tone === 'bad' ? 'var(--status-failed)' : tone === 'warn' ? 'var(--status-broken)' : tone === 'good' ? 'var(--status-passed)' : 'var(--color-text)'
   return (
     <div className="px-4 py-3.5 flex flex-col gap-1" style={{ borderRight: borderRight ? '1px solid var(--color-border)' : '0' }}>
       <span
@@ -789,9 +789,9 @@ function SuiteChip({ suite }: { suite: string }) {
     <span
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[10.5px]"
       style={{
-        background: 'rgba(68,147,248,0.12)',
+        background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
         color: 'var(--color-accent)',
-        border: '1px solid rgba(68,147,248,0.25)',
+        border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)',
       }}
     >
       {suite}
@@ -903,8 +903,8 @@ function FailureBlock({
       className="relative"
       style={{
         padding: 16,
-        borderLeft: '3px solid #ef4444',
-        background: 'linear-gradient(90deg, rgba(239,68,68,0.06), transparent 30%), var(--color-bg-card)',
+        borderLeft: '3px solid var(--status-failed)',
+        background: 'linear-gradient(90deg, color-mix(in srgb, var(--status-failed) 6%, transparent), transparent 30%), var(--color-bg-card)',
         borderTop: '1px solid var(--color-border)',
       }}
     >
@@ -928,7 +928,7 @@ function FailureBlock({
           style={{
             background: 'var(--color-bg)',
             border: '1px solid var(--color-border)',
-            borderLeft: '2px solid rgba(239,68,68,0.55)',
+            borderLeft: '2px solid color-mix(in srgb, var(--status-failed) 55%, transparent)',
             borderRadius: 'var(--radius-sm)',
             padding: '10px 12px',
             color: 'var(--color-text-secondary)',
@@ -962,8 +962,8 @@ function ProductBugPill({ criticality }: { criticality: string | null }) {
   const tone =
     criticality === 'CRITICAL' || criticality === 'HIGH' ? 'bug' :
     'neutral'
-  const bg = tone === 'bug' ? 'rgba(239,68,68,0.15)' : 'var(--color-bg-secondary)'
-  const fg = tone === 'bug' ? '#fca5a5' : 'var(--color-text-faint)'
+  const bg = tone === 'bug' ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : 'var(--color-bg-secondary)'
+  const fg = tone === 'bug' ? 'var(--status-failed)' : 'var(--color-text-faint)'
   return (
     <span
       className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold uppercase"
@@ -1069,10 +1069,10 @@ function RoleRow({
   onCopy: () => void
 }) {
   const pal = {
-    dev: { bg: 'rgba(168,85,247,0.10)', fg: '#c084fc' },
-    qa:  { bg: 'rgba(68,147,248,0.10)', fg: 'var(--color-accent)' },
-    rm:  { bg: 'rgba(34,197,94,0.10)',  fg: '#4ade80' },
-    sre: { bg: 'rgba(245,158,11,0.10)', fg: '#fbbf24' },
+    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 10%, transparent)', fg: 'var(--status-flaky)' },
+    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', fg: 'var(--color-accent)' },
+    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)',  fg: 'var(--status-passed)' },
+    sre: { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', fg: 'var(--status-broken)' },
   }[tone]
   return (
     <div
@@ -1133,10 +1133,10 @@ function AIConfidenceCard({
   const tone: 'good' | 'warn' | 'bad' =
     confidencePct >= 70 ? 'good' : confidencePct >= 40 ? 'warn' : 'bad'
   const barFill = tone === 'good'
-    ? 'linear-gradient(90deg, #22c55e, #34d399)'
+    ? 'linear-gradient(90deg, var(--status-passed), var(--status-passed))'
     : tone === 'warn'
-      ? 'linear-gradient(90deg, #f59e0b, #fcd34d)'
-      : 'linear-gradient(90deg, #ef4444, #f97316)'
+      ? 'linear-gradient(90deg, var(--status-broken), var(--status-broken))'
+      : 'linear-gradient(90deg, var(--status-failed), var(--status-broken))'
 
   const why = !llmUsed
     ? 'The pipeline ran and scored every dimension, but the LLM reasoning layer was unavailable. Treat the verdict as a deterministic fallback, not a high-trust recommendation.'
@@ -1203,7 +1203,7 @@ function AIConfidenceCard({
                 className="flex items-center gap-2 text-[12px] text-[var(--color-text-secondary)] rounded-sm px-2.5 py-1.5"
                 style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
               >
-                <XCircle className="h-3.5 w-3.5 flex-none" style={{ color: '#fca5a5' }} />
+                <XCircle className="h-3.5 w-3.5 flex-none" style={{ color: 'var(--status-failed)' }} />
                 {g.label}
               </div>
             ))}
@@ -1216,7 +1216,7 @@ function AIConfidenceCard({
               <span
                 key={i}
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px]"
-                style={{ background: 'rgba(34,197,94,0.10)', color: '#34d399', border: '1px solid rgba(34,197,94,0.25)' }}
+                style={{ background: 'color-mix(in srgb, var(--status-passed) 10%, transparent)', color: 'var(--status-passed)', border: '1px solid color-mix(in srgb, var(--status-passed) 25%, transparent)' }}
               >
                 <Check className="h-2.5 w-2.5" strokeWidth={3} /> {c}
               </span>
@@ -1256,10 +1256,10 @@ function CategoryRow({
     .toLowerCase()
     .replace(/\b\w/g, c => c.toUpperCase())
   const isProductBug = /product/.test(category.toLowerCase()) || /bug/.test(category.toLowerCase())
-  const pillBg = active && isProductBug ? 'rgba(239,68,68,0.15)' : 'var(--color-bg-secondary)'
-  const pillFg = active && isProductBug ? '#fca5a5' : 'var(--color-text-faint)'
-  const rowBg = active && isProductBug ? 'rgba(239,68,68,0.06)' : 'var(--color-bg)'
-  const rowBd = active && isProductBug ? 'rgba(239,68,68,0.20)' : 'var(--color-border)'
+  const pillBg = active && isProductBug ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : 'var(--color-bg-secondary)'
+  const pillFg = active && isProductBug ? 'var(--status-failed)' : 'var(--color-text-faint)'
+  const rowBg = active && isProductBug ? 'color-mix(in srgb, var(--status-failed) 6%, transparent)' : 'var(--color-bg)'
+  const rowBd = active && isProductBug ? 'color-mix(in srgb, var(--status-failed) 20%, transparent)' : 'var(--color-border)'
   const pct = totalAcrossAll > 0 ? Math.round((count / totalAcrossAll) * 100) : 0
   return (
     <div
@@ -1283,7 +1283,7 @@ function CategoryRow({
           {count > 0 ? `${count} failure${count === 1 ? '' : 's'}` : 'None detected this run'}
         </span>
       </div>
-      <span className="font-mono text-[12px]" style={{ color: active && isProductBug ? '#fca5a5' : 'var(--color-text-faint)' }}>
+      <span className="font-mono text-[12px]" style={{ color: active && isProductBug ? 'var(--status-failed)' : 'var(--color-text-faint)' }}>
         {count}{count > 0 && totalAcrossAll > 0 ? ` (${pct}%)` : ''}
       </span>
     </div>
@@ -1656,9 +1656,9 @@ function VerdictCardWithDimensions({
               className="flex items-center gap-2.5 px-3 py-2.5 rounded-md mb-1"
               style={{ background: 'var(--alert-bg-soft)', border: '1px solid var(--alert-border-soft)' }}
             >
-              <XCircle className="h-[18px] w-[18px] flex-none" style={{ color: '#fca5a5' }} />
+              <XCircle className="h-[18px] w-[18px] flex-none" style={{ color: 'var(--status-failed)' }} />
               <span className="text-[13px] text-[var(--color-text-secondary)]">
-                <strong style={{ color: '#fca5a5' }}>
+                <strong style={{ color: 'var(--status-failed)' }}>
                   {blockerCount} blocking issue{blockerCount === 1 ? '' : 's'}
                 </strong>
                 {decision?.blocking_issues?.[0] && <> · {decision.blocking_issues[0]}</>}
@@ -1678,7 +1678,7 @@ function VerdictCardWithDimensions({
                 type="button"
                 onClick={onHold}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
-                style={{ color: '#fcd34d', borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}
+                style={{ color: 'var(--status-broken)', borderColor: 'color-mix(in srgb, var(--status-broken) 40%, transparent)', background: 'color-mix(in srgb, var(--status-broken) 8%, transparent)' }}
               >
                 <TriangleAlert className="h-3.5 w-3.5" />
                 Hold release

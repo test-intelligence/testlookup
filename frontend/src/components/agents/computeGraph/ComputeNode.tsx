@@ -50,29 +50,29 @@ const STATUS_STYLE: Record<ComputeStage['status'], {
   done: {
     border: 'var(--color-border)',
     background: 'var(--color-bg-card)',
-    pillText: '#3fb950',
+    pillText: 'var(--status-passed)',
     pillBg: 'var(--status-passed-bg-soft)',
-    pillBorder: 'rgba(63,185,80,0.40)',
+    pillBorder: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
     iconBg: 'var(--status-passed-bg-soft)',
-    iconFg: '#3fb950',
+    iconFg: 'var(--status-passed)',
   },
   running: {
-    border: 'rgba(68,147,248,0.50)',
-    background: 'rgba(68,147,248,0.04)',
+    border: 'color-mix(in srgb, var(--color-accent) 50%, transparent)',
+    background: 'color-mix(in srgb, var(--color-accent) 4%, transparent)',
     pillText: 'var(--color-accent)',
     pillBg: 'var(--color-accent-muted)',
-    pillBorder: 'rgba(68,147,248,0.40)',
+    pillBorder: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
     iconBg: 'var(--color-accent-muted)',
     iconFg: 'var(--color-accent)',
   },
   failed: {
-    border: 'rgba(248,81,73,0.50)',
-    background: 'rgba(248,81,73,0.04)',
-    pillText: '#f85149',
+    border: 'color-mix(in srgb, var(--status-failed) 50%, transparent)',
+    background: 'color-mix(in srgb, var(--status-failed) 4%, transparent)',
+    pillText: 'var(--status-failed)',
     pillBg: 'var(--status-failed-bg-soft)',
-    pillBorder: 'rgba(248,81,73,0.40)',
+    pillBorder: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
     iconBg: 'var(--status-failed-bg-soft)',
-    iconFg: '#f85149',
+    iconFg: 'var(--status-failed)',
   },
   skipped: {
     border: 'var(--color-border)',
@@ -112,9 +112,9 @@ interface MetricCellProps {
 
 function MetricCell({ k, v, tone = 'neutral' }: MetricCellProps) {
   const valueColor =
-    tone === 'ok'   ? '#3fb950'
+    tone === 'ok'   ? 'var(--status-passed)'
     : tone === 'warn' ? '#d29922'
-    : tone === 'bad'  ? '#f85149'
+    : tone === 'bad'  ? 'var(--status-failed)'
     : 'var(--color-text)'
   return (
     <div
@@ -265,7 +265,7 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
 
       {/* Failed-state retry suffix */}
       {stage.status === 'failed' && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-[10.5px]" style={{ color: '#f85149' }}>
+        <div className="mt-1.5 flex items-center gap-1.5 text-[10.5px]" style={{ color: 'var(--status-failed)' }}>
           <CircleAlert className="w-3 h-3" />
           retry 1/3 queued
         </div>

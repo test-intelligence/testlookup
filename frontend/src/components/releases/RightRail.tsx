@@ -89,9 +89,9 @@ export function ShippingThisWeek({ releases, onOpen }: { releases: DerivedReleas
         <ul className="m-0 p-0 list-none divide-y" style={{ borderColor: 'var(--color-border)' }}>
           {items.map(({ release: r, label }) => {
             const dot =
-              r.gate.decision === 'go' ? '#22c55e'
-              : r.gate.decision === 'conditional' ? '#eab308'
-              : r.gate.decision === 'no_go' ? '#ef4444'
+              r.gate.decision === 'go' ? 'var(--status-passed)'
+              : r.gate.decision === 'conditional' ? 'var(--status-skipped)'
+              : r.gate.decision === 'no_go' ? 'var(--status-failed)'
               : 'var(--color-text-muted)'
             return (
               <li key={r.id} className="flex items-center gap-3 px-3.5 py-2.5">
@@ -177,9 +177,9 @@ export function AgingSignals({ releases, onOpen }: { releases: DerivedRelease[];
                   'shrink-0 inline-flex items-center text-[10.5px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full border',
                 )}
                 style={{
-                  color: severity === 'red' ? '#fca5a5' : '#fcd34d',
-                  background: severity === 'red' ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.10)',
-                  borderColor: severity === 'red' ? 'rgba(239,68,68,0.40)' : 'rgba(234,179,8,0.40)',
+                  color: severity === 'red' ? 'var(--status-failed)' : 'var(--status-broken)',
+                  background: severity === 'red' ? 'color-mix(in srgb, var(--status-failed) 10%, transparent)' : 'color-mix(in srgb, var(--status-skipped) 10%, transparent)',
+                  borderColor: severity === 'red' ? 'color-mix(in srgb, var(--status-failed) 40%, transparent)' : 'color-mix(in srgb, var(--status-skipped) 40%, transparent)',
                 }}
               >
                 {ageDays}d
@@ -235,8 +235,8 @@ export function CompliancePacks({
                 <div
                   className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
                   style={{
-                    background: isReleased ? 'rgba(34,197,94,0.14)' : 'rgba(234,179,8,0.14)',
-                    color: isReleased ? '#22c55e' : '#eab308',
+                    background: isReleased ? 'color-mix(in srgb, var(--status-passed) 14%, transparent)' : 'color-mix(in srgb, var(--status-skipped) 14%, transparent)',
+                    color: isReleased ? 'var(--status-passed)' : 'var(--status-skipped)',
                   }}
                 >
                   {isReleased ? <ShieldCheck className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}

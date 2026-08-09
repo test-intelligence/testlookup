@@ -973,7 +973,7 @@ export default function LiveExecutionPage() {
                 {visibleStats.overallPassRate}%
               </p>
               {visibleStats.overallPassRate < 90 && visibleStats.totalTests > 0 && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(251,191,36,.08)] text-[#fcd34d] border-[rgba(251,191,36,.30)]">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--status-broken) 8%, transparent)] text-[var(--status-broken)] border-[color-mix(in srgb, var(--status-broken) 30%, transparent)]">
                   below 90% target
                 </span>
               )}
@@ -1099,7 +1099,7 @@ export default function LiveExecutionPage() {
                 const passW = s.total > 0 ? (s.passed / s.total) * 100 : 0
                 const failW = s.total > 0 ? (s.failed / s.total) * 100 : 0
                 return (
-                  <tr key={s.run_id} className="border-b border-[var(--color-border)] hover:bg-[rgba(68,147,248,.04)] last:border-b-0">
+                  <tr key={s.run_id} className="border-b border-[var(--color-border)] hover:bg-[color-mix(in srgb, var(--color-accent) 4%, transparent)] last:border-b-0">
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2">
                         <span className={clsx('h-2 w-2 rounded-full flex-shrink-0', statusDot(s.status))} />
@@ -1155,8 +1155,8 @@ export default function LiveExecutionPage() {
                             stale
                               ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
                               : s.status === 'running'
-                                ? 'bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]'
-                                : 'bg-[rgba(52,211,153,.10)] text-[var(--status-passed)] border-[rgba(52,211,153,.30)]',
+                                ? 'bg-[color-mix(in srgb, var(--color-accent) 10%, transparent)] text-[var(--color-accent)] border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]'
+                                : 'bg-[color-mix(in srgb, var(--status-passed) 10%, transparent)] text-[var(--status-passed)] border-[color-mix(in srgb, var(--status-passed) 30%, transparent)]',
                           )}
                           title={stale ? 'No telemetry for over a minute — pending reaper cleanup' : undefined}
                           >
@@ -1258,7 +1258,7 @@ export default function LiveExecutionPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(52,211,153,.10)] text-[var(--status-passed)] border-[rgba(52,211,153,.30)]">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--status-passed) 10%, transparent)] text-[var(--status-passed)] border-[color-mix(in srgb, var(--status-passed) 30%, transparent)]">
                 <Check className="w-3 h-3" />
                 {workflow.stages.filter(s => s.status === 'completed').length} done
               </span>
@@ -1277,14 +1277,14 @@ export default function LiveExecutionPage() {
               const isSelected = selectedStageId === stage.stage_name
               const Icon = status === 'completed' ? Check : status === 'failed' ? XCircle : status === 'running' ? Activity : Clock
               const stageColor =
-                status === 'completed' ? 'rgba(52,211,153,.12)' :
+                status === 'completed' ? 'color-mix(in srgb, var(--status-passed) 12%, transparent)' :
                 status === 'failed' ? 'rgba(248,113,113,.12)' :
                 status === 'running' ? 'var(--color-accent-muted)' :
                 'var(--color-bg-hover)'
               const stageBorder =
-                status === 'completed' ? 'rgba(52,211,153,.4)' :
+                status === 'completed' ? 'color-mix(in srgb, var(--status-passed) 40%, transparent)' :
                 status === 'failed' ? 'rgba(248,113,113,.4)' :
-                status === 'running' ? 'rgba(68,147,248,.4)' :
+                status === 'running' ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' :
                 'var(--color-border)'
               const stageIconColor =
                 status === 'completed' ? 'text-[var(--status-passed)]' :
@@ -1330,12 +1330,12 @@ export default function LiveExecutionPage() {
                     <p className="text-[11px] text-[var(--color-text-muted)] mb-2">{stage.description}</p>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {stage.confidence_score != null && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(52,211,153,.10)] text-[var(--status-passed)] border-[rgba(52,211,153,.30)]">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--status-passed) 10%, transparent)] text-[var(--status-passed)] border-[color-mix(in srgb, var(--status-passed) 30%, transparent)]">
                           {stage.confidence_score}% conf
                         </span>
                       )}
                       {stage.evidence_count != null && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[rgba(68,147,248,.10)] text-[#93c5fd] border-[rgba(68,147,248,.30)]">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--color-accent) 10%, transparent)] text-[var(--color-accent)] border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]">
                           {stage.evidence_count} evidence
                         </span>
                       )}

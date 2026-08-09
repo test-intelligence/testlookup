@@ -8,9 +8,9 @@ import { clsx } from 'clsx'
 import type { GateDecision } from './types'
 
 const STYLES: Record<GateDecision, { label: string; fg: string; bg: string; bd: string }> = {
-  go:            { label: 'Go',             fg: '#86efac', bg: 'rgba(34,197,94,0.10)', bd: 'rgba(34,197,94,0.40)' },
-  conditional:   { label: 'Conditional Go', fg: '#fcd34d', bg: 'rgba(234,179,8,0.10)', bd: 'rgba(234,179,8,0.40)' },
-  no_go:         { label: 'No-Go',          fg: '#fca5a5', bg: 'rgba(239,68,68,0.10)', bd: 'rgba(239,68,68,0.40)' },
+  go:            { label: 'Go',             fg: 'var(--status-passed)', bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 40%, transparent)' },
+  conditional:   { label: 'Conditional Go', fg: 'var(--status-broken)', bg: 'color-mix(in srgb, var(--status-skipped) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-skipped) 40%, transparent)' },
+  no_go:         { label: 'No-Go',          fg: 'var(--status-failed)', bg: 'color-mix(in srgb, var(--status-failed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 40%, transparent)' },
   not_evaluated: { label: 'Not evaluated',  fg: 'var(--color-text-muted)', bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)' },
   cancelled:     { label: 'Cancelled',      fg: 'var(--color-text-muted)', bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)' },
 }

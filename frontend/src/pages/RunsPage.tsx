@@ -106,41 +106,41 @@ interface VerdictTheme {
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   BROKEN: {
-    border: 'rgba(239,68,68,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-no-go)',
-    eyebrowText: '#fca5a5',
-    gateText:    '#fca5a5',
-    pillBg: 'rgba(239,68,68,0.16)',
-    pillBd: 'rgba(239,68,68,0.30)',
-    pillFg: '#fca5a5',
-    meter:  '#fca5a5',
+    eyebrowText: 'var(--status-failed)',
+    gateText:    'var(--status-failed)',
+    pillBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
+    pillFg: 'var(--status-failed)',
+    meter:  'var(--status-failed)',
     label:  'Pipeline broken',
     pulse:  true,
   },
   MIXED: {
-    border: 'rgba(245,158,11,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(245,158,11,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText:    '#fcd34d',
-    pillBg: 'rgba(245,158,11,0.12)',
-    pillBd: 'rgba(245,158,11,0.30)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    eyebrowText: 'var(--status-broken)',
+    gateText:    'var(--status-broken)',
+    pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'Mixed',
     pulse:  true,
   },
   HEALTHY: {
-    border: 'rgba(34,197,94,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-go)',
-    eyebrowText: '#86efac',
-    gateText:    '#86efac',
-    pillBg: 'rgba(34,197,94,0.12)',
-    pillBd: 'rgba(34,197,94,0.30)',
-    pillFg: '#86efac',
-    meter:  '#86efac',
+    eyebrowText: 'var(--status-passed)',
+    gateText:    'var(--status-passed)',
+    pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
+    pillFg: 'var(--status-passed)',
+    meter:  'var(--status-passed)',
     label:  'Pipeline healthy',
     pulse:  false,
   },
@@ -453,9 +453,9 @@ function DangerBtn({
       title={title}
       disabled={disabled}
       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md border transition-colors disabled:opacity-50"
-      style={{ background: 'rgba(239,68,68,0.12)', color: '#fca5a5', borderColor: 'rgba(239,68,68,0.35)' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'rgba(239,68,68,0.20)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239,68,68,0.12)')}
+      style={{ background: 'color-mix(in srgb, var(--status-failed) 12%, transparent)', color: 'var(--status-failed)', borderColor: 'color-mix(in srgb, var(--status-failed) 35%, transparent)' }}
+      onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'color-mix(in srgb, var(--status-failed) 20%, transparent)')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = 'color-mix(in srgb, var(--status-failed) 12%, transparent)')}
     >
       {children}
     </button>
@@ -575,9 +575,9 @@ function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean 
 
 function IssueRow({ issue }: { issue: IssueRowSpec }) {
   const palette = {
-    bad:  { bg: 'rgba(239,68,68,0.08)',  bd: 'rgba(239,68,68,0.30)',  icBg: 'rgba(239,68,68,0.16)',  icFg: '#fca5a5' },
-    warn: { bg: 'rgba(245,158,11,0.06)', bd: 'rgba(245,158,11,0.28)', icBg: 'rgba(245,158,11,0.16)', icFg: '#fcd34d' },
-    info: { bg: 'rgba(68,147,248,0.06)', bd: 'rgba(68,147,248,0.25)', icBg: 'rgba(68,147,248,0.16)', icFg: '#93c5fd' },
+    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',  icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
+    warn: { bg: 'color-mix(in srgb, var(--status-broken) 6%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 28%, transparent)', icBg: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', icFg: 'var(--status-broken)' },
+    info: { bg: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
   }[issue.tone]
   const Icon = issue.Icon
   return (
@@ -591,7 +591,7 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
       <div className="text-[13px] text-[var(--color-text)] leading-[1.4]">{issue.body}</div>
       {issue.cta && (
         <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-          style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'rgba(68,147,248,0.06)' }}>
+          style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
           {issue.cta.label} →
         </button>
       )}
@@ -641,7 +641,7 @@ function HealthMeter({ model, verdict }: { model: PipelineModel; verdict: Verdic
             transform: 'translate(-50%, -50%)',
             width: 14, height: 14,
             background: 'var(--color-bg-card)',
-            boxShadow: `0 0 0 2px ${t.meter === '#fca5a5' ? 'rgba(239,68,68,0.25)' : 'rgba(0,0,0,0.4)'}`,
+            boxShadow: `0 0 0 2px ${t.meter === 'var(--status-failed)' ? 'color-mix(in srgb, var(--status-failed) 25%, transparent)' : 'rgba(0,0,0,0.4)'}`,
             border: `2px solid ${t.meter}`,
           }}
         />
@@ -665,8 +665,8 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
 }
 
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? '#fca5a5' : dim.tone === 'warn' ? '#fcd34d' : '#34d399'
-  const barColor   = dim.tone === 'bad' ? '#ef4444' : dim.tone === 'warn' ? '#f59e0b' : '#22c55e'
+  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
@@ -764,7 +764,7 @@ function WorkflowRibbon({ stages }: { stages: RibbonStage[] }) {
 
 function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
   const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)', fg: '#34d399', icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
+    ? { bg: 'var(--status-passed-soft)', fg: 'var(--status-passed)', icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
     : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: <ChevronRight className="h-2.5 w-2.5" strokeWidth={3} /> }
   return (
     <button
@@ -812,9 +812,9 @@ function KpiCell({
   isLast?: boolean
 }) {
   const valueColor =
-    tone === 'good'   ? '#34d399' :
-    tone === 'warn'   ? '#fcd34d' :
-    tone === 'bad'    ? '#fca5a5' :
+    tone === 'good'   ? 'var(--status-passed)' :
+    tone === 'warn'   ? 'var(--status-broken)' :
+    tone === 'bad'    ? 'var(--status-failed)' :
     'var(--color-text)'
   return (
     <div
@@ -856,7 +856,7 @@ function SparklineRedBars({ count, brighterLast = true }: { count: number; brigh
         const x = 3 + i * (97 / n)
         const w = Math.min(11, 97 / n - 2)
         const tall = brighterLast && i === n - 1
-        return <rect key={i} x={x} y={tall ? 2 : 6} width={w} height={tall ? 20 : 16} rx={1} fill={tall ? '#dc2626' : '#ef4444'} />
+        return <rect key={i} x={x} y={tall ? 2 : 6} width={w} height={tall ? 20 : 16} rx={1} fill={tall ? 'var(--status-failed)' : 'var(--status-failed)'} />
       })}
     </svg>
   )
@@ -867,8 +867,8 @@ function SparklineStackedShare({ primaryPct }: { primaryPct: number }) {
   const p = Math.max(0, Math.min(100, primaryPct))
   return (
     <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <rect x="2" y="4" width={Math.max(2, p - 2)} height="16" rx="2" fill="rgba(239,68,68,0.7)" />
-      <rect x={p} y="4" width={Math.max(2, 96 - p)} height="16" rx="2" fill="#fcd34d" />
+      <rect x="2" y="4" width={Math.max(2, p - 2)} height="16" rx="2" fill="color-mix(in srgb, var(--status-failed) 70%, transparent)" />
+      <rect x={p} y="4" width={Math.max(2, 96 - p)} height="16" rx="2" fill="var(--status-broken)" />
     </svg>
   )
 }
@@ -878,9 +878,9 @@ function SparklineTargetWithDot({ valuePct }: { valuePct: number }) {
   const y = 24 - (Math.max(0, Math.min(100, valuePct)) / 100) * 18
   return (
     <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
-      <line x1="0" y1="3" x2="100" y2="3" stroke="rgba(34,197,94,0.4)" strokeDasharray="2 3" strokeWidth={1} />
-      <line x1="0" y1={y} x2="100" y2={y} stroke="#fcd34d" strokeWidth={1.2} />
-      <circle cx={92} cy={y} r={2} fill="#fcd34d" />
+      <line x1="0" y1="3" x2="100" y2="3" stroke="color-mix(in srgb, var(--status-passed) 40%, transparent)" strokeDasharray="2 3" strokeWidth={1} />
+      <line x1="0" y1={y} x2="100" y2={y} stroke="var(--status-broken)" strokeWidth={1.2} />
+      <circle cx={92} cy={y} r={2} fill="var(--status-broken)" />
     </svg>
   )
 }
@@ -890,8 +890,8 @@ function SparklineDottedPair({ leftHealthy = true, rightFailing = true }: { left
   return (
     <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
       <line x1="8" y1="12" x2="92" y2="12" stroke="var(--color-border)" strokeDasharray="2 3" strokeWidth={1} />
-      <circle cx={8}  cy={12} r={3} fill={leftHealthy ? '#34d399' : 'var(--color-text-faint)'} />
-      <circle cx={92} cy={12} r={3} fill={rightFailing ? 'rgba(239,68,68,0.8)' : '#34d399'} />
+      <circle cx={8}  cy={12} r={3} fill={leftHealthy ? 'var(--status-passed)' : 'var(--color-text-faint)'} />
+      <circle cx={92} cy={12} r={3} fill={rightFailing ? 'color-mix(in srgb, var(--status-failed) 80%, transparent)' : 'var(--status-passed)'} />
     </svg>
   )
 }
@@ -904,7 +904,7 @@ function SparklineRedStreak({ count }: { count: number }) {
       {Array.from({ length: n }).map((_, i) => {
         const x = 2 + i * (96 / n)
         const w = Math.min(12, 96 / n - 2)
-        return <rect key={i} x={x} y={6} width={w} height={16} rx={1} fill="#ef4444" />
+        return <rect key={i} x={x} y={6} width={w} height={16} rx={1} fill="var(--status-failed)" />
       })}
     </svg>
   )
@@ -972,7 +972,7 @@ export function SignatureClusterCard({
       title={
         <>
           Failure signature ·{' '}
-          <code className="font-mono text-[12px]" style={{ color: '#fca5a5' }}>{sigLabel}</code>
+          <code className="font-mono text-[12px]" style={{ color: 'var(--status-failed)' }}>{sigLabel}</code>
         </>
       }
       rightSlot={<span>single root cause likely</span>}
@@ -1034,7 +1034,7 @@ function ClusterRow({
       )}
       style={{
         gridTemplateColumns: '170px 1fr 60px 70px',
-        background: isOutlier ? 'rgba(245,158,11,0.05)' : 'transparent',
+        background: isOutlier ? 'color-mix(in srgb, var(--status-broken) 5%, transparent)' : 'transparent',
       }}
     >
       <span className="text-[12px] tabular-nums truncate text-[var(--color-text-secondary)]">
@@ -1042,20 +1042,20 @@ function ClusterRow({
         <span className="ml-1.5 font-mono text-[11px]">{run.id.slice(0, 8)}</span>
       </span>
       <div className="flex h-3.5 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-        {passFlex > 0 && <span style={{ flex: passFlex, background: '#22c55e' }} />}
-        {failFlex > 0 && <span style={{ flex: failFlex, background: '#ef4444' }} />}
+        {passFlex > 0 && <span style={{ flex: passFlex, background: 'var(--status-passed)' }} />}
+        {failFlex > 0 && <span style={{ flex: failFlex, background: 'var(--status-failed)' }} />}
       </div>
       <span
         className="text-[12.5px] font-semibold tabular-nums text-right"
-        style={{ color: isOutlier ? '#fcd34d' : pct >= 80 ? '#34d399' : pct >= 50 ? '#fcd34d' : '#fca5a5' }}
+        style={{ color: isOutlier ? 'var(--status-broken)' : pct >= 80 ? 'var(--status-passed)' : pct >= 50 ? 'var(--status-broken)' : 'var(--status-failed)' }}
       >
         {pct.toFixed(1)}%
       </span>
       <span
         className="text-[10.5px] uppercase font-semibold text-center px-1.5 py-0.5 rounded-full justify-self-end"
         style={{
-          background: sigDiffers ? 'rgba(245,158,11,0.16)' : 'rgba(239,68,68,0.15)',
-          color:      sigDiffers ? '#fcd34d' : '#fca5a5',
+          background: sigDiffers ? 'color-mix(in srgb, var(--status-broken) 16%, transparent)' : 'color-mix(in srgb, var(--status-failed) 15%, transparent)',
+          color:      sigDiffers ? 'var(--status-broken)' : 'var(--status-failed)',
           letterSpacing: 'var(--tracking-wide)',
         }}
       >
@@ -1183,7 +1183,7 @@ function RunsTable({
                   id={`run-row-${r.id}`}
                   key={r.id}
                   style={{
-                    background: isOutlier ? 'rgba(245,158,11,0.03)' : (i % 2 === 0 ? 'var(--color-bg-card)' : 'transparent'),
+                    background: isOutlier ? 'color-mix(in srgb, var(--status-broken) 3%, transparent)' : (i % 2 === 0 ? 'var(--color-bg-card)' : 'transparent'),
                     borderBottom: '1px solid var(--color-border)',
                   }}
                   className="transition-colors hover:bg-[var(--color-bg-hover)]"
@@ -1235,9 +1235,9 @@ function RunsTable({
                         isOutlier && 'italic',
                       )}
                       style={{
-                        background: isOutlier ? 'rgba(245,158,11,0.10)' : (failed ? 'rgba(239,68,68,0.10)' : 'rgba(34,197,94,0.10)'),
-                        border: `1px solid ${isOutlier ? 'rgba(245,158,11,0.25)' : (failed ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.25)')}`,
-                        color: isOutlier ? '#fcd34d' : (failed ? '#fca5a5' : '#86efac'),
+                        background: isOutlier ? 'color-mix(in srgb, var(--status-broken) 10%, transparent)' : (failed ? 'color-mix(in srgb, var(--status-failed) 10%, transparent)' : 'color-mix(in srgb, var(--status-passed) 10%, transparent)'),
+                        border: `1px solid ${isOutlier ? 'color-mix(in srgb, var(--status-broken) 25%, transparent)' : (failed ? 'color-mix(in srgb, var(--status-failed) 25%, transparent)' : 'color-mix(in srgb, var(--status-passed) 25%, transparent)')}`,
+                        color: isOutlier ? 'var(--status-broken)' : (failed ? 'var(--status-failed)' : 'var(--status-passed)'),
                       }}
                     >
                       <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
@@ -1248,8 +1248,8 @@ function RunsTable({
                     <span
                       className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold"
                       style={{
-                        background: failed ? 'rgba(239,68,68,0.15)' : isPassed(r.status) ? 'rgba(34,197,94,0.15)' : 'var(--color-bg-secondary)',
-                        color:      failed ? '#fca5a5' : isPassed(r.status) ? '#86efac' : 'var(--color-text-muted)',
+                        background: failed ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : isPassed(r.status) ? 'color-mix(in srgb, var(--status-passed) 15%, transparent)' : 'var(--color-bg-secondary)',
+                        color:      failed ? 'var(--status-failed)' : isPassed(r.status) ? 'var(--status-passed)' : 'var(--color-text-muted)',
                       }}
                     >
                       {(r.status || '—').replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}
@@ -1258,19 +1258,19 @@ function RunsTable({
                   <td style={{ padding: '8px 12px' }}>
                     <div className="flex items-center gap-2">
                       <div className="flex h-3 rounded-sm overflow-hidden flex-1 max-w-[80px]" style={{ background: 'var(--color-bg-secondary)' }}>
-                        {r.passed_tests > 0 && <span style={{ flex: r.passed_tests, background: '#22c55e' }} />}
-                        {r.failed_tests > 0 && <span style={{ flex: r.failed_tests, background: '#ef4444' }} />}
+                        {r.passed_tests > 0 && <span style={{ flex: r.passed_tests, background: 'var(--status-passed)' }} />}
+                        {r.failed_tests > 0 && <span style={{ flex: r.failed_tests, background: 'var(--status-failed)' }} />}
                       </div>
                       <span className="text-[10.5px] tabular-nums text-[var(--color-text-muted)] whitespace-nowrap">
-                        <span style={{ color: '#34d399' }}>{r.passed_tests}</span> · <span style={{ color: '#fca5a5' }}>{r.failed_tests}</span> · <span>{r.total_tests} total</span>
+                        <span style={{ color: 'var(--status-passed)' }}>{r.passed_tests}</span> · <span style={{ color: 'var(--status-failed)' }}>{r.failed_tests}</span> · <span>{r.total_tests} total</span>
                       </span>
                     </div>
                   </td>
                   <td style={{ padding: '8px 12px' }} className="font-semibold tabular-nums">
                     <span style={{
-                      color: Number(r.pass_rate) >= 80 ? '#34d399'
-                        : Number(r.pass_rate) >= 50 ? '#fcd34d'
-                        : '#fca5a5',
+                      color: Number(r.pass_rate) >= 80 ? 'var(--status-passed)'
+                        : Number(r.pass_rate) >= 50 ? 'var(--status-broken)'
+                        : 'var(--status-failed)',
                     }}>
                       {Number(r.pass_rate ?? 0).toFixed(1)}%
                     </span>
@@ -1296,7 +1296,7 @@ function RunsTable({
                         className="inline-flex items-center gap-1 text-[11.5px] px-2 py-0.5 rounded-md border"
                         style={{
                           color: 'var(--color-accent)',
-                          borderColor: 'rgba(68,147,248,0.30)',
+                          borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
                           background: 'var(--color-accent-bg-soft)',
                         }}
                       >
@@ -1416,16 +1416,16 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
       className="rounded-xl"
       style={{
         padding: '14px 16px',
-        background: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.06), transparent 55%), var(--color-bg-card)',
-        border: '1px solid rgba(34,197,94,0.28)',
-        borderLeft: '3px solid #22c55e',
+        background: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 6%, transparent), transparent 55%), var(--color-bg-card)',
+        border: '1px solid color-mix(in srgb, var(--status-passed) 28%, transparent)',
+        borderLeft: '3px solid var(--status-passed)',
       }}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
         <h3 id="lastgreen" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Last green build</h3>
         <span
           className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
-          style={{ background: 'rgba(34,197,94,0.15)', color: '#86efac', letterSpacing: 'var(--tracking-wide)' }}
+          style={{ background: 'color-mix(in srgb, var(--status-passed) 15%, transparent)', color: 'var(--status-passed)', letterSpacing: 'var(--tracking-wide)' }}
         >
           Bisect target
         </span>
@@ -1452,7 +1452,7 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
 }
 
 function CalloutStat({ label, value, tone }: { label: string; value: React.ReactNode; tone: 'good' | 'bad' | 'neutral' }) {
-  const fg = tone === 'good' ? '#34d399' : tone === 'bad' ? '#fca5a5' : 'var(--color-text)'
+  const fg = tone === 'good' ? 'var(--status-passed)' : tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)'
   return (
     <div
       className="rounded-md border px-3 py-2.5"
@@ -1489,7 +1489,7 @@ function BuildVelocityCard({ cells, redStreak }: { cells: VelocityCell[]; redStr
                 aspectRatio: '1',
                 background: c.kind === 'pass' ? 'var(--status-passed)' : c.kind === 'fail' ? 'var(--gate-no-go)' : 'var(--color-bg-secondary)',
                 border: c.kind === 'empty' ? '1px solid var(--color-border)' : '1px solid transparent',
-                boxShadow: c.isLast && c.kind === 'fail' ? '0 0 0 1px rgba(239,68,68,0.45)' : 'none',
+                boxShadow: c.isLast && c.kind === 'fail' ? '0 0 0 1px color-mix(in srgb, var(--status-failed) 45%, transparent)' : 'none',
               }}
             />
           ))}
@@ -1584,9 +1584,9 @@ function RecommendedActions({ recs }: { recs: RecRow[] }) {
 
 function RecActionRow({ rec }: { rec: RecRow }) {
   const palette = {
-    dev: { bg: 'rgba(168,85,247,0.16)', fg: '#c4b5fd' },
-    qa:  { bg: 'rgba(68,147,248,0.16)', fg: '#93c5fd' },
-    rm:  { bg: 'rgba(34,197,94,0.16)',  fg: '#86efac' },
+    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
+    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
+    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
   }[rec.role]
   const Icon = rec.Icon
   return (
@@ -2016,7 +2016,7 @@ export default function RunsPage() {
     const el = document.getElementById(`run-row-${run.id}`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.style.background = 'rgba(245,158,11,0.10)'
+      el.style.background = 'color-mix(in srgb, var(--status-broken) 10%, transparent)'
       window.setTimeout(() => { el.style.background = '' }, 1200)
     }
   }

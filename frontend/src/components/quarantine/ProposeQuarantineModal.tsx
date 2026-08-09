@@ -86,7 +86,7 @@ export default function ProposeQuarantineModal({
         </p>
 
         <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
-          Reason <span style={{ color: '#fca5a5' }}>*</span>
+          Reason <span style={{ color: 'var(--status-failed)' }}>*</span>
           <textarea
             value={reason}
             onChange={e => setReason(e.target.value)}

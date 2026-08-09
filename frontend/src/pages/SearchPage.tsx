@@ -218,8 +218,8 @@ function SearchCommandBar({
         padding: '14px 16px',
         marginBottom: 14,
         boxShadow: focused
-          ? '0 0 0 1px rgba(68,147,248,0.16), 0 8px 28px rgba(0,0,0,0.25)'
-          : '0 0 0 1px rgba(68,147,248,0.08), 0 8px 28px rgba(0,0,0,0.25)',
+          ? '0 0 0 1px color-mix(in srgb, var(--color-accent) 16%, transparent), 0 8px 28px rgba(0,0,0,0.25)'
+          : '0 0 0 1px color-mix(in srgb, var(--color-accent) 8%, transparent), 0 8px 28px rgba(0,0,0,0.25)',
         transition: 'box-shadow 200ms ease',
       }}
     >
@@ -331,9 +331,9 @@ function Chip({
       onClick={onClick}
       className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
       style={{
-        background: active ? 'rgba(68,147,248,0.14)' : 'transparent',
-        borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
-        color: active ? '#93c5fd' : 'var(--color-text-muted)',
+        background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+        color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
       }}
       onMouseEnter={(e) => { if (!active) e.currentTarget.style.borderColor = 'var(--color-border-light)' }}
       onMouseLeave={(e) => { if (!active) e.currentTarget.style.borderColor = 'var(--color-border)' }}
@@ -371,9 +371,9 @@ function VerdictRibbon({
     : zeroResultPct > 10 ? 'bad'
     : zeroResultPct > 5  ? 'warn'
     : 'good'
-  const zeroResultColor = zeroResultTone === 'bad' ? '#fca5a5'
-    : zeroResultTone === 'warn' ? '#fcd34d'
-    : zeroResultTone === 'good' ? '#86efac'
+  const zeroResultColor = zeroResultTone === 'bad' ? 'var(--status-failed)'
+    : zeroResultTone === 'warn' ? 'var(--status-broken)'
+    : zeroResultTone === 'good' ? 'var(--status-passed)'
     : 'var(--color-text)'
 
   const tagPulse = indexStatus?.status === 'healthy'
@@ -390,7 +390,7 @@ function VerdictRibbon({
       <div className="min-w-0" style={{ padding: '14px 18px' }}>
         <span
           className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: '#86efac', letterSpacing: 'var(--tracking-wider)' }}
+          style={{ color: 'var(--status-passed)', letterSpacing: 'var(--tracking-wider)' }}
         >
           <span
             className="h-1.5 w-1.5 rounded-full"
@@ -539,9 +539,9 @@ function WorkflowRibbon({ stages }: { stages: RibbonStage[] }) {
 function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
   const Icon = stage.Icon
   const ic = stage.status === 'done'
-    ? { bg: 'rgba(34,197,94,0.18)', fg: '#34d399' }
+    ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'var(--status-passed)' }
     : stage.status === 'active'
-      ? { bg: 'rgba(68,147,248,0.18)', fg: '#93c5fd' }
+      ? { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', fg: 'var(--color-accent)' }
       : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
   const trackFg = stage.status === 'done' ? 'var(--status-passed)'
     : stage.status === 'active' ? 'var(--color-accent)'
@@ -647,7 +647,7 @@ function renderHighlightedQuery(q: string): React.ReactNode {
       <code
         key={key++}
         className="font-mono text-[11px] px-1 py-px rounded-sm mx-0.5"
-        style={{ background: 'rgba(68,147,248,0.06)', border: '1px solid rgba(68,147,248,0.18)', color: '#93c5fd' }}
+        style={{ background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 18%, transparent)', color: 'var(--color-accent)' }}
       >
         {m[0]}
       </code>,
@@ -701,8 +701,8 @@ function RecentList({
             <ListRow
               key={r.id}
               Icon={HistoryIcon}
-              iconBg="rgba(68,147,248,0.14)"
-              iconFg="#93c5fd"
+              iconBg="color-mix(in srgb, var(--color-accent) 14%, transparent)"
+              iconFg="var(--color-accent)"
               query={r.query}
               meta={
                 <>
@@ -771,8 +771,8 @@ function SavedList({
             <ListRow
               key={r.id}
               Icon={Bookmark}
-              iconBg="rgba(245,158,11,0.14)"
-              iconFg="#fcd34d"
+              iconBg="color-mix(in srgb, var(--status-broken) 14%, transparent)"
+              iconFg="var(--status-broken)"
               query={r.label || r.query}
               meta={
                 <>
@@ -811,8 +811,8 @@ function SuggestedList({ rows, onPick }: { rows: SuggestedSearch[]; onPick: (r: 
           <ListRow
             key={r.id}
             Icon={Lightbulb}
-            iconBg="rgba(34,197,94,0.14)"
-            iconFg="#86efac"
+            iconBg="color-mix(in srgb, var(--status-passed) 14%, transparent)"
+            iconFg="var(--status-passed)"
             query={r.query}
             meta={
               <>
@@ -848,9 +848,9 @@ function QuerySyntaxCard() {
             <code
               className="font-mono text-[11px] px-1.5 py-0.5 rounded-sm self-center"
               style={{
-                background: 'rgba(68,147,248,0.06)',
-                border: '1px solid rgba(68,147,248,0.18)',
-                color: '#93c5fd',
+                background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--color-accent) 18%, transparent)',
+                color: 'var(--color-accent)',
                 width: 'fit-content',
               }}
             >
@@ -886,11 +886,11 @@ function buildEntityHealth(indexStatus: IndexStatus | null, entityCounts: Record
     : `${Math.round(lastSync / 3_600_000)}h`
 
   return [
-    { entity: 'test_case',  label: 'Tests',    count: entityCounts.test_case ?? 0,  status: overall, detail: lastSyncLabel, Icon: TestTube,    iconBg: 'rgba(68,147,248,0.14)', iconFg: '#93c5fd' },
-    { entity: 'test_run',   label: 'Runs',     count: entityCounts.test_run ?? 0,   status: overall, detail: lastSyncLabel, Icon: Zap,         iconBg: 'rgba(34,197,94,0.14)',  iconFg: '#86efac' },
-    { entity: 'suite',      label: 'Suites',   count: entityCounts.suite ?? 0,      status: overall, detail: lastSyncLabel, Icon: Layers,      iconBg: 'rgba(167,139,250,0.14)', iconFg: '#c4b5fd' },
+    { entity: 'test_case',  label: 'Tests',    count: entityCounts.test_case ?? 0,  status: overall, detail: lastSyncLabel, Icon: TestTube,    iconBg: 'color-mix(in srgb, var(--color-accent) 14%, transparent)', iconFg: 'var(--color-accent)' },
+    { entity: 'test_run',   label: 'Runs',     count: entityCounts.test_run ?? 0,   status: overall, detail: lastSyncLabel, Icon: Zap,         iconBg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  iconFg: 'var(--status-passed)' },
+    { entity: 'suite',      label: 'Suites',   count: entityCounts.suite ?? 0,      status: overall, detail: lastSyncLabel, Icon: Layers,      iconBg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', iconFg: 'var(--status-flaky)' },
     { entity: 'defect',     label: 'Defects',  count: entityCounts.defect ?? 0,     status: overall, detail: lastSyncLabel, Icon: ShieldCheck, iconBg: 'rgba(236,72,153,0.14)',  iconFg: '#f9a8d4' },
-    { entity: 'flaky_test', label: 'Flaky',    count: entityCounts.flaky_test ?? 0, status: overall, detail: lastSyncLabel, Icon: AlertTriangle, iconBg: 'rgba(245,158,11,0.14)', iconFg: '#fcd34d' },
+    { entity: 'flaky_test', label: 'Flaky',    count: entityCounts.flaky_test ?? 0, status: overall, detail: lastSyncLabel, Icon: AlertTriangle, iconBg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', iconFg: 'var(--status-broken)' },
     { entity: 'release',    label: 'Releases', count: entityCounts.release ?? 0,    status: overall, detail: lastSyncLabel, Icon: Package,     iconBg: 'var(--color-bg-secondary)', iconFg: 'var(--color-text-muted)' },
   ]
 }
@@ -911,10 +911,10 @@ function IndexHealthCard({ rows }: { rows: EntityHealth[] }) {
         {rows.map(r => {
           const Icon = r.Icon
           const statusPalette = r.status === 'live'
-            ? { bg: 'rgba(34,197,94,0.14)', bd: 'rgba(34,197,94,0.30)', fg: '#86efac', label: 'Live' }
+            ? { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed)', label: 'Live' }
             : r.status === 'embedding'
-              ? { bg: 'rgba(245,158,11,0.14)', bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d', label: 'Embedding' }
-              : { bg: 'rgba(239,68,68,0.14)', bd: 'rgba(239,68,68,0.30)', fg: '#fca5a5', label: 'Down' }
+              ? { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Embedding' }
+              : { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)', label: 'Down' }
           return (
             <div
               key={r.entity}
@@ -1502,11 +1502,11 @@ const ENTITY_ICON: Record<SearchEntityType, typeof SearchIcon> = {
 }
 
 const ENTITY_PALETTE: Record<SearchEntityType, { bg: string; fg: string }> = {
-  test_case:  { bg: 'rgba(68,147,248,0.14)',  fg: '#93c5fd' },
-  test_run:   { bg: 'rgba(34,197,94,0.14)',   fg: '#86efac' },
-  suite:      { bg: 'rgba(167,139,250,0.14)', fg: '#c4b5fd' },
+  test_case:  { bg: 'color-mix(in srgb, var(--color-accent) 14%, transparent)',  fg: 'var(--color-accent)' },
+  test_run:   { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',   fg: 'var(--status-passed)' },
+  suite:      { bg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', fg: 'var(--status-flaky)' },
   defect:     { bg: 'rgba(236,72,153,0.14)',  fg: '#f9a8d4' },
-  flaky_test: { bg: 'rgba(245,158,11,0.14)',  fg: '#fcd34d' },
+  flaky_test: { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)',  fg: 'var(--status-broken)' },
   release:    { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' },
 }
 

@@ -1,6 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
-const COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#6b7280']
+const COLORS = ['var(--status-failed)', 'var(--status-broken)', 'var(--color-accent)', '#6b7280']
 const LABELS = ['P1 Critical', 'P2 High', 'P3 Medium', 'P4 Low']
 
 interface Props { data: number[] }   // [p1, p2, p3, p4]

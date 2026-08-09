@@ -24,9 +24,9 @@ interface RightRailProps {
 }
 
 const STATUS_TONE: Record<ComputeStage['status'], { dot: string; pillBg: string; pillText: string; label: string }> = {
-  done:    { dot: '#3fb950',          pillBg: 'rgba(63,185,80,0.14)',  pillText: '#3fb950', label: 'DONE' },
+  done:    { dot: 'var(--status-passed)',          pillBg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  pillText: 'var(--status-passed)', label: 'DONE' },
   running: { dot: 'var(--color-accent)', pillBg: 'var(--color-accent-muted)', pillText: 'var(--color-accent)', label: 'RUNNING' },
-  failed:  { dot: '#f85149',          pillBg: 'rgba(248,81,73,0.14)',  pillText: '#f85149', label: 'FAILED' },
+  failed:  { dot: 'var(--status-failed)',          pillBg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)',  pillText: 'var(--status-failed)', label: 'FAILED' },
   skipped: { dot: 'var(--color-text-muted)', pillBg: 'var(--color-bg-secondary)', pillText: 'var(--color-text-muted)', label: 'SKIPPED' },
   pending: { dot: 'var(--color-text-muted)', pillBg: 'var(--color-bg-secondary)', pillText: 'var(--color-text-muted)', label: 'PENDING' },
 }
@@ -48,8 +48,8 @@ function Blob({ children }: { children: React.ReactNode }) {
 
 function KV({ k, v, tone }: { k: string; v: React.ReactNode; tone?: 'ok' | 'bad' }) {
   const valueColor =
-    tone === 'ok' ? '#3fb950'
-    : tone === 'bad' ? '#f85149'
+    tone === 'ok' ? 'var(--status-passed)'
+    : tone === 'bad' ? 'var(--status-failed)'
     : 'var(--color-text)'
   return (
     <div className="flex gap-3 text-[11.5px] py-1">
@@ -185,7 +185,7 @@ function DecisionBody({ decision }: { decision: ComputeDecision }) {
     <div className="px-3.5 py-3.5 overflow-auto">
       <span
         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-[0.08em]"
-        style={{ background: 'var(--color-purple-soft, rgba(163,113,247,0.14))', color: 'var(--color-purple, #a371f7)' }}
+        style={{ background: 'var(--color-purple-soft, color-mix(in srgb, var(--status-flaky) 14%, transparent))', color: 'var(--color-purple, var(--status-flaky))' }}
       >
         ◇ Decision
       </span>
@@ -211,7 +211,7 @@ function DecisionBody({ decision }: { decision: ComputeDecision }) {
             className="flex items-center justify-between px-2 py-1.5 rounded border text-[11.5px] font-mono"
             style={{
               background: 'var(--color-accent-muted)',
-              borderColor: 'rgba(68,147,248,0.40)',
+              borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
               color: 'var(--color-accent)',
             }}
           >

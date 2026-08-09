@@ -89,62 +89,62 @@ interface VerdictTheme {
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   READY: {
-    border: 'rgba(68,147,248,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(68,147,248,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 55%)',
     bar:    'var(--color-accent)',
-    eyebrowText: '#93c5fd',
-    gateText:    '#93c5fd',
-    pillBg: 'rgba(68,147,248,0.12)',
-    pillBd: 'rgba(68,147,248,0.30)',
-    pillFg: '#93c5fd',
+    eyebrowText: 'var(--color-accent)',
+    gateText:    'var(--color-accent)',
+    pillBg: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+    pillFg: 'var(--color-accent)',
     label:  'Ready to investigate',
     pulse:  true,
   },
   NO_FAILURES: {
-    border: 'rgba(34,197,94,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-go)',
-    eyebrowText: '#86efac',
-    gateText:    '#86efac',
-    pillBg: 'rgba(34,197,94,0.12)',
-    pillBd: 'rgba(34,197,94,0.30)',
-    pillFg: '#86efac',
+    eyebrowText: 'var(--status-passed)',
+    gateText:    'var(--status-passed)',
+    pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
+    pillFg: 'var(--status-passed)',
     label:  'Nothing to investigate',
     pulse:  false,
   },
   NO_SOURCES: {
-    border: 'rgba(239,68,68,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-no-go)',
-    eyebrowText: '#fca5a5',
-    gateText:    '#fca5a5',
-    pillBg: 'rgba(239,68,68,0.16)',
-    pillBd: 'rgba(239,68,68,0.30)',
-    pillFg: '#fca5a5',
+    eyebrowText: 'var(--status-failed)',
+    gateText:    'var(--status-failed)',
+    pillBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
+    pillFg: 'var(--status-failed)',
     label:  'No evidence sources',
     pulse:  true,
   },
   RUNNING: {
-    border: 'rgba(68,147,248,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(68,147,248,0.12), transparent 55%)',
+    border: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 55%)',
     bar:    'var(--color-accent)',
-    eyebrowText: '#93c5fd',
-    gateText:    '#93c5fd',
-    pillBg: 'rgba(68,147,248,0.16)',
-    pillBd: 'rgba(68,147,248,0.30)',
-    pillFg: '#93c5fd',
+    eyebrowText: 'var(--color-accent)',
+    gateText:    'var(--color-accent)',
+    pillBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+    pillFg: 'var(--color-accent)',
     label:  'Investigation running',
     pulse:  true,
   },
   FAILED: {
-    border: 'rgba(245,158,11,0.40)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText:    '#fcd34d',
+    eyebrowText: 'var(--status-broken)',
+    gateText:    'var(--status-broken)',
     pillBg: 'var(--gate-conditional-bg)',
     pillBd: 'var(--gate-conditional-border)',
-    pillFg: '#fcd34d',
+    pillFg: 'var(--status-broken)',
     label:  'Last run failed',
     pulse:  true,
   },
@@ -186,15 +186,15 @@ interface ProviderMeta {
 }
 
 const PROVIDER_META: Record<string, ProviderMeta> = {
-  github:   { name: 'GitHub',           description: 'commits, diffs, blame',        icon: GitBranch,     toneBg: 'rgba(168,85,247,0.16)', toneFg: '#c4b5fd' },
-  jira:     { name: 'Jira context',     description: 'defect & ticket context',      icon: KeyRound,      toneBg: 'rgba(68,147,248,0.16)', toneFg: '#93c5fd' },
-  splunk:   { name: 'Splunk logs',      description: 'application log search',       icon: FileText,      toneBg: 'rgba(34,197,94,0.16)',  toneFg: '#86efac' },
-  ocp:      { name: 'OpenShift / K8s',  description: 'cluster & pod telemetry',      icon: Server,        toneBg: 'rgba(245,158,11,0.16)', toneFg: '#fcd34d' },
-  slack:    { name: 'Slack',            description: 'notification channel',         icon: MessageSquare, toneBg: 'rgba(168,85,247,0.16)', toneFg: '#c4b5fd' },
-  teams:    { name: 'Microsoft Teams',  description: 'notification channel',         icon: MessageSquare, toneBg: 'rgba(68,147,248,0.16)', toneFg: '#93c5fd' },
-  smtp:     { name: 'SMTP email',       description: 'notification delivery',        icon: Mail,          toneBg: 'rgba(34,197,94,0.16)',  toneFg: '#86efac' },
-  ollama:   { name: 'Ollama LLM',       description: 'local model runtime',          icon: Bot,           toneBg: 'rgba(68,147,248,0.16)', toneFg: '#93c5fd' },
-  chromadb: { name: 'ChromaDB',         description: 'semantic search index',        icon: Database,      toneBg: 'rgba(168,85,247,0.16)', toneFg: '#c4b5fd' },
+  github:   { name: 'GitHub',           description: 'commits, diffs, blame',        icon: GitBranch,     toneBg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', toneFg: 'var(--status-flaky)' },
+  jira:     { name: 'Jira context',     description: 'defect & ticket context',      icon: KeyRound,      toneBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', toneFg: 'var(--color-accent)' },
+  splunk:   { name: 'Splunk logs',      description: 'application log search',       icon: FileText,      toneBg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  toneFg: 'var(--status-passed)' },
+  ocp:      { name: 'OpenShift / K8s',  description: 'cluster & pod telemetry',      icon: Server,        toneBg: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', toneFg: 'var(--status-broken)' },
+  slack:    { name: 'Slack',            description: 'notification channel',         icon: MessageSquare, toneBg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', toneFg: 'var(--status-flaky)' },
+  teams:    { name: 'Microsoft Teams',  description: 'notification channel',         icon: MessageSquare, toneBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', toneFg: 'var(--color-accent)' },
+  smtp:     { name: 'SMTP email',       description: 'notification delivery',        icon: Mail,          toneBg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  toneFg: 'var(--status-passed)' },
+  ollama:   { name: 'Ollama LLM',       description: 'local model runtime',          icon: Bot,           toneBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', toneFg: 'var(--color-accent)' },
+  chromadb: { name: 'ChromaDB',         description: 'semantic search index',        icon: Database,      toneBg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', toneFg: 'var(--status-flaky)' },
 }
 
 const GENERIC_PROVIDER_META: Omit<ProviderMeta, 'name' | 'description'> = {
@@ -249,8 +249,8 @@ function testResultsSource(hasRuns: boolean): EvidenceSource {
     status: hasRuns ? 'live' : 'off',
     detail: hasRuns ? 'Live' : 'Off',
     icon: ShieldCheck,
-    toneBg: hasRuns ? 'rgba(68,147,248,0.16)' : 'var(--color-bg-secondary)',
-    toneFg: hasRuns ? '#93c5fd' : 'var(--color-text-muted)',
+    toneBg: hasRuns ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'var(--color-bg-secondary)',
+    toneFg: hasRuns ? 'var(--color-accent)' : 'var(--color-text-muted)',
   }
 }
 
@@ -728,9 +728,9 @@ function FacetTile({
   tone: 'bad' | 'warn' | 'good' | 'neutral'
 }) {
   const valueColor =
-    tone === 'bad'  ? '#fca5a5' :
-    tone === 'warn' ? '#fcd34d' :
-    tone === 'good' ? '#86efac' :
+    tone === 'bad'  ? 'var(--status-failed)' :
+    tone === 'warn' ? 'var(--status-broken)' :
+    tone === 'good' ? 'var(--status-passed)' :
     'var(--color-text)'
   return (
     <div
@@ -802,7 +802,7 @@ function EstimateCard({ model }: { model: DeepModel }) {
               <span
                 aria-hidden
                 className="absolute top-0 bottom-0"
-                style={{ left: `${softWarnPct}%`, width: 1, background: '#fcd34d' }}
+                style={{ left: `${softWarnPct}%`, width: 1, background: 'var(--status-broken)' }}
                 title={`Soft warn at ${softWarnPct}%`}
               />
             )}
@@ -918,11 +918,11 @@ function WorkflowRibbon({ stages, model }: { stages: RibbonStage[]; model: DeepM
 
 function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
   const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)',         fg: '#34d399',                icon: <Check className="h-3 w-3" strokeWidth={3} /> }
+    ? { bg: 'var(--status-passed-soft)',         fg: 'var(--status-passed)',                icon: <Check className="h-3 w-3" strokeWidth={3} /> }
     : stage.status === 'active'
-      ? { bg: 'rgba(68,147,248,0.16)',           fg: 'var(--color-accent)',   icon: <Sparkles className="h-3 w-3" strokeWidth={2.5} /> }
+      ? { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',           fg: 'var(--color-accent)',   icon: <Sparkles className="h-3 w-3" strokeWidth={2.5} /> }
       : stage.status === 'failed'
-        ? { bg: 'rgba(239,68,68,0.18)',          fg: '#fca5a5',               icon: <XCircle className="h-3 w-3" strokeWidth={2.5} /> }
+        ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',          fg: 'var(--status-failed)',               icon: <XCircle className="h-3 w-3" strokeWidth={2.5} /> }
         : { bg: 'var(--color-bg-secondary)',     fg: 'var(--color-text-muted)', icon: <Clock className="h-3 w-3" strokeWidth={2.5} /> }
   const trackFg = stage.status === 'done' ? 'var(--status-passed)'
     : stage.status === 'active' ? 'var(--color-accent)'
@@ -955,13 +955,13 @@ function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
               key={i}
               className="inline-flex items-center px-1.5 py-px rounded-sm text-[10px] font-medium"
               style={{
-                background: p.tone === 'accent' ? 'rgba(68,147,248,0.10)'
-                  : p.tone === 'good' ? 'rgba(34,197,94,0.10)'
-                  : p.tone === 'warn' ? 'rgba(245,158,11,0.10)'
+                background: p.tone === 'accent' ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)'
+                  : p.tone === 'good' ? 'color-mix(in srgb, var(--status-passed) 10%, transparent)'
+                  : p.tone === 'warn' ? 'color-mix(in srgb, var(--status-broken) 10%, transparent)'
                   : 'var(--color-bg-secondary)',
                 color: p.tone === 'accent' ? 'var(--color-accent)'
-                  : p.tone === 'good' ? '#86efac'
-                  : p.tone === 'warn' ? '#fcd34d'
+                  : p.tone === 'good' ? 'var(--status-passed)'
+                  : p.tone === 'warn' ? 'var(--status-broken)'
                   : 'var(--color-text-muted)',
                 border: '1px solid var(--color-border)',
               }}
@@ -996,9 +996,9 @@ function KpiCell({
   isLast?: boolean
 }) {
   const valueColor =
-    tone === 'good'   ? '#34d399' :
-    tone === 'warn'   ? '#fcd34d' :
-    tone === 'bad'    ? '#fca5a5' :
+    tone === 'good'   ? 'var(--status-passed)' :
+    tone === 'warn'   ? 'var(--status-broken)' :
+    tone === 'bad'    ? 'var(--status-failed)' :
     tone === 'accent' ? 'var(--color-accent)' :
     'var(--color-text)'
   return (
@@ -1035,8 +1035,8 @@ function SeverityDistBar({ p0, p1, p2, p3 }: { p0: number; p1: number; p2: numbe
   const total = p0 + p1 + p2 + p3 || 1
   return (
     <div className="flex h-2.5 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-      {p0 > 0 && <span style={{ flex: p0, background: '#ef4444' }} title={`${p0} P0`} />}
-      {p1 > 0 && <span style={{ flex: p1, background: '#f59e0b' }} title={`${p1} P1`} />}
+      {p0 > 0 && <span style={{ flex: p0, background: 'var(--status-failed)' }} title={`${p0} P0`} />}
+      {p1 > 0 && <span style={{ flex: p1, background: 'var(--status-broken)' }} title={`${p1} P1`} />}
       {p2 > 0 && <span style={{ flex: p2, background: 'var(--color-accent)' }} title={`${p2} P2`} />}
       {p3 > 0 && <span style={{ flex: p3, background: 'var(--color-text-faint)' }} title={`${p3} P3`} />}
       {total === 1 && p0 + p1 + p2 + p3 === 0 && <span style={{ flex: 1, background: 'var(--color-bg-secondary)' }} />}
@@ -1096,7 +1096,7 @@ function ProposedClustersCard({ model, onOpenCluster, focusedRunId }: { model: D
           Proposed clusters
           <span
             className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold uppercase"
-            style={{ background: 'rgba(68,147,248,0.16)', color: '#93c5fd', letterSpacing: 'var(--tracking-wide)' }}
+            style={{ background: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', color: 'var(--color-accent)', letterSpacing: 'var(--tracking-wide)' }}
           >
             pre-scan
           </span>
@@ -1132,9 +1132,9 @@ function ProposedClustersCard({ model, onOpenCluster, focusedRunId }: { model: D
 
 function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () => void }) {
   const sevPalette: Record<ProposedCluster['severity'], { bg: string; bd: string; fg: string }> = {
-    P0: { bg: 'rgba(239,68,68,0.18)',   bd: 'rgba(239,68,68,0.30)',   fg: '#fca5a5' },
-    P1: { bg: 'rgba(245,158,11,0.18)',  bd: 'rgba(245,158,11,0.30)',  fg: '#fcd34d' },
-    P2: { bg: 'rgba(68,147,248,0.18)',  bd: 'rgba(68,147,248,0.30)',  fg: '#93c5fd' },
+    P0: { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',   bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',   fg: 'var(--status-failed)' },
+    P1: { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)',  bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',  fg: 'var(--status-broken)' },
+    P2: { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',  bd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',  fg: 'var(--color-accent)' },
     P3: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' },
   }
   const sev = sevPalette[cluster.severity]
@@ -1184,7 +1184,7 @@ function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () 
           <p className="text-[12px] m-0 mt-1" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
             {cluster.rationale}
             {' '}Cluster cohesion{' '}
-            <strong className="font-semibold" style={{ color: cluster.confidence >= 0.85 ? '#34d399' : cluster.confidence >= 0.65 ? '#fcd34d' : '#fca5a5' }}>
+            <strong className="font-semibold" style={{ color: cluster.confidence >= 0.85 ? 'var(--status-passed)' : cluster.confidence >= 0.65 ? 'var(--status-broken)' : 'var(--status-failed)' }}>
               {cluster.confidence.toFixed(2)}
             </strong>. No AI finding recorded for this cluster yet.
           </p>
@@ -1202,7 +1202,7 @@ function ClusterRow({ cluster, onOpen }: { cluster: ProposedCluster; onOpen: () 
         type="button"
         onClick={onOpen}
         className="text-[11.5px] font-medium px-2.5 py-1 rounded-md self-start"
-        style={{ background: 'rgba(68,147,248,0.12)', color: 'var(--color-accent)', border: '1px solid rgba(68,147,248,0.25)' }}
+        style={{ background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)', color: 'var(--color-accent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)' }}
       >
         Open cluster →
       </button>
@@ -1252,12 +1252,12 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
 }
 
 function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
-  const confColor = row.avgConf >= 0.8 ? '#34d399' : row.avgConf >= 0.6 ? '#fcd34d' : row.avgConf > 0 ? '#fca5a5' : 'var(--color-text-faint)'
+  const confColor = row.avgConf >= 0.8 ? 'var(--status-passed)' : row.avgConf >= 0.6 ? 'var(--status-broken)' : row.avgConf > 0 ? 'var(--status-failed)' : 'var(--color-text-faint)'
   const statusPalette = row.status === 'complete'
-    ? { bg: 'rgba(34,197,94,0.10)', bd: 'rgba(34,197,94,0.25)', fg: '#86efac', label: 'Complete' }
+    ? { bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 25%, transparent)', fg: 'var(--status-passed)', label: 'Complete' }
     : row.status === 'running'
-      ? { bg: 'rgba(68,147,248,0.10)', bd: 'rgba(68,147,248,0.25)', fg: '#93c5fd', label: 'Running' }
-      : { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.25)', fg: '#fcd34d', label: row.failedAtStage ? `Failed at ${row.failedAtStage}` : 'Failed' }
+      ? { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', fg: 'var(--color-accent)', label: 'Running' }
+      : { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)', label: row.failedAtStage ? `Failed at ${row.failedAtStage}` : 'Failed' }
   return (
     <tr
       style={{ borderBottom: '1px solid var(--color-border)' }}
@@ -1357,9 +1357,9 @@ function EvidenceSourcesCard({
         {sources.map(src => {
           const Icon = src.icon
           const statusPalette = src.status === 'live'
-            ? { bg: 'rgba(34,197,94,0.10)', bd: 'rgba(34,197,94,0.25)', fg: '#86efac' }
+            ? { bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 25%, transparent)', fg: 'var(--status-passed)' }
             : src.status === 'lagging'
-              ? { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.25)', fg: '#fcd34d' }
+              ? { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)' }
               : { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' }
           return (
             <button
@@ -1434,7 +1434,7 @@ function ModelRoutingCard({
                 {s.fallback_used && (
                   <span
                     className="inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold"
-                    style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.25)', color: '#fcd34d' }}
+                    style={{ background: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--status-broken) 25%, transparent)', color: 'var(--status-broken)' }}
                     title={s.fallback_reason ?? 'Fallback engine used'}
                   >
                     fallback
@@ -1881,7 +1881,7 @@ export default function DeepInvestigationPage() {
           value={model.preScanClusters}
           tone="accent"
           meta={<>pre-scan · avg conf {model.preScanAvgConfidence.toFixed(2)}</>}
-          spark={<SparkRisingLine stroke="#93c5fd" />}
+          spark={<SparkRisingLine stroke="var(--color-accent)" />}
         />
         <KpiCell
           Icon={Clock}
@@ -1890,7 +1890,7 @@ export default function DeepInvestigationPage() {
           sub={model.lastRunAgeHours != null ? 'h ago' : undefined}
           tone="neutral"
           meta={model.lastRunSummary ?? <>no prior run</>}
-          spark={<SparkRisingLine stroke="#34d399" />}
+          spark={<SparkRisingLine stroke="var(--status-passed)" />}
         />
         <KpiCell
           Icon={Target}
@@ -1898,7 +1898,7 @@ export default function DeepInvestigationPage() {
           value={model.preScanAvgConfidence > 0 ? model.preScanAvgConfidence.toFixed(2) : '—'}
           tone={model.preScanAvgConfidence >= 0.8 ? 'good' : model.preScanAvgConfidence >= 0.7 ? 'warn' : 'bad'}
           meta={<>target ≥ 0.7 · {model.proposedClusters.filter(c => c.confidence < 0.7).length} below</>}
-          spark={<SparkTargetLine stroke="#fcd34d" points="0,13 14,10 28,8 42,11 56,7 70,9 84,6 98,8" />}
+          spark={<SparkTargetLine stroke="var(--status-broken)" points="0,13 14,10 28,8 42,11 56,7 70,9 84,6 98,8" />}
         />
         <KpiCell
           Icon={DollarSign}

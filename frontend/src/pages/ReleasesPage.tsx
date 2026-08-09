@@ -745,7 +745,7 @@ export default function ReleasesPage() {
                     className={clsx(
                       'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors capitalize',
                       statusFilter === s
-                        ? 'bg-[var(--color-accent-muted)] text-[var(--color-text)] border border-[rgba(68,147,248,0.40)]'
+                        ? 'bg-[var(--color-accent-muted)] text-[var(--color-text)] border border-[color-mix(in srgb, var(--color-accent) 40%, transparent)]'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent',
                     )}
                   >

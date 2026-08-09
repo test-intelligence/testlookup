@@ -180,7 +180,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4">
           <div className="flex items-start gap-3">
             <span className="inline-flex items-center justify-center rounded-md flex-none mt-0.5"
-              style={{ width: 28, height: 28, background: 'rgba(245,158,11,0.14)', color: '#fcd34d' }}
+              style={{ width: 28, height: 28, background: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', color: 'var(--status-broken)' }}
             >
               <ShieldCheck className="h-4 w-4" />
             </span>

@@ -15,20 +15,20 @@ const SEV_STYLE: Record<DerivedBlocker['severity'], {
   warn: {
     icon: AlertTriangle,
     iconClass: 'text-amber-400',
-    border: 'rgba(234,179,8,0.22)',
-    bg: 'linear-gradient(180deg, rgba(234,179,8,0.06), transparent 70%)',
+    border: 'color-mix(in srgb, var(--status-skipped) 22%, transparent)',
+    bg: 'linear-gradient(180deg, color-mix(in srgb, var(--status-skipped) 6%, transparent), transparent 70%)',
   },
   red: {
     icon: AlertTriangle,
     iconClass: 'text-red-400',
-    border: 'rgba(239,68,68,0.28)',
-    bg: 'linear-gradient(180deg, rgba(239,68,68,0.06), transparent 70%)',
+    border: 'color-mix(in srgb, var(--status-failed) 28%, transparent)',
+    bg: 'linear-gradient(180deg, color-mix(in srgb, var(--status-failed) 6%, transparent), transparent 70%)',
   },
   resolved: {
     icon: CheckCircle2,
     iconClass: 'text-emerald-400',
-    border: 'rgba(34,197,94,0.28)',
-    bg: 'linear-gradient(180deg, rgba(34,197,94,0.06), transparent 70%)',
+    border: 'color-mix(in srgb, var(--status-passed) 28%, transparent)',
+    bg: 'linear-gradient(180deg, color-mix(in srgb, var(--status-passed) 6%, transparent), transparent 70%)',
   },
 }
 

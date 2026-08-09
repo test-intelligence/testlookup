@@ -353,31 +353,31 @@ const VERDICT_STYLE: Record<VerdictState, {
   glow: string;
 }> = {
   'all-clear': {
-    border: 'rgba(34,197,94,0.32)',
+    border: 'color-mix(in srgb, var(--status-passed) 32%, transparent)',
     bar:    'var(--gate-go)',
-    pulse:  '#22c55e',
-    eyebrow:'#86efac',
-    headlineWord: '#86efac',
+    pulse:  'var(--status-passed)',
+    eyebrow:'var(--status-passed)',
+    headlineWord: 'var(--status-passed)',
     headline: () => 'nothing needs investigation right now.',
     lede: (c, r) => `${c.total} run${c.total === 1 ? '' : 's'} ${r.toLowerCase()}. ${c.passed} pass${c.flaky ? `, ${c.flaky} known-flaky retr${c.flaky === 1 ? 'y' : 'ies'} recovered` : ''}. Intelligence still surfaces anomalies below.`,
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
   },
   'attention': {
-    border: 'rgba(245,158,11,0.32)',
+    border: 'color-mix(in srgb, var(--status-broken) 32%, transparent)',
     bar:    'var(--gate-conditional)',
-    pulse:  '#eab308',
-    eyebrow:'#fcd34d',
-    headlineWord: '#fcd34d',
+    pulse:  'var(--status-skipped)',
+    eyebrow:'var(--status-broken)',
+    headlineWord: 'var(--status-broken)',
     headline: (c) => `${c.flaky || c.broken} ${c.flaky ? 'flaky' : 'broken'} signal${(c.flaky || c.broken) === 1 ? '' : 's'} to watch.`,
     lede: (c, r) => `${c.total} run${c.total === 1 ? '' : 's'} ${r.toLowerCase()}. No outright failures — but ${c.flaky} flaky and ${c.broken} broken runs warrant a glance.`,
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-glow), transparent 55%)',
   },
   'at-risk': {
-    border: 'rgba(239,68,68,0.32)',
+    border: 'color-mix(in srgb, var(--status-failed) 32%, transparent)',
     bar:    'var(--gate-no-go)',
-    pulse:  '#ef4444',
-    eyebrow:'#fca5a5',
-    headlineWord: '#fca5a5',
+    pulse:  'var(--status-failed)',
+    eyebrow:'var(--status-failed)',
+    headlineWord: 'var(--status-failed)',
     headline: (c) => `${c.failed} failing run${c.failed === 1 ? '' : 's'} need investigation.`,
     lede: (c, r) => `${c.total} run${c.total === 1 ? '' : 's'} ${r.toLowerCase()}. ${c.failed} failed, ${c.flaky} flaky. Open the topmost failure to start triage.`,
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--alert-bg-soft), transparent 55%)',
@@ -511,15 +511,15 @@ function HealthSummaryPanel({ health, headlineColor }: { health: HealthSummary; 
         }}
         aria-hidden
       >
-        <i className="rounded-full" style={{ background: '#22c55e', display: widths.pass  ? 'block' : 'none' }} />
-        <i className="rounded-full" style={{ background: '#c084fc', display: widths.flake ? 'block' : 'none' }} />
-        <i className="rounded-full" style={{ background: '#ef4444', display: widths.fail  ? 'block' : 'none' }} />
+        <i className="rounded-full" style={{ background: 'var(--status-passed)', display: widths.pass  ? 'block' : 'none' }} />
+        <i className="rounded-full" style={{ background: 'var(--status-flaky)', display: widths.flake ? 'block' : 'none' }} />
+        <i className="rounded-full" style={{ background: 'var(--status-failed)', display: widths.fail  ? 'block' : 'none' }} />
       </div>
 
       <div className="mt-2 flex items-center flex-wrap gap-3 text-[11.5px] text-[var(--color-text-muted)]">
-        <LegendItem color="#22c55e" label={`${counts.passed} passed`} />
-        <LegendItem color="#c084fc" label={`${counts.flaky} flaky`} />
-        <LegendItem color="#ef4444" label={`${counts.failed + counts.broken} failed`} />
+        <LegendItem color="var(--status-passed)" label={`${counts.passed} passed`} />
+        <LegendItem color="var(--status-flaky)" label={`${counts.flaky} flaky`} />
+        <LegendItem color="var(--status-failed)" label={`${counts.failed + counts.broken} failed`} />
         <span className="ml-auto text-[var(--color-text-faint)]">{counts.total} runs analyzed</span>
       </div>
     </div>
@@ -807,9 +807,9 @@ function RunStatusPill({ run }: { run: TestRun }) {
   else if (isFlaky(run))   { label = `Flaky · ${run.broken_tests} retr${run.broken_tests === 1 ? 'y' : 'ies'}`; kind = 'flaky' }
 
   const tokens: Record<string, { fg: string; bg: string; bd: string; dot: string }> = {
-    pass:   { fg: 'var(--status-passed)',  bg: 'var(--status-passed-bg)',  bd: 'var(--status-passed-bd)',  dot: '#22c55e' },
-    fail:   { fg: 'var(--status-failed)',  bg: 'var(--status-failed-bg)',  bd: 'var(--status-failed-bd)',  dot: '#ef4444' },
-    flaky:  { fg: 'var(--status-flaky)',   bg: 'var(--status-flaky-bg)',   bd: 'var(--status-flaky-bd)',   dot: '#c084fc' },
+    pass:   { fg: 'var(--status-passed)',  bg: 'var(--status-passed-bg)',  bd: 'var(--status-passed-bd)',  dot: 'var(--status-passed)' },
+    fail:   { fg: 'var(--status-failed)',  bg: 'var(--status-failed-bg)',  bd: 'var(--status-failed-bd)',  dot: 'var(--status-failed)' },
+    flaky:  { fg: 'var(--status-flaky)',   bg: 'var(--status-flaky-bg)',   bd: 'var(--status-flaky-bd)',   dot: 'var(--status-flaky)' },
     broken: { fg: 'var(--status-broken)',  bg: 'var(--status-broken-bg)',  bd: 'var(--status-broken-bd)',  dot: '#fdba74' },
   }
   const t = tokens[kind]
@@ -828,9 +828,9 @@ function RunStatusPill({ run }: { run: TestRun }) {
  *  showed a confidence; naming it one was the whole bug. */
 function PassRateMeter({ pct }: { pct: number }) {
   const grad =
-    pct >= 80 ? 'linear-gradient(90deg,#22c55e,#34d399)'
-    : pct >= 60 ? 'linear-gradient(90deg,#eab308,#fcd34d)'
-                : 'linear-gradient(90deg,#ef4444,#fca5a5)'
+    pct >= 80 ? 'linear-gradient(90deg,var(--status-passed),var(--status-passed))'
+    : pct >= 60 ? 'linear-gradient(90deg,var(--status-skipped),var(--status-broken))'
+                : 'linear-gradient(90deg,var(--status-failed),var(--status-failed))'
   return (
     <span className="inline-flex items-center gap-2 whitespace-nowrap">
       <span

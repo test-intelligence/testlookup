@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Fix: status colours differed between pages (1,167 hardcoded literals)
+
+Reported: the "passed" green in the Failure-signature table on `/runs` did not match the
+green in Suite-coverage-breakdown on `/coverage`.
+
+Confirmed. `/coverage` used `var(--status-passed)` (`#34a06b`); `/runs` hardcoded `#34d399`
+(Tailwind emerald-400) inline. **Two different greens for the same meaning, on two pages.**
+
+The cause was much wider than those two tables: **1,167 inline colour literals across 42
+files**, which bypass the theme tokens entirely. The retheme normalized the tokens, but
+components that never used tokens were untouched by it — so the six themes were consistent
+with each other and inconsistent with the components.
+
+- 39 files migrated. Solid literals map to the semantic token (`var(--status-passed)` etc.);
+  `rgba(...)` with alpha maps to `color-mix(in srgb, var(--token) N%, transparent)`, matching
+  the existing derived tokens (`--status-*-bg`, `-bd`, `-bg-soft`) that already existed for
+  exactly this purpose and were being bypassed.
+- Grouped by **meaning, not hue**: `#86efac`, `#34d399`, `#22c55e`, `#10b981` and `#3fb950`
+  all meant "passed" and now collapse onto one token. That is the actual fix — a lighter and
+  a darker green for the same state is the inconsistency, not a design.
+- Neutrals, white, black and greys are deliberately **left alone** — they are overlays,
+  shadows and surfaces, not status colours, and folding them into status tokens would be wrong.
+
+Guard: `check-theme-tokens.mjs` now fails on any inline status literal in `src/**/*.tsx`,
+verified by reintroducing `#34d399` and watching it fail.
+
+736 tests pass, 0 lint errors, build clean.
+
 ### 2026-08-08 — Fix: webfont leftovers the retheme missed (found by deploy validation)
 
 Validating the retheme against the **served** bundle — not the repo — caught `IBM Plex Mono`

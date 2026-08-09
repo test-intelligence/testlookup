@@ -38,16 +38,16 @@ export default function TrendChart({ data, type = 'line', height = 280 }: Props)
         <AreaChart {...common}>
           <defs>
             <linearGradient id="totalGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+              <stop offset="5%" stopColor="var(--color-accent)" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="var(--color-accent)" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
           <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
           <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
-          <Area type="monotone" dataKey="total" stroke="#3b82f6" fill="url(#totalGrad)" strokeWidth={2} name="Total Tests" />
-          <Area type="monotone" dataKey="passed" stroke="#10b981" fill="transparent" strokeWidth={1.5} name="Passed" />
+          <Area type="monotone" dataKey="total" stroke="var(--color-accent)" fill="url(#totalGrad)" strokeWidth={2} name="Total Tests" />
+          <Area type="monotone" dataKey="passed" stroke="var(--status-passed)" fill="transparent" strokeWidth={1.5} name="Passed" />
         </AreaChart>
       </ResponsiveContainer>
     )
@@ -62,10 +62,10 @@ export default function TrendChart({ data, type = 'line', height = 280 }: Props)
           <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
           <Legend iconType="circle" wrapperStyle={{ paddingTop: 12, fontSize: 12 }} />
-          <Bar dataKey="passed"  stackId="a" fill="#10b981" name="Passed"  radius={[0, 0, 0, 0]} />
-          <Bar dataKey="failed"  stackId="a" fill="#ef4444" name="Failed"  />
-          <Bar dataKey="skipped" stackId="a" fill="#f59e0b" name="Skipped" />
-          <Bar dataKey="broken"  stackId="a" fill="#f97316" name="Broken"  radius={[3, 3, 0, 0]} />
+          <Bar dataKey="passed"  stackId="a" fill="var(--status-passed)" name="Passed"  radius={[0, 0, 0, 0]} />
+          <Bar dataKey="failed"  stackId="a" fill="var(--status-failed)" name="Failed"  />
+          <Bar dataKey="skipped" stackId="a" fill="var(--status-broken)" name="Skipped" />
+          <Bar dataKey="broken"  stackId="a" fill="var(--status-broken)" name="Broken"  radius={[3, 3, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     )
@@ -80,10 +80,10 @@ export default function TrendChart({ data, type = 'line', height = 280 }: Props)
         <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
         <Tooltip contentStyle={TOOLTIP_STYLE} />
         <Legend iconType="circle" wrapperStyle={{ paddingTop: 16, fontSize: 12 }} />
-        <Line type="monotone" dataKey="passed"  stroke="#10b981" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Passed" />
-        <Line type="monotone" dataKey="failed"  stroke="#ef4444" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Failed" />
-        <Line type="monotone" dataKey="skipped" stroke="#f59e0b" strokeWidth={1.5} dot={false} activeDot={{ r: 4 }} name="Skipped" strokeDasharray="4 2" />
-        <Line type="monotone" dataKey="pass_rate" stroke="#3b82f6" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Pass Rate %" hide />
+        <Line type="monotone" dataKey="passed"  stroke="var(--status-passed)" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Passed" />
+        <Line type="monotone" dataKey="failed"  stroke="var(--status-failed)" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Failed" />
+        <Line type="monotone" dataKey="skipped" stroke="var(--status-broken)" strokeWidth={1.5} dot={false} activeDot={{ r: 4 }} name="Skipped" strokeDasharray="4 2" />
+        <Line type="monotone" dataKey="pass_rate" stroke="var(--color-accent)" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Pass Rate %" hide />
       </LineChart>
     </ResponsiveContainer>
   )

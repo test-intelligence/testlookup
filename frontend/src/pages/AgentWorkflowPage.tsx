@@ -134,8 +134,8 @@ function formatElapsed(seconds: number): string {
 // status dots. Centralised so the views stay visually coherent.
 const NODE_STYLE: Record<DisplayStatus, { bg: string; border: string; fg: string; dot: string }> = {
   done:    { bg: 'var(--color-bg-card)',           border: 'var(--color-border)',                 fg: 'rgb(63 185 80)',         dot: 'rgb(63 185 80)' },
-  running: { bg: 'rgba(68,147,248,.04)',           border: 'rgba(68,147,248,.45)',                fg: 'var(--color-accent)',    dot: 'var(--color-accent)' },
-  failed:  { bg: 'rgba(248,81,73,.04)',            border: 'rgba(248,81,73,.45)',                 fg: 'rgb(248 81 73)',         dot: 'rgb(248 81 73)' },
+  running: { bg: 'color-mix(in srgb, var(--color-accent) 4%, transparent)',           border: 'color-mix(in srgb, var(--color-accent) 45%, transparent)',                fg: 'var(--color-accent)',    dot: 'var(--color-accent)' },
+  failed:  { bg: 'color-mix(in srgb, var(--status-failed) 4%, transparent)',            border: 'color-mix(in srgb, var(--status-failed) 45%, transparent)',                 fg: 'rgb(248 81 73)',         dot: 'rgb(248 81 73)' },
   skipped: { bg: 'transparent',                    border: 'var(--color-border)',                 fg: 'var(--color-text-faint)', dot: 'transparent' },
   pending: { bg: 'var(--color-bg-card)',           border: 'var(--color-border)',                 fg: 'var(--color-text-faint)', dot: 'var(--color-text-faint)' },
 }
@@ -199,10 +199,10 @@ function pipelineDot(status?: string | null): string {
 function runStatusTone(status?: string | null): { bg: string; fg: string } {
   const normalized = (status ?? '').toLowerCase()
   if (normalized === 'passed' || normalized === 'success' || normalized === 'completed') {
-    return { bg: 'rgba(63,185,80,.14)', fg: 'rgb(63 185 80)' }
+    return { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', fg: 'rgb(63 185 80)' }
   }
   if (normalized === 'failed' || normalized === 'broken') {
-    return { bg: 'rgba(248,81,73,.14)', fg: 'rgb(248 81 73)' }
+    return { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)', fg: 'rgb(248 81 73)' }
   }
   if (normalized === 'running') {
     return { bg: 'var(--color-accent-muted)', fg: 'var(--color-accent)' }
@@ -251,7 +251,7 @@ function RunPicker({
               className="inline-flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] whitespace-nowrap transition-colors"
               style={{
                 background: active ? 'var(--color-accent-muted)' : 'var(--color-bg-secondary)',
-                borderColor: active ? 'rgba(68,147,248,.40)' : 'var(--color-border)',
+                borderColor: active ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-border)',
                 color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)',
               }}
             >
@@ -385,7 +385,7 @@ function Edge({ from, to, active, dashed, ghost, curve, curveUp, muted, label, l
                 lineHeight: 1.6,
                 background: labelTone === 'accent' ? 'var(--color-accent-muted)' : 'var(--color-bg-card)',
                 color: labelTone === 'accent' ? 'var(--color-accent)' : 'var(--color-text-faint)',
-                borderColor: labelTone === 'accent' ? 'rgba(68,147,248,.40)' : 'var(--color-border)',
+                borderColor: labelTone === 'accent' ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-border)',
               }}
             >
               {label}
@@ -685,8 +685,8 @@ function SubwayTrack({
             height: 64,
             transform: 'rotate(45deg)',
             borderColor: selectedId === DECISION_LABEL ? 'rgb(163 113 247)' : 'var(--color-border-light)',
-            background: selectedId === DECISION_LABEL ? 'rgba(163,113,247,.10)' : 'var(--color-bg-card)',
-            boxShadow: selectedId === DECISION_LABEL ? '0 0 0 3px rgba(163,113,247,.14)' : 'none',
+            background: selectedId === DECISION_LABEL ? 'color-mix(in srgb, var(--status-flaky) 10%, transparent)' : 'var(--color-bg-card)',
+            boxShadow: selectedId === DECISION_LABEL ? '0 0 0 3px color-mix(in srgb, var(--status-flaky) 14%, transparent)' : 'none',
             borderRadius: 4,
           }}
         >
@@ -810,7 +810,7 @@ function RunMeta({
         style={{
           background: snapshot ? 'var(--color-accent-muted)' : 'var(--color-bg-secondary)',
           color: snapshot ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-          borderColor: snapshot ? 'rgba(68,147,248,.40)' : 'var(--color-border)',
+          borderColor: snapshot ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-border)',
         }}
       >
         {snapshot ? 'Showing completed-run snapshot' : 'Preview completed-run snapshot'}
@@ -854,7 +854,7 @@ function VerdictPanel({ pipeline, totalTests, failedCount, elapsedLabel }: {
           <span
             className="text-[11px] font-bold px-2.5 py-1 rounded-full"
             style={{
-              background: verdict === 'GO' ? 'rgba(63,185,80,.18)' : 'rgba(210,153,34,.18)',
+              background: verdict === 'GO' ? 'color-mix(in srgb, var(--status-passed) 18%, transparent)' : 'rgba(210,153,34,.18)',
               color: verdict === 'GO' ? 'rgb(63 185 80)' : 'rgb(210 153 34)',
             }}
           >
@@ -930,11 +930,11 @@ function InlineSummaryReport({ runId, open, onClose }: { runId: string | null; o
   const decision = intelligence?.release_decision ?? null
 
   const decisionTone = decision?.recommendation === 'GO'
-    ? { bg: 'rgba(63,185,80,.18)', fg: 'rgb(63 185 80)' }
+    ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'rgb(63 185 80)' }
     : decision?.recommendation === 'CONDITIONAL_GO'
       ? { bg: 'rgba(210,153,34,.18)', fg: 'rgb(210 153 34)' }
       : decision?.recommendation === 'NO_GO'
-        ? { bg: 'rgba(248,81,73,.18)', fg: 'rgb(248 81 73)' }
+        ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'rgb(248 81 73)' }
         : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
 
   return (
@@ -1191,9 +1191,9 @@ function EventStrip({ events, onSelect }: { events: FeedEvent[]; onSelect: (id: 
 
 function KindPill({ kind }: { kind: FeedEvent['kind'] }) {
   const tone =
-    kind === 'failed' ? { bg: 'rgba(248,81,73,.18)', fg: 'rgb(248 81 73)' } :
-    kind === 'completed' ? { bg: 'rgba(63,185,80,.18)', fg: 'rgb(63 185 80)' } :
-    kind === 'decision' ? { bg: 'rgba(163,113,247,.18)', fg: 'rgb(163 113 247)' } :
+    kind === 'failed' ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'rgb(248 81 73)' } :
+    kind === 'completed' ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'rgb(63 185 80)' } :
+    kind === 'decision' ? { bg: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', fg: 'rgb(163 113 247)' } :
     kind === 'retry' ? { bg: 'rgba(210,153,34,.18)', fg: 'rgb(210 153 34)' } :
     { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
   return (
@@ -1212,7 +1212,7 @@ function RightRail({ stage, decisionSelected, events }: { stage: DisplayStage | 
         <div className="flex items-center gap-2 mb-2">
           <span
             className="font-mono text-[10px] px-2 py-0.5 rounded"
-            style={{ background: 'rgba(163,113,247,.18)', color: 'rgb(163 113 247)' }}
+            style={{ background: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', color: 'rgb(163 113 247)' }}
           >
             ◇ decision
           </span>
@@ -1264,7 +1264,7 @@ function RightRail({ stage, decisionSelected, events }: { stage: DisplayStage | 
 
       <div className="p-4 space-y-4">
         {stage.status === 'failed' && stage.raw.error && (
-          <div className="rounded border p-3" style={{ background: 'rgba(248,81,73,.06)', borderColor: 'rgba(248,81,73,.30)' }}>
+          <div className="rounded border p-3" style={{ background: 'color-mix(in srgb, var(--status-failed) 6%, transparent)', borderColor: 'color-mix(in srgb, var(--status-failed) 30%, transparent)' }}>
             <div className="font-mono text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgb(248 81 73)' }}>Error</div>
             <pre className="font-mono text-[11px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-all">{stage.raw.error}</pre>
           </div>
@@ -1584,7 +1584,7 @@ export default function AgentWorkflowPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <span
               className="text-[11px] font-medium px-2 py-1 rounded uppercase"
-              style={{ background: 'rgba(163,113,247,.18)', color: 'rgb(163 113 247)' }}
+              style={{ background: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', color: 'rgb(163 113 247)' }}
             >
               {analysisMode} mode
             </span>
@@ -1596,7 +1596,7 @@ export default function AgentWorkflowPage() {
                 style={{
                   background: summaryOpen ? 'var(--color-accent)' : 'var(--color-accent-muted)',
                   color: summaryOpen ? 'white' : 'var(--color-accent)',
-                  borderColor: 'rgba(68,147,248,.40)',
+                  borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
                   height: 32,
                 }}
                 title="Toggle the AI-generated executive summary inline"

@@ -620,8 +620,8 @@ export default function ValueMetricsPage() {
         <div
           className="rounded-xl border p-4 text-sm"
           style={{
-            background: 'rgba(245,158,11,0.06)',
-            borderColor: 'rgba(245,158,11,0.30)',
+            background: 'color-mix(in srgb, var(--status-broken) 6%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
             color: 'var(--color-text-secondary)',
           }}
         >

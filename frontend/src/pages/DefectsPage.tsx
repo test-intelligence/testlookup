@@ -95,41 +95,41 @@ interface VerdictTheme {
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   BLOCKED: {
-    border: 'rgba(239,68,68,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-no-go)',
-    eyebrowText: '#fca5a5',
-    gateText:    '#fca5a5',
-    pillBg: 'rgba(239,68,68,0.16)',
-    pillBd: 'rgba(239,68,68,0.30)',
-    pillFg: '#fca5a5',
-    meter:  '#fca5a5',
+    eyebrowText: 'var(--status-failed)',
+    gateText:    'var(--status-failed)',
+    pillBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
+    pillFg: 'var(--status-failed)',
+    meter:  'var(--status-failed)',
     label:  'Release blocked',
     pulse:  true,
   },
   AT_RISK: {
-    border: 'rgba(245,158,11,0.40)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText:    '#fcd34d',
+    eyebrowText: 'var(--status-broken)',
+    gateText:    'var(--status-broken)',
     pillBg: 'var(--gate-conditional-bg)',
     pillBd: 'var(--gate-conditional-border)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'At risk',
     pulse:  true,
   },
   HEALTHY: {
-    border: 'rgba(34,197,94,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-go)',
-    eyebrowText: '#86efac',
-    gateText:    '#86efac',
-    pillBg: 'rgba(34,197,94,0.12)',
-    pillBd: 'rgba(34,197,94,0.30)',
-    pillFg: '#86efac',
-    meter:  '#86efac',
+    eyebrowText: 'var(--status-passed)',
+    gateText:    'var(--status-passed)',
+    pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
+    pillFg: 'var(--status-passed)',
+    meter:  'var(--status-passed)',
     label:  'Queue healthy',
     pulse:  false,
   },
@@ -573,9 +573,9 @@ function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean 
 
 function IssueRow({ issue }: { issue: IssueRowSpec }) {
   const palette = {
-    bad:  { bg: 'rgba(239,68,68,0.08)',           bd: 'rgba(239,68,68,0.30)',           icBg: 'rgba(239,68,68,0.16)',  icFg: '#fca5a5' },
-    warn: { bg: 'var(--gate-conditional-bg-soft)', bd: 'var(--gate-conditional-border)', icBg: 'var(--gate-conditional-bg)', icFg: '#fcd34d' },
-    info: { bg: 'var(--color-accent-bg-soft)',    bd: 'rgba(68,147,248,0.25)',          icBg: 'rgba(68,147,248,0.16)', icFg: '#93c5fd' },
+    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',           bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',           icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
+    warn: { bg: 'var(--gate-conditional-bg-soft)', bd: 'var(--gate-conditional-border)', icBg: 'var(--gate-conditional-bg)', icFg: 'var(--status-broken)' },
+    info: { bg: 'var(--color-accent-bg-soft)',    bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)',          icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
   }[issue.tone]
   const Icon = issue.Icon
   return (
@@ -589,7 +589,7 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
       <div className="text-[13px] text-[var(--color-text)] leading-[1.4]">{issue.body}</div>
       {issue.cta && (
         <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-          style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'var(--color-accent-bg-soft)' }}>
+          style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'var(--color-accent-bg-soft)' }}>
           {issue.cta.label} →
         </button>
       )}
@@ -663,8 +663,8 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
 }
 
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? '#fca5a5' : dim.tone === 'warn' ? '#fcd34d' : '#34d399'
-  const barColor   = dim.tone === 'bad' ? '#ef4444' : dim.tone === 'warn' ? '#f59e0b' : '#22c55e'
+  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
@@ -762,11 +762,11 @@ function WorkflowRibbon({ stages }: { stages: RibbonStage[] }) {
 
 function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
   const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)',   fg: '#34d399',            icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
+    ? { bg: 'var(--status-passed-soft)',   fg: 'var(--status-passed)',            icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
     : stage.status === 'warn'
-      ? { bg: 'var(--gate-conditional-bg)', fg: '#fcd34d',           icon: <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} /> }
+      ? { bg: 'var(--gate-conditional-bg)', fg: 'var(--status-broken)',           icon: <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.5} /> }
       : stage.status === 'active'
-        ? { bg: 'rgba(68,147,248,0.18)',  fg: 'var(--color-accent)', icon: <ChevronRight className="h-2.5 w-2.5" strokeWidth={3} /> }
+        ? { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',  fg: 'var(--color-accent)', icon: <ChevronRight className="h-2.5 w-2.5" strokeWidth={3} /> }
         : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: <Clock className="h-2.5 w-2.5" strokeWidth={2.5} /> }
   const trackFg = stage.status === 'done' ? 'var(--status-passed)'
     : stage.status === 'warn' ? 'var(--gate-conditional)'
@@ -819,9 +819,9 @@ function KpiCell({
   isLast?: boolean
 }) {
   const valueColor =
-    tone === 'good'   ? '#34d399' :
-    tone === 'warn'   ? '#fcd34d' :
-    tone === 'bad'    ? '#fca5a5' :
+    tone === 'good'   ? 'var(--status-passed)' :
+    tone === 'warn'   ? 'var(--status-broken)' :
+    tone === 'bad'    ? 'var(--status-failed)' :
     'var(--color-text)'
   return (
     <div
@@ -854,7 +854,7 @@ function KpiCell({
 }
 
 // Rising line + dot — for "Open defects".
-function SparkRisingLine({ stroke = '#ef4444' }: { stroke?: string } = {}) {
+function SparkRisingLine({ stroke = 'var(--status-failed)' }: { stroke?: string } = {}) {
   return (
     <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
       <polyline fill="none" stroke={stroke} strokeWidth={1.5} points="0,18 12,14 24,16 36,12 48,14 60,8 72,10 84,6 96,4" />
@@ -867,10 +867,10 @@ function SparkRisingLine({ stroke = '#ef4444' }: { stroke?: string } = {}) {
 function SparkGrowingBars() {
   return (
     <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <rect x="2"  y="8" width="22" height="14" rx="2" fill="rgba(239,68,68,0.55)" />
-      <rect x="28" y="8" width="22" height="14" rx="2" fill="rgba(239,68,68,0.70)" />
-      <rect x="54" y="6" width="22" height="16" rx="2" fill="rgba(239,68,68,0.85)" />
-      <rect x="80" y="4" width="18" height="18" rx="2" fill="#ef4444" />
+      <rect x="2"  y="8" width="22" height="14" rx="2" fill="color-mix(in srgb, var(--status-failed) 55%, transparent)" />
+      <rect x="28" y="8" width="22" height="14" rx="2" fill="color-mix(in srgb, var(--status-failed) 70%, transparent)" />
+      <rect x="54" y="6" width="22" height="16" rx="2" fill="color-mix(in srgb, var(--status-failed) 85%, transparent)" />
+      <rect x="80" y="4" width="18" height="18" rx="2" fill="var(--status-failed)" />
     </svg>
   )
 }
@@ -890,8 +890,8 @@ function SparkAgedBar({ pct }: { pct: number }) {
   const p = Math.max(0, Math.min(100, pct))
   return (
     <svg viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-[22px]">
-      <rect x="2" y="6" width="94" height="10" rx="2" fill="rgba(239,68,68,0.15)" stroke="rgba(239,68,68,0.4)" strokeWidth={1} />
-      <rect x="2" y="6" width={Math.max(2, (p / 100) * 94)} height="10" rx="2" fill="rgba(239,68,68,0.7)" />
+      <rect x="2" y="6" width="94" height="10" rx="2" fill="color-mix(in srgb, var(--status-failed) 15%, transparent)" stroke="color-mix(in srgb, var(--status-failed) 40%, transparent)" strokeWidth={1} />
+      <rect x="2" y="6" width={Math.max(2, (p / 100) * 94)} height="10" rx="2" fill="color-mix(in srgb, var(--status-failed) 70%, transparent)" />
     </svg>
   )
 }
@@ -1002,19 +1002,19 @@ function DefectRowEl({
 }) {
   const isP0 = row.severity === 'P0'
   const sevPalette: Record<Severity, { bg: string; bd: string; fg: string }> = {
-    P0: { bg: 'rgba(239,68,68,0.15)',     bd: 'rgba(239,68,68,0.30)',     fg: '#fca5a5' },
-    P1: { bg: 'rgba(245,158,11,0.15)',    bd: 'rgba(245,158,11,0.30)',    fg: '#fcd34d' },
-    P2: { bg: 'rgba(68,147,248,0.15)',    bd: 'rgba(68,147,248,0.30)',    fg: '#93c5fd' },
+    P0: { bg: 'color-mix(in srgb, var(--status-failed) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',     fg: 'var(--status-failed)' },
+    P1: { bg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',    bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',    fg: 'var(--status-broken)' },
+    P2: { bg: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',    bd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',    fg: 'var(--color-accent)' },
     P3: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)',     fg: 'var(--color-text-muted)' },
   }
   const sev = sevPalette[row.severity]
-  const statusColor = row.statusKey === 'OPEN' ? '#fca5a5'
-    : row.statusKey === 'IN_PROGRESS' ? '#fcd34d'
-    : row.statusKey === 'RESOLVED' ? '#86efac'
+  const statusColor = row.statusKey === 'OPEN' ? 'var(--status-failed)'
+    : row.statusKey === 'IN_PROGRESS' ? 'var(--status-broken)'
+    : row.statusKey === 'RESOLVED' ? 'var(--status-passed)'
     : 'var(--color-text-muted)'
-  const ageColor = row.ageTone === 'bad' ? '#fca5a5'
-    : row.ageTone === 'warn' ? '#fcd34d'
-    : row.ageTone === 'good' ? '#86efac'
+  const ageColor = row.ageTone === 'bad' ? 'var(--status-failed)'
+    : row.ageTone === 'warn' ? 'var(--status-broken)'
+    : row.ageTone === 'good' ? 'var(--status-passed)'
     : 'var(--color-text)'
 
   // Pick the contextual primary action per the design.
@@ -1028,7 +1028,7 @@ function DefectRowEl({
   return (
     <tr
       style={{
-        background: isP0 ? 'rgba(239,68,68,0.045)' : 'transparent',
+        background: isP0 ? 'color-mix(in srgb, var(--status-failed) 4%, transparent)' : 'transparent',
         borderBottom: '1px solid var(--color-border)',
       }}
       className="transition-colors hover:bg-[var(--color-bg-hover)]"
@@ -1094,7 +1094,7 @@ function DefectRowEl({
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-[10.5px] font-mono px-1.5 py-0.5 rounded-md"
-            style={{ background: 'rgba(68,147,248,0.10)', border: '1px solid rgba(68,147,248,0.25)', color: '#93c5fd' }}
+            style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)', color: 'var(--color-accent)' }}
           >
             {row.jiraKey ?? row.jira_ticket_id}
             <ExternalLink className="h-2.5 w-2.5" />
@@ -1102,7 +1102,7 @@ function DefectRowEl({
         ) : (
           <span
             className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10.5px] font-mono"
-            style={{ background: 'rgba(68,147,248,0.10)', border: '1px solid rgba(68,147,248,0.25)', color: '#93c5fd' }}
+            style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)', color: 'var(--color-accent)' }}
           >
             {row.jiraKey ?? row.jira_ticket_id}
           </span>
@@ -1120,7 +1120,7 @@ function DefectRowEl({
         {row.external_status_conflict && (
           <span
             className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] ml-1"
-            style={{ border: '1px solid rgba(245,158,11,0.40)', color: '#fcd34d', background: 'rgba(245,158,11,0.10)' }}
+            style={{ border: '1px solid color-mix(in srgb, var(--status-broken) 40%, transparent)', color: 'var(--status-broken)', background: 'color-mix(in srgb, var(--status-broken) 10%, transparent)' }}
             title="Jira reports this issue as done, but the failure signature still fired within the last 7 days."
           >
             closed in Jira but still failing
@@ -1140,7 +1140,7 @@ function DefectRowEl({
             className="text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors"
             style={{
               color: 'var(--color-accent)',
-              borderColor: 'rgba(68,147,248,0.30)',
+              borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
               background: 'var(--color-accent-bg-soft)',
             }}
           >
@@ -1211,24 +1211,24 @@ function JiraBridgeCard({ model, host = 'jira' }: { model: QueueModel; host?: st
     <CardShell
       title={
         <span className="inline-flex items-center gap-2 text-[var(--color-text)]">
-          <ShieldCheck className="h-3.5 w-3.5" style={{ color: '#93c5fd' }} />
-          Jira bridge · <code className="font-mono text-[11.5px]" style={{ color: '#93c5fd' }}>{host}</code>
+          <ShieldCheck className="h-3.5 w-3.5" style={{ color: 'var(--color-accent)' }} />
+          Jira bridge · <code className="font-mono text-[11.5px]" style={{ color: 'var(--color-accent)' }}>{host}</code>
         </span>
       }
       rightSlot={
         <span
           className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
-          style={{ background: 'rgba(34,197,94,0.15)', color: '#86efac', border: '1px solid rgba(34,197,94,0.25)' }}
+          style={{ background: 'color-mix(in srgb, var(--status-passed) 15%, transparent)', color: 'var(--status-passed)', border: '1px solid color-mix(in srgb, var(--status-passed) 25%, transparent)' }}
         >
-          <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: '#86efac' }} />
+          <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--status-passed)' }} />
           Connected
         </span>
       }
     >
       <div className="px-4 py-3 flex flex-col gap-1.5 text-[12px]">
         <BridgeRow l="Linked defects" v={<>{linkedCount} / {model.total} <span className="text-[var(--color-text-muted)]">({linkedPct}%)</span></>} />
-        <BridgeRow l="Unlinked" v={<span style={{ color: model.unlinkedTotal > 0 ? '#fcd34d' : '#86efac' }}>{model.unlinkedTotal}{model.unlinkedP0 > 0 ? ` · ${model.unlinkedP0} P0` : ''}</span>} />
-        <BridgeRow l="Auto-link rule misses" v={<span style={{ color: model.unlinkedTotal > 0 ? '#fca5a5' : '#86efac' }}>{model.unlinkedTotal} in last 7d</span>} />
+        <BridgeRow l="Unlinked" v={<span style={{ color: model.unlinkedTotal > 0 ? 'var(--status-broken)' : 'var(--status-passed)' }}>{model.unlinkedTotal}{model.unlinkedP0 > 0 ? ` · ${model.unlinkedP0} P0` : ''}</span>} />
+        <BridgeRow l="Auto-link rule misses" v={<span style={{ color: model.unlinkedTotal > 0 ? 'var(--status-failed)' : 'var(--status-passed)' }}>{model.unlinkedTotal} in last 7d</span>} />
         <BridgeRow l="Sync latency p95" v="—" />
         <BridgeRow l="Last sync" v="just now" />
       </div>
@@ -1284,8 +1284,8 @@ function ComponentBreakdown({ model }: { model: QueueModel }) {
             <div key={name} className="grid items-center gap-2.5" style={{ gridTemplateColumns: '90px 1fr 28px' }}>
               <span className="font-mono text-[11.5px] text-[var(--color-text-secondary)] truncate">{name}</span>
               <div className="flex h-3 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)', width: `${widthPct}%` }}>
-                {v.bySev.P0 > 0 && <span style={{ flex: v.bySev.P0, background: '#ef4444' }} />}
-                {v.bySev.P1 > 0 && <span style={{ flex: v.bySev.P1, background: '#f59e0b' }} />}
+                {v.bySev.P0 > 0 && <span style={{ flex: v.bySev.P0, background: 'var(--status-failed)' }} />}
+                {v.bySev.P1 > 0 && <span style={{ flex: v.bySev.P1, background: 'var(--status-broken)' }} />}
                 {v.bySev.P2 > 0 && <span style={{ flex: v.bySev.P2, background: 'var(--color-accent)' }} />}
                 {v.bySev.P3 > 0 && <span style={{ flex: v.bySev.P3, background: 'var(--color-text-faint)' }} />}
               </div>
@@ -1294,8 +1294,8 @@ function ComponentBreakdown({ model }: { model: QueueModel }) {
           )
         })}
         <div className="flex items-center gap-3.5 mt-2.5 text-[10.5px] text-[var(--color-text-muted)] flex-wrap">
-          <Legend color="#ef4444" label="P0" />
-          <Legend color="#f59e0b" label="P1" />
+          <Legend color="var(--status-failed)" label="P0" />
+          <Legend color="var(--status-broken)" label="P1" />
           <Legend color="var(--color-accent)" label="P2" />
           <Legend color="var(--color-text-faint)" label="P3" />
         </div>
@@ -1385,9 +1385,9 @@ function RecommendedActions({ recs }: { recs: RecRow[] }) {
 
 function RecActionRow({ rec }: { rec: RecRow }) {
   const palette = {
-    dev: { bg: 'rgba(168,85,247,0.16)', fg: '#c4b5fd' },
-    qa:  { bg: 'rgba(68,147,248,0.16)', fg: '#93c5fd' },
-    rm:  { bg: 'rgba(34,197,94,0.16)',  fg: '#86efac' },
+    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
+    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
+    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
   }[rec.role]
   const Icon = rec.Icon
   return (
@@ -1664,7 +1664,7 @@ export default function DefectsPage() {
             {model.p0Count > 0 && (
               <>
                 <span aria-hidden>·</span>
-                <span style={{ color: '#fca5a5' }}>{model.p0Count} P0 blocking release</span>
+                <span style={{ color: 'var(--status-failed)' }}>{model.p0Count} P0 blocking release</span>
               </>
             )}
             <span aria-hidden>·</span>
@@ -1704,7 +1704,7 @@ export default function DefectsPage() {
             tone={model.open + model.inProgress > 0 ? 'bad' : 'good'}
             meta={
               model.weeklyAdded > 0 || model.weeklyClosed > 0
-                ? <><span style={{ color: model.weeklyAdded > model.weeklyClosed ? '#fca5a5' : '#86efac' }}>
+                ? <><span style={{ color: model.weeklyAdded > model.weeklyClosed ? 'var(--status-failed)' : 'var(--status-passed)' }}>
                     {model.weeklyAdded - model.weeklyClosed >= 0 ? '+' : ''}{model.weeklyAdded - model.weeklyClosed}
                   </span> vs last week</>
                 : <>no movement this week</>
@@ -1733,7 +1733,7 @@ export default function DefectsPage() {
               : 'bad'
             }
             meta={model.mttrDays != null ? <>over {model.resolved + model.closed} closed</> : <>no closures yet</>}
-            spark={<SparkLineWithTarget stroke="#fcd34d" points="0,16 14,14 28,15 42,12 56,10 70,11 84,8 98,6" />}
+            spark={<SparkLineWithTarget stroke="var(--status-broken)" points="0,16 14,14 28,15 42,12 56,10 70,11 84,8 98,6" />}
           />
           <KpiCell
             Icon={BarChart3}
@@ -1742,7 +1742,7 @@ export default function DefectsPage() {
             sub="%"
             tone={escapeRate > 10 ? 'bad' : escapeRate > 5 ? 'warn' : 'good'}
             meta={<>target ≤ 5% · last 30d</>}
-            spark={<SparkLineWithTarget stroke="#fcd34d" points="0,12 16,15 32,11 48,13 64,9 80,11 96,8" />}
+            spark={<SparkLineWithTarget stroke="var(--status-broken)" points="0,12 16,15 32,11 48,13 64,9 80,11 96,8" />}
           />
           <KpiCell
             Icon={Bug}

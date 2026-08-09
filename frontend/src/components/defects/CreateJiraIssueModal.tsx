@@ -172,7 +172,7 @@ export default function CreateJiraIssueModal({
             Assembling the pre-filled payload…
           </p>
         ) : previewError || !preview ? (
-          <p className="mt-4 text-[12.5px]" style={{ color: '#fca5a5' }}>
+          <p className="mt-4 text-[12.5px]" style={{ color: 'var(--status-failed)' }}>
             Could not assemble the defect payload — the failure may not have
             per-test rows yet. Try again in a moment.
           </p>
@@ -182,8 +182,8 @@ export default function CreateJiraIssueModal({
               <div
                 className="mt-3 rounded-md border px-3 py-2 text-[12px]"
                 style={{
-                  background: 'rgba(68,147,248,0.06)',
-                  borderColor: 'rgba(68,147,248,0.25)',
+                  background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)',
+                  borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)',
                   color: 'var(--color-text-secondary)',
                 }}
               >

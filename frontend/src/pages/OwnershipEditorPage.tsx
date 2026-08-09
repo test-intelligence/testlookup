@@ -278,7 +278,7 @@ export default function OwnershipEditorPage() {
               <span className="text-gray-300 truncate flex items-center gap-1.5">
                 {rule.service_name === CODEOWNERS_SERVICE ? (
                   <span
-                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[rgba(68,147,248,0.14)] text-[#93c5fd] border border-[rgba(68,147,248,0.30)]"
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[color-mix(in srgb, var(--color-accent) 14%, transparent)] text-[var(--color-accent)] border border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]"
                     title="Imported from a CODEOWNERS file"
                   >
                     CODEOWNERS
@@ -460,7 +460,7 @@ function ImportCodeownersDialog({
                 className={clsx(
                   'px-3 py-1.5 text-xs rounded-full border transition-colors',
                   active
-                    ? 'bg-[rgba(68,147,248,0.14)] border-[rgba(68,147,248,0.30)] text-[#93c5fd]'
+                    ? 'bg-[color-mix(in srgb, var(--color-accent) 14%, transparent)] border-[color-mix(in srgb, var(--color-accent) 30%, transparent)] text-[var(--color-accent)]'
                     : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-hover)]',
                 )}
               >

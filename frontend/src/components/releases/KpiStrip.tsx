@@ -12,9 +12,9 @@ import type { DerivedRelease } from './types'
 type Tone = 'good' | 'warn' | 'bad' | 'neutral'
 
 const TONE_COLOR: Record<Tone, string> = {
-  good:    '#86efac',
-  warn:    '#fcd34d',
-  bad:     '#fca5a5',
+  good:    'var(--status-passed)',
+  warn:    'var(--status-broken)',
+  bad:     'var(--status-failed)',
   neutral: 'var(--color-text)',
 }
 

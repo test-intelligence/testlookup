@@ -54,7 +54,7 @@ export default function ModeTabs({ mode, onChange, liveActive = false }: ModeTab
             />
             <span>{t.label}</span>
             {t.id === 'live' && !active && liveActive && (
-              <span className="ml-1 text-[9px] uppercase tracking-[0.08em] px-1 rounded-sm" style={{ background: 'rgba(63,185,80,0.14)', color: '#3fb950' }}>
+              <span className="ml-1 text-[9px] uppercase tracking-[0.08em] px-1 rounded-sm" style={{ background: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', color: 'var(--status-passed)' }}>
                 live
               </span>
             )}

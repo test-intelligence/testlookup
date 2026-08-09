@@ -1034,7 +1034,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
   )
   const healthTag: 'Healthy' | 'Needs attention' | 'At risk' =
     healthScore >= 85 ? 'Healthy' : healthScore >= 70 ? 'Needs attention' : 'At risk'
-  const healthTone = healthScore >= 85 ? '#86efac' : healthScore >= 70 ? '#fcd34d' : '#fca5a5'
+  const healthTone = healthScore >= 85 ? 'var(--status-passed)' : healthScore >= 70 ? 'var(--status-broken)' : 'var(--status-failed)'
 
   // ── Saved views (synthesised) ───────────────────────────────────────
   type SavedViewId = 'my_drafts' | 'p0_p1' | 'unautomated'
@@ -1163,7 +1163,7 @@ function TestCasesTab({ projectId }: TestCasesTabProps) {
                     <button
                       onClick={() => setShowAiGen(true)}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
-                      style={{ color: '#c4b5fd', borderColor: 'rgba(167,139,250,0.30)', background: 'rgba(167,139,250,0.06)' }}
+                      style={{ color: 'var(--status-flaky)', borderColor: 'color-mix(in srgb, var(--status-flaky) 30%, transparent)', background: 'color-mix(in srgb, var(--status-flaky) 6%, transparent)' }}
                     >
                       <Sparkles className="h-3.5 w-3.5" /> AI Generate
                     </button>
@@ -1312,10 +1312,10 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
   const t = isEmptyCatalog
     ? { border: 'var(--color-border)', glow: 'transparent', bar: 'var(--color-border-light)', eyebrow: 'var(--color-text-muted)' }
     : p.healthTag === 'Healthy'
-      ? { border: 'rgba(34,197,94,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)', bar: 'var(--gate-go)', eyebrow: '#86efac' }
+      ? { border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)', glow: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)', bar: 'var(--gate-go)', eyebrow: 'var(--status-passed)' }
       : p.healthTag === 'Needs attention'
-        ? { border: 'rgba(245,158,11,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)', bar: 'var(--gate-conditional)', eyebrow: '#fcd34d' }
-        : { border: 'rgba(239,68,68,0.40)', glow: 'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)', bar: 'var(--gate-no-go)', eyebrow: '#fca5a5' }
+        ? { border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)', glow: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)', bar: 'var(--gate-conditional)', eyebrow: 'var(--status-broken)' }
+        : { border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)', glow: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)', bar: 'var(--gate-no-go)', eyebrow: 'var(--status-failed)' }
 
   const blockers: { tone: 'critical' | 'warn'; text: React.ReactNode }[] = []
   if (p.deprecatedInActive > 0) {
@@ -1379,7 +1379,7 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
               <span
                 className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ml-1"
                 style={{
-                  background: p.healthTag === 'Healthy' ? 'rgba(34,197,94,0.12)' : p.healthTag === 'Needs attention' ? 'var(--gate-conditional-bg)' : 'rgba(239,68,68,0.12)',
+                  background: p.healthTag === 'Healthy' ? 'color-mix(in srgb, var(--status-passed) 12%, transparent)' : p.healthTag === 'Needs attention' ? 'var(--gate-conditional-bg)' : 'color-mix(in srgb, var(--status-failed) 12%, transparent)',
                   border: `1px solid ${t.border}`,
                   color: p.healthTone,
                 }}
@@ -1399,9 +1399,9 @@ function LibraryVerdictRibbon(p: LibraryVerdictProps) {
                 key={i}
                 className="inline-flex items-center px-2.5 py-1 rounded-full text-[11.5px]"
                 style={{
-                  background: b.tone === 'critical' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
-                  border: b.tone === 'critical' ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(245,158,11,0.25)',
-                  color: b.tone === 'critical' ? '#fca5a5' : '#fcd34d',
+                  background: b.tone === 'critical' ? 'color-mix(in srgb, var(--status-failed) 8%, transparent)' : 'color-mix(in srgb, var(--status-broken) 8%, transparent)',
+                  border: b.tone === 'critical' ? '1px solid color-mix(in srgb, var(--status-failed) 25%, transparent)' : '1px solid color-mix(in srgb, var(--status-broken) 25%, transparent)',
+                  color: b.tone === 'critical' ? 'var(--status-failed)' : 'var(--status-broken)',
                 }}
               >
                 <span className="sr-only">{b.tone === 'critical' ? 'Warning: ' : 'Notice: '}</span>
@@ -1627,9 +1627,9 @@ function CasesFilterBar({
             onClick={() => onSavedView(v)}
             className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
             style={{
-              background: active ? 'rgba(167,139,250,0.14)' : 'transparent',
-              borderColor: active ? 'rgba(167,139,250,0.30)' : 'var(--color-border)',
-              color: active ? '#c4b5fd' : 'var(--color-text-muted)',
+              background: active ? 'color-mix(in srgb, var(--status-flaky) 14%, transparent)' : 'transparent',
+              borderColor: active ? 'color-mix(in srgb, var(--status-flaky) 30%, transparent)' : 'var(--color-border)',
+              color: active ? 'var(--status-flaky)' : 'var(--color-text-muted)',
             }}
           >
             {v.label}
@@ -1664,9 +1664,9 @@ function SelectChip({
     <span
       className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
       style={{
-        background: active ? 'rgba(68,147,248,0.10)' : 'transparent',
-        borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
-        color: active ? '#93c5fd' : 'var(--color-text-muted)',
+        background: active ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent',
+        borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+        color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
         opacity: disabled ? 0.55 : 1,
       }}
       title={title}
@@ -1686,7 +1686,7 @@ function SelectChip({
           </option>
         ))}
       </select>
-      <span className="font-mono text-[10.5px] tabular-nums ml-1" style={{ color: active ? 'rgba(147,197,253,0.65)' : 'var(--color-text-faint)' }}>
+      <span className="font-mono text-[10.5px] tabular-nums ml-1" style={{ color: active ? 'color-mix(in srgb, var(--color-accent) 65%, transparent)' : 'var(--color-text-faint)' }}>
         {value ? '1' : options.length - 1}
       </span>
     </span>
@@ -1756,12 +1756,12 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
       <td style={{ padding: '10px 12px', minWidth: 280 }}>
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate">{tc.title}</span>
-          {tc.ai_generated && <Sparkles className="h-3 w-3 text-[#c4b5fd] flex-shrink-0" aria-label="AI generated" />}
+          {tc.ai_generated && <Sparkles className="h-3 w-3 text-[var(--status-flaky)] flex-shrink-0" aria-label="AI generated" />}
           {tc.source === 'automation' && (
             <span
               title="Discovered via an automation run — not authored in the test catalog"
               className="inline-flex items-center px-1.5 py-0 rounded-full text-[9.5px] font-semibold uppercase tracking-wider flex-shrink-0"
-              style={{ background: 'rgba(68,147,248,0.10)', border: '1px solid rgba(68,147,248,0.30)', color: '#93c5fd', letterSpacing: '0.06em' }}
+              style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)', color: 'var(--color-accent)', letterSpacing: '0.06em' }}
             >
               Auto
             </span>
@@ -1784,7 +1784,7 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
       </td>
       <td style={{ padding: '10px 12px' }}>
         {tc.is_automated ? (
-          <span className="inline-flex items-center gap-1 text-[11.5px]" style={{ color: '#86efac' }}>
+          <span className="inline-flex items-center gap-1 text-[11.5px]" style={{ color: 'var(--status-passed)' }}>
             <CheckCircle2 className="h-3 w-3" /> Auto
           </span>
         ) : (
@@ -1800,7 +1800,7 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
         <button
           onClick={(e) => onDelete(tc.id, e)}
           title="Delete"
-          className="text-[var(--color-text-faint)] hover:text-[#fca5a5] transition-colors p-1"
+          className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-1"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -1811,13 +1811,13 @@ function CaseRow({ tc, onRowClick, onDelete }: { tc: ManagedTestCase; onRowClick
 
 function CaseStatusPill({ status }: { status: string }) {
   const map: Record<string, { bg: string; bd: string; fg: string; label: string; lt?: boolean }> = {
-    active:           { bg: 'rgba(34,197,94,0.10)',  bd: 'rgba(34,197,94,0.30)',  fg: '#86efac', label: 'Active' },
-    approved:         { bg: 'rgba(68,147,248,0.10)', bd: 'rgba(68,147,248,0.30)', fg: '#93c5fd', label: 'Approved' },
-    review_requested: { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d', label: 'Review' },
-    under_review:     { bg: 'rgba(245,158,11,0.10)', bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d', label: 'Under review' },
+    active:           { bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)',  bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',  fg: 'var(--status-passed)', label: 'Active' },
+    approved:         { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)', fg: 'var(--color-accent)', label: 'Approved' },
+    review_requested: { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Review' },
+    under_review:     { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Under review' },
     draft:            { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'Draft' },
     deprecated:       { bg: 'rgba(120,113,108,0.12)', bd: 'rgba(120,113,108,0.30)', fg: '#a8a29e', label: 'Deprecated', lt: true },
-    rejected:         { bg: 'rgba(239,68,68,0.10)', bd: 'rgba(239,68,68,0.30)', fg: '#fca5a5', label: 'Rejected' },
+    rejected:         { bg: 'color-mix(in srgb, var(--status-failed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)', label: 'Rejected' },
   }
   const p = map[status] ?? { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: status.replace(/_/g, ' ') }
   return (
@@ -1838,9 +1838,9 @@ function CaseStatusPill({ status }: { status: string }) {
 
 function CasePriorityTag({ priority }: { priority: string }) {
   const map: Record<string, { bg: string; bd: string; fg: string; label: string }> = {
-    critical: { bg: 'rgba(239,68,68,0.14)',  bd: 'rgba(239,68,68,0.25)',  fg: '#fca5a5', label: 'P0' },
-    high:     { bg: 'rgba(245,158,11,0.14)', bd: 'rgba(245,158,11,0.25)', fg: '#fcd34d', label: 'P1' },
-    medium:   { bg: 'rgba(68,147,248,0.10)', bd: 'rgba(68,147,248,0.22)', fg: '#93c5fd', label: 'P2' },
+    critical: { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 25%, transparent)',  fg: 'var(--status-failed)', label: 'P0' },
+    high:     { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)', label: 'P1' },
+    medium:   { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 22%, transparent)', fg: 'var(--color-accent)', label: 'P2' },
     low:      { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'P3' },
   }
   const p = map[priority] ?? map.low
@@ -1856,9 +1856,9 @@ function CasePriorityTag({ priority }: { priority: string }) {
 
 const AVATAR_GRADIENTS = [
   'linear-gradient(135deg, #6366f1, #ec4899)',
-  'linear-gradient(135deg, #06b6d4, #3b82f6)',
-  'linear-gradient(135deg, #f59e0b, #ef4444)',
-  'linear-gradient(135deg, #10b981, #06b6d4)',
+  'linear-gradient(135deg, #06b6d4, var(--color-accent))',
+  'linear-gradient(135deg, var(--status-broken), var(--status-failed))',
+  'linear-gradient(135deg, var(--status-passed), #06b6d4)',
   'linear-gradient(135deg, #8b5cf6, #ec4899)',
 ]
 
@@ -1911,10 +1911,10 @@ function LastRunCell({ status, at }: { status: string | undefined; at: string | 
   const isPass = /pass/i.test(s)
   const isFail = /fail|error|broken/i.test(s)
   if (isFail) {
-    return <span className="text-[11.5px]" style={{ color: '#fca5a5' }}>FAIL · {ageLabel}</span>
+    return <span className="text-[11.5px]" style={{ color: 'var(--status-failed)' }}>FAIL · {ageLabel}</span>
   }
   if (isPass) {
-    return <span className="text-[11.5px]" style={{ color: '#86efac' }}>PASS · {ageLabel}</span>
+    return <span className="text-[11.5px]" style={{ color: 'var(--status-passed)' }}>PASS · {ageLabel}</span>
   }
   return <span className="text-[11.5px] text-[var(--color-text-muted)]">{ageLabel} ago</span>
 }
@@ -1957,7 +1957,7 @@ function EmptyStateBlock({
             <button
               onClick={onAiGenerate}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border"
-              style={{ color: '#c4b5fd', borderColor: 'rgba(167,139,250,0.30)', background: 'rgba(167,139,250,0.06)' }}
+              style={{ color: 'var(--status-flaky)', borderColor: 'color-mix(in srgb, var(--status-flaky) 30%, transparent)', background: 'color-mix(in srgb, var(--status-flaky) 6%, transparent)' }}
             >
               <Sparkles className="h-3.5 w-3.5" /> AI Generate
             </button>
@@ -2004,12 +2004,12 @@ function CoverageMatrixCard({ auto, manual, uncovered }: { auto: number; manual:
           aria-label={`Coverage: ${auto} automated, ${manual} manual, ${uncovered} uncovered`}
         >
           {auto > 0 && (
-            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'rgba(34,197,94,0.55)', color: 'white' }}>
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'color-mix(in srgb, var(--status-passed) 55%, transparent)', color: 'white' }}>
               {auto} auto
             </div>
           )}
           {manual > 0 && (
-            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'rgba(68,147,248,0.50)', color: 'white' }}>
+            <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'color-mix(in srgb, var(--color-accent) 50%, transparent)', color: 'white' }}>
               {manual} manual
             </div>
           )}
@@ -2020,8 +2020,8 @@ function CoverageMatrixCard({ auto, manual, uncovered }: { auto: number; manual:
           )}
         </div>
         <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
-          <Legend color="rgba(34,197,94,0.55)" label={`Automated · ${pct(auto)}%`} />
-          <Legend color="rgba(68,147,248,0.50)" label={`Manual · ${pct(manual)}%`} />
+          <Legend color="color-mix(in srgb, var(--status-passed) 55%, transparent)" label={`Automated · ${pct(auto)}%`} />
+          <Legend color="color-mix(in srgb, var(--color-accent) 50%, transparent)" label={`Manual · ${pct(manual)}%`} />
           <Legend color="rgba(120,113,108,0.30)" label={`Uncovered · ${pct(uncovered)}%`} />
         </div>
       </div>
@@ -2060,7 +2060,7 @@ function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c
         <div>
           {rows.map(c => {
             const days = Math.floor((now - new Date(c.updated_at).getTime()) / 86400000)
-            const ageColor = days >= 7 ? '#fca5a5' : 'var(--color-text-muted)'
+            const ageColor = days >= 7 ? 'var(--status-failed)' : 'var(--color-text-muted)'
             return (
               <button
                 key={c.id}
@@ -2106,15 +2106,15 @@ function GenerateCasesCard({
     <div
       className="overflow-hidden rounded-xl"
       style={{
-        background: 'radial-gradient(120% 100% at 0% 0%, rgba(167,139,250,0.06), transparent 55%), var(--color-bg-card)',
-        border: '1px solid rgba(167,139,250,0.30)',
+        background: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-flaky) 6%, transparent), transparent 55%), var(--color-bg-card)',
+        border: '1px solid color-mix(in srgb, var(--status-flaky) 30%, transparent)',
       }}
     >
       <div
         className="flex items-center justify-between gap-2 px-4 py-3"
         style={{ borderBottom: '1px solid var(--color-border)' }}
       >
-        <h3 className="text-[13px] font-semibold m-0 inline-flex items-center gap-2" style={{ color: '#c4b5fd' }}>
+        <h3 className="text-[13px] font-semibold m-0 inline-flex items-center gap-2" style={{ color: 'var(--status-flaky)' }}>
           <Sparkles className="h-3.5 w-3.5" />
           Generate test cases
         </h3>
@@ -2161,7 +2161,7 @@ function GeneratePath({ title, sub, count, onClick }: { title: string; sub: Reac
         borderColor: 'var(--color-border)',
       }}
     >
-      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 30, height: 30, background: 'rgba(167,139,250,0.16)', color: '#c4b5fd' }}>
+      <span className="inline-flex items-center justify-center rounded-full" style={{ width: 30, height: 30, background: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', color: 'var(--status-flaky)' }}>
         <Sparkles className="h-3.5 w-3.5" />
       </span>
       <div className="min-w-0">
@@ -2170,7 +2170,7 @@ function GeneratePath({ title, sub, count, onClick }: { title: string; sub: Reac
       </div>
       <span
         className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-mono tabular-nums"
-        style={{ background: 'rgba(167,139,250,0.12)', color: '#c4b5fd', border: '1px solid rgba(167,139,250,0.25)' }}
+        style={{ background: 'color-mix(in srgb, var(--status-flaky) 12%, transparent)', color: 'var(--status-flaky)', border: '1px solid color-mix(in srgb, var(--status-flaky) 25%, transparent)' }}
       >
         {count}
       </span>
@@ -2213,9 +2213,9 @@ function StrategyGapsCard({ gaps }: { gaps: { severity: 'critical' | 'warn'; tit
               <span
                 className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
                 style={{
-                  background: g.severity === 'critical' ? 'rgba(239,68,68,0.14)' : 'rgba(245,158,11,0.14)',
-                  border: g.severity === 'critical' ? '1px solid rgba(239,68,68,0.30)' : '1px solid rgba(245,158,11,0.30)',
-                  color: g.severity === 'critical' ? '#fca5a5' : '#fcd34d',
+                  background: g.severity === 'critical' ? 'color-mix(in srgb, var(--status-failed) 14%, transparent)' : 'color-mix(in srgb, var(--status-broken) 14%, transparent)',
+                  border: g.severity === 'critical' ? '1px solid color-mix(in srgb, var(--status-failed) 30%, transparent)' : '1px solid color-mix(in srgb, var(--status-broken) 30%, transparent)',
+                  color: g.severity === 'critical' ? 'var(--status-failed)' : 'var(--status-broken)',
                 }}
               >
                 {g.pill}
@@ -2254,10 +2254,10 @@ function RecentActivityCard({ events }: { events: RecentEvent[] }) {
             const min = Math.max(1, Math.floor(ms / 60000))
             const ageLabel = min < 60 ? `${min}m` : min < 1440 ? `${Math.floor(min / 60)}h` : `${Math.floor(min / 1440)}d`
             const action = (e.action ?? e.event_type ?? 'updated').toLowerCase()
-            const palette = /create|new/.test(action) ? { bg: 'rgba(34,197,94,0.14)',    fg: '#86efac' }
-              : /review|approve/.test(action)        ? { bg: 'rgba(245,158,11,0.14)',  fg: '#fcd34d' }
+            const palette = /create|new/.test(action) ? { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',    fg: 'var(--status-passed)' }
+              : /review|approve/.test(action)        ? { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)',  fg: 'var(--status-broken)' }
               : /deprecate|delete/.test(action)      ? { bg: 'rgba(120,113,108,0.16)', fg: '#a8a29e' }
-              : /ai|generate/.test(action)           ? { bg: 'rgba(167,139,250,0.14)', fg: '#c4b5fd' }
+              : /ai|generate/.test(action)           ? { bg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', fg: 'var(--status-flaky)' }
               : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
             return (
               <div

@@ -19,9 +19,9 @@ import PhasePipeline from './PhasePipeline'
 import BlockerRow from './BlockerRow'
 
 const ICON_TILE: Record<GateDecision, { bg: string; fg: string; icon: typeof Clock }> = {
-  go:            { bg: 'rgba(34,197,94,0.14)',  fg: '#22c55e', icon: CheckCircle2 },
-  conditional:   { bg: 'rgba(234,179,8,0.14)',  fg: '#eab308', icon: BadgeCheck },
-  no_go:         { bg: 'rgba(239,68,68,0.14)',  fg: '#ef4444', icon: BadgeCheck },
+  go:            { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  fg: 'var(--status-passed)', icon: CheckCircle2 },
+  conditional:   { bg: 'color-mix(in srgb, var(--status-skipped) 14%, transparent)',  fg: 'var(--status-skipped)', icon: BadgeCheck },
+  no_go:         { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)',  fg: 'var(--status-failed)', icon: BadgeCheck },
   not_evaluated: { bg: 'var(--color-accent-muted)', fg: 'var(--color-accent)', icon: Clock },
   cancelled:     { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: Clock },
 }
@@ -35,9 +35,9 @@ interface GateCellProps {
 }
 function GateCell({ label, value, sub, tone = 'neutral' }: GateCellProps) {
   const color =
-    tone === 'good' ? '#86efac'
-    : tone === 'warn' ? '#fcd34d'
-    : tone === 'bad'  ? '#fca5a5'
+    tone === 'good' ? 'var(--status-passed)'
+    : tone === 'warn' ? 'var(--status-broken)'
+    : tone === 'bad'  ? 'var(--status-failed)'
     : 'var(--color-text)'
   return (
     <div className="text-right">
@@ -51,9 +51,9 @@ function GateCell({ label, value, sub, tone = 'neutral' }: GateCellProps) {
 function PassFailBar({ totals }: { totals: NonNullable<DerivedRelease['totals']> }) {
   const total = Math.max(1, totals.passed + totals.failed + totals.flaky + totals.skipped)
   const segs: { color: string; flex: number; label: string }[] = [
-    { color: '#22c55e', flex: totals.passed,  label: 'passed' },
-    { color: '#ef4444', flex: totals.failed,  label: 'failed' },
-    { color: '#c084fc', flex: totals.flaky,   label: 'flaky' },
+    { color: 'var(--status-passed)', flex: totals.passed,  label: 'passed' },
+    { color: 'var(--status-failed)', flex: totals.failed,  label: 'failed' },
+    { color: 'var(--status-flaky)', flex: totals.flaky,   label: 'flaky' },
     { color: '#9ca3af', flex: totals.skipped, label: 'skipped' },
   ]
   return (
@@ -68,9 +68,9 @@ function PassFailBar({ totals }: { totals: NonNullable<DerivedRelease['totals']>
         ))}
       </div>
       <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] tabular-nums shrink-0">
-        <Dot color="#22c55e" /> {totals.passed}
-        <Dot color="#ef4444" /> {totals.failed}
-        <Dot color="#c084fc" /> {totals.flaky}
+        <Dot color="var(--status-passed)" /> {totals.passed}
+        <Dot color="var(--status-failed)" /> {totals.failed}
+        <Dot color="var(--status-flaky)" /> {totals.flaky}
         <Dot color="#9ca3af" /> {totals.skipped}
         <span className="text-[var(--color-text-faint)]">/ {total}</span>
       </div>
@@ -105,7 +105,7 @@ function PlanningCallout({ releaseName }: { releaseName: string }) {
           type="button"
           onClick={() => toast('Generate from PRD — coming in next iteration', { icon: '✨' })}
           className="inline-flex items-center gap-1 text-[12px] px-2.5 py-1 rounded-md border text-[var(--color-accent)] hover:underline"
-          style={{ background: 'var(--color-accent-muted)', borderColor: 'rgba(68,147,248,0.40)' }}
+          style={{ background: 'var(--color-accent-muted)', borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)' }}
         >
           <Sparkles className="h-3 w-3" /> Generate from PRD
         </button>

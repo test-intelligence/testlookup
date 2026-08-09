@@ -37,7 +37,7 @@ const AXIS_TICK = { fill: '#64748b', fontSize: 11 }
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function PassRateBar({ rate }: { rate: number }) {
-  const color = rate >= 90 ? '#10b981' : rate >= 70 ? '#f59e0b' : '#ef4444'
+  const color = rate >= 90 ? 'var(--status-passed)' : rate >= 70 ? 'var(--status-broken)' : 'var(--status-failed)'
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 bg-[var(--color-bg-hover)] rounded-full overflow-hidden">
@@ -317,9 +317,9 @@ export default function SuiteDetailPage() {
                     <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="passed_count"  name="Passed"  stackId="status" fill="#10b981" />
-                    <Bar dataKey="failed_count"  name="Failed"  stackId="status" fill="#ef4444" />
-                    <Bar dataKey="skipped_count" name="Skipped" stackId="status" fill="#f59e0b" />
+                    <Bar dataKey="passed_count"  name="Passed"  stackId="status" fill="var(--status-passed)" />
+                    <Bar dataKey="failed_count"  name="Failed"  stackId="status" fill="var(--status-failed)" />
+                    <Bar dataKey="skipped_count" name="Skipped" stackId="status" fill="var(--status-broken)" />
                     <Bar dataKey="broken_count"  name="Broken"  stackId="status" fill="#fb923c" />
                   </BarChart>
                 </ResponsiveContainer>
@@ -337,8 +337,8 @@ export default function SuiteDetailPage() {
                 <AreaChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
                   <defs>
                     <linearGradient id="passGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#10b981" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                      <stop offset="5%"  stopColor="var(--status-passed)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="var(--status-passed)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
@@ -346,8 +346,8 @@ export default function SuiteDetailPage() {
                   <YAxis domain={[0, 100]} tick={AXIS_TICK} axisLine={false} tickLine={false} unit="%" />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${v}%`, 'Pass Rate']} />
                   <Area
-                    type="monotone" dataKey="pass_rate" stroke="#10b981"
-                    strokeWidth={2} fill="url(#passGrad)" dot={{ r: 3, fill: '#10b981' }}
+                    type="monotone" dataKey="pass_rate" stroke="var(--status-passed)"
+                    strokeWidth={2} fill="url(#passGrad)" dot={{ r: 3, fill: 'var(--status-passed)' }}
                     name="Pass Rate"
                   />
                 </AreaChart>

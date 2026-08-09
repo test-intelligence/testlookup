@@ -278,9 +278,9 @@ function MyFailuresLink() {
         <span
           className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-medium tabular-nums"
           style={{
-            background: 'rgba(239,68,68,0.18)',
-            color: '#fca5a5',
-            border: '1px solid rgba(239,68,68,0.30)',
+            background: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',
+            color: 'var(--status-failed)',
+            border: '1px solid color-mix(in srgb, var(--status-failed) 30%, transparent)',
           }}
           aria-label={`${count} assigned failures`}
         >

@@ -51,10 +51,10 @@ function relativeAge(iso: string): string {
 
 function severityDot(severity: string | null | undefined): string {
   const s = (severity || '').toLowerCase()
-  if (s === 'blocker' || s === 'critical') return '#fca5a5'  // red
-  if (s === 'major' || s === 'high')        return '#fcd34d' // amber
+  if (s === 'blocker' || s === 'critical') return 'var(--status-failed)'  // red
+  if (s === 'major' || s === 'high')        return 'var(--status-broken)' // amber
   if (s === 'minor' || s === 'low')         return '#9198a1' // slate
-  return '#86efac'                                            // unknown → green-ish
+  return 'var(--status-passed)'                                            // unknown → green-ish
 }
 
 export default function MyFailuresPage() {
@@ -131,9 +131,9 @@ export default function MyFailuresPage() {
                 onClick={() => { setStoredDays(d); setPage(1) }}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
                 style={{
-                  background: active ? 'rgba(68,147,248,0.14)' : 'transparent',
-                  borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
-                  color: active ? '#93c5fd' : 'var(--color-text-muted)',
+                  background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+                  borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+                  color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
                 }}
               >
                 {d === 1 ? '24h' : `${d}d`}
@@ -162,9 +162,9 @@ export default function MyFailuresPage() {
                     onClick={() => { setScope(opt); setPage(1) }}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors capitalize"
                     style={{
-                      background: active ? 'rgba(68,147,248,0.14)' : 'transparent',
-                      borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
-                      color: active ? '#93c5fd' : 'var(--color-text-muted)',
+                      background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+                      borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+                      color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
                     }}
                     title={
                       opt === 'mine'
@@ -710,7 +710,7 @@ function TriageStatusModal({
               className={clsx(
                 'flex items-start gap-3 px-3 py-2 rounded border cursor-pointer transition-colors',
                 selected === choice.value
-                  ? 'border-[var(--color-accent)] bg-[rgba(68,147,248,0.08)]'
+                  ? 'border-[var(--color-accent)] bg-[color-mix(in srgb, var(--color-accent) 8%, transparent)]'
                   : 'border-[var(--color-border)] hover:bg-[var(--color-bg-hover)]',
               )}
             >
@@ -786,7 +786,7 @@ function ReassignChoice({
       className={clsx(
         'flex items-center gap-3 px-3 py-2 rounded border cursor-pointer transition-colors',
         checked
-          ? 'border-[var(--color-accent)] bg-[rgba(68,147,248,0.08)]'
+          ? 'border-[var(--color-accent)] bg-[color-mix(in srgb, var(--color-accent) 8%, transparent)]'
           : 'border-[var(--color-border)] hover:bg-[var(--color-bg-hover)]',
       )}
     >

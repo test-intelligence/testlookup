@@ -126,6 +126,35 @@ for (const file of walk(SRC_DIR)) {
   }
 }
 
+// Status colours must come from tokens, not inline literals. Components that
+// hardcoded hex bypassed the theme entirely, which is how /runs rendered a
+// "passed" bar in #34d399 while /coverage rendered one in var(--status-passed)
+// (#34a06b) — two different greens for the same meaning, on two pages.
+//
+// 1,167 colour literals existed across 42 files before this was enforced.
+const STATUS_LITERALS = [
+  // passed
+  '#86efac', '#34d399', '#22c55e', '#10b981', '#3fb950', '#4ade80', '#7ce0a0',
+  // failed
+  '#fca5a5', '#ef4444', '#f85149', '#f87171', '#ff8a6b',
+  // broken / skipped
+  '#fcd34d', '#f59e0b', '#fbbf24', '#eab308', '#ffb347', '#f5d76e',
+  // flaky
+  '#c4b5fd', '#c084fc', '#a371f7', '#a78bfa', '#e0b3ff',
+  // accent
+  '#93c5fd', '#4493f8', '#58a6ff',
+]
+for (const file of walk(SRC_DIR)) {
+  if (!file.endsWith('.tsx')) continue
+  const text = readFileSync(file, 'utf8')
+  const rel = file.slice(ROOT.length + 1)
+  for (const lit of STATUS_LITERALS) {
+    if (text.toLowerCase().includes(lit)) {
+      fail.push(`${rel} hardcodes ${lit} — use var(--status-passed|failed|broken|skipped|flaky) or var(--color-accent) so every page renders the same colour for the same meaning`)
+    }
+  }
+}
+
 if (HTML.includes('fonts.googleapis.com/css2')) {
   fail.push('index.html loads Google Fonts again. TestLookup is offline-first: in an air-gapped deployment that request stalls until timeout rather than failing fast.')
 }

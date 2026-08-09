@@ -149,10 +149,10 @@ export default function ComputeCanvas({
                       ? 'var(--fg-faint, #4a525c)'
                       : 'var(--color-text-muted)',
                   background: isChosen
-                    ? 'rgba(68,147,248,0.06)'
+                    ? 'color-mix(in srgb, var(--color-accent) 6%, transparent)'
                     : 'var(--color-bg-card)',
                   borderColor: isChosen
-                    ? 'rgba(68,147,248,0.40)'
+                    ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)'
                     : 'var(--color-border)',
                 }}
               >

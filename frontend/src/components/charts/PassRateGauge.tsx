@@ -3,7 +3,7 @@ import { RadialBarChart, RadialBar, ResponsiveContainer } from 'recharts'
 interface Props { value: number; size?: number }
 
 export default function PassRateGauge({ value, size = 120 }: Props) {
-  const color = value >= 95 ? '#10b981' : value >= 80 ? '#f59e0b' : '#ef4444'
+  const color = value >= 95 ? 'var(--status-passed)' : value >= 80 ? 'var(--status-broken)' : 'var(--status-failed)'
   const data = [{ value: 100, fill: '#1e293b' }, { value, fill: color }]
 
   return (

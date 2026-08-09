@@ -13,9 +13,9 @@ import type { DerivedBlocker, DerivedRelease, GateDecision } from './types'
 import GateBadge from './GateBadge'
 
 const GATE_ACCENT: Record<GateDecision, { bar: string; glow: string; border: string }> = {
-  go:            { bar: 'var(--gate-go)',           glow: 'linear-gradient(180deg, rgba(34,197,94,0.05), transparent 70%)', border: 'rgba(34,197,94,0.30)' },
-  conditional:   { bar: 'var(--gate-conditional)',  glow: 'linear-gradient(180deg, rgba(234,179,8,0.05), transparent 70%)', border: 'rgba(234,179,8,0.30)' },
-  no_go:         { bar: 'var(--gate-no-go)',        glow: 'linear-gradient(180deg, rgba(239,68,68,0.05), transparent 70%)', border: 'rgba(239,68,68,0.30)' },
+  go:            { bar: 'var(--gate-go)',           glow: 'linear-gradient(180deg, color-mix(in srgb, var(--status-passed) 5%, transparent), transparent 70%)', border: 'color-mix(in srgb, var(--status-passed) 30%, transparent)' },
+  conditional:   { bar: 'var(--gate-conditional)',  glow: 'linear-gradient(180deg, color-mix(in srgb, var(--status-skipped) 5%, transparent), transparent 70%)', border: 'color-mix(in srgb, var(--status-skipped) 30%, transparent)' },
+  no_go:         { bar: 'var(--gate-no-go)',        glow: 'linear-gradient(180deg, color-mix(in srgb, var(--status-failed) 5%, transparent), transparent 70%)', border: 'color-mix(in srgb, var(--status-failed) 30%, transparent)' },
   not_evaluated: { bar: 'var(--color-border-light)', glow: 'transparent', border: 'var(--color-border)' },
   cancelled:     { bar: 'var(--color-border-light)', glow: 'transparent', border: 'var(--color-border)' },
 }

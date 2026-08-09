@@ -227,9 +227,9 @@ export default function SummaryReportPage() {
               disabled={isDownloading || !hasData}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                background: hasData ? 'rgba(68,147,248,0.14)' : 'transparent',
-                borderColor: hasData ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
-                color: hasData ? '#93c5fd' : 'var(--color-text-muted)',
+                background: hasData ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+                borderColor: hasData ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+                color: hasData ? 'var(--color-accent)' : 'var(--color-text-muted)',
               }}
             >
               <Download className="h-3.5 w-3.5" />
@@ -254,9 +254,9 @@ export default function SummaryReportPage() {
                 onClick={() => setDays(d)}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
                 style={{
-                  background: active ? 'rgba(68,147,248,0.14)' : 'transparent',
-                  borderColor: active ? 'rgba(68,147,248,0.30)' : 'var(--color-border)',
-                  color: active ? '#93c5fd' : 'var(--color-text-muted)',
+                  background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+                  borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+                  color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
                 }}
               >
                 {d === 1 ? '24h' : `${d}d`}
@@ -278,8 +278,8 @@ export default function SummaryReportPage() {
                 onClick={() => setMode(m)}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
                 style={{
-                  background: active ? 'rgba(168,85,247,0.14)' : 'transparent',
-                  borderColor: active ? 'rgba(168,85,247,0.30)' : 'var(--color-border)',
+                  background: active ? 'color-mix(in srgb, var(--status-flaky) 14%, transparent)' : 'transparent',
+                  borderColor: active ? 'color-mix(in srgb, var(--status-flaky) 30%, transparent)' : 'var(--color-border)',
                   color: active ? '#d8b4fe' : 'var(--color-text-muted)',
                 }}
                 title={MODE_LABELS[m].hint}

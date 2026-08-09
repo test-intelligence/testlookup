@@ -46,14 +46,14 @@ const VERDICT_THEME: Record<Verdict, {
 }> = {
   GO: {
     barColor: 'var(--gate-go)',
-    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
-    border: 'rgba(34,197,94,0.35)',
+    glow: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-passed) 35%, transparent)',
     eyebrowDot: 'var(--gate-go)',
-    eyebrowText: '#86efac',
-    gateText: '#86efac',
-    meterValue: '#86efac',
-    meterTrack: 'rgba(34,197,94,0.18)',
-    meterFill: 'linear-gradient(90deg, #22c55e, #34d399)',
+    eyebrowText: 'var(--status-passed)',
+    gateText: 'var(--status-passed)',
+    meterValue: 'var(--status-passed)',
+    meterTrack: 'color-mix(in srgb, var(--status-passed) 18%, transparent)',
+    meterFill: 'linear-gradient(90deg, var(--status-passed), var(--status-passed))',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'ship cleared',
   },
@@ -61,15 +61,15 @@ const VERDICT_THEME: Record<Verdict, {
     // Yellow band — healthy but flagged. Uses a lemon/yellow palette to keep
     // it visually distinct from CONDITIONAL (which is amber/orange) and GO
     // (which is green).
-    barColor: '#facc15',
+    barColor: 'var(--status-skipped)',
     glow: 'radial-gradient(120% 100% at 0% 0%, rgba(250,204,21,0.08), transparent 55%)',
     border: 'rgba(250,204,21,0.35)',
-    eyebrowDot: '#facc15',
+    eyebrowDot: 'var(--status-skipped)',
     eyebrowText: '#fde68a',
     gateText: '#fde68a',
     meterValue: '#fde68a',
     meterTrack: 'rgba(250,204,21,0.18)',
-    meterFill: 'linear-gradient(90deg, #eab308, #facc15)',
+    meterFill: 'linear-gradient(90deg, var(--status-skipped), var(--status-skipped))',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'go with watch',
   },
@@ -84,20 +84,20 @@ const VERDICT_THEME: Record<Verdict, {
     gateText: '#fdba74',
     meterValue: '#fdba74',
     meterTrack: 'rgba(249,115,22,0.18)',
-    meterFill: 'linear-gradient(90deg, #f97316, #fb923c)',
+    meterFill: 'linear-gradient(90deg, var(--status-broken), #fb923c)',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'review before shipping',
   },
   NO_GO: {
     barColor: 'var(--gate-no-go)',
-    glow: 'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)',
-    border: 'rgba(239,68,68,0.35)',
+    glow: 'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-failed) 35%, transparent)',
     eyebrowDot: 'var(--gate-no-go)',
-    eyebrowText: '#fca5a5',
-    gateText: '#fca5a5',
-    meterValue: '#fca5a5',
-    meterTrack: 'rgba(239,68,68,0.18)',
-    meterFill: 'linear-gradient(90deg, #ef4444, #f97316)',
+    eyebrowText: 'var(--status-failed)',
+    gateText: 'var(--status-failed)',
+    meterValue: 'var(--status-failed)',
+    meterTrack: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',
+    meterFill: 'linear-gradient(90deg, var(--status-failed), var(--status-broken))',
     eyebrowLabel: 'RELEASE READINESS',
     headlineSuffix: 'ship blocked',
   },
@@ -147,9 +147,9 @@ function gateLabel(v: Verdict): string {
 type SparkTone = 'good' | 'warn' | 'bad' | 'neutral'
 
 const SPARK_COLOR: Record<SparkTone, string> = {
-  good: '#34d399',
-  warn: '#fcd34d',
-  bad:  '#fca5a5',
+  good: 'var(--status-passed)',
+  warn: 'var(--status-broken)',
+  bad:  'var(--status-failed)',
   neutral: '#9198a1',
 }
 
@@ -211,7 +211,7 @@ function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, li
         'flex flex-col gap-1.5 px-3.5 py-3 rounded-xl bg-[var(--color-bg-card)]',
         'border border-[var(--color-border)] min-h-[108px]',
       )}
-      style={isBad ? { borderColor: 'rgba(239,68,68,0.35)' } : undefined}
+      style={isBad ? { borderColor: 'color-mix(in srgb, var(--status-failed) 35%, transparent)' } : undefined}
     >
       <div className="flex items-center gap-1.5 text-[11px] uppercase text-[var(--color-text-muted)] font-medium" style={{ letterSpacing: 'var(--tracking-wider)' }}>
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: dotColor }} aria-hidden />
@@ -237,7 +237,7 @@ function KpiCard({ label, value, unit, delta, tone, series, emptyMsg, gradId, li
             className="text-[11px] font-semibold tabular-nums"
             style={{
               color: delta.tone === 'good' ? 'var(--status-passed)'
-                : delta.tone === 'bad' ? '#fca5a5'
+                : delta.tone === 'bad' ? 'var(--status-failed)'
                 : 'var(--color-text-muted)',
             }}
           >
@@ -395,7 +395,7 @@ function VerdictCard({
 }
 
 function ReasonCard({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: SparkTone }) {
-  const valueColor = tone === 'bad' ? '#fca5a5'
+  const valueColor = tone === 'bad' ? 'var(--status-failed)'
     : tone === 'warn' ? 'var(--status-skipped)'
     : tone === 'good' ? 'var(--status-passed)'
     : 'var(--color-text)'
@@ -520,16 +520,16 @@ function ChevronArrow() {
 
 function StageCard({ stage }: { stage: RibbonStage }) {
   const badge = stage.state === 'done'
-    ? { bg: 'rgba(34,197,94,0.18)', fg: 'var(--status-passed)', glyph: '✓' }
+    ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'var(--status-passed)', glyph: '✓' }
     : stage.state === 'warn'
-      ? { bg: 'rgba(245,158,11,0.18)', fg: 'var(--status-skipped)', glyph: '!' }
+      ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'var(--status-skipped)', glyph: '!' }
       : stage.state === 'running'
-        ? { bg: 'rgba(68,147,248,0.18)', fg: 'var(--color-accent)', glyph: '·' }
+        ? { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', fg: 'var(--color-accent)', glyph: '·' }
         : { bg: 'rgba(255,255,255,0.04)', fg: 'var(--color-text-faint)', glyph: '◯' }
 
   const pill = stage.pillTone === 'red'
-    ? { bg: 'rgba(239,68,68,0.12)', fg: '#fca5a5' }
-    : { bg: 'rgba(68,147,248,0.10)', fg: 'var(--color-accent)' }
+    ? { bg: 'color-mix(in srgb, var(--status-failed) 12%, transparent)', fg: 'var(--status-failed)' }
+    : { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', fg: 'var(--color-accent)' }
 
   return (
     <Link
@@ -571,9 +571,9 @@ function StageCard({ stage }: { stage: RibbonStage }) {
 
 // ── Execution trend chart ────────────────────────────────────────────────
 const CHART_COLORS = {
-  passed:  '#34d399',
-  failed:  '#fca5a5',
-  skipped: '#fcd34d',
+  passed:  'var(--status-passed)',
+  failed:  'var(--status-failed)',
+  skipped: 'var(--status-broken)',
 }
 
 interface ChartTooltipPayload {
@@ -683,7 +683,7 @@ function ExecutionTrendChart({ trends, days }: { trends: TrendPoint[]; days: num
 }
 
 function FootStat({ k, v, small, smallTone }: { k: string; v: string; small: string; smallTone: 'muted' | 'bad' | 'good' }) {
-  const smallColor = smallTone === 'bad' ? '#fca5a5'
+  const smallColor = smallTone === 'bad' ? 'var(--status-failed)'
     : smallTone === 'good' ? 'var(--status-passed)'
     : 'var(--color-text-muted)'
   return (
@@ -725,7 +725,7 @@ function BlockersPanel({ newFailures, hasData }: { newFailures: number; hasData:
         {hasData && newFailures > 0 && (
           <span
             className="px-1.5 py-0.5 rounded-full text-[11px] font-semibold"
-            style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5' }}
+            style={{ background: 'color-mix(in srgb, var(--status-failed) 15%, transparent)', color: 'var(--status-failed)' }}
           >
             {newFailures} new · 24h
           </span>

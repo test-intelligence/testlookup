@@ -96,54 +96,54 @@ interface VerdictTheme {
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   HEALTHY: {
-    border: 'rgba(34,197,94,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-go)',
-    eyebrowText: '#86efac',
-    gateText:    '#86efac',
-    pillBg: 'rgba(34,197,94,0.12)',
-    pillBd: 'rgba(34,197,94,0.30)',
-    pillFg: '#86efac',
-    meter:  '#86efac',
+    eyebrowText: 'var(--status-passed)',
+    gateText:    'var(--status-passed)',
+    pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
+    pillFg: 'var(--status-passed)',
+    meter:  'var(--status-passed)',
     label:  'Trend healthy',
     pulse:  false,
   },
   MIXED: {
-    border: 'rgba(245,158,11,0.40)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText:    '#fcd34d',
+    eyebrowText: 'var(--status-broken)',
+    gateText:    'var(--status-broken)',
     pillBg: 'var(--gate-conditional-bg)',
     pillBd: 'var(--gate-conditional-border)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'Trend mixed',
     pulse:  true,
   },
   INSUFFICIENT: {
-    border: 'rgba(245,158,11,0.40)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText:    '#fcd34d',
+    eyebrowText: 'var(--status-broken)',
+    gateText:    'var(--status-broken)',
     pillBg: 'var(--gate-conditional-bg)',
     pillBd: 'var(--gate-conditional-border)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'Insufficient data',
     pulse:  true,
   },
   DECLINING: {
-    border: 'rgba(239,68,68,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(239,68,68,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-failed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-no-go)',
-    eyebrowText: '#fca5a5',
-    gateText:    '#fca5a5',
-    pillBg: 'rgba(239,68,68,0.12)',
-    pillBd: 'rgba(239,68,68,0.30)',
-    pillFg: '#fca5a5',
-    meter:  '#fca5a5',
+    eyebrowText: 'var(--status-failed)',
+    gateText:    'var(--status-failed)',
+    pillBg: 'color-mix(in srgb, var(--status-failed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
+    pillFg: 'var(--status-failed)',
+    meter:  'var(--status-failed)',
     label:  'Trend declining',
     pulse:  true,
   },
@@ -531,9 +531,9 @@ function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean 
 
 function IssueRow({ issue }: { issue: IssueRowSpec }) {
   const palette = {
-    bad:  { bg: 'rgba(239,68,68,0.08)',          bd: 'rgba(239,68,68,0.30)',  icBg: 'rgba(239,68,68,0.16)',  icFg: '#fca5a5' },
-    warn: { bg: 'var(--gate-conditional-bg-soft)', bd: 'var(--gate-conditional-border)', icBg: 'var(--gate-conditional-bg)', icFg: '#fcd34d' },
-    info: { bg: 'var(--color-accent-bg-soft)',   bd: 'rgba(68,147,248,0.25)', icBg: 'rgba(68,147,248,0.16)', icFg: '#93c5fd' },
+    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',          bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',  icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
+    warn: { bg: 'var(--gate-conditional-bg-soft)', bd: 'var(--gate-conditional-border)', icBg: 'var(--gate-conditional-bg)', icFg: 'var(--status-broken)' },
+    info: { bg: 'var(--color-accent-bg-soft)',   bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
   }[issue.tone]
   const Icon = issue.Icon
   return (
@@ -548,11 +548,11 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
       {issue.cta && (
         issue.cta.to
           ? <Link to={issue.cta.to} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
-              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'var(--color-accent-bg-soft)' }}>
+              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'var(--color-accent-bg-soft)' }}>
               {issue.cta.label} →
             </Link>
           : <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'var(--color-accent-bg-soft)' }}>
+              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'var(--color-accent-bg-soft)' }}>
               {issue.cta.label} →
             </button>
       )}
@@ -606,7 +606,7 @@ function ConfidenceMeter({ model, verdict }: { model: ConfidenceModel; verdict: 
             transform: 'translate(-50%, -50%)',
             width: 12, height: 12,
             background: t.meter,
-            boxShadow: '0 0 0 2px rgba(245,158,11,0.25)',
+            boxShadow: '0 0 0 2px color-mix(in srgb, var(--status-broken) 25%, transparent)',
             border: '1.5px solid var(--color-bg-card)',
           }}
         />
@@ -630,8 +630,8 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
 }
 
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? '#fca5a5' : dim.tone === 'warn' ? '#fcd34d' : '#34d399'
-  const barColor   = dim.tone === 'bad' ? '#ef4444' : dim.tone === 'warn' ? '#f59e0b' : '#22c55e'
+  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
@@ -698,7 +698,7 @@ function TrendStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean
     >
       <span
         className="inline-flex items-center justify-center rounded-full flex-none"
-        style={{ width: 18, height: 18, background: 'var(--status-passed-soft)', color: '#34d399' }}
+        style={{ width: 18, height: 18, background: 'var(--status-passed-soft)', color: 'var(--status-passed)' }}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M5 12l5 5L20 7" />
@@ -709,7 +709,7 @@ function TrendStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean
         <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums truncate">
           {stage.evidence} evidence
           <span className="mx-1 text-[var(--color-text-faint)]">·</span>
-          <span className="font-semibold" style={{ color: '#34d399' }}>{stage.confidencePct}% confidence</span>
+          <span className="font-semibold" style={{ color: 'var(--status-passed)' }}>{stage.confidencePct}% confidence</span>
         </span>
       </span>
       <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)] self-start pt-0.5">
@@ -730,7 +730,7 @@ function SparklineFlatLineWithDot({ valuePct }: { valuePct: number }) {
   return (
     <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
       <line x1="0" y1="12" x2="100" y2="12" stroke="var(--color-border)" strokeDasharray="2 2" />
-      <circle cx={x} cy={y} r={2.5} fill="#34d399" />
+      <circle cx={x} cy={y} r={2.5} fill="var(--status-passed)" />
     </svg>
   )
 }
@@ -750,7 +750,7 @@ function SparklineTickGrid({ activeIdx, total }: { activeIdx: number; total: num
             y={isActive ? 0 : 20}
             width={w}
             height={isActive ? 24 : 4}
-            fill={isActive ? '#34d399' : 'var(--color-border)'}
+            fill={isActive ? 'var(--status-passed)' : 'var(--color-border)'}
           />
         )
       })}
@@ -784,7 +784,7 @@ function SparklineDottedPair({ leftMuted = true }: { leftMuted?: boolean } = {})
     <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true" className="block w-full h-6">
       <circle cx={5} cy={12} r={2.5} fill={leftMuted ? 'var(--color-text-faint)' : 'var(--status-passed)'} />
       <line x1="5" y1="12" x2="93" y2="12" stroke="var(--color-border)" strokeDasharray="2 3" />
-      <circle cx={93} cy={12} r={2.5} fill="#34d399" />
+      <circle cx={93} cy={12} r={2.5} fill="var(--status-passed)" />
     </svg>
   )
 }
@@ -805,9 +805,9 @@ function KpiCell({
   isLast?: boolean
 }) {
   const valueColor =
-    tone === 'good'   ? '#34d399' :
-    tone === 'warn'   ? '#fcd34d' :
-    tone === 'bad'    ? '#fca5a5' :
+    tone === 'good'   ? 'var(--status-passed)' :
+    tone === 'warn'   ? 'var(--status-broken)' :
+    tone === 'bad'    ? 'var(--status-failed)' :
     tone === 'accent' ? 'var(--color-accent)' :
     'var(--color-text)'
   return (
@@ -870,8 +870,8 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
                   background: hasRuns
                     ? (isMixed ? 'var(--pattern-mixed-day)' : 'var(--status-passed)')
                     : 'var(--color-bg-secondary)',
-                  border: hasRuns ? '1px solid rgba(34,197,94,0.50)' : '1px solid var(--color-border)',
-                  boxShadow: c.isToday ? '0 0 0 1px var(--color-accent)' : c.isLastBeforeGap ? '0 0 0 1px #fcd34d' : 'none',
+                  border: hasRuns ? '1px solid color-mix(in srgb, var(--status-passed) 50%, transparent)' : '1px solid var(--color-border)',
+                  boxShadow: c.isToday ? '0 0 0 1px var(--color-accent)' : c.isLastBeforeGap ? '0 0 0 1px var(--status-broken)' : 'none',
                 }}
               />
             )
@@ -901,7 +901,7 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
           >
             <span
               className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold uppercase"
-              style={{ background: 'var(--gate-conditional-bg)', color: '#fcd34d', letterSpacing: 'var(--tracking-wide)' }}
+              style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
             >
               Gap
             </span>
@@ -1023,10 +1023,10 @@ function DailyBreakdown({ trend, days, model }: { trend: TrendPoint[]; days: num
                           flexDirection: 'column-reverse',
                         }}
                       >
-                        {p.passed > 0  && <span style={{ flex: passPct,   background: '#22c55e' }} />}
-                        {p.failed > 0  && <span style={{ flex: failPct,   background: '#ef4444' }} />}
-                        {p.skipped > 0 && <span style={{ flex: skipPct,   background: '#f59e0b' }} />}
-                        {(p.broken ?? 0) > 0 && <span style={{ flex: brokenPct, background: '#f97316' }} />}
+                        {p.passed > 0  && <span style={{ flex: passPct,   background: 'var(--status-passed)' }} />}
+                        {p.failed > 0  && <span style={{ flex: failPct,   background: 'var(--status-failed)' }} />}
+                        {p.skipped > 0 && <span style={{ flex: skipPct,   background: 'var(--status-broken)' }} />}
+                        {(p.broken ?? 0) > 0 && <span style={{ flex: brokenPct, background: 'var(--status-broken)' }} />}
                       </div>
                     </div>
                   )
@@ -1045,10 +1045,10 @@ function DailyBreakdown({ trend, days, model }: { trend: TrendPoint[]; days: num
         </div>
 
         <div className="flex flex-wrap gap-3.5 mt-3 text-[11px] text-[var(--color-text-muted)]">
-          <Legend color="#22c55e" label={`Passed (${totals.passed})`} />
-          <Legend color="#ef4444" label={`Failed (${totals.failed})`} />
-          <Legend color="#f59e0b" label={`Skipped (${totals.skipped})`} />
-          <Legend color="#f97316" label={`Broken (${totals.broken})`} />
+          <Legend color="var(--status-passed)" label={`Passed (${totals.passed})`} />
+          <Legend color="var(--status-failed)" label={`Failed (${totals.failed})`} />
+          <Legend color="var(--status-broken)" label={`Skipped (${totals.skipped})`} />
+          <Legend color="var(--status-broken)" label={`Broken (${totals.broken})`} />
           <span className="ml-auto inline-flex items-center gap-1.5">
             <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--color-border)' }} />
             Empty day
@@ -1100,7 +1100,7 @@ function PassRateTrend({ model, days }: { model: ConfidenceModel; days: number }
           <div>
             <span
               className="font-bold tabular-nums leading-none"
-              style={{ fontSize: 26, color: today >= 80 ? '#34d399' : today >= 50 ? '#fcd34d' : '#fca5a5', letterSpacing: '-0.02em' }}
+              style={{ fontSize: 26, color: today >= 80 ? 'var(--status-passed)' : today >= 50 ? 'var(--status-broken)' : 'var(--status-failed)', letterSpacing: '-0.02em' }}
             >
               {today.toFixed(1)}%
             </span>
@@ -1114,7 +1114,7 @@ function PassRateTrend({ model, days }: { model: ConfidenceModel; days: number }
               Target {target}%
             </span>
             {model.totalRuns > 0 && (
-              <span style={{ color: deltaToTarget < 0 ? '#fca5a5' : '#34d399' }}>
+              <span style={{ color: deltaToTarget < 0 ? 'var(--status-failed)' : 'var(--status-passed)' }}>
                 {deltaToTarget < 0 ? '↓' : '↑'} {Math.abs(deltaToTarget).toFixed(0)}pp {deltaToTarget < 0 ? 'below' : 'above'} target
               </span>
             )}
@@ -1145,26 +1145,26 @@ function PassRateTrend({ model, days }: { model: ConfidenceModel; days: number }
           ))}
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="block w-full h-full" aria-hidden="true">
             {/* Target band shading */}
-            <rect x="0" y="0" width="100" height={100 - target} fill="rgba(34,197,94,0.06)" />
+            <rect x="0" y="0" width="100" height={100 - target} fill="color-mix(in srgb, var(--status-passed) 6%, transparent)" />
             <line x1="0" y1={100 - target} x2="100" y2={100 - target} stroke="var(--color-border)" strokeDasharray="2 2" />
             {!sparse && points.length >= 2 && (
               <polyline
                 points={points.map(p => `${p.x},${p.y}`).join(' ')}
                 fill="none"
                 stroke={(() => {
-                  if (model.passRatePerDay.length < 2) return '#34d399'
+                  if (model.passRatePerDay.length < 2) return 'var(--status-passed)'
                   const recent = model.passRatePerDay.slice(-1)[0]
                   const prior = model.passRatePerDay[0]
-                  return recent > prior + 3 ? '#34d399' : recent < prior - 3 ? '#fca5a5' : '#fcd34d'
+                  return recent > prior + 3 ? 'var(--status-passed)' : recent < prior - 3 ? 'var(--status-failed)' : 'var(--status-broken)'
                 })()}
                 strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
               />
             )}
             {!sparse && points.map((p, i) => (
-              <circle key={i} cx={p.x} cy={p.y} r={1.5} fill="#34d399" vectorEffect="non-scaling-stroke" />
+              <circle key={i} cx={p.x} cy={p.y} r={1.5} fill="var(--status-passed)" vectorEffect="non-scaling-stroke" />
             ))}
-            <circle cx={todayX} cy={todayY} r={2.5} fill="#34d399" vectorEffect="non-scaling-stroke" />
+            <circle cx={todayX} cy={todayY} r={2.5} fill="var(--status-passed)" vectorEffect="non-scaling-stroke" />
           </svg>
           {sparse && (
             <span
@@ -1196,14 +1196,14 @@ function SchedulePausedCallout({ model }: { model: ConfidenceModel }) {
         padding: '14px 16px',
         background: 'radial-gradient(120% 100% at 0% 0%, var(--gate-conditional-bg-soft), transparent 55%), var(--color-bg-card)',
         border: '1px solid var(--gate-conditional-border)',
-        borderLeft: '3px solid #f59e0b',
+        borderLeft: '3px solid var(--status-broken)',
       }}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
         <h3 id="schedpaused" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Schedule appears paused</h3>
         <span
           className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
-          style={{ background: 'var(--gate-conditional-bg)', color: '#fcd34d', letterSpacing: 'var(--tracking-wide)' }}
+          style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
         >
           Action needed
         </span>
@@ -1237,7 +1237,7 @@ function CalloutStat({ label, value }: { label: string; value: React.ReactNode }
       <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
         {label}
       </div>
-      <div className="text-[20px] font-bold tabular-nums mt-0.5" style={{ color: '#fca5a5' }}>{value}</div>
+      <div className="text-[20px] font-bold tabular-nums mt-0.5" style={{ color: 'var(--status-failed)' }}>{value}</div>
     </div>
   )
 }
@@ -1269,7 +1269,7 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
   const total = suite.passed + suite.failed + suite.skipped
   const pct = total > 0 ? Math.round((suite.passed / total) * 100) : 0
   const tone = pct >= 80 ? 'good' : pct >= 50 ? 'warn' : 'bad'
-  const pctColor = tone === 'good' ? '#34d399' : tone === 'warn' ? '#fcd34d' : '#fca5a5'
+  const pctColor = tone === 'good' ? 'var(--status-passed)' : tone === 'warn' ? 'var(--status-broken)' : 'var(--status-failed)'
   return (
     <div
       className={clsx('grid items-center gap-3', !isLast && 'pb-2.5 mb-2.5')}
@@ -1277,7 +1277,7 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
     >
       <span
         className="font-mono text-[12.5px] truncate"
-        style={{ color: tone === 'bad' ? '#fca5a5' : 'var(--color-text)' }}
+        style={{ color: tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)' }}
       >
         {suite.suite_name}
       </span>
@@ -1291,7 +1291,7 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
           style={{
             width: 3,
             height: 14,
-            background: tone === 'bad' ? '#fca5a5' : '#34d399',
+            background: tone === 'bad' ? 'var(--status-failed)' : 'var(--status-passed)',
             borderRadius: 1,
           }}
         />
@@ -1385,9 +1385,9 @@ function RecommendedActions({ recs }: { recs: RecRow[] }) {
 
 function RecActionRow({ rec }: { rec: RecRow }) {
   const palette = {
-    dev: { bg: 'rgba(168,85,247,0.16)', fg: '#c4b5fd' },
-    qa:  { bg: 'rgba(68,147,248,0.16)', fg: '#93c5fd' },
-    rm:  { bg: 'rgba(34,197,94,0.16)',  fg: '#86efac' },
+    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
+    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
+    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
   }[rec.role]
   const Icon = rec.Icon
   return (

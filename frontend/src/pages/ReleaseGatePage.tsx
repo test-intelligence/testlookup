@@ -35,7 +35,7 @@ const REC_CONFIG: Record<Recommendation, { label: string; colour: string; bg: st
 }
 
 function RiskGauge({ score }: { score: number }) {
-  const colour = score >= 70 ? '#f87171' : score >= 40 ? '#fbbf24' : '#34d399'
+  const colour = score >= 70 ? 'var(--status-failed)' : score >= 40 ? 'var(--status-broken)' : 'var(--status-passed)'
   const pct = Math.min(100, Math.max(0, score))
   return (
     <div className="flex flex-col items-center gap-1">

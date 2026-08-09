@@ -244,67 +244,67 @@ interface VerdictTheme {
 
 const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   REPEAT_FAILURE: {
-    border: 'rgba(239,68,68,0.40)',
+    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-no-go-glow), transparent 55%)',
     bar:    'var(--gate-no-go)',
-    eyebrowText: '#fca5a5',
-    gateText:    '#fca5a5',
-    pillBg: 'rgba(239,68,68,0.12)',
-    pillBd: 'rgba(239,68,68,0.30)',
-    pillFg: '#fca5a5',
-    meter:  '#fca5a5',
+    eyebrowText: 'var(--status-failed)',
+    gateText:    'var(--status-failed)',
+    pillBg: 'color-mix(in srgb, var(--status-failed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',
+    pillFg: 'var(--status-failed)',
+    meter:  'var(--status-failed)',
     label:  'Repeat failure',
     pulse:  true,
   },
   FLAKY: {
-    border: 'rgba(245,158,11,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(245,158,11,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText:    '#fcd34d',
-    pillBg: 'rgba(245,158,11,0.12)',
-    pillBd: 'rgba(245,158,11,0.30)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    eyebrowText: 'var(--status-broken)',
+    gateText:    'var(--status-broken)',
+    pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'Flaky',
     pulse:  true,
   },
   FIRST_TIME: {
-    border: 'rgba(245,158,11,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(245,158,11,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrowText: '#fcd34d',
-    gateText:    '#fcd34d',
-    pillBg: 'rgba(245,158,11,0.12)',
-    pillBd: 'rgba(245,158,11,0.30)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    eyebrowText: 'var(--status-broken)',
+    gateText:    'var(--status-broken)',
+    pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'First-time failure',
     pulse:  true,
   },
   RECOVERING: {
-    border: 'rgba(68,147,248,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(68,147,248,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 55%)',
     bar:    'var(--color-accent)',
-    eyebrowText: '#93c5fd',
-    gateText:    '#93c5fd',
-    pillBg: 'rgba(68,147,248,0.12)',
-    pillBd: 'rgba(68,147,248,0.30)',
-    pillFg: '#93c5fd',
-    meter:  '#93c5fd',
+    eyebrowText: 'var(--color-accent)',
+    gateText:    'var(--color-accent)',
+    pillBg: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+    pillFg: 'var(--color-accent)',
+    meter:  'var(--color-accent)',
     label:  'Recovering',
     pulse:  false,
   },
   STABLE: {
-    border: 'rgba(34,197,94,0.40)',
+    border: 'color-mix(in srgb, var(--status-passed) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--gate-go-glow), transparent 55%)',
     bar:    'var(--gate-go)',
-    eyebrowText: '#86efac',
-    gateText:    '#86efac',
-    pillBg: 'rgba(34,197,94,0.12)',
-    pillBd: 'rgba(34,197,94,0.30)',
-    pillFg: '#86efac',
-    meter:  '#86efac',
+    eyebrowText: 'var(--status-passed)',
+    gateText:    'var(--status-passed)',
+    pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
+    pillFg: 'var(--status-passed)',
+    meter:  'var(--status-passed)',
     label:  'Stable',
     pulse:  false,
   },
@@ -626,9 +626,9 @@ function CtaBtn({ cta, primary }: { cta: IssueRowSpec['cta']; primary?: boolean 
 
 function IssueRow({ issue }: { issue: IssueRowSpec }) {
   const palette = {
-    bad:  { bg: 'rgba(239,68,68,0.08)',  bd: 'rgba(239,68,68,0.30)',  icBg: 'rgba(239,68,68,0.16)',  icFg: '#fca5a5' },
-    warn: { bg: 'rgba(245,158,11,0.06)', bd: 'rgba(245,158,11,0.28)', icBg: 'rgba(245,158,11,0.16)', icFg: '#fcd34d' },
-    info: { bg: 'rgba(68,147,248,0.06)', bd: 'rgba(68,147,248,0.25)', icBg: 'rgba(68,147,248,0.16)', icFg: '#93c5fd' },
+    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',  icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
+    warn: { bg: 'color-mix(in srgb, var(--status-broken) 6%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 28%, transparent)', icBg: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', icFg: 'var(--status-broken)' },
+    info: { bg: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
   }[issue.tone]
   const Icon = issue.Icon
   return (
@@ -643,11 +643,11 @@ function IssueRow({ issue }: { issue: IssueRowSpec }) {
       {issue.cta && (
         issue.cta.to
           ? <Link to={issue.cta.to} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
-              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'rgba(68,147,248,0.06)' }}>
+              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
               {issue.cta.label} →
             </Link>
           : <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'rgba(68,147,248,0.06)' }}>
+              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
               {issue.cta.label} →
             </button>
       )}
@@ -703,8 +703,8 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
 }
 
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? '#fca5a5' : dim.tone === 'warn' ? '#fcd34d' : '#34d399'
-  const barColor   = dim.tone === 'bad' ? '#ef4444' : dim.tone === 'warn' ? '#f59e0b' : '#22c55e'
+  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
@@ -784,7 +784,7 @@ function SuiteFailureBreakdown({ topFailing }: { topFailing: TopFailingItem[] })
                 {r.tests} test{r.tests === 1 ? '' : 's'}
               </span>
               <div className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-                <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: '#ef4444' }} />
+                <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: 'var(--status-failed)' }} />
               </div>
               <span className="tabular-nums font-semibold text-[var(--color-text)] min-w-[28px] text-right">
                 {r.failures}
@@ -837,14 +837,14 @@ function buildRibbon(model: StabilityModel): RibbonStage[] {
       meta: model.totalCategorised === 0
         ? <>0 evidence · <span style={{ color: 'var(--color-text-faint)' }}>no failures yet</span></>
         : model.uncategorizedPct >= 50
-          ? <>1 evidence · <span style={{ color: '#fcd34d', fontWeight: 600 }}>unknown cluster</span></>
-          : <>1 evidence · <span style={{ color: '#34d399', fontWeight: 600 }}>{Math.round(100 - model.uncategorizedPct)}% confidence</span></>,
+          ? <>1 evidence · <span style={{ color: 'var(--status-broken)', fontWeight: 600 }}>unknown cluster</span></>
+          : <>1 evidence · <span style={{ color: 'var(--status-passed)', fontWeight: 600 }}>{Math.round(100 - model.uncategorizedPct)}% confidence</span></>,
     },
     {
       num: 3, name: 'Hotspot Ranking',
       status: 'done',
       evidence: 1,
-      meta: <>1 evidence · <span style={{ color: model.repeatFailures.length > 0 ? '#fca5a5' : '#34d399', fontWeight: 600 }}>{model.repeatFailures.length} repeat{model.repeatFailures.length === 1 ? '' : 's'}</span></>,
+      meta: <>1 evidence · <span style={{ color: model.repeatFailures.length > 0 ? 'var(--status-failed)' : 'var(--status-passed)', fontWeight: 600 }}>{model.repeatFailures.length} repeat{model.repeatFailures.length === 1 ? '' : 's'}</span></>,
     },
     {
       num: 4, name: 'Remediation Focus',
@@ -883,9 +883,9 @@ function CoverageRibbon({ stages }: { stages: RibbonStage[] }) {
 
 function StageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean }) {
   const ic = stage.status === 'done'
-    ? { bg: 'var(--status-passed-soft)', fg: '#34d399', icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
+    ? { bg: 'var(--status-passed-soft)', fg: 'var(--status-passed)', icon: <Check className="h-2.5 w-2.5" strokeWidth={3} /> }
     : stage.status === 'failed'
-      ? { bg: 'var(--status-failed-soft)', fg: '#fca5a5', icon: <XCircle className="h-2.5 w-2.5" strokeWidth={3} /> }
+      ? { bg: 'var(--status-failed-soft)', fg: 'var(--status-failed)', icon: <XCircle className="h-2.5 w-2.5" strokeWidth={3} /> }
       : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: <Minus className="h-2.5 w-2.5" strokeWidth={3} /> }
   const trackFg = stage.status === 'done' ? 'var(--status-passed)'
     : stage.status === 'failed' ? 'var(--gate-no-go)'
@@ -935,9 +935,9 @@ interface KpiCellProps {
 
 function KpiCell({ Icon, label, value, meta, tone = 'neutral', isFirst, isLast }: KpiCellProps) {
   const valueColor =
-    tone === 'good'   ? '#34d399' :
-    tone === 'warn'   ? '#fcd34d' :
-    tone === 'bad'    ? '#fca5a5' :
+    tone === 'good'   ? 'var(--status-passed)' :
+    tone === 'warn'   ? 'var(--status-broken)' :
+    tone === 'bad'    ? 'var(--status-failed)' :
     tone === 'accent' ? 'var(--color-accent)' :
     'var(--color-text)'
   return (
@@ -1042,7 +1042,7 @@ function WhatsFailingCard({
         rightSlot={<Pill tone="warn">Per-test data pending</Pill>}
       >
         <div className="px-4 py-6 flex flex-col items-center text-center">
-          <TriangleAlert className="h-8 w-8 mb-2" style={{ color: '#fcd34d' }} />
+          <TriangleAlert className="h-8 w-8 mb-2" style={{ color: 'var(--status-broken)' }} />
           <p className="text-[13px] text-[var(--color-text-secondary)] m-0 max-w-md">
             <strong style={{ color: 'var(--color-text)' }}>{failingExecutions}</strong>{' '}
             failing execution{failingExecutions === 1 ? '' : 's'} detected in this window,
@@ -1092,13 +1092,13 @@ function WhatsFailingCard({
         className="relative"
         style={{
           padding: '16px 18px',
-          borderLeft: '3px solid #ef4444',
-          background: 'linear-gradient(90deg, rgba(239,68,68,0.06), transparent 30%), var(--color-bg-card)',
+          borderLeft: '3px solid var(--status-failed)',
+          background: 'linear-gradient(90deg, color-mix(in srgb, var(--status-failed) 6%, transparent), transparent 30%), var(--color-bg-card)',
         }}
       >
         <div className="flex items-start justify-between gap-3 flex-wrap mb-2.5">
           <div className="min-w-0">
-            <div className="font-mono text-[13.5px] font-medium truncate" style={{ color: '#fca5a5' }}>
+            <div className="font-mono text-[13.5px] font-medium truncate" style={{ color: 'var(--status-failed)' }}>
               {topFailingTest.test_name}
             </div>
             <div className="text-[12px] text-[var(--color-text-muted)] mt-1 flex flex-wrap gap-x-3 gap-y-1">
@@ -1113,13 +1113,13 @@ function WhatsFailingCard({
                 title={`Failed at step: ${topFailingTest.failure_step}`}
               >
                 failed at:{' '}
-                <span className="font-mono" style={{ color: '#fca5a5' }}>
+                <span className="font-mono" style={{ color: 'var(--status-failed)' }}>
                   {topFailingTest.failure_step}
                 </span>
               </div>
             )}
           </div>
-          <div className="text-[12px]" style={{ color: '#fca5a5', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <div className="text-[12px]" style={{ color: 'var(--status-failed)', fontWeight: 600, whiteSpace: 'nowrap' }}>
             {topFailingTest.fail_count} failed
           </div>
         </div>
@@ -1131,7 +1131,7 @@ function WhatsFailingCard({
           style={{
             background: 'var(--color-bg)',
             border: '1px solid var(--color-border)',
-            borderLeft: '2px solid rgba(239,68,68,0.55)',
+            borderLeft: '2px solid color-mix(in srgb, var(--status-failed) 55%, transparent)',
             borderRadius: 'var(--radius-sm)',
             padding: '10px 12px',
             color: 'var(--color-text-secondary)',
@@ -1488,9 +1488,9 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
         {uncategorizedPct >= 50 && (
           <div
             className="flex items-start gap-2 rounded-md p-2.5 mb-3 text-[12px]"
-            style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.28)', color: 'var(--color-text-secondary)' }}
+            style={{ background: 'color-mix(in srgb, var(--status-broken) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--status-broken) 28%, transparent)', color: 'var(--color-text-secondary)' }}
           >
-            <AlertTriangle className="h-3.5 w-3.5 flex-none mt-0.5" style={{ color: '#fcd34d' }} />
+            <AlertTriangle className="h-3.5 w-3.5 flex-none mt-0.5" style={{ color: 'var(--status-broken)' }} />
             <span>
               Classifier confidence low — {Math.round(uncategorizedPct)}% of failures are sitting in <em>Unknown</em>.{' '}
               <button
@@ -1542,7 +1542,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                 </div>
                 <div
                   className={clsx('text-[13px] font-semibold tabular-nums text-right', empty && 'text-[var(--color-text-muted)]')}
-                  style={empty ? undefined : { color: c.id === 'unknown' ? '#fcd34d' : 'var(--color-text)' }}
+                  style={empty ? undefined : { color: c.id === 'unknown' ? 'var(--status-broken)' : 'var(--color-text)' }}
                 >
                   {empty ? '—' : `${pct}%`}
                 </div>
@@ -1573,8 +1573,8 @@ function ComparisonStrip({
   // ``deltaColour`` returns CSS values rather than Tailwind classes so the
   // direction-vs-good logic stays explicit at each call site — a higher
   // failure count is bad, a higher pass rate is good.
-  const RED   = '#fca5a5'
-  const GREEN = '#86efac'
+  const RED   = 'var(--status-failed)'
+  const GREEN = 'var(--status-passed)'
   const NEUTRAL = 'var(--color-text-muted)'
   const colourForFailureDelta = (delta: number): string =>
     delta === 0 ? NEUTRAL : (delta > 0 ? RED : GREEN)
@@ -1718,7 +1718,7 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
                   ? 'var(--color-bg-secondary)'
                   : c.kind === 'fail'
                     ? `rgba(239,68,68,${0.45 + 0.55 * Math.min(1, c.severity)})`
-                    : 'rgba(34,197,94,0.7)',
+                    : 'color-mix(in srgb, var(--status-passed) 70%, transparent)',
                 border: c.kind === 'empty' ? '1px solid var(--color-border)' : '1px solid transparent',
               }}
             />
@@ -1728,10 +1728,10 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
           <span>{len} day{len === 1 ? '' : 's'} ago</span>
           <span className="inline-flex items-center gap-1">
             Pass
-            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'rgba(34,197,94,0.7)' }} />
+            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'color-mix(in srgb, var(--status-passed) 70%, transparent)' }} />
             <span aria-hidden>·</span>
             Fail
-            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: '#ef4444' }} />
+            <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--status-failed)' }} />
           </span>
           <span>Today</span>
         </div>
@@ -1743,11 +1743,11 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
 // ── Flakiness card ────────────────────────────────────────────────────────
 function FlakinessCard({ flaky, repeatFailures }: { flaky: FlakyTestItem[]; repeatFailures: TopFailingItem[] }) {
   const isStable = flaky.length === 0
-  const headerBorder = isStable ? 'rgba(34,197,94,0.28)' : 'rgba(245,158,11,0.28)'
-  const stripe       = isStable ? '#22c55e'              : '#f59e0b'
+  const headerBorder = isStable ? 'color-mix(in srgb, var(--status-passed) 28%, transparent)' : 'color-mix(in srgb, var(--status-broken) 28%, transparent)'
+  const stripe       = isStable ? 'var(--status-passed)'              : 'var(--status-broken)'
   const ledeBg       = isStable
-    ? 'linear-gradient(90deg, rgba(34,197,94,0.06), transparent 40%), var(--color-bg-card)'
-    : 'linear-gradient(90deg, rgba(245,158,11,0.06), transparent 40%), var(--color-bg-card)'
+    ? 'linear-gradient(90deg, color-mix(in srgb, var(--status-passed) 6%, transparent), transparent 40%), var(--color-bg-card)'
+    : 'linear-gradient(90deg, color-mix(in srgb, var(--status-broken) 6%, transparent), transparent 40%), var(--color-bg-card)'
   return (
     <section
       aria-label="Flakiness analysis"
@@ -1817,9 +1817,9 @@ function FlakinessCard({ flaky, repeatFailures }: { flaky: FlakyTestItem[]; repe
                 <div className="grid items-center gap-3" style={{ gridTemplateColumns: '1fr auto' }}>
                   <span className="font-mono text-[11.5px] text-[var(--color-text)] truncate">{f.test_name}</span>
                   {f.source === 'manual' ? (
-                    <span className="tabular-nums" style={{ color: '#93c5fd' }} title="Manually triaged as flaky on /my-failures">Flagged</span>
+                    <span className="tabular-nums" style={{ color: 'var(--color-accent)' }} title="Manually triaged as flaky on /my-failures">Flagged</span>
                   ) : (
-                    <span className="tabular-nums" style={{ color: '#fcd34d' }}>{Math.round(f.failure_rate_pct)}% flake</span>
+                    <span className="tabular-nums" style={{ color: 'var(--status-broken)' }}>{Math.round(f.failure_rate_pct)}% flake</span>
                   )}
                 </div>
                 {f.likely_cause && (
@@ -1838,7 +1838,7 @@ function FlakinessCard({ flaky, repeatFailures }: { flaky: FlakyTestItem[]; repe
 }
 
 function FlakeMetaCell({ k, v, tone }: { k: string; v: string; tone: 'good' | 'neutral' }) {
-  const fg = tone === 'good' ? '#34d399' : 'var(--color-text-secondary)'
+  const fg = tone === 'good' ? 'var(--status-passed)' : 'var(--color-text-secondary)'
   return (
     <div
       className="rounded-sm border px-2 py-2"
@@ -1917,9 +1917,9 @@ function RecommendedActions({ recs }: { recs: RecRow[] }) {
 
 function RecActionRow({ rec }: { rec: RecRow }) {
   const palette = {
-    dev: { bg: 'rgba(168,85,247,0.16)', fg: '#c4b5fd' },
-    qa:  { bg: 'rgba(68,147,248,0.16)', fg: '#93c5fd' },
-    rm:  { bg: 'rgba(34,197,94,0.16)',  fg: '#86efac' },
+    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
+    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
+    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
   }[rec.role]
   const Icon = rec.Icon
   return (
@@ -2010,9 +2010,9 @@ function CardShell({
 
 function Pill({ children, tone }: { children: React.ReactNode; tone: 'good' | 'warn' | 'bad' | 'neutral' }) {
   const palette = {
-    good:    { bg: 'rgba(34,197,94,0.15)',      bd: 'rgba(34,197,94,0.30)', fg: '#86efac' },
-    warn:    { bg: 'rgba(245,158,11,0.15)',     bd: 'rgba(245,158,11,0.30)', fg: '#fcd34d' },
-    bad:     { bg: 'var(--status-failed-soft)', bd: 'rgba(239,68,68,0.30)', fg: '#fca5a5' },
+    good:    { bg: 'color-mix(in srgb, var(--status-passed) 15%, transparent)',      bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed)' },
+    warn:    { bg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)' },
+    bad:     { bg: 'var(--status-failed-soft)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)' },
     neutral: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' },
   }[tone]
   return (
@@ -2122,7 +2122,7 @@ function MuteTestModal({
         </div>
 
         <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
-          Reason <span style={{ color: '#fca5a5' }}>*</span>
+          Reason <span style={{ color: 'var(--status-failed)' }}>*</span>
           <textarea
             value={reason}
             onChange={e => setReason(e.target.value)}

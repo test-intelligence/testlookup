@@ -82,41 +82,41 @@ const VERDICT_THEME: Record<Verdict, {
   pulse: boolean
 }> = {
   HEALTHY: {
-    border: 'rgba(34,197,94,0.35)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(34,197,94,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-passed) 35%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-passed) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-go)',
-    eyebrow:'#86efac',
-    gate:   '#86efac',
-    pillBg: 'rgba(34,197,94,0.12)',
-    pillBd: 'rgba(34,197,94,0.25)',
-    pillFg: '#86efac',
-    meter:  '#86efac',
+    eyebrow:'var(--status-passed)',
+    gate:   'var(--status-passed)',
+    pillBg: 'color-mix(in srgb, var(--status-passed) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-passed) 25%, transparent)',
+    pillFg: 'var(--status-passed)',
+    meter:  'var(--status-passed)',
     label:  'Healthy',
     pulse:  false,
   },
   AT_RISK: {
-    border: 'rgba(245,158,11,0.40)',
-    glow:   'radial-gradient(120% 100% at 0% 0%, rgba(245,158,11,0.10), transparent 55%)',
+    border: 'color-mix(in srgb, var(--status-broken) 40%, transparent)',
+    glow:   'radial-gradient(120% 100% at 0% 0%, color-mix(in srgb, var(--status-broken) 10%, transparent), transparent 55%)',
     bar:    'var(--gate-conditional)',
-    eyebrow:'#fcd34d',
-    gate:   '#fcd34d',
-    pillBg: 'rgba(245,158,11,0.12)',
-    pillBd: 'rgba(245,158,11,0.25)',
-    pillFg: '#fcd34d',
-    meter:  '#fcd34d',
+    eyebrow:'var(--status-broken)',
+    gate:   'var(--status-broken)',
+    pillBg: 'color-mix(in srgb, var(--status-broken) 12%, transparent)',
+    pillBd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)',
+    pillFg: 'var(--status-broken)',
+    meter:  'var(--status-broken)',
     label:  'At risk',
     pulse:  true,
   },
   BLOCKED: {
-    border: 'rgba(239,68,68,0.40)',
+    border: 'color-mix(in srgb, var(--status-failed) 40%, transparent)',
     glow:   'radial-gradient(120% 100% at 0% 0%, var(--alert-bg-soft), transparent 55%)',
     bar:    'var(--gate-no-go)',
-    eyebrow:'#fca5a5',
-    gate:   '#fca5a5',
-    pillBg: 'rgba(239,68,68,0.12)',
+    eyebrow:'var(--status-failed)',
+    gate:   'var(--status-failed)',
+    pillBg: 'color-mix(in srgb, var(--status-failed) 12%, transparent)',
     pillBd: 'var(--alert-border-soft)',
-    pillFg: '#fca5a5',
-    meter:  '#fca5a5',
+    pillFg: 'var(--status-failed)',
+    meter:  'var(--status-failed)',
     label:  'Blocked',
     pulse:  true,
   },
@@ -624,8 +624,8 @@ export function CoverageComparisonStrip({
 
   // ``deltaColour`` returns CSS values rather than Tailwind classes so the
   // direction-vs-good logic stays explicit at each call site.
-  const RED   = '#fca5a5'
-  const GREEN = '#86efac'
+  const RED   = 'var(--status-failed)'
+  const GREEN = 'var(--status-passed)'
   const NEUTRAL = 'var(--color-text-muted)'
   const colourForRateDelta = (delta: number): string =>
     Math.abs(delta) < 0.01 ? NEUTRAL : (delta > 0 ? GREEN : RED)
@@ -709,9 +709,9 @@ function CoverageCompareCell({
 
 function IssueRow({ issue }: { issue: Issue }) {
   const palette = {
-    bad:  { bg: 'rgba(239,68,68,0.08)',  bd: 'rgba(239,68,68,0.30)',  icBg: 'rgba(239,68,68,0.16)',  icFg: '#fca5a5' },
-    warn: { bg: 'rgba(245,158,11,0.06)', bd: 'rgba(245,158,11,0.28)', icBg: 'rgba(245,158,11,0.16)', icFg: '#fcd34d' },
-    info: { bg: 'rgba(68,147,248,0.06)', bd: 'rgba(68,147,248,0.25)', icBg: 'rgba(68,147,248,0.16)', icFg: '#93c5fd' },
+    bad:  { bg: 'color-mix(in srgb, var(--status-failed) 8%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',  icBg: 'color-mix(in srgb, var(--status-failed) 16%, transparent)',  icFg: 'var(--status-failed)' },
+    warn: { bg: 'color-mix(in srgb, var(--status-broken) 6%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 28%, transparent)', icBg: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', icFg: 'var(--status-broken)' },
+    info: { bg: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', icBg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', icFg: 'var(--color-accent)' },
   }[issue.tone]
   const Icon = issue.Icon
   return (
@@ -726,11 +726,11 @@ function IssueRow({ issue }: { issue: Issue }) {
       {issue.cta && (
         issue.cta.to
           ? <Link to={issue.cta.to} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap"
-              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'rgba(68,147,248,0.06)' }}>
+              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
               {issue.cta.label} →
             </Link>
           : <button type="button" onClick={issue.cta.onClick} className="text-[11.5px] font-medium px-2 py-0.5 rounded-full border whitespace-nowrap transition-colors"
-              style={{ color: 'var(--color-accent)', borderColor: 'rgba(68,147,248,0.25)', background: 'rgba(68,147,248,0.06)' }}>
+              style={{ color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)' }}>
               {issue.cta.label} →
             </button>
       )}
@@ -786,8 +786,8 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
 }
 
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? '#fca5a5' : dim.tone === 'warn' ? '#fcd34d' : '#34d399'
-  const barColor   = dim.tone === 'bad' ? '#ef4444' : dim.tone === 'warn' ? '#f59e0b' : '#22c55e'
+  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
@@ -873,7 +873,7 @@ function SlimStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean 
     >
       <span
         className="inline-flex items-center justify-center rounded-full flex-none"
-        style={{ width: 18, height: 18, background: 'var(--status-passed-soft)', color: '#34d399' }}
+        style={{ width: 18, height: 18, background: 'var(--status-passed-soft)', color: 'var(--status-passed)' }}
       >
         <Check className="h-2.5 w-2.5" strokeWidth={3} />
       </span>
@@ -884,7 +884,7 @@ function SlimStageCell({ stage, isLast }: { stage: RibbonStage; isLast: boolean 
           {stage.coverageScorePct != null && (
             <>
               <span className="mx-1 text-[var(--color-text-faint)]">·</span>
-              <span className="font-semibold" style={{ color: '#34d399' }}>{stage.coverageScorePct}% coverage score</span>
+              <span className="font-semibold" style={{ color: 'var(--status-passed)' }}>{stage.coverageScorePct}% coverage score</span>
             </>
           )}
         </span>
@@ -912,9 +912,9 @@ interface KpiCellProps {
 
 function KpiCell({ Icon, label, value, meta, tone = 'neutral', isFirst, isLast }: KpiCellProps) {
   const valueColor =
-    tone === 'good'   ? '#34d399' :
-    tone === 'warn'   ? '#fcd34d' :
-    tone === 'bad'    ? '#fca5a5' :
+    tone === 'good'   ? 'var(--status-passed)' :
+    tone === 'warn'   ? 'var(--status-broken)' :
+    tone === 'bad'    ? 'var(--status-failed)' :
     tone === 'accent' ? 'var(--color-accent)' :
     'var(--color-text)'
   return (
@@ -951,7 +951,7 @@ function Delta({ value }: { value: number | null }) {
   }
   if (value === 0) return <span className="tabular-nums text-[var(--color-text-muted)]">no change</span>
   const sign = value > 0 ? '+' : '−'
-  const color = value > 0 ? '#34d399' : '#fca5a5'
+  const color = value > 0 ? 'var(--status-passed)' : 'var(--status-failed)'
   return <span className="tabular-nums font-medium" style={{ color }}>{sign}{Math.abs(Math.round(value))}%</span>
 }
 
@@ -970,8 +970,8 @@ function SuiteBreakdown({ suites, totalExecutions }: { suites: CoverageSuite[]; 
         <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Suite coverage breakdown</h3>
         <div className="flex items-center gap-3 text-[11.5px] text-[var(--color-text-muted)]">
           <Legend color="var(--status-passed)" label="Passed" />
-          <Legend color="#ef4444" label="Failed" />
-          <Legend color="#f59e0b" label="Skipped" />
+          <Legend color="var(--status-failed)" label="Failed" />
+          <Legend color="var(--status-broken)" label="Skipped" />
           <span className="inline-flex items-center gap-1.5 text-[var(--color-text-faint)]">
             <span aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: 'repeating-linear-gradient(45deg, var(--color-text-faint), var(--color-text-faint) 2px, var(--color-bg-hover) 2px, var(--color-bg-hover) 4px)' }} />
             Untagged
@@ -1021,9 +1021,9 @@ function SuiteRow({ suite, totalExecutions, isLast }: { suite: CoverageSuite; to
   const passRateTone: 'good' | 'warn' | 'bad' | 'dim' =
     untagged ? 'dim' : passRate >= 90 ? 'good' : passRate >= 70 ? 'warn' : 'bad'
   const passRateColor =
-    passRateTone === 'good' ? '#34d399' :
-    passRateTone === 'warn' ? '#fcd34d' :
-    passRateTone === 'bad'  ? '#fca5a5' :
+    passRateTone === 'good' ? 'var(--status-passed)' :
+    passRateTone === 'warn' ? 'var(--status-broken)' :
+    passRateTone === 'bad'  ? 'var(--status-failed)' :
     'var(--color-text-muted)'
 
   return (
@@ -1039,7 +1039,7 @@ function SuiteRow({ suite, totalExecutions, isLast }: { suite: CoverageSuite; to
     >
       {/* Suite name + count */}
       <div className="flex items-center gap-1.5 min-w-0" style={{
-        color: untagged ? 'var(--color-text-muted)' : (suite.failed > 0 && !untagged ? '#fca5a5' : 'var(--color-text)'),
+        color: untagged ? 'var(--color-text-muted)' : (suite.failed > 0 && !untagged ? 'var(--status-failed)' : 'var(--color-text)'),
         fontFamily: untagged ? 'var(--font-sans)' : 'var(--font-mono)',
         fontStyle: untagged ? 'italic' : 'normal',
         fontSize: 12.5,
@@ -1069,8 +1069,8 @@ function SuiteRow({ suite, totalExecutions, isLast }: { suite: CoverageSuite; to
         ) : (
           <>
             {suite.passed > 0  && <StackSegment count={suite.passed}  color="var(--status-passed)" />}
-            {suite.failed > 0  && <StackSegment count={suite.failed}  color="#ef4444" />}
-            {suite.skipped > 0 && <StackSegment count={suite.skipped} color="#f59e0b" />}
+            {suite.failed > 0  && <StackSegment count={suite.failed}  color="var(--status-failed)" />}
+            {suite.skipped > 0 && <StackSegment count={suite.skipped} color="var(--status-broken)" />}
             {total === 0 && <div className="flex-1" />}
           </>
         )}
@@ -1116,16 +1116,16 @@ function UntaggedCallout({ untaggedRuns, totalRuns, suites }: { untaggedRuns: nu
       className="rounded-xl"
       style={{
         padding: '14px 16px',
-        border: '1px solid rgba(245,158,11,0.28)',
-        borderLeft: '3px solid #f59e0b',
-        background: 'linear-gradient(90deg, rgba(245,158,11,0.06), transparent 50%), var(--color-bg-card)',
+        border: '1px solid color-mix(in srgb, var(--status-broken) 28%, transparent)',
+        borderLeft: '3px solid var(--status-broken)',
+        background: 'linear-gradient(90deg, color-mix(in srgb, var(--status-broken) 6%, transparent), transparent 50%), var(--color-bg-card)',
       }}
     >
       <h3 className="text-[13px] font-semibold m-0 mb-1 flex items-center gap-2 text-[var(--color-text)]">
         Untagged executions
         <span
           className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase"
-          style={{ background: 'rgba(245,158,11,0.16)', color: '#fcd34d', letterSpacing: 'var(--tracking-wide)' }}
+          style={{ background: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
         >
           Data quality
         </span>
@@ -1246,7 +1246,7 @@ function CoverageGaps({ gaps }: { gaps: GapRow[] }) {
               className="flex items-center gap-2 rounded-sm border"
               style={{ padding: '8px 10px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
             >
-              <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: g.tone === 'bad' ? '#ef4444' : '#f59e0b' }} />
+              <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: g.tone === 'bad' ? 'var(--status-failed)' : 'var(--status-broken)' }} />
               <div className="flex-1 text-[12.5px] text-[var(--color-text)] leading-[1.35] gap-body">{g.body}</div>
               <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">{g.ago}</span>
             </div>
@@ -1317,9 +1317,9 @@ function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) 
             style={{
               aspectRatio: '1',
               background: c.level === 0 ? 'var(--color-bg-secondary)'
-                : c.level === 1 ? 'rgba(34,197,94,0.18)'
-                : c.level === 2 ? 'rgba(34,197,94,0.40)'
-                : c.level === 3 ? 'rgba(34,197,94,0.70)'
+                : c.level === 1 ? 'color-mix(in srgb, var(--status-passed) 18%, transparent)'
+                : c.level === 2 ? 'color-mix(in srgb, var(--status-passed) 40%, transparent)'
+                : c.level === 3 ? 'color-mix(in srgb, var(--status-passed) 70%, transparent)'
                 :                 'var(--status-passed)',
               border: c.level === 0 ? '1px solid var(--color-border)' : '1px solid transparent',
               boxShadow: c.isToday ? '0 0 0 1px var(--color-accent)' : 'none',
@@ -1332,7 +1332,7 @@ function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) 
         <span className="inline-flex items-center gap-1">
           Less
           <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }} />
-          <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'rgba(34,197,94,0.40)' }} />
+          <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'color-mix(in srgb, var(--status-passed) 40%, transparent)' }} />
           <i className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--status-passed)' }} />
           More
         </span>
@@ -1423,9 +1423,9 @@ function RecommendedActions({ recs }: { recs: RecRow[] }) {
 
 function RecActionRow({ rec }: { rec: RecRow }) {
   const palette = {
-    dev: { bg: 'rgba(168,85,247,0.16)', fg: '#c4b5fd' },
-    qa:  { bg: 'rgba(68,147,248,0.16)', fg: '#93c5fd' },
-    rm:  { bg: 'rgba(34,197,94,0.16)',  fg: '#86efac' },
+    dev: { bg: 'color-mix(in srgb, var(--status-flaky) 16%, transparent)', fg: 'var(--status-flaky)' },
+    qa:  { bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', fg: 'var(--color-accent)' },
+    rm:  { bg: 'color-mix(in srgb, var(--status-passed) 16%, transparent)',  fg: 'var(--status-passed)' },
   }[rec.role]
   const Icon = rec.Icon
   return (
@@ -1787,7 +1787,7 @@ export default function CoveragePage() {
                 tone={model.daysWithRuns < Math.ceil(days * 0.3) ? 'warn' : 'neutral'}
                 meta={
                   model.daysWithRuns < Math.ceil(days * 0.3) ? (
-                    <span className="font-medium" style={{ color: '#fcd34d' }}>⚠ Schedule may be paused</span>
+                    <span className="font-medium" style={{ color: 'var(--status-broken)' }}>⚠ Schedule may be paused</span>
                   ) : (
                     <>{Math.round((model.daysWithRuns / days) * 100)}% of window</>
                   )

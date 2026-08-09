@@ -23,7 +23,7 @@ export default function DecisionDiamond({ decision, selected, onSelect }: Decisi
       onClick={onSelect}
       title={decision.rationale ?? undefined}
       className={clsx(
-        'absolute focus:outline-none focus:ring-2 focus:ring-[var(--color-purple,#a371f7)]/50',
+        'absolute focus:outline-none focus:ring-2 focus:ring-[var(--color-purple,var(--status-flaky))]/50',
       )}
       style={{
         left: pos.x,
@@ -32,11 +32,11 @@ export default function DecisionDiamond({ decision, selected, onSelect }: Decisi
         height: DECISION_SIZE,
         transform: 'rotate(45deg)',
         background: selected
-          ? 'rgba(163,113,247,0.18)'
-          : 'rgba(163,113,247,0.08)',
-        border: '1.5px solid var(--color-purple, #a371f7)',
+          ? 'color-mix(in srgb, var(--status-flaky) 18%, transparent)'
+          : 'color-mix(in srgb, var(--status-flaky) 8%, transparent)',
+        border: '1.5px solid var(--color-purple, var(--status-flaky))',
         borderRadius: 8,
-        boxShadow: selected ? '0 0 0 3px var(--color-purple-soft, rgba(163,113,247,0.14))' : undefined,
+        boxShadow: selected ? '0 0 0 3px var(--color-purple-soft, color-mix(in srgb, var(--status-flaky) 14%, transparent))' : undefined,
         cursor: 'pointer',
       }}
       aria-label={`Decision: ${decision.label}`}
@@ -50,7 +50,7 @@ export default function DecisionDiamond({ decision, selected, onSelect }: Decisi
           className="text-[8.5px] uppercase"
           style={{
             letterSpacing: '0.12em',
-            color: 'var(--color-purple, #a371f7)',
+            color: 'var(--color-purple, var(--status-flaky))',
             opacity: 0.8,
           }}
         >
@@ -58,7 +58,7 @@ export default function DecisionDiamond({ decision, selected, onSelect }: Decisi
         </div>
         <div
           className="text-[10px] font-mono"
-          style={{ color: 'var(--color-purple, #a371f7)' }}
+          style={{ color: 'var(--color-purple, var(--status-flaky))' }}
         >
           {compactKey}
         </div>
