@@ -308,6 +308,11 @@ jobs:
       - name: Bundle budget (eager critical path)
         run: npm run check:bundle
 
+      # Status hues must stay unified across themes, fonts must stay system,
+      # and the picker swatches must keep matching the tokens they advertise.
+      - name: Theme tokens (normalization invariants)
+        run: npm run check:theme
+
   # ─────────────────────────────────────────────────────────────
   # JOB 3: MCP server lint and syntax validation
   # ─────────────────────────────────────────────────────────────

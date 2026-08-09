@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Retheme: normalized theme tokens across all six themes
+
+Implements `TestLookup Retheme Preview.dc.html` from the Claude Design project
+("Testlookup application slides"), whose drop-in artifact is `retheme/theme-tokens.css`.
+
+- **Status hues unified.** One green, one red, one amber, one gold, one violet across every
+  dark theme. They had drifted — `#7ce0a0` / `#43e0a0` / `#3fb950` were all "passed", so a
+  passed pill meant a different colour depending on the active theme. `lab` keeps darker
+  equivalents because it is the light theme and needs the contrast.
+- **Neon lime accent retired** (`#b8f24a` → `#3b82f6`); passed-green softened to `#34a06b`;
+  Signal's green-tinted surfaces neutralized to charcoal; Midnight's green primary button
+  retired for blue.
+- **Aurora background glows removed** — every theme now sets `--app-bg-image:none`.
+- **System font stacks everywhere**, replacing Sora / Plus Jakarta Sans / Space Grotesk /
+  Archivo / IBM Plex Mono / JetBrains Mono.
+
+Derived tokens were not touched: they resolve through `var()`, so they adapt automatically —
+which is what made a token-only change viable.
+
+Two consequences the design spec did not cover, both handled here:
+
+- **Theme-picker swatches are hardcoded in `themeStore.ts`.** Left alone they would have
+  shown the *old* palette — a lime chip for a blue theme. All six swatches and two hint
+  labels realigned, and the regression test now asserts each swatch equals its theme's actual
+  `--color-bg` / `--color-bg-card` / `--color-accent`, so they cannot drift apart again.
+- **The webfonts were still being loaded.** `index.html` pulled 8 Google Font families that
+  no theme references any more. Removed, along with both preconnects, and the CSP tightened
+  to drop `fonts.googleapis.com` / `fonts.gstatic.com`. This matters beyond the saved request:
+  TestLookup is offline-first, and in an air-gapped deployment that request does not fail
+  fast — it stalls until timeout. The CSP's own explanatory comment still claimed
+  "Scoped to 'self' + Google Fonts"; corrected.
+
+Guard: `frontend/scripts/check-theme-tokens.mjs`, wired into CI beside the bundle budget.
+It reads the real `index.css`, `index.html` and `themeStore.ts` and **fails on the
+pre-retheme files with 12+ specific violations**.
+
+It also measured the drift more precisely than the brief did: the spec named three
+conflicting "passed" greens; there were **five**, alongside five reds, four ambers, five
+golds and five violets. A node script rather than a vitest file because `npm run build` runs
+`tsc` over `src/` with no node types, and vitest stubs CSS imports to empty (`css: false`),
+so `?raw` on a stylesheet yields nothing.
+
 ### 2026-08-08 — Celery workers expose their own metrics; the last ghost alert is backed
 
 - Completes the ghost-metric work. `TestLookupTaskLatencyHigh` alerts on

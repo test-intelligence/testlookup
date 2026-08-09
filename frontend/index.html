@@ -11,7 +11,9 @@
       script-src: strict 'self' — the production bundle is fully self-served
         via Vite and contains no inline scripts.
       style-src: 'unsafe-inline' is required by Tailwind arbitrary values and
-        react-hot-toast's dynamic styles. Scoped to 'self' + Google Fonts.
+        react-hot-toast's dynamic styles. Scoped to 'self' — the Google Fonts
+        origin was dropped with the webfonts in the 2026-08 retheme.
+      font-src: 'self' + data: only. No remote font origin is allowed.
       connect-src: same-origin API + WebSockets only. Anchors to external
         systems (Jira, Confluence) are full page navigations, not fetches,
         so they do not need a connect-src entry.
@@ -40,14 +42,16 @@
       upgrade behavior, set CSP as a real response header in nginx,
       conditional on ``$scheme = https``, so HTTP origins are unaffected.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; form-action 'self'; base-uri 'self'; object-src 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' ws: wss:; form-action 'self'; base-uri 'self'; object-src 'none'" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), payment=(), usb=()" />
+    <!-- No webfonts: the 2026-08 retheme moved every theme to system font
+         stacks. Beyond the removed request, TestLookup is offline-first —
+         an air-gapped deployment cannot reach fonts.googleapis.com, so the
+         request stalls until it times out. CSP no longer allows either
+         Google font origin; restoring a webfont means restoring both. -->
     <title>TestLookup — Instant Answers from Your Test Results</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Schibsted+Grotesk:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Archivo:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>

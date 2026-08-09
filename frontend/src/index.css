@@ -38,108 +38,105 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 @layer base {
-  /* ── SIGNAL · deep-teal surfaces, cream type, lime accent (default) ── */
+  /* ── SIGNAL · neutral charcoal, blue accent (default) ── */
   [data-theme="signal"] {
-    --color-bg:#0a1411; --color-bg-secondary:#0c1815; --color-bg-card:#0f1d19;
-    --color-bg-input:#0a1512; --color-bg-hover:#15241f;
-    --color-border:#1f322b; --color-border-light:#2a4339;
-    --color-text:#f1ece0; --color-text-secondary:#c8c3b4; --color-text-muted:#8e9389; --color-text-faint:#646b62;
-    --color-accent:#b8f24a; --color-accent-ink:#bdf25a;
-    --color-btn-primary-bg:#b8f24a; --color-btn-primary-text:#0a1411;
-    --status-passed:#7ce0a0; --status-failed:#ff8a6b; --status-broken:#ffb347; --status-skipped:#f5d76e; --status-flaky:#e0b3ff;
-    --color-purple:#e0b3ff; --color-cyan:#5ad1c4;
+    --color-bg:#101318; --color-bg-secondary:#14181f; --color-bg-card:#181d25;
+    --color-bg-input:#101318; --color-bg-hover:#1e242e;
+    --color-border:#262d38; --color-border-light:#333c49;
+    --color-text:#e8ebef; --color-text-secondary:#b9bfc9; --color-text-muted:#7f8794; --color-text-faint:#575f6b;
+    --color-accent:#3b82f6; --color-accent-ink:#6ba3f8;
+    --color-btn-primary-bg:#3b82f6; --color-btn-primary-text:#ffffff;
+    --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
+    --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.030);
-    --font-display:'Sora', system-ui, sans-serif;
-    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-mono:'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
-    --app-bg-image:
-      radial-gradient(60% 45% at 100% 0%, rgba(184,242,74,0.06), transparent 60%),
-      radial-gradient(55% 45% at 0% 100%, rgba(124,224,160,0.045), transparent 55%);
+    --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --app-bg-image:none;
   }
 
-  /* ── CONSOLE · near-black neutral, electric violet ── */
+  /* ── CONSOLE · near-black neutral, muted indigo ── */
   [data-theme="console"] {
-    --color-bg:#09090c; --color-bg-secondary:#0d0d12; --color-bg-card:#111118;
-    --color-bg-input:#08080b; --color-bg-hover:#17171f;
-    --color-border:#1f1f2b; --color-border-light:#2c2c3c;
-    --color-text:#ededf2; --color-text-secondary:#b6b7c4; --color-text-muted:#76778a; --color-text-faint:#4d4e60;
-    --color-accent:#7c5cff; --color-accent-ink:#a78bff;
-    --color-btn-primary-bg:#7c5cff; --color-btn-primary-text:#ffffff;
-    --status-passed:#43e0a0; --status-failed:#ff6b8b; --status-broken:#ffc24b; --status-skipped:#ffd24b; --status-flaky:#5cd4ff;
-    --color-purple:#a78bff; --color-cyan:#5cd4ff;
+    --color-bg:#0b0c10; --color-bg-secondary:#0f1116; --color-bg-card:#13161c;
+    --color-bg-input:#0b0c10; --color-bg-hover:#191d24;
+    --color-border:#232833; --color-border-light:#303743;
+    --color-text:#e9eaee; --color-text-secondary:#b5b8c2; --color-text-muted:#7c808d; --color-text-faint:#535866;
+    --color-accent:#6366f1; --color-accent-ink:#8f92f5;
+    --color-btn-primary-bg:#6366f1; --color-btn-primary-text:#ffffff;
+    --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
+    --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.035);
-    --font-display:'Space Grotesk', system-ui, sans-serif;
-    --font-sans:'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-mono:'JetBrains Mono', ui-monospace, monospace;
-    --app-bg-image:radial-gradient(90% 55% at 12% -10%, rgba(124,92,255,0.12), transparent 55%);
+    --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --app-bg-image:none;
   }
 
-  /* ── SLATE · cool grey, sky-blue accent ── */
+  /* ── SLATE · cool grey, soft sky-blue accent ── */
   [data-theme="slate"] {
     --color-bg:#11151c; --color-bg-secondary:#181d27; --color-bg-card:#1b212c;
     --color-bg-input:#11151c; --color-bg-hover:#222a36;
     --color-border:#2e3744; --color-border-light:#3d4856;
     --color-text:#eef2f7; --color-text-secondary:#c2cad6; --color-text-muted:#828c9c; --color-text-faint:#5a6473;
-    --color-accent:#56b6f0; --color-accent-ink:#7cc7f5;
-    --color-btn-primary-bg:#3d8bfd; --color-btn-primary-text:#ffffff;
-    --status-passed:#5fd38a; --status-failed:#fb7185; --status-broken:#fbbf45; --status-skipped:#fbd65f; --status-flaky:#c4a3f5;
-    --color-purple:#c4a3f5; --color-cyan:#5fd3ce;
+    --color-accent:#5e9ed6; --color-accent-ink:#82b4e0;
+    --color-btn-primary-bg:#3b82f6; --color-btn-primary-text:#ffffff;
+    --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
+    --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.030);
-    --font-display:'Sora', system-ui, sans-serif;
-    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-mono:'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
-    --app-bg-image:linear-gradient(180deg, rgba(255,255,255,0.03), transparent 40%);
+    --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --app-bg-image:none;
   }
 
-  /* ── EMBER · warm charcoal, amber accent ── */
+  /* ── EMBER · warm charcoal, muted amber accent ── */
   [data-theme="ember"] {
-    --color-bg:#16110d; --color-bg-secondary:#1d1611; --color-bg-card:#211913;
-    --color-bg-input:#16110d; --color-bg-hover:#2a201a;
-    --color-border:#352a22; --color-border-light:#473930;
-    --color-text:#f5ede4; --color-text-secondary:#d6c8ba; --color-text-muted:#9c8c7d; --color-text-faint:#6e6155;
-    --color-accent:#ff9f45; --color-accent-ink:#ffb366;
-    --color-btn-primary-bg:#ff9f45; --color-btn-primary-text:#16110d;
-    --status-passed:#9bd07a; --status-failed:#f6685e; --status-broken:#ffc24b; --status-skipped:#ffd479; --status-flaky:#e89bd8;
-    --color-purple:#e89bd8; --color-cyan:#5ec8b0;
+    --color-bg:#16120e; --color-bg-secondary:#1c1712; --color-bg-card:#201a14;
+    --color-bg-input:#16120e; --color-bg-hover:#28211a;
+    --color-border:#342b22; --color-border-light:#453a2f;
+    --color-text:#f0e9e0; --color-text-secondary:#cfc4b6; --color-text-muted:#978a7b; --color-text-faint:#6a5f53;
+    --color-accent:#d08c3a; --color-accent-ink:#dda45e;
+    --color-btn-primary-bg:#d08c3a; --color-btn-primary-text:#16120e;
+    --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
+    --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.030);
-    --font-display:'Sora', system-ui, sans-serif;
-    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-mono:'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
-    --app-bg-image:radial-gradient(70% 50% at 100% 0%, rgba(255,159,69,0.06), transparent 60%);
+    --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --app-bg-image:none;
   }
 
-  /* ── LAB · LIGHT editorial, cobalt accent. Everything flips: dark ink on
-        light surfaces, darker status hues, dark grid dots. ── */
+  /* ── LAB · light, blue accent. Status hues darkened for contrast. ── */
   [data-theme="lab"] {
-    --color-bg:#f4f2ec; --color-bg-secondary:#efece4; --color-bg-card:#fbfaf6;
-    --color-bg-input:#eae7dd; --color-bg-hover:#e7e3d8;
-    --color-border:#ddd8cb; --color-border-light:#cfc9b9;
-    --color-text:#16140f; --color-text-secondary:#46433a; --color-text-muted:#7d796c; --color-text-faint:#a39e8f;
-    --color-accent:#1f3aff; --color-accent-ink:#1f3aff;
-    --color-btn-primary-bg:#1f3aff; --color-btn-primary-text:#ffffff;
-    --status-passed:#15803d; --status-failed:#b91c1c; --status-broken:#c2410c; --status-skipped:#a16207; --status-flaky:#6d28d9;
-    --color-purple:#6d28d9; --color-cyan:#0e7490;
+    --color-bg:#f5f6f8; --color-bg-secondary:#eef0f3; --color-bg-card:#ffffff;
+    --color-bg-input:#eceef2; --color-bg-hover:#e6e9ee;
+    --color-border:#d9dde4; --color-border-light:#c8cdd6;
+    --color-text:#1a1d23; --color-text-secondary:#454a54; --color-text-muted:#767d89; --color-text-faint:#9aa1ac;
+    --color-accent:#2563eb; --color-accent-ink:#2563eb;
+    --color-btn-primary-bg:#2563eb; --color-btn-primary-text:#ffffff;
+    --status-passed:#1f7a48; --status-failed:#b3352c; --status-broken:#b05816; --status-skipped:#91701c; --status-flaky:#6742ad;
+    --color-purple:#6742ad; --color-cyan:#0e7490;
     --grid-dot:rgba(0,0,0,0.06);
-    --font-display:'Schibsted Grotesk', system-ui, sans-serif;
-    --font-sans:'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-mono:'IBM Plex Mono', ui-monospace, monospace;
-    --app-bg-image:radial-gradient(120% 70% at 50% -10%, rgba(31,58,255,0.05), transparent 60%);
+    --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --app-bg-image:none;
   }
 
-  /* ── MIDNIGHT · the original GitHub-derived dark (kept as a choice) ── */
+  /* ── MIDNIGHT · GitHub-derived dark, blue accent (green button retired) ── */
   [data-theme="midnight"] {
     --color-bg:#0d1117; --color-bg-secondary:#161b22; --color-bg-card:#151b23;
     --color-bg-input:#0d1117; --color-bg-hover:#1c2128;
     --color-border:#3d444d; --color-border-light:#4a525c;
     --color-text:#f0f6fc; --color-text-secondary:#c9d1d9; --color-text-muted:#9198a1; --color-text-faint:#656d76;
-    --color-accent:#4493f8; --color-accent-ink:#58a6ff;
-    --color-btn-primary-bg:#238636; --color-btn-primary-text:#ffffff;
-    --status-passed:#3fb950; --status-failed:#f85149; --status-broken:#d29922; --status-skipped:#d29922; --status-flaky:#a371f7;
-    --color-purple:#a371f7; --color-cyan:#39c5cf;
+    --color-accent:#3b82f6; --color-accent-ink:#6ba3f8;
+    --color-btn-primary-bg:#3b82f6; --color-btn-primary-text:#ffffff;
+    --status-passed:#34a06b; --status-failed:#d1554e; --status-broken:#cf8542; --status-skipped:#bfa14a; --status-flaky:#9d85d6;
+    --color-purple:#9d85d6; --color-cyan:#4fa8b8;
     --grid-dot:rgba(255,255,255,0.025);
-    --font-display:'Plus Jakarta Sans', system-ui, sans-serif;
-    --font-sans:'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-mono:'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
     --app-bg-image:none;
   }
 
@@ -150,9 +147,9 @@
      ═══════════════════════════════════════════════════════════════════ */
   :root {
     /* Default font stacks (a theme always overrides these; here as a safety net). */
-    --font-display: 'Sora', system-ui, sans-serif;
-    --font-sans:    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --font-mono:    'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+    --font-display: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:    system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 
     /* Accent tints + button hover + sidebar/ring/scrollbar */
     --color-accent-muted:   color-mix(in srgb, var(--color-accent) 14%, transparent);
