@@ -128,12 +128,10 @@ def test_no_alert_rule_fires_on_a_metric_nothing_defines():
             name = m.group(1)
             emitted |= {name, f"{name}_total", f"{name}_sum", f"{name}_count", f"{name}_bucket"}
 
-    # Known-inert, listed explicitly rather than silently tolerated — adding a
-    # NEW ghost still fails. celery_task_runtime_seconds needs the Celery
-    # workers to expose their own scrape target (they are separate processes
-    # from the backend Prometheus scrapes), which is infra work beyond this
-    # change. Recorded in docs/performance/PERF_FINDINGS.md as F-P15.
-    KNOWN_INERT = {"celery_task_runtime_seconds_bucket"}
+    # Empty again: celery_task_runtime_seconds was the last known-inert entry
+    # and is now emitted by the workers' own scrape target. Kept as a mechanism
+    # so a future gap can be recorded visibly instead of silently tolerated.
+    KNOWN_INERT: set[str] = set()
 
     referenced = set(re.findall(r"\b(celery_[a-z0-9_]+)\b", rules))
     ghosts = sorted(r for r in referenced if r not in emitted and r not in KNOWN_INERT)

@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Celery workers expose their own metrics; the last ghost alert is backed
+
+- Completes the ghost-metric work. `TestLookupTaskLatencyHigh` alerts on
+  `celery_task_runtime_seconds` (p99 > 120s) and nothing emitted it. The backend could not:
+  only the worker sees task execution, so this needed a worker-side scrape target.
+
+- **Multiprocess mode is the crux.** Prefork children each keep a private registry, so the
+  process serving `/metrics` would otherwise publish only its own view. Children write to
+  `PROMETHEUS_MULTIPROC_DIR` (an `emptyDir` at `/tmp/prometheus-multiproc`) and the parent
+  aggregates via `MultiProcessCollector` on `worker_ready`.
+
+- Without that directory set the server is deliberately **not** started — publishing one
+  child's numbers as if they were the whole worker is worse than publishing nothing. That
+  also means Compose deployments simply run without it, no config required.
+
+- `--max-tasks-per-child` recycles children constantly, so `worker_process_shutdown` calls
+  `mark_process_dead`. That clears the dead PID's *gauge* files; counter and histogram files
+  stay, because a task that ran is a task that ran.
+
+- Buckets go to 600s. prometheus_client's defaults top out at 10s, which would dump every
+  slow task into `+Inf` and make a p99 near the alert's 120s threshold meaningless — the
+  metric would exist and still not answer the question it was added for.
+
+- All four workers annotated for scraping on 9100; `beat` deliberately excluded — it
+  schedules and executes nothing.
+
+- Verified end-to-end: a recorded observation aggregates back out through
+  `MultiProcessCollector` with the `le="120.0"` bucket and both labels present.
+
+- Regression: `test_worker_metrics_exposure.py` (13 of 18 fail before) checks the three
+  things that each fail silently on their own — the env var matching a **real mount path**,
+  the scrape annotation matching the **actual container port**, and the volume being
+  ephemeral so a restart cannot resurrect dead children.
+
+- `KNOWN_INERT` in the queue-depth test is now empty. **No alert rule references a metric
+  nothing emits.**
+
 ### 2026-08-08 — Failure-signature table on /runs is paginated
 
 - `SignatureClusterCard` rendered every member of the primary cluster **plus** every outlier

@@ -2,7 +2,13 @@
 from datetime import timedelta
 
 from celery import Celery
-from celery.signals import worker_process_init
+from celery.signals import (
+    task_postrun,
+    task_prerun,
+    worker_process_init,
+    worker_process_shutdown,
+    worker_ready,
+)
 from celery.schedules import crontab
 from kombu import Exchange, Queue
 
@@ -356,3 +362,94 @@ def _reset_db_pool_after_fork(**_kwargs: object) -> None:
 
     get_engine.cache_clear()
     get_session_factory.cache_clear()
+
+
+# ── Prometheus: worker-side metrics ───────────────────────────────────────────
+#
+# TestLookupTaskLatencyHigh alerts on celery_task_runtime_seconds. Only the
+# worker sees task execution, so the backend cannot emit it — the worker has to
+# expose its own scrape target.
+#
+# Prefork means each child keeps a private registry, so the exporting process
+# would otherwise publish only its own numbers. prometheus_client multiprocess
+# mode solves it: children write metric files into PROMETHEUS_MULTIPROC_DIR and
+# the exporter aggregates them. Without that directory set we deliberately do
+# NOT start the server — publishing one child's view as if it were the whole
+# worker is worse than publishing nothing.
+
+_TASK_STARTED_AT: dict[str, float] = {}
+
+
+@task_prerun.connect
+def _record_task_start(task_id=None, task=None, **_kwargs: object) -> None:
+    import time
+
+    if task_id:
+        _TASK_STARTED_AT[task_id] = time.perf_counter()
+
+
+@task_postrun.connect
+def _record_task_runtime(task_id=None, task=None, **_kwargs: object) -> None:
+    """Observe execution time. Never let instrumentation fail a task."""
+    import time
+
+    started = _TASK_STARTED_AT.pop(task_id, None) if task_id else None
+    if started is None:
+        return
+    try:
+        from app.core.metrics import celery_task_runtime_seconds
+
+        queue = ""
+        request = getattr(task, "request", None)
+        if request is not None:
+            queue = getattr(request, "delivery_info", {}).get("routing_key", "") or ""
+        celery_task_runtime_seconds.labels(
+            task_name=getattr(task, "name", "unknown"),
+            queue_name=queue or "unknown",
+        ).observe(time.perf_counter() - started)
+    except Exception:  # noqa: BLE001 — metrics must never break the task
+        pass
+
+
+@worker_ready.connect
+def _start_metrics_server(**_kwargs: object) -> None:
+    """Expose /metrics from the worker parent, aggregating child processes."""
+    import os
+
+    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not multiproc_dir:
+        return
+    try:
+        from prometheus_client import CollectorRegistry, multiprocess, start_http_server
+
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        port = int(os.environ.get("WORKER_METRICS_PORT", "9100"))
+        start_http_server(port, registry=registry)
+    except Exception:  # noqa: BLE001 — a metrics port must never stop a worker
+        pass
+
+
+@worker_process_shutdown.connect
+def _clear_dead_child_metrics(**_kwargs: object) -> None:
+    """Tell prometheus_client this child is gone.
+
+    ``--max-tasks-per-child`` recycles prefork children constantly (200 tasks
+    here), so without this the multiprocess directory accumulates a file set per
+    dead PID for the life of the pod.
+
+    ``mark_process_dead`` clears the *gauge* files for the PID; counter and
+    histogram files are deliberately left, because their observations already
+    happened and dropping them would rewrite history — a task that ran is a task
+    that ran, whether or not the worker that ran it still exists.
+    """
+    import os
+
+    if not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        return
+    try:
+        from prometheus_client import multiprocess
+
+        multiprocess.mark_process_dead(os.getpid())
+    except Exception:  # noqa: BLE001 — never block worker shutdown
+        pass

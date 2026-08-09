@@ -344,3 +344,27 @@ celery_queue_length = Gauge(
     "Pending tasks per Celery queue, read from the Redis broker at scrape time",
     ["queue_name"],
 )
+
+
+# ── Celery task runtime ───────────────────────────────────────────────────────
+#
+# ``celery_task_runtime_seconds`` backs the TestLookupTaskLatencyHigh alert
+# (p99 > 120s). Like celery_queue_length before it, the alert existed while
+# nothing emitted the metric — verified live, 0 samples.
+#
+# This one has to be recorded inside the WORKER, not the backend, because only
+# the worker sees task execution. Workers are prefork: each child has its own
+# registry, so the process exporting /metrics cannot see sibling children's
+# values. prometheus_client's multiprocess mode is the mechanism — children
+# write to PROMETHEUS_MULTIPROC_DIR and the exporter aggregates the files.
+#
+# Buckets are chosen around the alert's 120s threshold so the histogram can
+# actually resolve a p99 near it; the default buckets top out at 10s, which
+# would make every long task land in +Inf and the quantile meaningless.
+
+celery_task_runtime_seconds = Histogram(
+    "celery_task_runtime_seconds",
+    "Celery task execution time in seconds",
+    ["task_name", "queue_name"],
+    buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, float("inf")),
+)

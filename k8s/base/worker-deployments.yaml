@@ -29,6 +29,13 @@ spec:
       app: testlookup-worker-critical
   template:
     metadata:
+      annotations:
+        # Celery workers are separate processes from the backend, so the
+        # backend's /metrics cannot carry task-execution metrics. Each
+        # worker exposes its own scrape target.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
       labels:
         app: testlookup-worker-critical
         app.kubernetes.io/component: worker
@@ -70,13 +77,26 @@ spec:
             - -Q
             - critical
             - --max-tasks-per-child=100
+          ports:
+            - name: metrics
+              containerPort: 9100
           envFrom:
             - configMapRef:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          env:
+            # prometheus_client multiprocess mode. Prefork children each keep a
+            # private registry, so the parent serving /metrics would otherwise
+            # publish only its own view of the worker. Children write metric
+            # files here and the exporter aggregates them.
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
           # cpu limit 1000m -> 2000m to match --concurrency=2. Not separately
           # measured; same arithmetic as the ingestion worker below, which was.
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
           resources:
             requests:
               cpu: 250m
@@ -130,6 +150,13 @@ spec:
                   matchLabels:
                     app: testlookup-worker-critical
                 topologyKey: kubernetes.io/hostname
+      volumes:
+        # Scratch space for multiprocess metric files. emptyDir, not
+        # persistent: the files describe this pod's live processes and
+        # must start empty, or a restart would resurrect dead children.
+        - name: prometheus-multiproc
+          emptyDir: {}
+
 ---
 # ── worker-ingestion: test report parsing (ingestion queue) ──────────────────
 apiVersion: apps/v1
@@ -148,6 +175,13 @@ spec:
       app: testlookup-worker-ingestion
   template:
     metadata:
+      annotations:
+        # Celery workers are separate processes from the backend, so the
+        # backend's /metrics cannot carry task-execution metrics. Each
+        # worker exposes its own scrape target.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
       labels:
         app: testlookup-worker-ingestion
         app.kubernetes.io/component: worker
@@ -195,11 +229,21 @@ spec:
             # shard count, update this list too.
             - ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7
             - --max-tasks-per-child=200
+          ports:
+            - name: metrics
+              containerPort: 9100
           envFrom:
             - configMapRef:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          env:
+            # prometheus_client multiprocess mode. Prefork children each keep a
+            # private registry, so the parent serving /metrics would otherwise
+            # publish only its own view of the worker. Children write metric
+            # files here and the exporter aggregates them.
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
           # cpu limit raised 1000m -> 4000m (2026-08-08) on measurement.
           # --concurrency=4 under a 1-core limit is four processes that cannot
           # exceed one core between them. Under an 80-run ingest burst the
@@ -209,6 +253,9 @@ spec:
           # the field that actually settles it. Back to back at the same
           # corpus size: 5.0 runs/s throttled at 1 core, 23.5 and 22.7 runs/s
           # unthrottled at 4. Observed demand peaked at 1.46 cores per pod.
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
           resources:
             requests:
               cpu: 250m
@@ -262,6 +309,13 @@ spec:
                   matchLabels:
                     app: testlookup-worker-ingestion
                 topologyKey: kubernetes.io/hostname
+      volumes:
+        # Scratch space for multiprocess metric files. emptyDir, not
+        # persistent: the files describe this pod's live processes and
+        # must start empty, or a restart would resurrect dead children.
+        - name: prometheus-multiproc
+          emptyDir: {}
+
 ---
 # ── worker-ai: multi-agent LangGraph pipeline (ai_analysis queue) ────────────
 apiVersion: apps/v1
@@ -280,6 +334,13 @@ spec:
       app: testlookup-worker-ai
   template:
     metadata:
+      annotations:
+        # Celery workers are separate processes from the backend, so the
+        # backend's /metrics cannot carry task-execution metrics. Each
+        # worker exposes its own scrape target.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
       labels:
         app: testlookup-worker-ai
         app.kubernetes.io/component: worker
@@ -313,11 +374,24 @@ spec:
             - -Q
             - ai_analysis
             - --max-tasks-per-child=50  # lower limit: prevent LLM memory leaks
+          ports:
+            - name: metrics
+              containerPort: 9100
           envFrom:
             - configMapRef:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          env:
+            # prometheus_client multiprocess mode. Prefork children each keep a
+            # private registry, so the parent serving /metrics would otherwise
+            # publish only its own view of the worker. Children write metric
+            # files here and the exporter aggregates them.
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
           resources:
             requests:
               cpu: 500m
@@ -371,6 +445,13 @@ spec:
                   matchLabels:
                     app: testlookup-worker-ai
                 topologyKey: kubernetes.io/hostname
+      volumes:
+        # Scratch space for multiprocess metric files. emptyDir, not
+        # persistent: the files describe this pod's live processes and
+        # must start empty, or a restart would resurrect dead children.
+        - name: prometheus-multiproc
+          emptyDir: {}
+
 ---
 # ── worker-default: notifications, housekeeping (default queue) ──────────────
 apiVersion: apps/v1
@@ -389,6 +470,13 @@ spec:
       app: testlookup-worker-default
   template:
     metadata:
+      annotations:
+        # Celery workers are separate processes from the backend, so the
+        # backend's /metrics cannot carry task-execution metrics. Each
+        # worker exposes its own scrape target.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
       labels:
         app: testlookup-worker-default
         app.kubernetes.io/component: worker
@@ -422,15 +510,28 @@ spec:
             - -Q
             - default
             - --max-tasks-per-child=200
+          ports:
+            - name: metrics
+              containerPort: 9100
           envFrom:
             - configMapRef:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          env:
+            # prometheus_client multiprocess mode. Prefork children each keep a
+            # private registry, so the parent serving /metrics would otherwise
+            # publish only its own view of the worker. Children write metric
+            # files here and the exporter aggregates them.
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
           # cpu limit 500m -> 4000m: --concurrency=4 under half a core was the
           # worst ratio of any worker (8 processes' worth of demand per core).
           # Not separately measured -- driving the default queue in isolation
           # is awkward -- but the arithmetic is the ingestion worker's.
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
           resources:
             requests:
               cpu: 100m
@@ -475,6 +576,13 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+      volumes:
+        # Scratch space for multiprocess metric files. emptyDir, not
+        # persistent: the files describe this pod's live processes and
+        # must start empty, or a restart would resurrect dead children.
+        - name: prometheus-multiproc
+          emptyDir: {}
+
 ---
 # ── beat: Celery beat scheduler (always exactly 1 replica — never scaled) ─────
 apiVersion: apps/v1
