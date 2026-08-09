@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Fix: the "Upload Report" sidebar link silently did nothing
+
+Reported: `/runs?upload=1` "displays the runs page". It did. The sidebar entry
+deep-links there, and the page opened the upload panel only when the scope was a
+single project — but **All Projects is the default scope**, so the plain link hit that
+branch every time. The user saw the sidebar highlight "Upload Report" as the active
+page, and an ordinary runs list underneath it. The only copy explaining why lived in a
+disabled button's `title` attribute, which nobody arriving from that click ever hovers.
+
+Confirmed on the live homelab before the fix — scope `all`, upload button present but
+disabled, drawer closed.
+
+- The page now **renders the reason** it could not honour the request: pick a project
+  (the common case, and the one the user can fix), or the QA Engineer role.
+- `?upload=1` already survived in the URL, so selecting a project opens the panel
+  automatically — verified live, and the banner says so.
+- The deep link also **skipped the role check** the button applies, so a non-QA-engineer
+  could open a panel that `POST /api/v1/ingest/file` then rejected with 403. The backend
+  did enforce it, so this was a misleading affordance rather than a privilege gap. The
+  link now honours the same three conditions as the button.
+
+The earlier manual-upload probe tested the header button *after explicitly selecting a
+project* and never followed the sidebar link, which is why this shipped as "verified".
 ### 2026-08-09 — Fix: `WEEKLY_RETRO` digests were unreachable from the UI *and* the API
 
 The auto-retro digest (Tier 2 item 12) was built end-to-end — `DigestSchedule.WEEKLY_RETRO`
