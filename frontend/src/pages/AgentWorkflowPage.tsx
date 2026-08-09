@@ -133,9 +133,9 @@ function formatElapsed(seconds: number): string {
 // Status → background/border/foreground tokens for both subway cards and
 // status dots. Centralised so the views stay visually coherent.
 const NODE_STYLE: Record<DisplayStatus, { bg: string; border: string; fg: string; dot: string }> = {
-  done:    { bg: 'var(--color-bg-card)',           border: 'var(--color-border)',                 fg: 'rgb(63 185 80)',         dot: 'rgb(63 185 80)' },
+  done:    { bg: 'var(--color-bg-card)',           border: 'var(--color-border)',                 fg: 'var(--status-passed)',         dot: 'var(--status-passed)' },
   running: { bg: 'color-mix(in srgb, var(--color-accent) 4%, transparent)',           border: 'color-mix(in srgb, var(--color-accent) 45%, transparent)',                fg: 'var(--color-accent)',    dot: 'var(--color-accent)' },
-  failed:  { bg: 'color-mix(in srgb, var(--status-failed) 4%, transparent)',            border: 'color-mix(in srgb, var(--status-failed) 45%, transparent)',                 fg: 'rgb(248 81 73)',         dot: 'rgb(248 81 73)' },
+  failed:  { bg: 'color-mix(in srgb, var(--status-failed) 4%, transparent)',            border: 'color-mix(in srgb, var(--status-failed) 45%, transparent)',                 fg: 'var(--status-failed)',         dot: 'var(--status-failed)' },
   skipped: { bg: 'transparent',                    border: 'var(--color-border)',                 fg: 'var(--color-text-faint)', dot: 'transparent' },
   pending: { bg: 'var(--color-bg-card)',           border: 'var(--color-border)',                 fg: 'var(--color-text-faint)', dot: 'var(--color-text-faint)' },
 }
@@ -190,19 +190,19 @@ const RUN_PICKER_PAGE_SIZE = 100
 function pipelineDot(status?: string | null): string {
   const normalized = (status ?? '').toLowerCase()
   if (normalized === 'running') return 'var(--color-accent)'
-  if (normalized === 'failed') return 'rgb(248 81 73)'
-  if (normalized === 'partial') return 'rgb(210 153 34)'
-  if (normalized === 'completed' || normalized === 'success') return 'rgb(63 185 80)'
+  if (normalized === 'failed') return 'var(--status-failed)'
+  if (normalized === 'partial') return 'var(--status-broken)'
+  if (normalized === 'completed' || normalized === 'success') return 'var(--status-passed)'
   return 'var(--color-text-faint)'
 }
 
 function runStatusTone(status?: string | null): { bg: string; fg: string } {
   const normalized = (status ?? '').toLowerCase()
   if (normalized === 'passed' || normalized === 'success' || normalized === 'completed') {
-    return { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', fg: 'rgb(63 185 80)' }
+    return { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', fg: 'var(--status-passed)' }
   }
   if (normalized === 'failed' || normalized === 'broken') {
-    return { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)', fg: 'rgb(248 81 73)' }
+    return { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)', fg: 'var(--status-failed)' }
   }
   if (normalized === 'running') {
     return { bg: 'var(--color-accent-muted)', fg: 'var(--color-accent)' }
@@ -480,7 +480,7 @@ function SubwayCard({ stage, x, y, selected, small, snapshot, onClick }: SubwayC
           </>
         )}
         {status === 'failed' && (
-          <span style={{ color: 'rgb(210 153 34)' }}>· retry queued</span>
+          <span style={{ color: 'var(--status-broken)' }}>· retry queued</span>
         )}
       </div>
       {status === 'running' && (
@@ -684,7 +684,7 @@ function SubwayTrack({
             width: 64,
             height: 64,
             transform: 'rotate(45deg)',
-            borderColor: selectedId === DECISION_LABEL ? 'rgb(163 113 247)' : 'var(--color-border-light)',
+            borderColor: selectedId === DECISION_LABEL ? 'var(--status-flaky)' : 'var(--color-border-light)',
             background: selectedId === DECISION_LABEL ? 'color-mix(in srgb, var(--status-flaky) 10%, transparent)' : 'var(--color-bg-card)',
             boxShadow: selectedId === DECISION_LABEL ? '0 0 0 3px color-mix(in srgb, var(--status-flaky) 14%, transparent)' : 'none',
             borderRadius: 4,
@@ -725,9 +725,9 @@ function SubwayTrack({
 
 function Legend({ dot, label }: { dot: 'green' | 'blue' | 'red' | 'muted' | 'dash'; label: string }) {
   const styles: Record<typeof dot, React.CSSProperties> = {
-    green: { background: 'rgb(63 185 80)' },
+    green: { background: 'var(--status-passed)' },
     blue: { background: 'var(--color-accent)', boxShadow: '0 0 0 3px var(--color-accent-muted)' },
-    red: { background: 'rgb(248 81 73)' },
+    red: { background: 'var(--status-failed)' },
     muted: { background: 'var(--color-text-faint)' },
     dash: { background: 'transparent', border: '1px dashed var(--color-text-muted)' },
   }
@@ -781,7 +781,7 @@ function RunMeta({
       {failedCount != null && failedCount > 0 && (
         <>
           <span className="text-[var(--color-text-faint)]">·</span>
-          <span className="font-mono text-[12px]" style={{ color: 'rgb(248 81 73)' }}>
+          <span className="font-mono text-[12px]" style={{ color: 'var(--status-failed)' }}>
             {failedCount} failed
           </span>
         </>
@@ -855,7 +855,7 @@ function VerdictPanel({ pipeline, totalTests, failedCount, elapsedLabel }: {
             className="text-[11px] font-bold px-2.5 py-1 rounded-full"
             style={{
               background: verdict === 'GO' ? 'color-mix(in srgb, var(--status-passed) 18%, transparent)' : 'color-mix(in srgb, var(--status-broken) 18%, transparent)',
-              color: verdict === 'GO' ? 'rgb(63 185 80)' : 'rgb(210 153 34)',
+              color: verdict === 'GO' ? 'var(--status-passed)' : 'var(--status-broken)',
             }}
           >
             {verdict}
@@ -876,9 +876,9 @@ function VerdictPanel({ pipeline, totalTests, failedCount, elapsedLabel }: {
             className="flex items-center gap-3 mt-3.5 px-3 py-2 rounded-lg border"
             style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}
           >
-            <AlertTriangle className="h-4 w-4" style={{ color: 'rgb(248 81 73)' }} />
+            <AlertTriangle className="h-4 w-4" style={{ color: 'var(--status-failed)' }} />
             <span className="text-[12px]" style={{ color: 'var(--color-text-secondary)' }}>
-              <span className="font-semibold" style={{ color: 'rgb(248 81 73)' }}>Product Bug</span> — {failedCount} failure{failedCount === 1 ? '' : 's'} ({blameShare}%)
+              <span className="font-semibold" style={{ color: 'var(--status-failed)' }}>Product Bug</span> — {failedCount} failure{failedCount === 1 ? '' : 's'} ({blameShare}%)
             </span>
             <span className="flex-1" />
             <span
@@ -887,7 +887,7 @@ function VerdictPanel({ pipeline, totalTests, failedCount, elapsedLabel }: {
             >
               <span
                 className="block h-full"
-                style={{ width: `${blameShare}%`, background: 'rgb(248 81 73)' }}
+                style={{ width: `${blameShare}%`, background: 'var(--status-failed)' }}
               />
             </span>
           </div>
@@ -898,7 +898,7 @@ function VerdictPanel({ pipeline, totalTests, failedCount, elapsedLabel }: {
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'red' | 'amber' }) {
-  const color = tone === 'red' ? 'rgb(248 81 73)' : tone === 'amber' ? 'rgb(210 153 34)' : 'var(--color-text)'
+  const color = tone === 'red' ? 'var(--status-failed)' : tone === 'amber' ? 'var(--status-broken)' : 'var(--color-text)'
   return (
     <div
       className="rounded-lg px-2 py-2.5 text-center"
@@ -930,11 +930,11 @@ function InlineSummaryReport({ runId, open, onClose }: { runId: string | null; o
   const decision = intelligence?.release_decision ?? null
 
   const decisionTone = decision?.recommendation === 'GO'
-    ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'rgb(63 185 80)' }
+    ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'var(--status-passed)' }
     : decision?.recommendation === 'CONDITIONAL_GO'
-      ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'rgb(210 153 34)' }
+      ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'var(--status-broken)' }
       : decision?.recommendation === 'NO_GO'
-        ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'rgb(248 81 73)' }
+        ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'var(--status-failed)' }
         : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
 
   return (
@@ -989,7 +989,7 @@ function InlineSummaryReport({ runId, open, onClose }: { runId: string | null; o
             </div>
           )}
           {isError && (
-            <p className="text-[12px]" style={{ color: 'rgb(248 81 73)' }}>
+            <p className="text-[12px]" style={{ color: 'var(--status-failed)' }}>
               Couldn't load the summary report. Try the full report link above.
             </p>
           )}
@@ -1191,10 +1191,10 @@ function EventStrip({ events, onSelect }: { events: FeedEvent[]; onSelect: (id: 
 
 function KindPill({ kind }: { kind: FeedEvent['kind'] }) {
   const tone =
-    kind === 'failed' ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'rgb(248 81 73)' } :
-    kind === 'completed' ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'rgb(63 185 80)' } :
-    kind === 'decision' ? { bg: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', fg: 'rgb(163 113 247)' } :
-    kind === 'retry' ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'rgb(210 153 34)' } :
+    kind === 'failed' ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'var(--status-failed)' } :
+    kind === 'completed' ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'var(--status-passed)' } :
+    kind === 'decision' ? { bg: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', fg: 'var(--status-flaky)' } :
+    kind === 'retry' ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'var(--status-broken)' } :
     { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
   return (
     <span className="font-mono text-[9.5px] px-1.5 py-0.5 rounded" style={{ background: tone.bg, color: tone.fg }}>
@@ -1212,7 +1212,7 @@ function RightRail({ stage, decisionSelected, events }: { stage: DisplayStage | 
         <div className="flex items-center gap-2 mb-2">
           <span
             className="font-mono text-[10px] px-2 py-0.5 rounded"
-            style={{ background: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', color: 'rgb(163 113 247)' }}
+            style={{ background: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', color: 'var(--status-flaky)' }}
           >
             ◇ decision
           </span>
@@ -1265,7 +1265,7 @@ function RightRail({ stage, decisionSelected, events }: { stage: DisplayStage | 
       <div className="p-4 space-y-4">
         {stage.status === 'failed' && stage.raw.error && (
           <div className="rounded border p-3" style={{ background: 'color-mix(in srgb, var(--status-failed) 6%, transparent)', borderColor: 'color-mix(in srgb, var(--status-failed) 30%, transparent)' }}>
-            <div className="font-mono text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgb(248 81 73)' }}>Error</div>
+            <div className="font-mono text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--status-failed)' }}>Error</div>
             <pre className="font-mono text-[11px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-all">{stage.raw.error}</pre>
           </div>
         )}
@@ -1314,7 +1314,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function KV({ k, v, tone }: { k: string; v: string; tone?: 'green' | 'red' }) {
-  const color = tone === 'green' ? 'rgb(63 185 80)' : tone === 'red' ? 'rgb(248 81 73)' : 'var(--color-text-secondary)'
+  const color = tone === 'green' ? 'var(--status-passed)' : tone === 'red' ? 'var(--status-failed)' : 'var(--color-text-secondary)'
   return (
     <div className="flex gap-2">
       <span className="text-[11px] text-[var(--color-text-muted)] w-[95px] shrink-0">{k}</span>
@@ -1584,7 +1584,7 @@ export default function AgentWorkflowPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <span
               className="text-[11px] font-medium px-2 py-1 rounded uppercase"
-              style={{ background: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', color: 'rgb(163 113 247)' }}
+              style={{ background: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', color: 'var(--status-flaky)' }}
             >
               {analysisMode} mode
             </span>

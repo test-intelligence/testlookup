@@ -1349,7 +1349,7 @@ export default function LiveExecutionPage() {
                       className={clsx('flex-auto self-center mx-0.5 relative', 'min-w-[24px] h-0.5')}
                       style={{
                         background: status === 'completed'
-                          ? 'rgb(52 211 153)'
+                          ? 'var(--status-passed)'
                           : 'repeating-linear-gradient(90deg, var(--color-text-faint) 0 4px, transparent 4px 8px)',
                       }}
                     >
@@ -1359,7 +1359,7 @@ export default function LiveExecutionPage() {
                           borderTop: '5px solid transparent',
                           borderBottom: '5px solid transparent',
                           borderLeft: status === 'completed'
-                            ? '6px solid rgb(52 211 153)'
+                            ? '6px solid var(--status-passed)'
                             : '6px solid var(--color-text-faint)',
                         }}
                       />

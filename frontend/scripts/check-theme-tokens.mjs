@@ -132,6 +132,12 @@ for (const file of walk(SRC_DIR)) {
 // (#34a06b) — two different greens for the same meaning, on two pages.
 //
 // 1,167 colour literals existed across 42 files before this was enforced.
+const STATUS_RGB = {
+  'passed #34a06b': [52, 160, 107], 'retired emerald': [52, 211, 153],
+  'retired green-500': [34, 197, 94], 'retired red-400': [248, 113, 113],
+  'retired red-500': [239, 68, 68], 'github green': [63, 185, 80],
+  'github red': [248, 81, 73], 'github amber': [210, 153, 34],
+}
 const STATUS_LITERALS = [
   // passed
   '#86efac', '#34d399', '#22c55e', '#10b981', '#3fb950', '#4ade80', '#7ce0a0',
@@ -148,6 +154,16 @@ for (const file of walk(SRC_DIR)) {
   if (!file.endsWith('.tsx')) continue
   const text = readFileSync(file, 'utf8')
   const rel = file.slice(ROOT.length + 1)
+    // CSS Color 4 allows `rgb(R G B)` with SPACES. Every earlier sweep used a
+  // comma-based pattern and silently missed 36 of these — caught only by a live
+  // probe seeing the colour render. Match both forms.
+  for (const m of text.matchAll(/rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/g)) {
+    const rgb = [1, 2, 3].map((i) => Number(m[i]))
+    const hit = Object.entries(STATUS_RGB).find(([, v]) => v.every((c, i) => c === rgb[i]))
+    if (hit) {
+      fail.push(`${rel} hardcodes rgb(${rgb.join(' ')}) — that is ${hit[0]}; use the token so it follows the theme`)
+    }
+  }
   for (const lit of STATUS_LITERALS) {
     if (text.toLowerCase().includes(lit)) {
       fail.push(`${rel} hardcodes ${lit} — use var(--status-passed|failed|broken|skipped|flaky) or var(--color-accent) so every page renders the same colour for the same meaning`)
