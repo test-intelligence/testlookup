@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — LLM cost is now measured (it was $0.00 for every call)
+
+TestLookup could not measure LLM cost **at all**. There was not one token-price constant
+in the backend, and every `cost_usd` traced back to a literal `0.0` — including the one
+carrying the comment *"cloud cost lands via base metering when known"*, which it never did.
+
+The consequence was not a missing report. `llm_cost_budget` — 24 tests, a per-project
+`hard_cap_usd`, an admin settings page — metered **$0.00 for every call**, so the USD cap
+**could never trip**, and no cost-reduction work could be justified or proved.
+
+Phase 0 of the Batch-API PRD:
+
+- **`services/llm_pricing.py`** — per provider/model rates (USD per million tokens) with
+  separate input / output / cached-read / cache-write rates, the Batch-API 50% multiplier,
+  and `LLM_PRICE_OVERRIDES` for deployments whose negotiated rates differ from list.
+- **Priced centrally in `mark_stage_done`.** Every agent stage funnels through it, so the
+  meter now covers the whole pipeline instead of the call sites that remembered — which
+  was none of them. A caller supplying real billing still wins.
+- **The input/output split is preserved.** All three token-capture sites collapsed usage to
+  `total_tokens` and passed it as `input_tokens`. Output costs several times more than
+  input on every cloud provider, so that systematically under-stated the bill.
+- **A $0.00 now says which kind it is.** `self_hosted` (Ollama et al — correct, there is no
+  per-token charge) is distinguishable from `unpriced` (a cloud model we have no rate for),
+  and the latter logs a warning and increments `testlookup_llm_unpriced_calls_total`
+  instead of quietly understating spend. Stage events carry `cost_source`.
+- **New gate `backend.cloud-providers-are-priced`** — a non-self-hosted provider without
+  price-table entries fails CI, because the failure mode is silent by nature.
+
+`PRICE_TABLE_UPDATED` records when the rates were last checked. These are list prices for
+reference, not a quote; override per deployment rather than editing the table.
 ### 2026-08-09 — Fix: the "Upload Report" sidebar link silently did nothing
 
 Reported: `/runs?upload=1` "displays the runs page". It did. The sidebar entry

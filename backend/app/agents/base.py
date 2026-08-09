@@ -14,6 +14,7 @@ from app.core.metrics import (
     pipeline_stage_runs_total,
     pipeline_stage_tokens_total,
 )
+from app.core.config import settings
 from app.core.tracing import get_tracer
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AgentStageResult
@@ -180,6 +181,34 @@ class BaseAgent(ABC):
                 stage.started_at = datetime.now(timezone.utc)
                 await db.commit()
 
+    async def _estimate_stage_cost(self, input_tokens: int, output_tokens: int):
+        """Price a stage's tokens against the effective provider and model.
+
+        Returns a ``CostEstimate`` or None. Best-effort by design: metering
+        must never be able to fail a pipeline stage, so every error path
+        degrades to "no estimate" and leaves the caller's value alone.
+        """
+        try:
+            from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+            from app.services.llm_pricing import estimate_cost  # noqa: PLC0415
+
+            try:
+                config = await get_effective_ai_config()
+            except Exception:  # noqa: BLE001 — fall back to env defaults
+                config = {}
+
+            provider = (config.get("provider") or settings.LLM_PROVIDER or "").lower()
+            model = config.get("model") or settings.LLM_MODEL or ""
+            return estimate_cost(
+                provider,
+                model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("stage_cost_estimate_failed", error=str(exc))
+            return None
+
     async def mark_stage_done(
         self,
         pipeline_run_id: str,
@@ -201,6 +230,18 @@ class BaseAgent(ABC):
         status = "failed" if error else "completed"
         total_tokens = input_tokens + output_tokens
 
+        # Price the call when the caller reported tokens but no cost. Every
+        # stage funnels through here, so deriving centrally is what makes the
+        # meter cover the whole pipeline rather than the one or two call sites
+        # that remembered. A caller that supplies its own cost_usd (a provider
+        # that returns real billing) always wins.
+        cost_source = "caller"
+        if cost_usd <= 0 and total_tokens > 0:
+            estimate = await self._estimate_stage_cost(input_tokens, output_tokens)
+            if estimate is not None:
+                cost_usd = estimate.cost_usd
+                cost_source = estimate.source
+
         # Emit pipeline event with observability detail
         event_type = "stage_failed" if error else "stage_completed"
         duration_secs = round(
@@ -216,6 +257,11 @@ class BaseAgent(ABC):
                 "total_tokens": total_tokens,
                 "llm_calls_count": llm_calls_count,
                 "cost_usd": round(cost_usd, 6),
+                # How the number was arrived at: "priced" | "self_hosted" |
+                # "unpriced" | "caller". A $0.00 from a self-hosted provider
+                # and a $0.00 from an unpriced cloud model mean opposite
+                # things, and the reader must be able to tell them apart.
+                "cost_source": cost_source,
                 **({"confidence_score": confidence_score} if confidence_score is not None else {}),
                 **({"evidence_count": evidence_count} if evidence_count is not None else {}),
                 **({"error": error[:500]} if error else {}),

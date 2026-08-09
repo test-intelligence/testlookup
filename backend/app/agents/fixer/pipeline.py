@@ -211,6 +211,7 @@ async def generate_candidate_patch(
         }
     try:
         from app.services.llm_factory import get_llm
+        from app.services.llm_pricing import extract_token_usage
         from app.services.prompt_registry import get_prompt_text
 
         prompt = get_prompt_text("fixer_generate_patch").format(
@@ -221,8 +222,10 @@ async def generate_candidate_patch(
         llm = await get_llm(temperature=0.0)
         response = await llm.ainvoke(prompt)
         text = str(getattr(response, "content", "") or "").strip()
-        usage = getattr(response, "usage_metadata", None) or {}
-        tokens = int(usage.get("total_tokens") or 0) or max(1, len(prompt) // 4)
+        usage = extract_token_usage(
+            response, fallback_prompt=prompt, fallback_completion=text
+        )
+        tokens = usage.total_tokens
         parsed = _extract_json(text)
         if not parsed or not parsed.get("can_fix"):
             return {

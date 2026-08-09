@@ -99,6 +99,15 @@ pipeline_stage_cost_usd = Counter(
     ["stage_name"],
 )
 
+#: A cloud LLM call we could not price. Without this, an unpriced model is an
+#: invisible understatement of the bill — which is the exact defect that left
+#: every cost_usd at 0.00 before pricing existed.
+llm_unpriced_calls_total = Counter(
+    "testlookup_llm_unpriced_calls_total",
+    "Cloud LLM calls with no matching entry in the price table",
+    ["provider", "model"],
+)
+
 pipeline_stage_llm_calls_total = Counter(
     "testlookup_pipeline_stage_llm_calls_total",
     "Total LLM calls per agent stage",

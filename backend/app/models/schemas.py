@@ -4261,6 +4261,12 @@ class BillingOverviewResponse(BaseModel):
     total_cost_usd: float
     total_llm_calls: int
     projects: List[BillingOverviewProject]
+    # Costs are derived from a checked-in rate table, not from provider
+    # invoices. Surfacing when it was last verified keeps a stale table
+    # visible instead of quietly believed — these are estimates, and the
+    # UI should say so.
+    price_table_updated: Optional[str] = None
+    pricing_is_estimated: bool = True
 
 
 # ── Flaky Auto-Quarantine (Tier 1 item 3) ───────────────────────────────────

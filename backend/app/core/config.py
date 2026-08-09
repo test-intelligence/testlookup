@@ -233,6 +233,12 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
 
+    # Per-deployment token rates, overriding the built-in table in
+    # ``services/llm_pricing.py``. List prices rarely match what an
+    # organisation actually pays. JSON keyed "provider:model-regex":
+    #   {"anthropic:sonnet": {"input_per_mtok": 2.4, "output_per_mtok": 12.0}}
+    LLM_PRICE_OVERRIDES: Optional[str] = None
+
     # ── Embedding ─────────────────────────────────────────────
     EMBEDDING_PROVIDER: str = "ollama"
     EMBEDDING_MODEL: str = "nomic-embed-text"

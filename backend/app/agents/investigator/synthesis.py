@@ -45,6 +45,7 @@ from app.models.agent_contracts import (
     InvestigatorSynthesisOutput,
     validate_agent_contract,
 )
+from app.services.llm_pricing import TokenUsage, extract_token_usage
 
 CONFLICT_MARGIN = 10
 UNKNOWN_CONFIDENCE = 25
@@ -91,10 +92,6 @@ RECOMMENDED_ACTIONS: dict[str, list[str]] = {
 }
 
 _LLM_CALL_TIMEOUT_S = 60
-
-
-def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
 
 
 def pick_primary_cause(hypotheses: list[dict[str, Any]]) -> tuple[str, int, Optional[str]]:
@@ -163,21 +160,26 @@ class SynthesisAgent(BaseAgent):
 
     async def _narrative_with_llm(
         self, primary_cause: str, hypotheses: list[dict[str, Any]], state: dict[str, Any]
-    ) -> tuple[Optional[str], int]:
-        """One bounded narrative call. Returns (narrative|None, tokens)."""
+    ) -> tuple[Optional[str], TokenUsage]:
+        """One bounded narrative call. Returns (narrative|None, usage).
+
+        The input/output split is preserved so the call can be priced: output
+        tokens cost several times more than input on every cloud provider, so
+        a collapsed total cannot be costed correctly.
+        """
         if settings.AI_OFFLINE_MODE:
-            return None, 0
+            return None, TokenUsage()
         budget = state.get("budget") or {}
         # Respect the LLM-call budget across the whole investigation: the five
         # hypothesis nodes used at most one call each.
         used = int(state.get("spend_llm_calls") or 0)
         if used + 1 > int(budget.get("max_llm_calls", 0)):
-            return None, 0
+            return None, TokenUsage()
         if int(state.get("spend_tokens") or 0) >= int(budget.get("max_tokens", 0)):
-            return None, 0
+            return None, TokenUsage()
         remaining = float(state.get("deadline_ts", 0)) - time.monotonic()
         if remaining <= 5:
-            return None, 0
+            return None, TokenUsage()
         try:
             from app.services.llm_factory import get_llm
             from app.services.prompt_registry import get_prompt_text
@@ -210,9 +212,10 @@ class SynthesisAgent(BaseAgent):
             response = await asyncio.wait_for(
                 llm.ainvoke(prompt), timeout=min(_LLM_CALL_TIMEOUT_S, remaining),
             )
-            usage = getattr(response, "usage_metadata", None) or {}
-            tokens = int(usage.get("total_tokens") or 0) or (
-                _estimate_tokens(prompt) + _estimate_tokens(str(getattr(response, "content", "")))
+            usage = extract_token_usage(
+                response,
+                fallback_prompt=prompt,
+                fallback_completion=str(getattr(response, "content", "")),
             )
             text = str(getattr(response, "content", "") or "").strip()
             if text.startswith("```"):
@@ -225,13 +228,13 @@ class SynthesisAgent(BaseAgent):
                     parsed = json.loads(text[start : end + 1])
                     narrative = str(parsed.get("narrative") or "").strip()
                     if narrative:
-                        return narrative[:2000], tokens
+                        return narrative[:2000], usage
                 except (ValueError, TypeError):
                     pass
-            return None, tokens
+            return None, usage
         except Exception as exc:  # noqa: BLE001 — narrative falls back to template
             self.logger.debug("synthesis_llm_narrative_failed", error=str(exc))
-            return None, 0
+            return None, TokenUsage()
 
     async def run(self, state: dict) -> dict:
         pipeline_run_id = state.get("pipeline_run_id", "")
@@ -272,8 +275,8 @@ class SynthesisAgent(BaseAgent):
                 f"{len(exhausted)} hypothesis(es) were left inconclusive{named}."
             )
 
-        narrative, tokens = await self._narrative_with_llm(primary_cause, hypotheses, state)
-        llm_calls = 1 if tokens else 0
+        narrative, usage = await self._narrative_with_llm(primary_cause, hypotheses, state)
+        llm_calls = 1 if usage.total_tokens else 0
         if narrative is not None and budget_note:
             narrative = f"{narrative} {budget_note}"
         if narrative is None:
@@ -329,10 +332,17 @@ class SynthesisAgent(BaseAgent):
         )
         final_verdict = contracted.get("verdict", verdict)
 
+        # Price once: the stage record and the investigation spend rollup must
+        # not disagree about what this call cost.
+        estimate = await self._estimate_stage_cost(usage.input_tokens, usage.output_tokens)
+        synthesis_cost = estimate.cost_usd if estimate else 0.0
+
         await self.mark_stage_done(
             pipeline_run_id,
             result_data={"primary_cause": primary_cause, "confidence": confidence},
-            input_tokens=tokens,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=synthesis_cost,
             llm_calls_count=llm_calls,
             confidence_score=confidence,
             evidence_count=len(hypotheses),
@@ -351,7 +361,7 @@ class SynthesisAgent(BaseAgent):
             "verdict": final_verdict,
             "model_info": model_info,
             "spend_llm_calls": llm_calls,
-            "spend_tokens": tokens,
-            "spend_cost_usd": 0.0,
+            "spend_tokens": usage.total_tokens,
+            "spend_cost_usd": synthesis_cost,
             "errors": [],
         }

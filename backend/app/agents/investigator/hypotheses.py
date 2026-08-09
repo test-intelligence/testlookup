@@ -66,6 +66,7 @@ from app.models.agent_contracts import (
     InvestigatorHypothesisOutput,
     validate_agent_contract,
 )
+from app.services.llm_pricing import TokenUsage, extract_token_usage
 
 # Deterministic threshold constants (the evidence matrix above).
 INFRA_VALIDATED_RATIO = 0.5
@@ -103,10 +104,6 @@ def _sample_names(items: list[dict[str, Any]], limit: int = _MAX_SAMPLE_NAMES) -
     return ", ".join(names) + suffix
 
 
-def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
-
-
 def _parse_llm_json(raw: Any) -> Optional[dict[str, Any]]:
     """Parse the LLM's JSON reply, tolerating markdown fences. None on any
     shape problem — the deterministic verdict is the fallback."""
@@ -141,17 +138,22 @@ class HypothesisAgent(BaseAgent):
 
     async def _weigh_with_llm(
         self, det: dict[str, Any], state: dict[str, Any]
-    ) -> tuple[Optional[dict[str, Any]], int, float]:
-        """Try the single bounded LLM call. Returns (weighed|None, tokens,
-        cost_usd). Any failure returns (None, 0, 0.0) — deterministic wins."""
+    ) -> tuple[Optional[dict[str, Any]], TokenUsage]:
+        """Try the single bounded LLM call. Returns (weighed|None, usage).
+        Any failure returns (None, empty usage) — deterministic wins.
+
+        Cost is no longer returned: it was always the literal 0.0, which is how
+        this codebase came to meter $0.00 for every call. ``mark_stage_done``
+        prices the reported input/output split centrally instead.
+        """
         if settings.AI_OFFLINE_MODE:
-            return None, 0, 0.0
+            return None, TokenUsage()
         budget = state.get("budget") or {}
         if int(budget.get("max_llm_calls", 0)) < 1:
-            return None, 0, 0.0
+            return None, TokenUsage()
         remaining = float(state.get("deadline_ts", 0)) - time.monotonic()
         if remaining <= 5:
-            return None, 0, 0.0
+            return None, TokenUsage()
         try:
             from app.services.llm_factory import get_llm
             from app.services.prompt_registry import get_prompt_text
@@ -172,28 +174,28 @@ class HypothesisAgent(BaseAgent):
                 llm.ainvoke(prompt),
                 timeout=min(_LLM_CALL_TIMEOUT_S, remaining),
             )
-            usage = getattr(response, "usage_metadata", None) or {}
-            tokens = int(usage.get("total_tokens") or 0) or (
-                _estimate_tokens(prompt) + _estimate_tokens(str(getattr(response, "content", "")))
+            usage = extract_token_usage(
+                response,
+                fallback_prompt=prompt,
+                fallback_completion=str(getattr(response, "content", "")),
             )
             parsed = _parse_llm_json(response)
             if parsed is None:
-                return None, tokens, 0.0
+                return None, usage
             status = str(parsed.get("status", "")).lower()
             if status not in ("validated", "invalidated", "inconclusive"):
-                return None, tokens, 0.0
+                return None, usage
             return (
                 {
                     "status": status,
                     "confidence": _clamp(float(parsed.get("confidence", det["confidence"]))),
                     "summary": str(parsed.get("summary") or det["summary"])[:1000],
                 },
-                tokens,
-                0.0,  # local providers meter at $0; cloud cost lands via base metering when known
+                usage,
             )
         except Exception as exc:  # noqa: BLE001 — LLM failure falls back
             self.logger.debug("hypothesis_llm_weigh_failed", error=str(exc))
-            return None, 0, 0.0
+            return None, TokenUsage()
 
     # ── Node entry ───────────────────────────────────────────────────────
 
@@ -250,8 +252,8 @@ class HypothesisAgent(BaseAgent):
         bundle = state.get("bundle") or {}
         det = self.evaluate(bundle)
 
-        weighed, tokens, cost_usd = await self._weigh_with_llm(det, state)
-        llm_calls = 1 if tokens else 0
+        weighed, usage = await self._weigh_with_llm(det, state)
+        llm_calls = 1 if usage.total_tokens else 0
         if weighed is not None:
             status = weighed["status"]
             confidence = weighed["confidence"]
@@ -304,10 +306,15 @@ class HypothesisAgent(BaseAgent):
         persisted = contracted.get("hypothesis", hypothesis)
 
         await persist_hypothesis(investigation_id, persisted)
+        # Price once and reuse: the stage record and the investigation-level
+        # spend rollup must not disagree about what this call cost.
+        estimate = await self._estimate_stage_cost(usage.input_tokens, usage.output_tokens)
+        cost_usd = estimate.cost_usd if estimate else 0.0
         await self.mark_stage_done(
             pipeline_run_id,
             result_data={"hypothesis": self.hypothesis_id, "status": status},
-            input_tokens=tokens,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
             llm_calls_count=llm_calls,
             cost_usd=cost_usd,
             confidence_score=confidence,
@@ -326,7 +333,7 @@ class HypothesisAgent(BaseAgent):
         return {
             "hypotheses": [persisted],
             "spend_llm_calls": llm_calls,
-            "spend_tokens": tokens,
+            "spend_tokens": usage.total_tokens,
             "spend_cost_usd": cost_usd,
             "errors": [],
         }

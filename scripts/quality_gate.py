@@ -830,6 +830,55 @@ _SETTINGS_INTERNAL_ONLY = {"CORS_ORIGINS_RAW"}
 _SETTINGS_FIELD_RE = re.compile(r"(?m)^\s{4}([A-Z][A-Z0-9_]{2,}):\s")
 
 
+def _backend_cloud_providers_are_priced() -> list[Violation]:
+    """Every cloud LLM provider must have entries in the price table.
+
+    A provider with no price meters $0.00 per call. That is not a missing
+    number in a report — it is an invisible understatement of the bill, and it
+    is exactly the state the whole backend was in before ``llm_pricing.py``
+    existed: ``llm_cost_budget`` had a per-project USD cap that could never
+    trip because every call cost nothing.
+
+    Self-hosted providers are exempt: $0.00 is the correct answer for them.
+    """
+    violations: list[Violation] = []
+    config_path = REPO_ROOT / "backend" / "app" / "core" / "config.py"
+    pricing_path = REPO_ROOT / "backend" / "app" / "services" / "llm_pricing.py"
+    if not config_path.exists() or not pricing_path.exists():
+        return violations
+
+    config_src = config_path.read_text(encoding="utf-8", errors="ignore")
+    pricing_src = pricing_path.read_text(encoding="utf-8", errors="ignore")
+
+    match = re.search(r"LLM_PROVIDER:\s*Literal\[([^\]]+)\]", config_src)
+    if not match:
+        return violations
+    declared = set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    self_hosted: set[str] = set()
+    sh_match = re.search(
+        r"SELF_HOSTED_PROVIDERS\s*=\s*frozenset\(\{([^}]*)\}\)", pricing_src
+    )
+    if sh_match:
+        self_hosted = set(re.findall(r'"([^"]+)"', sh_match.group(1)))
+
+    priced = set(re.findall(r'^\s*\("([a-z_]+)",\s*r"', pricing_src, flags=re.MULTILINE))
+
+    line_no = config_src[: match.start()].count(chr(10)) + 1
+    for provider in sorted(declared - self_hosted - priced):
+        violations.append(
+            Violation(
+                file=config_path,
+                line=line_no,
+                message=(
+                    f"LLM provider '{provider}' has no entry in llm_pricing.PRICE_TABLE — "
+                    f"every call through it meters $0.00 and under-states the bill silently"
+                ),
+            )
+        )
+    return violations
+
+
 def _backend_settings_are_consumed() -> list[Violation]:
     """Every Settings field must be read somewhere.
 
@@ -1519,6 +1568,12 @@ GUARDS: list[Guard] = [
         description="Literal 'all' assigned to project_id — never send to backend.",
         check=_frontend_all_projects_literal,
         fix_hint="Use `activeProjectId === ALL_PROJECTS_ID` guard and pass `null` to the API.",
+    ),
+    Guard(
+        name="backend.cloud-providers-are-priced",
+        description="Every non-self-hosted LLM provider has price-table entries.",
+        check=_backend_cloud_providers_are_priced,
+        fix_hint="Add a (provider, model-regex, ModelPrice) row to services/llm_pricing.py PRICE_TABLE.",
     ),
     Guard(
         name="backend.settings-are-consumed",

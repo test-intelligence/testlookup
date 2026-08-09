@@ -40,6 +40,7 @@ from app.models.schemas import (
     LlmUsageRead,
 )
 from app.services import llm_cost_budget as cost_service
+from app.services.llm_pricing import PRICE_TABLE_UPDATED
 
 router = APIRouter(prefix="/api/v1", tags=["LLM Cost Budget"])
 logger = structlog.get_logger("routers.llm_cost_budget")
@@ -157,6 +158,7 @@ async def billing_overview(
                 total_cost_usd=0.0,
                 total_llm_calls=0,
                 projects=[],
+                price_table_updated=PRICE_TABLE_UPDATED,
             )
         project_filter = list(accessible)
 
@@ -197,4 +199,5 @@ async def billing_overview(
         total_cost_usd=round(total_cost, 6),
         total_llm_calls=total_calls,
         projects=rows,
+        price_table_updated=PRICE_TABLE_UPDATED,
     )
