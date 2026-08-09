@@ -45,11 +45,19 @@ async def list_plans(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
+    # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
+    # project skipped it entirely — the guard fired only where there was
+    # nothing to guard. Third recurrence of the class (F-033 digests, F-040
+    # chat). ``resolve_project_scope`` 403s a non-admin naming a project they
+    # do not belong to; the empty return below preserves today's behaviour for
+    # a non-admin who names no project at all.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
     items, total, pages = await list_test_plans(db, project_id, page, size, status)
     return {"items": [row(plan, TestPlanResponse) for plan in items], "total": total, "page": page, "size": size, "pages": pages}
 

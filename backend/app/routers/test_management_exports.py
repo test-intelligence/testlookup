@@ -68,11 +68,16 @@ async def export_test_cases_excel(
     current_user: User = Depends(get_current_active_user),
 ):
     """Export test cases to an Excel (.xlsx) file."""
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return Response(content=b"", media_type="application/octet-stream")
+    # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
+    # project skipped it entirely. See the backend.project-scope-guard-placement
+    # gate — this is the third recurrence of the class.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return Response(content=b"", media_type="application/octet-stream")
     _check_excel_deps()
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -1010,11 +1015,16 @@ async def get_suite_test_cases(
     if limit is not None:
         size = limit
     empty_page = {"items": [], "total": 0, "page": page, "pages": 0, "size": size}
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return empty_page
+    # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
+    # project skipped it entirely. See the backend.project-scope-guard-placement
+    # gate — this is the third recurrence of the class.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return empty_page
     from sqlalchemy import func, or_
 
     from app.models.postgres import TestCase, TestRun
@@ -1186,11 +1196,16 @@ async def get_suite_membership(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return current suite membership records from the traceability model."""
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return []
+    # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
+    # project skipped it entirely. See the backend.project-scope-guard-placement
+    # gate — this is the third recurrence of the class.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return []
     from app.models.postgres import SuiteMembership
 
     stmt = select(SuiteMembership).where(SuiteMembership.suite_name == suite_name)
@@ -1232,11 +1247,16 @@ async def get_suite_changes(
     current_user: User = Depends(get_current_active_user),
 ):
     """Return suite membership change events, optionally filtered by run."""
-    if not project_id:
-        from app.core.deps import get_accessible_project_ids
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return []
+    # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
+    # project skipped it entirely. See the backend.project-scope-guard-placement
+    # gate — this is the third recurrence of the class.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return []
     from app.models.postgres import SuiteMembershipEvent
 
     stmt = select(SuiteMembershipEvent).where(SuiteMembershipEvent.suite_name == suite_name)

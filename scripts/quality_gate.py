@@ -830,6 +830,82 @@ _SETTINGS_INTERNAL_ONLY = {"CORS_ORIGINS_RAW"}
 _SETTINGS_FIELD_RE = re.compile(r"(?m)^\s{4}([A-Z][A-Z0-9_]{2,}):\s")
 
 
+def _backend_project_scope_guard_placement() -> list[Violation]:
+    """An access check must not sit inside an ``if not project_id`` branch.
+
+    This exact shape has now leaked tenant data three times — digests (F-033),
+    chat (F-040), and six more handlers found by the sweep after it (F-042)::
+
+        if not project_id:
+            accessible = await get_accessible_project_ids(db, current_user)
+            if accessible is not None:
+                return []
+        return await service(db, project_id, ...)     # <- unguarded
+
+    The guard fires only when there is nothing to guard. Supplying a
+    ``project_id`` skips it entirely.
+
+    Grepping for the guard cannot catch this, which is why it kept recurring:
+    ``get_accessible_project_ids`` **is** imported and **is** called. The
+    architectural authorization ratchet cannot catch it either — that one
+    matches routers whose *path* declares ``{project_id}``, and here the id
+    arrives as a query parameter. So the placement needs its own guard.
+
+    Fix: call ``resolve_project_scope`` unconditionally. It 403s a non-admin
+    naming a project they do not belong to and leaves ADMIN unrestricted.
+    """
+    violations: list[Violation] = []
+    routers = REPO_ROOT / "backend" / "app" / "routers"
+    if not routers.is_dir():
+        return violations
+
+    guards = ("get_accessible_project_ids", "resolve_project_scope")
+    for path in sorted(routers.glob("*.py")):
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not re.match(r"if (not project_id|project_id is None)\s*:", stripped):
+                continue
+            indent = len(line) - len(line.lstrip())
+            # Body of the branch: lines indented deeper, until it closes.
+            body: list[str] = []
+            for nxt in lines[i + 1 :]:
+                if not nxt.strip():
+                    body.append(nxt)
+                    continue
+                if (len(nxt) - len(nxt.lstrip())) <= indent:
+                    break
+                body.append(nxt)
+            blob = chr(10).join(body)
+            if not any(g in blob for g in guards):
+                continue
+
+            # A compensating check on the other path is fine: runs.py guards
+            # the `if` branch by membership set and the `else` branch with
+            # _require_accessible_project, so the leaking case *is* covered.
+            # Look at the rest of the enclosing handler, excluding this branch.
+            rest: list[str] = []
+            for nxt in lines[i + 1 + len(body) :]:
+                if nxt.startswith("@router.") or re.match(r"^(async )?def ", nxt):
+                    break
+                rest.append(nxt)
+            if any(g in chr(10).join(rest) for g in (*guards, "_require_accessible_project")):
+                continue
+
+            violations.append(
+                    Violation(
+                        file=path,
+                        line=i + 1,
+                        message=(
+                            "access check sits inside an `if not project_id` branch — "
+                            "it cannot fire for the case that leaks. Call "
+                            "resolve_project_scope unconditionally instead"
+                        ),
+                    )
+                )
+    return violations
+
+
 def _backend_cloud_providers_are_priced() -> list[Violation]:
     """Every cloud LLM provider must have entries in the price table.
 
@@ -1568,6 +1644,12 @@ GUARDS: list[Guard] = [
         description="Literal 'all' assigned to project_id — never send to backend.",
         check=_frontend_all_projects_literal,
         fix_hint="Use `activeProjectId === ALL_PROJECTS_ID` guard and pass `null` to the API.",
+    ),
+    Guard(
+        name="backend.project-scope-guard-placement",
+        description="Access checks must not sit inside an `if not project_id` branch.",
+        check=_backend_project_scope_guard_placement,
+        fix_hint="Call resolve_project_scope(db, user, project_id) unconditionally; it 403s a non-admin naming a project they cannot access.",
     ),
     Guard(
         name="backend.cloud-providers-are-priced",

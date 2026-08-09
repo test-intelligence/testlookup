@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user
+from app.core.deps import get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import SavedView, User
 from app.models.schemas import SavedViewCreate, SavedViewResponse, SavedViewUpdate
@@ -23,10 +23,19 @@ async def list_saved_views(
     current_user: User = Depends(get_current_active_user),
 ):
     """List saved views: user's personal + shared views for the project."""
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return []
+    # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
+    # project skipped it entirely — the guard fired only where there was
+    # nothing to guard. Third recurrence of the class (F-033 digests, F-040
+    # chat). ``resolve_project_scope`` 403s a non-admin naming a project they
+    # do not belong to; the empty return below preserves today's behaviour for
+    # a non-admin who names no project at all.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return []
     query = select(SavedView).where(
         (SavedView.user_id == current_user.id) | (SavedView.is_shared == True)  # noqa: E712
     )

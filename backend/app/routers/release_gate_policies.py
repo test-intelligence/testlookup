@@ -8,7 +8,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
-    get_accessible_project_ids,
     get_current_active_user,
     require_project_access,
     require_role,
@@ -38,10 +37,19 @@ async def list_policies(
     db: AsyncSession = Depends(get_db),
 ):
     """List all release gate policies with optional filters."""
-    if project_id is None:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return []
+    # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
+    # project skipped it entirely — the guard fired only where there was
+    # nothing to guard. Third recurrence of the class (F-033 digests, F-040
+    # chat). ``resolve_project_scope`` 403s a non-admin naming a project they
+    # do not belong to; the empty return below preserves today's behaviour for
+    # a non-admin who names no project at all.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(
+        db, current_user, str(project_id) if project_id else None
+    )
+    if scoped_project_id is None and allowed is not None:
+        return []
     query = select(ReleaseGatePolicy).order_by(ReleaseGatePolicy.created_at.desc())
     if project_id is not None:
         query = query.where(ReleaseGatePolicy.project_id == project_id)

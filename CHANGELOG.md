@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Security: the access check sat in the branch that cannot leak (10 handlers)
+
+Third recurrence of one bug. The digests (F-033) and chat (F-040) fixes each corrected
+their own router; sweeping all 45 GET endpoints that take an optional `project_id` —
+enumerated from the running app, not by grep — found **ten more** with the same shape:
+
+```python
+if not project_id:                      # fires only when there is nothing to guard
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None:
+        return []
+...                                     # runs with the caller's project_id, unguarded
+```
+
+Two confirmed live with a zero-membership VIEWER: `release-gate-policies` returned another
+tenant's full rule document (go/no-go thresholds, pass-rate minimum), and
+`test-management/plans` returned their plan. The other eight — saved views, managed cases,
+strategies, audit log and four export endpoints — are fixed on the shared code path; no
+data of those types existed on the probe deployment to repro individually.
+
+All now call `resolve_project_scope` unconditionally. `runs.py` matches the shape but is
+correct (it compensates in the `else` branch) and is deliberately not changed.
+
+**New gate `backend.project-scope-guard-placement`** fails CI when an access check sits
+inside an `if not project_id` branch. Grepping for the guard cannot catch this class —
+`get_accessible_project_ids` *is* imported and *is* called — and the architectural
+authorization ratchet only matches routers whose *path* declares `{project_id}`. After
+three recurrences, placement needed its own guard.
+
 ### 2026-08-09 — Security: chat took `project_id` from the caller unchecked (HIGH)
 
 Three endpoints in `routers/chat.py` accepted a client-supplied `project_id` and never
