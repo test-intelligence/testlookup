@@ -14,7 +14,7 @@
  * stylesheet yields nothing. A node script has plain fs access and is the
  * pattern already used by check-bundle-budget.mjs.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -29,6 +29,16 @@ const ALL = [...DARK, LIGHT]
 const STATUSES = ['status-passed', 'status-failed', 'status-broken', 'status-skipped', 'status-flaky']
 const WEBFONTS = ['Sora', 'Plus Jakarta Sans', 'Space Grotesk', 'Archivo', 'IBM Plex Mono', 'JetBrains Mono']
 const RETIRED_GREENS = ['#7ce0a0', '#43e0a0', '#3fb950']
+
+function walk(dir) {
+  const out = []
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) out.push(...walk(full))
+    else if (/\.(ts|tsx)$/.test(entry) && !/\.(test|spec)\./.test(entry)) out.push(full)
+  }
+  return out
+}
 
 const fail = []
 
@@ -91,6 +101,31 @@ for (const id of ALL) {
     if (themeBlock(id).includes(family)) fail.push(`"${id}" names webfont "${family}" — themes use system stacks`)
   }
 }
+// Source files outside index.css can put a webfont name into the built CSS —
+// tailwind.config.js's fontFamily fallbacks did exactly that ('Sora',
+// 'IBM Plex Mono'), and an inline style in AppLogo.tsx hardcoded another. The
+// theme blocks were clean while the shipped stylesheet was not, which is why
+// this scans the sources that feed it rather than only index.css.
+const TAILWIND = readFileSync(join(ROOT, 'tailwind.config.js'), 'utf8')
+const fontFamilyBlock = /fontFamily:\s*\{[^}]*\}/.exec(TAILWIND)?.[0] ?? ''
+for (const family of WEBFONTS) {
+  if (fontFamilyBlock.includes(family)) {
+    fail.push(`tailwind.config.js fontFamily still falls back to "${family}" — it is no longer loaded, so it only resolves on a machine that has it installed locally`)
+  }
+}
+
+// Inline fontFamily styles in components bypass the token system entirely.
+const SRC_DIR = join(ROOT, 'src')
+for (const file of walk(SRC_DIR)) {
+  const text = readFileSync(file, 'utf8')
+  for (const m of text.matchAll(/fontFamily:\s*['\`]([^'\`]+)['\`]/g)) {
+    const value = m[1]
+    if (!value.includes('var(--font-')) {
+      fail.push(`${file.slice(ROOT.length + 1)} hardcodes fontFamily "${value}" — use var(--font-mono|sans|display) so it follows the theme`)
+    }
+  }
+}
+
 if (HTML.includes('fonts.googleapis.com/css2')) {
   fail.push('index.html loads Google Fonts again. TestLookup is offline-first: in an air-gapped deployment that request stalls until timeout rather than failing fast.')
 }

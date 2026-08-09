@@ -9,7 +9,7 @@ interface AppLogoProps {
 
 /**
  * Bracketed wordmark — TestLookup's canonical mark.
- *   [testlookup]   ← brackets in JetBrains Mono / accent blue, wordmark in Inter
+ *   [testlookup]   ← brackets in the theme mono face / accent blue, wordmark in the theme sans face
  *
  * Rendered inline so it inherits theme color and scales with font-size.
  * No PNG, no fallback — the recipe IS the mark.
@@ -33,9 +33,9 @@ export default function AppLogo({ glyph = false, light = false, className = '' }
         role="img"
         aria-label="testlookup"
       >
-        <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 500, color: bracketColor, fontSize: '1.4em' }}>[</span>
-        <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 700, color: wordColor, letterSpacing: '-0.02em' }}>t</span>
-        <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 500, color: bracketColor, fontSize: '1.4em' }}>]</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500, color: bracketColor, fontSize: '1.4em' }}>[</span>
+        <span style={{ fontFamily: 'var(--font-sans)', fontWeight: 700, color: wordColor, letterSpacing: '-0.02em' }}>t</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500, color: bracketColor, fontSize: '1.4em' }}>]</span>
       </span>
     )
   }
@@ -46,11 +46,11 @@ export default function AppLogo({ glyph = false, light = false, className = '' }
       role="img"
       aria-label="testlookup"
     >
-      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 500, color: bracketColor, fontSize: '1.45em' }}>[</span>
-      <span style={{ fontFamily: 'Inter, sans-serif', fontWeight: 400, color: wordColor, letterSpacing: '-0.02em' }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500, color: bracketColor, fontSize: '1.45em' }}>[</span>
+      <span style={{ fontFamily: 'var(--font-sans)', fontWeight: 400, color: wordColor, letterSpacing: '-0.02em' }}>
         test<b style={{ fontWeight: 700 }}>lookup</b>
       </span>
-      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 500, color: bracketColor, fontSize: '1.45em' }}>]</span>
+      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500, color: bracketColor, fontSize: '1.45em' }}>]</span>
     </span>
   )
 }

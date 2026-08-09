@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-08 — Fix: webfont leftovers the retheme missed (found by deploy validation)
+
+Validating the retheme against the **served** bundle — not the repo — caught `IBM Plex Mono`
+still in the shipped CSS. Three sources fed webfont names into the build from outside
+`index.css`, so every theme block was clean while the stylesheet was not:
+
+- `tailwind.config.js` `fontFamily` fell back to `'Sora'` and `'IBM Plex Mono'` after the CSS
+  var. Since neither is loaded any more, those entries could only ever resolve on a machine
+  that happened to have the font installed — a rendering difference between developers, not
+  a fallback.
+- `AppLogo.tsx` hardcoded `'JetBrains Mono, monospace'` on 4 inline styles.
+- `AppLogo.tsx` also hardcoded `'Inter, sans-serif'` on 2 more. **Inter was never loaded at
+  all**, so the wordmark had been falling back to generic `sans-serif` and never followed the
+  theme — that predates the retheme.
+
+All now use `var(--font-mono)` / `var(--font-sans)`, so the logo tracks the active theme.
+
+The guard was extended to scan `tailwind.config.js` and every component for inline
+`fontFamily` values that don't go through a token. **That extension is what found the Inter
+pair** — my first version only checked inside the six `[data-theme]` blocks, which is exactly
+why the leftovers survived the original change.
+
 ### 2026-08-08 — Retheme: normalized theme tokens across all six themes
 
 Implements `TestLookup Retheme Preview.dc.html` from the Claude Design project

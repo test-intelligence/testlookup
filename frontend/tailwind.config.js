@@ -58,10 +58,15 @@ export default {
       },
       // Point Tailwind's font utilities at the per-theme CSS vars so switching
       // theme swaps the type system too (each [data-theme] block sets --font-*).
+      // Fallbacks after the CSS var are system stacks only. They used to name
+      // 'Sora' and 'IBM Plex Mono', which the 2026-08 retheme stopped loading —
+      // so those entries could never resolve except on a machine that happened
+      // to have the font installed locally, which is a rendering difference
+      // between developers rather than a fallback.
       fontFamily: {
-        display: ['var(--font-display)', 'Sora', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
         sans: ['var(--font-sans)', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-        mono: ['var(--font-mono)', 'IBM Plex Mono', 'ui-monospace', 'monospace'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       borderRadius: {
         sm: 'var(--radius-sm)',
