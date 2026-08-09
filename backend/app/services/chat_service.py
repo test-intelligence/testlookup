@@ -10,7 +10,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.postgres import ChatMessage, ChatSession, TestRun
 
 
-async def get_run_summaries(db: AsyncSession, project_id: Optional[str], days: int) -> list[dict]:
+async def get_run_summaries(
+    db: AsyncSession,
+    project_id: Optional[str],
+    days: int,
+    *,
+    allowed_project_ids: Optional[set] = None,
+) -> list[dict]:
+    """Recent AI run summaries, scoped to what the caller may see.
+
+    ``project_id`` and ``allowed_project_ids`` are the two mutually exclusive
+    halves of ``resolve_project_scope``'s answer: a pinned project the caller
+    has been verified against, or the set of projects they belong to. Both
+    ``None`` means ADMIN with no project named — unrestricted.
+
+    An **empty** ``allowed_project_ids`` is meaningful, not missing: it is a
+    user who belongs to nothing, and must match no summaries rather than all
+    of them. Hence the explicit ``is not None`` test.
+    """
     from app.db.mongo import Collections, get_mongo_db
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -18,6 +35,8 @@ async def get_run_summaries(db: AsyncSession, project_id: Optional[str], days: i
     mongo_query: dict = {"generated_at": {"$gte": cutoff}}
     if project_id:
         mongo_query["project_id"] = project_id
+    elif allowed_project_ids is not None:
+        mongo_query["project_id"] = {"$in": [str(p) for p in allowed_project_ids]}
 
     cursor = mongo_db[Collections.RUN_SUMMARIES].find(
         mongo_query,

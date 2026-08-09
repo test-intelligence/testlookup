@@ -17,7 +17,6 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
-    get_accessible_project_ids,
     get_current_active_user,
     require_session_access,
 )
@@ -44,11 +43,19 @@ async def get_run_summaries(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    if not project_id:
-        accessible = await get_accessible_project_ids(db, current_user)
-        if accessible is not None:
-            return []
-    return await chat_service.get_run_summaries(db, project_id, days)
+    # F-040: the old guard ran only in the ``if not project_id`` branch, so
+    # naming a project skipped it entirely and the service applied no scoping
+    # of its own. Same shape as the digests leak (F-033) — the guard fired
+    # only where there was nothing to guard.
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    scoped_project_id, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await chat_service.get_run_summaries(
+        db,
+        str(scoped_project_id) if scoped_project_id else None,
+        days,
+        allowed_project_ids=allowed,
+    )
 
 
 # ── Sessions ──────────────────────────────────────────────────────
@@ -67,6 +74,15 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # F-041: payload.project_id went straight onto the row unchecked. The row
+    # is not inert — send_message hands its project to the ConversationAgent,
+    # which is what fetches the data to answer with, so an unverified binding
+    # is a standing handle on another tenant's project.
+    if payload.project_id:
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        await resolve_project_scope(db, current_user, str(payload.project_id))
+
     session = await chat_service.create_session(db, payload, current_user)
     await db.commit()
     await db.refresh(session)
@@ -100,6 +116,15 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # F-041: send_message resolves ``session.project_id or payload.project_id``,
+    # so a per-message project re-points an otherwise legitimate session at
+    # another tenant. Session *ownership* is guarded by require_session_access
+    # (creator-only); the project named inside it was not.
+    if payload.project_id:
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        await resolve_project_scope(db, current_user, str(payload.project_id))
+
     result = await chat_service.send_message(db, session, payload, current_user)
     # Persist the title mutation staged by send_message. The ConversationAgent
     # manages its own writes internally; we only commit our unit of work.

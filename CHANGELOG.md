@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Security: chat took `project_id` from the caller unchecked (HIGH)
+
+Three endpoints in `routers/chat.py` accepted a client-supplied `project_id` and never
+verified membership. The read is **F-033 character-for-character** — the same guard in
+the same wrong branch, in a router the post-F-033 sweep did not reach:
+
+```python
+if not project_id:                       # fires only when there is nothing to guard
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None:
+        return []
+return await chat_service.get_run_summaries(db, project_id, days)
+```
+
+Confirmed on the live deployment with a throwaway VIEWER holding **zero memberships** —
+0 projects visible and 0 summaries on the guarded branch, but **5 records** for another
+tenant's project: build numbers, pass rates, failure counts, executive summaries,
+`markdown_report`, `is_regression`.
+
+`POST /chat/sessions` and `POST /chat/sessions/{id}/messages` are worse than a leaky
+read: `send_message` resolves `session.project_id or payload.project_id` and hands it to
+the ConversationAgent, which is what fetches the data to answer with. So an unverified
+binding is a standing handle on another tenant's project, and a per-message `project_id`
+re-points an otherwise legitimate session. Confirmed live: the same VIEWER created a
+session bound to another tenant's project (201).
+
+Session **ownership** was never the problem — `require_session_access` is creator-only
+and correct. It is the project named inside the session that went unchecked.
+
+All three now resolve scope through `resolve_project_scope` (403 for a non-admin naming
+a project they do not belong to; ADMIN unrestricted). `run-summaries` also filters by the
+caller's membership set when no project is named, so a non-admin gets *their* summaries
+instead of the blanket empty list the old guard returned.
+
+**Why the ratchet missed it:** `test_architectural_authorization.py` matches routers whose
+*path* declares `{project_id}`; here it arrives as a query parameter and two body fields.
+Grepping for the guard also looks fine — it is imported and called, just in the branch
+that cannot leak.
+
 ### 2026-08-09 — LLM cost is now measured (it was $0.00 for every call)
 
 TestLookup could not measure LLM cost **at all**. There was not one token-price constant
