@@ -1717,7 +1717,7 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
                 background: c.kind === 'empty'
                   ? 'var(--color-bg-secondary)'
                   : c.kind === 'fail'
-                    ? `rgba(239,68,68,${0.45 + 0.55 * Math.min(1, c.severity)})`
+                    ? `color-mix(in srgb, var(--status-failed) ${Math.round((0.45 + 0.55 * Math.min(1, c.severity)) * 100)}%, transparent)`
                     : 'color-mix(in srgb, var(--status-passed) 70%, transparent)',
                 border: c.kind === 'empty' ? '1px solid var(--color-border)' : '1px solid transparent',
               }}

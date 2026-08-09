@@ -46,11 +46,11 @@ export default function VisualizationConfigModal({ instance, onSave, onClose }: 
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/70" />
       <div
-        className="relative bg-[#1e293b] border border-[#334155] rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+        className="relative bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#334155] bg-[#0f172a]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
           <div className="flex items-center gap-2">
             <Settings2 className="h-4 w-4 text-[var(--color-text-secondary)]" />
             <h2 className="text-sm font-semibold text-[var(--color-text)]">Configure Visualization</h2>
@@ -99,7 +99,7 @@ export default function VisualizationConfigModal({ instance, onSave, onClose }: 
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[#334155] bg-[#0f172a]">
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]">
           <button onClick={onClose} className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)]">
             Cancel
           </button>

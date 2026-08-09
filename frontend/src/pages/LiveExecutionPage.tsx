@@ -1278,12 +1278,12 @@ export default function LiveExecutionPage() {
               const Icon = status === 'completed' ? Check : status === 'failed' ? XCircle : status === 'running' ? Activity : Clock
               const stageColor =
                 status === 'completed' ? 'color-mix(in srgb, var(--status-passed) 12%, transparent)' :
-                status === 'failed' ? 'rgba(248,113,113,.12)' :
+                status === 'failed' ? 'color-mix(in srgb, var(--status-failed) 12%, transparent)' :
                 status === 'running' ? 'var(--color-accent-muted)' :
                 'var(--color-bg-hover)'
               const stageBorder =
                 status === 'completed' ? 'color-mix(in srgb, var(--status-passed) 40%, transparent)' :
-                status === 'failed' ? 'rgba(248,113,113,.4)' :
+                status === 'failed' ? 'color-mix(in srgb, var(--status-failed) 40%, transparent)' :
                 status === 'running' ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' :
                 'var(--color-border)'
               const stageIconColor =

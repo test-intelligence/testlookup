@@ -15,8 +15,8 @@ const STATE_STYLE: Record<PhaseState, {
 }> = {
   idle:    { dot: 'var(--color-text-faint)',  textColor: 'var(--color-text-muted)',     bg: 'var(--color-bg-secondary)', border: 'var(--color-border)' },
   done:    { dot: 'var(--status-passed)',                   textColor: 'var(--status-passed)',                    bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)',      border: 'color-mix(in srgb, var(--status-passed) 30%, transparent)' },
-  active:  { dot: '#14b8a6',                   textColor: '#5eead4',                    bg: 'rgba(20,184,166,0.10)',     border: 'rgba(20,184,166,0.40)',
-             halo: '0 0 0 3px rgba(20,184,166,0.18)' },
+  active:  { dot: 'var(--color-cyan)',                   textColor: 'var(--color-cyan)',                    bg: 'color-mix(in srgb, var(--color-cyan) 10%, transparent)',     border: 'color-mix(in srgb, var(--color-cyan) 40%, transparent)',
+             halo: '0 0 0 3px color-mix(in srgb, var(--color-cyan) 18%, transparent)' },
   failed:  { dot: 'var(--status-failed)',                   textColor: 'var(--status-failed)',                    bg: 'color-mix(in srgb, var(--status-failed) 10%, transparent)',      border: 'color-mix(in srgb, var(--status-failed) 30%, transparent)' },
   skipped: { dot: 'var(--color-text-faint)',   textColor: 'var(--color-text-faint)',    bg: 'var(--color-bg-secondary)', border: 'var(--color-border)' },
 }
