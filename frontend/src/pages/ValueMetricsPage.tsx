@@ -646,35 +646,35 @@ export default function ValueMetricsPage() {
           label="Defects Auto-Grouped"
           value={metrics.defects_auto_grouped}
           sub={`${metrics.tests_grouped} tests grouped into clusters`}
-          color="text-violet-400"
+          color="text-[var(--status-flaky)]"
         />
         <MetricCard
           icon={AlertTriangle}
           label="Duplicates Avoided"
           value={metrics.duplicate_tickets_avoided}
           sub="Duplicate tickets prevented"
-          color="text-amber-400"
+          color="text-[var(--status-broken)]"
         />
         <MetricCard
           icon={Sparkles}
           label="Defects Promoted"
           value={metrics.defects_promoted}
           sub="Cluster → Jira defect"
-          color="text-emerald-400"
+          color="text-[var(--status-passed)]"
         />
         <MetricCard
           icon={Bug}
           label="Flaky Tests Found"
           value={metrics.flaky_tests_identified}
           sub={`${metrics.quarantine_recommended} recommended for quarantine`}
-          color="text-pink-400"
+          color="text-[var(--status-flaky)]"
         />
         <MetricCard
           icon={ShieldAlert}
           label="Risky Releases Blocked"
           value={metrics.risky_releases_blocked}
           sub={`${metrics.releases_conditional} conditional, ${metrics.release_overrides} overridden`}
-          color="text-red-400"
+          color="text-[var(--status-failed)]"
         />
         <MetricCard
           icon={BarChart3}
@@ -688,7 +688,7 @@ export default function ValueMetricsPage() {
           label="Release Decisions"
           value={metrics.risky_releases_blocked + metrics.releases_conditional}
           sub="Automated go/no-go assessments"
-          color="text-orange-400"
+          color="text-[var(--status-broken)]"
         />
       </div>
 

@@ -65,15 +65,15 @@ export default function StoragePage() {
           <p className="text-xs text-[var(--color-text-muted)]">Connection details are configured via environment variables and masked for security.</p>
           <div className="grid grid-cols-3 gap-3">
             <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
-              <div className={`w-2 h-2 rounded-full ${config.postgres_connected ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <div className={`w-2 h-2 rounded-full ${config.postgres_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
               <span className="text-sm text-[var(--color-text-muted)]">PostgreSQL</span>
             </div>
             <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
-              <div className={`w-2 h-2 rounded-full ${config.mongo_connected ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <div className={`w-2 h-2 rounded-full ${config.mongo_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
               <span className="text-sm text-[var(--color-text-muted)]">MongoDB</span>
             </div>
             <div className="flex items-center gap-2 bg-[var(--color-bg-card)]/50 rounded px-3 py-2">
-              <div className={`w-2 h-2 rounded-full ${config.redis_connected ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <div className={`w-2 h-2 rounded-full ${config.redis_connected ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]'}`} />
               <span className="text-sm text-[var(--color-text-muted)]">Redis</span>
             </div>
           </div>

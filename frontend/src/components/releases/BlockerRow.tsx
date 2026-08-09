@@ -14,19 +14,19 @@ const SEV_STYLE: Record<DerivedBlocker['severity'], {
 }> = {
   warn: {
     icon: AlertTriangle,
-    iconClass: 'text-amber-400',
+    iconClass: 'text-[var(--status-broken)]',
     border: 'color-mix(in srgb, var(--status-skipped) 22%, transparent)',
     bg: 'linear-gradient(180deg, color-mix(in srgb, var(--status-skipped) 6%, transparent), transparent 70%)',
   },
   red: {
     icon: AlertTriangle,
-    iconClass: 'text-red-400',
+    iconClass: 'text-[var(--status-failed)]',
     border: 'color-mix(in srgb, var(--status-failed) 28%, transparent)',
     bg: 'linear-gradient(180deg, color-mix(in srgb, var(--status-failed) 6%, transparent), transparent 70%)',
   },
   resolved: {
     icon: CheckCircle2,
-    iconClass: 'text-emerald-400',
+    iconClass: 'text-[var(--status-passed)]',
     border: 'color-mix(in srgb, var(--status-passed) 28%, transparent)',
     bg: 'linear-gradient(180deg, color-mix(in srgb, var(--status-passed) 6%, transparent), transparent 70%)',
   },

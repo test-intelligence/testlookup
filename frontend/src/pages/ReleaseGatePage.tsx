@@ -25,9 +25,9 @@ import { copyTextToClipboard } from '@/utils/clipboard'
 type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO' | 'PENDING'
 
 const REC_CONFIG: Record<Recommendation, { label: string; colour: string; bg: string; icon: React.ElementType }> = {
-  GO:              { label: 'GO',              colour: 'text-emerald-400', bg: 'bg-emerald-900/20 border-emerald-700/30', icon: CheckCircle },
-  NO_GO:           { label: 'NO GO',           colour: 'text-red-400',     bg: 'bg-red-900/20 border-red-700/30',         icon: XCircle     },
-  CONDITIONAL_GO:  { label: 'CONDITIONAL GO',  colour: 'text-amber-400',   bg: 'bg-amber-900/20 border-amber-700/30',     icon: AlertTriangle },
+  GO:              { label: 'GO',              colour: 'text-[var(--status-passed)]', bg: 'bg-[var(--status-passed-bg)]/20 border-[var(--status-passed-bd)]/30', icon: CheckCircle },
+  NO_GO:           { label: 'NO GO',           colour: 'text-[var(--status-failed)]',     bg: 'bg-[var(--status-failed-bg)]/20 border-[var(--status-failed-bd)]/30',         icon: XCircle     },
+  CONDITIONAL_GO:  { label: 'CONDITIONAL GO',  colour: 'text-[var(--status-broken)]',   bg: 'bg-[var(--status-broken-bg)]/20 border-[var(--status-broken-bd)]/30',     icon: AlertTriangle },
   // Used when the decision has no test evidence to grade — backend can still
   // return GO/NO_GO from policy defaults, but the UI shouldn't surface a
   // verdict against zero data.
@@ -162,9 +162,9 @@ export default function ReleaseGatePage() {
                     <td className="td">
                       <span className={clsx(
                         'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ring-1 ring-inset',
-                        run.status === 'passed' ? 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20' :
-                        run.status === 'failed' ? 'bg-red-500/10 text-red-400 ring-red-500/20' :
-                        'bg-neutral-700/10 text-[var(--color-text-muted)] ring-neutral-600/20',
+                        run.status === 'passed' ? 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/20' :
+                        run.status === 'failed' ? 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)] ring-[var(--status-failed)]/20' :
+                        'bg-[var(--color-bg-card)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/20',
                       )}>
                         {(run.status ?? 'unknown').toUpperCase()}
                       </span>
@@ -313,10 +313,10 @@ export default function ReleaseGatePage() {
         // breakdown / LLM narrative are blank, so we surface a CTA.
         <div
           role="status"
-          className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3"
+          className="flex items-start justify-between gap-3 rounded-lg border border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 px-4 py-3"
         >
-          <div className="flex items-start gap-2 text-sm text-amber-200">
-            <Shield className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+          <div className="flex items-start gap-2 text-sm text-[var(--status-broken)]">
+            <Shield className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--status-broken)]" />
             <div>
               <strong className="font-semibold">Quick-look decision.</strong>{' '}
               Derived from this run&apos;s aggregates because deep investigation
@@ -359,7 +359,7 @@ export default function ReleaseGatePage() {
             <p className="text-sm text-[var(--color-text-muted)] mt-1">Pass rate: {decision.pass_rate.toFixed(1)}%</p>
           )}
           {hasEvidence && decision.original_recommendation && decision.original_recommendation !== decision.recommendation && (
-            <p className="text-xs text-amber-500 mt-1">
+            <p className="text-xs text-[var(--status-broken)] mt-1">
               Original AI recommendation: {decision.original_recommendation}
               {decision.original_risk_score != null && ` (score: ${decision.original_risk_score})`}
             </p>
@@ -395,10 +395,10 @@ export default function ReleaseGatePage() {
             {decision.rule_evaluations.map((ev: { rule_id: string; rule_name: string; passed: boolean; action: string; message: string }) => (
               <div key={ev.rule_id} className="flex items-center justify-between bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2 text-sm">
                 <div className="flex items-center gap-2">
-                  <span className={clsx('w-2 h-2 rounded-full', ev.passed ? 'bg-emerald-400' : ev.action === 'BLOCK' ? 'bg-red-400' : 'bg-amber-400')} />
+                  <span className={clsx('w-2 h-2 rounded-full', ev.passed ? 'bg-[var(--status-passed-bg)]' : ev.action === 'BLOCK' ? 'bg-[var(--status-failed-bg)]' : 'bg-[var(--status-broken-bg)]')} />
                   <span className="text-[var(--color-text-secondary)]">{ev.rule_name}</span>
                 </div>
-                <span className={clsx('text-xs', ev.passed ? 'text-[var(--color-text-muted)]' : 'text-red-300')}>{ev.message}</span>
+                <span className={clsx('text-xs', ev.passed ? 'text-[var(--color-text-muted)]' : 'text-[var(--status-failed)]')}>{ev.message}</span>
               </div>
             ))}
           </div>
@@ -407,8 +407,8 @@ export default function ReleaseGatePage() {
 
       {/* Override badge */}
       {decision.human_override && (
-        <div className="card border border-amber-700/30 bg-amber-900/10 py-3">
-          <p className="text-xs text-amber-400 uppercase tracking-wider mb-1">Human Override Applied</p>
+        <div className="card border border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/10 py-3">
+          <p className="text-xs text-[var(--status-broken)] uppercase tracking-wider mb-1">Human Override Applied</p>
           <p className="text-sm text-[var(--color-text-secondary)]">{decision.human_override}</p>
         </div>
       )}
@@ -418,13 +418,13 @@ export default function ReleaseGatePage() {
         {decision.blocking_issues.length > 0 && (
           <div className="card">
             <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-              <XCircle className="w-4 h-4 text-red-400" />
+              <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
               Blocking Issues
             </h3>
             <ul className="space-y-2">
               {decision.blocking_issues.map((issue, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-[var(--color-text-secondary)]">
-                  <span className="text-red-400 mt-0.5 shrink-0">✕</span>
+                  <span className="text-[var(--status-failed)] mt-0.5 shrink-0">✕</span>
                   {issue}
                 </li>
               ))}
@@ -436,13 +436,13 @@ export default function ReleaseGatePage() {
         {decision.conditions_for_go.length > 0 && (
           <div className="card">
             <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400" />
+              <Zap className="w-4 h-4 text-[var(--status-broken)]" />
               Conditions for GO
             </h3>
             <ul className="space-y-2">
               {decision.conditions_for_go.map((cond, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-[var(--color-text-secondary)]">
-                  <span className="text-amber-400 mt-0.5 shrink-0">→</span>
+                  <span className="text-[var(--status-broken)] mt-0.5 shrink-0">→</span>
                   {cond}
                 </li>
               ))}
@@ -482,7 +482,7 @@ export default function ReleaseGatePage() {
             {decision.open_defects_by_component.map((d) => (
               <div key={d.component} className="flex items-center justify-between bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2">
                 <span className="text-sm text-[var(--color-text-secondary)]">{d.component}</span>
-                <span className="text-sm font-mono text-red-400">{d.count}</span>
+                <span className="text-sm font-mono text-[var(--status-failed)]">{d.count}</span>
               </div>
             ))}
           </div>
@@ -546,7 +546,7 @@ export default function ReleaseGatePage() {
               onChange={e => setOverrideReason(e.target.value)}
               placeholder="Reason for override (required)…"
               rows={3}
-              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 resize-none"
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] resize-none"
             />
             <div className="flex gap-2">
               <button

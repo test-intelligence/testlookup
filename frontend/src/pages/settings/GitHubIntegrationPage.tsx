@@ -171,7 +171,7 @@ export default function GitHubIntegrationPage() {
             <span
               className={`ml-auto text-[10px] px-2 py-0.5 rounded border ${
                 existing.enabled
-                  ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+                  ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
                   : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
               }`}
             >
@@ -252,8 +252,8 @@ export default function GitHubIntegrationPage() {
           <div
             className={`rounded-md border p-2 text-xs ${
               lastTest.success
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                ? 'border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)]'
+                : 'border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)]'
             }`}
           >
             {lastTest.success ? (
@@ -279,7 +279,7 @@ export default function GitHubIntegrationPage() {
         )}
 
         {existing?.last_error && (
-          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">
+          <div className="rounded-md border border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 p-2 text-xs text-[var(--status-broken)]">
             <strong>Last error:</strong> {existing.last_error}
             {existing.last_error_at && (
               <span className="text-[var(--color-text-faint)] ml-1">
@@ -317,7 +317,7 @@ export default function GitHubIntegrationPage() {
               <button
                 type="button"
                 onClick={remove}
-                className="ml-auto text-xs text-rose-400 hover:underline flex items-center gap-1"
+                className="ml-auto text-xs text-[var(--status-failed)] hover:underline flex items-center gap-1"
               >
                 <Trash2 className="h-3 w-3" /> Remove
               </button>

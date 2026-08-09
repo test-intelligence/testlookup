@@ -176,10 +176,10 @@ function PurgeConfirmModal({ projectId, projectName, onClose, onQueued }: PurgeM
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-lg rounded-lg border border-red-700/50 bg-[var(--color-bg)] p-6 shadow-2xl">
+      <div className="w-full max-w-lg rounded-lg border border-[var(--status-failed-bd)]/50 bg-[var(--color-bg)] p-6 shadow-2xl">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-red-400" />
+            <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
             <h2 className="text-lg font-semibold text-[var(--color-text)]">Purge old data now</h2>
           </div>
           <button
@@ -232,7 +232,7 @@ function PurgeConfirmModal({ projectId, projectName, onClose, onQueued }: PurgeM
             onClick={handleConfirm}
             disabled={!matches || submitting}
             aria-disabled={!matches || submitting}
-            className="inline-flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-red-900/40 disabled:text-red-200/60"
+            className="inline-flex items-center gap-1.5 rounded bg-[var(--status-failed-bg)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--status-failed-bg)] disabled:cursor-not-allowed disabled:bg-[var(--status-failed-bg)]/40 disabled:text-[var(--status-failed)]/60"
           >
             {submitting ? (
               <>
@@ -325,7 +325,7 @@ export default function RetentionPage() {
           title="Retention & Purge"
           subtitle={`Data-retention windows for ${activeProject?.name || 'this project'}`}
         />
-        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-4 text-xs text-rose-300 space-y-2">
+        <div className="rounded-md border border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 p-4 text-xs text-[var(--status-failed)] space-y-2">
           <p className="flex items-center gap-1.5">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
             <strong>Could not load the retention policy.</strong>
@@ -473,11 +473,11 @@ export default function RetentionPage() {
                   onChange={(e) => editDay(field, e.target.value)}
                   aria-invalid={Boolean(fieldError)}
                   className={`mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border rounded ${
-                    fieldError ? 'border-rose-500/60' : 'border-[var(--color-border)]'
+                    fieldError ? 'border-[var(--status-failed-bd)]/60' : 'border-[var(--color-border)]'
                   }`}
                 />
                 {fieldError ? (
-                  <span className="mt-1 block text-rose-400">{fieldError}</span>
+                  <span className="mt-1 block text-[var(--status-failed)]">{fieldError}</span>
                 ) : (
                   <span className="mt-1 block text-[var(--color-text-faint)]">{help}</span>
                 )}
@@ -538,7 +538,7 @@ export default function RetentionPage() {
         </button>
 
         {previewError && (
-          <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-2 text-xs text-rose-300">
+          <div className="rounded-md border border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 p-2 text-xs text-[var(--status-failed)]">
             <AlertTriangle className="h-3.5 w-3.5 inline mr-1" />
             {previewError}
           </div>
@@ -605,8 +605,8 @@ export default function RetentionPage() {
       </section>
 
       {/* ── Danger zone ─────────────────────────────────────────────── */}
-      <section className="card space-y-4 border-red-700/40" aria-labelledby="retention-danger-heading">
-        <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-red-300">
+      <section className="card space-y-4 border-[var(--status-failed-bd)]/40" aria-labelledby="retention-danger-heading">
+        <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
           <AlertTriangle className="h-4 w-4" />
           <h2 id="retention-danger-heading">Danger zone</h2>
         </header>
@@ -627,7 +627,7 @@ export default function RetentionPage() {
                 ? 'Enable and save the retention policy first — purging is blocked while the policy is disabled'
                 : undefined
             }
-            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-red-600/60 bg-red-900/30 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-900/60 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30 px-3 py-1.5 text-xs font-medium text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/60 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Trash2 className="h-3.5 w-3.5" /> Purge now
           </button>

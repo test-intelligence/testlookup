@@ -69,9 +69,9 @@ function passRateColor(rate: number): string {
 }
 
 function statusDot(status: string) {
-  if (status === 'running') return 'bg-neutral-300 animate-pulse'
+  if (status === 'running') return 'bg-[var(--color-bg-hover)] animate-pulse'
   if (status === 'completed') return 'bg-[var(--status-passed)]'
-  return 'bg-neutral-600'
+  return 'bg-[var(--color-bg-hover)]'
 }
 
 function relativeTime(ts: number): string {
@@ -1183,7 +1183,7 @@ export default function LiveExecutionPage() {
                     </td>
                     <td className="px-3 py-3">
                       {s.release_name ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-violet-900/30 text-violet-300 border-violet-700/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/30">
                           <Package className="w-2.5 h-2.5" />
                           {s.release_name}
                         </span>

@@ -18,10 +18,10 @@ const SEVERITY_OPTIONS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 type Severity = (typeof SEVERITY_OPTIONS)[number]
 
 const SEVERITY_COLOURS: Record<Severity, string> = {
-  CRITICAL: 'text-red-400 border-red-700/60 bg-red-900/20',
-  HIGH:     'text-orange-400 border-orange-700/60 bg-orange-900/20',
-  MEDIUM:   'text-amber-400 border-amber-700/60 bg-amber-900/20',
-  LOW:      'text-emerald-400 border-emerald-700/60 bg-emerald-900/20',
+  CRITICAL: 'text-[var(--status-failed)] border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/20',
+  HIGH:     'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/20',
+  MEDIUM:   'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/20',
+  LOW:      'text-[var(--status-passed)] border-[var(--status-passed-bd)]/60 bg-[var(--status-passed-bg)]/20',
 }
 
 interface DefectPromotionModalProps {
@@ -134,7 +134,7 @@ export default function DefectPromotionModal({
           )}
 
           {isError && (
-            <div className="rounded-xl bg-red-900/20 border border-red-700/40 p-4 text-sm text-red-300">
+            <div className="rounded-xl bg-[var(--status-failed-bg)]/20 border border-[var(--status-failed-bd)]/40 p-4 text-sm text-[var(--status-failed)]">
               Failed to load defect candidate. You can still fill in the form manually.
             </div>
           )}
@@ -143,14 +143,14 @@ export default function DefectPromotionModal({
             <div className={clsx(
               'rounded-xl p-4 space-y-2',
               promotionResult.approval_status === 'pending_review'
-                ? 'bg-amber-900/20 border border-amber-700/40'
-                : 'bg-emerald-900/20 border border-emerald-700/40',
+                ? 'bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/40'
+                : 'bg-[var(--status-passed-bg)]/20 border border-[var(--status-passed-bd)]/40',
             )}>
               <p className={clsx(
                 'text-sm font-semibold',
                 promotionResult.approval_status === 'pending_review'
-                  ? 'text-amber-300'
-                  : 'text-emerald-300',
+                  ? 'text-[var(--status-broken)]'
+                  : 'text-[var(--status-passed)]',
               )}>
                 {promotionResult.approval_status === 'pending_review'
                   ? 'Defect created — awaiting approval'
@@ -161,9 +161,9 @@ export default function DefectPromotionModal({
               </p>
               {promotionResult.approval_status === 'pending_review' && (
                 <div className="flex items-start gap-2 mt-2">
-                  <Clock className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                  <Clock className="h-4 w-4 text-[var(--status-broken)] shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-xs text-amber-300">
+                    <p className="text-xs text-[var(--status-broken)]">
                       This defect requires QA Lead approval before Jira ticket creation.
                     </p>
                     {promotionResult.policy_reasons && promotionResult.policy_reasons.length > 0 && (
@@ -179,7 +179,7 @@ export default function DefectPromotionModal({
                 </div>
               )}
               {promotionResult.duplicate_detected && (
-                <p className="text-xs text-amber-400">
+                <p className="text-xs text-[var(--status-broken)]">
                   Possible duplicate detected — defect ID:{' '}
                   <span className="font-mono">{promotionResult.duplicate_defect_id}</span>
                 </p>
@@ -202,10 +202,10 @@ export default function DefectPromotionModal({
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Duplicate warning */}
               {candidate?.duplicate_detected && (
-                <div className="rounded-xl bg-amber-900/20 border border-amber-700/40 p-3 flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="rounded-xl bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/40 p-3 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-[var(--status-broken)] shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-sm text-amber-300 font-medium">
+                    <p className="text-sm text-[var(--status-broken)] font-medium">
                       Possible duplicate detected
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
@@ -222,7 +222,7 @@ export default function DefectPromotionModal({
               {/* Title */}
               <div>
                 <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
-                  Title <span className="text-red-400">*</span>
+                  Title <span className="text-[var(--status-failed)]">*</span>
                 </label>
                 <input
                   type="text"
@@ -230,7 +230,7 @@ export default function DefectPromotionModal({
                   onChange={e => setTitle(e.target.value)}
                   placeholder="Concise defect title…"
                   required
-                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 transition-colors"
+                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] transition-colors"
                 />
               </div>
 
@@ -269,7 +269,7 @@ export default function DefectPromotionModal({
                     value={component}
                     onChange={e => setComponent(e.target.value)}
                     placeholder="e.g. auth-service"
-                    className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 transition-colors"
+                    className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] transition-colors"
                   />
                 </div>
                 <div>
@@ -281,7 +281,7 @@ export default function DefectPromotionModal({
                     value={ownerTeam}
                     onChange={e => setOwnerTeam(e.target.value)}
                     placeholder="e.g. payments-backend"
-                    className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 transition-colors"
+                    className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] transition-colors"
                   />
                 </div>
               </div>
@@ -297,7 +297,7 @@ export default function DefectPromotionModal({
                   value={labelsInput}
                   onChange={e => setLabelsInput(e.target.value)}
                   placeholder="regression, automated-test, cluster-promoted"
-                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 transition-colors"
+                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] transition-colors"
                 />
               </div>
 
@@ -311,7 +311,7 @@ export default function DefectPromotionModal({
                   onChange={e => setDescription(e.target.value)}
                   rows={4}
                   placeholder="What failed / Steps to reproduce / Expected / Actual / Environment…"
-                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 transition-colors resize-none"
+                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] transition-colors resize-none"
                 />
               </div>
 
@@ -326,7 +326,7 @@ export default function DefectPromotionModal({
                   value={projectKey}
                   onChange={e => setProjectKey(e.target.value.toUpperCase())}
                   placeholder="e.g. QA"
-                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-neutral-500 transition-colors"
+                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] transition-colors"
                 />
               </div>
 
@@ -388,7 +388,7 @@ export default function DefectPromotionModal({
                             {candidate.evidence_bundle.log_anomalies
                               .slice(0, 3)
                               .map((a, i) => (
-                                <li key={i} className="text-xs text-amber-400 flex gap-1.5">
+                                <li key={i} className="text-xs text-[var(--status-broken)] flex gap-1.5">
                                   <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
                                   {a}
                                 </li>
@@ -409,12 +409,12 @@ export default function DefectPromotionModal({
                     className={clsx(
                       'font-semibold',
                       candidate.composite_score >= 70
-                        ? 'text-red-400'
+                        ? 'text-[var(--status-failed)]'
                         : candidate.composite_score >= 50
-                          ? 'text-orange-400'
+                          ? 'text-[var(--status-broken)]'
                           : candidate.composite_score >= 30
-                            ? 'text-amber-400'
-                            : 'text-emerald-400',
+                            ? 'text-[var(--status-broken)]'
+                            : 'text-[var(--status-passed)]',
                     )}
                   >
                     {candidate.composite_score.toFixed(1)}/100
@@ -425,7 +425,7 @@ export default function DefectPromotionModal({
               )}
 
               {promotionError && (
-                <div className="rounded-lg bg-red-900/20 border border-red-700/40 px-3 py-2 text-sm text-red-300">
+                <div className="rounded-lg bg-[var(--status-failed-bg)]/20 border border-[var(--status-failed-bd)]/40 px-3 py-2 text-sm text-[var(--status-failed)]">
                   {promotionError}
                 </div>
               )}
@@ -459,7 +459,7 @@ export default function DefectPromotionModal({
           <div className="flex justify-end px-6 py-4 border-t border-[var(--color-border)] shrink-0">
             <button
               onClick={handleClose}
-              className="px-5 py-2 bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] text-sm font-medium rounded-lg transition-colors"
+              className="px-5 py-2 bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm font-medium rounded-lg transition-colors"
             >
               Close
             </button>

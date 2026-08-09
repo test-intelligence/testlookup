@@ -173,7 +173,7 @@ function ModeTabs({ mode, setMode, isLive }: { mode: ModeTab; setMode: (m: ModeT
             <TabIcon className={clsx('h-3.5 w-3.5', t.id === 'live' && active && 'animate-spin')} />
             {t.label}
             {t.id === 'live' && active && isLive && (
-              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--status-passed-bg)] animate-pulse" />
             )}
             {active && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--color-accent)]" />}
           </button>
@@ -854,7 +854,7 @@ function VerdictPanel({ pipeline, totalTests, failedCount, elapsedLabel }: {
           <span
             className="text-[11px] font-bold px-2.5 py-1 rounded-full"
             style={{
-              background: verdict === 'GO' ? 'color-mix(in srgb, var(--status-passed) 18%, transparent)' : 'rgba(210,153,34,.18)',
+              background: verdict === 'GO' ? 'color-mix(in srgb, var(--status-passed) 18%, transparent)' : 'color-mix(in srgb, var(--status-broken) 18%, transparent)',
               color: verdict === 'GO' ? 'rgb(63 185 80)' : 'rgb(210 153 34)',
             }}
           >
@@ -932,7 +932,7 @@ function InlineSummaryReport({ runId, open, onClose }: { runId: string | null; o
   const decisionTone = decision?.recommendation === 'GO'
     ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'rgb(63 185 80)' }
     : decision?.recommendation === 'CONDITIONAL_GO'
-      ? { bg: 'rgba(210,153,34,.18)', fg: 'rgb(210 153 34)' }
+      ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'rgb(210 153 34)' }
       : decision?.recommendation === 'NO_GO'
         ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'rgb(248 81 73)' }
         : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
@@ -1194,7 +1194,7 @@ function KindPill({ kind }: { kind: FeedEvent['kind'] }) {
     kind === 'failed' ? { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)', fg: 'rgb(248 81 73)' } :
     kind === 'completed' ? { bg: 'color-mix(in srgb, var(--status-passed) 18%, transparent)', fg: 'rgb(63 185 80)' } :
     kind === 'decision' ? { bg: 'color-mix(in srgb, var(--status-flaky) 18%, transparent)', fg: 'rgb(163 113 247)' } :
-    kind === 'retry' ? { bg: 'rgba(210,153,34,.18)', fg: 'rgb(210 153 34)' } :
+    kind === 'retry' ? { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)', fg: 'rgb(210 153 34)' } :
     { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
   return (
     <span className="font-mono text-[9.5px] px-1.5 py-0.5 rounded" style={{ background: tone.bg, color: tone.fg }}>

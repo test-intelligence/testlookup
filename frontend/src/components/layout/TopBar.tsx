@@ -10,10 +10,10 @@ import { notificationService } from '@/services/notificationService'
 import ThemePicker from '@/components/ui/ThemePicker'
 
 const AVATAR_BG: Record<string, string> = {
-  slate: 'bg-slate-500', red: 'bg-red-500', orange: 'bg-orange-500',
-  amber: 'bg-amber-500', lime: 'bg-lime-500', emerald: 'bg-emerald-500',
-  teal: 'bg-teal-500', cyan: 'bg-cyan-500', blue: 'bg-blue-500',
-  violet: 'bg-violet-500', fuchsia: 'bg-fuchsia-500', pink: 'bg-pink-500',
+  slate: 'bg-[var(--color-bg-hover)]', red: 'bg-[var(--status-failed-bg)]', orange: 'bg-[var(--status-broken-bg)]',
+  amber: 'bg-[var(--status-broken-bg)]', lime: 'bg-[var(--status-passed-bg)]', emerald: 'bg-[var(--status-passed-bg)]',
+  teal: 'bg-[var(--status-passed-bg)]', cyan: 'bg-[var(--color-accent-muted)]', blue: 'bg-[var(--color-accent-muted)]',
+  violet: 'bg-[var(--status-flaky-bg)]', fuchsia: 'bg-[var(--status-flaky-bg)]', pink: 'bg-[var(--status-flaky-bg)]',
 }
 
 function getInitials(fullName: string | null | undefined, username: string): string {
@@ -270,7 +270,7 @@ export default function TopBar() {
                         </p>
                       </div>
                       {!log.is_read && (
-                        <span className="w-2 h-2 rounded-full bg-neutral-400 shrink-0 mt-1.5" />
+                        <span className="w-2 h-2 rounded-full bg-[var(--color-bg-hover)] shrink-0 mt-1.5" />
                       )}
                     </li>
                   ))}

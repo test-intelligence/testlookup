@@ -162,9 +162,9 @@ export default function SettingsPage() {
       <PageHeader title="Settings" subtitle="Application configuration and integrations" />
 
       {!canViewSettings && (
-        <div className="card flex items-center gap-3 border-amber-700/30 bg-amber-900/10 py-3 px-4">
-          <ShieldAlert className="h-4 w-4 text-amber-400 flex-shrink-0" />
-          <p className="text-sm text-amber-300">Some settings require QA Lead or Admin role.</p>
+        <div className="card flex items-center gap-3 border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/10 py-3 px-4">
+          <ShieldAlert className="h-4 w-4 text-[var(--status-broken)] flex-shrink-0" />
+          <p className="text-sm text-[var(--status-broken)]">Some settings require QA Lead or Admin role.</p>
         </div>
       )}
 

@@ -37,10 +37,10 @@ const PHASE_TYPES = [
 ]
 
 const PHASE_STATUS_COLOR: Record<string, string> = {
-  pending:     'bg-neutral-700/20 text-[var(--color-text-muted)]',
-  in_progress: 'bg-amber-500/20 text-amber-400',
-  completed:   'bg-emerald-500/20 text-emerald-400',
-  skipped:     'bg-neutral-700/10 text-[var(--color-text-muted)]',
+  pending:     'bg-[var(--color-bg-card)]/20 text-[var(--color-text-muted)]',
+  in_progress: 'bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]',
+  completed:   'bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]',
+  skipped:     'bg-[var(--color-bg-card)]/10 text-[var(--color-text-muted)]',
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -298,7 +298,7 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
             onKeyDown={handleKeyDown}
             placeholder="e.g. QA Testing"
             autoFocus
-            className="bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] focus:border-neutral-500 placeholder:text-[var(--color-text-muted)] w-full"
+            className="bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)] focus:border-[var(--color-border)] placeholder:text-[var(--color-text-muted)] w-full"
           />
         </div>
         <div>
@@ -313,7 +313,7 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
         </div>
       </div>
       {isDuplicate && (
-        <p className="text-xs text-red-400">A phase with this name already exists in this release.</p>
+        <p className="text-xs text-[var(--status-failed)]">A phase with this name already exists in this release.</p>
       )}
       <div className="flex items-center justify-between">
         <p className="text-[10px] text-[var(--color-text-faint)]">Press Enter to add, Escape to cancel</p>
@@ -402,9 +402,9 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
   const m = detail.metrics ?? {}
   const passRate = m.avg_pass_rate != null ? Number(m.avg_pass_rate).toFixed(1) : '—'
   const passColor = m.avg_pass_rate == null ? 'text-[var(--color-text-muted)]'
-    : m.avg_pass_rate >= 90 ? 'text-emerald-400'
-    : m.avg_pass_rate >= 70 ? 'text-amber-400'
-    : 'text-red-400'
+    : m.avg_pass_rate >= 90 ? 'text-[var(--status-passed)]'
+    : m.avg_pass_rate >= 70 ? 'text-[var(--status-broken)]'
+    : 'text-[var(--status-failed)]'
 
   return (
     <div className="space-y-5">
@@ -422,8 +422,8 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
         {[
           { label: 'Runs',    value: m.total_runs ?? 0,    color: 'text-[var(--color-text-secondary)]' },
           { label: 'Tests',   value: m.total_tests ?? 0,   color: 'text-[var(--color-text-secondary)]' },
-          { label: 'Passed',  value: m.total_passed ?? 0,  color: 'text-emerald-400' },
-          { label: 'Failed',  value: m.total_failed ?? 0,  color: 'text-red-400' },
+          { label: 'Passed',  value: m.total_passed ?? 0,  color: 'text-[var(--status-passed)]' },
+          { label: 'Failed',  value: m.total_failed ?? 0,  color: 'text-[var(--status-failed)]' },
           { label: 'Pass Rate', value: `${passRate}%`,     color: passColor },
         ].map(({ label, value, color }) => (
           <div key={label} className="card py-2.5">
@@ -449,15 +449,15 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
       {/* Auto-complete banner — shown when all phases done and release not yet released */}
       {detail.status !== 'released' && detail.status !== 'cancelled' && (detail.phases ?? []).length > 0 &&
         (detail.phases ?? []).every((p: ReleasePhase) => p.status === 'completed' || p.status === 'skipped') && (
-        <div className="card border border-emerald-700/40 bg-emerald-900/20 flex items-center justify-between gap-3 py-3">
+        <div className="card border border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/20 flex items-center justify-between gap-3 py-3">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
-            <p className="text-sm text-emerald-300">All phases are completed. This release is ready to be marked as Released.</p>
+            <CheckCircle2 className="h-5 w-5 text-[var(--status-passed)] shrink-0" />
+            <p className="text-sm text-[var(--status-passed)]">All phases are completed. This release is ready to be marked as Released.</p>
           </div>
           <button
             onClick={markAsReleased}
             disabled={markingReleased}
-            className="shrink-0 px-4 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-[var(--color-text)] rounded-lg font-medium transition-colors"
+            className="shrink-0 px-4 py-1.5 text-sm bg-[var(--status-passed-bg)] hover:bg-[var(--status-passed-bg)] disabled:opacity-50 text-[var(--color-text)] rounded-lg font-medium transition-colors"
           >
             {markingReleased ? 'Marking…' : 'Mark as Released'}
           </button>
@@ -502,7 +502,7 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
                   onClick={() => {
                     if (confirm(`Remove phase "${phase.name}"?`)) deletePhase(phase.id)
                   }}
-                  className="text-[var(--color-text-faint)] hover:text-red-400 transition-colors p-0.5"
+                  className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-0.5"
                   title="Remove phase"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -547,8 +547,8 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
                   <th className="th text-left">Build</th>
                   <th className="th text-left">Suite</th>
                   <th className="th text-right">Date</th>
-                  <th className="th text-right text-emerald-400">Passed</th>
-                  <th className="th text-right text-red-400">Failed</th>
+                  <th className="th text-right text-[var(--status-passed)]">Passed</th>
+                  <th className="th text-right text-[var(--status-failed)]">Failed</th>
                   <th className="th text-right">Pass Rate</th>
                   <th className="th"></th>
                 </tr>
@@ -568,13 +568,13 @@ function ReleaseDetailPanel({ releaseId, onEdit: _onEdit, projectId: _projectId 
                       <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
                     </td>
                     <td className="td text-right text-xs text-[var(--color-text-muted)]">{fmtDate(run.created_at)}</td>
-                    <td className="td text-right tabular-nums text-emerald-400">{run.passed_tests}</td>
-                    <td className="td text-right tabular-nums text-red-400">{run.failed_tests}</td>
+                    <td className="td text-right tabular-nums text-[var(--status-passed)]">{run.passed_tests}</td>
+                    <td className="td text-right tabular-nums text-[var(--status-failed)]">{run.failed_tests}</td>
                     <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">
                       {run.pass_rate != null ? `${Number(run.pass_rate).toFixed(1)}%` : '—'}
                     </td>
                     <td className="td text-right">
-                      <button onClick={() => unlinkRun(run.id)} className="text-[var(--color-text-muted)] hover:text-red-400 transition-colors">
+                      <button onClick={() => unlinkRun(run.id)} className="text-[var(--color-text-muted)] hover:text-[var(--status-failed)] transition-colors">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </td>
@@ -832,7 +832,7 @@ export default function ReleasesPage() {
                           </button>
                           <button
                             onClick={() => deleteRelease(r.id)}
-                            className="text-xs text-red-500/70 hover:text-red-400 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                            className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors"
                           >
                             Delete
                           </button>

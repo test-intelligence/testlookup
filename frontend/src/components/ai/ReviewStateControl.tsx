@@ -26,33 +26,33 @@ const STATE_OPTIONS: Array<{
     value: 'reviewed',
     label: 'Reviewed',
     Icon: CheckCircle2,
-    badgeCls: 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50',
+    badgeCls: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] border border-[var(--status-passed-bd)]/50',
     helper: 'Human confirmed the AI verdict.',
   },
   {
     value: 'defect_filed',
     label: 'Defect filed',
     Icon: BugPlay,
-    badgeCls: 'bg-rose-900/40 text-rose-300 border border-rose-700/50',
+    badgeCls: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)] border border-[var(--status-failed-bd)]/50',
     helper: 'Tracker URL required.',
   },
   {
     value: 'false_positive',
     label: 'False positive',
     Icon: XCircle,
-    badgeCls: 'bg-violet-900/40 text-violet-300 border border-violet-700/50',
+    badgeCls: 'bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border border-[var(--status-flaky-bd)]/50',
     helper: 'Flake or test bug — not a real failure.',
   },
   {
     value: 'reproducible',
     label: 'Reproducible',
     Icon: AlertTriangle,
-    badgeCls: 'bg-orange-900/40 text-orange-300 border border-orange-700/50',
+    badgeCls: 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border border-[var(--status-broken-bd)]/50',
     helper: 'Failure confirmed locally; awaiting fix.',
   },
 ]
 
-const PENDING_BADGE = 'bg-amber-900/40 text-amber-300 border border-amber-700/50'
+const PENDING_BADGE = 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border border-[var(--status-broken-bd)]/50'
 
 interface Props {
   testCaseId: string

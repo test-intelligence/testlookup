@@ -60,7 +60,7 @@ function StatusBadge({ status }: { status: string }) {
     s === 'FAILED'  ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] ring-[var(--status-failed-bd)]' :
     s === 'BROKEN'  ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] ring-[var(--status-broken-bd)]' :
     s === 'SKIPPED' ? 'bg-[var(--status-skipped-bg)] text-[var(--status-skipped)] ring-[var(--status-skipped-bd)]' :
-                      'bg-neutral-700/10 text-[var(--color-text-muted)] ring-neutral-600/20'
+                      'bg-[var(--color-bg-card)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/20'
   return (
     <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ring-1 ring-inset', cls)}>
       {s}
@@ -278,7 +278,7 @@ export default function SuiteDetailPage() {
               },
               {
                 label: 'Avg Duration', value: fmt(summary.avg_duration_ms),
-                color: 'text-cyan-400', icon: <Clock className="h-4 w-4" />,
+                color: 'text-[var(--color-accent)]', icon: <Clock className="h-4 w-4" />,
               },
             ].map(({ label, value, color, icon }) => (
               <div key={label} className="card py-3">
@@ -320,7 +320,7 @@ export default function SuiteDetailPage() {
                     <Bar dataKey="passed_count"  name="Passed"  stackId="status" fill="var(--status-passed)" />
                     <Bar dataKey="failed_count"  name="Failed"  stackId="status" fill="var(--status-failed)" />
                     <Bar dataKey="skipped_count" name="Skipped" stackId="status" fill="var(--status-broken)" />
-                    <Bar dataKey="broken_count"  name="Broken"  stackId="status" fill="#fb923c" />
+                    <Bar dataKey="broken_count"  name="Broken"  stackId="status" fill="var(--status-broken)" />
                   </BarChart>
                 </ResponsiveContainer>
               )}

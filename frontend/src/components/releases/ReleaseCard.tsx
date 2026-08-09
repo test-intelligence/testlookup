@@ -175,14 +175,14 @@ export default function ReleaseCard({ release, collapsed = false, onClick }: Rel
             </div>
             <div className="mt-1 flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)] flex-wrap">
               <span
-                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-sky-700 text-sky-100 text-[9px] font-semibold"
+                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--color-accent-muted)] text-[var(--color-accent)] text-[9px] font-semibold"
                 title={release.ownerName}
               >{release.ownerInitials}</span>
               <span>{release.ownerName}</span>
               {dueLabel && (
                 <>
                   <span aria-hidden>·</span>
-                  <span className={clsx(overdue && 'text-red-300 font-medium')}>
+                  <span className={clsx(overdue && 'text-[var(--status-failed)] font-medium')}>
                     {overdue ? `Overdue (${dueLabel})` : `Due ${dueLabel}`}
                   </span>
                 </>

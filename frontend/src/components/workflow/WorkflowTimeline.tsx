@@ -412,8 +412,8 @@ function EventIcon({ event }: { event: WorkflowEventNode }) {
   if (type === 'stage_failed') return <XCircle className="h-3.5 w-3.5 text-[var(--status-failed)]" />
   if (type === 'stage_skipped') return <ChevronRight className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
   if (type === 'stage_started') return <ArrowRight className="h-3.5 w-3.5 text-[var(--color-text)]" />
-  if (type === 'llm_called') return <Bot className="h-3.5 w-3.5 text-violet-400" />
-  if (type === 'tool_invoked') return <Cpu className="h-3.5 w-3.5 text-cyan-400" />
+  if (type === 'llm_called') return <Bot className="h-3.5 w-3.5 text-[var(--status-flaky)]" />
+  if (type === 'tool_invoked') return <Cpu className="h-3.5 w-3.5 text-[var(--color-accent)]" />
   if (type === 'cache_hit') return <Database className="h-3.5 w-3.5 text-[var(--status-passed)]" />
   if (type === 'checkpoint_restored') return <Shield className="h-3.5 w-3.5 text-[var(--status-broken)]" />
   return <AlertCircle className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
@@ -473,12 +473,12 @@ function StageNode({
               </span>
             )}
             {stage.evidence_count != null && (
-              <span className="badge bg-cyan-900/20 text-cyan-300 border border-cyan-700/30 text-[10px]">
+              <span className="badge bg-[var(--color-accent-muted)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30 text-[10px]">
                 {stage.evidence_count} evidence
               </span>
             )}
             {stage.total_tokens != null && stage.total_tokens > 0 && (
-              <span className="badge bg-indigo-900/20 text-indigo-300 border border-indigo-700/30 text-[10px]">
+              <span className="badge bg-[var(--color-accent-muted)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30 text-[10px]">
                 {stage.total_tokens.toLocaleString()} tok
               </span>
             )}

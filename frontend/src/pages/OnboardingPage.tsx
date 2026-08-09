@@ -45,19 +45,19 @@ function StepCard({
   return (
     <div className={clsx(
       'card flex items-center gap-4 transition-all',
-      isDone && 'border-emerald-700/40 bg-emerald-900/10',
+      isDone && 'border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/10',
       isSkipped && 'opacity-50',
     )}>
       <div className={clsx(
         'p-2.5 rounded-xl shrink-0',
-        isDone ? 'bg-emerald-600/20' : 'bg-[var(--color-bg-secondary)]',
+        isDone ? 'bg-[var(--status-passed-bg)]/20' : 'bg-[var(--color-bg-secondary)]',
       )}>
         {isDone
-          ? <CheckCircle className="h-5 w-5 text-emerald-400" />
+          ? <CheckCircle className="h-5 w-5 text-[var(--status-passed)]" />
           : <Icon className="h-5 w-5 text-[var(--color-text-muted)]" />}
       </div>
       <div className="flex-1 min-w-0">
-        <p className={clsx('font-medium', isDone ? 'text-emerald-300' : 'text-[var(--color-text)]')}>{step.label}</p>
+        <p className={clsx('font-medium', isDone ? 'text-[var(--status-passed)]' : 'text-[var(--color-text)]')}>{step.label}</p>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{step.description}</p>
         {step.completed_at && (
           <p className="text-[10px] text-[var(--color-text-faint)] mt-1">
@@ -178,13 +178,13 @@ export default function OnboardingPage() {
           <div
             className={clsx(
               'h-full rounded-full transition-all duration-500',
-              progressPct === 100 ? 'bg-emerald-500' : 'bg-neutral-300',
+              progressPct === 100 ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--color-bg-hover)]',
             )}
             style={{ width: `${progressPct}%` }}
           />
         </div>
         {status?.is_complete && (
-          <p className="text-xs text-emerald-400 mt-2">
+          <p className="text-xs text-[var(--status-passed)] mt-2">
             Setup complete — you're ready to use all features.
           </p>
         )}

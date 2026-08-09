@@ -152,10 +152,10 @@ function StageBody({ stage, events }: { stage: ComputeStage; events: ComputeEdge
               <ul className="space-y-2 m-0 p-0 list-none">
                 {stageEvents.map((e, i) => {
                   const icon =
-                    e.kind === 'completed' ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> :
-                    e.kind === 'failed'    ? <XCircle      className="w-3.5 h-3.5 text-red-400" /> :
+                    e.kind === 'completed' ? <CheckCircle2 className="w-3.5 h-3.5 text-[var(--status-passed)]" /> :
+                    e.kind === 'failed'    ? <XCircle      className="w-3.5 h-3.5 text-[var(--status-failed)]" /> :
                     e.kind === 'started'   ? <Loader2      className="w-3.5 h-3.5 text-[var(--color-accent)]" /> :
-                    e.kind === 'retry'     ? <Sparkles     className="w-3.5 h-3.5 text-amber-400" /> :
+                    e.kind === 'retry'     ? <Sparkles     className="w-3.5 h-3.5 text-[var(--status-broken)]" /> :
                                               <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   return (
                     <li key={`${e.stage}-${e.at}-${i}`} className="flex items-start gap-2 text-[12px]">

@@ -1425,7 +1425,7 @@ export default function RunIntelligencePage() {
   if (isError || !intelligence) {
     return (
       <EmptyState
-        icon={<AlertTriangle className="h-8 w-8 text-red-400" />}
+        icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
         title="Failed to load Run Intelligence"
         description="Could not fetch AI analysis data for this run."
       />

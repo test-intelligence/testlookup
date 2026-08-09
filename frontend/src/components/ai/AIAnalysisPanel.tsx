@@ -35,18 +35,18 @@ const TOOL_LABELS: Record<string, string> = {
 }
 
 const CATEGORY_STYLES: Record<string, string> = {
-  PRODUCT_BUG:       'bg-red-900/40 text-red-300 border-red-700/50',
-  INFRASTRUCTURE:    'bg-orange-900/40 text-orange-300 border-orange-700/50',
-  TEST_DATA:         'bg-amber-900/40 text-amber-300 border-amber-700/50',
-  AUTOMATION_DEFECT: 'bg-purple-900/40 text-purple-300 border-purple-700/50',
-  FLAKY:             'bg-pink-900/40 text-pink-300 border-pink-700/50',
+  PRODUCT_BUG:       'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)] border-[var(--status-failed-bd)]/50',
+  INFRASTRUCTURE:    'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border-[var(--status-broken-bd)]/50',
+  TEST_DATA:         'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border-[var(--status-broken-bd)]/50',
+  AUTOMATION_DEFECT: 'bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/50',
+  FLAKY:             'bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/50',
   UNKNOWN:           'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border-[var(--color-border-light)]',
 }
 
 const DEPTH_LABEL: Record<string, { label: string; colour: string }> = {
   fast_path: { label: 'Fast-path classifier',         colour: 'text-[var(--color-text)]' },
-  standard:  { label: 'Standard ReAct investigation', colour: 'text-emerald-400' },
-  deep:      { label: 'Deep ReAct investigation',     colour: 'text-violet-400' },
+  standard:  { label: 'Standard ReAct investigation', colour: 'text-[var(--status-passed)]' },
+  deep:      { label: 'Deep ReAct investigation',     colour: 'text-[var(--status-flaky)]' },
 }
 
 // ── Confidence + Why sub-component ──────────────────────────────────────────
@@ -151,13 +151,13 @@ function InvestigationTrail({
         {steps.map((step, index) => (
           <div key={step.id} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-3">
             <div className="flex items-center gap-2">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-900/30 text-emerald-300">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--status-passed-bg)]/30 text-[var(--status-passed)]">
                 <CheckCircle className="h-3 w-3" />
               </div>
               <p className="text-sm text-[var(--color-text)]">{step.label}</p>
             </div>
             {index < steps.length - 1 && (
-              <div className="mt-2 h-px w-full bg-gradient-to-r from-neutral-800 to-transparent" />
+              <div className="mt-2 h-px w-full bg-gradient-to-r from-[var(--color-text-muted)] to-transparent" />
             )}
           </div>
         ))}
@@ -297,10 +297,10 @@ export default function AIAnalysisPanel({
   // ── Error state ────────────────────────────────────────────
   if (hasError) {
     return (
-      <div className="card border-red-800/50">
+      <div className="card border-[var(--status-failed-bd)]/50">
         <div className="flex items-center gap-3 mb-3">
-          <AlertTriangle className="h-5 w-5 text-red-400" />
-          <p className="font-semibold text-red-300">Analysis Failed</p>
+          <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
+          <p className="font-semibold text-[var(--status-failed)]">Analysis Failed</p>
         </div>
         <p className="text-sm text-[var(--color-text-muted)] mb-4">The AI agent encountered an error. Check that your LLM (Ollama) is running.</p>
         <button className="btn-secondary text-sm" onClick={() => { setHasError(false) }}>Try Again</button>
@@ -368,17 +368,17 @@ export default function AIAnalysisPanel({
       <div className="flex flex-wrap gap-2">
         <span className={clsx('badge border', categoryStyle)}>{result.failure_category.replace('_', ' ')}</span>
         {result.is_flaky && (
-          <span className="badge bg-pink-900/40 text-pink-300 border border-pink-700/50">
+          <span className="badge bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border border-[var(--status-flaky-bd)]/50">
             ⚠ High Flakiness
           </span>
         )}
         {result.backend_error_found && (
-          <span className="badge bg-orange-900/40 text-orange-300 border border-orange-700/50">
+          <span className="badge bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border border-[var(--status-broken-bd)]/50">
             Backend Error Found
           </span>
         )}
         {result.pod_issue_found && (
-          <span className="badge bg-red-900/40 text-red-300 border border-red-700/50">
+          <span className="badge bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)] border border-[var(--status-failed-bd)]/50">
             OCP Pod Issue
           </span>
         )}
@@ -448,7 +448,7 @@ export default function AIAnalysisPanel({
               <ul className="space-y-1.5">
                 {result.recommended_actions.map((action, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm text-[var(--color-text-secondary)]">
-                    <CheckCircle className="h-4 w-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                    <CheckCircle className="h-4 w-4 text-[var(--status-passed)] flex-shrink-0 mt-0.5" />
                     {action}
                   </li>
                 ))}

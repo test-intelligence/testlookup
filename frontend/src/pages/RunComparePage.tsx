@@ -148,7 +148,7 @@ export default function RunComparePage() {
           </button>
         </div>
         {!selectedProjectId && (
-          <p className="text-[11px] text-amber-400 m-0">
+          <p className="text-[11px] text-[var(--status-broken)] m-0">
             Select a single project in the top project selector to compare latest suite runs.
           </p>
         )}
@@ -429,7 +429,7 @@ function SelectionNotice({
             {compare.suite_name && <span>suite: <code>{compare.suite_name}</code></span>}
             <span>left branch: <code>{leftBranch}</code></span>
             <span>right branch: <code>{rightBranch}</code></span>
-            <span className={sameBranch ? 'text-emerald-400' : 'text-amber-400'}>
+            <span className={sameBranch ? 'text-[var(--status-passed)]' : 'text-[var(--status-broken)]'}>
               {sameBranch ? 'same branch' : 'branch differs'}
             </span>
           </div>
@@ -442,12 +442,12 @@ function SelectionNotice({
 function AIReportPanel({ report }: { report: RunCompareAIReport }) {
   const tone =
     report.status === 'queued'
-      ? 'border-amber-500/40'
+      ? 'border-[var(--status-broken-bd)]/40'
       : report.risk_level === 'CRITICAL' || report.risk_level === 'HIGH'
-      ? 'border-rose-500/40'
+      ? 'border-[var(--status-failed-bd)]/40'
       : report.risk_level === 'MEDIUM'
-      ? 'border-amber-500/40'
-      : 'border-emerald-500/40'
+      ? 'border-[var(--status-broken-bd)]/40'
+      : 'border-[var(--status-passed-bd)]/40'
   return (
     <section className={`rounded-md border ${tone} bg-[var(--color-bg-card)] p-3 space-y-3`}>
       <div className="flex items-center gap-2">
@@ -516,9 +516,9 @@ function SideCard({
         <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
       </div>
       <div className="mt-2 flex items-center gap-3 text-xs">
-        <span className="text-emerald-400">✓ {run.passed_tests}</span>
-        <span className="text-rose-400">✗ {run.failed_tests}</span>
-        <span className="text-amber-400">⚠ {run.broken_tests}</span>
+        <span className="text-[var(--status-passed)]">✓ {run.passed_tests}</span>
+        <span className="text-[var(--status-failed)]">✗ {run.failed_tests}</span>
+        <span className="text-[var(--status-broken)]">⚠ {run.broken_tests}</span>
         <span className="text-[var(--color-text-muted)]">◯ {run.skipped_tests}</span>
         <span className="ml-auto text-[var(--color-text-faint)]">
           {run.pass_rate != null ? `${run.pass_rate.toFixed(1)}%` : '—'}
@@ -540,9 +540,9 @@ function DeltaTile({
   const Icon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Clock
   const tone =
     trend === 'up'
-      ? 'border-emerald-500/40 text-emerald-400'
+      ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)]'
       : trend === 'down'
-      ? 'border-rose-500/40 text-rose-400'
+      ? 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)]'
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
     <div className={`rounded-md border ${tone} bg-[var(--color-bg-card)] p-3`}>
@@ -700,9 +700,9 @@ function DeltaTable({
 function StatusIcon({ status }: { status: string | null }) {
   if (!status) return <MinusCircle className="h-3.5 w-3.5 text-[var(--color-text-faint)] inline" />
   const s = status.toUpperCase()
-  if (s === 'PASSED') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 inline" />
-  if (s === 'FAILED') return <XCircle className="h-3.5 w-3.5 text-rose-400 inline" />
-  if (s === 'BROKEN') return <AlertTriangle className="h-3.5 w-3.5 text-amber-400 inline" />
+  if (s === 'PASSED') return <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)] inline" />
+  if (s === 'FAILED') return <XCircle className="h-3.5 w-3.5 text-[var(--status-failed)] inline" />
+  if (s === 'BROKEN') return <AlertTriangle className="h-3.5 w-3.5 text-[var(--status-broken)] inline" />
   if (s === 'SKIPPED')
     return <MinusCircle className="h-3.5 w-3.5 text-[var(--color-text-muted)] inline" />
   return <span className="text-xs text-[var(--color-text-muted)]">{status}</span>
@@ -710,15 +710,15 @@ function StatusIcon({ status }: { status: string | null }) {
 
 function ClassificationBadge({ c }: { c: RunCompareClassification }) {
   const map: Record<RunCompareClassification, { label: string; tone: string }> = {
-    new_failure: { label: 'new failure', tone: 'border-rose-500/40 text-rose-400 bg-rose-500/10' },
-    regressed: { label: 'regressed', tone: 'border-rose-500/40 text-rose-400' },
-    still_failing: { label: 'still failing', tone: 'border-amber-500/40 text-amber-400' },
-    duration_spike: { label: 'duration spike', tone: 'border-amber-500/40 text-amber-400' },
-    fixed: { label: 'fixed', tone: 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10' },
-    improved: { label: 'improved', tone: 'border-emerald-500/40 text-emerald-400' },
+    new_failure: { label: 'new failure', tone: 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10' },
+    regressed: { label: 'regressed', tone: 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)]' },
+    still_failing: { label: 'still failing', tone: 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)]' },
+    duration_spike: { label: 'duration spike', tone: 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)]' },
+    fixed: { label: 'fixed', tone: 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10' },
+    improved: { label: 'improved', tone: 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)]' },
     new_test: { label: 'new test', tone: 'border-[var(--color-accent)]/40 text-[var(--color-accent)]' },
     removed_test: { label: 'removed', tone: 'border-[var(--color-border)] text-[var(--color-text-muted)]' },
-    renamed: { label: 'renamed', tone: 'border-sky-500/40 text-sky-400' },
+    renamed: { label: 'renamed', tone: 'border-[var(--color-accent)]/40 text-[var(--color-accent)]' },
   }
   const cfg = map[c]
   const Icon = c === 'new_failure' || c === 'regressed' ? XCircle

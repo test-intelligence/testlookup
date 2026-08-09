@@ -141,16 +141,16 @@ export default function DigestsPage() {
         showInspector
       />
 
-      <div className="flex gap-1 border-b border-gray-700">
+      <div className="flex gap-1 border-b border-[var(--color-border)]">
         {tabs.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-neutral-500' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
+            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {error && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{error}</div>}
+      {error && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{error}</div>}
 
       {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div> : (
         <>
@@ -162,12 +162,12 @@ export default function DigestsPage() {
                   <label className="text-xs text-[var(--color-text-muted)]">Digest Name</label>
                   <input value={newSubName} onChange={e => setNewSubName(e.target.value)}
                     placeholder="e.g., Weekly QA Summary"
-                    className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" />
+                    className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
                 </div>
                 <div>
                   <label className="text-xs text-[var(--color-text-muted)]">Schedule</label>
                   <select value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as typeof newSubSchedule)}
-                    className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1">
+                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
                     <option value="WEEKLY">Weekly</option>
                     <option value="DAILY">Daily</option>
                     <option value="PER_RUN">Per Run</option>
@@ -178,7 +178,7 @@ export default function DigestsPage() {
                 <div>
                   <label className="text-xs text-[var(--color-text-muted)]">Channel</label>
                   <select value={newSubChannel} onChange={e => setNewSubChannel(e.target.value as 'email' | 'slack' | 'teams')}
-                    className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1">
+                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
                     <option value="email">Email</option>
                     <option value="slack">Slack</option>
                     <option value="teams">Teams</option>
@@ -188,7 +188,7 @@ export default function DigestsPage() {
                   <div>
                     <label className="text-xs text-[var(--color-text-muted)]">Trigger</label>
                     <select value={newSubTriggerFilter} onChange={e => setNewSubTriggerFilter(e.target.value as typeof newSubTriggerFilter)}
-                      className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1">
+                      className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
                       <option value="all">All Runs</option>
                       <option value="failed_only">Failed Only</option>
                       <option value="degraded_only">Degraded Only</option>
@@ -200,10 +200,10 @@ export default function DigestsPage() {
                     <label className="text-xs text-[var(--color-text-muted)]">Suite Name</label>
                     <input value={newSubScopeValue} onChange={e => setNewSubScopeValue(e.target.value)}
                       placeholder="e.g., smoke-tests"
-                      className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" />
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
                   </div>
                 )}
-                <button onClick={handleCreateSub} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-neutral-200 text-sm">
+                <button onClick={handleCreateSub} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm">
                   Subscribe
                 </button>
               </div>
@@ -228,17 +228,17 @@ export default function DigestsPage() {
                 </label>
               )}
 
-              {subs.length === 0 && <div className="text-center py-8 text-gray-500">No digest subscriptions. Create one above.</div>}
+              {subs.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No digest subscriptions. Create one above.</div>}
               {subs.map(sub => (
                 <div key={sub.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-center">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-100 font-medium">{sub.name}</span>
-                      <span className={clsx('px-2 py-0.5 rounded text-xs', sub.is_paused ? 'bg-yellow-900/40 text-yellow-400' : sub.is_active ? 'bg-green-900/40 text-green-400' : 'bg-gray-700 text-[var(--color-text-muted)]')}>
+                      <span className="text-[var(--color-text)] font-medium">{sub.name}</span>
+                      <span className={clsx('px-2 py-0.5 rounded text-xs', sub.is_paused ? 'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]' : sub.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
                         {sub.is_paused ? 'Paused' : sub.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">
                       {sub.schedule.replace('_', ' ')} via {sub.channel}
                       {sub.scope_value ? ` · Scope: ${sub.scope_value}` : ''}
                       {sub.trigger_filter && sub.trigger_filter !== 'all' ? ` · ${sub.trigger_filter.replace('_', ' ')}` : ''}
@@ -249,11 +249,11 @@ export default function DigestsPage() {
                   </div>
                   <div className="flex gap-2">
                     {sub.is_paused ? (
-                      <button onClick={() => handleResume(sub.id)} className="px-3 py-1 text-xs bg-green-700/50 rounded text-green-300 hover:bg-green-600">Resume</button>
+                      <button onClick={() => handleResume(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-passed-bg)]/50 rounded text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]">Resume</button>
                     ) : (
-                      <button onClick={() => handlePause(sub.id)} className="px-3 py-1 text-xs bg-yellow-700/50 rounded text-yellow-300 hover:bg-yellow-600">Pause</button>
+                      <button onClick={() => handlePause(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-skipped-bg)]/50 rounded text-[var(--status-skipped)] hover:bg-[var(--status-skipped-bg)]">Pause</button>
                     )}
-                    <button onClick={() => handleDeleteSub(sub.id)} className="px-3 py-1 text-xs bg-red-700/50 rounded text-red-300 hover:bg-red-600">Unsubscribe</button>
+                    <button onClick={() => handleDeleteSub(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]">Unsubscribe</button>
                   </div>
                 </div>
               ))}
@@ -265,23 +265,23 @@ export default function DigestsPage() {
             <div className="space-y-4">
               <div className="flex gap-2">
                 <input value={newViewName} onChange={e => setNewViewName(e.target.value)} placeholder="View name"
-                  className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm flex-1" />
+                  className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm flex-1" />
                 <button onClick={handleCreateView} disabled={!newViewName.trim()}
-                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-neutral-200 text-sm disabled:opacity-50">
+                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">
                   Save View
                 </button>
               </div>
 
-              {views.length === 0 && <div className="text-center py-8 text-gray-500">No saved views.</div>}
+              {views.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No saved views.</div>}
               {views.map(view => (
                 <div key={view.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-3 flex justify-between items-center">
                   <div>
-                    <span className="text-gray-100 text-sm font-medium">{view.name}</span>
+                    <span className="text-[var(--color-text)] text-sm font-medium">{view.name}</span>
                     {view.is_shared && <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-[var(--color-bg-secondary)]/60 text-[var(--color-text)] rounded">Shared</span>}
-                    {view.is_default && <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-green-900/40 text-green-400 rounded">Default</span>}
-                    <p className="text-xs text-gray-500 mt-0.5">{Object.keys(view.filters).length} filter(s) · Created {new Date(view.created_at).toLocaleDateString()}</p>
+                    {view.is_default && <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] rounded">Default</span>}
+                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{Object.keys(view.filters).length} filter(s) · Created {new Date(view.created_at).toLocaleDateString()}</p>
                   </div>
-                  <button onClick={() => handleDeleteView(view.id)} className="px-2 py-1 text-xs bg-red-700/50 rounded text-red-300 hover:bg-red-600">Delete</button>
+                  <button onClick={() => handleDeleteView(view.id)} className="px-2 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]">Delete</button>
                 </div>
               ))}
             </div>
@@ -292,48 +292,48 @@ export default function DigestsPage() {
             <div className="space-y-4">
               <div className="flex gap-2 items-center">
                 <select value={previewPeriod} onChange={e => setPreviewPeriod(e.target.value as 'daily' | 'weekly')}
-                  className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm">
+                  className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm">
                   <option value="weekly">Weekly</option>
                   <option value="daily">Daily</option>
                 </select>
                 <button onClick={handlePreview} disabled={previewing}
-                  className="px-4 py-2 bg-purple-600 text-[var(--color-text)] rounded hover:bg-purple-700 text-sm disabled:opacity-50">
+                  className="px-4 py-2 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded hover:bg-[var(--status-flaky-bg)] text-sm disabled:opacity-50">
                   {previewing ? 'Generating...' : 'Generate Preview'}
                 </button>
               </div>
 
               {preview && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-6 space-y-4">
-                  <h2 className="text-lg font-semibold text-gray-100">{preview.period.charAt(0).toUpperCase() + preview.period.slice(1)} Digest — {preview.project_name || 'All Projects'}</h2>
+                  <h2 className="text-lg font-semibold text-[var(--color-text)]">{preview.period.charAt(0).toUpperCase() + preview.period.slice(1)} Digest — {preview.project_name || 'All Projects'}</h2>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                      <div className="text-xl font-bold text-green-400">{preview.avg_pass_rate?.toFixed(1) ?? 'N/A'}%</div>
-                      <div className="text-[10px] text-gray-500">Avg Pass Rate
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--status-passed)]">{preview.avg_pass_rate?.toFixed(1) ?? 'N/A'}%</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Avg Pass Rate
                         {preview.pass_rate_trend != null && (
-                          <span className={preview.pass_rate_trend >= 0 ? 'text-green-400' : 'text-red-400'}>
+                          <span className={preview.pass_rate_trend >= 0 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}>
                             {' '}({preview.pass_rate_trend >= 0 ? '+' : ''}{preview.pass_rate_trend.toFixed(1)}%)
                           </span>
                         )}
                       </div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{preview.total_runs}</div>
-                      <div className="text-[10px] text-gray-500">Runs</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Runs</div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                      <div className="text-xl font-bold text-red-400">{preview.new_regressions}</div>
-                      <div className="text-[10px] text-gray-500">Regressions</div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--status-failed)]">{preview.new_regressions}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Regressions</div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                      <div className="text-xl font-bold text-amber-400">{preview.flaky_test_count}</div>
-                      <div className="text-[10px] text-gray-500">Flaky Tests</div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--status-broken)]">{preview.flaky_test_count}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Flaky Tests</div>
                     </div>
                   </div>
 
                   {preview.action_items.length > 0 && (
                     <div>
-                      <h3 className="text-sm font-medium text-gray-300 mb-1">Action Items</h3>
+                      <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">Action Items</h3>
                       {preview.action_items.map((item, i) => (
                         <p key={i} className="text-sm text-[var(--color-text-muted)]">→ {item}</p>
                       ))}
@@ -342,9 +342,9 @@ export default function DigestsPage() {
 
                   {preview.top_blockers.length > 0 && (
                     <div>
-                      <h3 className="text-sm font-medium text-gray-300 mb-1">Top Blockers</h3>
+                      <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">Top Blockers</h3>
                       {preview.top_blockers.map((b, i) => (
-                        <p key={i} className="text-sm text-red-300">• {b}</p>
+                        <p key={i} className="text-sm text-[var(--status-failed)]">• {b}</p>
                       ))}
                     </div>
                   )}

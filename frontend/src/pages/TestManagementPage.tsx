@@ -2485,7 +2485,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
             <select
               value={selectedSuite}
               onChange={e => setSelectedSuite(e.target.value)}
-              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-neutral-500"
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"
             >
               <option value="">— Select a suite —</option>
               {suites.map(s => (
@@ -2568,7 +2568,7 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
         <div className="h-full bg-[var(--status-passed)]" style={{ width: `${passedPct}%` }} title={`Passed: ${plan.passed_cases}`} />
         <div className="h-full bg-[var(--status-failed)]" style={{ width: `${failedPct}%` }} title={`Failed: ${plan.failed_cases}`} />
         <div className="h-full bg-[var(--status-broken)]" style={{ width: `${blockedPct}%` }} title={`Blocked: ${plan.blocked_cases}`} />
-        <div className="h-full bg-neutral-700" style={{ width: `${notRunPct}%` }} title="Not run" />
+        <div className="h-full bg-[var(--color-bg-card)]" style={{ width: `${notRunPct}%` }} title="Not run" />
       </div>
     )
   }
@@ -3034,7 +3034,7 @@ const REVIEW_STATE_STYLES: Record<SuiteReviewState, { label: string; cls: string
   pending:       { label: 'Pending review',  cls: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
   confirmed:     { label: 'Confirmed',        cls: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
   acknowledged:  { label: 'Acknowledged',     cls: 'bg-[var(--color-accent-bg-soft)] text-[var(--color-accent)]' },
-  review_later:  { label: 'Review later',     cls: 'bg-violet-900/30 text-violet-300' },
+  review_later:  { label: 'Review later',     cls: 'bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky)]' },
 }
 
 function TestSuitesTab({ projectId }: TestSuitesTabProps) {

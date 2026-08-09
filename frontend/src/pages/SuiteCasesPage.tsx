@@ -215,13 +215,13 @@ function BulkMoveModal({
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  active: 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/30',
-  deleted: 'bg-red-500/10 text-red-400 ring-red-500/30',
-  needs_review: 'bg-amber-500/10 text-amber-400 ring-amber-500/30',
+  active: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/30',
+  deleted: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)] ring-[var(--status-failed)]/30',
+  needs_review: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)] ring-[var(--status-broken)]/30',
 }
 
 function StatusPill({ status }: { status: string }) {
-  const cls = STATUS_COLOR[status] || 'bg-neutral-500/10 text-[var(--color-text-muted)] ring-neutral-500/30'
+  const cls = STATUS_COLOR[status] || 'bg-[var(--color-bg-hover)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/30'
   return (
     <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ring-1 ring-inset ${cls}`}>
       {status}
@@ -326,16 +326,16 @@ export default function SuiteCasesPage() {
       {casesLoading ? (
         <LoadingSpinner />
       ) : cases.length === 0 && (runLevelExecutions > 0 || runLevelUnique > 0) ? (
-        <div className="rounded border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
+        <div className="rounded border border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/5 px-4 py-3 text-sm text-[var(--status-broken)]">
           <p className="font-medium">
             {runLevelUnique || runLevelExecutions} test{(runLevelUnique || runLevelExecutions) === 1 ? '' : 's'} reported by recent runs, but per-test rows are missing for this suite.
           </p>
-          <p className="mt-1 text-xs text-amber-300/80">
+          <p className="mt-1 text-xs text-[var(--status-broken)]/80">
             This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
             the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
             or the live buffer evicted before persistence. Re-run the suite to populate detail rows, or
             {' '}
-            <Link to={`/coverage/suite?name=${encodeURIComponent(suite.name)}`} className="underline decoration-dotted underline-offset-2 hover:text-amber-200">
+            <Link to={`/coverage/suite?name=${encodeURIComponent(suite.name)}`} className="underline decoration-dotted underline-offset-2 hover:text-[var(--status-broken)]">
               open analytics
             </Link>
             {' '}
@@ -466,7 +466,7 @@ export default function SuiteCasesPage() {
             <span className="text-[var(--color-text)]">
               {selectedIds.size} selected
               {selectedIds.size > BULK_LINK_MAX && (
-                <span className="ml-1 text-amber-400">
+                <span className="ml-1 text-[var(--status-broken)]">
                   (max {BULK_LINK_MAX} per move)
                 </span>
               )}

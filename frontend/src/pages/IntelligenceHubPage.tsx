@@ -132,12 +132,12 @@ function formatDuration(ms?: number | null) {
 }
 
 const AVATAR_PALETTE = [
-  'bg-sky-700 text-sky-100',
-  'bg-emerald-700 text-emerald-100',
-  'bg-amber-700 text-amber-100',
-  'bg-violet-700 text-violet-100',
-  'bg-rose-700 text-rose-100',
-  'bg-cyan-700 text-cyan-100',
+  'bg-[var(--color-accent-muted)] text-[var(--color-accent)]',
+  'bg-[var(--status-passed-bg)] text-[var(--status-passed)]',
+  'bg-[var(--status-broken-bg)] text-[var(--status-broken)]',
+  'bg-[var(--status-flaky-bg)] text-[var(--status-flaky)]',
+  'bg-[var(--status-failed-bg)] text-[var(--status-failed)]',
+  'bg-[var(--color-accent-muted)] text-[var(--color-accent)]',
 ]
 function avatarFor(seed: string): { initials: string; cls: string } {
   if (!seed) return { initials: '··', cls: AVATAR_PALETTE[0] }
@@ -496,7 +496,7 @@ function HealthSummaryPanel({ health, headlineColor }: { health: HealthSummary; 
           </div>
           <div className={clsx(
             'mt-1 inline-flex items-center gap-1 text-[12px] font-semibold tabular-nums',
-            delta > 0 ? 'text-emerald-400' : delta < 0 ? 'text-red-400' : 'text-[var(--color-text-muted)]',
+            delta > 0 ? 'text-[var(--status-passed)]' : delta < 0 ? 'text-[var(--status-failed)]' : 'text-[var(--color-text-muted)]',
           )}>
             {delta > 0 ? <TrendingUp className="h-3 w-3" /> : delta < 0 ? <TrendingDown className="h-3 w-3" /> : null}
             {delta > 0 ? '+' : ''}{delta.toFixed(1)} pts
@@ -810,7 +810,7 @@ function RunStatusPill({ run }: { run: TestRun }) {
     pass:   { fg: 'var(--status-passed)',  bg: 'var(--status-passed-bg)',  bd: 'var(--status-passed-bd)',  dot: 'var(--status-passed)' },
     fail:   { fg: 'var(--status-failed)',  bg: 'var(--status-failed-bg)',  bd: 'var(--status-failed-bd)',  dot: 'var(--status-failed)' },
     flaky:  { fg: 'var(--status-flaky)',   bg: 'var(--status-flaky-bg)',   bd: 'var(--status-flaky-bd)',   dot: 'var(--status-flaky)' },
-    broken: { fg: 'var(--status-broken)',  bg: 'var(--status-broken-bg)',  bd: 'var(--status-broken-bd)',  dot: '#fdba74' },
+    broken: { fg: 'var(--status-broken)',  bg: 'var(--status-broken-bg)',  bd: 'var(--status-broken-bd)',  dot: 'var(--status-broken)' },
   }
   const t = tokens[kind]
   return (
@@ -992,9 +992,9 @@ function ActivityPanel({ runs }: { runs: TestRun[] }) {
               {(() => {
                 const label = r.run_seq != null ? `#${r.run_seq}` : `#${r.build_number}`
                 const code = <code className="text-[11.5px] px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">{label}</code>
-                if (isFailed(r)) return <><Zap className="inline h-3 w-3 mr-1 text-red-400" />Run {code} failed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span> — {r.failed_tests} test{r.failed_tests === 1 ? '' : 's'}</>
-                if (isFlaky(r))  return <><Activity className="inline h-3 w-3 mr-1 text-purple-400" />Run {code} recovered after {r.broken_tests} retr{r.broken_tests === 1 ? 'y' : 'ies'}</>
-                return <><Sparkles className="inline h-3 w-3 mr-1 text-emerald-400" />Run {code} passed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span></>
+                if (isFailed(r)) return <><Zap className="inline h-3 w-3 mr-1 text-[var(--status-failed)]" />Run {code} failed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span> — {r.failed_tests} test{r.failed_tests === 1 ? '' : 's'}</>
+                if (isFlaky(r))  return <><Activity className="inline h-3 w-3 mr-1 text-[var(--status-flaky)]" />Run {code} recovered after {r.broken_tests} retr{r.broken_tests === 1 ? 'y' : 'ies'}</>
+                return <><Sparkles className="inline h-3 w-3 mr-1 text-[var(--status-passed)]" />Run {code} passed on <span className="text-[var(--color-text)]">{r.branch ?? 'unknown'}</span></>
               })()}
             </span>
           </li>

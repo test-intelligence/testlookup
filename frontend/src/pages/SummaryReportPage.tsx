@@ -319,10 +319,10 @@ export default function SummaryReportPage() {
           {/* Counts strip */}
           <section className="card mb-5">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-y-3 text-sm">
-              <Count label="Passed"    value={totals.passed}   color="text-emerald-300" />
-              <Count label="Failed"    value={totals.failed}   color="text-red-300" />
-              <Count label="Skipped"   value={totals.skipped}  color="text-amber-300" />
-              <Count label="Broken"    value={totals.broken}   color="text-red-300" />
+              <Count label="Passed"    value={totals.passed}   color="text-[var(--status-passed)]" />
+              <Count label="Failed"    value={totals.failed}   color="text-[var(--status-failed)]" />
+              <Count label="Skipped"   value={totals.skipped}  color="text-[var(--status-broken)]" />
+              <Count label="Broken"    value={totals.broken}   color="text-[var(--status-failed)]" />
               <Count label="Evaluated" value={totals.evaluated} color="text-[var(--color-text)]" />
             </div>
             <div className="mt-3 pt-3 border-t border-[var(--color-border)] text-[11.5px] text-[var(--color-text-muted)] flex flex-wrap gap-x-4 gap-y-1">
@@ -371,7 +371,7 @@ export default function SummaryReportPage() {
                         <td className="px-4 py-2.5 text-[var(--color-text)] font-medium text-xs truncate max-w-[420px]" title={t.test_name}>{t.test_name}</td>
                         <td className="px-4 py-2.5 text-[var(--color-text-muted)] text-xs">{t.suite_name ?? '—'}</td>
                         <td className="px-4 py-2.5 text-[var(--color-text-muted)] text-xs">{t.class_name ?? '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-xs tabular-nums text-red-300 font-medium">{fmtInt(t.failures)}</td>
+                        <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-failed)] font-medium">{fmtInt(t.failures)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -398,9 +398,9 @@ function KpiTile({
   sub?: string
 }) {
   const toneClasses: Record<typeof tone, string> = {
-    good:    'bg-emerald-500/10 text-emerald-400',
-    bad:     'bg-red-500/10 text-red-400',
-    warn:    'bg-amber-500/10 text-amber-400',
+    good:    'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)]',
+    bad:     'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)]',
+    warn:    'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)]',
     neutral: 'bg-white/5 text-[var(--color-text)]',
   }
   return (
@@ -525,10 +525,10 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
                 </Link>
               </td>
               <td className="px-4 py-2.5 text-right text-xs tabular-nums">{fmtInt(s.total)}</td>
-              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-emerald-300">{fmtInt(s.passed)}</td>
-              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-red-300">{fmtInt(s.failed)}</td>
-              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-amber-300">{fmtInt(s.skipped)}</td>
-              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-red-300">{fmtInt(s.broken)}</td>
+              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-passed)]">{fmtInt(s.passed)}</td>
+              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-failed)]">{fmtInt(s.failed)}</td>
+              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-broken)]">{fmtInt(s.skipped)}</td>
+              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-failed)]">{fmtInt(s.broken)}</td>
               <td className="px-4 py-2.5 text-right text-xs tabular-nums">
                 <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium', passPctClass(s.pass_rate_pct))}>{fmtPct(s.pass_rate_pct)}</span>
               </td>
@@ -554,7 +554,7 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
 }
 
 function passPctClass(pct: number): string {
-  if (pct >= 95) return 'bg-emerald-900/30 text-emerald-300'
-  if (pct >= 80) return 'bg-amber-900/30 text-amber-300'
-  return 'bg-red-900/30 text-red-300'
+  if (pct >= 95) return 'bg-[var(--status-passed-bg)]/30 text-[var(--status-passed)]'
+  if (pct >= 80) return 'bg-[var(--status-broken-bg)]/30 text-[var(--status-broken)]'
+  return 'bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)]'
 }

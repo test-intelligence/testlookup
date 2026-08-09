@@ -71,7 +71,7 @@ function RegressionDiffPanel({ runId }: { runId: string }) {
         className="w-full flex items-center justify-between text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
       >
         <span className="flex items-center gap-2">
-          <TrendingDown className="h-4 w-4 text-amber-400" />
+          <TrendingDown className="h-4 w-4 text-[var(--status-broken)]" />
           What changed since last good run?
         </span>
         {open ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)]" /> : <ChevronDown className="h-4 w-4 text-[var(--color-text-muted)]" />}
@@ -87,17 +87,17 @@ function RegressionDiffPanel({ runId }: { runId: string }) {
             <>
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-2">
-                  <p className={clsx('text-xl font-bold tabular-nums', (data.pass_rate_delta ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                  <p className={clsx('text-xl font-bold tabular-nums', (data.pass_rate_delta ?? 0) >= 0 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]')}>
                     {(data.pass_rate_delta ?? 0) >= 0 ? '+' : ''}{data.pass_rate_delta?.toFixed(1)}%
                   </p>
                   <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Pass rate delta</p>
                 </div>
                 <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-2">
-                  <p className="text-xl font-bold text-red-400">{data.new_failing_count ?? 0}</p>
+                  <p className="text-xl font-bold text-[var(--status-failed)]">{data.new_failing_count ?? 0}</p>
                   <p className="text-xs text-[var(--color-text-muted)] mt-0.5">New failures</p>
                 </div>
                 <div className="bg-[var(--color-bg-secondary)]/80 rounded-lg p-2">
-                  <p className="text-xl font-bold text-emerald-400">{data.resolved_count ?? 0}</p>
+                  <p className="text-xl font-bold text-[var(--status-passed)]">{data.resolved_count ?? 0}</p>
                   <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Resolved</p>
                 </div>
               </div>
@@ -110,7 +110,7 @@ function RegressionDiffPanel({ runId }: { runId: string }) {
                   <ul className="space-y-1">
                     {data.new_failing_tests?.slice(0, 10).map((t, i) => (
                       <li key={i} className="text-sm text-[var(--color-text-secondary)] flex items-center gap-2">
-                        <div className="h-1.5 w-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                        <div className="h-1.5 w-1.5 rounded-full bg-[var(--status-failed-bg)] flex-shrink-0" />
                         {t.test_name}
                         {t.suite_name && <span className="text-[var(--color-text-muted)] text-xs">· {t.suite_name}</span>}
                       </li>
@@ -179,9 +179,9 @@ function ReleaseTag({ releaseName, onSet }: {
           value={value}
           onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false) }}
-          className="bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] rounded px-2 py-0.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-faint)] w-44 focus:outline-none focus:border-neutral-500"
+          className="bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] rounded px-2 py-0.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-faint)] w-44 focus:outline-none focus:border-[var(--color-border)]"
         />
-        <button onClick={handleSave} disabled={saving} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-50">
+        <button onClick={handleSave} disabled={saving} className="text-[var(--status-passed)] hover:text-[var(--status-passed)] disabled:opacity-50">
           <Check className="h-4 w-4" />
         </button>
         <button onClick={() => setEditing(false)} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]">
@@ -196,7 +196,7 @@ function ReleaseTag({ releaseName, onSet }: {
       <div className="flex items-center gap-2">
         <button
           onClick={() => navigate('/releases')}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-violet-900/40 text-violet-300 hover:bg-violet-800/50 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] hover:bg-[var(--status-flaky-bg)]/50 transition-colors"
         >
           <Package className="h-3 w-3" />
           {releaseName}
@@ -211,7 +211,7 @@ function ReleaseTag({ releaseName, onSet }: {
   return (
     <button
       onClick={() => setEditing(true)}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-[var(--color-border-light)] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:border-neutral-500 transition-colors"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-[var(--color-border-light)] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:border-[var(--color-border)] transition-colors"
     >
       <Package className="h-3 w-3" />
       Set release
@@ -379,9 +379,9 @@ export default function RunDetailPage() {
                 releaseName={run.release_name}
                 onSet={handleSetRelease}
               />
-              <span className="text-emerald-400 font-medium">{run.passed_tests} passed</span>
-              <span className="text-red-400 font-medium">{run.failed_tests} failed</span>
-              <span className="text-amber-400 font-medium">{run.skipped_tests} skipped</span>
+              <span className="text-[var(--status-passed)] font-medium">{run.passed_tests} passed</span>
+              <span className="text-[var(--status-failed)] font-medium">{run.failed_tests} failed</span>
+              <span className="text-[var(--status-broken)] font-medium">{run.skipped_tests} skipped</span>
               <span className="text-[var(--color-text-muted)]">/ {run.total_tests} total</span>
               <StatusBadge status={run.status} />
               {isQaEngineer && (
@@ -468,7 +468,7 @@ export default function RunDetailPage() {
         {isLoading ? (
           <div className="flex items-center justify-center py-20"><LoadingSpinner size="lg" /></div>
         ) : error ? (
-          <div className="flex items-center justify-center py-16 text-red-400 text-sm gap-2">
+          <div className="flex items-center justify-center py-16 text-[var(--status-failed)] text-sm gap-2">
             <span>Failed to load test cases — {(error as Error)?.message ?? 'server error'}</span>
           </div>
         ) : !data?.items?.length ? (

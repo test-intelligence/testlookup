@@ -134,7 +134,7 @@ export default function ProjectsPage() {
                   <Edit3 className="h-3.5 w-3.5" />
                 </button>
                 <button onClick={(e) => { e.stopPropagation(); handleDelete(p) }}
-                  className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] rounded text-red-400 hover:text-red-300 transition-colors" title="Archive">
+                  className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] rounded text-[var(--status-failed)] hover:text-[var(--status-failed)] transition-colors" title="Archive">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>

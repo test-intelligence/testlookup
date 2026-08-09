@@ -49,10 +49,10 @@ export default function SeedDataPage() {
       {/* Dev environment warning */}
       <div className="flex items-start gap-3 rounded-lg border px-4 py-3"
         style={{ borderColor: 'var(--color-border)', background: 'rgba(217, 119, 6, 0.08)' }}>
-        <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 flex-shrink-0" />
-        <div className="text-sm text-amber-300">
+        <AlertTriangle className="h-4 w-4 text-[var(--status-broken)] mt-0.5 flex-shrink-0" />
+        <div className="text-sm text-[var(--status-broken)]">
           <p className="font-medium">Development environment only</p>
-          <p className="text-amber-400/70 mt-0.5">
+          <p className="text-[var(--status-broken)]/70 mt-0.5">
             These controls are only available in the dev environment. Seed data includes demo users,
             projects, test runs, AI analysis, defects, and coverage snapshots.
           </p>
@@ -72,12 +72,12 @@ export default function SeedDataPage() {
             Checking status...
           </div>
         ) : isError ? (
-          <div className="flex items-center gap-2 text-sm text-red-400">
+          <div className="flex items-center gap-2 text-sm text-[var(--status-failed)]">
             <XCircle className="h-4 w-4" />
             Unable to check seed status — API may be unavailable
           </div>
         ) : seeded ? (
-          <div className="flex items-center gap-2 text-sm text-emerald-400">
+          <div className="flex items-center gap-2 text-sm text-[var(--status-passed)]">
             <CheckCircle2 className="h-4 w-4" />
             Seed data is loaded
           </div>
@@ -96,10 +96,10 @@ export default function SeedDataPage() {
         </h2>
 
         {running && (
-          <div className="flex items-center gap-2 text-sm text-amber-300 bg-amber-900/20 border border-amber-700/30 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded-lg px-4 py-3">
             <Loader2 className="h-4 w-4 animate-spin" />
             {actionLabel[running]}
-            <span className="text-amber-400/60 ml-1">This may take a minute.</span>
+            <span className="text-[var(--status-broken)]/60 ml-1">This may take a minute.</span>
           </div>
         )}
 
@@ -135,7 +135,7 @@ export default function SeedDataPage() {
 
           {/* Delete */}
           <button
-            className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-medium transition-colors border border-red-700/50 text-red-400 hover:bg-red-900/20"
+            className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-medium transition-colors border border-[var(--status-failed-bd)]/50 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/20"
             onClick={() => handleAction('delete')}
             disabled={running !== null || seeded === false}
           >

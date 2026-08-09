@@ -64,7 +64,7 @@ export default function BillingPage() {
           value={overview.total_llm_calls.toLocaleString()}
         />
         <SummaryTile
-          icon={<ShieldAlert className="h-4 w-4 text-amber-400" />}
+          icon={<ShieldAlert className="h-4 w-4 text-[var(--status-broken)]" />}
           label="Projects over soft-warn"
           value={overview.projects
             .filter((p) => p.status === 'SOFT_WARN' || p.status === 'CAPPED')
@@ -141,9 +141,9 @@ function SummaryTile({
 }) {
   const borderClass =
     tone === 'error'
-      ? 'border-rose-500/40'
+      ? 'border-[var(--status-failed-bd)]/40'
       : tone === 'warn'
-      ? 'border-amber-500/40'
+      ? 'border-[var(--status-broken-bd)]/40'
       : 'border-[var(--color-border)]'
   return (
     <div className={`rounded-md border ${borderClass} bg-[var(--color-bg-card)] p-3`}>
@@ -199,11 +199,11 @@ function ProjectRow({
 function StatusPill({ status }: { status: UsageStatus }) {
   const toneClass =
     status === 'CAPPED'
-      ? 'border-rose-500/40 text-rose-400 bg-rose-500/10'
+      ? 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10'
       : status === 'SOFT_WARN'
-      ? 'border-amber-500/40 text-amber-400 bg-amber-500/10'
+      ? 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/10'
       : status === 'OK'
-      ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+      ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
     <span className={`text-xs px-2 py-0.5 rounded border ${toneClass}`}>{status}</span>

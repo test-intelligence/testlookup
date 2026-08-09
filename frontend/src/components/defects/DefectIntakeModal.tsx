@@ -11,10 +11,10 @@ import type {
 } from '@/types/analytics'
 
 const SEVERITIES: { id: DefectIntakeSeverity; label: string; tone: string }[] = [
-  { id: 'P0', label: 'P0 — Blocker', tone: 'text-red-300 border-red-700/60 bg-red-900/30' },
-  { id: 'P1', label: 'P1 — High',    tone: 'text-orange-300 border-orange-700/60 bg-orange-900/30' },
-  { id: 'P2', label: 'P2 — Medium',  tone: 'text-amber-300 border-amber-700/60 bg-amber-900/30' },
-  { id: 'P3', label: 'P3 — Low',     tone: 'text-emerald-300 border-emerald-700/60 bg-emerald-900/30' },
+  { id: 'P0', label: 'P0 — Blocker', tone: 'text-[var(--status-failed)] border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30' },
+  { id: 'P1', label: 'P1 — High',    tone: 'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/30' },
+  { id: 'P2', label: 'P2 — Medium',  tone: 'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/30' },
+  { id: 'P3', label: 'P3 — Low',     tone: 'text-[var(--status-passed)] border-[var(--status-passed-bd)]/60 bg-[var(--status-passed-bg)]/30' },
 ]
 
 const CATEGORIES: { id: DefectIntakeCategory; label: string }[] = [
@@ -132,7 +132,7 @@ export default function DefectIntakeModal({
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
           <div>
             <label htmlFor="defect-title" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-              Title <span className="text-red-400">*</span>
+              Title <span className="text-[var(--status-failed)]">*</span>
             </label>
             <input
               id="defect-title"
@@ -248,11 +248,11 @@ export default function DefectIntakeModal({
                 'w-full rounded-lg bg-[var(--color-bg-secondary)] border px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none',
                 isJiraValid
                   ? 'border-[var(--color-border)] focus:border-[var(--color-accent)]'
-                  : 'border-red-700/60 focus:border-red-500',
+                  : 'border-[var(--status-failed-bd)]/60 focus:border-[var(--status-failed-bd)]',
               )}
             />
             {!isJiraValid && (
-              <p className="mt-1 text-xs text-red-400">Must be an http(s) URL.</p>
+              <p className="mt-1 text-xs text-[var(--status-failed)]">Must be an http(s) URL.</p>
             )}
           </div>
 
@@ -272,7 +272,7 @@ export default function DefectIntakeModal({
           </div>
 
           {error && (
-            <div className="rounded-lg bg-red-900/20 border border-red-700/40 p-3 text-xs text-red-300">
+            <div className="rounded-lg bg-[var(--status-failed-bg)]/20 border border-[var(--status-failed-bd)]/40 p-3 text-xs text-[var(--status-failed)]">
               {error}
             </div>
           )}

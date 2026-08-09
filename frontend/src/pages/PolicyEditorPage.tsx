@@ -221,20 +221,20 @@ export default function PolicyEditorPage() {
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-gray-100">Release Gate Policies</h1>
+            <h1 className="text-2xl font-bold text-[var(--color-text)]">Release Gate Policies</h1>
             <p className="mt-1 text-sm text-[var(--color-text-muted)]">Define per-project release gate thresholds, rules, and override constraints.</p>
           </div>
-          <button onClick={() => navigate('/policies/new')} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-neutral-200 text-sm">
+          <button onClick={() => navigate('/policies/new')} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
             New Policy
           </button>
         </div>
 
-        {displayError && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{displayError}</div>}
+        {displayError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{displayError}</div>}
 
         {loading ? (
           <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
         ) : policies.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
+          <div className="text-center py-12 text-[var(--color-text-muted)]">
             No policies configured. Create one to customize release gate thresholds per project.
           </div>
         ) : (
@@ -243,27 +243,27 @@ export default function PolicyEditorPage() {
               <div key={p.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-center">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-gray-100 font-medium">{p.name}</span>
-                    <span className="text-gray-500 text-xs">v{p.version}</span>
+                    <span className="text-[var(--color-text)] font-medium">{p.name}</span>
+                    <span className="text-[var(--color-text-muted)] text-xs">v{p.version}</span>
                     <span className={clsx('px-2 py-0.5 rounded text-xs', {
-                      'bg-green-900/40 text-green-400': p.is_active,
-                      'bg-yellow-900/40 text-yellow-400': p.is_draft && !p.is_active,
-                      'bg-gray-700 text-[var(--color-text-muted)]': !p.is_draft && !p.is_active,
+                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': p.is_active,
+                      'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': p.is_draft && !p.is_active,
+                      'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': !p.is_draft && !p.is_active,
                     })}>
                       {p.is_active ? 'Active' : p.is_draft ? 'Draft' : 'Inactive'}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-[var(--color-text-muted)] mt-1">
                     {p.project_id ? `Project: ${p.project_id.slice(0, 8)}...` : 'System Default'}
                     {' · '}Created: {new Date(p.created_at).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => navigate(`/policies/${p.id}`)} className="px-3 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600 text-gray-300">
+                  <button onClick={() => navigate(`/policies/${p.id}`)} className="px-3 py-1 text-xs bg-[var(--color-bg-card)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
                     {p.is_draft ? 'Edit' : 'View'}
                   </button>
                   {p.is_active && (
-                    <button onClick={() => handleDeactivate(p.id)} className="px-3 py-1 text-xs bg-red-700/50 rounded hover:bg-red-600 text-red-300">
+                    <button onClick={() => handleDeactivate(p.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
                       Deactivate
                     </button>
                   )}
@@ -284,7 +284,7 @@ export default function PolicyEditorPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-100">{isNew ? 'New Policy' : `Edit: ${name}`}</h1>
+          <h1 className="text-2xl font-bold text-[var(--color-text)]">{isNew ? 'New Policy' : `Edit: ${name}`}</h1>
           <button onClick={() => navigate('/policies')} className="text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] mt-1">
             Back to policies
           </button>
@@ -292,11 +292,11 @@ export default function PolicyEditorPage() {
         <div className="flex gap-2">
           {isDraft && (
             <>
-              <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-neutral-200 text-sm disabled:opacity-50">
+              <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">
                 {saving ? 'Saving...' : 'Save Draft'}
               </button>
               {!isNew && (
-                <button onClick={handlePublish} className="px-4 py-2 bg-green-600 text-[var(--color-text)] rounded-lg hover:bg-green-700 text-sm">
+                <button onClick={handlePublish} className="px-4 py-2 bg-[var(--status-passed-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-passed-bg)] text-sm">
                   Publish
                 </button>
               )}
@@ -305,25 +305,25 @@ export default function PolicyEditorPage() {
         </div>
       </div>
 
-      {displayError && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">{displayError}</div>}
+      {displayError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{displayError}</div>}
 
       {/* Metadata */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-200">Metadata</h2>
+        <h2 className="text-sm font-semibold text-[var(--color-text)]">Metadata</h2>
         <div className="grid grid-cols-2 gap-3">
           <input placeholder="Policy Name *" value={name} onChange={e => setName(e.target.value)}
-            className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm" disabled={!isDraft} />
+            className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm" disabled={!isDraft} />
           <input placeholder="Project ID (empty = system default)" value={projectId || ''}
             onChange={e => setProjectId(e.target.value || null)}
-            className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm" disabled={!isDraft} />
+            className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm" disabled={!isDraft} />
         </div>
         <textarea placeholder="Description" value={description} onChange={e => setDescription(e.target.value)}
-          className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm h-16" disabled={!isDraft} />
+          className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm h-16" disabled={!isDraft} />
       </div>
 
       {/* Thresholds */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-200">Thresholds</h2>
+        <h2 className="text-sm font-semibold text-[var(--color-text)]">Thresholds</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {([
             ['go_threshold', 'GO Threshold', 'Composite below this → GO'],
@@ -336,8 +336,8 @@ export default function PolicyEditorPage() {
               <input type="number" step="0.1"
                 value={doc.thresholds[key as keyof typeof doc.thresholds]}
                 onChange={e => setDoc(d => ({ ...d, thresholds: { ...d.thresholds, [key]: parseFloat(e.target.value) || 0 } }))}
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" disabled={!isDraft} />
-              <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" disabled={!isDraft} />
+              <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</p>
             </div>
           ))}
         </div>
@@ -346,12 +346,12 @@ export default function PolicyEditorPage() {
       {/* Pass-Rate Bands (4-colour build verdict) */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
         <div className="flex justify-between items-center">
-          <h2 className="text-sm font-semibold text-neutral-200">Pass-Rate Bands</h2>
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Pass-Rate Bands</h2>
           {(() => {
             const b = doc.pass_rate_bands ?? DEFAULT_PASS_RATE_BANDS;
             const valid = b.orange_min < b.yellow_min && b.yellow_min < b.green_min;
             return (
-              <span className={clsx('text-xs', valid ? 'text-green-400' : 'text-red-400')}>
+              <span className={clsx('text-xs', valid ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]')}>
                 {valid ? 'Bands valid' : 'Bands must be strictly increasing (orange < yellow < green)'}
               </span>
             );
@@ -378,9 +378,9 @@ export default function PolicyEditorPage() {
                     [key]: parseFloat(e.target.value) || 0,
                   },
                 }))}
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1"
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1"
                 disabled={!isDraft} />
-              <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>
+              <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</p>
             </div>
           ))}
         </div>
@@ -388,7 +388,7 @@ export default function PolicyEditorPage() {
 
       {/* Hard Caps (band downgrades) */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-200">Hard Caps</h2>
+        <h2 className="text-sm font-semibold text-[var(--color-text)]">Hard Caps</h2>
         <p className="text-[11px] text-[var(--color-text-muted)]">
           Each cap downgrades the resolved band one step when exceeded (green → yellow → orange → red).
           Set to 0 to disable a cap, except the P0 cap where 0 means "no P0 defects allowed".
@@ -410,9 +410,9 @@ export default function PolicyEditorPage() {
                     [key]: parseInt(e.target.value, 10) || 0,
                   },
                 }))}
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1"
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1"
                 disabled={!isDraft} />
-              <p className="text-[10px] text-gray-600 mt-0.5">{hint}</p>
+              <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</p>
             </div>
           ))}
         </div>
@@ -421,7 +421,7 @@ export default function PolicyEditorPage() {
       {/* Failure-Kind Weighting (opt-in, US-9.3) */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
         <div className="flex justify-between items-center">
-          <h2 className="text-sm font-semibold text-neutral-200">Failure-Kind Weighting</h2>
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Failure-Kind Weighting</h2>
           <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
             <input
               type="checkbox"
@@ -452,7 +452,7 @@ export default function PolicyEditorPage() {
                 kind_rules: { ...(d.kind_rules ?? DEFAULT_KIND_RULES), enabled: true, [key]: next },
               }));
               return (
-                <div key={key} className="bg-gray-900/50 rounded-lg p-3 space-y-2">
+                <div key={key} className="bg-[var(--color-bg)]/50 rounded-lg p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -460,28 +460,28 @@ export default function PolicyEditorPage() {
                       onChange={e => setBudget(e.target.checked ? { max_failures: 5, downgrade_to: 'CONDITIONAL_GO' } : null)}
                       disabled={!isDraft}
                     />
-                    <span className="text-sm text-neutral-200 font-medium">{label} budget</span>
+                    <span className="text-sm text-[var(--color-text)] font-medium">{label} budget</span>
                   </div>
-                  <p className="text-[10px] text-gray-600">{hint}. No budget = failures of this kind count in full.</p>
+                  <p className="text-[10px] text-[var(--color-text-muted)]">{hint}. No budget = failures of this kind count in full.</p>
                   {budget != null && (
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-gray-500">Max failures excused</label>
+                        <label className="text-[10px] text-[var(--color-text-muted)]">Max failures excused</label>
                         <input type="number" step="1" min={0} value={budget.max_failures}
                           onChange={e => setBudget({ ...budget, max_failures: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                          className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                          className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                       </div>
                       <div>
-                        <label className="text-[10px] text-gray-500">Downgrade NO-GO to</label>
+                        <label className="text-[10px] text-[var(--color-text-muted)]">Downgrade NO-GO to</label>
                         <select value={budget.downgrade_to}
                           onChange={() => setBudget({ ...budget, downgrade_to: 'CONDITIONAL_GO' })}
-                          className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft}>
+                          className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                           <option value="CONDITIONAL_GO">CONDITIONAL_GO</option>
                         </select>
-                        <p className="text-[10px] text-gray-600 mt-0.5">Never GO — hard rule.</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">Never GO — hard rule.</p>
                       </div>
                       <div className="col-span-2">
-                        <label className="text-[10px] text-gray-500" htmlFor={`kind-floor-${key}`}>
+                        <label className="text-[10px] text-[var(--color-text-muted)]" htmlFor={`kind-floor-${key}`}>
                           Min confidence to excuse (optional, 0-100)
                         </label>
                         <input
@@ -498,8 +498,8 @@ export default function PolicyEditorPage() {
                                 : Math.max(0, Math.min(100, parseInt(raw, 10) || 0)),
                             });
                           }}
-                          className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
-                        <p className="text-[10px] text-gray-600 mt-0.5">
+                          className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                           Only failures whose AI kind confidence meets the floor are excusable;
                           below-floor failures count as product. Empty = no floor (behavior unchanged).
                         </p>
@@ -516,8 +516,8 @@ export default function PolicyEditorPage() {
       {/* Dimension Weights */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
         <div className="flex justify-between items-center">
-          <h2 className="text-sm font-semibold text-neutral-200">Dimension Weights</h2>
-          <span className={clsx('text-xs', Math.abs(weightsSum - 1.0) <= 0.01 ? 'text-green-400' : 'text-red-400')}>
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Dimension Weights</h2>
+          <span className={clsx('text-xs', Math.abs(weightsSum - 1.0) <= 0.01 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]')}>
             Sum: {weightsSum.toFixed(2)} {Math.abs(weightsSum - 1.0) <= 0.01 ? '' : '(must be 1.00)'}
           </span>
         </div>
@@ -530,7 +530,7 @@ export default function PolicyEditorPage() {
                 onChange={e => setDoc(d => ({
                   ...d, dimension_weights: { ...d.dimension_weights, [key]: parseFloat(e.target.value) || 0 },
                 }))}
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" disabled={!isDraft} />
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" disabled={!isDraft} />
             </div>
           ))}
         </div>
@@ -539,46 +539,46 @@ export default function PolicyEditorPage() {
       {/* Rules */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
         <div className="flex justify-between items-center">
-          <h2 className="text-sm font-semibold text-neutral-200">Rules</h2>
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">Rules</h2>
           {isDraft && (
             <select onChange={e => { if (e.target.value) { addRule(e.target.value); e.target.value = ''; } }}
-              className="bg-gray-700 text-gray-100 rounded px-3 py-1.5 text-xs" defaultValue="">
+              className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-1.5 text-xs" defaultValue="">
               <option value="" disabled>+ Add Rule</option>
               {RULE_TYPES.map(t => <option key={t.type} value={t.type}>{t.label}</option>)}
             </select>
           )}
         </div>
 
-        {doc.rules.length === 0 && <p className="text-gray-500 text-sm">No rules configured. The policy will use thresholds only.</p>}
+        {doc.rules.length === 0 && <p className="text-[var(--color-text-muted)] text-sm">No rules configured. The policy will use thresholds only.</p>}
 
         {doc.rules.map((rule, idx) => (
-          <div key={rule.id} className="bg-gray-900/50 rounded-lg p-3 space-y-2">
+          <div key={rule.id} className="bg-[var(--color-bg)]/50 rounded-lg p-3 space-y-2">
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <input type="checkbox" checked={rule.enabled}
                   onChange={e => updateRule(idx, { enabled: e.target.checked })} disabled={!isDraft} />
                 <input value={rule.name} onChange={e => updateRule(idx, { name: e.target.value })}
-                  className="bg-transparent text-neutral-200 text-sm font-medium border-none outline-none" disabled={!isDraft} />
-                <span className="text-xs text-gray-600 font-mono">{rule.type}</span>
+                  className="bg-transparent text-[var(--color-text)] text-sm font-medium border-none outline-none" disabled={!isDraft} />
+                <span className="text-xs text-[var(--color-text-muted)] font-mono">{rule.type}</span>
               </div>
               {isDraft && (
-                <button onClick={() => removeRule(idx)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+                <button onClick={() => removeRule(idx)} className="text-xs text-[var(--status-failed)] hover:text-[var(--status-failed)]">Remove</button>
               )}
             </div>
             <div className="grid grid-cols-3 gap-2">
               {rule.type === 'flaky_recurrence' && (
                 <>
                   <div>
-                    <label className="text-[10px] text-gray-500">Max Flaky Tests</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Max Flaky Tests</label>
                     <input type="number" value={rule.params.max_flaky_tests as number ?? 10}
                       onChange={e => updateRuleParam(idx, 'max_flaky_tests', parseInt(e.target.value) || 0)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500">Action</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Action</label>
                     <select value={rule.params.action as string ?? 'BLOCK'}
                       onChange={e => updateRuleParam(idx, 'action', e.target.value)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft}>
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       <option value="BLOCK">BLOCK</option>
                       <option value="WARN">WARN</option>
                       <option value="INFO">INFO</option>
@@ -589,16 +589,16 @@ export default function PolicyEditorPage() {
               {rule.type === 'open_defect_limit' && (
                 <>
                   <div>
-                    <label className="text-[10px] text-gray-500">Max Open Defects</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Max Open Defects</label>
                     <input type="number" value={rule.params.max_open_defects as number ?? 5}
                       onChange={e => updateRuleParam(idx, 'max_open_defects', parseInt(e.target.value) || 0)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500">Action</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Action</label>
                     <select value={rule.params.action as string ?? 'BLOCK'}
                       onChange={e => updateRuleParam(idx, 'action', e.target.value)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft}>
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       <option value="BLOCK">BLOCK</option>
                       <option value="WARN">WARN</option>
                       <option value="INFO">INFO</option>
@@ -609,24 +609,24 @@ export default function PolicyEditorPage() {
               {rule.type === 'dimension_ceiling' && (
                 <>
                   <div>
-                    <label className="text-[10px] text-gray-500">Dimension</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Dimension</label>
                     <select value={rule.params.dimension as string ?? 'regression_likely'}
                       onChange={e => updateRuleParam(idx, 'dimension', e.target.value)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft}>
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       {DIMENSIONS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500">Max Score</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Max Score</label>
                     <input type="number" value={rule.params.max_score as number ?? 70}
                       onChange={e => updateRuleParam(idx, 'max_score', parseFloat(e.target.value) || 0)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500">Action</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Action</label>
                     <select value={rule.params.action as string ?? 'BLOCK'}
                       onChange={e => updateRuleParam(idx, 'action', e.target.value)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft}>
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft}>
                       <option value="BLOCK">BLOCK</option>
                       <option value="WARN">WARN</option>
                     </select>
@@ -641,10 +641,10 @@ export default function PolicyEditorPage() {
                     <label className="text-[10px] text-[var(--color-text-muted)]">Allow NO_GO → GO override</label>
                   </div>
                   <div>
-                    <label className="text-[10px] text-gray-500">Min Reason Length</label>
+                    <label className="text-[10px] text-[var(--color-text-muted)]">Min Reason Length</label>
                     <input type="number" value={rule.params.require_reason_min_length as number ?? 0}
                       onChange={e => updateRuleParam(idx, 'require_reason_min_length', parseInt(e.target.value) || 0)}
-                      className="w-full bg-gray-700 text-gray-100 rounded px-2 py-1 text-xs" disabled={!isDraft} />
+                      className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1 text-xs" disabled={!isDraft} />
                   </div>
                 </>
               )}
@@ -655,47 +655,47 @@ export default function PolicyEditorPage() {
 
       {/* Simulator */}
       <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-neutral-200">Policy Simulator</h2>
+        <h2 className="text-sm font-semibold text-[var(--color-text)]">Policy Simulator</h2>
         <p className="text-xs text-[var(--color-text-muted)]">Test this policy against a past test run to see how the decision would change.</p>
         <div className="flex gap-2">
           <input placeholder="Run ID" value={simRunId} onChange={e => setSimRunId(e.target.value)}
-            className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm flex-1" />
+            className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm flex-1" />
           <button onClick={handleSimulate} disabled={simulating}
-            className="px-4 py-2 bg-purple-600 text-[var(--color-text)] rounded-lg hover:bg-purple-700 text-sm disabled:opacity-50">
+            className="px-4 py-2 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-flaky-bg)] text-sm disabled:opacity-50">
             {simulating ? 'Simulating...' : 'Simulate'}
           </button>
         </div>
 
         {simResult && (
-          <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+          <div className="bg-[var(--color-bg)]/50 rounded-lg p-4 space-y-3">
             <div className="grid grid-cols-2 gap-4 text-center">
               <div>
-                <p className="text-xs text-gray-500">Original</p>
+                <p className="text-xs text-[var(--color-text-muted)]">Original</p>
                 <p className={clsx('text-lg font-bold', {
-                  'text-green-400': simResult.original_recommendation === 'GO',
-                  'text-amber-400': simResult.original_recommendation === 'CONDITIONAL_GO',
-                  'text-red-400': simResult.original_recommendation === 'NO_GO',
+                  'text-[var(--status-passed)]': simResult.original_recommendation === 'GO',
+                  'text-[var(--status-broken)]': simResult.original_recommendation === 'CONDITIONAL_GO',
+                  'text-[var(--status-failed)]': simResult.original_recommendation === 'NO_GO',
                 })}>{simResult.original_recommendation}</p>
-                <p className="text-xs text-gray-500">Composite: {simResult.original_composite.toFixed(1)}</p>
+                <p className="text-xs text-[var(--color-text-muted)]">Composite: {simResult.original_composite.toFixed(1)}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-500">Simulated</p>
+                <p className="text-xs text-[var(--color-text-muted)]">Simulated</p>
                 <p className={clsx('text-lg font-bold', {
-                  'text-green-400': simResult.simulated_recommendation === 'GO',
-                  'text-amber-400': simResult.simulated_recommendation === 'CONDITIONAL_GO',
-                  'text-red-400': simResult.simulated_recommendation === 'NO_GO',
+                  'text-[var(--status-passed)]': simResult.simulated_recommendation === 'GO',
+                  'text-[var(--status-broken)]': simResult.simulated_recommendation === 'CONDITIONAL_GO',
+                  'text-[var(--status-failed)]': simResult.simulated_recommendation === 'NO_GO',
                 })}>{simResult.simulated_recommendation}</p>
-                <p className="text-xs text-gray-500">Composite: {simResult.simulated_composite.toFixed(1)}</p>
+                <p className="text-xs text-[var(--color-text-muted)]">Composite: {simResult.simulated_composite.toFixed(1)}</p>
               </div>
             </div>
-            <p className="text-sm text-gray-300">{simResult.diff_summary}</p>
+            <p className="text-sm text-[var(--color-text-secondary)]">{simResult.diff_summary}</p>
             {simResult.rule_evaluations.length > 0 && (
               <div className="space-y-1">
                 {simResult.rule_evaluations.map((ev: RuleEvaluation) => (
                   <div key={ev.rule_id} className="flex items-center gap-2 text-xs">
-                    <span className={clsx('w-1.5 h-1.5 rounded-full', ev.passed ? 'bg-green-400' : 'bg-red-400')} />
-                    <span className="text-gray-300">{ev.rule_name}</span>
-                    <span className="text-gray-500">{ev.message}</span>
+                    <span className={clsx('w-1.5 h-1.5 rounded-full', ev.passed ? 'bg-[var(--status-passed-bg)]' : 'bg-[var(--status-failed-bg)]')} />
+                    <span className="text-[var(--color-text-secondary)]">{ev.rule_name}</span>
+                    <span className="text-[var(--color-text-muted)]">{ev.message}</span>
                   </div>
                 ))}
               </div>

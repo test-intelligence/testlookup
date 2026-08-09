@@ -113,7 +113,7 @@ interface MetricCellProps {
 function MetricCell({ k, v, tone = 'neutral' }: MetricCellProps) {
   const valueColor =
     tone === 'ok'   ? 'var(--status-passed)'
-    : tone === 'warn' ? '#d29922'
+    : tone === 'warn' ? 'var(--status-broken)'
     : tone === 'bad'  ? 'var(--status-failed)'
     : 'var(--color-text)'
   return (

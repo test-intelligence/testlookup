@@ -26,9 +26,9 @@ export default function LogViewer({ content, title = 'Stack Trace' }: Props) {
       <div className="flex items-center justify-between px-4 py-2 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2">
           <div className="flex gap-1.5">
-            <div className="h-3 w-3 rounded-full bg-red-500/70" />
-            <div className="h-3 w-3 rounded-full bg-amber-500/70" />
-            <div className="h-3 w-3 rounded-full bg-emerald-500/70" />
+            <div className="h-3 w-3 rounded-full bg-[var(--status-failed-bg)]/70" />
+            <div className="h-3 w-3 rounded-full bg-[var(--status-broken-bg)]/70" />
+            <div className="h-3 w-3 rounded-full bg-[var(--status-passed-bg)]/70" />
           </div>
           <span className="text-xs text-[var(--color-text-muted)] font-mono ml-2">{title}</span>
         </div>
@@ -38,7 +38,7 @@ export default function LogViewer({ content, title = 'Stack Trace' }: Props) {
           disabled={!content}
         >
           {copied
-            ? <Check className="h-3.5 w-3.5 text-emerald-400" />
+            ? <Check className="h-3.5 w-3.5 text-[var(--status-passed)]" />
             : <Copy className="h-3.5 w-3.5" />
           }
         </button>

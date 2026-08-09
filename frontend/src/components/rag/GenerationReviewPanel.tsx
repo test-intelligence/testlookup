@@ -53,8 +53,8 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
         <span className={clsx(
           'px-2 py-0.5 rounded text-xs font-medium',
           result.generation_mode === 'grounded'
-            ? 'bg-emerald-500/20 text-emerald-400'
-            : 'bg-amber-500/20 text-amber-400',
+            ? 'bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]'
+            : 'bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]',
         )}>
           {result.generation_mode}
         </span>
@@ -70,9 +70,9 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
 
       {/* Gaps */}
       {result.gaps_noted.length > 0 && (
-        <div className="rounded-lg border border-amber-700/30 bg-amber-900/10 px-4 py-2">
-          <p className="text-xs font-medium text-amber-400 mb-1">Uncovered Requirements</p>
-          <ul className="text-xs text-amber-300/80 space-y-0.5">
+        <div className="rounded-lg border border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/10 px-4 py-2">
+          <p className="text-xs font-medium text-[var(--status-broken)] mb-1">Uncovered Requirements</p>
+          <ul className="text-xs text-[var(--status-broken)]/80 space-y-0.5">
             {result.gaps_noted.map((gap, i) => (
               <li key={i}>- {gap}</li>
             ))}
@@ -93,8 +93,8 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
               key={idx}
               className={clsx(
                 'rounded-lg border p-4 space-y-2',
-                isAccepted && 'border-emerald-500/30 bg-emerald-500/5',
-                isRejected && 'border-red-500/30 bg-red-500/5 opacity-60',
+                isAccepted && 'border-[var(--status-passed-bd)]/30 bg-[var(--status-passed-bg)]/5',
+                isRejected && 'border-[var(--status-failed-bd)]/30 bg-[var(--status-failed-bg)]/5 opacity-60',
                 !isAccepted && !isRejected && 'border-[var(--color-border)]',
               )}
             >
@@ -127,7 +127,7 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
                 {!isAccepted && !isRejected && (
                   <>
                     <button
-                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]/30 transition-colors"
                       onClick={() => handleAccept(idx)}
                       disabled={isProcessing}
                     >
@@ -135,7 +135,7 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
                       Accept
                     </button>
                     <button
-                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-[var(--status-failed-bg)]/20 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/30 transition-colors"
                       onClick={() => handleReject(idx)}
                       disabled={isProcessing}
                     >
@@ -144,8 +144,8 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
                     </button>
                   </>
                 )}
-                {isAccepted && <span className="text-xs text-emerald-400">Accepted</span>}
-                {isRejected && <span className="text-xs text-red-400">Rejected</span>}
+                {isAccepted && <span className="text-xs text-[var(--status-passed)]">Accepted</span>}
+                {isRejected && <span className="text-xs text-[var(--status-failed)]">Rejected</span>}
 
                 {hasCitations && (
                   <button

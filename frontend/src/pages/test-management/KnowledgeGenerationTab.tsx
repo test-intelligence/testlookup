@@ -30,13 +30,13 @@ export default function KnowledgeGenerationTab() {
 
   if (ragStatus && !ragStatus.enabled) {
     return (
-      <div className="card flex items-center gap-3 border-amber-700/30 bg-amber-900/10 py-4 px-5">
-        <Bot className="h-5 w-5 text-amber-400" />
+      <div className="card flex items-center gap-3 border-[var(--status-broken-bd)]/30 bg-[var(--status-broken-bg)]/10 py-4 px-5">
+        <Bot className="h-5 w-5 text-[var(--status-broken)]" />
         <div>
-          <p className="text-sm font-medium text-amber-300">Knowledge RAG is not enabled</p>
-          <p className="text-xs text-amber-400/70 mt-0.5">
+          <p className="text-sm font-medium text-[var(--status-broken)]">Knowledge RAG is not enabled</p>
+          <p className="text-xs text-[var(--status-broken)]/70 mt-0.5">
             An admin can enable this feature from{' '}
-            <Link to="/settings/ai" className="underline text-amber-300 hover:text-amber-200 inline-flex items-center gap-1">
+            <Link to="/settings/ai" className="underline text-[var(--status-broken)] hover:text-[var(--status-broken)] inline-flex items-center gap-1">
               <Settings className="h-3 w-3" />Settings &gt; AI Configuration
             </Link>.
           </p>

@@ -49,7 +49,7 @@ export default function ModeTabs({ mode, onChange, liveActive = false }: ModeTab
             <Icon
               className={clsx(
                 'h-3.5 w-3.5',
-                t.id === 'live' && liveActive && 'motion-safe:animate-pulse text-emerald-400',
+                t.id === 'live' && liveActive && 'motion-safe:animate-pulse text-[var(--status-passed)]',
               )}
             />
             <span>{t.label}</span>

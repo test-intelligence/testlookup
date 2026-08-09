@@ -55,24 +55,24 @@ export const formatPassRate = (rate?: number | null): string =>
   rate != null ? `${rate.toFixed(1)}%` : '—'
 
 export const statusColor = (status: string): string => ({
-  PASSED:  'text-emerald-400',
-  FAILED:  'text-red-400',
-  BROKEN:  'text-orange-400',
-  SKIPPED: 'text-amber-400',
-  UNKNOWN: 'text-neutral-400',
-}[status?.toUpperCase()] ?? 'text-neutral-400')
+  PASSED:  'text-[var(--status-passed)]',
+  FAILED:  'text-[var(--status-failed)]',
+  BROKEN:  'text-[var(--status-broken)]',
+  SKIPPED: 'text-[var(--status-skipped)]',
+  UNKNOWN: 'text-[var(--color-text-secondary)]',
+}[status?.toUpperCase()] ?? 'text-[var(--color-text-secondary)]')
 
 export const categoryColor = (cat: string): string => ({
-  PRODUCT_BUG:      'text-red-400',
-  INFRASTRUCTURE:   'text-orange-400',
-  TEST_DATA:        'text-amber-400',
-  AUTOMATION_DEFECT:'text-purple-400',
-  FLAKY:            'text-pink-400',
-  UNKNOWN:          'text-neutral-400',
-}[cat?.toUpperCase()] ?? 'text-neutral-400')
+  PRODUCT_BUG:      'text-[var(--status-failed)]',
+  INFRASTRUCTURE:   'text-[var(--status-broken)]',
+  TEST_DATA:        'text-[var(--status-broken)]',
+  AUTOMATION_DEFECT:'text-[var(--status-flaky)]',
+  FLAKY:            'text-[var(--status-flaky)]',
+  UNKNOWN:          'text-[var(--color-text-secondary)]',
+}[cat?.toUpperCase()] ?? 'text-[var(--color-text-secondary)]')
 
 export const confidenceColor = (score: number): string => {
-  if (score >= 80) return 'text-emerald-400'
-  if (score >= 60) return 'text-amber-400'
-  return 'text-red-400'
+  if (score >= 80) return 'text-[var(--status-passed)]'
+  if (score >= 60) return 'text-[var(--status-broken)]'
+  return 'text-[var(--status-failed)]'
 }

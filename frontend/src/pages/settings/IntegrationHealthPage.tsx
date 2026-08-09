@@ -13,13 +13,13 @@ import {
 import { triggerProbe } from '../../services/integrationHealthService';
 
 const STATUS_COLORS: Record<string, string> = {
-  healthy: 'bg-green-900/40 text-green-400',
-  degraded: 'bg-yellow-900/40 text-yellow-400',
-  down: 'bg-red-900/40 text-red-400',
-  auth_error: 'bg-red-900/40 text-red-400',
-  timeout: 'bg-orange-900/40 text-orange-400',
-  unknown: 'bg-gray-700 text-[var(--color-text-muted)]',
-  skipped: 'bg-gray-700 text-gray-500',
+  healthy: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]',
+  degraded: 'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]',
+  down: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]',
+  auth_error: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]',
+  timeout: 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]',
+  unknown: 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]',
+  skipped: 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]',
 };
 
 type Tab = 'status' | 'trends' | 'history';
@@ -64,7 +64,7 @@ export default function IntegrationHealthPage() {
         subtitle="Active health probes for Jira, Splunk, GitHub, Slack, Teams, SMTP, and more."
         actions={
           <button onClick={() => handleProbe()} disabled={probing}
-            className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-neutral-200 text-sm disabled:opacity-50">
+            className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">
             {probing ? 'Probing...' : 'Probe All Now'}
           </button>
         }
@@ -80,10 +80,10 @@ export default function IntegrationHealthPage() {
         showInspector
       />
 
-      <div className="flex gap-1 border-b border-gray-700">
+      <div className="flex gap-1 border-b border-[var(--color-border)]">
         {tabs.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-neutral-500' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
+            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
             {t.label}
           </button>
         ))}
@@ -94,20 +94,20 @@ export default function IntegrationHealthPage() {
           {/* Current Status */}
           {tab === 'status' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {statuses.length === 0 && <div className="col-span-full text-center py-8 text-gray-500">No health data yet. Click "Probe All Now" to start.</div>}
+              {statuses.length === 0 && <div className="col-span-full text-center py-8 text-[var(--color-text-muted)]">No health data yet. Click "Probe All Now" to start.</div>}
               {statuses.map(s => (
                 <div key={s.provider} className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-100 font-medium capitalize">{s.provider}</span>
+                    <span className="text-[var(--color-text)] font-medium capitalize">{s.provider}</span>
                     <span className={clsx('px-2 py-0.5 rounded text-xs font-medium', STATUS_COLORS[s.status] || STATUS_COLORS.unknown)}>
                       {s.status}
                     </span>
                   </div>
-                  <div className="space-y-1 text-xs text-gray-500">
-                    {s.response_ms != null && <p>Latency: <span className="text-gray-300">{s.response_ms}ms</span></p>}
+                  <div className="space-y-1 text-xs text-[var(--color-text-muted)]">
+                    {s.response_ms != null && <p>Latency: <span className="text-[var(--color-text-secondary)]">{s.response_ms}ms</span></p>}
                     {s.message && <p className="truncate" title={s.message}>{s.message}</p>}
                     {s.consecutive_failures > 0 && (
-                      <p className="text-red-400">Consecutive failures: {s.consecutive_failures}</p>
+                      <p className="text-[var(--status-failed)]">Consecutive failures: {s.consecutive_failures}</p>
                     )}
                     {s.last_checked_at && <p>Last checked: {new Date(s.last_checked_at).toLocaleString()}</p>}
                   </div>
@@ -123,19 +123,19 @@ export default function IntegrationHealthPage() {
           {/* Trends */}
           {tab === 'trends' && (
             <div className="space-y-2">
-              {trends.length === 0 && <div className="text-center py-8 text-gray-500">No trend data available.</div>}
-              <div className="bg-[var(--color-bg-hover)]/50 rounded-lg px-4 py-2 grid grid-cols-6 gap-2 text-xs text-gray-500 font-medium">
+              {trends.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No trend data available.</div>}
+              <div className="bg-[var(--color-bg-hover)]/50 rounded-lg px-4 py-2 grid grid-cols-6 gap-2 text-xs text-[var(--color-text-muted)] font-medium">
                 <span>Provider</span><span>Uptime</span><span>Healthy</span><span>Degraded</span><span>Down</span><span>Avg Latency</span>
               </div>
               {trends.map(t => (
                 <div key={t.provider} className="bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-6 gap-2 items-center text-sm">
-                  <span className="text-neutral-200 capitalize font-medium">{t.provider}</span>
-                  <span className={clsx('font-mono', t.uptime_pct >= 99 ? 'text-green-400' : t.uptime_pct >= 90 ? 'text-yellow-400' : 'text-red-400')}>
+                  <span className="text-[var(--color-text)] capitalize font-medium">{t.provider}</span>
+                  <span className={clsx('font-mono', t.uptime_pct >= 99 ? 'text-[var(--status-passed)]' : t.uptime_pct >= 90 ? 'text-[var(--status-skipped)]' : 'text-[var(--status-failed)]')}>
                     {t.uptime_pct}%
                   </span>
-                  <span className="text-green-400 text-xs">{t.healthy}</span>
-                  <span className="text-yellow-400 text-xs">{t.degraded}</span>
-                  <span className="text-red-400 text-xs">{t.down}</span>
+                  <span className="text-[var(--status-passed)] text-xs">{t.healthy}</span>
+                  <span className="text-[var(--status-skipped)] text-xs">{t.degraded}</span>
+                  <span className="text-[var(--status-failed)] text-xs">{t.down}</span>
                   <span className="text-[var(--color-text-muted)] text-xs">{t.avg_response_ms}ms</span>
                 </div>
               ))}
@@ -147,23 +147,23 @@ export default function IntegrationHealthPage() {
             <div className="space-y-4">
               <div className="flex gap-2">
                 <select value={selectedProvider} onChange={e => setSelectedProvider(e.target.value)}
-                  className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm">
+                  className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm">
                   <option value="">Select provider...</option>
                   {statuses.map(s => <option key={s.provider} value={s.provider}>{s.provider}</option>)}
                 </select>
               </div>
-              {!selectedProvider && <div className="text-center py-8 text-gray-500">Select a provider to view probe history.</div>}
-              {selectedProvider && history.length === 0 && <div className="text-center py-8 text-gray-500">No history for {selectedProvider}.</div>}
+              {!selectedProvider && <div className="text-center py-8 text-[var(--color-text-muted)]">Select a provider to view probe history.</div>}
+              {selectedProvider && history.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No history for {selectedProvider}.</div>}
               {history.map(h => (
                 <div key={h.id} className="bg-[var(--color-bg-secondary)] rounded px-3 py-2 flex justify-between items-center text-sm">
                   <div className="flex items-center gap-3">
                     <span className={clsx('px-2 py-0.5 rounded text-xs', STATUS_COLORS[h.status] || STATUS_COLORS.unknown)}>{h.status}</span>
                     <span className="text-[var(--color-text-muted)] text-xs">{h.response_ms != null ? `${h.response_ms}ms` : '—'}</span>
-                    {h.auth_valid === false && <span className="text-red-400 text-xs">Auth failed</span>}
+                    {h.auth_valid === false && <span className="text-[var(--status-failed)] text-xs">Auth failed</span>}
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-gray-500 text-xs truncate max-w-64">{h.message}</span>
-                    <span className="text-gray-600 text-xs">{h.checked_at ? new Date(h.checked_at).toLocaleString() : '—'}</span>
+                    <span className="text-[var(--color-text-muted)] text-xs truncate max-w-64">{h.message}</span>
+                    <span className="text-[var(--color-text-muted)] text-xs">{h.checked_at ? new Date(h.checked_at).toLocaleString() : '—'}</span>
                   </div>
                 </div>
               ))}

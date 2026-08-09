@@ -202,7 +202,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
         <div className="flex items-center gap-2 shrink-0">
           {/* Phase 6: Token and cost badges (hidden in rules/ML mode) */}
           {showLLMMetrics && stage.total_tokens != null && stage.total_tokens > 0 && (
-            <span className="text-[10px] bg-indigo-900/30 text-indigo-400 px-1.5 py-0.5 rounded"
+            <span className="text-[10px] bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)] px-1.5 py-0.5 rounded"
               title={`Input: ${stage.input_tokens ?? 0} / Output: ${stage.output_tokens ?? 0}`}
             >
               {stage.total_tokens.toLocaleString()} tok
@@ -250,7 +250,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
               )}
               {showLLMMetrics && stage.total_tokens != null && stage.total_tokens > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
-                  <div className="text-sm font-bold text-indigo-400">{stage.total_tokens.toLocaleString()}</div>
+                  <div className="text-sm font-bold text-[var(--color-accent)]">{stage.total_tokens.toLocaleString()}</div>
                   <div className="text-[9px] text-[var(--color-text-muted)]">Tokens ({stage.input_tokens ?? 0}in/{stage.output_tokens ?? 0}out)</div>
                 </div>
               )}
@@ -262,7 +262,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
               )}
               {stage.evidence_count != null && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
-                  <div className="text-sm font-bold text-cyan-400">{stage.evidence_count}</div>
+                  <div className="text-sm font-bold text-[var(--color-accent)]">{stage.evidence_count}</div>
                   <div className="text-[9px] text-[var(--color-text-muted)]">Evidence Items</div>
                 </div>
               )}
@@ -399,7 +399,7 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
       </div>
       <div className="w-full h-1.5 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
         <div
-          className="h-full bg-neutral-300 rounded-full transition-all"
+          className="h-full bg-[var(--color-bg-hover)] rounded-full transition-all"
           style={{ width: `${progress}%` }}
         />
       </div>
@@ -445,7 +445,7 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
             <div className="text-[10px] text-[var(--color-text-muted)]">Cost / {formatMoney(obs.cost.budget_usd)}</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
-            <div className="text-sm font-semibold text-indigo-300">{obs.tokens.total.toLocaleString()}</div>
+            <div className="text-sm font-semibold text-[var(--color-accent)]">{obs.tokens.total.toLocaleString()}</div>
             <div className="text-[10px] text-[var(--color-text-muted)]">{obs.tokens.llm_calls} LLM calls</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
@@ -494,8 +494,8 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
 // ── Main page ──────────────────────────────────────────────────
 
 const MODE_BADGE: Record<string, { label: string; colour: string }> = {
-  llm:   { label: 'LLM Mode',   colour: 'bg-indigo-900/30 text-indigo-400' },
-  ml:    { label: 'ML Mode',    colour: 'bg-cyan-900/30 text-cyan-400' },
+  llm:   { label: 'LLM Mode',   colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
+  ml:    { label: 'ML Mode',    colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
   rules: { label: 'Rules Mode', colour: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
   auto:  { label: 'Auto Mode',  colour: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
 }
@@ -735,7 +735,7 @@ export default function AgentStatusPage() {
 
               {analysisMode === 'llm' && (
                 <p className="text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2">
-                  <span className="text-indigo-300 font-medium">LLM mode tip:</span>{' '}
+                  <span className="text-[var(--color-accent)] font-medium">LLM mode tip:</span>{' '}
                   the analysis stage needs a reachable LLM (Ollama with the configured model pulled, or a hosted provider).
                   If the LLM is unavailable the pipeline still runs and falls back to the rules engine — the row will appear here either way.
                 </p>

@@ -5,9 +5,9 @@ import { copyTextToClipboard } from '@/utils/clipboard'
 
 const ROLE_CONFIG: Record<string, { label: string; icon: React.ElementType; colour: string }> = {
   qa:              { label: 'QA',              icon: User,   colour: 'text-[var(--color-text)]' },
-  developer:       { label: 'Developer',       icon: Code,   colour: 'text-purple-400' },
-  sre:             { label: 'SRE',             icon: Server, colour: 'text-orange-400' },
-  release_manager: { label: 'Release Manager', icon: Shield, colour: 'text-emerald-400' },
+  developer:       { label: 'Developer',       icon: Code,   colour: 'text-[var(--status-flaky)]' },
+  sre:             { label: 'SRE',             icon: Server, colour: 'text-[var(--status-broken)]' },
+  release_manager: { label: 'Release Manager', icon: Shield, colour: 'text-[var(--status-passed)]' },
 }
 
 interface RoleActionCardProps {
@@ -85,7 +85,7 @@ export default function RoleActionCard({ roleActions, filterRoles, compact }: Ro
                 title="Copy to clipboard"
               >
                 {copiedRole === key
-                  ? <Check className="h-3.5 w-3.5 text-emerald-400" />
+                  ? <Check className="h-3.5 w-3.5 text-[var(--status-passed)]" />
                   : <Copy className="h-3.5 w-3.5" />}
               </button>
             </div>

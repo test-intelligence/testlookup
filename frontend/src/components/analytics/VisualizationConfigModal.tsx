@@ -52,10 +52,10 @@ export default function VisualizationConfigModal({ instance, onSave, onClose }: 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#334155] bg-[#0f172a]">
           <div className="flex items-center gap-2">
-            <Settings2 className="h-4 w-4 text-slate-400" />
-            <h2 className="text-sm font-semibold text-slate-100">Configure Visualization</h2>
+            <Settings2 className="h-4 w-4 text-[var(--color-text-secondary)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Configure Visualization</h2>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-700/50">
+          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] p-1 rounded hover:bg-[var(--color-bg-card)]/50">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -63,31 +63,31 @@ export default function VisualizationConfigModal({ instance, onSave, onClose }: 
         {/* Form */}
         <div className="px-5 py-4 space-y-4">
           {/* Template info */}
-          <div className="text-xs text-slate-500">
-            Template: <span className="text-slate-300">{template?.label ?? instance.templateId}</span>
+          <div className="text-xs text-[var(--color-text-muted)]">
+            Template: <span className="text-[var(--color-text-secondary)]">{template?.label ?? instance.templateId}</span>
           </div>
 
           {/* Custom title */}
           <div>
-            <label className="text-xs font-medium text-slate-400 block mb-1">Custom Title</label>
+            <label className="text-xs font-medium text-[var(--color-text-secondary)] block mb-1">Custom Title</label>
             <input
               type="text"
               value={title}
               onChange={e => setTitle(e.target.value)}
               placeholder={template?.label ?? 'Untitled'}
-              className="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded-lg px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg px-3 py-2 text-sm placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
             />
-            <p className="text-[10px] text-slate-500 mt-1">Leave blank to use the default template name</p>
+            <p className="text-[10px] text-[var(--color-text-muted)] mt-1">Leave blank to use the default template name</p>
           </div>
 
           {/* Chart type override */}
           {allowedTypes.length > 1 && (
             <div>
-              <label className="text-xs font-medium text-slate-400 block mb-1">Chart Type</label>
+              <label className="text-xs font-medium text-[var(--color-text-secondary)] block mb-1">Chart Type</label>
               <select
                 value={chartType}
                 onChange={e => setChartType(e.target.value as ChartType)}
-                className="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
               >
                 <option value="">Default ({CHART_TYPE_LABELS[template?.chartType ?? ''] ?? 'auto'})</option>
                 {allowedTypes.map(ct => (
@@ -100,12 +100,12 @@ export default function VisualizationConfigModal({ instance, onSave, onClose }: 
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[#334155] bg-[#0f172a]">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)]">
             Cancel
           </button>
           <button
             onClick={handleSave}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
+            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-[var(--color-accent-muted)] text-white rounded-lg hover:bg-[var(--color-accent-muted)] transition-colors"
           >
             <Check className="h-3 w-3" />
             Save

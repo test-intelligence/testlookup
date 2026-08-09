@@ -13,9 +13,9 @@ const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN'
 const ROLE_COLORS: Record<UserRole, string> = {
   VIEWER: 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]',
   TESTER: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]',
-  QA_ENGINEER: 'bg-emerald-900/50 text-emerald-300',
-  QA_LEAD: 'bg-amber-900/50 text-amber-300',
-  ADMIN: 'bg-red-900/50 text-red-300',
+  QA_ENGINEER: 'bg-[var(--status-passed-bg)]/50 text-[var(--status-passed)]',
+  QA_LEAD: 'bg-[var(--status-broken-bg)]/50 text-[var(--status-broken)]',
+  ADMIN: 'bg-[var(--status-failed-bg)]/50 text-[var(--status-failed)]',
 }
 
 export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolean; canManageUsers: boolean }) {
@@ -150,7 +150,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
         <select
           value={selectedProjectId}
           onChange={e => setSelectedProjectId(e.target.value)}
-          className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500 flex-1 max-w-xs"
+          className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)] flex-1 max-w-xs"
         >
           <option value="">— Pick a project —</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -167,7 +167,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
 
       {/* User loading error warning */}
       {usersError && (
-        <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-3 py-2">
+        <div className="flex items-center gap-2 text-xs text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-3 py-2">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           Could not load users list. The &quot;Add Member&quot; dropdown may be empty. Check your permissions (QA_LEAD+ required).
         </div>
@@ -192,7 +192,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
               </p>
 
               {qaLeadCandidates.length === 0 ? (
-                <p className="text-xs text-amber-300 bg-amber-900/20 border border-amber-700/30 rounded px-2 py-1.5 mt-2 inline-block">
+                <p className="text-xs text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-2 py-1.5 mt-2 inline-block">
                   No project members have the QA_LEAD role yet. Add one below before setting a default.
                 </p>
               ) : isAdmin ? (
@@ -200,7 +200,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                   <select
                     value={defaultQaLeadDraft}
                     onChange={e => setDefaultQaLeadDraft(e.target.value)}
-                    className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5 focus:outline-none focus:border-neutral-500 min-w-[260px]"
+                    className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5 focus:outline-none focus:border-[var(--color-border)] min-w-[260px]"
                   >
                     <option value="">— Select a QA Lead —</option>
                     {qaLeadCandidates.map(m => (
@@ -302,7 +302,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                     <td className="px-4 py-3 text-right">
                       <button
                         onClick={() => handleRemove(m.user_id)}
-                        className="text-red-500/70 hover:text-red-400 p-1 rounded transition-colors"
+                        className="text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] p-1 rounded transition-colors"
                         title="Remove from project"
                       >
                         <UserMinus className="h-4 w-4" />
@@ -379,7 +379,7 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
               <select
                 value={userId}
                 onChange={e => setUserId(e.target.value)}
-                className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"
               >
                 <option value="">— Select user —</option>
                 {nonMembers.map(u => (
@@ -393,7 +393,7 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
             <select
               value={role}
               onChange={e => setRole(e.target.value as UserRole)}
-              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-neutral-500"
+              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"
             >
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>

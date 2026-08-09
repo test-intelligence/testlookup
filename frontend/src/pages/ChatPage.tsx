@@ -54,7 +54,7 @@ function SessionItem({
       </span>
       <button
         onClick={e => { e.stopPropagation(); onDelete() }}
-        className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-red-400 transition-all"
+        className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--status-failed)] transition-all"
       >
         <Trash2 className="w-3 h-3" />
       </button>
@@ -87,9 +87,9 @@ const MessageBubble = memo(function MessageBubble({ role, content, sources }: {
       }`}>
         {content === '…' ? (
           <span className="inline-flex gap-1 items-center text-[var(--color-text-muted)]">
-            <span className="w-1.5 h-1.5 rounded-full bg-neutral-600 animate-bounce [animation-delay:0ms]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-neutral-600 animate-bounce [animation-delay:150ms]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-neutral-600 animate-bounce [animation-delay:300ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-bg-hover)] animate-bounce [animation-delay:0ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-bg-hover)] animate-bounce [animation-delay:150ms]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-bg-hover)] animate-bounce [animation-delay:300ms]" />
           </span>
         ) : isUser ? (
           <p className="whitespace-pre-wrap">{content}</p>
@@ -134,7 +134,7 @@ function RunSummaryCard({
   return (
     <div className={`rounded-lg border transition-colors ${
       summary.is_regression
-        ? 'border-red-700/40 bg-red-900/10'
+        ? 'border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10'
         : summary.is_stub
           ? 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40'
           : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/80'
@@ -142,13 +142,13 @@ function RunSummaryCard({
       {/* Card header */}
       <div className="flex items-start gap-3 px-4 py-3">
         <div className={`mt-0.5 w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
-          summary.is_regression ? 'bg-red-900/50' : summary.is_stub ? 'bg-[var(--color-bg-hover)]/50' : 'bg-[var(--color-bg-hover)]'
+          summary.is_regression ? 'bg-[var(--status-failed-bg)]/50' : summary.is_stub ? 'bg-[var(--color-bg-hover)]/50' : 'bg-[var(--color-bg-hover)]'
         }`}>
           {summary.is_regression
-            ? <AlertTriangle className="w-4 h-4 text-red-400" />
+            ? <AlertTriangle className="w-4 h-4 text-[var(--status-failed)]" />
             : summary.is_stub
               ? <Bot className="w-4 h-4 text-[var(--color-text-muted)] animate-pulse" />
-              : <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+              : <CheckCircle2 className="w-4 h-4 text-[var(--status-passed)]" />}
         </div>
 
         <div className="flex-1 min-w-0">
@@ -162,12 +162,12 @@ function RunSummaryCard({
               </span>
             )}
             {!summary.is_stub && summary.is_regression && (
-              <span className="text-[10px] bg-red-900/60 text-red-300 border border-red-700/40 px-1.5 py-0.5 rounded font-medium">
+              <span className="text-[10px] bg-[var(--status-failed-bg)]/60 text-[var(--status-failed)] border border-[var(--status-failed-bd)]/40 px-1.5 py-0.5 rounded font-medium">
                 REGRESSION
               </span>
             )}
             {!summary.is_stub && summary.anomaly_count > 0 && (
-              <span className="text-[10px] bg-yellow-900/40 text-yellow-400 border border-yellow-700/30 px-1.5 py-0.5 rounded">
+              <span className="text-[10px] bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)] border border-[var(--status-skipped-bd)]/30 px-1.5 py-0.5 rounded">
                 {summary.anomaly_count} anomal{summary.anomaly_count === 1 ? 'y' : 'ies'}
               </span>
             )}
@@ -204,7 +204,7 @@ function RunSummaryCard({
             )}
             <button
               onClick={() => onAskAbout(summary.test_run_id, summary.build_number)}
-              className="ml-auto flex items-center gap-1 text-xs bg-neutral-200/30 hover:bg-neutral-200/50 text-[var(--color-text-secondary)] border border-[var(--color-border-light)] px-2.5 py-1 rounded transition-colors"
+              className="ml-auto flex items-center gap-1 text-xs bg-[var(--color-bg-hover)]/30 hover:bg-[var(--color-bg-hover)]/50 text-[var(--color-text-secondary)] border border-[var(--color-border-light)] px-2.5 py-1 rounded transition-colors"
             >
               <MessageSquare className="w-3 h-3" />
               Ask AI
@@ -378,7 +378,7 @@ export default function ChatPage() {
             {/* Pre-computed run summaries */}
             <div>
               <div className="flex items-center gap-2 mb-3">
-                <Zap className="w-3.5 h-3.5 text-yellow-400" />
+                <Zap className="w-3.5 h-3.5 text-[var(--status-skipped)]" />
                 <h4 className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
                   Recent Run Summaries — last 5 days
                 </h4>
@@ -443,7 +443,7 @@ export default function ChatPage() {
               />
             ))}
             {error && (
-              <div className="text-xs text-red-400 text-center">{error}</div>
+              <div className="text-xs text-[var(--status-failed)] text-center">{error}</div>
             )}
             <div ref={messagesEndRef} />
           </div>

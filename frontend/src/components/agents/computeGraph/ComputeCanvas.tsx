@@ -83,7 +83,7 @@ export default function ComputeCanvas({
               markerHeight="6"
               orient="auto-start-reverse"
             >
-              <path d="M0,0 L10,5 L0,10 z" fill="var(--color-accent, #b8f24a)" />
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--color-accent)" />
             </marker>
             <marker
               id="c-arrow-faint"
@@ -103,7 +103,7 @@ export default function ComputeCanvas({
             const isNot    = edge.kind === 'notchosen'
             const dashed   = edge.kind === 'dashed' || isNot
             const stroke = isChosen
-              ? 'var(--color-accent, #b8f24a)'
+              ? 'var(--color-accent)'
               : isNot
                 ? 'var(--fg-faint, #4a525c)'
                 : 'var(--border-strong, #4a5564)'
@@ -144,7 +144,7 @@ export default function ComputeCanvas({
                   top: y,
                   transform: 'translate(-50%, -50%)',
                   color: isChosen
-                    ? 'var(--color-accent, #b8f24a)'
+                    ? 'var(--color-accent)'
                     : isNot
                       ? 'var(--fg-faint, #4a525c)'
                       : 'var(--color-text-muted)',

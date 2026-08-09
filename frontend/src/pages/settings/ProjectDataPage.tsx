@@ -115,10 +115,10 @@ function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess }:
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-lg rounded-lg border border-red-700/50 bg-[var(--color-bg)] p-6 shadow-2xl">
+      <div className="w-full max-w-lg rounded-lg border border-[var(--status-failed-bd)]/50 bg-[var(--color-bg)] p-6 shadow-2xl">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-red-400" />
+            <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
             <h2 className="text-lg font-semibold text-[var(--color-text)]">{spec.title}</h2>
           </div>
           <button
@@ -134,15 +134,15 @@ function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess }:
 
         <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{spec.blurb}</p>
 
-        <div className="mt-4 rounded border border-red-700/40 bg-red-900/10 p-3 text-xs">
-          <p className="font-semibold text-red-300">This will permanently delete:</p>
-          <ul className="mt-1 ml-4 list-disc space-y-0.5 text-red-200/90">
+        <div className="mt-4 rounded border border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 p-3 text-xs">
+          <p className="font-semibold text-[var(--status-failed)]">This will permanently delete:</p>
+          <ul className="mt-1 ml-4 list-disc space-y-0.5 text-[var(--status-failed)]/90">
             {spec.deletes.map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
-          <p className="mt-3 font-semibold text-emerald-300">Will be kept:</p>
-          <ul className="mt-1 ml-4 list-disc space-y-0.5 text-emerald-200/90">
+          <p className="mt-3 font-semibold text-[var(--status-passed)]">Will be kept:</p>
+          <ul className="mt-1 ml-4 list-disc space-y-0.5 text-[var(--status-passed)]/90">
             {spec.keeps.map((line) => (
               <li key={line}>{line}</li>
             ))}
@@ -178,7 +178,7 @@ function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess }:
             onClick={handleConfirm}
             disabled={!matches || submitting}
             aria-disabled={!matches || submitting}
-            className="inline-flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-red-900/40 disabled:text-red-200/60"
+            className="inline-flex items-center gap-1.5 rounded bg-[var(--status-failed-bg)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--status-failed-bg)] disabled:cursor-not-allowed disabled:bg-[var(--status-failed-bg)]/40 disabled:text-[var(--status-failed)]/60"
           >
             {submitting ? (
               <>
@@ -241,7 +241,7 @@ export default function ProjectDataPage() {
             <div className="font-mono text-xs text-[var(--color-text-muted)]">{project.id}</div>
           </div>
         ) : (
-          <div className="rounded border border-amber-700/40 bg-amber-900/10 px-3 py-2 text-sm text-amber-300">
+          <div className="rounded border border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 px-3 py-2 text-sm text-[var(--status-broken)]">
             Select a specific project from the picker — reset is per-project and not available in
             All-Projects mode.
           </div>
@@ -250,11 +250,11 @@ export default function ProjectDataPage() {
 
       {/* Last result */}
       {lastResult && (
-        <section className="card border-emerald-700/40 bg-emerald-900/10">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-emerald-200">
+        <section className="card border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/10">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--status-passed)]">
             Reset complete ({lastResult.mode})
           </h2>
-          <ul className="mt-2 ml-4 list-disc space-y-0.5 text-xs text-emerald-100/90">
+          <ul className="mt-2 ml-4 list-disc space-y-0.5 text-xs text-[var(--status-passed)]/90">
             {Object.entries(lastResult.deleted).map(([table, count]) => (
               <li key={table}>
                 <span className="font-mono">{table}</span>: {count.toLocaleString()} row
@@ -267,10 +267,10 @@ export default function ProjectDataPage() {
 
       {/* Danger zone */}
       <section
-        className="card space-y-4 border-red-700/40"
+        className="card space-y-4 border-[var(--status-failed-bd)]/40"
         aria-labelledby="danger-zone-heading"
       >
-        <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-red-300">
+        <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
           <AlertTriangle className="h-4 w-4" />
           <h2 id="danger-zone-heading">Danger zone</h2>
         </header>
@@ -279,7 +279,7 @@ export default function ProjectDataPage() {
           re-validates and writes a settings_audit_log entry for every successful run.
         </p>
 
-        <div className="divide-y divide-[var(--color-border)] rounded border border-red-700/30">
+        <div className="divide-y divide-[var(--color-border)] rounded border border-[var(--status-failed-bd)]/30">
           {MODE_SPECS.map((spec) => (
             <div key={spec.mode} className="flex items-start justify-between gap-4 p-4">
               <div className="min-w-0">
@@ -290,7 +290,7 @@ export default function ProjectDataPage() {
                 type="button"
                 onClick={() => setActiveSpec(spec)}
                 disabled={!canReset}
-                className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-red-600/60 bg-red-900/30 px-3 py-1.5 text-xs font-medium text-red-200 hover:bg-red-900/60 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30 px-3 py-1.5 text-xs font-medium text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/60 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Trash2 className="h-3.5 w-3.5" /> {spec.buttonLabel}
               </button>

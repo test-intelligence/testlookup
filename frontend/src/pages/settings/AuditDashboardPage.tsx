@@ -17,12 +17,12 @@ type Tab = 'events' | 'observability';
 
 const SOURCE_COLORS: Record<string, string> = {
   access: 'bg-[var(--color-bg-secondary)]/60 text-[var(--color-text)]',
-  settings: 'bg-purple-900/40 text-purple-400',
-  test_management: 'bg-cyan-900/40 text-cyan-400',
-  identity: 'bg-yellow-900/40 text-yellow-400',
-  report: 'bg-green-900/40 text-green-400',
-  notification: 'bg-gray-700 text-gray-300',
-  release: 'bg-red-900/40 text-red-400',
+  settings: 'bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)]',
+  test_management: 'bg-[var(--color-accent-muted)]/40 text-[var(--color-accent)]',
+  identity: 'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]',
+  report: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]',
+  notification: 'bg-[var(--color-bg-card)] text-[var(--color-text-secondary)]',
+  release: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]',
 };
 
 export default function AuditDashboardPage() {
@@ -69,7 +69,7 @@ export default function AuditDashboardPage() {
         title="Audit Dashboard"
         subtitle="Unified view of security actions, configuration changes, and tenant metrics."
         actions={
-          <button onClick={handleExport} className="px-4 py-2 bg-gray-700 text-neutral-200 rounded-lg hover:bg-gray-600 text-sm">
+          <button onClick={handleExport} className="px-4 py-2 bg-[var(--color-bg-card)] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
             Export CSV
           </button>
         }
@@ -85,13 +85,13 @@ export default function AuditDashboardPage() {
         showInspector
       />
 
-      <div className="flex gap-1 border-b border-gray-700">
+      <div className="flex gap-1 border-b border-[var(--color-border)]">
         {([
           { key: 'events' as Tab, label: 'Audit Events' },
           { key: 'observability' as Tab, label: 'Project Observability' },
         ]).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-neutral-500' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
+            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
             {t.label}
           </button>
         ))}
@@ -102,32 +102,32 @@ export default function AuditDashboardPage() {
         <div className="space-y-4">
           <div className="flex gap-2 items-center flex-wrap">
             <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}
-              className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm">
+              className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm">
               <option value="">All categories</option>
               {categories.map(c => <option key={c.key} value={c.key}>{c.key} — {c.description}</option>)}
             </select>
             <select value={days} onChange={e => setDays(parseInt(e.target.value))}
-              className="bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm">
+              className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm">
               <option value={7}>Last 7 days</option>
               <option value={30}>Last 30 days</option>
               <option value={90}>Last 90 days</option>
             </select>
-            <span className="text-xs text-gray-500">{total} events</span>
+            <span className="text-xs text-[var(--color-text-muted)]">{total} events</span>
           </div>
 
           {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div> : (
             <div className="space-y-1">
-              {events.length === 0 && <div className="text-center py-8 text-gray-500">No audit events found for this filter.</div>}
+              {events.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No audit events found for this filter.</div>}
               {events.map((ev, i) => (
                 <div key={i} className="bg-[var(--color-bg-secondary)] rounded px-3 py-2 flex justify-between items-center text-sm">
                   <div className="flex items-center gap-3">
-                    <span className={clsx('px-2 py-0.5 rounded text-[10px] font-medium', SOURCE_COLORS[ev.source] || 'bg-gray-700 text-[var(--color-text-muted)]')}>
+                    <span className={clsx('px-2 py-0.5 rounded text-[10px] font-medium', SOURCE_COLORS[ev.source] || 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
                       {ev.source}
                     </span>
-                    <span className="text-gray-300 font-mono text-xs">{ev.action}</span>
-                    {ev.actor_name && <span className="text-gray-500 text-xs">by {ev.actor_name}</span>}
+                    <span className="text-[var(--color-text-secondary)] font-mono text-xs">{ev.action}</span>
+                    {ev.actor_name && <span className="text-[var(--color-text-muted)] text-xs">by {ev.actor_name}</span>}
                   </div>
-                  <span className="text-gray-600 text-xs">{ev.created_at ? new Date(ev.created_at).toLocaleString() : '—'}</span>
+                  <span className="text-[var(--color-text-muted)] text-xs">{ev.created_at ? new Date(ev.created_at).toLocaleString() : '—'}</span>
                 </div>
               ))}
             </div>
@@ -139,7 +139,7 @@ export default function AuditDashboardPage() {
       {tab === 'observability' && (
         <div className="space-y-4">
           {!projectId ? (
-            <div className="text-center py-8 text-gray-500">Select a project to view tenant-scoped observability metrics.</div>
+            <div className="text-center py-8 text-[var(--color-text-muted)]">Select a project to view tenant-scoped observability metrics.</div>
           ) : obs ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
@@ -147,27 +147,27 @@ export default function AuditDashboardPage() {
                 <div className="text-xs text-[var(--color-text-muted)] mt-1">Runs ({obs.period_days}d)</div>
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-green-400">{obs.avg_pass_rate?.toFixed(1) ?? 'N/A'}%</div>
+                <div className="text-2xl font-bold text-[var(--status-passed)]">{obs.avg_pass_rate?.toFixed(1) ?? 'N/A'}%</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-1">Avg Pass Rate</div>
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-red-400">{obs.failed_runs}</div>
+                <div className="text-2xl font-bold text-[var(--status-failed)]">{obs.failed_runs}</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-1">Failed Runs</div>
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-purple-400">{obs.ai_analyses_count}</div>
+                <div className="text-2xl font-bold text-[var(--status-flaky)]">{obs.ai_analyses_count}</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-1">AI Analyses</div>
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-amber-400">{obs.release_decisions_count}</div>
+                <div className="text-2xl font-bold text-[var(--status-broken)]">{obs.release_decisions_count}</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-1">Release Decisions</div>
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-cyan-400">{obs.total_tests}</div>
+                <div className="text-2xl font-bold text-[var(--color-accent)]">{obs.total_tests}</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-1">Total Tests</div>
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-gray-300">{obs.audit_events_count}</div>
+                <div className="text-2xl font-bold text-[var(--color-text-secondary)]">{obs.audit_events_count}</div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-1">Audit Events</div>
               </div>
             </div>

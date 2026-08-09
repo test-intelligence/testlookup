@@ -23,10 +23,10 @@ import {
 import { describeMfaError, formatRetryAfter } from '@/utils/mfaErrors';
 
 const DEV_ROLES = [
-  { label: 'Admin',       value: 'admin',       colour: 'text-red-400' },
-  { label: 'QA Lead',     value: 'qa_lead',     colour: 'text-violet-400' },
+  { label: 'Admin',       value: 'admin',       colour: 'text-[var(--status-failed)]' },
+  { label: 'QA Lead',     value: 'qa_lead',     colour: 'text-[var(--status-flaky)]' },
   { label: 'QA Engineer', value: 'qa_engineer', colour: 'text-[var(--color-text)]' },
-  { label: 'Tester',      value: 'tester',      colour: 'text-emerald-400' },
+  { label: 'Tester',      value: 'tester',      colour: 'text-[var(--status-passed)]' },
   { label: 'Viewer',      value: 'viewer',      colour: 'text-[var(--color-text-muted)]' },
 ];
 
@@ -225,8 +225,8 @@ export default function LoginPage() {
 
         {/* ── Dev quick-login panel (Vite dev mode only) ── */}
         {isDev && mode === 'login' && (
-          <div className="bg-amber-950/40 border border-amber-700/50 rounded-lg px-4 py-3">
-            <p className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-2">
+          <div className="bg-[var(--status-broken-bg)]/40 border border-[var(--status-broken-bd)]/50 rounded-lg px-4 py-3">
+            <p className="text-xs font-semibold text-[var(--status-broken)] uppercase tracking-wide mb-2">
               Dev environment — quick login (no password required)
             </p>
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
@@ -236,13 +236,13 @@ export default function LoginPage() {
                   type="button"
                   disabled={devLoggingInAs !== null}
                   onClick={() => handleDevLogin(value)}
-                  className="flex items-center justify-center gap-1.5 text-xs px-2 py-1.5 rounded bg-amber-900/30 hover:bg-amber-900/60 border border-amber-700/40 transition-colors disabled:opacity-50"
+                  className="flex items-center justify-center gap-1.5 text-xs px-2 py-1.5 rounded bg-[var(--status-broken-bg)]/30 hover:bg-[var(--status-broken-bg)]/60 border border-[var(--status-broken-bd)]/40 transition-colors disabled:opacity-50"
                 >
                   {devLoggingInAs === value ? (
                     <LoadingSpinner size="sm" />
                   ) : (
                     <>
-                      <Zap className="h-3 w-3 text-amber-400" />
+                      <Zap className="h-3 w-3 text-[var(--status-broken)]" />
                       <span className={colour}>{label}</span>
                     </>
                   )}
@@ -396,7 +396,7 @@ export default function LoginPage() {
                     Sign in with SSO
                   </button>
                   {ssoStatus.enforcement_mode === 'SSO_REQUIRED' && (
-                    <p className="text-xs text-amber-400 mt-1.5 text-center">
+                    <p className="text-xs text-[var(--status-broken)] mt-1.5 text-center">
                       SSO is required. Password login is only available for admin accounts.
                     </p>
                   )}
@@ -415,7 +415,7 @@ export default function LoginPage() {
 
               <div>
                 <label htmlFor="reg-email" className="block text-sm font-medium text-[var(--color-text-secondary)]">
-                  Email <span className="text-red-400">*</span>
+                  Email <span className="text-[var(--status-failed)]">*</span>
                 </label>
                 <input
                   id="reg-email"
@@ -430,7 +430,7 @@ export default function LoginPage() {
 
               <div>
                 <label htmlFor="reg-username" className="block text-sm font-medium text-[var(--color-text-secondary)]">
-                  Username <span className="text-red-400">*</span>
+                  Username <span className="text-[var(--status-failed)]">*</span>
                 </label>
                 <input
                   id="reg-username"
@@ -461,7 +461,7 @@ export default function LoginPage() {
 
               <div>
                 <label htmlFor="reg-password" className="block text-sm font-medium text-[var(--color-text-secondary)]">
-                  Password <span className="text-red-400">*</span>
+                  Password <span className="text-[var(--status-failed)]">*</span>
                 </label>
                 <input
                   id="reg-password"
@@ -477,7 +477,7 @@ export default function LoginPage() {
 
               <div>
                 <label htmlFor="reg-confirm" className="block text-sm font-medium text-[var(--color-text-secondary)]">
-                  Confirm Password <span className="text-red-400">*</span>
+                  Confirm Password <span className="text-[var(--status-failed)]">*</span>
                 </label>
                 <input
                   id="reg-confirm"

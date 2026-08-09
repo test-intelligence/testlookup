@@ -12,10 +12,10 @@ import { testHealthService, FlakyCoachEntry } from '@/services/testHealthService
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 
 const QUARANTINE_CONFIG: Record<string, { label: string; colour: string; bg: string; icon: React.ElementType }> = {
-  QUARANTINE:  { label: 'Quarantine',  colour: 'text-red-400',     bg: 'bg-red-900/20 border-red-700/30',     icon: ShieldAlert },
-  INVESTIGATE: { label: 'Investigate', colour: 'text-amber-400',   bg: 'bg-amber-900/20 border-amber-700/30', icon: AlertTriangle },
+  QUARANTINE:  { label: 'Quarantine',  colour: 'text-[var(--status-failed)]',     bg: 'bg-[var(--status-failed-bg)]/20 border-[var(--status-failed-bd)]/30',     icon: ShieldAlert },
+  INVESTIGATE: { label: 'Investigate', colour: 'text-[var(--status-broken)]',   bg: 'bg-[var(--status-broken-bg)]/20 border-[var(--status-broken-bd)]/30', icon: AlertTriangle },
   MONITOR:     { label: 'Monitor',     colour: 'text-[var(--color-text)]',    bg: 'bg-[var(--color-bg-secondary)]/30 border-[var(--color-border-light)]',   icon: Eye },
-  HEALTHY:     { label: 'Healthy',     colour: 'text-emerald-400', bg: 'bg-emerald-900/20 border-emerald-700/30', icon: CheckCircle },
+  HEALTHY:     { label: 'Healthy',     colour: 'text-[var(--status-passed)]', bg: 'bg-[var(--status-passed-bg)]/20 border-[var(--status-passed-bd)]/30', icon: CheckCircle },
 }
 
 function StatusHistoryBar({ history }: { history: string[] }) {
@@ -27,10 +27,10 @@ function StatusHistoryBar({ history }: { history: string[] }) {
           key={i}
           className={clsx(
             'w-2 h-2 rounded-full',
-            s === 'PASSED' || s === 'TestStatus.PASSED' ? 'bg-emerald-500' :
-            s === 'FAILED' || s === 'TestStatus.FAILED' ? 'bg-red-500' :
-            s === 'BROKEN' || s === 'TestStatus.BROKEN' ? 'bg-orange-500' :
-            'bg-neutral-700',
+            s === 'PASSED' || s === 'TestStatus.PASSED' ? 'bg-[var(--status-passed-bg)]' :
+            s === 'FAILED' || s === 'TestStatus.FAILED' ? 'bg-[var(--status-failed-bg)]' :
+            s === 'BROKEN' || s === 'TestStatus.BROKEN' ? 'bg-[var(--status-broken-bg)]' :
+            'bg-[var(--color-bg-card)]',
           )}
         />
       ))}
@@ -59,7 +59,7 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <StatusHistoryBar history={entry.status_history} />
-            <span className="text-sm font-mono text-red-400">
+            <span className="text-sm font-mono text-[var(--status-failed)]">
               {(entry.failure_rate * 100).toFixed(0)}%
             </span>
             <span className={clsx('text-xs px-2 py-0.5 rounded border', cfg.bg, cfg.colour)}>
@@ -81,7 +81,7 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
             </div>
             <div>
               <p className="text-xs text-[var(--color-text-muted)]">Failed Runs</p>
-              <p className="text-red-400 font-mono">{entry.failed_runs}</p>
+              <p className="text-[var(--status-failed)] font-mono">{entry.failed_runs}</p>
             </div>
             <div>
               <p className="text-xs text-[var(--color-text-muted)]">Flaky Since</p>
@@ -117,8 +117,8 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
               <p
                 className={clsx(
                   'font-mono text-xs',
-                  entry.is_flaky_confidence >= 0.7 ? 'text-amber-400' :
-                  entry.is_flaky_confidence <= 0.3 ? 'text-emerald-400' :
+                  entry.is_flaky_confidence >= 0.7 ? 'text-[var(--status-broken)]' :
+                  entry.is_flaky_confidence <= 0.3 ? 'text-[var(--status-passed)]' :
                   'text-[var(--color-text-secondary)]',
                 )}
               >
@@ -145,7 +145,7 @@ function FlakyTestRow({ entry }: { entry: FlakyCoachEntry }) {
                 <span className="text-[var(--color-text-faint)]">(latest run)</span>
               </p>
               <p className="text-[var(--color-text-secondary)] text-xs">
-                <span className="font-mono text-[11px] text-amber-400">{entry.failing_step}</span>
+                <span className="font-mono text-[11px] text-[var(--status-broken)]">{entry.failing_step}</span>
                 {entry.failing_step_detail && (
                   <span className="block text-[var(--color-text-muted)] mt-0.5">{entry.failing_step_detail}</span>
                 )}
@@ -244,7 +244,7 @@ export default function FlakyCoachPage() {
               onClick={() => setFilter(filter === key ? null : key)}
               className={clsx(
                 'card text-center transition-all',
-                filter === key && 'ring-1 ring-neutral-500',
+                filter === key && 'ring-1 ring-[var(--color-border)]',
               )}
             >
               <p className={clsx('text-2xl font-bold', cfg.colour)}>{count}</p>

@@ -11,15 +11,15 @@ import { formatDateTime, formatDuration, fromNow } from '@/utils/formatters'
 // render the same canonical lifecycle states identically. Keep in sync if
 // the canonical state machine grows (deleted / needs_review etc.).
 const STATUS_COLOR: Record<string, string> = {
-  active: 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/30',
-  deleted: 'bg-red-500/10 text-red-400 ring-red-500/30',
-  needs_review: 'bg-amber-500/10 text-amber-400 ring-amber-500/30',
+  active: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/30',
+  deleted: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)] ring-[var(--status-failed)]/30',
+  needs_review: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)] ring-[var(--status-broken)]/30',
 }
 
 function StatusPill({ status }: { status: string }) {
   const cls =
     STATUS_COLOR[status] ||
-    'bg-neutral-500/10 text-[var(--color-text-muted)] ring-neutral-500/30'
+    'bg-[var(--color-bg-hover)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/30'
   return (
     <span
       className={clsx(
@@ -35,16 +35,16 @@ function StatusPill({ status }: { status: string }) {
 // Per-run TestCase status uses the global formatter palette. We wrap it in
 // a pill so the column stays scannable at a glance even with many rows.
 const RUN_STATUS_COLOR: Record<string, string> = {
-  PASSED: 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/30',
-  FAILED: 'bg-red-500/10 text-red-400 ring-red-500/30',
-  BROKEN: 'bg-orange-500/10 text-orange-400 ring-orange-500/30',
-  SKIPPED: 'bg-amber-500/10 text-amber-400 ring-amber-500/30',
+  PASSED: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/30',
+  FAILED: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)] ring-[var(--status-failed)]/30',
+  BROKEN: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)] ring-[var(--status-broken)]/30',
+  SKIPPED: 'bg-[var(--status-skipped-bg)]/10 text-[var(--status-skipped)] ring-[var(--status-skipped)]/30',
 }
 
 function RunStatusPill({ status }: { status: string }) {
   const cls =
     RUN_STATUS_COLOR[status?.toUpperCase()] ||
-    'bg-neutral-500/10 text-[var(--color-text-muted)] ring-neutral-500/30'
+    'bg-[var(--color-bg-hover)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/30'
   return (
     <span
       className={clsx(

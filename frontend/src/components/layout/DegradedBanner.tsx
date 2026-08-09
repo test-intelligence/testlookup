@@ -26,9 +26,9 @@ export default function DegradedBanner() {
   return (
     <div
       role="status"
-      className="flex items-start gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
+      className="flex items-start gap-2 border-b border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 px-4 py-2 text-sm text-[var(--status-broken)]"
     >
-      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-300" />
+      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--status-broken)]" />
       <div>
         <strong className="font-semibold">Degraded:</strong> {list} unreachable.
         Pages relying on these will show data from PostgreSQL where possible.

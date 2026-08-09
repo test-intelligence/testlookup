@@ -101,7 +101,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
 
       {isLoading && <LoadingSpinner />}
       {isError && (
-        <p className="text-xs text-rose-400">Failed to load compliance pack history.</p>
+        <p className="text-xs text-[var(--status-failed)]">Failed to load compliance pack history.</p>
       )}
 
       {!isLoading && !isError && packs.length === 0 && (
@@ -117,7 +117,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
               key={pack.id}
               className="flex items-center gap-2 text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
             >
-              <FileCheck className="h-3 w-3 text-emerald-400 shrink-0" />
+              <FileCheck className="h-3 w-3 text-[var(--status-passed)] shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-[var(--color-text)]">

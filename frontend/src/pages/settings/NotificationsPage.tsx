@@ -52,13 +52,13 @@ const CHANNEL_META: Record<NotificationChannel, { label: string; icon: React.Ele
   slack: {
     label: 'Slack',
     icon: MessageSquare,
-    colour: 'text-emerald-400',
+    colour: 'text-[var(--status-passed)]',
     placeholder: 'Slack incoming webhook URL',
   },
   teams: {
     label: 'Microsoft Teams',
     icon: Users,
-    colour: 'text-violet-400',
+    colour: 'text-[var(--status-flaky)]',
     placeholder: 'Teams incoming webhook URL',
   },
 }
@@ -210,7 +210,7 @@ function ChannelCard({
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-medium ${
               preference.enabled
-                ? 'bg-emerald-900/40 text-emerald-400'
+                ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]'
                 : 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]'
             }`}
           >
@@ -322,7 +322,7 @@ function ChannelCard({
             {preference && (
               <button
                 onClick={handleDelete}
-                className="ml-auto flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300 transition-colors"
+                className="ml-auto flex items-center gap-1.5 text-sm text-[var(--status-failed)] hover:text-[var(--status-failed)] transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
                 Remove
@@ -432,7 +432,7 @@ function SmtpConfigCard() {
         <span
           className={`text-xs px-2 py-0.5 rounded-full font-medium ${
             enabled
-              ? 'bg-emerald-900/40 text-emerald-400'
+              ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]'
               : 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]'
           }`}
         >
@@ -532,13 +532,13 @@ function SmtpConfigCard() {
               {passwordSet && password === '' && (
                 <div className="mt-1.5">
                   {clearPassword ? (
-                    <span className="text-xs text-amber-400 flex items-center gap-1">
+                    <span className="text-xs text-[var(--status-broken)] flex items-center gap-1">
                       <XCircle className="w-3.5 h-3.5" />
                       Password will be cleared on save.{' '}
                       <button
                         type="button"
                         onClick={() => setClearPassword(false)}
-                        className="underline hover:text-amber-300"
+                        className="underline hover:text-[var(--status-broken)]"
                       >
                         Undo
                       </button>
@@ -547,7 +547,7 @@ function SmtpConfigCard() {
                     <button
                       type="button"
                       onClick={() => setClearPassword(true)}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                      className="text-xs text-[var(--status-failed)] hover:text-[var(--status-failed)] transition-colors"
                     >
                       Clear stored password
                     </button>
@@ -668,9 +668,9 @@ function HistoryPanel() {
             >
               <span className="mt-0.5">
                 {log.status === 'sent' ? (
-                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
                 ) : (
-                  <XCircle className="w-4 h-4 text-red-400" />
+                  <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
                 )}
               </span>
               <div className="flex-1 min-w-0">

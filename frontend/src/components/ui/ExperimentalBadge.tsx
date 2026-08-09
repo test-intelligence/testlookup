@@ -16,7 +16,7 @@ import { FlaskConical } from 'lucide-react'
 export default function ExperimentalBadge() {
   return (
     <span
-      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-400 bg-amber-500/10"
+      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-[var(--status-broken-bd)]/40 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/10"
       title="This feature is experimental and may change or be removed. It is off by default and must be enabled via Settings &gt; Feature Flags."
     >
       <FlaskConical className="h-3 w-3" />

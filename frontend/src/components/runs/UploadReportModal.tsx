@@ -289,7 +289,7 @@ export default function UploadReportModal({
           ) : phase === 'success' ? (
             <div className="flex flex-col items-center text-center gap-3 py-4">
               {result ? (
-                <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+                <CheckCircle2 className="h-10 w-10 text-[var(--status-passed)]" />
               ) : (
                 <Clock className="h-10 w-10 text-[var(--color-text-muted)]" />
               )}
@@ -378,7 +378,7 @@ export default function UploadReportModal({
                   value={format}
                   disabled={busy}
                   onChange={(e) => setFormat(e.target.value as ReportFormat)}
-                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:border-neutral-500 outline-none"
+                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-border)] outline-none"
                 >
                   {SUPPORTED_FORMATS.map((f) => (
                     <option key={f.value} value={f.value}>{f.label}</option>
@@ -449,7 +449,7 @@ export default function UploadReportModal({
 
               {/* Error */}
               {phase === 'error' && errorMsg && (
-                <div className="flex items-start gap-2 text-xs text-red-300 bg-red-900/20 border border-red-700/40 rounded-lg px-3 py-2">
+                <div className="flex items-start gap-2 text-xs text-[var(--status-failed)] bg-[var(--status-failed-bg)]/20 border border-[var(--status-failed-bd)]/40 rounded-lg px-3 py-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
                   <span>{errorMsg}</span>
                 </div>
@@ -530,7 +530,7 @@ function Field({
         placeholder={placeholder}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:border-neutral-500 outline-none disabled:opacity-50"
+        className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-border)] outline-none disabled:opacity-50"
       />
     </div>
   )

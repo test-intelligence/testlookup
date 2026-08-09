@@ -103,7 +103,7 @@ function CreateSuiteModal({
                 ))}
               </select>
               {projectOptions.length === 0 && (
-                <p className="mt-1 text-xs text-amber-400">
+                <p className="mt-1 text-xs text-[var(--status-broken)]">
                   No projects available — you must be a member of at least one project to create a suite.
                 </p>
               )}
@@ -273,7 +273,7 @@ export default function SuitesPage() {
                       <FolderTree className="h-4 w-4 text-[var(--color-text-muted)]" />
                       <span className="font-medium text-[var(--color-text)]">{s.name}</span>
                       {s.is_default && (
-                        <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-400 ring-1 ring-amber-500/30">
+                        <span className="inline-flex items-center gap-1 rounded bg-[var(--status-broken-bg)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--status-broken)] ring-1 ring-[var(--status-broken)]/30">
                           <Star className="h-3 w-3" /> Default
                         </span>
                       )}
@@ -290,7 +290,7 @@ export default function SuitesPage() {
                       {canSetDefault && !s.is_default && (
                         <button
                           onClick={() => handleSetDefault(s)}
-                          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-amber-500/10 hover:text-amber-400"
+                          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-broken-bg)]/10 hover:text-[var(--status-broken)]"
                           title="Make default"
                         >
                           <Star className="h-4 w-4" />
@@ -299,7 +299,7 @@ export default function SuitesPage() {
                       {canEdit && !s.is_default && (
                         <button
                           onClick={() => handleDelete(s)}
-                          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-red-500/10 hover:text-red-400"
+                          className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-failed-bg)]/10 hover:text-[var(--status-failed)]"
                           title="Delete"
                         >
                           <Trash2 className="h-4 w-4" />

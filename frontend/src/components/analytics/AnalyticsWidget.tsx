@@ -43,7 +43,7 @@ export default function AnalyticsWidget({
             {onEdit && instance && (
               <button
                 onClick={() => onEdit(instance.instanceId)}
-                className="text-[var(--color-text-faint)] hover:text-blue-400 transition-colors p-1 rounded"
+                className="text-[var(--color-text-faint)] hover:text-[var(--color-accent)] transition-colors p-1 rounded"
                 title="Edit visualization"
                 aria-label={`Edit ${displayLabel}`}
               >
@@ -53,7 +53,7 @@ export default function AnalyticsWidget({
             {onDuplicate && instance && (
               <button
                 onClick={() => onDuplicate(instance.instanceId)}
-                className="text-[var(--color-text-faint)] hover:text-emerald-400 transition-colors p-1 rounded"
+                className="text-[var(--color-text-faint)] hover:text-[var(--status-passed)] transition-colors p-1 rounded"
                 title="Duplicate visualization"
                 aria-label={`Duplicate ${displayLabel}`}
               >
@@ -63,7 +63,7 @@ export default function AnalyticsWidget({
             {onRemove && (
               <button
                 onClick={() => onRemove(removeId)}
-                className="text-[var(--color-text-faint)] hover:text-red-400 transition-colors p-1 rounded"
+                className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-1 rounded"
                 title={`Remove ${displayLabel}`}
                 aria-label={`Remove ${displayLabel} widget`}
               >

@@ -196,7 +196,7 @@ export default function MyFailuresPage() {
       {isLoading && !data ? (
         <div className="flex items-center justify-center py-16"><LoadingSpinner size="lg" /></div>
       ) : error ? (
-        <div className="flex items-center gap-2 text-sm text-amber-300 bg-amber-900/20 border border-amber-700/30 rounded px-3 py-3">
+        <div className="flex items-center gap-2 text-sm text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-3 py-3">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           Couldn’t load your failures. The inbox will retry automatically.
         </div>
@@ -326,9 +326,9 @@ function FailureRow({
   // 2-4 is amber, 5+ is red so repeat offenders pop without screen-real-estate cost.
   const countTone =
     count >= 5
-      ? 'bg-red-900/40 text-red-300'
+      ? 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'
       : count >= 2
-      ? 'bg-amber-900/30 text-amber-300'
+      ? 'bg-[var(--status-broken-bg)]/30 text-[var(--status-broken)]'
       : 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'
   return (
     <tr
@@ -450,8 +450,8 @@ function FailureRow({
 }
 
 function statusBadgeClass(status: string): string {
-  if (status === 'BROKEN') return 'bg-amber-900/40 text-amber-300'
-  if (status === 'FAILED') return 'bg-red-900/40 text-red-300'
+  if (status === 'BROKEN') return 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]'
+  if (status === 'FAILED') return 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'
   return 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'
 }
 
@@ -550,7 +550,7 @@ function ReassignModal({
         {loading ? (
           <div className="py-8 flex justify-center"><LoadingSpinner /></div>
         ) : error ? (
-          <div className="text-xs text-amber-300 bg-amber-900/20 border border-amber-700/30 rounded px-3 py-2">
+          <div className="text-xs text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-3 py-2">
             {error}
           </div>
         ) : !hasAny ? (

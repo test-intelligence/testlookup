@@ -100,7 +100,7 @@ export default function IntegrationsPage() {
             <Field label="Email" value={form.jira_email ?? ''} onChange={v => upd('jira_email', v)} disabled={!isAdmin} placeholder="user@company.com" />
             <Field label="Default Project Key" value={form.jira_default_project_key ?? ''} onChange={v => upd('jira_default_project_key', v)} disabled={!isAdmin} placeholder="QA" />
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.jira_token_set && <span className="text-emerald-400">(set)</span>}</label>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.jira_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
               <input type="password" placeholder={config.jira_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
                 onChange={e => upd('jira_api_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
@@ -117,7 +117,7 @@ export default function IntegrationsPage() {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Base URL" value={form.splunk_base_url ?? ''} onChange={v => upd('splunk_base_url', v)} disabled={!isAdmin} placeholder="https://splunk.company.com:8089" />
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.splunk_token_set && <span className="text-emerald-400">(set)</span>}</label>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.splunk_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
               <input type="password" placeholder={config.splunk_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
                 onChange={e => upd('splunk_api_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
@@ -135,7 +135,7 @@ export default function IntegrationsPage() {
             <Field label="API URL" value={form.ocp_api_url ?? ''} onChange={v => upd('ocp_api_url', v)} disabled={!isAdmin} placeholder="https://api.cluster.example.com:6443" />
             <Field label="Default Namespace" value={form.ocp_default_namespace ?? ''} onChange={v => upd('ocp_default_namespace', v)} disabled={!isAdmin} placeholder="qa-testing" />
             <div className="col-span-2">
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Service Account Token {config.ocp_token_set && <span className="text-emerald-400">(set)</span>}</label>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Service Account Token {config.ocp_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
               <input type="password" placeholder={config.ocp_token_set ? '••••••••' : 'Enter SA token'} disabled={!isAdmin}
                 onChange={e => upd('ocp_sa_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
@@ -170,7 +170,7 @@ export default function IntegrationsPage() {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Repository" value={form.github_repo ?? ''} onChange={v => upd('github_repo', v)} disabled={!isAdmin} placeholder="org/repo" />
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Token {config.github_token_set && <span className="text-emerald-400">(set)</span>}</label>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Token {config.github_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
               <input type="password" placeholder={config.github_token_set ? '••••••••' : 'ghp_...'} disabled={!isAdmin}
                 onChange={e => upd('github_token', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />

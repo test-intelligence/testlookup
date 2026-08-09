@@ -155,8 +155,8 @@ export default function OwnershipEditorPage() {
   if (!projectId) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-bold text-gray-100">Service Ownership</h1>
-        <div className="text-center py-12 text-gray-500">
+        <h1 className="text-2xl font-bold text-[var(--color-text)]">Service Ownership</h1>
+        <div className="text-center py-12 text-[var(--color-text-muted)]">
           Select a project to manage ownership rules. Ownership maps tests and failure clusters to responsible teams.
         </div>
       </div>
@@ -167,7 +167,7 @@ export default function OwnershipEditorPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-100">Service Ownership Map</h1>
+          <h1 className="text-2xl font-bold text-[var(--color-text)]">Service Ownership Map</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
             Define rules that map test suites, components, and packages to the teams that own them.
             Rules are evaluated by priority (highest first).
@@ -188,7 +188,7 @@ export default function OwnershipEditorPage() {
             Import CODEOWNERS
           </button>
           <button onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-neutral-200 text-sm">
+            className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
             {showForm ? 'Cancel' : 'Add Rule'}
           </button>
         </div>
@@ -206,7 +206,7 @@ export default function OwnershipEditorPage() {
         />
       )}
 
-      {isError && <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">Failed to load ownership rules</div>}
+      {isError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">Failed to load ownership rules</div>}
 
       {/* New rule form */}
       {showForm && (
@@ -215,41 +215,41 @@ export default function OwnershipEditorPage() {
             <div>
               <label className="text-xs text-[var(--color-text-muted)]">Match Type *</label>
               <select value={matchType} onChange={e => setMatchType(e.target.value)}
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1">
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
                 {MATCH_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Match Pattern * <span className="text-gray-600">(glob supported)</span></label>
+              <label className="text-xs text-[var(--color-text-muted)]">Match Pattern * <span className="text-[var(--color-text-muted)]">(glob supported)</span></label>
               <input value={matchPattern} onChange={e => setMatchPattern(e.target.value)}
                 placeholder="e.g., auth-* or com.app.payments.*"
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" required />
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" required />
             </div>
             <div>
               <label className="text-xs text-[var(--color-text-muted)]">Service Name *</label>
               <input value={serviceName} onChange={e => setServiceName(e.target.value)}
                 placeholder="e.g., auth-service"
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" required />
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" required />
             </div>
             <div>
               <label className="text-xs text-[var(--color-text-muted)]">Team Name *</label>
               <input value={teamName} onChange={e => setTeamName(e.target.value)}
                 placeholder="e.g., Identity Team"
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" required />
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" required />
             </div>
             <div>
               <label className="text-xs text-[var(--color-text-muted)]">Team Contact</label>
               <input value={teamContact} onChange={e => setTeamContact(e.target.value)}
                 placeholder="e.g., #identity-team or team@example.com"
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" />
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
             </div>
             <div>
-              <label className="text-xs text-[var(--color-text-muted)]">Priority <span className="text-gray-600">(higher = first)</span></label>
+              <label className="text-xs text-[var(--color-text-muted)]">Priority <span className="text-[var(--color-text-muted)]">(higher = first)</span></label>
               <input type="number" min="0" max="1000" value={priority} onChange={e => setPriority(parseInt(e.target.value) || 0)}
-                className="w-full bg-gray-700 text-gray-100 rounded px-3 py-2 text-sm mt-1" />
+                className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1" />
             </div>
           </div>
-          <button type="submit" className="px-4 py-2 bg-green-600 text-[var(--color-text)] rounded hover:bg-green-700 text-sm">
+          <button type="submit" className="px-4 py-2 bg-[var(--status-passed-bg)] text-[var(--color-text)] rounded hover:bg-[var(--status-passed-bg)] text-sm">
             Create Rule
           </button>
         </form>
@@ -259,12 +259,12 @@ export default function OwnershipEditorPage() {
       {loading ? (
         <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
       ) : rules.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-[var(--color-text-muted)]">
           No ownership rules configured for this project. Add rules to route failures to the right teams.
         </div>
       ) : (
         <div className="space-y-2">
-          <div className="bg-[var(--color-bg-hover)]/50 rounded-lg px-4 py-2 grid grid-cols-7 gap-2 text-xs text-gray-500 font-medium">
+          <div className="bg-[var(--color-bg-hover)]/50 rounded-lg px-4 py-2 grid grid-cols-7 gap-2 text-xs text-[var(--color-text-muted)] font-medium">
             <span>Type</span><span>Pattern</span><span>Service</span><span>Team</span>
             <span>Contact</span><span>Priority</span><span>Actions</span>
           </div>
@@ -274,8 +274,8 @@ export default function OwnershipEditorPage() {
               !rule.is_active && 'opacity-50',
             )}>
               <span className="text-xs font-mono text-[var(--color-text)]">{rule.match_type}</span>
-              <span className="text-neutral-200 truncate font-mono text-xs" title={rule.match_pattern}>{rule.match_pattern}</span>
-              <span className="text-gray-300 truncate flex items-center gap-1.5">
+              <span className="text-[var(--color-text)] truncate font-mono text-xs" title={rule.match_pattern}>{rule.match_pattern}</span>
+              <span className="text-[var(--color-text-secondary)] truncate flex items-center gap-1.5">
                 {rule.service_name === CODEOWNERS_SERVICE ? (
                   <span
                     className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[color-mix(in srgb, var(--color-accent) 14%, transparent)] text-[var(--color-accent)] border border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]"
@@ -287,16 +287,16 @@ export default function OwnershipEditorPage() {
                   rule.service_name
                 )}
               </span>
-              <span className="text-gray-300 truncate">{rule.team_name}</span>
-              <span className="text-gray-500 truncate text-xs">{rule.team_contact || '—'}</span>
+              <span className="text-[var(--color-text-secondary)] truncate">{rule.team_name}</span>
+              <span className="text-[var(--color-text-muted)] truncate text-xs">{rule.team_contact || '—'}</span>
               <span className="text-[var(--color-text-muted)] text-xs">{rule.priority}</span>
               <div className="flex gap-1.5">
                 <button onClick={() => handleToggle(rule)}
-                  className={clsx('px-2 py-0.5 rounded text-xs', rule.is_active ? 'bg-green-900/40 text-green-400' : 'bg-gray-700 text-[var(--color-text-muted)]')}>
+                  className={clsx('px-2 py-0.5 rounded text-xs', rule.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
                   {rule.is_active ? 'Active' : 'Disabled'}
                 </button>
                 <button onClick={() => handleDelete(rule.id)}
-                  className="px-2 py-0.5 rounded text-xs bg-red-900/30 text-red-400 hover:bg-red-800/40">
+                  className="px-2 py-0.5 rounded text-xs bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/40">
                   Delete
                 </button>
               </div>
@@ -308,19 +308,19 @@ export default function OwnershipEditorPage() {
       {/* Team notification channels (US-7.3) */}
       <div className="space-y-2">
         <div>
-          <h2 className="text-lg font-semibold text-gray-100">Team Notification Channels</h2>
+          <h2 className="text-lg font-semibold text-[var(--color-text)]">Team Notification Channels</h2>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
             Route transition notifications (newly failing, recovered, newly flaky) for a team's tests
             directly to that team's channel. Teams without a channel fall back to the project defaults.
           </p>
         </div>
         {isChannelsError && (
-          <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">
+          <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">
             Failed to load team channels
           </div>
         )}
         {teamNames.length === 0 ? (
-          <div className="text-center py-6 text-gray-500 text-sm">
+          <div className="text-center py-6 text-[var(--color-text-muted)] text-sm">
             No teams yet — teams come from the ownership rules above.
           </div>
         ) : (
@@ -331,13 +331,13 @@ export default function OwnershipEditorPage() {
               return (
                 <div key={team}
                   className="bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-[1fr_140px_2fr_auto] gap-3 items-center text-sm">
-                  <span className="text-gray-300 truncate" title={team}>{team}</span>
+                  <span className="text-[var(--color-text-secondary)] truncate" title={team}>{team}</span>
                   <select value={edit.channel_type}
                     onChange={e => setChannelEdits(prev => ({
                       ...prev,
                       [team]: { ...edit, channel_type: e.target.value as ChannelType },
                     }))}
-                    className="bg-gray-700 text-gray-100 rounded px-2 py-1.5 text-xs">
+                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-2 py-1.5 text-xs">
                     {CHANNEL_TYPES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                   </select>
                   <input value={edit.target}
@@ -346,15 +346,15 @@ export default function OwnershipEditorPage() {
                       [team]: { ...edit, target: e.target.value },
                     }))}
                     placeholder={edit.channel_type === 'email' ? 'team@example.com' : 'https://hooks…'}
-                    className="bg-gray-700 text-gray-100 rounded px-3 py-1.5 text-xs font-mono" />
+                    className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-1.5 text-xs font-mono" />
                   <div className="flex gap-1.5">
                     <button onClick={() => handleSaveChannel(team)}
-                      className="px-2 py-0.5 rounded text-xs bg-green-900/40 text-green-400 hover:bg-green-800/40">
+                      className="px-2 py-0.5 rounded text-xs bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]/40">
                       Save
                     </button>
                     {existing && (
                       <button onClick={() => handleRemoveChannel(team)}
-                        className="px-2 py-0.5 rounded text-xs bg-red-900/30 text-red-400 hover:bg-red-800/40">
+                        className="px-2 py-0.5 rounded text-xs bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/40">
                         Remove
                       </button>
                     )}
@@ -367,7 +367,7 @@ export default function OwnershipEditorPage() {
       </div>
 
       {/* Help section */}
-      <div className="bg-[var(--color-bg-hover)]/50 rounded-lg p-4 text-xs text-gray-500">
+      <div className="bg-[var(--color-bg-hover)]/50 rounded-lg p-4 text-xs text-[var(--color-text-muted)]">
         <h3 className="text-[var(--color-text-muted)] font-medium mb-2">How ownership resolution works</h3>
         <ol className="list-decimal list-inside space-y-1">
           <li>When a failure cluster is analyzed, each member test is matched against rules (highest priority first)</li>
@@ -375,7 +375,7 @@ export default function OwnershipEditorPage() {
           <li>If no rule matches, the system falls back to the project's component_owner_map, then to Allure @Owner labels</li>
           <li>Resolved ownership appears on cluster cards and pre-fills defect promotion forms</li>
         </ol>
-        <p className="mt-2">Patterns support glob syntax: <code className="bg-gray-900 px-1 rounded">auth-*</code> matches <code className="bg-gray-900 px-1 rounded">auth-login</code>, <code className="bg-gray-900 px-1 rounded">auth-register</code>, etc.</p>
+        <p className="mt-2">Patterns support glob syntax: <code className="bg-[var(--color-bg)] px-1 rounded">auth-*</code> matches <code className="bg-[var(--color-bg)] px-1 rounded">auth-login</code>, <code className="bg-[var(--color-bg)] px-1 rounded">auth-register</code>, etc.</p>
       </div>
     </div>
   );

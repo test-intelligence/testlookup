@@ -268,7 +268,7 @@ export default function AIConfigPage() {
   }
 
   if (loading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
-  if (error) return <div className="card text-red-400 text-sm">{error}</div>
+  if (error) return <div className="card text-[var(--status-failed)] text-sm">{error}</div>
   if (!config) return null
 
   const llmTier = modelStatus?.fallback_chain.find(e => e.mode === 'llm')
@@ -327,17 +327,17 @@ export default function AIConfigPage() {
                     </span>
                   )}
                   {mode.value === 'ml' && !config.ml_model_available && (
-                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
                       Not Trained
                     </span>
                   )}
                   {mode.value === 'ml' && config.ml_model_available && (
-                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">
                       Ready ({((config.ml_model_accuracy ?? 0) * 100).toFixed(0)}% accuracy)
                     </span>
                   )}
                   {mode.value === 'ml' && config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
-                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                    <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
                       Bootstrap (LLM-imitating)
                     </span>
                   )}
@@ -348,7 +348,7 @@ export default function AIConfigPage() {
           </div>
           {/* ML Model Status Banner */}
           {form.analysis_mode === 'ml' && !config.ml_model_available && (
-            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
               <span className="font-medium">ML model not yet trained.</span>
               <span className="text-[var(--color-text-muted)]">
                 Need {config.ml_training_sample_count} / 200 labeled samples.
@@ -360,7 +360,7 @@ export default function AIConfigPage() {
               the LLM's own labels — do not claim it learns from corrections. */}
           {(form.analysis_mode === 'ml' || form.analysis_mode === 'auto') &&
             config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
-            <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+            <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
               <span className="font-medium">ML classifier is in bootstrap mode (LLM-imitating).</span>
               <span className="text-[var(--color-text-muted)]">
                 The current model was trained mostly on the LLM&apos;s own high-confidence
@@ -514,9 +514,9 @@ export default function AIConfigPage() {
             <div>
               <span className="text-sm font-medium text-[var(--color-text)]">Enable Knowledge RAG</span>
               {config.knowledge_rag_enabled ? (
-                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">Active</span>
+                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">Active</span>
               ) : (
-                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-400">Disabled</span>
+                <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-bg-hover)]/20 text-[var(--color-text-secondary)]">Disabled</span>
               )}
               <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
                 When enabled, the &quot;Knowledge Generation&quot; tab appears in Test Management,
@@ -531,13 +531,13 @@ export default function AIConfigPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Cloud API Keys</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">OpenAI API Key {config.openai_key_set && <span className="text-emerald-400">(set)</span>}</label>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">OpenAI API Key {config.openai_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
               <input type="password" placeholder={config.openai_key_set ? '••••••••' : 'sk-...'} disabled={!isAdmin}
                 onChange={e => upd('openai_api_key', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
             </div>
             <div>
-              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Google API Key {config.google_key_set && <span className="text-emerald-400">(set)</span>}</label>
+              <label className="block text-xs text-[var(--color-text-muted)] mb-1">Google API Key {config.google_key_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
               <input type="password" placeholder={config.google_key_set ? '••••••••' : 'AIza...'} disabled={!isAdmin}
                 onChange={e => upd('google_api_key', e.target.value || undefined)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />

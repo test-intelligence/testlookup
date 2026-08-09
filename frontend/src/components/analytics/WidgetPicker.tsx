@@ -60,10 +60,10 @@ export default function WidgetPicker({ page, enabledIds, onSave, onClose }: Prop
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#334155] bg-[#0f172a]">
           <div className="flex items-center gap-2">
-            <LayoutGrid className="h-4 w-4 text-slate-400" />
-            <h2 className="text-sm font-semibold text-slate-100">Customize Widgets</h2>
+            <LayoutGrid className="h-4 w-4 text-[var(--color-text-secondary)]" />
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Customize Widgets</h2>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors p-1 rounded hover:bg-slate-700/50">
+          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors p-1 rounded hover:bg-[var(--color-bg-card)]/50">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -72,24 +72,24 @@ export default function WidgetPicker({ page, enabledIds, onSave, onClose }: Prop
         <div className="px-5 py-3 overflow-y-auto max-h-[55vh] space-y-4">
           {Object.entries(groups).map(([type, widgets]) => (
             <div key={type}>
-              <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2">
+              <p className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
                 {type === 'metric' ? 'KPI Metrics' : type === 'line' || type === 'area' ? 'Trend Charts' : type === 'pie' || type === 'donut' ? 'Distribution Charts' : type === 'stacked_bar' || type === 'bar' ? 'Bar Charts' : 'Charts'}
               </p>
               <div className="space-y-1">
                 {widgets.map(w => (
                   <label
                     key={w.id}
-                    className="flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors"
+                    className="flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--color-bg-card)]/50 cursor-pointer transition-colors"
                   >
                     <input
                       type="checkbox"
                       checked={selected.has(w.id)}
                       onChange={() => toggle(w.id)}
-                      className="mt-0.5 h-4 w-4 rounded border-slate-500 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0 accent-blue-500"
+                      className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] bg-[var(--color-bg-card)] text-[var(--color-accent)] focus:ring-[var(--color-accent)] focus:ring-offset-0 accent-blue-500"
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-slate-200">{w.label}</p>
-                      <p className="text-xs text-slate-400">{w.description}</p>
+                      <p className="text-sm text-[var(--color-text)]">{w.label}</p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">{w.description}</p>
                     </div>
                   </label>
                 ))}
@@ -102,18 +102,18 @@ export default function WidgetPicker({ page, enabledIds, onSave, onClose }: Prop
         <div className="flex items-center justify-between px-5 py-3 border-t border-[#334155] bg-[#0f172a]">
           <button
             onClick={handleReset}
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+            className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
           >
             <RotateCcw className="h-3 w-3" />
             Reset to Defaults
           </button>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors">
+            <button onClick={onClose} className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors">
               Cancel
             </button>
             <button
               onClick={handleSave}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-[var(--color-accent-muted)] text-white rounded-lg hover:bg-[var(--color-accent-muted)] transition-colors"
             >
               <Check className="h-3 w-3" />
               Apply ({selected.size} widgets)

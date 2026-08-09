@@ -60,13 +60,13 @@ export class ErrorBoundary extends Component<Props, State> {
             An unexpected error occurred in the application. The error has been reported
             automatically.
           </p>
-          <p className="text-xs text-red-400 font-mono bg-[var(--color-bg-card)] rounded p-2 text-left break-all">
+          <p className="text-xs text-[var(--status-failed)] font-mono bg-[var(--color-bg-card)] rounded p-2 text-left break-all">
             {error.message}
           </p>
           <div className="flex gap-3 justify-center pt-2">
             <button
               onClick={this.handleReset}
-              className="px-4 py-2 text-sm rounded-lg bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] transition-colors"
+              className="px-4 py-2 text-sm rounded-lg bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] transition-colors"
             >
               Try again
             </button>

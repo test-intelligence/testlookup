@@ -82,7 +82,7 @@ export default function QuarantinePage() {
       {/* Stats tiles */}
       <div className="grid grid-cols-4 gap-3">
         <StatTile
-          icon={<ShieldAlert className="h-4 w-4 text-amber-400" />}
+          icon={<ShieldAlert className="h-4 w-4 text-[var(--status-broken)]" />}
           label="Awaiting review"
           value={(stats?.proposed ?? 0) + (stats?.detected ?? 0)}
         />
@@ -97,12 +97,12 @@ export default function QuarantinePage() {
           }
         />
         <StatTile
-          icon={<Check className="h-4 w-4 text-emerald-400" />}
+          icon={<Check className="h-4 w-4 text-[var(--status-passed)]" />}
           label="Released"
           value={stats?.released ?? 0}
         />
         <StatTile
-          icon={<X className="h-4 w-4 text-rose-400" />}
+          icon={<X className="h-4 w-4 text-[var(--status-failed)]" />}
           label="Rejected / expired"
           value={(stats?.rejected ?? 0) + (stats?.expired ?? 0)}
         />
@@ -284,7 +284,7 @@ function QuarantineRow({
               )}
               {row.defect_external_status_conflict && (
                 <span
-                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-400 bg-amber-500/10"
+                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border border-[var(--status-broken-bd)]/40 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/10"
                   title="Jira reports this issue as done, but the test still failed within the last 7 days."
                 >
                   <AlertTriangle className="h-2.5 w-2.5" />
@@ -306,7 +306,7 @@ function QuarantineRow({
           <StatusPill status={row.status} />
           {row.stale && (
             <span
-              className="text-[10px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-400 bg-rose-500/10"
+              className="text-[10px] px-2 py-0.5 rounded border border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10"
               title={row.sla_days != null ? `SLA: ${row.sla_days} days` : undefined}
             >
               stale — {daysOverSla(row.stale_at)}d over SLA
@@ -314,7 +314,7 @@ function QuarantineRow({
           )}
           {row.ready_to_promote && (
             <span
-              className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-400 bg-emerald-500/10"
+              className="text-[10px] px-2 py-0.5 rounded border border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10"
               title={`${row.consecutive_passes} consecutive passing runs since quarantine`}
             >
               Ready to promote
@@ -340,7 +340,7 @@ function QuarantineRow({
                   'Quarantine approved',
                 )
               }
-              className="text-xs text-emerald-400 hover:underline flex items-center gap-0.5"
+              className="text-xs text-[var(--status-passed)] hover:underline flex items-center gap-0.5"
             >
               <Check className="h-3 w-3" /> Approve
             </button>
@@ -357,7 +357,7 @@ function QuarantineRow({
                   'Proposal rejected',
                 )
               }
-              className="text-xs text-rose-400 hover:underline flex items-center gap-0.5"
+              className="text-xs text-[var(--status-failed)] hover:underline flex items-center gap-0.5"
             >
               <X className="h-3 w-3" /> Reject
             </button>
@@ -381,7 +381,7 @@ function QuarantineRow({
                       'Quarantine released',
                     )
                   }
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-0.5 font-medium"
+                  className="text-xs text-[var(--status-passed)] hover:underline flex items-center gap-0.5 font-medium"
                 >
                   <ArrowUpCircle className="h-3 w-3" /> Promote out
                 </button>
@@ -443,15 +443,15 @@ function daysOverSla(staleAt: string | null): number {
 function StatusPill({ status }: { status: QuarantineStatus }) {
   const toneClass =
     status === 'QUARANTINED' || status === 'RE_QUARANTINED'
-      ? 'border-amber-500/40 text-amber-400 bg-amber-500/10'
+      ? 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/10'
       : status === 'RECHECK_SCHEDULED' || status === 'APPROVED'
       ? 'border-[var(--color-accent)]/40 text-[var(--color-accent)] bg-[var(--color-accent)]/10'
       : status === 'PROPOSED' || status === 'DETECTED'
-      ? 'border-amber-500/40 text-amber-300'
+      ? 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)]'
       : status === 'RELEASED'
-      ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+      ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
       : status === 'REJECTED' || status === 'EXPIRED'
-      ? 'border-rose-500/40 text-rose-400 bg-rose-500/10'
+      ? 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10'
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
     <span className={`text-[10px] px-2 py-0.5 rounded border ${toneClass}`}>

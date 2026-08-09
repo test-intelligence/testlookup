@@ -211,7 +211,7 @@ export default function FeatureFlagsPage() {
                     onClick={() => toggleGlobal(flag)}
                     className={`text-xs px-2 py-1 rounded border ${
                       flag.enabled_global
-                        ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+                        ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
                         : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
                     }`}
                     aria-label={`Toggle ${flag.key}`}
@@ -248,7 +248,7 @@ export default function FeatureFlagsPage() {
                   <button
                     type="button"
                     onClick={() => deleteFlag(flag)}
-                    className="text-xs text-rose-400 hover:underline"
+                    className="text-xs text-[var(--status-failed)] hover:underline"
                   >
                     <Trash2 className="h-3 w-3 inline" />
                   </button>

@@ -23,15 +23,15 @@ interface Props {
 }
 
 function scoreColour(score: number): string {
-  if (score >= 70) return 'bg-red-500'
-  if (score >= 40) return 'bg-amber-500'
-  return 'bg-emerald-500'
+  if (score >= 70) return 'bg-[var(--status-failed-bg)]'
+  if (score >= 40) return 'bg-[var(--status-broken-bg)]'
+  return 'bg-[var(--status-passed-bg)]'
 }
 
 function scoreTextColour(score: number): string {
-  if (score >= 70) return 'text-red-400'
-  if (score >= 40) return 'text-amber-400'
-  return 'text-emerald-400'
+  if (score >= 70) return 'text-[var(--status-failed)]'
+  if (score >= 40) return 'text-[var(--status-broken)]'
+  return 'text-[var(--status-passed)]'
 }
 
 export default function CriticalityMatrix({

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — UI consistency: every colour now comes from a theme token
+
+Follow-up to the status-colour fix. Removed the remaining inconsistency sources so the same
+meaning renders the same colour on every page and tab.
+
+- **1,405 raw Tailwind palette classes migrated** across 77 files (`text-emerald-400`,
+  `bg-gray-700`, `border-neutral-500`, …). These render a fixed palette colour regardless of
+  theme, so they could never match a token — a `text-emerald-400` "passed" label was always
+  going to disagree with `var(--status-passed)`.
+  - status families map by **meaning**: green/emerald/teal → passed, red/rose → failed,
+    amber/orange → broken, yellow → skipped, purple/violet/pink → flaky, blue/sky/indigo → accent
+  - neutrals map by **lightness and property**: text → `--color-text` / `-secondary` / `-muted`,
+    surfaces → `--color-bg` / `-card` / `-hover`, borders → `--color-border`
+- **`formatters.ts` — the shared status→colour helper** — was still returning
+  `text-emerald-400`. It is the canonical mapping used app-wide, so it was a central source
+  of the mismatch.
+- **The retired lime `#b8f24a` survived as a `var(--color-accent, #b8f24a)` fallback** in
+  ComputeCanvas (3 sites). It only renders if the token is undefined, but it is stale and
+  points at a colour the retheme deliberately removed.
+- 6 more files had status literals the first pass missed (`#fdba74`, `#fde68a`,
+  `rgba(250,204,21)`, …).
+
+**Corrected an error in my own migration:** the blanket amber/orange → `--status-broken` rule
+collapsed SKIPPED and BROKEN onto one colour, when a `--status-skipped` token exists. Two
+distinct states rendering identically would have been a regression disguised as consistency.
+Fixed in `formatters.ts` and `CanonicalDetailPage.tsx`.
+
+**Left alone deliberately:** whites, blacks and grey overlays used for shadows and scrims.
+They are not status or surface colours and folding them into tokens would be wrong.
+
+Lint: **572 warnings → 0**. 736 tests pass (matching baseline exactly), build/typecheck clean,
+theme-token guard and bundle budget both pass.
+
 ### 2026-08-09 — Fix: status colours differed between pages (1,167 hardcoded literals)
 
 Reported: the "passed" green in the Failure-signature table on `/runs` did not match the

@@ -88,7 +88,7 @@ function KpiCard({ label, value, tone = 'neutral', delta, sub, sparkline }: KpiC
             <span
               className={clsx(
                 'inline-flex items-center gap-0.5 font-semibold tabular-nums',
-                delta.dir === 'up' ? 'text-emerald-300' : 'text-red-300',
+                delta.dir === 'up' ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]',
               )}
             >
               {delta.dir === 'up' ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}

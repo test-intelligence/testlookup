@@ -30,9 +30,9 @@ function buildInvitationUrl(rawPath: string): string {
 const ROLE_COLORS: Record<UserRole, string> = {
   VIEWER: 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]',
   TESTER: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]',
-  QA_ENGINEER: 'bg-emerald-900/50 text-emerald-300',
-  QA_LEAD: 'bg-amber-900/50 text-amber-300',
-  ADMIN: 'bg-red-900/50 text-red-300',
+  QA_ENGINEER: 'bg-[var(--status-passed-bg)]/50 text-[var(--status-passed)]',
+  QA_LEAD: 'bg-[var(--status-broken-bg)]/50 text-[var(--status-broken)]',
+  ADMIN: 'bg-[var(--status-failed-bg)]/50 text-[var(--status-failed)]',
 }
 
 export default function UserManagementPage() {
@@ -41,7 +41,7 @@ export default function UserManagementPage() {
 
   const tabClass = (t: typeof tab) =>
     `px-4 py-2 text-sm font-medium transition-colors ${
-      tab === t ? 'text-[var(--color-text)] border-b-2 border-neutral-500' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+      tab === t ? 'text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
     }`
 
   return (
@@ -138,7 +138,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
           <div className="flex gap-2">
             <button
               onClick={() => setShowAddUserModal(true)}
-              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-[var(--color-text)] text-sm px-3 py-1.5 rounded transition-colors"
+              className="flex items-center gap-1.5 bg-[var(--status-passed-bg)] hover:bg-[var(--status-passed-bg)] text-[var(--color-text)] text-sm px-3 py-1.5 rounded transition-colors"
             >
               <UserPlus className="h-4 w-4" /> Add User
             </button>
@@ -189,7 +189,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-                    user.is_active ? 'bg-emerald-900/50 text-emerald-300' : 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]'
+                    user.is_active ? 'bg-[var(--status-passed-bg)]/50 text-[var(--status-passed)]' : 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]'
                   }`}>
                     {user.is_active ? <UserCheck className="h-3 w-3" /> : <UserX className="h-3 w-3" />}
                     {user.is_active ? 'Active' : 'Inactive'}
@@ -209,8 +209,8 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                         onClick={() => handleToggleStatus(user.id, user.is_active)}
                         className={`text-xs px-2 py-1 rounded transition-colors ${
                           user.is_active
-                            ? 'text-red-400 hover:bg-red-900/30'
-                            : 'text-emerald-400 hover:bg-emerald-900/30'
+                            ? 'text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/30'
+                            : 'text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]/30'
                         }`}
                       >
                         {user.is_active ? 'Deactivate' : 'Activate'}
@@ -331,7 +331,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
               />
             </div>
             <div>
@@ -341,7 +341,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
                 required
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
               />
             </div>
           </div>
@@ -351,7 +351,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
               type="text"
               value={fullName}
               onChange={e => setFullName(e.target.value)}
-              className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+              className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
               placeholder="Jane Doe"
             />
           </div>
@@ -361,7 +361,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
               <select
                 value={role}
                 onChange={e => setRole(e.target.value as UserRole)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
               >
                 {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
@@ -371,7 +371,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
               <select
                 value={isActive ? 'active' : 'inactive'}
                 onChange={e => setIsActive(e.target.value === 'active')}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
               >
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
@@ -392,7 +392,7 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
                       <button
                         type="button"
                         onClick={() => handleRemoveFromProject(ap.project_id)}
-                        className="text-red-500/70 hover:text-red-400 text-xs"
+                        className="text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] text-xs"
                       >
                         Remove
                       </button>
@@ -509,9 +509,9 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
             <p className="text-sm text-[var(--color-text-secondary)]">
               User <strong className="text-[var(--color-text)]">{result.username}</strong> created. Share the temporary password:
             </p>
-            <div className="bg-[var(--color-bg-card)] border border-amber-700/50 rounded p-3">
+            <div className="bg-[var(--color-bg-card)] border border-[var(--status-broken-bd)]/50 rounded p-3">
               <p className="text-xs text-[var(--color-text-muted)] mb-1">Temporary password (shown once):</p>
-              <code className="text-sm text-amber-300 font-bold break-all">{result.temp_password}</code>
+              <code className="text-sm text-[var(--status-broken)] font-bold break-all">{result.temp_password}</code>
             </div>
             <p className="text-xs text-[var(--color-text-muted)]">The user should change this password after first login.</p>
 
@@ -523,7 +523,7 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
                   {assignedProjects.map(pid => {
                     const proj = projects.find(p => p.id === pid)
                     return (
-                      <div key={pid} className="flex items-center gap-2 text-xs text-emerald-400">
+                      <div key={pid} className="flex items-center gap-2 text-xs text-[var(--status-passed)]">
                         <UserCheck className="h-3 w-3" />
                         {proj?.name ?? pid}
                       </div>
@@ -572,7 +572,7 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 onClick={onClose}
-                className="bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] text-sm px-4 py-2 rounded"
+                className="bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm px-4 py-2 rounded"
               >
                 Done
               </button>
@@ -583,32 +583,32 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
               <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="user@company.com" />
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Username</label>
               <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="jdoe" />
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Full name (optional)</label>
               <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="Jane Doe" />
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
               <select value={role} onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500">
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
               <button type="submit" disabled={loading}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-[var(--color-text)] text-sm px-4 py-2 rounded transition-colors">
+                className="bg-[var(--status-passed-bg)] hover:bg-[var(--status-passed-bg)] disabled:opacity-50 text-[var(--color-text)] text-sm px-4 py-2 rounded transition-colors">
                 {loading ? 'Creating…' : 'Create User'}
               </button>
             </div>
@@ -652,7 +652,7 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
             <div className="space-y-3">
               <p className="text-sm text-[var(--color-text-secondary)]">Invitation created. Share this link with the user:</p>
               <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded p-3">
-                <code className="text-xs text-emerald-400 break-all">
+                <code className="text-xs text-[var(--status-passed)] break-all">
                   {inviteUrl || 'Invalid invitation link received from server.'}
                 </code>
               </div>
@@ -667,7 +667,7 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
                   }}
                   className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] mr-3 disabled:opacity-40"
                 >Copy link</button>
-                <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] text-sm px-4 py-2 rounded">Close</button>
+                <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm px-4 py-2 rounded">Close</button>
               </div>
             </div>
           )
@@ -676,13 +676,13 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
               <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500"
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
                 placeholder="user@company.com" />
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
               <select value={role} onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500">
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
@@ -745,7 +745,7 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
             {(keys ?? []).map((k) => (
               <tr key={k.id} className="hover:bg-[var(--color-bg-hover)]/30 transition-colors">
                 <td className="px-4 py-3 font-medium text-[var(--color-text)]">{k.name}</td>
-                <td className="px-4 py-3"><code className="text-xs text-emerald-400 bg-[var(--color-bg-card)] px-2 py-0.5 rounded">{k.key_hint}</code></td>
+                <td className="px-4 py-3"><code className="text-xs text-[var(--status-passed)] bg-[var(--color-bg-card)] px-2 py-0.5 rounded">{k.key_hint}</code></td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-1">
                     {k.scopes.length > 0 ? k.scopes.map((s) => (
@@ -756,7 +756,7 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
                 <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.expires_at ? new Date(k.expires_at).toLocaleDateString() : <span className="text-[var(--color-text-muted)]">Never</span>}</td>
                 <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : <span className="text-[var(--color-text-muted)]">—</span>}</td>
                 <td className="px-4 py-3">
-                  <button onClick={() => handleRevoke(k.id, k.name)} className="text-red-400 hover:text-red-300 hover:bg-red-900/20 p-1 rounded transition-colors">
+                  <button onClick={() => handleRevoke(k.id, k.name)} className="text-[var(--status-failed)] hover:text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/20 p-1 rounded transition-colors">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>
@@ -808,12 +808,12 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
         <h2 className="text-lg font-semibold text-[var(--color-text)]">Generate API Key</h2>
         {createdKey ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 p-3 bg-amber-900/30 border border-amber-700/50 rounded text-amber-300 text-xs">
+            <div className="flex items-center gap-2 p-3 bg-[var(--status-broken-bg)]/30 border border-[var(--status-broken-bd)]/50 rounded text-[var(--status-broken)] text-xs">
               <RefreshCw className="h-4 w-4 flex-shrink-0" />
               <span>Copy this key now — it will not be shown again.</span>
             </div>
             <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded p-3">
-              <code className="text-xs text-emerald-400 break-all">{createdKey}</code>
+              <code className="text-xs text-[var(--status-passed)] break-all">{createdKey}</code>
             </div>
             <div className="flex justify-end gap-2">
               <button onClick={async () => {
@@ -822,7 +822,7 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
                   else toast.error('Clipboard access denied — copy manually')
                 }}
                 className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] px-3 py-1.5">Copy</button>
-              <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-neutral-700 text-[var(--color-text)] text-sm px-4 py-2 rounded">Done</button>
+              <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm px-4 py-2 rounded">Done</button>
             </div>
           </div>
         ) : (
@@ -830,7 +830,7 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Key name</label>
               <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. GitHub Actions CI"
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500" />
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
             </div>
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-2">Scopes (leave empty for full access)</label>
@@ -846,7 +846,7 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
             <div>
               <label className="block text-sm text-[var(--color-text-muted)] mb-1">Expiry (days, optional)</label>
               <input type="number" min={1} max={365} value={expiresDays} onChange={(e) => setExpiresDays(e.target.value)} placeholder="Never expires"
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-neutral-500" />
+                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]" />
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>

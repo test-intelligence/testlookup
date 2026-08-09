@@ -8,18 +8,18 @@ import { api } from '@/services/api'
 
 // ── Avatar colour palette ─────────────────────────────────────────────────────
 const AVATAR_COLORS: { key: string; bg: string; ring: string }[] = [
-  { key: 'slate',   bg: 'bg-slate-500',   ring: 'ring-slate-400' },
-  { key: 'red',     bg: 'bg-red-500',     ring: 'ring-red-400' },
-  { key: 'orange',  bg: 'bg-orange-500',  ring: 'ring-orange-400' },
-  { key: 'amber',   bg: 'bg-amber-500',   ring: 'ring-amber-400' },
-  { key: 'lime',    bg: 'bg-lime-500',    ring: 'ring-lime-400' },
-  { key: 'emerald', bg: 'bg-emerald-500', ring: 'ring-emerald-400' },
-  { key: 'teal',    bg: 'bg-teal-500',    ring: 'ring-teal-400' },
-  { key: 'cyan',    bg: 'bg-cyan-500',    ring: 'ring-cyan-400' },
-  { key: 'blue',    bg: 'bg-blue-500',    ring: 'ring-blue-400' },
-  { key: 'violet',  bg: 'bg-violet-500',  ring: 'ring-violet-400' },
-  { key: 'fuchsia', bg: 'bg-fuchsia-500', ring: 'ring-fuchsia-400' },
-  { key: 'pink',    bg: 'bg-pink-500',    ring: 'ring-pink-400' },
+  { key: 'slate',   bg: 'bg-[var(--color-bg-hover)]',   ring: 'ring-[var(--color-border-light)]' },
+  { key: 'red',     bg: 'bg-[var(--status-failed-bg)]',     ring: 'ring-[var(--status-failed)]' },
+  { key: 'orange',  bg: 'bg-[var(--status-broken-bg)]',  ring: 'ring-[var(--status-broken)]' },
+  { key: 'amber',   bg: 'bg-[var(--status-broken-bg)]',   ring: 'ring-[var(--status-broken)]' },
+  { key: 'lime',    bg: 'bg-[var(--status-passed-bg)]',    ring: 'ring-[var(--status-passed)]' },
+  { key: 'emerald', bg: 'bg-[var(--status-passed-bg)]', ring: 'ring-[var(--status-passed)]' },
+  { key: 'teal',    bg: 'bg-[var(--status-passed-bg)]',    ring: 'ring-[var(--status-passed)]' },
+  { key: 'cyan',    bg: 'bg-[var(--color-accent-muted)]',    ring: 'ring-[var(--color-accent)]' },
+  { key: 'blue',    bg: 'bg-[var(--color-accent-muted)]',    ring: 'ring-[var(--color-accent)]' },
+  { key: 'violet',  bg: 'bg-[var(--status-flaky-bg)]',  ring: 'ring-[var(--status-flaky)]' },
+  { key: 'fuchsia', bg: 'bg-[var(--status-flaky-bg)]', ring: 'ring-[var(--status-flaky)]' },
+  { key: 'pink',    bg: 'bg-[var(--status-flaky-bg)]',    ring: 'ring-[var(--status-flaky)]' },
 ]
 
 const COLOR_MAP = Object.fromEntries(AVATAR_COLORS.map(c => [c.key, c]))
@@ -52,7 +52,7 @@ function getStrength(pw: string): StrengthResult {
   ]
   const score = checks.filter(c => c.ok).length
   const labels = ['', 'Weak', 'Fair', 'Good', 'Strong', 'Very strong']
-  const colors = ['', 'bg-red-500', 'bg-orange-400', 'bg-amber-400', 'bg-emerald-400', 'bg-emerald-500']
+  const colors = ['', 'bg-[var(--status-failed-bg)]', 'bg-[var(--status-broken-bg)]', 'bg-[var(--status-broken-bg)]', 'bg-[var(--status-passed-bg)]', 'bg-[var(--status-passed-bg)]']
   return { score, label: labels[score] ?? '', color: colors[score] ?? '', checks }
 }
 
@@ -331,7 +331,7 @@ export default function ProfilePage() {
               </div>
               <ul className="grid grid-cols-2 gap-x-4 gap-y-0.5">
                 {strength.checks.map(c => (
-                  <li key={c.label} className={`flex items-center gap-1 text-xs ${c.ok ? 'text-emerald-400' : 'text-[var(--color-text-faint)]'}`}>
+                  <li key={c.label} className={`flex items-center gap-1 text-xs ${c.ok ? 'text-[var(--status-passed)]' : 'text-[var(--color-text-faint)]'}`}>
                     <Check className={`h-3 w-3 ${c.ok ? 'opacity-100' : 'opacity-0'}`} />
                     {c.label}
                   </li>
@@ -365,7 +365,7 @@ export default function ProfilePage() {
             </button>
           </div>
           {confirmPw && newPw !== confirmPw && (
-            <p className="text-xs text-red-400 mt-1">Passwords do not match</p>
+            <p className="text-xs text-[var(--status-failed)] mt-1">Passwords do not match</p>
           )}
         </div>
 

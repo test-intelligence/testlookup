@@ -12,10 +12,10 @@ const SOURCE_ICONS: Record<string, typeof Database> = {
 }
 
 const SYNC_COLORS: Record<string, string> = {
-  synced: 'text-emerald-400',
-  pending: 'text-amber-400',
-  syncing: 'text-blue-400',
-  failed: 'text-red-400',
+  synced: 'text-[var(--status-passed)]',
+  pending: 'text-[var(--status-broken)]',
+  syncing: 'text-[var(--color-accent)]',
+  failed: 'text-[var(--status-failed)]',
 }
 
 interface Props {
@@ -60,14 +60,14 @@ export default function KnowledgeSourcePicker({ sources, selectedIds, onToggle, 
             className={clsx(
               'flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
               isSelected
-                ? 'border-blue-500/50 bg-blue-500/10'
+                ? 'border-[var(--color-accent)]/50 bg-[var(--color-accent-muted)]/10'
                 : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]',
             )}
             onClick={() => onToggle(source.id)}
           >
             <div className={clsx(
               'h-5 w-5 rounded border flex items-center justify-center flex-shrink-0',
-              isSelected ? 'bg-blue-500 border-blue-500' : 'border-[var(--color-border)]',
+              isSelected ? 'bg-[var(--color-accent-muted)] border-[var(--color-accent)]' : 'border-[var(--color-border)]',
             )}>
               {isSelected && <Check className="h-3 w-3 text-white" />}
             </div>

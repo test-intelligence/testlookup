@@ -40,48 +40,48 @@ describe('formatters', () => {
 
   describe('statusColor', () => {
     it('returns correct colour for each status', () => {
-      expect(statusColor('PASSED')).toBe('text-emerald-400')
-      expect(statusColor('FAILED')).toBe('text-red-400')
-      expect(statusColor('SKIPPED')).toBe('text-amber-400')
-      expect(statusColor('BROKEN')).toBe('text-orange-400')
+      expect(statusColor('PASSED')).toBe('text-[var(--status-passed)]')
+      expect(statusColor('FAILED')).toBe('text-[var(--status-failed)]')
+      expect(statusColor('SKIPPED')).toBe('text-[var(--status-skipped)]')
+      expect(statusColor('BROKEN')).toBe('text-[var(--status-broken)]')
     })
     it('returns muted colour for unknown status', () => {
-      expect(statusColor('UNKNOWN')).toBe('text-neutral-400')
-      expect(statusColor('')).toBe('text-neutral-400')
+      expect(statusColor('UNKNOWN')).toBe('text-[var(--color-text-secondary)]')
+      expect(statusColor('')).toBe('text-[var(--color-text-secondary)]')
     })
     it('is case-insensitive', () => {
-      expect(statusColor('passed')).toBe('text-emerald-400')
-      expect(statusColor('failed')).toBe('text-red-400')
+      expect(statusColor('passed')).toBe('text-[var(--status-passed)]')
+      expect(statusColor('failed')).toBe('text-[var(--status-failed)]')
     })
   })
 
   describe('categoryColor', () => {
     it('maps each failure category to the right colour', () => {
-      expect(categoryColor('PRODUCT_BUG')).toBe('text-red-400')
-      expect(categoryColor('INFRASTRUCTURE')).toBe('text-orange-400')
-      expect(categoryColor('TEST_DATA')).toBe('text-amber-400')
-      expect(categoryColor('AUTOMATION_DEFECT')).toBe('text-purple-400')
-      expect(categoryColor('FLAKY')).toBe('text-pink-400')
+      expect(categoryColor('PRODUCT_BUG')).toBe('text-[var(--status-failed)]')
+      expect(categoryColor('INFRASTRUCTURE')).toBe('text-[var(--status-broken)]')
+      expect(categoryColor('TEST_DATA')).toBe('text-[var(--status-broken)]')
+      expect(categoryColor('AUTOMATION_DEFECT')).toBe('text-[var(--status-flaky)]')
+      expect(categoryColor('FLAKY')).toBe('text-[var(--status-flaky)]')
     })
     it('returns slate for unknown category', () => {
-      expect(categoryColor('UNKNOWN')).toBe('text-neutral-400')
+      expect(categoryColor('UNKNOWN')).toBe('text-[var(--color-text-secondary)]')
     })
   })
 
   describe('confidenceColor', () => {
     it('returns green for high confidence (>=80)', () => {
-      expect(confidenceColor(80)).toBe('text-emerald-400')
-      expect(confidenceColor(95)).toBe('text-emerald-400')
-      expect(confidenceColor(100)).toBe('text-emerald-400')
+      expect(confidenceColor(80)).toBe('text-[var(--status-passed)]')
+      expect(confidenceColor(95)).toBe('text-[var(--status-passed)]')
+      expect(confidenceColor(100)).toBe('text-[var(--status-passed)]')
     })
     it('returns amber for medium confidence (60-79)', () => {
-      expect(confidenceColor(60)).toBe('text-amber-400')
-      expect(confidenceColor(75)).toBe('text-amber-400')
-      expect(confidenceColor(79)).toBe('text-amber-400')
+      expect(confidenceColor(60)).toBe('text-[var(--status-broken)]')
+      expect(confidenceColor(75)).toBe('text-[var(--status-broken)]')
+      expect(confidenceColor(79)).toBe('text-[var(--status-broken)]')
     })
     it('returns red for low confidence (<60)', () => {
-      expect(confidenceColor(0)).toBe('text-red-400')
-      expect(confidenceColor(59)).toBe('text-red-400')
+      expect(confidenceColor(0)).toBe('text-[var(--status-failed)]')
+      expect(confidenceColor(59)).toBe('text-[var(--status-failed)]')
     })
   })
 })

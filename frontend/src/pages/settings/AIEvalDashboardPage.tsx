@@ -19,10 +19,10 @@ import {
 type Tab = 'dashboard' | 'datasets' | 'gate';
 
 const GATE_STATUS_STYLES: Record<string, string> = {
-  PASS: 'bg-green-900/40 text-green-400 border-green-700/50',
-  FAIL: 'bg-red-900/40 text-red-400 border-red-700/50',
-  WARN: 'bg-amber-900/40 text-amber-400 border-amber-700/50',
-  NO_BASELINE: 'bg-gray-700 text-[var(--color-text-muted)] border-gray-600',
+  PASS: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] border-[var(--status-passed-bd)]/50',
+  FAIL: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)] border-[var(--status-failed-bd)]/50',
+  WARN: 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border-[var(--status-broken-bd)]/50',
+  NO_BASELINE: 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)] border-[var(--color-border)]',
 };
 
 export default function AIEvalDashboardPage() {
@@ -123,10 +123,10 @@ export default function AIEvalDashboardPage() {
         showInspector
       />
 
-      <div className="flex gap-1 border-b border-gray-700">
+      <div className="flex gap-1 border-b border-[var(--color-border)]">
         {tabs.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-neutral-500' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
+            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
             {t.label}
           </button>
         ))}
@@ -140,25 +140,25 @@ export default function AIEvalDashboardPage() {
               {/* Agreement metrics */}
               {dashboard.agreement && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-neutral-200 mb-3">Human-AI Agreement (30d)</h2>
+                  <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Human-AI Agreement (30d)</h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                      <div className="text-2xl font-bold text-green-400">
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-2xl font-bold text-[var(--status-passed)]">
                         {dashboard.agreement.agreement_rate != null ? `${(dashboard.agreement.agreement_rate * 100).toFixed(1)}%` : 'N/A'}
                       </div>
-                      <div className="text-[10px] text-gray-500">Agreement Rate</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Agreement Rate</div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.agreement.total_feedback}</div>
-                      <div className="text-[10px] text-gray-500">Total Feedback</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Total Feedback</div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                      <div className="text-xl font-bold text-green-400">{dashboard.agreement.correct}</div>
-                      <div className="text-[10px] text-gray-500">Correct</div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--status-passed)]">{dashboard.agreement.correct}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Correct</div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                      <div className="text-xl font-bold text-red-400">{dashboard.agreement.incorrect}</div>
-                      <div className="text-[10px] text-gray-500">Incorrect</div>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className="text-xl font-bold text-[var(--status-failed)]">{dashboard.agreement.incorrect}</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Incorrect</div>
                     </div>
                   </div>
                 </div>
@@ -168,11 +168,11 @@ export default function AIEvalDashboardPage() {
               {dashboard.label_health && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
                   <div className="flex items-center gap-3 mb-3">
-                    <h2 className="text-sm font-semibold text-neutral-200">Training Label Health</h2>
+                    <h2 className="text-sm font-semibold text-[var(--color-text)]">Training Label Health</h2>
                     <span className={clsx('px-2 py-0.5 rounded text-[10px] font-medium', {
-                      'bg-green-900/40 text-green-400': dashboard.label_health.ml_maturity === 'human_calibrated',
-                      'bg-amber-900/40 text-amber-400': dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating',
-                      'bg-gray-700 text-[var(--color-text-muted)]': dashboard.label_health.ml_maturity === 'not_trained',
+                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': dashboard.label_health.ml_maturity === 'human_calibrated',
+                      'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]': dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating',
+                      'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': dashboard.label_health.ml_maturity === 'not_trained',
                     })}>
                       {dashboard.label_health.ml_maturity === 'human_calibrated' ? 'Human-calibrated'
                         : dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating' ? 'Bootstrap (LLM-imitating)'
@@ -180,33 +180,33 @@ export default function AIEvalDashboardPage() {
                     </span>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                      <div className={clsx('text-2xl font-bold', dashboard.label_health.meets_human_label_floor ? 'text-green-400' : 'text-amber-400')}>
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
+                      <div className={clsx('text-2xl font-bold', dashboard.label_health.meets_human_label_floor ? 'text-[var(--status-passed)]' : 'text-[var(--status-broken)]')}>
                         {dashboard.label_health.human_label_total}
                       </div>
-                      <div className="text-[10px] text-gray-500">
+                      <div className="text-[10px] text-[var(--color-text-muted)]">
                         Human Labels (floor: {dashboard.label_health.human_label_floor})
                       </div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.label_health.human_direct}</div>
-                      <div className="text-[10px] text-gray-500">Direct Corrections</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Direct Corrections</div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.label_health.llm_pseudo_candidates}</div>
-                      <div className="text-[10px] text-gray-500">LLM Pseudo-labels</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">LLM Pseudo-labels</div>
                     </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">
                         {dashboard.label_health.human_share_of_pool != null
                           ? `${(dashboard.label_health.human_share_of_pool * 100).toFixed(1)}%`
                           : 'N/A'}
                       </div>
-                      <div className="text-[10px] text-gray-500">Human Share of Pool</div>
+                      <div className="text-[10px] text-[var(--color-text-muted)]">Human Share of Pool</div>
                     </div>
                   </div>
                   {dashboard.label_health.last_trained_composition && (
-                    <p className="text-xs text-gray-500 mt-3">
+                    <p className="text-xs text-[var(--color-text-muted)] mt-3">
                       Deployed model trained on{' '}
                       {dashboard.label_health.last_trained_composition.human_label_count} human label
                       {dashboard.label_health.last_trained_composition.human_label_count === 1 ? '' : 's'}
@@ -220,7 +220,7 @@ export default function AIEvalDashboardPage() {
                     </p>
                   )}
                   {dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating' && (
-                    <p className="text-xs text-amber-400/80 mt-2">
+                    <p className="text-xs text-[var(--status-broken)]/80 mt-2">
                       Below the human-label floor the ML classifier is trained mostly on the LLM&apos;s
                       own high-confidence verdicts — it imitates the LLM rather than learning from your
                       corrections. Confirm or correct AI verdicts to move it to human-calibrated.
@@ -232,23 +232,23 @@ export default function AIEvalDashboardPage() {
               {/* Drift detection */}
               {dashboard.drift && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-neutral-200 mb-3">Quality Drift</h2>
+                  <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Quality Drift</h2>
                   <div className="flex items-center gap-4">
                     <span className={clsx('px-3 py-1 rounded text-sm font-medium', {
-                      'bg-green-900/40 text-green-400': dashboard.drift.drift_direction === 'improving',
-                      'bg-red-900/40 text-red-400': dashboard.drift.drift_direction === 'degrading',
-                      'bg-gray-700 text-[var(--color-text-muted)]': dashboard.drift.drift_direction === 'stable',
+                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': dashboard.drift.drift_direction === 'improving',
+                      'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]': dashboard.drift.drift_direction === 'degrading',
+                      'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': dashboard.drift.drift_direction === 'stable',
                     })}>
                       {dashboard.drift.drift_direction === 'improving' ? 'Improving' : dashboard.drift.drift_direction === 'degrading' ? 'Degrading' : 'Stable'}
                     </span>
                     {dashboard.drift.drift != null && (
                       <span className="text-sm text-[var(--color-text-muted)]">
-                        Accuracy delta: <span className={dashboard.drift.drift >= 0 ? 'text-green-400' : 'text-red-400'}>
+                        Accuracy delta: <span className={dashboard.drift.drift >= 0 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}>
                           {dashboard.drift.drift >= 0 ? '+' : ''}{(dashboard.drift.drift * 100).toFixed(1)}%
                         </span>
                       </span>
                     )}
-                    <span className="text-xs text-gray-600">
+                    <span className="text-xs text-[var(--color-text-muted)]">
                       Current accuracy: {dashboard.drift.current?.accuracy != null ? `${(dashboard.drift.current.accuracy * 100).toFixed(1)}%` : 'N/A'}
                     </span>
                   </div>
@@ -258,19 +258,19 @@ export default function AIEvalDashboardPage() {
               {/* Recent eval runs */}
               {dashboard.recent_eval_runs.length > 0 && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-neutral-200 mb-3">Recent Evaluation Runs</h2>
+                  <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Recent Evaluation Runs</h2>
                   <div className="space-y-2">
                     {dashboard.recent_eval_runs.map(run => (
-                      <div key={run.id} className="bg-gray-900/50 rounded px-3 py-2 flex justify-between items-center text-sm">
+                      <div key={run.id} className="bg-[var(--color-bg)]/50 rounded px-3 py-2 flex justify-between items-center text-sm">
                         <div className="flex items-center gap-3">
-                          <span className="text-gray-300 font-mono text-xs">{run.model_name}</span>
-                          <span className="text-gray-500 text-xs">{run.task_type}</span>
+                          <span className="text-[var(--color-text-secondary)] font-mono text-xs">{run.model_name}</span>
+                          <span className="text-[var(--color-text-muted)] text-xs">{run.task_type}</span>
                         </div>
                         <div className="flex items-center gap-4 text-xs">
-                          {run.accuracy != null && <span className="text-green-400">Acc: {(run.accuracy * 100).toFixed(1)}%</span>}
+                          {run.accuracy != null && <span className="text-[var(--status-passed)]">Acc: {(run.accuracy * 100).toFixed(1)}%</span>}
                           {run.f1_score != null && <span className="text-[var(--color-text)]">F1: {(run.f1_score * 100).toFixed(1)}%</span>}
-                          <span className="text-gray-500">{run.total_items} items</span>
-                          <span className="text-gray-600">{new Date(run.evaluated_at).toLocaleDateString()}</span>
+                          <span className="text-[var(--color-text-muted)]">{run.total_items} items</span>
+                          <span className="text-[var(--color-text-muted)]">{new Date(run.evaluated_at).toLocaleDateString()}</span>
                         </div>
                       </div>
                     ))}
@@ -281,21 +281,21 @@ export default function AIEvalDashboardPage() {
               {/* Model versions */}
               {dashboard.model_versions.length > 0 && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                  <h2 className="text-sm font-semibold text-neutral-200 mb-3">Model Version History</h2>
+                  <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Model Version History</h2>
                   <div className="space-y-2">
                     {dashboard.model_versions.map(v => (
-                      <div key={v.id} className="bg-gray-900/50 rounded px-3 py-2 flex justify-between items-center text-sm">
+                      <div key={v.id} className="bg-[var(--color-bg)]/50 rounded px-3 py-2 flex justify-between items-center text-sm">
                         <div className="flex items-center gap-2">
-                          <span className="text-gray-300">{v.model_name}</span>
-                          <span className="text-xs text-gray-600">{v.track}</span>
+                          <span className="text-[var(--color-text-secondary)]">{v.model_name}</span>
+                          <span className="text-xs text-[var(--color-text-muted)]">{v.track}</span>
                           <span className={clsx('px-2 py-0.5 rounded text-[10px]', {
-                            'bg-green-900/40 text-green-400': v.status === 'active',
-                            'bg-yellow-900/40 text-yellow-400': v.status === 'training' || v.status === 'evaluating',
-                            'bg-gray-700 text-[var(--color-text-muted)]': v.status === 'retired',
-                            'bg-red-900/40 text-red-400': v.status === 'failed',
+                            'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': v.status === 'active',
+                            'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': v.status === 'training' || v.status === 'evaluating',
+                            'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': v.status === 'retired',
+                            'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]': v.status === 'failed',
                           })}>{v.status}</span>
                         </div>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-[var(--color-text-muted)]">
                           {v.eval_accuracy != null ? `Acc: ${(v.eval_accuracy * 100).toFixed(1)}%` : '—'}
                         </span>
                       </div>
@@ -311,24 +311,24 @@ export default function AIEvalDashboardPage() {
             <div className="space-y-4">
               <div className="flex gap-2">
                 <button onClick={handleGenerateDataset}
-                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-neutral-200 text-sm">
+                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
                   Generate from Feedback
                 </button>
                 <button onClick={handleSeedGolden}
-                  className="px-4 py-2 bg-emerald-600 text-[var(--color-text)] rounded-lg hover:bg-emerald-700 text-sm">
+                  className="px-4 py-2 bg-[var(--status-passed-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-passed-bg)] text-sm">
                   Seed Golden Datasets
                 </button>
               </div>
 
-              {datasets.length === 0 && <div className="text-center py-8 text-gray-500">No evaluation datasets. Generate one from human feedback or seed golden datasets.</div>}
+              {datasets.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No evaluation datasets. Generate one from human feedback or seed golden datasets.</div>}
               {datasets.map(ds => (
                 <div key={ds.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-center">
                   <div>
-                    <span className="text-gray-100 font-medium">{ds.name}</span>
-                    <p className="text-xs text-gray-500 mt-1">{ds.task_type} · {ds.item_count} items · Created {new Date(ds.created_at).toLocaleDateString()}</p>
+                    <span className="text-[var(--color-text)] font-medium">{ds.name}</span>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">{ds.task_type} · {ds.item_count} items · Created {new Date(ds.created_at).toLocaleDateString()}</p>
                   </div>
                   <button onClick={() => handleRunEval(ds.id)}
-                    className="px-3 py-1.5 bg-purple-600 text-[var(--color-text)] rounded text-xs hover:bg-purple-700">
+                    className="px-3 py-1.5 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded text-xs hover:bg-[var(--status-flaky-bg)]">
                     Run Evaluation
                   </button>
                 </div>
@@ -341,8 +341,8 @@ export default function AIEvalDashboardPage() {
             <div className="space-y-6">
               {/* Gate runner */}
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                <h2 className="text-sm font-semibold text-neutral-200 mb-3">Run Pre-Release Gate</h2>
-                <p className="text-xs text-gray-500 mb-4">
+                <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Run Pre-Release Gate</h2>
+                <p className="text-xs text-[var(--color-text-muted)] mb-4">
                   Evaluate agent quality against baselines. Prompt, model, or routing changes should not ship if the gate returns FAIL.
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -353,7 +353,7 @@ export default function AIEvalDashboardPage() {
                     { task: 'release_decision', agent: 'ReleaseRiskAgent', label: 'Release Decision' },
                   ].map(g => (
                     <button key={g.task} onClick={() => handleRunGate(g.task, g.agent)}
-                      className="px-4 py-2 bg-indigo-600 text-[var(--color-text)] rounded-lg hover:bg-indigo-700 text-sm">
+                      className="px-4 py-2 bg-[var(--color-accent-muted)] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-accent-muted)] text-sm">
                       Gate: {g.label}
                     </button>
                   ))}
@@ -367,7 +367,7 @@ export default function AIEvalDashboardPage() {
                     <h2 className="text-sm font-semibold">
                       Gate Result: {gateResult.status}
                     </h2>
-                    <span className="text-xs text-gray-500">
+                    <span className="text-xs text-[var(--color-text-muted)]">
                       {gateResult.agent_name} / {gateResult.task_type}
                     </span>
                   </div>
@@ -381,11 +381,11 @@ export default function AIEvalDashboardPage() {
                         { label: 'Recall', value: gateResult.current_metrics.recall },
                         { label: 'F1 Score', value: gateResult.current_metrics.f1_score },
                       ].map(m => (
-                        <div key={m.label} className="bg-gray-900/50 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-neutral-200">
+                        <div key={m.label} className="bg-[var(--color-bg)]/50 rounded p-2 text-center">
+                          <div className="text-lg font-bold text-[var(--color-text)]">
                             {m.value != null ? `${(m.value * 100).toFixed(1)}%` : 'N/A'}
                           </div>
-                          <div className="text-[10px] text-gray-500">{m.label}</div>
+                          <div className="text-[10px] text-[var(--color-text-muted)]">{m.label}</div>
                         </div>
                       ))}
                     </div>
@@ -396,11 +396,11 @@ export default function AIEvalDashboardPage() {
                     <h3 className="text-xs font-medium text-[var(--color-text-muted)] mb-1">Rules</h3>
                     {gateResult.rule_results.map((rule, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
-                        <span className={rule.passed ? 'text-green-400' : 'text-red-400'}>
+                        <span className={rule.passed ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}>
                           {rule.passed ? 'PASS' : 'FAIL'}
                         </span>
                         <span className="text-[var(--color-text-muted)]">{rule.rule}</span>
-                        <span className="text-gray-600">{rule.detail}</span>
+                        <span className="text-[var(--color-text-muted)]">{rule.detail}</span>
                       </div>
                     ))}
                   </div>
@@ -409,17 +409,17 @@ export default function AIEvalDashboardPage() {
 
               {/* Active baselines */}
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                <h2 className="text-sm font-semibold text-neutral-200 mb-3">Active Baselines</h2>
+                <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Active Baselines</h2>
                 {baselines.length === 0 && (
-                  <p className="text-xs text-gray-500">No baselines configured. Set a baseline from the API to enable gate comparisons.</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">No baselines configured. Set a baseline from the API to enable gate comparisons.</p>
                 )}
                 {baselines.map(b => (
-                  <div key={b.id} className="bg-gray-900/50 rounded px-3 py-2 mb-2 flex justify-between items-center text-sm">
+                  <div key={b.id} className="bg-[var(--color-bg)]/50 rounded px-3 py-2 mb-2 flex justify-between items-center text-sm">
                     <div>
-                      <span className="text-gray-300">{b.agent_name}</span>
-                      <span className="text-gray-600 text-xs ml-2">{b.task_type} / {b.prompt_version}</span>
+                      <span className="text-[var(--color-text-secondary)]">{b.agent_name}</span>
+                      <span className="text-[var(--color-text-muted)] text-xs ml-2">{b.task_type} / {b.prompt_version}</span>
                     </div>
-                    <div className="flex gap-3 text-xs text-gray-500">
+                    <div className="flex gap-3 text-xs text-[var(--color-text-muted)]">
                       <span>Acc: {b.baseline_accuracy != null ? `${(b.baseline_accuracy * 100).toFixed(1)}%` : 'N/A'}</span>
                       <span>Min: {(b.min_accuracy * 100).toFixed(0)}%</span>
                       <span>Max drop: {b.max_regression_pct.toFixed(1)}%</span>

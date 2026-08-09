@@ -51,7 +51,7 @@ function CommandRow({ command }: { command: string }) {
         aria-label={`Copy command: ${command}`}
         className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
       >
-        {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? <Check className="h-3.5 w-3.5 text-[var(--status-passed)]" /> : <Copy className="h-3.5 w-3.5" />}
       </button>
     </div>
   )

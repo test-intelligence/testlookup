@@ -285,7 +285,7 @@ export default function OutboundWebhooksPage() {
                   disabled={!canEdit}
                   className={`text-[10px] px-2 py-0.5 rounded border ${
                     sub.enabled
-                      ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+                      ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
                       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
                   }`}
                 >
@@ -303,7 +303,7 @@ export default function OutboundWebhooksPage() {
                     <button
                       type="button"
                       onClick={() => remove(sub)}
-                      className="text-rose-400 hover:underline"
+                      className="text-[var(--status-failed)] hover:underline"
                       aria-label={`Delete ${sub.name}`}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -314,7 +314,7 @@ export default function OutboundWebhooksPage() {
             </div>
 
             {sub.last_error && (
-              <div className="px-3 pb-2 text-[11px] text-amber-400">
+              <div className="px-3 pb-2 text-[11px] text-[var(--status-broken)]">
                 Last error: {sub.last_error}
               </div>
             )}
@@ -482,11 +482,11 @@ function DeliveryHistoryPanel({
           return (
           <li key={d.id} className="flex items-center gap-2 text-[11px]">
             {d.status === 'SUCCESS' ? (
-              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+              <CheckCircle2 className="h-3 w-3 text-[var(--status-passed)]" />
             ) : d.status === 'PENDING' ? (
-              <Clock className="h-3 w-3 text-amber-400" />
+              <Clock className="h-3 w-3 text-[var(--status-broken)]" />
             ) : (
-              <XCircle className="h-3 w-3 text-rose-400" />
+              <XCircle className="h-3 w-3 text-[var(--status-failed)]" />
             )}
             <span className="font-mono text-[var(--color-text)]">{d.event_type}</span>
             <span className="text-[var(--color-text-muted)]">

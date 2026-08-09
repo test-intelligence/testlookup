@@ -353,7 +353,7 @@ function MiniStat({
 }) {
   return (
     <div
-      className={`rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 ${tone === 'warn' ? 'border-amber-500/40' : ''}`}
+      className={`rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 ${tone === 'warn' ? 'border-[var(--status-broken-bd)]/40' : ''}`}
     >
       <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
         {label}
@@ -367,11 +367,11 @@ function StatusPill({ status }: { status: string | null }) {
   if (!status) return null
   const tone =
     status === 'completed'
-      ? 'text-emerald-400 border-emerald-500/40'
+      ? 'text-[var(--status-passed)] border-[var(--status-passed-bd)]/40'
       : status === 'failed'
-      ? 'text-rose-400 border-rose-500/40'
+      ? 'text-[var(--status-failed)] border-[var(--status-failed-bd)]/40'
       : status === 'partial'
-      ? 'text-amber-400 border-amber-500/40'
+      ? 'text-[var(--status-broken)] border-[var(--status-broken-bd)]/40'
       : 'text-[var(--color-text-muted)] border-[var(--color-border)]'
   return (
     <span
@@ -442,9 +442,9 @@ function StageCard({ stage }: { stage: StageDecisionSummary }) {
   const toneClass = useMemo(() => {
     switch (stage.status) {
       case 'completed':
-        return 'border-emerald-500/30'
+        return 'border-[var(--status-passed-bd)]/30'
       case 'failed':
-        return 'border-rose-500/40'
+        return 'border-[var(--status-failed-bd)]/40'
       case 'skipped':
         return 'border-[var(--color-border)] opacity-80'
       default:
@@ -518,8 +518,8 @@ function StageCard({ stage }: { stage: StageDecisionSummary }) {
 }
 
 function StageIcon({ status }: { status: string }) {
-  if (status === 'completed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-  if (status === 'failed') return <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />
+  if (status === 'completed') return <CheckCircle2 className="h-3.5 w-3.5 text-[var(--status-passed)]" />
+  if (status === 'failed') return <AlertTriangle className="h-3.5 w-3.5 text-[var(--status-failed)]" />
   if (status === 'skipped') return <SkipForward className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
   return <Info className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
 }
@@ -533,9 +533,9 @@ function BadgePill({
 }) {
   const toneClass =
     tone === 'warn'
-      ? 'border-amber-500/40 text-amber-300'
+      ? 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)]'
       : tone === 'error'
-      ? 'border-rose-500/40 text-rose-300'
+      ? 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)]'
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
     <span
@@ -594,7 +594,7 @@ function PerTestSection({
         label={`Per-test routing (${perTest.length})`}
       />
       {fallbackCount > 0 && (
-        <p className="text-[11px] text-amber-400/90">
+        <p className="text-[11px] text-[var(--status-broken)]/90">
           {fallbackCount} test{fallbackCount === 1 ? '' : 's'} fell back from the requested engine —
           shown first below.
         </p>
@@ -623,7 +623,7 @@ function PerTestSection({
                 </td>
                 <td className="px-2 py-1.5 text-[var(--color-text-muted)]">
                   {row.fallback_from ? (
-                    <span className="text-amber-400">
+                    <span className="text-[var(--status-broken)]">
                       {row.fallback_from} → {row.analysis_mode}
                     </span>
                   ) : (

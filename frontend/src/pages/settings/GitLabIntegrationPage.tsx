@@ -149,7 +149,7 @@ export default function GitLabIntegrationPage() {
           subtitle={`Post commit statuses and MR comments for ${activeProject?.name || 'this project'}`}
           actions={<ExperimentalBadge />}
         />
-        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 p-4 text-xs text-rose-300 space-y-2">
+        <div className="rounded-md border border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 p-4 text-xs text-[var(--status-failed)] space-y-2">
           <p className="flex items-center gap-1.5">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
             <strong>Could not load the GitLab integration settings.</strong>
@@ -239,7 +239,7 @@ export default function GitLabIntegrationPage() {
             <span
               className={`ml-auto text-[10px] px-2 py-0.5 rounded border ${
                 config.enabled
-                  ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10'
+                  ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
                   : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
               }`}
             >
@@ -310,7 +310,7 @@ export default function GitLabIntegrationPage() {
           </div>
         ) : (
           <div className="flex items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 text-emerald-400">
+            <span className="inline-flex items-center gap-1 text-[var(--status-passed)]">
               <ShieldCheck className="h-3.5 w-3.5" /> Token set
             </span>
             {canEdit && (
@@ -335,7 +335,7 @@ export default function GitLabIntegrationPage() {
                     setDirty(true)
                   }
                 }}
-                className="text-rose-400 hover:underline"
+                className="text-[var(--status-failed)] hover:underline"
               >
                 Remove token
               </button>
@@ -393,8 +393,8 @@ export default function GitLabIntegrationPage() {
           <div
             className={`rounded-md border p-2 text-xs ${
               lastTest.ok
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                ? 'border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)]'
+                : 'border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)]'
             }`}
           >
             {lastTest.ok ? (
@@ -412,7 +412,7 @@ export default function GitLabIntegrationPage() {
         )}
 
         {config?.last_error && (
-          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-300">
+          <div className="rounded-md border border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 p-2 text-xs text-[var(--status-broken)]">
             <strong>Integration health — last error:</strong> {config.last_error}
             {config.last_error_at && (
               <span className="text-[var(--color-text-faint)] ml-1">
