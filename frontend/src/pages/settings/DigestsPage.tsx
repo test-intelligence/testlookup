@@ -17,6 +17,7 @@ import {
   deleteSavedView,
 } from '../../services/savedViewsService';
 import { useDigestSavedViews, useDigestSubscriptions } from '@/hooks/useDigestData';
+import { useFeatureEnabled } from '@/hooks/useFeatureFlags';
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
 
 type Tab = 'subscriptions' | 'saved-views' | 'preview';
@@ -31,11 +32,22 @@ export default function DigestsPage() {
     useDigestSubscriptions(tab === 'subscriptions');
   const [newSubName, setNewSubName] = useState('');
   const [newSubSchedule, setNewSubSchedule] = useState<import('@/services/digestService').DigestScheduleType>('WEEKLY');
+  // Tier 2 item 12. Gated: when `weekly_retro_digest` is off the dispatch task
+  // *silently skips* WEEKLY_RETRO subscriptions, so offering the option would
+  // let a user create one that never delivers and never says why.
+  const retroEnabled = useFeatureEnabled('weekly_retro_digest');
   const [newSubChannel, setNewSubChannel] = useState<'email' | 'slack' | 'teams'>('email');
   const [newSubTriggerFilter, setNewSubTriggerFilter] = useState<'all' | 'failed_only' | 'degraded_only'>('all');
   const [newSubScopeValue, setNewSubScopeValue] = useState('');
   // US-7.5: attach the self-contained HTML analysis report (email + daily/weekly only).
   const [newSubReportAttachment, setNewSubReportAttachment] = useState(false);
+
+  // If the flag flips off mid-session (30s TTL) the option disappears from the
+  // selector — adjust during render rather than in an effect, which this repo
+  // lints against.
+  if (!retroEnabled && newSubSchedule === 'WEEKLY_RETRO') {
+    setNewSubSchedule('WEEKLY');
+  }
 
   // Saved views
   const { views, isLoading: viewsLoading, isError: viewsError, mutate: mutateViews } =
@@ -169,6 +181,7 @@ export default function DigestsPage() {
                   <select value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as typeof newSubSchedule)}
                     className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
                     <option value="WEEKLY">Weekly</option>
+                    {retroEnabled && <option value="WEEKLY_RETRO">Weekly Retro</option>}
                     <option value="DAILY">Daily</option>
                     <option value="PER_RUN">Per Run</option>
                     <option value="PER_RELEASE">Per Release</option>
@@ -207,6 +220,15 @@ export default function DigestsPage() {
                   Subscribe
                 </button>
               </div>
+
+              {newSubSchedule === 'WEEKLY_RETRO' && (
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  <span className="text-[var(--color-text)]">Weekly Retro</span> is a narrative
+                  &ldquo;week in review&rdquo; — what changed, what regressed and what stabilised —
+                  rather than the current-state snapshot a Weekly digest sends. Delivered every
+                  Monday 07:00 UTC.
+                </p>
+              )}
 
               {newSubChannel === 'email' && (newSubSchedule === 'DAILY' || newSubSchedule === 'WEEKLY') && (
                 <label className="flex items-start gap-2 text-sm text-[var(--color-text-muted)] cursor-pointer">

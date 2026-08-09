@@ -3577,7 +3577,13 @@ class DigestSubscriptionCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     saved_view_id: Optional[uuid.UUID] = None
     name: str = Field(..., min_length=2, max_length=255)
-    schedule: str = Field(default="WEEKLY", pattern="^(DAILY|WEEKLY|PER_RUN|PER_RELEASE|PER_SUITE)$")
+    # Must stay in sync with the ``DigestSchedule`` ORM enum — pinned by
+    # tests/regression/test_digest_schedule_vocab.py, which derives its cases
+    # from the enum so a new member fails until it is wired through here.
+    schedule: str = Field(
+        default="WEEKLY",
+        pattern="^(DAILY|WEEKLY|WEEKLY_RETRO|PER_RUN|PER_RELEASE|PER_SUITE)$",
+    )
     channel: str = Field(default="email", pattern="^(email|slack|teams)$")
     scope_type: Optional[str] = Field(default="project", pattern="^(project|release|suite|global)$")
     scope_value: Optional[str] = Field(None, max_length=255)

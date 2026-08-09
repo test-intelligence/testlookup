@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Fix: `WEEKLY_RETRO` digests were unreachable from the UI *and* the API
+
+The auto-retro digest (Tier 2 item 12) was built end-to-end — `DigestSchedule.WEEKLY_RETRO`
+in the ORM, a Monday 07:00 UTC beat entry, a retro renderer in `digest_content_service` —
+with **no way to create the subscription**:
+
+- `DigestsPage` offered five schedules; `WEEKLY_RETRO` was not among them.
+- `DigestSubscriptionCreate.schedule` carried a regex that **excluded** `WEEKLY_RETRO`, so
+  even a hand-rolled API call 422'd. The vocabulary lived in three places and nothing
+  forced them to agree — the repo's producer/consumer drift class.
+
+Fixed both halves. The option is **gated on the `weekly_retro_digest` flag**, because
+`dispatch_scheduled_digests` silently skips `WEEKLY_RETRO` subscriptions when the flag is
+off — an ungated option would let a user create a subscription that never delivers and
+never says why.
+
+The regression test derives its cases from the `DigestSchedule` enum rather than naming
+`WEEKLY_RETRO`, so the *next* enum member fails until it is wired through too.
+
 ### 2026-08-09 — Perf: suite-history query 349ms → 50ms (F-P16 root cause)
 
 `compute_suite_history` was **369 ms of the 513 ms** `GET /api/v1/test-management/suites`

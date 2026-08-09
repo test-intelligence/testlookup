@@ -1,6 +1,12 @@
 import { api } from './api';
 
-export type DigestScheduleType = 'DAILY' | 'WEEKLY' | 'PER_RUN' | 'PER_RELEASE' | 'PER_SUITE';
+export type DigestScheduleType =
+  | 'DAILY'
+  | 'WEEKLY'
+  | 'WEEKLY_RETRO'
+  | 'PER_RUN'
+  | 'PER_RELEASE'
+  | 'PER_SUITE';
 export type ScopeType = 'project' | 'release' | 'suite' | 'global';
 export type TriggerFilter = 'all' | 'failed_only' | 'degraded_only';
 
