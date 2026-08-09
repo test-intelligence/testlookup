@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Perf: suite-history query 349ms → 50ms (F-P16 root cause)
+
+`compute_suite_history` was **369 ms of the 513 ms** `GET /api/v1/test-management/suites`
+endpoint — the single largest cost, and invisible to four earlier hypotheses because it
+lives in a service the router calls rather than in the router's own SQL. Found by enabling
+`log_min_duration_statement` for one request.
+
+Two changes, both verified against the live database to return **byte-identical rows**
+(`EXCEPT` in both directions, 0 rows each way):
+
+- **`UNION` → `UNION ALL`.** The branches are disjoint by construction: path A emits
+  `(run, primary_suite_name)`, path B emits `(run, tc.suite_name)` only where it
+  `IS DISTINCT FROM` primary, and already de-dupes itself. Measured on live data, the dedup
+  removed **0 of 3824 rows** — pure sort cost. The function's own docstring already claimed
+  `UNION ALL`; the code disagreed. 349.7 → 290.4 ms.
+- **Carry `from_primary` instead of a correlated `EXISTS`.** The join needed "is this row the
+  run-level suite?" and asked the database per row via a subquery over `test_runs`.
+  `run_effective` already knows — it is the branch the row came from. 290.4 → 52.9 ms.
+
+Measured on the **real generated SQL**, not a reconstruction: **49.6 ms**.
+
+Both queries in the service are converted; the second reaches the flag through its `filtered`
+CTE, which is `SELECT *`.
+
+Regression: `test_suite_history_query_shape.py` (6 of 7 fail before) pins the shape, since
+the same rows can be produced either way and a correctness test passes on the slow version.
+Suite counts stay covered by the existing 160 suite tests, all passing.
+
 ### 2026-08-09 — UI consistency: every colour now comes from a theme token
 
 Follow-up to the status-colour fix. Removed the remaining inconsistency sources so the same
