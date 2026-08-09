@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### 2026-08-09 — Security: `scope=team` guarded cross-user escalation but not cross-tenant (HIGH)
+
+`/api/v1/me/assigned-failures` drops the per-assignee filter when `scope=team`, and
+honours that scope for QA_LEAD and ADMIN only. The source comment states the intent:
+
+> Team scope is only honoured for QA_LEAD / ADMIN. Anyone else silently falls back to
+> `mine` so the URL can't be tampered with to leak cross-user data.
+
+It did exactly that — and nothing else. Dropping the assignee filter without adding a
+project filter left the query bounded by **nothing**.
+
+Confirmed live with a QA_LEAD holding zero memberships (0 projects visible):
+
+```
+GET /me/assigned-failures?project_id=<theirs>&scope=team -> total 11
+    test_refund_flow (api), test_discount_stacking (regression)
+GET /me/assigned-failures?scope=team&days=90&size=100    -> total 72, 2 projects
+GET /me/assigned-failures/count?scope=team               -> {"count": 72}
+```
+
+Instance-wide reach for a normal tenant role — the property that made F-035
+(`POST /search/reindex`) serious.
+
+Both handlers now resolve the caller's scope: a named project is verified (403 for a
+non-member), an unnamed one bounds `team` to the caller's memberships. ADMIN stays
+unrestricted.
+
+`scope=mine` is untouched and always was safe — it filters on
+`assigned_to_user_id == current_user.id`. It also **skips the membership lookup
+entirely**: the sidebar polls the count endpoint, and an existing regression test pins
+its query count, so the scope resolution runs only when it can change the answer.
+
 ### 2026-08-09 — Security: the access check sat in the branch that cannot leak (10 handlers)
 
 Third recurrence of one bug. The digests (F-033) and chat (F-040) fixes each corrected

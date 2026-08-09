@@ -138,6 +138,26 @@ async def list_my_assigned_failures(
     ):
         effective_scope = "mine"
 
+    # F-043: ``scope=team`` drops the per-assignee filter, so without a project
+    # bound the query is scoped by nothing at all — measured live at 72 rows
+    # across every project on the instance for a QA_LEAD belonging to none of
+    # them. The role gate above stops cross-*user* escalation; it never
+    # addressed cross-*tenant*.
+    #
+    # Resolved only when it can change the answer: a named project (verify it,
+    # 403 for a non-member) or team scope (bound it by membership). ``mine``
+    # with no project is self-scoped by ``assigned_to_user_id`` already, and
+    # must not pay a membership lookup on the sidebar's polling path.
+    allowed_project_ids = None
+    if scoped_project_id is not None or effective_scope == "team":
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        verified_project_id, allowed_project_ids = await resolve_project_scope(
+            db, current_user, str(scoped_project_id) if scoped_project_id else None
+        )
+        if verified_project_id is not None:
+            scoped_project_id = verified_project_id
+
     # Phase: triage workflow (migration 0088). Inbox shows only rows
     # the assignee hasn't actioned yet. ``REVIEWED_APPROVED /
     # DEFECT_CREATED / WONT_FIX`` rows are off the inbox by design;
@@ -153,6 +173,10 @@ async def list_my_assigned_failures(
         base_filters.append(TestCase.assigned_to_user_id == current_user.id)
     if scoped_project_id is not None:
         base_filters.append(TestRun.project_id == scoped_project_id)
+    elif allowed_project_ids is not None:
+        # No project named: bound to the caller's memberships. An EMPTY set is
+        # meaningful — a user who belongs to nothing must match nothing.
+        base_filters.append(TestRun.project_id.in_(list(allowed_project_ids)))
 
     # Total count for pagination + badge.
     count_stmt = (
@@ -321,6 +345,26 @@ async def my_assigned_failures_count(
     ):
         effective_scope = "mine"
 
+    # F-043: ``scope=team`` drops the per-assignee filter, so without a project
+    # bound the query is scoped by nothing at all — measured live at 72 rows
+    # across every project on the instance for a QA_LEAD belonging to none of
+    # them. The role gate above stops cross-*user* escalation; it never
+    # addressed cross-*tenant*.
+    #
+    # Resolved only when it can change the answer: a named project (verify it,
+    # 403 for a non-member) or team scope (bound it by membership). ``mine``
+    # with no project is self-scoped by ``assigned_to_user_id`` already, and
+    # must not pay a membership lookup on the sidebar's polling path.
+    allowed_project_ids = None
+    if scoped_project_id is not None or effective_scope == "team":
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        verified_project_id, allowed_project_ids = await resolve_project_scope(
+            db, current_user, str(scoped_project_id) if scoped_project_id else None
+        )
+        if verified_project_id is not None:
+            scoped_project_id = verified_project_id
+
     filters = [
         TestCase.status.in_(_ACTIONABLE_STATUSES),
         # Match the inbox list endpoint — badge counts only PENDING_REVIEW.
@@ -334,6 +378,9 @@ async def my_assigned_failures_count(
         filters.append(TestCase.assigned_to_user_id == current_user.id)
     if scoped_project_id is not None:
         filters.append(TestRun.project_id == scoped_project_id)
+    elif allowed_project_ids is not None:
+        # See the list handler: an empty membership set must match nothing.
+        filters.append(TestRun.project_id.in_(list(allowed_project_ids)))
 
     stmt = (
         select(func.count(TestCase.id))
